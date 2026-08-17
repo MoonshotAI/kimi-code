@@ -1,36 +1,3 @@
-/**
- * Cold-path history grouping: rebuild a turn tree from a flat message list
- * (as produced by the engine's `reduceContextTranscript`).
- *
- * This is a best-effort reconstruction — the live path (engine events) is the
- * high-fidelity one. Known limitations, accepted by design:
- *  - step granularity collapses to "one assistant message = one step";
- *  - live-only detail is never backfilled: step usage / finishReason /
- *    timing / retry, tool inputText / progress, and task resultSummary /
- *    error / stateReason / usage exist only on live engine events — persisted
- *    context messages do not carry them (turn end facts DO persist as
- *    `turn.ended` records and are folded in by `foldWireRecordFacts`);
- *  - media content parts become attachment entities (metadata only — base64
- *    bytes are dropped, never shipped); mid-turn media is not anchored. A
- *    daemon-ref media part (`kimi-file://<fileId>`) is self-contained
- *    and projects to a single attachment; a standalone `<media path>` tag is
- *    user text or the legacy degrade form and stays prompt text;
- *  - streamed-vs-persisted duplication is assumed already resolved upstream;
- *  - only the turn tree is built here: tasks / interactions / todos / meta
- *    (goal, plan, swarm) are NOT context messages — the companion fold
- *    (`foldWireRecordFacts` in `foldFacts.ts`) rebuilds them from the
- *    non-`context.*` wire records on top of this base snapshot;
- *  - persisted messages carry no turn ids, so turn ordinals are assigned by
- *    grouping — **0-based, matching the engine's live turn numbering** — and
- *    can drift from the engine's ids when hidden origins (e.g. retries) make
- *    the engine consume an ordinal that grouping cannot see. Alignment is
- *    what makes a rebuilt slice safe to merge into a live store (backfill):
- *    the engine's next turn continues at `t<turnCount>` without colliding.
- *
- * The input type is structural so the engine's `ContextMessage` is directly
- * assignable without a dependency from this package onto the engine.
- */
-
 import type { AgentTranscriptSnapshot } from '../ops/operation';
 import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptFrame } from '../model/frame';
@@ -86,20 +53,8 @@ interface StepDraft {
   frames: TranscriptFrame[];
 }
 
-/** Origins whose content is context, not display — folded away, not shown. */
 const HIDDEN_USER_ORIGINS = new Set(['injection', 'system_trigger', 'retry']);
-/**
- * Hidden origins that nonetheless OPEN a real engine turn
- * (`MessageStepRequest` with `admission: 'newTurn'`, e.g. goal continuation;
- * a subagent's run prompt goes through `promptService.enqueue`, which always
- * launches a new turn). Other hidden origins are mid-turn context
- * (reminders, injections, retries) and stay folded away; skipping a
- * turn-opening one would fold the continuation's assistant output into the
- * prior visible turn and break the 0-based ordinal alignment with the
- * engine's live turn numbering.
- */
 const TURN_OPENING_SYSTEM_TRIGGERS = new Set(['goal_continuation', 'subagent']);
-/** Origins rendered as timeline markers rather than turns. */
 const MARKER_USER_ORIGINS: Readonly<Record<string, string>> = {
   skill_activation: 'skill',
   plugin_command: 'skill',
@@ -114,17 +69,9 @@ export function groupMessagesIntoSnapshot(
   const items: TranscriptItem[] = [];
   const attachments: TranscriptAttachment[] = [];
   let turn: TurnDraft | undefined;
-  /** Next turn ordinal — 0-based, matching the engine's live turn numbering. */
   let nextOrdinal = 0;
   let markerCount = 0;
 
-  /**
-   * Turn-opening user message → prompt text + attachment ids. A daemon-ref
-   * media part (`kimi-file://<fileId>`) is self-contained: it yields one
-   * attachment. Text parts pass through verbatim — a standalone
-   * `<media path>` tag is user text or the legacy degrade form, never markup
-   * the read model may eat.
-   */
   const foldTurnOpeningInput = (
     message: HistoryMessage,
   ): { text: string; attachmentIds?: string[] } => {
@@ -149,7 +96,6 @@ export function groupMessagesIntoSnapshot(
               : source.kind === 'file'
                 ? { kind: 'file', fileId: source.file_id }
                 : undefined,
-          // base64 bytes are deliberately dropped — never shipped to clients.
         };
         attachments.push(entity);
         ids.push(entity.attachmentId);
@@ -212,22 +158,12 @@ export function groupMessagesIntoSnapshot(
     if (message.role === 'user') {
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
         if (opensOwnTurn(message)) {
-          // A real turn boundary: advance the grouping (and the ordinal).
-          // The steering text is internal — the boundary lands promptless,
-          // mirroring the live path's displayable-origin gate.
           startTurn(mapOrigin(message));
         }
         continue;
       }
       const markerKey = originKind !== undefined ? MARKER_USER_ORIGINS[originKind] : undefined;
       if (markerKey !== undefined) {
-        // A user-slash skill/plugin command is a real user prompt (mirrors
-        // the engine's `isRealUserPrompt`): it opened its own turn, so
-        // advance the grouping instead of folding the response into the
-        // previous turn. Other triggers are mid-turn context — marker only.
-        // A slash turn-opening input projects like any other user's (each
-        // daemon-ref media part → one attachment), mirroring the live
-        // `projectTurnPrompt` projection.
         const opening = isUserSlashPrompt(message) ? foldTurnOpeningInput(message) : undefined;
         pushMarker(markerKey, { text: opening?.text ?? textOf(message), origin: message.origin });
         if (opening !== undefined) {
@@ -237,11 +173,6 @@ export function groupMessagesIntoSnapshot(
       }
       const bundled = bundledSkillActivations(message);
       if (bundled.length > 0) {
-        // The v2 engine bundles a prompt's inline skill activations into the
-        // prompt message itself: one rendered text part per skill precedes
-        // the caller's parts in the content, and the origin carries every
-        // activation. Expand the persisted bundle back into per-skill markers
-        // so a cold rebuild shows the same cards the live events produced.
         const parts = message.content ?? [];
         bundled.forEach((activation, index) => {
           const block = parts[index];
@@ -287,9 +218,6 @@ export function groupMessagesIntoSnapshot(
           frameId: `${step.stepId}.${call.id}`,
           toolCallId: call.id,
           name: call.name,
-          // The result may not be persisted yet (approval pending / tool
-          // still executing at capture time): start 'running' and let the
-          // `role === 'tool'` branch transition to done/error.
           state: 'running',
           input: parseArguments(call.arguments),
         });
@@ -314,16 +242,9 @@ export function groupMessagesIntoSnapshot(
     }
   }
 
-  // The entity slots stay empty here: tasks / interactions / todos / meta are
-  // not context messages — `foldWireRecordFacts` fills them from the
-  // non-`context.*` wire records on top of this base snapshot. Prompts stay
-  // empty too: the wire journal carries no prompt records (see foldFacts).
   return { items, tasks: [], interactions: [], attachments, todos: [], prompts: [], meta: {} };
 }
 
-// ---------------------------------------------------------------- helpers
-
-/** Whether a hidden-origin user message opened its own engine turn. */
 function opensOwnTurn(message: HistoryMessage): boolean {
   const origin = message.origin as { kind?: unknown; name?: unknown } | undefined;
   return (
@@ -333,11 +254,6 @@ function opensOwnTurn(message: HistoryMessage): boolean {
   );
 }
 
-/**
- * Whether a skill/plugin-activation message was a user-slash prompt — a real
- * turn opener per the engine's `isRealUserPrompt` (other triggers are
- * mid-turn context).
- */
 function isUserSlashPrompt(message: HistoryMessage): boolean {
   const origin = message.origin as { kind?: unknown; trigger?: unknown } | undefined;
   return (
@@ -356,9 +272,6 @@ function mapOrigin(message: HistoryMessage): TurnOrigin {
     }
     case 'task':
     case 'background_task': {
-      // Legacy/v1 sessions persist background-task notifications under the
-      // 'background_task' spelling (the live mapper already handles it) —
-      // same shape, same taskId, so the turn keeps its task link.
       const taskId = (origin as { taskId?: unknown }).taskId;
       return taskId !== undefined && typeof taskId === 'string'
         ? { kind: 'task', taskId, payload: origin }
@@ -367,8 +280,6 @@ function mapOrigin(message: HistoryMessage): TurnOrigin {
     case 'hook_result':
       return { kind: 'hook', payload: origin };
     case 'shell_command':
-      // `!shell` input/output echo: displayed as user-turn input; the payload
-      // (`phase`, `isError`) lets a client renderer specialize later.
       return { kind: 'user', payload: origin };
     case 'user':
     case undefined:
@@ -436,7 +347,6 @@ function draftToTurnItem(draft: TurnDraft): TranscriptItem {
   };
 }
 
-/** Re-project the (mutated) draft into the items array, preserving identity of slots. */
 function syncTurnItem(items: TranscriptItem[], draft: TurnDraft): void {
   const index = items.findIndex((entry) => entry.kind === 'turn' && entry.turnId === draft.turnId);
   if (index >= 0) items[index] = draftToTurnItem(draft);

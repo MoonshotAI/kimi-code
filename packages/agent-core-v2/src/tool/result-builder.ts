@@ -1,11 +1,3 @@
-/**
- * `tool` domain — buffered tool-result builder.
- *
- * Shared helper for tools that stream text into a bounded output buffer with
- * optional per-line and total-char truncation. Pure helper; no scoped
- * service.
- */
-
 import { BugIndicatingError } from '#/errors';
 
 import type { ExecutableToolErrorResult, ExecutableToolSuccessResult } from './toolContract';

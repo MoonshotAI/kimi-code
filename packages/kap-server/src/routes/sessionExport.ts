@@ -1,10 +1,3 @@
-/**
- * `POST /sessions/{session_id}/export` — stream a session diagnostic archive.
- *
- * The server owns archive options and temporary paths. A bounded Web JSONL log
- * may be supplied by the client and is added to the archive by sessionExport.
- */
-
 import { createReadStream, type ReadStream } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import type { ServerResponse } from 'node:http';
@@ -117,10 +110,6 @@ export function registerSessionExportRoute(
             sessionId: req.params.session_id,
             outputPath,
             includeGlobalLog: true,
-            // Desktop hosts ask for their own app log via `desktop: true`;
-            // the file is read server-side (missing files are skipped) and the
-            // manifest is stamped with the host product version as
-            // `desktopVersion`.
             includeDesktopLog: req.body.desktop === true,
             version: options.hostIdentity.version,
             desktopVersion:

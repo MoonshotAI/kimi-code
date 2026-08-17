@@ -1,19 +1,3 @@
-/**
- * BashTool tests for the v2 shellTools domain.
- *
- * Ported from v1 (`packages/agent-core/test/tools/bash.test.ts`) and adapted
- * to the v2 constructor `(runner, kaos, background, options)`. Self-contained:
- * builds minimal fake `ISessionProcessRunner` / `IProcess`, `IKaos`, and
- * `IAgentTaskService` inline so the tool can be exercised without the
- * composition root. The fake `IAgentTaskService` drives the real
- * `ProcessTask` so stream observation, timeout and user-interrupt
- * semantics match production.
- *
- * Deviations from v1:
- *   - v1's `execWithEnv(args, env)` is now `runner.exec(args, { env })`, so
- *     exec-call assertions read `options.env` from the second argument.
- */
-
 import { PassThrough, Readable, type Writable } from 'node:stream';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -65,7 +49,6 @@ const windowsBashEnv: IHostEnvironment = {
   homeDir: 'C:\\Users\\test',
   ready: Promise.resolve(),
 };
-
 
 function processWithOutput(
   options: {
@@ -294,7 +277,6 @@ function processWithOpenStreamsThatExitOnKill(): IHostProcess {
   };
 }
 
-
 function createTestEnv(env: IHostEnvironment = posixEnv): IHostEnvironment {
   return env;
 }
@@ -309,13 +291,11 @@ function createTestCtx(cwd = '/workspace'): ISessionContext {
   });
 }
 
-
 function createTestRunner(proc: IHostProcess | ReturnType<typeof vi.fn>) {
   const exec = typeof proc === 'function' ? proc : vi.fn().mockResolvedValue(proc);
   const runner = { _serviceBrand: undefined, spawn: exec } as IHostProcessService;
   return { runner, exec };
 }
-
 
 const TERMINAL_STATUSES: ReadonlySet<AgentTaskStatus> = new Set([
   'completed',
@@ -683,7 +663,6 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
   return { service, tasks, persisted };
 }
 
-
 function context(
   args: BashInput,
   signal = new AbortController().signal,
@@ -755,7 +734,6 @@ function bashTool(
   };
   return new BashTool(runtime, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config);
 }
-
 
 describe('BashTool', () => {
   it('exposes current metadata and schema', () => {

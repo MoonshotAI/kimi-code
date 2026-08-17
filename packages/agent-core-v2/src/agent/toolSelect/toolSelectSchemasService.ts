@@ -1,10 +1,3 @@
-/**
- * `toolSelect` domain — `IAgentToolSelectSchemasService` implementation.
- *
- * Declares pending dynamic-tool schemas from `toolSelect` through
- * `contextInjector`. Bound at Agent scope.
- */
-
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';

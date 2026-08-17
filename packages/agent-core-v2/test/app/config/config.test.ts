@@ -1,12 +1,3 @@
-/**
- * Scenario: agent-facing config projection, owner-registered sections, and env overlays.
- *
- * Exercises the public profile/config surfaces and resolves the real
- * `ConfigService` with TOML document storage while stubbing host and model
- * boundaries. Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/config/config.test.ts`.
- */
-
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ToolCall } from '#/kosong/contract/message';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -460,9 +451,6 @@ describe('ConfigService env overlay (live)', () => {
     disposables.dispose();
   });
 
-  // `builtinProductSkills` is a whole-section scalar rather than an object of
-  // fields, so it exercises the section-level env binding branch and needs its
-  // own strip — `stripEnvBoundFields` only walks object fields.
   it('applies a scalar section env binding and keeps it out of the file', async () => {
     const env: Record<string, string> = {};
     const disposables = new DisposableStore();
@@ -481,8 +469,6 @@ describe('ConfigService env overlay (live)', () => {
     env['KIMI_CODE_BUILTIN_PRODUCT_SKILLS'] = '0';
     expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(false);
 
-    // A write while the env var is active must persist the file's own value,
-    // never the env override echoed back.
     await config.replace(BUILTIN_PRODUCT_SKILLS_SECTION, true);
     delete env['KIMI_CODE_BUILTIN_PRODUCT_SKILLS'];
     expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(true);
@@ -490,9 +476,6 @@ describe('ConfigService env overlay (live)', () => {
     disposables.dispose();
   });
 
-  // Contract: "an env value that fails its binding's parse is ignored". Object
-  // fields already honored it; a whole-section scalar binding must too, or a
-  // blank / mistyped variable silently clears the configured value.
   it('keeps the file value when a scalar section env value fails to parse', async () => {
     const env: Record<string, string> = {};
     const disposables = new DisposableStore();
@@ -1096,14 +1079,12 @@ describe('loopControl config section', () => {
     expect(config.inspect<LoopControl>(LOOP_CONTROL_SECTION).userValue).toEqual({
       maxStepsPerRun: 100,
     });
-    // …its presence is reported as a deprecation warning…
     expect(config.diagnostics()).toContainEqual({
       domain: LOOP_CONTROL_SECTION,
       severity: 'warning',
       message:
         "[loop_control] 'max_steps_per_run' is deprecated and no longer used; rename it to 'max_steps_per_turn'. Run /update-config to fix it.",
     });
-    // …and a stripped write leaves the on-disk legacy key untouched.
     await config.set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 7 });
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(7);
     const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
@@ -1200,9 +1181,7 @@ describe('config deprecations', () => {
       '[loop_control]\nmax_retries_per_step = 3\n',
     );
 
-    // The old value is NOT mapped onto the new field…
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({});
-    // …and the file is left untouched — the warning is the migration guide.
     expect(config.diagnostics()).toContainEqual({
       domain: LOOP_CONTROL_SECTION,
       severity: 'warning',
@@ -1234,15 +1213,12 @@ describe('config deprecations', () => {
     const env: Record<string, string> = { [LOOP_MAX_RETRIES_PER_STEP_ENV]: '4' };
     const { config, disposables } = await createConfig(env);
 
-    // The deprecated var still supplies the value…
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxAttemptsPerStep: 4 });
-    // …with a deprecation warning…
     expect(config.diagnostics()).toContainEqual({
       domain: LOOP_CONTROL_SECTION,
       severity: 'warning',
       message: `Environment variable ${LOOP_MAX_RETRIES_PER_STEP_ENV} is deprecated; use ${LOOP_MAX_ATTEMPTS_PER_STEP_ENV} instead.`,
     });
-    // …and the replacement var wins as soon as it appears.
     env[LOOP_MAX_ATTEMPTS_PER_STEP_ENV] = '2';
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxAttemptsPerStep: 2 });
 
@@ -1270,8 +1246,6 @@ describe('config deprecations', () => {
     };
     expect(config.diagnostics()).toContainEqual(warning);
 
-    // The file never changed, so reload takes the unchanged early return —
-    // the env-derived warning must survive it.
     await config.reload();
 
     expect(config.diagnostics()).toContainEqual(warning);
@@ -1287,15 +1261,12 @@ describe('config deprecations', () => {
       '[loop_control]\nmax_attempts_per_step = 9\n',
     );
 
-    // A client echoing the env-overlaid section back (plus a genuine edit).
     await config.set(LOOP_CONTROL_SECTION, { maxAttemptsPerStep: 2, reservedContextSize: 5000 });
 
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({
       maxAttemptsPerStep: 2,
       reservedContextSize: 5000,
     });
-    // The deprecated env still owns the field: persistence restores the raw
-    // value instead of leaking the echoed env value.
     expect(config.inspect<LoopControl>(LOOP_CONTROL_SECTION).userValue).toEqual({
       maxAttemptsPerStep: 9,
       reservedContextSize: 5000,
@@ -1336,7 +1307,6 @@ describe('config deprecations', () => {
         "[loop_control] 'max_retries_per_step' is deprecated and no longer used; rename it to 'max_attempts_per_step'. Run /update-config to fix it.",
     });
 
-    // Renaming the key on disk clears the warning on the next reload.
     await storage.write(
       '',
       'config.toml',
@@ -1763,18 +1733,14 @@ describe('subagent config section', () => {
       {},
       '[secondary_model]\ndefault_model = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n"provider/smart" = "hard tasks"\n',
     );
-    // An omitted model falls back to the pool default; pool bindings carry no
-    // explicit thinking (the subagent resolves thinking naturally).
     expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
     });
-    // A pool alias binds directly.
     expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own, 'provider/smart')).toEqual({
       model: 'provider/smart',
       thinking: undefined,
     });
-    // "primary" always inherits the caller.
     expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
@@ -1789,8 +1755,6 @@ describe('subagent config section', () => {
       '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
     );
 
-    // Flag off: the pool (and force) are ignored — spawns inherit the caller,
-    // and an explicit choice fails like the no-pool case.
     expect(resolveSubagentBinding(config, secondaryModelFlags(false), own)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
@@ -1809,13 +1773,10 @@ describe('subagent config section', () => {
       '[secondary_model]\ndefault_model = "provider/fast"\n',
     );
 
-    // An omitted model falls back to the default; pool bindings carry no
-    // explicit thinking.
     expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
     });
-    // The only other choice is "primary".
     expect(resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
@@ -1834,10 +1795,6 @@ describe('subagent config section', () => {
       '[secondary_model]\nmodel = "provider/fast"\ndefault_effort = "low"\n',
     );
 
-    // Recipe patch fields have no pool counterpart: the schema keeps them
-    // (so config writes round-trip losslessly for the v1 engine) but pool
-    // resolution ignores them; the lone legacy key forms the implicit
-    // single-entry pool.
     expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
       model: 'provider/fast',
       defaultEffort: 'low',
@@ -1920,7 +1877,6 @@ describe('subagent config section', () => {
       models: { 'provider/fast': '' },
     });
 
-    // A v2 write validates before persisting — the patch fields must survive.
     await config.set(SECONDARY_MODEL_SECTION, { defaultModel: 'provider/fast' });
     const after = config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION);
     expect(after?.defaultEffort).toBe('low');
@@ -1940,12 +1896,10 @@ describe('subagent config section', () => {
       defaultModel: 'provider/fast',
       force: true,
     });
-    // An omitted model binds the forced default, with no thinking inheritance.
     expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
     });
-    // Any explicit choice — "primary" included — is rejected.
     expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toThrow(
       /Invalid model "primary": \[secondary_model\]\.force is set/,
     );
@@ -1960,9 +1914,6 @@ describe('subagent config section', () => {
       '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
     );
 
-    // A live session can reach this state through a deep-merged config patch
-    // that adds force without clearing the pool table; spawn resolution must
-    // fail the same way the startup pre-flight does.
     expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own)).toThrow(
       /\[secondary_model\]\.force cannot be combined with \[secondary_model\.models\]/,
     );

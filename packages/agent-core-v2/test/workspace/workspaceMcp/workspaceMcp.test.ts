@@ -1,14 +1,3 @@
-/**
- * Scenario: workspace MCP — the shared connection manager is driven by the
- * config domain: the initial connect consumes its snapshot, and its diffed
- * change events are applied incrementally after the initial connect settles.
- *
- * Exercises the real `WorkspaceMcpService` against a stubbed
- * `IWorkspaceMcpConfigService` and real stdio fixture servers. Run:
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/workspace/workspaceMcp/workspaceMcp.test.ts`.
- */
-
 import { mkdtempSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -211,8 +200,6 @@ describe('WorkspaceMcpService', () => {
     manager = service.connectionManager();
     const handle = service.sessionHandle();
 
-    // 'alpha' appears (connecting) while the initial load is still unsettled:
-    // admitted into the baseline. A name the view does not know is not.
     await vi.waitFor(() => {
       expect(manager?.get('alpha')).toBeDefined();
     });
@@ -222,13 +209,10 @@ describe('WorkspaceMcpService', () => {
     settleConnectAll();
     await service.ready;
 
-    // Once the initial connect settles the baseline is closed: a server that
-    // connects afterwards (a plugin install or a config edit) stays outside.
     await manager?.connect('late', stdioServer());
     expect(handle.isBaselineServer('late')).toBe(false);
     expect(handle.isBaselineServer('alpha')).toBe(true);
 
-    // A session materializing now captures a fresh baseline that includes it.
     expect(service.sessionHandle().isBaselineServer('late')).toBe(true);
   }, 20000);
 
@@ -239,7 +223,6 @@ describe('WorkspaceMcpService', () => {
     await service.ready;
 
     const overlay = service.sessionOverlay({ eph: stdioServer() });
-    // True even before the overlay's own connect settles.
     expect(overlay.handle.isBaselineServer('eph')).toBe(true);
     expect(overlay.handle.isBaselineServer('base')).toBe(true);
 
@@ -258,8 +241,6 @@ describe('WorkspaceMcpService', () => {
       servers: Readonly<Record<string, McpServerConfig>>,
     ) {
       if ('eph' in servers) {
-        // Slow ephemeral connect: keeps the overlay's combined readiness open
-        // long after the workspace initial load has settled.
         return new Promise<void>((resolve) => {
           settleOverlay = resolve;
         });
@@ -278,9 +259,6 @@ describe('WorkspaceMcpService', () => {
     expect(overlay.handle.isBaselineServer('eph')).toBe(true);
     expect(overlay.handle.isBaselineServer('base')).toBe(true);
 
-    // The overlay connect is still pending, but the workspace portion of the
-    // baseline closed with the workspace initial load: a workspace server
-    // added now (plugin install, config edit) must not leak into the session.
     await manager?.connect('late', stdioServer());
     expect(overlay.handle.isBaselineServer('late')).toBe(false);
 
@@ -304,9 +282,6 @@ describe('WorkspaceMcpService', () => {
     const view = overlay.handle.connectionManager;
     expect(view.get('eph')?.status).toBe('connected');
     expect(view.get('base')?.status).toBe('connected');
-    // Isolation: the shared manager (and thus the handler's other sessions)
-    // never sees the ephemeral server, and the config domain's effective set
-    // is untouched — nothing is persisted.
     expect(manager?.get('eph')).toBeUndefined();
     expect(Object.keys(current)).toEqual(['base']);
 
@@ -354,15 +329,12 @@ describe('WorkspaceMcpService', () => {
       manager = service.connectionManager();
       await service.ready;
 
-      // A real, spawnable session cwd distinct from the workspace root.
       const sessionCwd = mkdtempSync(join(tmpdir(), 'kimi-session-mcp-cwd-'));
       const servers = { eph: stdioServer() };
       const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
       const { event, contributed, disposers } = willCreateEvent(servers, sessionCwd);
       assemblyEvents.fire(event);
 
-      // The ephemeral servers come from the session seed and the stdio cwd
-      // from the session's own context — the lifecycle event carries neither.
       expect(sessionOverlay).toHaveBeenCalledWith(servers, { stdioCwd: sessionCwd });
       const overlay = sessionOverlay.mock.results[0]?.value as ISessionMcpOverlay;
       expect(contributed.get(ISessionMcpHandle)).toBe(overlay.handle);
@@ -464,8 +436,6 @@ describe('MergedMcpConnectionView', () => {
 
   it('routes reconnect to the name owner and aggregates initial-load readiness', async () => {
     await base.connect('shared', disabledStdio('base-cmd'));
-    // Enabled but unreachable: the entry exists with a failed status, so a
-    // routed reconnect re-attempts instead of raising disabled/not-found.
     await overlay.connect('shared', { transport: 'http', url: 'http://127.0.0.1:1/mcp' });
     expect(overlay.get('shared')?.status).toBe('failed');
     const view = new MergedMcpConnectionView(base, overlay, new Set(['shared']));

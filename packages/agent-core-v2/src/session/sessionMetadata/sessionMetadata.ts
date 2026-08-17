@@ -1,16 +1,3 @@
-/**
- * `sessionMetadata` domain — typed session metadata.
- *
- * Defines the `SessionMeta` model and the `ISessionMetadata` used by upper
- * layers to read and update the session's durable metadata (title, timestamps,
- * archived flag and the archive moment `archivedAt` — set on archive, cleared
- * on restore — fork provenance, the latest main turn's terminal outcome).
- * Owns the in-memory copy, persists it as a
- * single atomic document through `storage`, and notifies changes via
- * `onDidChangeMetadata`. Session-scoped — one instance per session. The initial
- * document is materialized when the session is created.
- */
-
 import type { Event } from '#/_base/event';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 

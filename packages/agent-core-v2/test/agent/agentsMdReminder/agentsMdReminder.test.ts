@@ -1,10 +1,3 @@
-/**
- * Scenario: discover uninjected AGENTS.md files from canonical tool accesses and Bash targets.
- * Responsibilities: seeding, once-only reminders, queue delivery, probing, and path extraction.
- * Wiring: real reminder, executor, parser, and host filesystem with telemetry/event stubs.
- * Run: pnpm exec vitest run test/agent/agentsMdReminder/agentsMdReminder.test.ts
- */
-
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, normalize, basename, dirname } from 'pathe';
@@ -359,7 +352,6 @@ describe('agentsMdReminder path-carrying tools', () => {
   it('anchors at the nearest existing ancestor when Write targets a not-yet-created directory', async () => {
     const h = createHarness();
     const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
-    // The root file was created after the bind injected nothing.
     h.reminder.seedInjected([], workDir);
 
     const result = await fire(

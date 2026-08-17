@@ -1,7 +1,3 @@
-/**
- * Covers: AgentTaskService.
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { PassThrough, Readable } from 'node:stream';
@@ -144,7 +140,6 @@ async function waitForOutput(
   }
   throw new Error(`Timed out waiting for output: ${expected}`);
 }
-
 
 function immediateProcess(exitCode: number, stdoutText = ''): IHostProcess {
   return {

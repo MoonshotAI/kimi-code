@@ -1,26 +1,3 @@
-/**
- * `FileStorageService` — `IFileSystemStorageService` backed by the local filesystem.
- *
- * Layout: a value addressed by `(scope, key)` lives at
- * `<baseDir>/<scope>/<key>`. `scope` may contain slashes to form nested
- * directories (e.g. `"agents/main"`).
- *
- * Primitives:
- *   - `write`  → `atomicWrite` (tmp + fsync + rename) followed by a directory
- *                fsync, so the replacement is both atomic and durable.
- *   - `writeStream` → the streamed form of `write` (`atomicWriteStream`), for
- *                values too large to buffer in memory.
- *   - `append` → `open('a')` + write + `fh.sync()` (when `durable`), plus a
- *                one-time directory fsync per scope.
- *   - `watch`  → chokidar on the parent directory, filtered to the exact key and
- *                debounced, so it survives atomic-replace renames and observes a
- *                file that does not exist yet at subscription time.
- *
- * It uses raw `node:fs` rather than `kaos`: the storage kernel needs direct
- * control over append offsets, fsync, atomic rename and streaming, which the
- * agent-execution-environment abstraction does not expose.
- */
-
 import { createReadStream, mkdirSync } from 'node:fs';
 import { mkdir, open, readFile, readdir, stat, unlink } from 'node:fs/promises';
 import { FSWatcher } from 'chokidar';

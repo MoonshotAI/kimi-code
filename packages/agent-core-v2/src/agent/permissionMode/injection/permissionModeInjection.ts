@@ -1,15 +1,3 @@
-/**
- * `permissionMode` domain — permission-mode context injection.
- *
- * Owns the `permission_mode` context-injection provider. It reads the live mode
- * from `IAgentPermissionModeService` and registers reminders through
- * `contextInjector`. Dedup is history-derived: the framework derives this
- * variant's live positions from the surviving history, so a reminder folded
- * away by compaction (or undo) is re-announced on the next inject, matching
- * v1's compaction behavior. The plain-data state (`lastMode`) is registered into
- * `agentState` (`IAgentStateService`) and read/written through it.
- */
-
 import { Service } from '#/_base/di/service';
 import { defineState } from '#/state/state';
 import {

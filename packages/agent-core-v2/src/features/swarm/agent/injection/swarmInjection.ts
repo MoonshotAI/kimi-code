@@ -1,11 +1,3 @@
-/**
- * `swarm` domain — swarm-mode context injection.
- *
- * Registers swarm-mode guidance through `contextInjector` and reads
- * `contextMemory` for restored legacy state. Used by the Agent-scoped swarm
- * service.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import {
   IAgentContextInjectorService,

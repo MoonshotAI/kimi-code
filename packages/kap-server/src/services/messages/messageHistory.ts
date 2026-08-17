@@ -1,22 +1,3 @@
-/**
- * v1-compatible message history — the loader behind
- * `GET /api/v1/sessions/{sid}/messages[/{mid}]`, served from the server layer
- * on top of the engine's native services (moved out of the engine's deleted
- * `messageLegacy` edge adapter).
- *
- * History is streamed from the main agent's append log after its pending wire
- * writes are flushed. The journal is folded incrementally by the shared
- * transcript reducer, keeping full history across compactions (inserting a
- * summary marker instead of folding) — unlike the live
- * `IAgentContextMemoryService.get()`, whose folded context collapses into
- * `[...keptUserMessages, compaction_summary]` and would lose the prefix.
- * `foldedLength` is what the live history length WOULD be from the journal's
- * records; because the journal can trail the live context by a record within a
- * single dispatch, anything beyond it is appended as the unflushed tail.
- * Pagination, id derivation, and the role filter mirror the legacy v1
- * semantics.
- */
-
 import {
   AGENT_WIRE_RECORD_KEY,
   IAgentBlobService,
@@ -162,11 +143,6 @@ export async function loadMessageHistory(
   });
 }
 
-/**
- * Replace `blobref:` media URLs with `data:` URIs read from the agent's
- * blob store (v1's `rehydrateBlobRefs`); unresolvable refs become the
- * `[media missing]` placeholder, same as v1 and live replay.
- */
 async function rehydrate(
   agent: IAgentScopeHandle,
   messages: readonly ContextMessage[],

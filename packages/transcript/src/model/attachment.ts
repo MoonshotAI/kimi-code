@@ -1,16 +1,3 @@
-/**
- * TranscriptAttachment — a session-global attachment entity (image / video /
- * audio / file carried by a message).
- *
- * Media is heavy: bytes never cross the transcript API. The entity carries
- * only metadata plus a fetch reference (`source`), and lives beside
- * `tasks`/`interactions` — global per agent transcript, never paginated.
- * The timeline anchor is a typed id list on the carrier (`TranscriptTurn.
- * attachmentIds` for the turn-opening input, `TextFrame.attachmentIds` for
- * mid-conversation messages); a `placeholder` like `[Image #1]` marks the
- * inline position inside the carrier's text.
- */
-
 import type { AttachmentId } from './ids';
 
 /**

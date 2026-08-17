@@ -1,14 +1,3 @@
-/**
- * `tools` domain — `TowerStatusTool` implementation (the `TowerStatus`
- * tool).
- *
- * Renders the dashboard from the protocol `TowerStore` rooted at the session
- * cwd (`sessionContext`), resolving the caller's roster identity from the
- * agent scope (`scopeContext`) and the spawn-concurrency section from the
- * rate limiter (`towerRateLimit`). Registered for every agent — visibility
- * is controlled by profile tool lists. Bound at Agent scope.
- */
-
 import { branchExists, branchTip } from '#/features/tower/protocol/index';
 import type { TowerMission, TowerState, TowerStore } from '#/features/tower/protocol/index';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';

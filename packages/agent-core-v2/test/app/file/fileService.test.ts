@@ -1,8 +1,3 @@
-/**
- * `FileServiceImpl` unit tests — exercise the service through its `IFileService`
- * interface against an in-memory `IBlobStore` backend.
- */
-
 import { Readable } from 'node:stream';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

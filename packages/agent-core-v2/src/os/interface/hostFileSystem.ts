@@ -1,13 +1,3 @@
-/**
- * `hostFs` domain — local real-filesystem primitives.
- *
- * Defines the `IHostFileSystem` used to read and write files on
- * the real local disk, plus the stat/entry models. `realpath` canonicalizes a
- * path by resolving every symlink component (Node `fs.realpath` semantics) and
- * rejects with `os.fs.not_found` for a missing path; consumers use it to make
- * lexical path confinement symlink-aware. App-scoped — one shared instance.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { TextDecodeErrors } from '#/_base/execEnv/decodeText';
 

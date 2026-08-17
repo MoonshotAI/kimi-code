@@ -1,46 +1,3 @@
-/**
- * `tools` domain — `ICronDeleteTool` implementation.
- *
- * CronDeleteTool — cancel a scheduled cron job by id.
- *
- * The tool's job is intentionally narrow: validate the id shape, ask the
- * service to drop the entry, and report whether anything was actually
- * removed. The scheduler picks up the deletion on its next `tick()`
- * automatically because the task set is re-read every pass — there is no
- * separate "unsubscribe" handshake to keep in sync.
- *
- * Why "not found" is reported as an error:
- *
- *   - The model uses the result string to decide whether to follow up
- *     (e.g. confirm to the user, retry, or move on). Returning a
- *     success-shaped message for a no-op would silently teach the model
- *     that CronDelete is idempotent against missing ids, which it is
- *     not — the next `CronList` would still show whatever id the model
- *     thought it deleted. Surfacing `isError: true` lets the model
- *     correct itself (typically by calling `CronList` again).
- *
- * Why the service is not consulted for telemetry on the not-found
- * branch:
- *
- *   - `cron_deleted` records an actual state change. Emitting it on a
- *     miss would inflate the metric and break parity with `cron_create`
- *     (which never fires on a rejected schedule). The branch is fully
- *     observable through tool-call telemetry already.
- *
- * Refresh-cron pattern this tool participates in:
- *
- *   When `CronList` (or a fired job's origin) reports `stale: true`, the
- *   documented "refresh" flow is `CronDelete(id)` followed by a fresh
- *   `CronCreate` with the same cron + prompt. That resets `createdAt`,
- *   clears the stale flag, and rejoins the herd-avoidance jitter draw
- *   with a new task id. The doc string spells this out so the model can
- *   reach for it without prompting from a system message.
- *
- * Collaborators: `ISessionCronService` for task removal
- * and telemetry emission, and `IAgentScopeContext` for the emitting agent
- * id. Bound at Agent scope.
- */
-
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -51,7 +8,6 @@ import { ISessionCronService } from '#/session/cron/sessionCronService';
 
 import { ICronDeleteTool, CronDeleteInputSchema, type CronDeleteInput } from './cron-delete';
 import CRON_DELETE_DESCRIPTION from './cron-delete.md?raw';
-
 
 const ID_PATTERN = /^(?:[0-9a-f]{8}|[0-9A-HJKMNP-TV-Z]{26})$/i;
 

@@ -1,14 +1,3 @@
-/**
- * `kosong/model` config-surface tests — the models config contract and
- * `IModelService`:
- *
- *  - the section TOML transforms round-trip snake_case ↔ camelCase (including
- *    the nested `overrides` object);
- *  - `ModelService` is an in-memory registry: `loadAll` hydrates and resolves
- *    `ready`, CRUD diffs state changes into `onDidChangeModels`
- *    (added/changed/removed), and equal writes stay silent.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { modelsFromToml, modelsToToml } from '#/app/kosongConfig/configSection';

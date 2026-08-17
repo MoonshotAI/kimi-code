@@ -1,28 +1,4 @@
-/**
- * `externalHooks` domain — Agent-scope adapter for external
- * hook commands.
- *
- * Listens to hook slots and agent events owned by the agent behavior/lifecycle
- * domains (`toolExecutor`, `permissionGate`, `prompt`, `turn`, `loop`,
- * `fullCompaction`, and `task`) and translates those minimal contexts into the
- * configured external hook commands, run through the shared App-scope
- * `IExternalHooksRunnerService` (so this adapter never owns an engine lifecycle
- * of its own). This includes the bus-driven lifecycle signals
- * `turn.started` → `TurnStarted`, `prompt.queued` → `UserPromptQueued`, and
- * `task.started` → `TaskStarted`. Every payload it sends is enriched with the
- * cached session title (seeded from and kept fresh by `ISessionMetadata`).
- * Appends
- * UserPromptSubmit hook results through `contextMemory`, drives Stop hook
- * continuations by enqueueing a mergeable `StepRequest` onto `loop`, and
- * passes the current session id from `sessionContext`
- * into hook runner payloads. The one mutable latch
- * (`stopHookContinuationUsed`, the Stop-hook re-entry guard) is registered
- * into `agentState` (`IAgentStateService`) and read/written through it; the
- * hook listener registrations stay ordinary disposables on the instance.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';

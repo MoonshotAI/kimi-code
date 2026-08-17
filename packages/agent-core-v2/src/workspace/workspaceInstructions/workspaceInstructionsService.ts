@@ -1,22 +1,3 @@
-/**
- * `workspaceInstructions` domain — `IWorkspaceInstructionsService`
- * implementation.
- *
- * Loads the workspace root's AGENTS.md hierarchy at construction through the
- * `profile` domain's pure loader (over the os `hostFs`, the host home dir,
- * and the `bootstrap` brand dir), then watches the loader's probe set
- * (`agentsMdWatchRoots` — brand / user-generic / project-root→leaf chain,
- * each plan root watched recursively and pruned to its candidates so files
- * created later inside not-yet-existing directories are still caught)
- * through `hostFsWatch` and reloads debounced; the change event fires only
- * when the combined content or warning actually changed. The snapshot is shared by every session of
- * the handler through the `ISessionInstructionsProvider` seed
- * (`sessionProvider()`), a live read view over this service. The plain-data
- * state (`current`) is registered into `workspaceState`
- * (`IWorkspaceStateService`) and read/written through it. Bound at
- * Workspace scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';

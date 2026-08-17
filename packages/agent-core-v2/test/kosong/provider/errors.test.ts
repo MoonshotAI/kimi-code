@@ -1,29 +1,3 @@
-/**
- * `kosong/provider` abort-classification probes (probe 3) — a user
- * cancellation must never be converted into (or returned as) a retryable
- * provider error:
- *
- *  - `convertOpenAIError` / `convertAnthropicError` THROW the standard abort
- *    DOMException for every abort shape (the standard DOMException, a bare
- *    `Error` named `AbortError`, an SDK `APIUserAbortError`) — the guard is a
- *    throw at the front of the classification chain, not a return;
- *  - non-abort errors still classify normally;
- *  - `isRetryableGenerateError` is false for the abort shape.
- *
- * Also probes quota-exhausted classification at the provider boundary. The
- * base converters stay vendor-neutral (only OpenAI's own documented
- * `insufficient_quota` code fails fast there); Moonshot's quota signals are
- * declared on the Kimi traits via the `convertError` hook, composed with
- * last-declarer-wins semantics and consulted — after the abort guard — with
- * the raw failure at every catch seam, including the Responses in-stream
- * error-event path.
- *
- * The Google GenAI converter coverage checks the recovery of the
- * server-directed retry delay from the wire body's `google.rpc.RetryInfo`
- * detail — the SDK's `ApiError` drops response headers, so the body detail
- * is the only carrier of that wait time.
- */
-
 import { APIError as AnthropicAPIError } from '@anthropic-ai/sdk';
 import { ApiError as GoogleApiError } from '@google/genai';
 import { APIError as OpenAIAPIError } from 'openai';

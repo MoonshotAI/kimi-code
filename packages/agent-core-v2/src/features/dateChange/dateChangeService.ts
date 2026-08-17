@@ -1,20 +1,3 @@
-/**
- * `dateChange` domain (L4) — `IAgentDateChangeService` implementation.
- *
- * Owns the `date_change` context-injection provider. The system prompt is only
- * re-rendered at profile (re)bind and after compaction, so a session that runs
- * past midnight keeps a stale date; this provider appends a system-reminder at
- * the next step boundary instead. The provider runs only while the profile's
- * rendered snapshot exists and matches the live cwd (an empty recorded cwd
- * means the render did not know it and never blocks), and reads current time
- * through the App-scoped `hostClock`. The baseline prefers the
- * typed disclosure on the newest surviving `date_change` injection, then the
- * persisted rendered snapshot, then a runtime seed kept in `agentState`: a
- * profile whose snapshot declares no date disclosure is seeded with the first
- * observed date (quietly), so a crossed midnight still announces afterwards.
- * Bound at Agent scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { defineState } from '#/state/state';
 import {

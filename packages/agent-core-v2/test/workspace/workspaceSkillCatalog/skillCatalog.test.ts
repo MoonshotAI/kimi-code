@@ -1,13 +1,3 @@
-/**
- * Scenario: workspace skill-source discovery, merge, and plugin refresh.
- *
- * Exercises the real Workspace-scoped catalog and source services with
- * filesystem or in-memory discovery boundaries, including controlled
- * concurrent refreshes and fs-watch-driven single-source rescans.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/workspace/workspaceSkillCatalog/skillCatalog.test.ts`.
- */
-
 import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 

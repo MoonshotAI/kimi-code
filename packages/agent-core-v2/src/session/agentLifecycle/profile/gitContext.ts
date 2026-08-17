@@ -1,18 +1,3 @@
-/**
- * Git context collection for explore agents.
- *
- * `collectGitContext` produces a `<git-context>` block that is prepended to a
- * fresh explore agent's prompt so it can orient itself in the repository
- * before searching. Every git probe is best-effort: probes fail in perfectly
- * normal states (no `origin` remote, no commits yet, detached HEAD, older
- * Git), so a failed probe is logged and its section omitted rather than
- * dropping the whole block. The block is omitted entirely only when nothing
- * useful was collected. The one explicit state surfaced to the agent is
- * `reason="not-a-repo"`, so it doesn't waste turns probing git history in a
- * non-repo directory. Remote URLs are sanitized so internal infrastructure
- * is not surfaced to the model.
- */
-
 import type { Readable } from 'node:stream';
 
 import type { ILogger } from '#/_base/log/log';

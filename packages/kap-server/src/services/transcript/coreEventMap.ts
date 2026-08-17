@@ -1,70 +1,3 @@
-/**
- * `AgentTranscriptProjector` — maps one agent's `IEventBus` domain events to
- * L2 transcript operations (`@moonshot-ai/transcript`).
- *
- * Mapping rules (settled design):
- *   - `turn.upsert` / `step.upsert` carry headers only; render content rides
- *     on `frame.upsert` (whole frame state) and `append` (deltas).
- *   - The turn prompt arrives on `turn.started` itself
- *     (`TurnStartedEvent.prompt`) — the context append carrying the same text
- *     is not a bus event and lands after the turn header.
- *   - Flush: at step/turn completion boundaries every open text/thinking frame
- *     of that step is re-emitted as a full-text `frame.upsert` — this is how
- *     'block'-grade subscribers (who never see `append`) reconverge.
- *   - `tool.call.delta` accumulates the raw argument text into the tool
- *     frame's `inputText` (creating the frame when the delta arrives before
- *     `tool.call.started`, which then keeps it); `tool.progress` overwrites
- *     the frame's `progress` with the newest update.
- *   - Step headers carry the LLM accounting: `turn.step.completed` fills
- *     `usage` (the wire `TokenUsage` verbatim), `finishReason`
- *     (`finishReason ?? rawFinishReason ?? providerFinishReason`) and the
- *     full `timing` breakdown; `turn.step.retrying` sets `retry` on the still
- *     'running' step (the terminal upsert carries no `retry`, which clears
- *     it); `turn.step.interrupted` fills `endReason` / `endMessage`.
- *   - `turn.ended` fills the turn header's `durationMs` / `error` plus the
- *     accumulated `usage`: the projector sums this turn's step usages
- *     (`inputTokens = inputOther + inputCacheCreation`,
- *     `cachedTokens = inputCacheRead`, `outputTokens = output`); a turn whose
- *     steps reported no usage gets no `usage`.
- *   - `agent.status.updated` projects two ways: `planMode` / `swarmMode` into
- *     the mode badges, and every other arrived slice (model / thinkingEffort
- *     / usage / contextTokens / maxContextTokens / contextUsage / permission)
- *     into `meta.agent` — slices arrive piecemeal and the reducer
- *     shallow-merges the key. `agent.activity.updated` maps the activity
- *     state through `toLegacyPhase` (the v1 phase projection shared with the
- *     WS edge) into `meta.agent.phase`.
- *   - Prompt queue events become `prompt.upsert` entities (global, beside
- *     tasks): `prompt.submitted` creates the entity, `prompt.completed` /
- *     `prompt.aborted` settle it, `prompt.steered` reroutes the active
- *     prompt's content and settles the absorbed prompts. Note the v2 bus
- *     currently never publishes `prompt.submitted` (only completed / aborted
- *     / steered — see `agent/prompt/promptService.ts`), so `map` accepts it
- *     as an extra event shape beyond `DomainEvent` for edge synthesis; the
- *     terminal events synthesize a minimal entity when submitted was missed.
- *   - `hook.result` becomes a 'hook' marker with the raw payload.
- *   - `context.spliced` (undo/clear) is projected as a bare 'undo' marker with
- *     the raw payload — no `items.remove` reconstruction in v1. Known
- *     limitation.
- *   - `error` / `warning` become `marker.upsert{ marker: 'notice' }` and never
- *     enter a step.
- *   - `swarm.*` / plan-mode transition events do not exist on the v2 bus;
- *     mode badges flow from the `planMode` / `swarmMode` slices of
- *     `agent.status.updated`. Plan content revisions DO arrive as a dedicated
- *     `plan.revision` event (the durable+observable `PlanRevision` class), projected
- *     as a 'plan.revision' marker plus — while plan mode is active — a
- *     `meta.merge` refining the plan badge with `reviewPath` / `version`.
- *
- * Event payloads are typed by the core `Event2` classes (declared in
- * `packages/agent-core-v2/src`, e.g.
- * `agent/loop/turnEvents.ts`, `agent/toolExecutor/toolExecutorEvents.ts`,
- * `agent/task/taskOps.ts`, `agent/shellCommand/shellCommandService.ts`,
- * `session/agentLifecycle/mirrorAgentRun.ts`, `features/swarm/session/sessionSwarmService.ts`,
- * `agent/goal/goalOps.ts`, `agent/usage/usageOps.ts`, `agent/skill/skillOps.ts`,
- * `agent/pluginCommand/pluginCommandService.ts`, `session/cron/cronOps.ts`,
- * `agent/fullCompaction/compactionOps.ts`, `agent/mcp/mcpService.ts`,
- * `agent/profile/profileService.ts`, `agent/contextMemory/contextMemoryService.ts`).
- */
-
 import type { AgentActivityUpdated } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type { ContextSpliced } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import type { HookResult } from '@moonshot-ai/agent-core-v2/agent/externalHooks/externalHooksService';
@@ -145,12 +78,6 @@ import type {
 import { toLegacyPhase } from '../legacyStatus/legacyStatus';
 import { projectPromptContentParts } from '../messages/messageProjection';
 
-// ---------------------------------------------------------------------------
-// Interaction view (structural — the kernel's `Interaction` narrowed to the
-// two kinds the transcript renders; see
-// `packages/agent-core-v2/src/session/interaction/interaction.ts`)
-// ---------------------------------------------------------------------------
-
 export interface ProjectorInteraction {
   readonly id: string;
   readonly kind: 'approval' | 'question';
@@ -159,11 +86,6 @@ export interface ProjectorInteraction {
   readonly origin: { readonly agentId?: string; readonly turnId?: number };
 }
 
-/**
- * The plan domain's `plan.revision` event (agent-core-v2 `planOps.ts` — the
- * durable+observable `PlanRevision` class): one per ExitPlanMode review
- * submission, carrying the reference to the offloaded plan file version.
- */
 type PlanRevisionEvent = { readonly type: 'plan.revision' } & PlanRevision;
 
 type AgentActivityUpdatedEvent = { readonly type: 'agent.activity.updated' } & AgentActivityUpdated;
@@ -383,8 +305,6 @@ export class AgentTranscriptProjector {
           }),
         ];
       case 'context.spliced':
-        // Known limitation: undo/clear projects as a bare 'undo' marker (raw
-        // payload attached); no `items.remove` reconstruction in v1.
         return [this.markerOp('undo', restOf(event))];
       case 'error':
         return [this.noticeOp('error', event.message, restOf(event))];
@@ -394,8 +314,6 @@ export class AgentTranscriptProjector {
         return [];
     }
   }
-
-  // ---------------------------------------------------------------- turn / step
 
   private onTurnStarted(event: {
     turnId: number;
@@ -443,8 +361,6 @@ export class AgentTranscriptProjector {
     const ops: TranscriptOperation[] = [];
     this.flushOpenFrames(ops);
     const turnId = `t${event.turnId}`;
-    // Defensive: a step left running is closed with the turn (the normal path
-    // closes it via `turn.step.completed` / `turn.step.interrupted` first).
     if (this.currentStep !== undefined && this.currentStep.state === 'running') {
       const step: StepHeader = { ...this.currentStep, state: 'interrupted', endedAt: nowIso() };
       this.currentStep = step;
@@ -469,10 +385,6 @@ export class AgentTranscriptProjector {
     };
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
     this.currentStep = undefined;
-    // The user-facing counterpart of the (hidden) context reminder: a
-    // deliberate user interrupt gets a timeline marker, mirroring the cold
-    // fold's `turn.cancel` handling. Programmatic aborts already surface
-    // through the turn's error field or goal/task state.
     if (event.reason === 'cancelled' && event.interruptReason === 'user_cancelled') {
       ops.push(
         this.markerOp('interruption', { turnId: event.turnId, reason: event.interruptReason }),
@@ -524,8 +436,6 @@ export class AgentTranscriptProjector {
       startedAt: nowIso(),
     };
     this.frameOrdinal = 0;
-    // Stray open frames from an interrupted previous step are dropped without
-    // a flush — their step's own completion event owns the flush.
     this.openText = undefined;
     this.openThinking = undefined;
     return [{ op: 'step.upsert', turnId, step: this.currentStep }];
@@ -565,8 +475,6 @@ export class AgentTranscriptProjector {
       endedAt: nowIso(),
       usage: event.usage,
       finishReason: event.finishReason ?? event.rawFinishReason ?? event.providerFinishReason,
-      // The header always carries the timing object; the wire omits the
-      // latency fields it never measured, which land as absent keys.
       timing: {
         llmFirstTokenLatencyMs: event.llmFirstTokenLatencyMs,
         llmStreamDurationMs: event.llmStreamDurationMs,
@@ -658,8 +566,6 @@ export class AgentTranscriptProjector {
     const turnId = `t${turnNumber}`;
     const step = this.ensureStep(turnId, ops);
     let open = kind === 'assistant' ? this.openText : this.openThinking;
-    // Mid-stream attach: the backfill may have seeded this step's stream
-    // frame already — adopt it instead of opening an empty one.
     open ??= this.adoptStreamFrame(turnId, step.stepId, kind);
     if (open === undefined) {
       const frameId = `${step.stepId}.f${++this.frameOrdinal}`;
@@ -674,10 +580,6 @@ export class AgentTranscriptProjector {
             : { kind: 'thinking', frameId, text: '' },
       });
     }
-    // Known limitation: one open text frame per step per stream kind — if the
-    // model emits multiple disjoint text parts in one step they are
-    // concatenated into the single frame (the wire `assistant.delta` stream is
-    // cumulative per turn and carries no part boundary).
     ops.push({
       op: 'append',
       target: { type: 'frame', turnId, stepId: step.stepId, frameId: open.frameId },
@@ -776,8 +678,6 @@ export class AgentTranscriptProjector {
     return this.currentStep;
   }
 
-  // ---------------------------------------------------------------- tools
-
   /**
    * `tool.call.delta` — raw argument streaming. The deltas accumulate into the
    * frame's `inputText` (the verbatim counterpart of the parsed `input`). A
@@ -809,8 +709,6 @@ export class AgentTranscriptProjector {
       kind: 'tool',
       frameId,
       toolCallId: event.toolCallId,
-      // The delta's name is optional (some providers stream arguments before
-      // naming the call); the empty string converges at `tool.call.started`.
       name: event.name ?? '',
       state: 'running',
       inputText: event.argumentsPart ?? '',
@@ -829,9 +727,6 @@ export class AgentTranscriptProjector {
     update: ToolFrameProgress;
   }): TranscriptOperation[] {
     const hit = this.toolFrames.get(event.toolCallId) ?? this.adoptToolFrame(event.toolCallId);
-    // No frame to hang the update on (the attach raced the call and the
-    // backfill has not landed either) — drop it; the terminal `tool.result`
-    // still converges the frame.
     if (hit === undefined) return [];
     const frame: ToolCallFrame = {
       ...hit.frame,
@@ -866,7 +761,6 @@ export class AgentTranscriptProjector {
       name: event.name,
       state: 'running',
       input,
-      // Argument text accumulated from `tool.call.delta` before this event.
       inputText: this.toolFrames.get(event.toolCallId)?.frame.inputText,
       display: event.display,
       todoId: event.name === TODO_LIST_TOOL_NAME && todoWriteItems(input) !== undefined ? TODO_ENTITY_ID : undefined,
@@ -894,8 +788,6 @@ export class AgentTranscriptProjector {
     const ops: TranscriptOperation[] = [
       { op: 'frame.upsert', turnId: hit.turnId, stepId: hit.stepId, frame },
     ];
-    // A confirmed TodoList write replaces the global todo document (the frame
-    // keeps its own point-in-time snapshot in `display`).
     if (!isError && frame.name === TODO_LIST_TOOL_NAME) {
       const items = todoWriteItems(frame.input);
       if (items !== undefined) {
@@ -919,8 +811,6 @@ export class AgentTranscriptProjector {
     this.toolFrames.set(toolCallId, hit);
     return hit;
   }
-
-  // ---------------------------------------------------------------- tasks
 
   /**
    * `task.notified` — a background task's completion notification. Mid-turn
@@ -974,8 +864,6 @@ export class AgentTranscriptProjector {
       taskId: info.taskId,
       kind: mapTaskKind(info.kind),
       state: info.status,
-      // `detached` is false while a tool call waits in the foreground; legacy
-      // records omit the flag and are treated as detached (see AgentTaskInfoBase).
       detached: info.detached ?? prev?.detached ?? true,
       description: info.description,
       agentId: info.agentId ?? prev?.agentId,
@@ -995,8 +883,6 @@ export class AgentTranscriptProjector {
 
   private onShellStarted(event: { commandId: string; taskId: string }): TranscriptOperation[] {
     this.shellTasks.set(event.commandId, event.taskId);
-    // Known limitation: the `shell.*` payloads carry no command text (see
-    // `shellCommandService.ts`), so shell-task descriptions stay empty in v1.
     const task = this.upsertTask(event.taskId, (prev) => ({
       taskId: event.taskId,
       kind: 'shell',
@@ -1037,17 +923,11 @@ export class AgentTranscriptProjector {
     update: { kind: string; text?: string };
   }): TranscriptOperation[] {
     const taskId = this.shellTaskId(event);
-    // progress/status/custom updates carry no transcript text; only
-    // stdout/stderr chunks append (see `toolUpdateSchema`).
     const text = event.update.text;
     if (typeof text !== 'string' || text.length === 0) return [];
     const ops: TranscriptOperation[] = [];
     let task = this.tasks.get(taskId);
     if (task === undefined) {
-      // Seed the task so the chunk has somewhere to land (the attach missed
-      // `shell.started`, and the terminal upsert would otherwise clobber the
-      // output with an empty tail) — plus its timeline taskref, exactly like
-      // `onShellStarted` emits.
       task = this.upsertTask(taskId, (prev) => ({
         taskId,
         kind: 'shell',
@@ -1099,8 +979,6 @@ export class AgentTranscriptProjector {
     }));
     const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
     if (!hadTask) {
-      // The whole command was missed (only the completion arrived) — the
-      // timeline still needs the taskref to render the task.
       ops.push({
         op: 'taskref.upsert',
         item: { kind: 'taskref', refId: `ref-${taskId}`, taskId, at: nowIso() },
@@ -1118,8 +996,6 @@ export class AgentTranscriptProjector {
     return task;
   }
 
-  // ---------------------------------------------------------------- subagents
-
   private onSubagentSpawned(event: {
     subagentId: string;
     subagentName: string;
@@ -1132,8 +1008,6 @@ export class AgentTranscriptProjector {
       taskId: event.subagentId,
       kind: 'subagent',
       state: 'running',
-      // `runInBackground` subagents are detached from birth; foreground runs
-      // may flip `detached` later via the task lifecycle.
       detached: event.runInBackground,
       description: event.description ?? prev?.description,
       agentId: event.subagentId,
@@ -1142,11 +1016,6 @@ export class AgentTranscriptProjector {
       endedAt: prev?.endedAt,
     }));
     const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
-    // Link the spawning tool call to the new agent (Agent / AgentSwarm tool
-    // frames). The spawned payload carries no task id of its own — the
-    // subagent task above is keyed by the agent id instead. The lookup falls
-    // back to store adoption for a call that started (and was backfilled)
-    // before this projector attached.
     const hit =
       this.toolFrames.get(event.parentToolCallId) ?? this.adoptToolFrame(event.parentToolCallId);
     if (hit !== undefined) {
@@ -1172,11 +1041,6 @@ export class AgentTranscriptProjector {
     error?: string;
     reason?: string;
   }): TranscriptOperation[] {
-    // The transcript task vocabulary has no 'suspended' state; a suspended
-    // subagent is still alive, so it reads as 'running' (with the raw
-    // suspension observable through `stateReason` and the `subagent.suspended`
-    // WS event). Only the event that carries a field updates it — an absent
-    // field keeps the prior value.
     const state: TranscriptTask['state'] =
       event.type === 'subagent.completed'
         ? 'completed'
@@ -1204,8 +1068,6 @@ export class AgentTranscriptProjector {
     return [{ op: 'task.upsert', task }];
   }
 
-  // ---------------------------------------------------------------- goal / modes / markers
-
   private onGoalUpdated(event: {
     readonly type: string;
     snapshot: {
@@ -1232,9 +1094,6 @@ export class AgentTranscriptProjector {
         },
       });
     }
-    // Known limitation: a cleared goal (`snapshot: null`) cannot be expressed
-    // by `meta.merge` (absent keys keep prior state) — the 'goal' marker
-    // lands, and `meta.goal` refreshes on the next reset.
     ops.push(this.markerOp('goal', restOf(event)));
     return ops;
   }
@@ -1251,10 +1110,6 @@ export class AgentTranscriptProjector {
     permission?: 'manual' | 'yolo' | 'auto';
   }): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
-    // Only the exact `planMode` / `swarmMode` fields drive the mode badges
-    // (the status slices arrive independently — see `agent/usage/usageOps.ts`).
-    // A mode exit (`false`) clears the badge: `null` deletes the key in the
-    // reducer, so clients never keep showing a mode that already ended.
     const modes: { plan?: Record<string, never> | null; swarm?: Record<string, never> | null } = {};
     if (event.planMode === true) {
       modes.plan = {};
@@ -1268,12 +1123,6 @@ export class AgentTranscriptProjector {
     if (modes.plan !== undefined || modes.swarm !== undefined) {
       ops.push({ op: 'meta.merge', meta: { modes } });
     }
-    // Every other arrived slice mirrors into `meta.agent`. The reducer
-    // shallow-merges that key, so only the arrived fields may appear on the
-    // payload — an explicit `undefined` entry would erase the previous
-    // slice's value. (`contextUsage` / `permission` ride the wire schema but
-    // are not declared on a v2 event class yet — projected whenever
-    // they arrive.)
     const agent: {
       model?: string;
       thinkingEffort?: string;
@@ -1352,10 +1201,6 @@ export class AgentTranscriptProjector {
     this.markerSeq += 1;
     const item: TranscriptMarker = {
       kind: 'marker',
-      // Live markers use their own namespace: the cold rebuild numbers its
-      // markers `m1…` from zero too, and a colliding id would make the
-      // store's upsert REPLACE the historical marker with the live one (or
-      // vice versa) instead of appending.
       markerId: `live-m${this.markerSeq}`,
       marker,
       payload,
@@ -1372,8 +1217,6 @@ export class AgentTranscriptProjector {
     return this.markerOp('notice', { level, message, event: eventPayload });
   }
 
-  // ---------------------------------------------------------------- prompts
-
   private onPromptSubmitted(event: ProjectorPromptSubmittedEvent): TranscriptOperation[] {
     const prompt = this.upsertPrompt(event.promptId, () => ({
       promptId: event.promptId,
@@ -1387,9 +1230,6 @@ export class AgentTranscriptProjector {
 
   private onPromptCompleted(event: PromptCompletedEvent): TranscriptOperation[] {
     const prompt = this.upsertPrompt(event.promptId, (prev) => ({
-      // Late attach: `prompt.submitted` was missed (or never published — the
-      // v2 bus does not emit it), so synthesize the minimal entity from the
-      // terminal event's fields.
       promptId: event.promptId,
       status: event.reason ?? 'completed',
       userMessageId: prev?.userMessageId,
@@ -1458,8 +1298,6 @@ export class AgentTranscriptProjector {
     return prompt;
   }
 
-  // ---------------------------------------------------------------- interactions
-
   /**
    * `requested` — entity-only emission: the global interaction entity
    * (`interaction.upsert`), addressed by id, pagination-proof, visible at
@@ -1497,8 +1335,6 @@ export class AgentTranscriptProjector {
     ];
     const toolCallId = record.toolCallId;
     if (toolCallId !== undefined) {
-      // Adopt the seeded frame when the call predates this projector, so the
-      // back-link still lands after a mid-bind attach.
       const hit = this.toolFrames.get(toolCallId) ?? this.adoptToolFrame(toolCallId);
       if (hit !== undefined) {
         const toolFrame: ToolCallFrame = { ...hit.frame, approvalId: id };
@@ -1510,10 +1346,6 @@ export class AgentTranscriptProjector {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Pure mapping helpers
-// ---------------------------------------------------------------------------
-
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -1522,16 +1354,11 @@ function epochMsToIso(value: number): string {
   return new Date(value).toISOString();
 }
 
-/** Event payload without the `type` discriminant (markers carry it verbatim). */
 function restOf(event: { readonly type: string; readonly time?: number }): Record<string, unknown> {
   const { type: _type, time: _time, ...rest } = event;
   return rest;
 }
 
-/**
- * Engine `PromptOrigin` → transcript `TurnOrigin` (mirrors the cold-path
- * `groupMessagesIntoSnapshot` origin mapping; payload kept verbatim).
- */
 function mapTurnOrigin(origin: unknown): TurnOrigin {
   const candidate = origin as { kind?: unknown } | null | undefined;
   const kind = typeof candidate?.kind === 'string' ? candidate.kind : undefined;
@@ -1559,7 +1386,6 @@ function mapTurnOrigin(origin: unknown): TurnOrigin {
     case 'compaction_summary':
       return { kind: 'compaction', payload: origin };
     case 'shell_command':
-      // `!shell` echoes are user-visible input (same treatment as the cold path).
       return { kind: 'user', payload: origin };
     default:
       return { kind: 'other', payload: origin };
@@ -1574,13 +1400,10 @@ function mapTurnEndState(reason: 'completed' | 'cancelled' | 'failed' | 'blocked
       return 'cancelled';
     case 'failed':
     case 'blocked':
-      // The engine folds `blocked` into `failed` at the wire edge (see
-      // `TurnEndReason`); the transcript mirrors that contract.
       return 'failed';
   }
 }
 
-/** Engine task kinds (`AgentTaskInfoByKind`: process / agent / question) → transcript kinds. */
 function mapTaskKind(kind: string): TranscriptTask['kind'] {
   switch (kind) {
     case 'process':
@@ -1604,11 +1427,9 @@ function mapInteractionEndState(
   return 'cancelled';
 }
 
-/** Engine todo tool name and the singleton todo entity id (the engine store key). */
 const TODO_LIST_TOOL_NAME = 'TodoList';
 const TODO_ENTITY_ID = 'todo';
 
-/** TodoList write args → todo items; undefined when the call is a read or malformed. */
 function todoWriteItems(input: unknown): TranscriptTodo['items'] | undefined {
   const todos = (input as { todos?: unknown } | undefined)?.todos;
   if (!Array.isArray(todos)) return undefined;
@@ -1623,7 +1444,6 @@ function todoWriteItems(input: unknown): TranscriptTodo['items'] | undefined {
   return items;
 }
 
-/** Tool args arrive parsed in v2; tolerate a raw JSON string (parse-or-keep). */
 function parseToolArgs(args: unknown): unknown {
   if (typeof args !== 'string' || args.length === 0) return args;
   try {

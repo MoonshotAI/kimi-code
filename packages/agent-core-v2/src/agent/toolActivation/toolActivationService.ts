@@ -1,35 +1,3 @@
-/**
- * `toolActivation` domain — `IAgentToolActivationService` implementation.
- *
- * The fold over the `AgentToolContribution` collection (`toolRegistry`, L3):
- * folds `view.items` into the per-agent runtime registry — for each record
- * allowed by the workspace os-level veto (the seeded `sessionToolPolicyGate`)
- * AND the bound Profile's tool policy (`profile`), it resolves the
- * Agent-scope service through the container — nothing constructs the tool
- * before this `accessor.get` — and registers the real instance into the
- * runtime registry.
- *
- * The fold is incremental: `view.onDidChange` re-folds deltas — an `added`
- * record walks the same activation judgment, a `removed` record (provider
- * unit disposed) withdraws the tool from the runtime registry through the
- * registration handle kept per record. Re-folding never gates the fold
- * itself: collection edges never join a cascade contagion set.
- *
- * One full pass also runs explicitly (after restore and profile binding) and
- * re-runs on every `agent.status.updated` event, so tools newly allowed by a
- * runtime re-bind or `setActiveTools` are activated without a restart.
- * Already-registered names are skipped, and besides withdrawn records
- * nothing is ever unregistered here: restricting visibility remains the
- * request-time tool policy's job.
- *
- * Resolving contributions lazily inside `activate()` / the change
- * subscription — never from this service's own constructor — keeps the
- * historical cycle broken: some tools (SkillTool → `prompt` → `loop` →
- * `toolRegistry`) transitively depend on the tool registry, which by
- * activation time has long finished constructing. Bound at Agent scope; the
- * lifecycle's explicit `activate()` is the only full-resolution path.
- */
-
 import { type CollectionView } from '#/_base/di/collection';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { type IDisposable } from '#/_base/di/lifecycle';

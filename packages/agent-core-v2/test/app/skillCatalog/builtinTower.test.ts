@@ -1,15 +1,3 @@
-/**
- * Scenario: the builtin `tower` skill definition.
- *
- * Pins the code-defined skill constant: identity and inline metadata,
- * model-invocation hiding (the user starts tower explicitly), the protocol
- * content that routes every comms action through the Tower tools, and the
- * catalog behavior once registered (listed but not invocable, `$ARGUMENTS`
- * expanded as the user objective). Run with
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/skillCatalog/builtinTower.test.ts`.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { visibleBuiltinSkills } from '#/app/skillCatalog/builtin/builtin';
@@ -30,8 +18,6 @@ describe('builtin skill: tower', () => {
 
   it('ships enabled for every product (not gated by the product-skills switch)', () => {
     expect(TOWER_SKILL.productSpecific).not.toBe(true);
-    // Registered through the feature-authored registry (import = register),
-    // folded into the visible builtin set.
     expect(visibleBuiltinSkills(true)).toContain(TOWER_SKILL);
     expect(visibleBuiltinSkills(false)).toContain(TOWER_SKILL);
   });

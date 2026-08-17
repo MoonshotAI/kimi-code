@@ -1,22 +1,3 @@
-/**
- * Scenario: custom agent identity resolution.
- *
- * Asserts the snapshot the identity service freezes once config first loads —
- * the filling `displayName` (config > host-declared > unset), the rewriting
- * `slug` (claimed only when the user declares one), and the finished
- * User-Agent products for the three outbound shapes — plus the freeze itself:
- * a `[identity]` edit after the freeze changes nothing until the next start,
- * and a synchronous read before the freeze fails loudly instead of serving a
- * pre-config value. Slug normalization guarantees a non-empty ASCII token for
- * any input, including the blank and CJK-only cases that would otherwise
- * reach the User-Agent builder.
- *
- * Runs the real `AgentIdentityService` over a stub config service and a stub
- * bootstrap; nothing else is wired. Run with
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/agentIdentity/agentIdentity.test.ts`.
- */
-
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost } from '#/_base/di/test';
@@ -89,8 +70,6 @@ describe('normalizeIdentitySlug', () => {
     expect(normalizeIdentitySlug(input)).toBe(expected);
   });
 
-  // The User-Agent builder throws on a blank or non-ASCII product token, so a
-  // name that folds away entirely must never reach it as an empty string.
   it.each(['开发助手', '!!!', '   ', '', '「」', '🎉'])(
     'falls back to the default slug for %j',
     (input) => {
@@ -102,7 +81,6 @@ describe('normalizeIdentitySlug', () => {
     for (const input of ['Acme', '开发', '~~~', '', 'a1', 'Ω']) {
       const slug = normalizeIdentitySlug(input);
       expect(slug.length).toBeGreaterThan(0);
-      // eslint-disable-next-line no-control-regex
       expect(/^[ -~]+$/.test(slug)).toBe(true);
     }
   });
@@ -118,7 +96,6 @@ describe('AgentIdentityService', () => {
   it('falls back to the host-declared display name and claims no slug', async () => {
     const identity = await resolve(undefined, 'Embedding Host');
     expect(identity.displayName).toBe('Embedding Host');
-    // A host default is not a custom identity — protocol fields stay untouched.
     expect(identity.slug).toBeUndefined();
   });
 
@@ -149,8 +126,6 @@ describe('AgentIdentityService', () => {
     expect(identity.displayName).toBe('Embedding Host');
   });
 
-  // A stray blank in config.toml must read as unset, exactly as a blank env
-  // var does — otherwise it claims an identity and rewrites the User-Agent.
   it.each([{ name: '' }, { name: '   ' }, { slug: '' }, { name: '', slug: '  ' }])(
     'treats blank config values as unset: %j',
     async (section) => {
@@ -160,8 +135,6 @@ describe('AgentIdentityService', () => {
     },
   );
 
-  // The host half of the same rule: a padded or blank `displayName` from an
-  // embedding host must read as unset too, or the prompt renders "You are   ,".
   it.each(['', '   '])('treats a blank host display name as unset: %j', async (hostName) => {
     expect((await resolve(undefined, hostName)).displayName).toBeUndefined();
   });
@@ -184,9 +157,6 @@ describe('AgentIdentityService', () => {
 });
 
 describe('AgentIdentityService freeze', () => {
-  // The identity is announced outward (MCP initialize, OAuth registration,
-  // provider logs) and cannot be re-announced, so the snapshot holds for the
-  // life of the process: a `[identity]` edit after the freeze changes nothing.
   it('ignores a config edit made after the freeze', async () => {
     const { identity, config } = createIdentity(
       { name: 'Acme' },
@@ -206,8 +176,6 @@ describe('AgentIdentityService freeze', () => {
 
   it('throws on a synchronous read before the freeze', () => {
     const { identity } = createIdentity({ name: 'Acme' });
-    // The service arms the freeze on config readiness, which cannot have
-    // delivered yet within the same synchronous frame.
     expect(() => identity.current()).toThrow(/before config load/);
   });
 
@@ -238,8 +206,6 @@ describe('buildAgentIdentitySnapshot products', () => {
     expect(snapshot.requestHeaders).toEqual(HOST);
   });
 
-  // The four (host User-Agent × slug) combinations of the always-defined
-  // product: directories this process chooses to call always get a header.
   it.each([
     [HOST, 'acme', 'acme/1.2.3 (darwin)'],
     [HOST, undefined, HOST['User-Agent']],
@@ -251,16 +217,12 @@ describe('buildAgentIdentitySnapshot products', () => {
     ).toBe(expected);
   });
 
-  // The rewriting product respects a host that deliberately sends nothing.
   it('yields no third-party User-Agent when the host sends none', () => {
     const snapshot = buildAgentIdentitySnapshot({ slug: 'acme', hostRequestHeaders: {} });
     expect(snapshot.thirdPartyUserAgent).toBeUndefined();
     expect(snapshot.requestHeaders).toEqual({});
   });
 
-  // HTTP header names are case-insensitive; a host that spells the header
-  // `user-agent` (e.g. a WHATWG Headers object flattened with
-  // Object.fromEntries) must get the same rewrite, under its own spelling.
   it.each(['user-agent', 'USER-AGENT'])(
     'locates the %j spelling and rewrites it in place',
     (key) => {

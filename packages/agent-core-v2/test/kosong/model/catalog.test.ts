@@ -1,23 +1,3 @@
-/**
- * `kosong/model` ModelCatalog tests — Model assembly, caching, and
- * config-event invalidation, exercised through the real DI graph (real
- * model/provider services + the real protocol-adapter registry with
- * every base contrib and the kimi + endpoint definitions registered):
- *
- *  - the assembled Model is PURE DATA: no `with*` morphs, no request driver —
- *    per-turn intent belongs to `ModelRequester` params;
- *  - vendor knowledge resolves through the registries: a `kimi` provider
- *    yields `protocol: 'openai'` (the vendor definition's declared base), the
- *    dialect path keeps an explicit foreign protocol, endpoint env fallbacks
- *    come from the definition registry, host-header forwarding follows the
- *    definition's `hostHeaders`, and the Anthropic effort profile is inferred
- *    only for vendors whose thinking is not trait-driven;
- *  - `get`/`getRequester` cache per id; the cache drops on the
- *    model/provider change events — and ONLY there: a registry write
- *    that bypasses the events keeps serving the stale Model until
- *    `notifyConfigChanged()` (the load-bearing test-harness contract).
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost } from '#/_base/di/test';
@@ -65,8 +45,6 @@ import { stubBootstrap } from '../../app/bootstrap/stubs';
 
 const HOST_HEADERS = { 'User-Agent': 'kimi-test/1.0', 'X-Msh-Device-Id': 'device-1' };
 
-// The real adapter over the real snapshot builder, so these tests cover the
-// exact layers the port hands the catalog in production.
 function hostHeadersPort(spec: {
   headers: Record<string, string>;
   identitySlug?: string;
@@ -212,7 +190,6 @@ describe('Model assembly (pure data)', () => {
         identitySlug: 'acme-dev',
       });
       try {
-        // Version preserved, product token swapped, device headers still absent.
         expect(catalog.get('gpt').headers).toEqual({ 'User-Agent': 'acme-dev/1.0' });
       } finally {
         host.dispose();
@@ -232,8 +209,6 @@ describe('Model assembly (pure data)', () => {
     });
 
     it('leaves full-header vendor requests byte-for-byte unchanged', () => {
-      // Vendors on the full-header path keep the host's own product token:
-      // that header set is built around it and backends key on it.
       const { host, catalog } = createHost(OFFICIAL, stubModelOAuthTokens(), {
         headers: HOST_HEADERS,
         identitySlug: 'acme-dev',
@@ -266,9 +241,6 @@ describe('Model assembly (pure data)', () => {
       }
     });
 
-    // Inspection must attribute what the runtime actually sent — including a
-    // host that spells the header `user-agent`, which the finished layer
-    // canonicalizes.
     it('attributes the User-Agent provenance for a lowercase host spelling', () => {
       const { host, catalog } = createHost(THIRD_PARTY, stubModelOAuthTokens(), {
         headers: { 'user-agent': 'kimi-test/1.0' },
@@ -942,8 +914,6 @@ describe('ModelCatalog ping', () => {
     }
   });
 });
-
-
 
 const catalogSections: Record<string, unknown> = {
   providers: {

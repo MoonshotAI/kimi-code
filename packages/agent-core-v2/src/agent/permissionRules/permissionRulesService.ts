@@ -1,14 +1,3 @@
-/**
- * `permissionRules` domain — `IAgentPermissionRulesService` implementation.
- *
- * Holds the agent's permission rules and deduped session-approval patterns in
- * the `permissionRulesKey` state, mutating it only through the
- * `PermissionRulesAdd` / `PermissionRecordApprovalResult` events
- * (`dispatcher.dispatch(...)`) and reading it through `dispatcher.getState`.
- * Restore rebuilds the state silently and consumers read the getters instead.
- * Bound at Agent scope.
- */
-
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';

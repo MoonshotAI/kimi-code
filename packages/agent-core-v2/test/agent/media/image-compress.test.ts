@@ -1,37 +1,3 @@
-/**
- * image-compress — downsample/re-encode oversized images for the model.
- *
- * Tests pin:
- *   - fast path: an image within both budgets passes through untouched
- *     (same byte reference, no re-encode)
- *   - dimension cap: an oversized image is scaled so its longest edge is
- *     exactly MAX_IMAGE_EDGE_PX, preserving aspect ratio
- *   - byte budget: an over-budget image walks the JPEG quality ladder and
- *     comes back as JPEG, strictly smaller than the input
- *   - alpha: a translucent PNG stays PNG when the budget allows, and only
- *     drops to JPEG as a last resort to meet a tiny budget
- *   - fallback: corrupt/empty bytes and non-recodable formats (GIF/WebP)
- *     return the original unchanged — never throws
- *   - invariant: `changed` implies the result is strictly smaller
- *   - base64 wrapper round-trips
- *   - performance: the fast path is codec-free; a large image compresses
- *     within a generous time bound
- *   - metadata: results always carry the original pixel dimensions
- *   - crop: cropImageForModel cuts a region at native resolution, clamps
- *     overflow, refuses out-of-bounds/undecodable input explicitly, and
- *     honors skipResize with a hard byte-budget failure
- *   - caption: buildImageCompressionCaption renders a consistent
- *     `<system>` note (dims, sizes, readback path)
- *   - annotate: compressImageContentParts can collect that caption for
- *     each compressed image and persist the original via a callback
- *   - quality guards: a 1px checkerboard downscales to flat gray (no
- *     spectral aliasing) at integer and fractional ratios, with jimp's
- *     point-sampled BILINEAR mode pinned as the aliasing counter-example;
- *     fully transparent pixels never bleed color into opaque edges; mean
- *     brightness survives the downscale; recompressing a compressed
- *     result is a no-op; extreme aspect ratios never collapse to zero
- */
-
 import { createRequire } from 'node:module';
 
 import { Jimp, ResizeStrategy } from 'jimp';
@@ -60,7 +26,6 @@ import {
   unsupportedImageMimeFromUrl,
 } from '#/agent/media/image-format-policy';
 import { buildDaemonFileUrl } from '#/agent/media/mediaRef';
-
 
 async function solidPng(width: number, height: number, color = 0x3366ccff): Promise<Uint8Array> {
   const image = new Jimp({ width, height, color });
@@ -194,7 +159,6 @@ function withExifOrientation(jpeg: Uint8Array, orientation: number): Uint8Array 
   );
 }
 
-
 describe('compressImageForModel — fast path', () => {
   it('passes a within-budget image through untouched (same reference)', async () => {
     const png = await solidPng(64, 64);
@@ -213,7 +177,6 @@ describe('compressImageForModel — fast path', () => {
     expect(result.data).toBe(jpeg);
   });
 });
-
 
 describe('compressImageForModel — dimension cap', () => {
   it('scales the longest edge down to MAX_IMAGE_EDGE_PX, preserving aspect', async () => {
@@ -243,7 +206,6 @@ describe('compressImageForModel — dimension cap', () => {
     expect(Math.max(result.width, result.height)).toBe(MAX_IMAGE_EDGE_PX);
   });
 });
-
 
 describe('compressImageForModel — byte budget', () => {
   it('walks the JPEG ladder for an over-budget non-alpha image', async () => {
@@ -313,7 +275,6 @@ describe('compressImageForModel — byte budget', () => {
   );
 });
 
-
 describe('compressImageForModel — fallback', () => {
   it('returns the original on corrupt bytes (never throws)', async () => {
     const corrupt = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4, 5]);
@@ -366,7 +327,6 @@ describe('compressImageForModel — fallback', () => {
     expect(result.data).toBe(png);
   });
 });
-
 
 describe('compressImageForModel — webp', () => {
   it(
@@ -453,7 +413,6 @@ describe('compressImageForModel — webp', () => {
   });
 });
 
-
 describe('compressImageForModel — invariants', () => {
   it('changed always yields a within-cap, decodable payload', async () => {
     const cases: Uint8Array[] = [
@@ -475,7 +434,6 @@ describe('compressImageForModel — invariants', () => {
     }
   }, 30000);
 });
-
 
 describe('compressBase64ForModel', () => {
   it('round-trips an over-sized image', async () => {
@@ -505,7 +463,6 @@ describe('compressBase64ForModel', () => {
   });
 });
 
-
 describe('compressImageForModel — performance', () => {
   it('fast path is codec-free and quick across many calls', async () => {
     const png = await solidPng(200, 200);
@@ -532,7 +489,6 @@ describe('compressImageForModel — performance', () => {
     expect(MAX_IMAGE_EDGE_PX).toBe(2000);
   });
 });
-
 
 describe('compressImageContentParts', () => {
   function dataUrl(mime: string, bytes: Uint8Array): string {
@@ -638,7 +594,6 @@ describe('compressImageContentParts', () => {
     expect((out[0] as { text: string }).text).toContain('image/avif');
   });
 });
-
 
 describe('gateImageFormatParts', () => {
   function dataUrl(mime: string, bytes: Uint8Array): string {
@@ -770,10 +725,6 @@ describe('gateImageFormatParts', () => {
 
   it('passes daemon file references (kimi-file://) through untouched', () => {
     const fileId = 'f_9b2f7c1e4a2d4f3a8c1e0b6d5a493827';
-    // A daemon reference carries no extension for the gate to reject — the
-    // resolver sniffs the real bytes downstream, so the reference survives
-    // as-is, including a legacy `?path=` query whose suffix (`.heic`) a remote
-    // URL would be rejected for.
     for (const url of [
       buildDaemonFileUrl(fileId),
       `kimi-file://${fileId}?path=${encodeURIComponent('/tmp/upload/photo.heic')}`,
@@ -839,7 +790,6 @@ describe('unsupportedImageMimeFromUrl', () => {
   });
 });
 
-
 describe('compressImageForModel — EXIF orientation', () => {
   it('reports original dimensions in the decoded (EXIF-rotated) space', async () => {
     const jpeg = withExifOrientation(await solidJpeg(120, 80), 6);
@@ -889,7 +839,6 @@ describe('compressImageForModel — original dimensions metadata', () => {
     expect(result.height).toBe(1000);
   });
 });
-
 
 describe('cropImageForModel', () => {
   it('crops a region out of a PNG at native resolution', async () => {
@@ -1055,7 +1004,6 @@ describe('cropImageForModel', () => {
   });
 });
 
-
 describe('buildImageCompressionCaption', () => {
   it('describes the original and sent variants with a readback path', () => {
     const caption = buildImageCompressionCaption({
@@ -1130,7 +1078,6 @@ describe('extractImageCompressionCaptions', () => {
   });
 });
 
-
 describe('compressImageContentParts — annotate', () => {
   function dataUrl(mime: string, bytes: Uint8Array): string {
     return `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`;
@@ -1181,7 +1128,6 @@ describe('compressImageContentParts — annotate', () => {
     expect(out.captions[0]).toMatch(/not preserved/i);
   });
 });
-
 
 async function checkerboardPng(size: number): Promise<Uint8Array> {
   const image = new Jimp({ width: size, height: size, color: 0x000000ff });
@@ -1311,7 +1257,6 @@ describe('compressImageForModel — downscale quality guards', () => {
     expect(sniffImageDimensions(result.data)).toEqual({ width: 2000, height: 1 });
   });
 });
-
 
 interface CapturedEvent {
   readonly event: string;

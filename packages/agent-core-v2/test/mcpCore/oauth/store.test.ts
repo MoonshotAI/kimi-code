@@ -98,7 +98,6 @@ describe('MCP OAuth credential identity', () => {
     expect(stamped?.obtained_at).toBeGreaterThanOrEqual(before);
     expect(stamped?.obtained_at).toBeLessThanOrEqual(after);
 
-    // A fresh provider over the same store reads the stamp back from disk.
     const reloaded = new McpOAuthClientProvider({
       serverName: 'linear',
       serverUrl: 'https://first.example.com/mcp',

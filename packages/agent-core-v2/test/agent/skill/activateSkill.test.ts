@@ -1,23 +1,3 @@
-/**
- * Scenario: `IAgentSkillService.activate` is the wire-facing skill activation
- * entry — awaited, returning the launched turn id.
- *
- * The activation settles only once the turn has launched, and activation
- * failures (unknown skill, busy agent) surface to the caller instead of
- * fire-and-forget. Run: `pnpm --filter @moonshot-ai/agent-core-v2
- * exec vitest run test/agent/skill/activateSkill.test.ts`.
- *
- * Scenario: `IAgentSkillService.promptWithSkills` bundles one or more skill
- * activations into the prompt's own user message — the rendered skill blocks
- * precede the caller's parts in the content (one text part per skill, in
- * order) and every activation's metadata rides the prompt origin's
- * `skillActivations`. The bundle launches exactly one turn (one LLM call)
- * and undoes as a single anchor; `skill.activated` fires per skill before
- * `turn.started`. Unknown skill names, an empty skill list, and an empty
- * prompt each reject the whole submission with zero side effects (no LLM
- * call, no context, no events).
- */
-
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';

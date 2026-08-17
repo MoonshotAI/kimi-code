@@ -1,12 +1,3 @@
-/**
- * `kosong/contract` generate() — the stream-merging generation driver.
- *
- * Covers event normalization (text/think deltas merged, tool-call argument
- * deltas routed by stream index), the empty/thinking-only response
- * rejections, the abort contract (standard DOMException, stream cancelled),
- * callback plumbing, and per-turn intent passthrough via GenerateOptions.
- */
-
 import { describe, expect, it, vi } from 'vitest';
 
 import { APIEmptyResponseError } from '#/kosong/contract/errors';

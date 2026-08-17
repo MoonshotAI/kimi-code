@@ -1,29 +1,3 @@
-/**
- * `kimi-cu` capability entry (macOS and Windows).
- *
- * Both platforms share the same product capability and plugin wiring flow.
- * macOS adds KimiCU.app + launchd + TCC permissions; Windows uses the
- * official signed runtime installer and its built-in `doctor` command.
- *
- * The macOS path replicates the official `setup_macos.sh` step-for-step
- * (stop old processes → ditto into /Applications → register service →
- * request permissions) with structured progress and errors instead of a
- * shell pipe. Elevation when /Applications is not writable goes through
- * `osascript ... with administrator privileges` (native auth dialog).
- * Installs are detect-first and idempotent: setup always refreshes the wiring
- * plugin, only unsatisfied runtime layers are redone, and setup re-enables a
- * previously disabled wiring plugin (and its
- * MCP servers), the app step requires an executable binary with bundle
- * metadata, the archive is staged and unpacked before the old service is
- * stopped, and cleanup of old processes is best-effort — a wedged old
- * binary turns CLI probes into failed steps or is skipped past, never
- * blocking the replacement.
- * The Windows path downloads and runs the official `setup_windows.ps1`, so
- * its signature verification, rollback, and agent autostart stay upstream.
- * It selects a trusted PowerShell installation that satisfies the script's
- * command requirements before changing plugin wiring.
- */
-
 import { constants } from 'node:fs';
 import { access, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -401,9 +375,6 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
       await bestEffort(appBin, ['uninstall']);
     }
     await bestEffort('launchctl', ['bootout', `gui/${uid}/${LAUNCHD_LABEL}`]);
-    // Keep connected MCP frontends alive while the app bundle is replaced.
-    // Their work is delegated to the service below; killing them makes the
-    // client report an installation-driven restart as an unexpected failure.
     for (const mode of ['service', 'overlay']) {
       await bestEffort('pkill', ['-f', `${APP_BUNDLE}/Contents/MacOS/kimi-cu[[:space:]]+${mode}`]);
     }
@@ -448,9 +419,6 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
     report('plugin');
     await installPluginLayer(ctx, MAC_PLUGIN);
 
-    // A read-only or concurrently edited user config must not block the app
-    // installation. Detection keeps the duplicate as an optional warning so
-    // clients can record it in logs and a later install can retry migration.
     if (await removeLegacyMcpRegistration(legacyMcpBefore).catch(() => false)) {
       report('mcp-config');
     }

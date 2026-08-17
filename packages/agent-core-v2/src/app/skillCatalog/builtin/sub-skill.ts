@@ -1,7 +1,3 @@
-/**
- * `skillCatalog` domain — builtin `sub-skill` bundle (parent + review + consolidate).
- */
-
 import type { SkillDefinition } from '#/app/skillCatalog/types';
 import { parseSkillText } from '#/app/skillCatalog/parser';
 import CONSOLIDATE_BODY from './sub-skill/consolidate/SKILL.md?raw';

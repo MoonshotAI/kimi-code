@@ -1,31 +1,4 @@
-/**
- * `prompt` domain — owns the per-agent prompt scheduler.
- *
- * Assigns prompt and message identities, serializes user prompts through an
- * active slot and FIFO, converts selected pending prompts into active-turn
- * steers, settles lifecycle handles, and keeps system input outside the prompt
- * resource model. Daemon-backed media in a prompt (normal or steered) is
- * materialized into the session media store before the request is queued; a
- * steered record leaves the queue only after that copy, revalidated as still
- * pending and still facing the same active turn, and is restored when the
- * turn vanished meanwhile, so every handle always launches or settles.
- * `submit` / `submitSteer` are the wire-facing user entry
- * points: they track `input_steer` through `telemetry`, persist the derived
- * title/lastPrompt through `sessionMetadata` for the main agent only
- * (publishing the live update through `event`), enqueue, and settle
- * `{turn_id}` from the launch handle. Session tool gating is an edge
- * concern: callers apply `IAgentToolPolicyService.setSessionDisabledTools`
- * before submitting, the way kap-server's prompt route composes it.
- * The pure-data `launching` flag is registered into
- * `agentState` (`IAgentStateService`) and read/written through it; the
- * `active` / `pending` / `steered` records stay plain fields because their
- * `Record` values carry Deferred promise handles (the container only holds
- * pure data structures), as do the lazily-resolved `fullCompactionService`
- * reference and the `hooks` slot. Bound at Agent scope.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -267,9 +240,6 @@ export class AgentPromptService implements IAgentPromptService {
 
   async submitSteer(payload: SteerPayload): Promise<PromptLaunchResult | undefined> {
     this.telemetry.track2('input_steer', { parts: payload.input.length });
-    // A steer is user input like a prompt — and can even launch the session's
-    // first turn (e.g. goal mode) — so keep title/lastPrompt in sync the same
-    // way, matching v1.
     await this.updatePromptMetadata(promptMetadataTextFromContentParts(payload.input));
     const queued = await this.enqueue({ message: {
       role: 'user',
@@ -277,11 +247,6 @@ export class AgentPromptService implements IAgentPromptService {
       toolCalls: [],
     } });
     if (queued.state !== 'pending') {
-      // No active prompt at enqueue time, so the enqueue itself already
-      // launched this input as its own turn (idle session, or a goal-turn
-      // boundary where the previous turn just ended) — v1's
-      // steer-degrades-to-launch end state. Return that turn instead of
-      // rejecting on a steer-by-id that can never find the record pending.
       const turn = await queued.launched;
       return turn === undefined ? undefined : { turn_id: turn.id };
     }
@@ -290,9 +255,6 @@ export class AgentPromptService implements IAgentPromptService {
       const turn = await steered?.launched;
       return turn === undefined ? undefined : { turn_id: turn.id };
     } catch (error) {
-      // Pending but nothing active to steer into (a manual compaction holds
-      // the context): the message stays queued and launches once compaction
-      // finishes, so report it as queued rather than failing the steer.
       if (isError2(error) && error.code === ErrorCodes.PROMPT_NOT_FOUND) return undefined;
       throw error;
     }
@@ -328,9 +290,6 @@ export class AgentPromptService implements IAgentPromptService {
     };
     const { message: rerouted, captions } = this.extractCompressionCaptions(message);
     await this.materializeDaemonRefs(rerouted);
-    // The copy yields: settle/abort may have consumed some records and the
-    // active turn may have rotated. Only records still pending steer, and
-    // only into the turn that was active at entry.
     const stillPending = selected.filter((item) => this.pending.includes(item));
     if (stillPending.length === 0 || this.active === undefined || this.active !== activeAtEntry) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');

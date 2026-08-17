@@ -1,36 +1,3 @@
-/**
- * `loop` domain — `IAgentLoopService` implementation.
- *
- * Owns a FIFO of Turn jobs, each with its own `StepRequestQueue`. Admission
- * reserves a stable Turn handle immediately; the head job alone books the
- * agent's work span with the session lifecycle, records `turn.prompt`,
- * publishes `turn.started`, and drains its Steps. Ending unbooks the work span,
- * then publishes `turn.ended` and pumps the next queued Turn. Requests without
- * an active Turn remain in the Loop-owned pending-input queue and bind to the
- * next admitted Turn.
- *
- * The run drains the queue one batch per step: each batch's driver request
- * (plus any mergeable requests folded into it) materializes its context
- * messages, then one LLM step runs (`onWillBeginStep` → streamed request → content
- * parts → tool execution → `step.end` → `onDidFinishStep`). The loop itself never
- * enqueues — it only runs requests and dispatches errors. A failed step is
- * dispatched to the registered error handlers (first match wins); a handler
- * that claims and catches the error has already enqueued the turn's
- * continuation itself, so the loop only learns caught-or-not, while an
- * unclaimed or uncaught error fails the turn. Dispatches the durable
- * `turn.*` events and the transient `turn.*` / delta observables through
- * `state` (`IEventDispatcher`), persists loop events through
- * `contextMemory`, and reads the step budget from `config`. The plain-data
- * loop state
- * (`nextReservedTurnId`, `lastRequestTraceId`, `disposing`) is registered
- * into `agentState` (`IAgentStateService`) and read/written through it;
- * `pendingTurns` and `activeTurnJob` stay plain fields because a `TurnJob`
- * holds resources (`AbortController`, controlled promises, a
- * `StepRequestQueue`) that must not be snapshotted, alongside the mechanism
- * resources (`standaloneStepQueue`, `pendingAssignments`, `errorHandlers`,
- * `settleWaiters`, `activeRequestTrace`). Bound at Agent scope.
- */
-
 import { randomUUID } from 'node:crypto';
 
 import { createControlledPromise } from '@antfu/utils';
@@ -113,7 +80,6 @@ export const loopLastRequestTraceIdKey = defineState<string | undefined>(
 );
 export const loopDisposingKey = defineState<boolean>('loop.disposing', () => false);
 
-// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class AgentLoopService extends Disposable implements IAgentLoopService {
   declare readonly _serviceBrand: undefined;
 

@@ -1,14 +1,3 @@
-/**
- * `AgentContextMemoryService` wire contract, exercised without the full agent
- * harness (mirror of `test/goal/goal-wire.test.ts`): a `TestInstantiationService`
- * + `InMemoryStorageService` + `AppendLogStore` + `WireService` + real
- * `EventDispatcherService` + stub `IAgentBlobService`. Covers the context
- * events' NEW-reference + flat-record shape, the live-only `context.spliced`
- * event (silent on replay), and — load-bearing — the blob
- * dehydrate-on-dispatch ↔ rehydrate-on-replay round-trip via
- * `contextMemoryKey.blobs`.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';

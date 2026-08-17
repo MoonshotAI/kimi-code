@@ -1,22 +1,3 @@
-/**
- * `prompt` domain — the `StepRequest` types for prompt, steer, and retry
- * steps.
- *
- * `PromptStepRequest` / `SteerStepRequest` carry an already-built user
- * `ContextMessage` (image-compression captions pre-split), apply the image
- * format gate as the last funnel before the history, and materialize it
- * at pop time — caption reminders are appended before the host message,
- * preserving the prompt-owned undo boundary.
- * `PromptStepRequest` uses `newTurn`, seeding the
- * `turn.prompt` record from its message. `SteerStepRequest` uses
- * `activeOrNewTurn`, is mergeable, and survives turn boundaries; it records
- * the `turn.steer` wire op on materialization and unregisters itself from the
- * service's pending-steer set once settled. `RetryStepRequest` uses `newTurn`:
- * it contributes no message and simply drives one more step over the
- * existing context. Each is constructed with its collaborators captured —
- * these are plain runtime objects, not DI services.
- */
-
 import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/types';
 import { newMessageId } from '#/agent/contextMemory/messageId';
 import { StepRequest, type StepRequestOptions, type TurnSeed } from '#/agent/loop/stepRequest';

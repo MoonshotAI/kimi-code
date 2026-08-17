@@ -1,10 +1,3 @@
-/**
- * Shared test stubs for the `kosong/model` suites:
- * a config stub with real change events (plus a silent-mutation escape hatch
- * for the cache-invalidation tests) and an OAuth stub with a programmable
- * token provider.
- */
-
 import { Emitter, type Event } from '#/_base/event';
 import type { IOAuthService } from '#/app/auth/auth';
 import {

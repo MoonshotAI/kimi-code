@@ -1,26 +1,3 @@
-/**
- * Session-canonical media download route.
- *
- * Resolves the Session-scoped `ISessionMediaStore` through the workspace /
- * session lifecycle chain and streams canonical prompt media with browser
- * byte-range semantics. The session store is canonical, so it is read first;
- * on a miss the route falls back to the App-scope `IFileService` staged
- * upload — the engine's prompt intake materializes bytes into the session
- * store asynchronously and best-effort, so a `session_media` ref is
- * downloadable during the intake window (and after an intake failure) as
- * long as the transient daemon upload is still staged. Only a double miss
- * is a 404.
- *
- * NOTE: resolving the session store through `resumeSessionById` fully
- * RESUMES a cold session — materializing the session scope, creating the
- * main agent, and firing `session_started` telemetry. Browsing historical
- * attachments therefore starts the session, unlike the deliberately
- * cold-reading transcript/messages surface. This asymmetry is an accepted
- * short-term semantic.
- * TODO: add a cold-read channel that resolves the sessionDir through
- * `ISessionIndex` and reads the media storage directly, without resuming.
- */
-
 import { Readable } from 'node:stream';
 
 import {
@@ -132,13 +109,6 @@ export function registerSessionMediaRoutes(app: SessionMediaRouteHost, core: Sco
   );
 }
 
-/**
- * Staged-upload fallback for the download route: serves the bytes from the
- * App-scope `IFileService` while the transient daemon upload still exists,
- * adapting its `GetResult` to the `SessionMediaFile` shape the route serves.
- * A missing upload (already discarded) reads as `undefined`, so the caller
- * can fall through to the canonical 404.
- */
 async function openStagedUpload(
   core: Scope,
   fileId: string,

@@ -1,12 +1,3 @@
-/**
- * `contextMemory` vacuous-content predicate — shared test for content parts
- * that carry nothing the provider wire can represent. Vacuous means an empty
- * or whitespace-only text block, or an empty thinking block with no provider
- * signature; a signed thinking block (`encrypted`) is never vacuous —
- * reasoning providers require it back verbatim — and media parts always
- * carry content.
- */
-
 import type { ContentPart } from '#/kosong/contract/message';
 
 export function isVacuousContentPart(part: ContentPart): boolean {

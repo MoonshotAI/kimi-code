@@ -1,59 +1,3 @@
-/**
- * `tools` domain — `ReadMediaFileTool` implementation.
- *
- * Reads image/video files as multi-modal content.
- *
- * Returns a 3-part wrap as `output`:
- * `[TextPart('<image|video path="…">'), ImageContent|VideoContent,
- *   TextPart('</image|video>')]`
- * plus a `note` side channel (rendered to the model, never to UIs), and
- * adapts its description and per-call behavior to the model's
- * `image_in` / `video_in` capability.
- *
- * The note — this tool wraps it in a `<system>` block as its own wording
- * choice — summarizes mime type, byte size and (for images) original pixel
- * dimensions, states exactly how the image was delivered (untouched,
- * downsampled, cropped, or native resolution) so compression is never
- * silent, guides the model to derive absolute coordinates from the original
- * size, and reminds it to re-read any media it generates or edits.
- *
- * Images support two opt-in delivery controls: `region` cuts a rectangle
- * (original-image pixel coordinates) out of the file so fine detail survives
- * at full fidelity, and `full_resolution` skips the default downscale when
- * the payload fits the per-image byte budget (refusing explicitly when it
- * does not, instead of silently degrading). Explicit region/native reads
- * refuse before loading a source that exceeds the safe decode allocation.
- * Default image reads also fail closed when compression cannot meet the
- * configured byte and longest-edge delivery budgets: the original bytes are
- * not emitted, and the tool result tells the model to create and re-read a
- * smaller copy.
- *
- * Path safety: goes through the shared path access resolver used by
- * Read/Write/Edit.
- *
- * Videos are delivered through the provider's upload channel when one is
- * bound, falling back to an inline base64 part when the channel exists but
- * fails at runtime (no files endpoint, network/server failure) — a failed
- * upload must not turn the whole read into an error. The same fallback
- * covers providers with no upload hook at all, as long as their protocol
- * converts `video_url` (`inlineVideoSupported`, computed from the model's
- * protocol at registration); when the wire would drop the inline payload
- * anyway (the OpenAI family), the by-design no-hook error
- * (`VideoUploadUnsupportedError`) surfaces instead. Auth rejections
- * (`provider.auth_error` / 401 / 403) always surface, because they drive
- * credential refresh rather than mask a bad token.
- *
- * Registration is capability-gated: this tool is
- * only registered when the active model supports image or video input.
- *
- * This tool is a deliberate exception to the `registerAgentToolService` contribution
- * table: its constructor depends on runtime model capabilities (capability
- * profile, video uploader, protocol flags), so it cannot be a static
- * Agent-scope Service and is instead instantiated
- * whenever the bound model changes. It still satisfies the `AgentTool`
- * contract.
- */
-
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ContentPart } from '#/kosong/contract/message';
 import { VideoUploadUnsupportedError } from '#/kosong/contract/errors';
@@ -103,7 +47,6 @@ import {
 } from './read-media-file';
 import readMediaDescriptionHead from './read-media.md?raw';
 
-
 function buildDescription(capabilities: ModelCapability): string {
   const head = renderPrompt(readMediaDescriptionHead, { MAX_MEDIA_MEGABYTES });
   const lines: string[] = [head];
@@ -126,7 +69,6 @@ function buildDescription(capabilities: ModelCapability): string {
   }
   return lines.join('\n');
 }
-
 
 interface ImageDelivery {
   readonly kind: 'untouched' | 'downsampled' | 'crop' | 'full';

@@ -1,21 +1,3 @@
-/**
- * `tokenCounting` domain — `IAgentTokenCountingService` contract.
- *
- * The single owner of every token count the agent reasons about: the context
- * size (measured anchors + estimated tail), the full request size (system
- * prompt + tools + messages) used by overflow heuristics, and the raw
- * character-based estimate primitives consumed by compaction budgets. Both
- * tracks — measured anchors and heuristic estimates — are ALWAYS recorded and
- * always feed internal logic (triggers, budgets, overflow backoff); the
- * `[token_counting]` strategy is resolved HERE and nowhere else, and selects
- * only the externally reported reading (`statusSize`):
- *   - `measured+estimated` (default): the live size, floored by the last
- *     measured total;
- *   - `measured`: the latest measured anchor alone — estimates never reported;
- *   - `estimated`: a pure estimate with anchors ignored (the escape hatch for
- *     providers whose usage reporting is absent or unreliable).
- */
-
 import { createDecorator } from '#/_base/di/instantiation';
 import type { Message } from '#/kosong/contract/message';
 import type { Tool } from '#/kosong/contract/tool';

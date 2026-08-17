@@ -1,28 +1,3 @@
-/**
- * `media` domain — `IAgentVideoResolverService` implementation.
- *
- * Resolves each `kimi-file://` video reference in the projected wire messages
- * to a provider-acceptable part right before the request leaves for the wire.
- * Reads the uploaded bytes through the `file` domain (`IFileService`), uploads
- * them through the bound model's `ModelRequester.uploadVideo` (wrapped for
- * `video_upload` telemetry through `createVideoUploader`), and persists the
- * `(file, provider) → llmFileId` mapping through the `blobStore`
- * access-pattern store so the upload happens once across a turn's steps,
- * retries, and media-recovery reprojections. Falls back to an inline base64
- * `video_url` (protocols that carry it) or a `<video path>` text tag (the
- * model then opens the edge-materialized copy with `ReadMediaFile`); auth
- * failures surface so they drive credential refresh instead of masking a bad
- * token, and an upload interrupted by the step's aborted signal re-throws —
- * shape-agnostic, since abort rejections vary by provider — so cancellation
- * ends the request instead of memoizing a degraded fallback for the rest of
- * the agent's lifetime. Resolution outcomes are memoized per (file, provider)
- * for step/retry stability — except a transient upload failure, which
- * degrades only the current request to the tag form so a later step retries
- * the upload instead of freezing the fallback. The plain-data state
- * (`resolved`) is registered into `agentState` (`IAgentStateService`) and
- * read/written through it. Bound at Agent scope.
- */
-
 import { createHash } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';

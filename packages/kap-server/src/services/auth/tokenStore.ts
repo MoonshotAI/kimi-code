@@ -36,21 +36,11 @@ export async function createTokenStore(homeDir: string): Promise<TokenStore> {
     try {
       st = statSync(tokenPath);
     } catch {
-      // File temporarily unavailable — keep serving the last known token.
       return cache.token;
     }
-    // Detect a rewrite by mtime OR inode. `writePrivateFile` does an atomic
-    // rename, which always yields a new inode (POSIX) and a fresh mtime
-    // (Windows/NTFS, where `ino` is always 0). Checking both makes the reload
-    // robust even on filesystems with coarse (1s) mtime resolution.
     if (st.mtimeMs === cache.mtimeMs && st.ino === cache.ino) {
       return cache.token;
     }
-    // Changed: re-read, but refuse a too-permissive file and never let an
-    // empty/partial read clobber the last good token.
-    // Skip the check on Windows: fs.stat mode is synthesised from the
-    // read-only attribute and does not reflect real ACLs, so it would always
-    // appear too permissive and prevent legitimate token reloads.
     if (process.platform !== 'win32' && (st.mode & 0o077) !== 0) {
       return cache.token;
     }
@@ -60,7 +50,6 @@ export async function createTokenStore(homeDir: string): Promise<TokenStore> {
         cache = { token, mtimeMs: st.mtimeMs, ino: st.ino };
       }
     } catch {
-      // keep last known token
     }
     return cache.token;
   };
@@ -77,7 +66,6 @@ export async function createTokenStore(homeDir: string): Promise<TokenStore> {
       return timingSafeEqual(candidateBuf, tokenBuf);
     },
     async dispose(): Promise<void> {
-      // Persistent token: intentionally left on disk so it survives restarts.
     },
   };
 }

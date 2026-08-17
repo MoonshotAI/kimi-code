@@ -1,12 +1,3 @@
-/**
- * Scenario: the title excerpts read through the REAL context memory — loop
- * events fold into assistant messages, tool calls and thinking stay out of
- * the excerpt, and the turn's final text wins. Wiring: harness agent (real
- * contextMemory + prompt queue) with the real AgentTitlePromptSourceService.
- * Run: pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/session/sessionTitle/titleExcerpt.integration.test.ts
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';

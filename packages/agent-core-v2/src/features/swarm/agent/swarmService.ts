@@ -1,20 +1,3 @@
-/**
- * `swarm` domain — `IAgentSwarmService` implementation.
- *
- * Tracks swarm-mode enter/exit in the `swarmKey` state (mutated only
- * through the durable `SwarmModeEnter` / `SwarmModeExit` events, read through
- * `dispatcher.getState`), derives the `AgentStatusUpdated` swarm-mode slice
- * from the event folds, announces the mode through the `swarm_mode`
- * context-injection provider (`SwarmInjection`), mirrors replayable
- * trailing-enter removal through `contextMemory`, and auto-exits on turn end
- * via `turn`. Bound at Agent scope — contributed into every Agent scope by
- * `SwarmFeature` (`features/swarm/swarmFeature`). The service also guards
- * AgentSwarm batch exclusivity through an `onBeforeExecuteTool` veto
- * listener: an AgentSwarm call must be the only tool call in its batch;
- * anything else is vetoed with a `toolApproval.formatDenyMessage`-formatted
- * reason.
- */
-
 import { Service } from '#/_base/di/service';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';

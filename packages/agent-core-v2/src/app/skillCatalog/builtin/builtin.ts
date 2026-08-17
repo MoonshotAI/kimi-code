@@ -1,19 +1,3 @@
-/**
- * `skillCatalog` domain — builtin skill registration.
- *
- * Code-defined builtin skills are constants (not discovered from storage), so
- * they bypass `ISkillDiscovery`: `BUILTIN_SKILLS` plus the feature-authored
- * contributions registered through `registerBuiltinSkill` (./registry — the
- * "import = register" channel, e.g. the tower skill) feed the builtin
- * `ISkillSource`.
- *
- * `visibleBuiltinSkills` is the one place that decides which of them the
- * `builtin_product_skills` switch excludes. Every consumer goes through it — the
- * session-scoped source and the session-less workspace listings alike — so a
- * skill marked `productSpecific` cannot stay advertised on one surface while
- * being filtered on another.
- */
-
 import type { SkillDefinition } from '#/app/skillCatalog/types';
 
 import { CHECK_KIMI_CODE_DOCS_SKILL } from './check-kimi-code-docs';

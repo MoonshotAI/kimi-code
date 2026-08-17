@@ -376,14 +376,6 @@ describe('SkillTool', () => {
   });
 });
 
-
-/**
- * Busy-delivery semantics (harness): a user-slash activation arriving while a
- * turn is running steers into that turn at the next step boundary (a
- * `turn.steer` record carrying the skill_activation origin); with no active
- * turn it launches a fresh one (`turn.prompt`). This is the plain-input
- * queue/steer equivalence — every skill behaves the same, no opt-in.
- */
 describe('AgentSkillService busy delivery (harness)', () => {
   let ctx: TestAgentContext;
 
@@ -406,7 +398,6 @@ describe('AgentSkillService busy delivery (harness)', () => {
       generateCalls += 1;
       const n = generateCalls;
       options?.onRequestStart?.();
-      // Hold turn 1 open so the first activation arrives while it is running.
       if (n === 1) await gate;
       options?.signal?.throwIfAborted();
       const text = `response-${String(n)}`;
@@ -430,8 +421,6 @@ describe('AgentSkillService busy delivery (harness)', () => {
       expect(generateCalls).toBe(1);
     });
 
-    // Busy: the activation steers into turn 1 — resolves without waiting for
-    // the turn to end, and starts no new turn.
     const busyActivation = ctx.get(IAgentSkillService).activate({ name: 'tower', args: 'mission-1' });
     const busyResult = await busyActivation;
     expect(busyResult.turn_id).toBe(0);
@@ -441,15 +430,11 @@ describe('AgentSkillService busy delivery (harness)', () => {
     await promptPromise;
     await ctx.untilTurnEnd();
 
-    // Idle: the next activation launches a fresh turn.
     const idleResult = await ctx.get(IAgentSkillService).activate({ name: 'tower', args: 'mission-2' });
     expect(idleResult.turn_id).toBe(1);
     await ctx.untilTurnEnd();
-    // Turn 1 runs a second step to react to the steered activation; the idle
-    // activation's turn is the third generate call.
     expect(generateCalls).toBe(3);
 
-    // Both activations landed in context, in order, with their origin.
     const activations = ctx
       .contextData()
       .history.filter((m) => m.role === 'user' && m.origin?.kind === 'skill_activation');
@@ -458,7 +443,6 @@ describe('AgentSkillService busy delivery (harness)', () => {
       'mission-2',
     ]);
 
-    // The wire log shows one steer (busy) and two prompts (initial + idle).
     const types = persistence.records.map((record) => record.type);
     expect(types.filter((type) => type === 'turn.prompt')).toHaveLength(2);
     expect(types.filter((type) => type === 'turn.steer')).toHaveLength(1);

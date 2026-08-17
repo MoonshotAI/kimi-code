@@ -66,45 +66,12 @@ There is no domain-layer numbering — a domain may import any other domain, gui
 - v2 never imports v1 (`@moonshot-ai/agent-core` or any subpath).
 - The kosong subtree (`src/kosong/{contract,protocol,provider,model}`) keeps its strict internal order (`contract ← protocol ← provider/model`), purity bans (no SDKs in `contract`/`protocol`), and the `provider/bases` registration boundary.
 
-## File-header comment convention
+## Comment convention
 
-`packages/agent-core-v2/AGENTS.md` mandates a header-only comment style:
-
-- **Header only.** Comments live solely in the top-of-file `/** */` block — never beside functions, methods, or statements. The code is the source of truth for *how*; the header states *what the module exposes and the responsibility it owns*.
-- **Identity line first.** Start with `` `<domain>` domain — <one-line role>. `` Keep an existing `(cross-cutting)` label as-is. Write the role as a responsibility ("drives the turn lifecycle"), not a symbol list.
-- **Scope is in the filename.** `workspace*.ts` = Workspace, `session*.ts` = Session, `agent*.ts` = Agent, no prefix = App (see service-authoring.md). State the same scope in the header so the two never drift.
-- **Interface files** (`<name>.ts`) state the public contract + scope: which `IXxx` they define and what it is for.
-- **Impl files** (`<name>Service.ts`) add collaborators + scope: list every imported cross-domain collaborator as a role ("persists records through `records`"); read scope from `registerScopedService(LifecycleScope.X, …)`.
-- **Contribution files** (`<targetDomain>.ts` / `<what>.contrib.ts`) state what they register into the target domain (e.g. "registers the `log` config section into `config`").
-- **Pure-function / `.types` / `.errors` files** state the responsibility only — they own no scoped state, so no scope line.
-
-Impl file example (`sessionMetadataService.ts`):
-
-```ts
-/**
- * `sessionMetadata` domain — `ISessionMetadata` implementation.
- *
- * Persists the session metadata document (`state.json`) through the `storage`
- * access-pattern store (`IAtomicDocumentStore`), rooted at the `metaScope`
- * namespace from `sessionContext`. Loads the existing document on
- * construction (creating it on first run), and logs through `log`. Bound at
- * Session scope.
- */
-```
-
-Contribution file example (`config.ts` inside `log/`):
-
-```ts
-/**
- * `log` domain — registers the `log` config section into `config`.
- *
- * Owns the `log` section schema and its env overlay; imported for the
- * registration side effect. Bound at App scope.
- */
-```
+`packages/agent-core-v2/AGENTS.md` bans comments: no file headers, no section banners, no statement-level narration — the code is the source of truth. The only exception is JSDoc attached to exported symbols, which flows into the generated `.d.ts` and the consumers' IDE hover. Tooling directives (`eslint-disable`, `@ts-expect-error`, …) are banned too: fix the underlying lint/type problem instead, and put negative type-safety cases in compiler-asserted fixtures. Scope is carried by the filename: `workspace*.ts` = Workspace, `session*.ts` = Session, `agent*.ts` = Agent, no prefix = App (see service-authoring.md).
 
 ## Red lines (this stage)
 
 - Import via the `#/...` alias (mapped to `src/`); never reach into another domain's internals by relative path.
 - Short-lived may inject long-lived; never the reverse.
-- File-header comments describe role and scope only; never narrate implementation beside statements.
+- No comments — not file headers, not beside statements; exported-symbol JSDoc is the only exception.

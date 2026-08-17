@@ -1,10 +1,3 @@
-/**
- * `/api/v1` prompt routes — v1-compatible prompt surface backed directly by
- * the Agent-scoped `prompt` scheduler. This edge applies protocol conversion,
- * request overrides, and metadata updates while preserving the paths and wire
- * shapes from `packages/server/src/routes/prompts.ts`.
- */
-
 import { join } from 'node:path';
 
 import {
@@ -28,6 +21,7 @@ import {
   type PromptHandle,
   type PromptQueueSnapshot,
   type PromptReservation,
+  type PromptWithSkillsResult,
   reservePrompt,
   ISessionContext,
   resumeSessionById,
@@ -38,7 +32,6 @@ import {
   ErrorCodes,
   sessionMediaOriginalsDir,
   type ISessionScopeHandle,
-  type PromptWithSkillsResult,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../protocol/error-codes';
@@ -95,10 +88,6 @@ const authProviderDetailsSchema = z.object({ provider_id: z.string() });
 const authModelDetailsSchema = z.object({ model_id: z.string(), provider_id: z.string() }).partial();
 
 async function resolveSession(core: Scope, sessionId: string): Promise<ISessionScopeHandle> {
-  // `resume` (not `get`) so a persisted-but-cold session — created by a previous
-  // process, by v1, or closed in this one — is loaded from disk instead of
-  // being reported as `session.not_found`. Mirrors the snapshot route. Returns
-  // `undefined` only when the session is unknown or its workspace is gone.
   const session = await resumeSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2('session.not_found', `session ${sessionId} does not exist`);
@@ -111,10 +100,6 @@ async function resolvePrompt(core: Scope, sessionId: string, agentId?: string) {
 }
 
 async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: string) {
-  // A prompt may target a forked side-channel agent (e.g. `/btw`) via
-  // `body.agent_id`. Default to `main` when absent; only `main` is
-  // auto-created — any other id must already exist (forked beforehand), or it
-  // is reported as `agent.not_found`.
   const agent =
     agentId === undefined || agentId === MAIN_AGENT_ID
       ? await ensureMainAgent(session)
@@ -125,9 +110,6 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   return {
     prompt: agent.accessor.get(IAgentPromptService),
     skill: agent.accessor.get(IAgentSkillService),
-    // Agent-scoped bus: prompt lifecycle events of OTHER sessions/agents do
-    // not arrive here (the App-scoped IEventService would leak them, and
-    // client-chosen prompt ids can collide across sessions).
     events: agent.accessor.get(IEventBus),
     auth: agent.accessor.get(IAuthSummaryService),
     profile: agent.accessor.get(IAgentProfileService),
@@ -136,14 +118,6 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   };
 }
 
-/**
- * Read-only pre-flight for bundled skill submissions: every named skill must
- * exist in the session catalog and be user-activatable. Runs before any media
- * materialization or control override, so a rejected bundle leaves the
- * session untouched. The engine re-validates authoritatively inside
- * `promptWithSkills`; this edge check only exists to protect side effects
- * that precede it (media copies, persistent overrides).
- */
 async function assertActivatableSkills(
   catalog: ISessionSkillCatalog,
   skills: readonly PromptSkillActivation[],
@@ -163,22 +137,6 @@ async function assertActivatableSkills(
   }
 }
 
-/**
- * Bind the resolved agent to the profile named by a prompt submission's
- * `profile` field. First-bind semantics live in the engine: a same-name
- * repeat is short-circuited here as a no-op, while an unknown name or a
- * post-bind switch is rejected by `AgentProfileService.bind` with a coded
- * `ProfileError` — this edge only maps it onto 40001. Checking anything
- * beyond the no-op shortcut here would re-introduce a check-then-act window
- * the engine guard has already closed.
- *
- * `model` falls back to the configured default inside the engine. `thinking`
- * rides along in the bind so an unsupported effort rejects atomically —
- * before any state mutation — instead of wedging the session's identity with
- * a successful bind followed by a failed `setThinking`.
- *
- * Returns true when a bind happened (i.e. `thinking` was consumed by it).
- */
 async function applyProfileSelection(
   profile: IAgentProfileService,
   profileName: string,
@@ -201,7 +159,6 @@ async function applyProfileSelection(
   }
   return true;
 }
-
 
 export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
   const listRoute = defineRoute(
@@ -246,7 +203,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
         [ErrorCode.PROMPT_ALREADY_COMPLETED]: { dataSchema: z.object({ aborted: z.literal(false) }) },
       },
-      description: 'Submit a prompt to a session, optionally with bundled skill activations',
+      description: 'Submit a prompt to a session',
       tags: ['prompts'],
       operationId: 'submitPrompt',
     },
@@ -256,18 +213,9 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       let reservation: PromptReservation | undefined;
       let enqueued = false;
       try {
-        // Fail fast on stale file references before anything is resolved or
-        // mutated: a bad `file_id` must not create the agent, register `main`
-        // in session metadata, or touch the session's controls.
         await assertPromptFileRefs(req.body.content, core.accessor.get(IFileService));
-        // A cold resume loads the session but does not create the main agent;
-        // bundled-skill preflight runs at this point precisely so a rejected
-        // bundle cannot even mutate session metadata by registering `main`.
         const session = await resolveSession(core, session_id);
         if (req.body.skills !== undefined) {
-          // A bundled submission goes through the engine's own enqueue path,
-          // which assigns the prompt id — reject the combination here, before
-          // the agent is materialized or any override binds.
           if (req.body.prompt_id !== undefined) {
             throw new Error2(
               ErrorCodes.REQUEST_INVALID,
@@ -287,13 +235,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         reservation = reservePrompt(resolved.prompt, req.body.prompt_id);
         await resolved.auth.ensureReady();
 
-        // Media resolution runs BEFORE any control mutation, so a failed
-        // submission leaves the session's controls untouched. Prompt videos
-        // and uploaded images are carried into context as bare internal
-        // `kimi-file://` references; the engine's prompt intake materializes
-        // the session copy and resolves them to a provider form
-        // (upload / inline / path tag) at request time, so the edge no longer
-        // uploads.
         const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
         preparedMedia = await resolvePromptMediaFiles(
           req.body.content,
@@ -315,7 +256,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         );
         const resolvedContent = preparedMedia.content;
 
-        // Media prepared successfully — only now do the overrides bind.
         let thinkingConsumed = false;
         if (req.body.profile !== undefined) {
           thinkingConsumed =
@@ -331,8 +271,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           resolved.profile.setThinking(req.body.thinking);
         if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
         if (req.body.disabled_tools !== undefined) {
-          // A session denylist before bind throws `profile.not_bound` — map it
-          // onto 40001 like the profile-selection errors above.
           try {
             await resolved.toolPolicy.setSessionDisabledTools(req.body.disabled_tools);
           } catch (error) {
@@ -344,17 +282,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         }
         const parts = contentToCoreParts(resolvedContent);
         if (req.body.skills !== undefined) {
-          // Settlement tracking installs before enqueue: a hook-blocked
-          // bundle completes synchronously inside the call, and a fast
-          // launch can settle just as early. The daemon upload is the
-          // resolver's fallback when intake degraded, so cleanup fires only
-          // once the bundle's lifecycle (or its steer parent's) settles.
           const settlement = watchPromptSettlements(resolved.events);
-          // Bundled skill submission: the engine validates every skill up
-          // front, records one activation event per skill, and enqueues a
-          // single user message (rendered skill blocks first, then the
-          // caller's parts). It owns the prompt-metadata update for the main
-          // agent, so this edge skips its own to avoid a double write.
           let result: PromptWithSkillsResult;
           try {
             result = await resolved.skill.promptWithSkills({
@@ -371,8 +299,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             okEnvelope(
               {
                 prompt_id: result.prompt_id,
-                // prompt_id IS the user_message_id — one identity for prompt
-                // and message, same as the plain-prompt path.
                 user_message_id: result.prompt_id,
                 status: result.state,
                 content: projectPromptContentParts(parts),
@@ -402,10 +328,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         );
         reply.send(okEnvelope(projectPromptHandle(handle), req.id));
       } catch (error) {
-        // A submission that failed before the engine took the prompt projected
-        // no Session media to the client — roll back the uploads the
-        // preparation created. A successful enqueue releases them when the
-        // prompt launches (intake complete) or settles without launching.
         if (!enqueued) await preparedMedia?.discard();
         sendMappedError(reply, req, error);
       } finally {
@@ -505,15 +427,8 @@ export function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][num
     ? 'running'
     : prompt.state === 'blocked' ? 'blocked' : 'queued';
   const origin = prompt.message.origin;
-  // A bundled prompt stores the rendered skill blocks ahead of the caller's
-  // parts; project the caller's parts only, so the listed content matches the
-  // submit response for the same prompt.
   const bundled = origin?.kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0;
   const content = bundled === 0 ? prompt.message.content : prompt.message.content.slice(bundled);
-  // The prompt queue holds user prompts only; the shared projection maps each
-  // self-contained daemon-ref media part to its `{kind:'session_media'}` wire
-  // shape, mirroring the message projection: the internal URL never reaches
-  // REST callers.
   return {
     prompt_id: prompt.id,
     user_message_id: prompt.userMessageId,
@@ -523,22 +438,6 @@ export function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][num
   };
 }
 
-/**
- * Settlement tracker for bundled submissions' media staging. The daemon
- * upload is the request-time resolver's fallback whenever intake degraded
- * (materialization is best-effort by design), so it must outlive the
- * bundle's request: cleanup fires only when the bundle's turn lifecycle
- * settles (`prompt.completed` / `prompt.aborted`). A bundle steered into
- * an active turn resolves its refs during the parent's request, and the
- * engine publishes completed/aborted only for the parent — so
- * `prompt.steered` (matching `promptIds`) re-targets the cleanup at the
- * parent (`activePromptId`).
- *
- * The tracker installs BEFORE the submission is enqueued: a hook-blocked
- * prompt completes synchronously inside the submission call, and an
- * exceptionally fast launch can settle just as early — both land in the
- * buffered `settledIds` instead of racing past a late subscription.
- */
 export function watchPromptSettlements(events: IEventBus): {
   settle(promptId: string, discard: () => void | Promise<void>): void;
   dispose(): void;
@@ -582,16 +481,12 @@ export function watchPromptSettlements(events: IEventBus): {
       }
       armed = { id: promptId, discard };
     },
-    // A submission that rejects after the tracker was installed never calls
-    // `settle`; the route's error path disposes the tracker here.
     dispose(): void {
       armed = undefined;
       subscription.dispose();
     },
   };
 }
-
-
 
 function sendMappedError(
   reply: { send(payload: unknown): unknown },

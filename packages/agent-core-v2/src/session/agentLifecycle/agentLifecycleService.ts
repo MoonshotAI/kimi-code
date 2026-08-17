@@ -1,27 +1,3 @@
-/**
- * `agentLifecycle` domain — `IAgentLifecycleService` implementation.
- *
- * Creates and tracks the session's agents as child scopes in a flat registry,
- * serializing same-id bootstrap and dropping incomplete handles after startup
- * failure. Seeds each agent's identity through `agent` scopeContext, wires
- * per-agent wire records and the wire state machine, the blob store, and MCP,
- * and registers the agent in the session registry. Binds the agent id into the
- * Agent-scoped telemetry view. New logs receive a metadata
- * envelope while non-empty unversioned logs are rejected. Removal awaits the
- * agent task manager's graceful exit policy before draining turns and full
- * compaction, then disposing the child scope. Fans session-level
- * permission-mode switches out to every live agent — except
- * `tower-worker`-profile agents, which TowerSpawn pins to `auto` (they run
- * detached and unattended); the broadcast leaves them on `auto`. Bound at
- * Session scope.
- *
- * No agent id is special here: the main agent is simply the agent created
- * with the conventional `MAIN_AGENT_ID`, and `fork` requires its source to
- * exist. MCP readiness is not awaited here: the workspace's shared manager
- * connects in the background and the agent's LLM steps wait on it instead
- * (see `AgentMcpService`).
- */
-
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
@@ -72,7 +48,6 @@ import {
 
 let nextAgentId = 0;
 
-// NOTE: stays Disposable — its own 'get' and 'config' collide with the Fiber
 export class AgentLifecycleService extends Disposable implements IAgentLifecycleService {
   declare readonly _serviceBrand: undefined;
   private readonly handles = new Map<string, IAgentScopeHandle>();
@@ -273,9 +248,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
   broadcastPermissionMode(mode: PermissionMode): void {
     for (const handle of this.handles.values()) {
-      // Tower workers/reviewers stay pinned to auto (see the file header) —
-      // the profile name is read off the wire model, not the profile service,
-      // so the broadcast never has to materialize one.
       if (
         handle.accessor.get(IAgentStateService).get(profileKey).profileName ===
         TOWER_WORKER_PROFILE

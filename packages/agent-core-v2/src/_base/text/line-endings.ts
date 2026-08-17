@@ -1,10 +1,3 @@
-/**
- * `_base` text helpers — model-text line-ending normalization.
- *
- * Normalizes CRLF → LF for display and re-materializes CRLF on write, so the
- * model sees a consistent view while the on-disk bytes stay faithful.
- */
-
 export type LineEndingStyle = 'lf' | 'crlf' | 'mixed';
 
 export interface ModelTextView {
