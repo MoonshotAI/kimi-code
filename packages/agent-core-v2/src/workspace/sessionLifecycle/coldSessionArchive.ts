@@ -23,6 +23,7 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 
 import { sessionScopeOf, workspacePersistenceScope } from './internal/addressing';
+import { SessionArchived } from './sessionLifecycleEvents';
 
 export type ColdSessionArchiveOutcome = 'updated' | 'not_found';
 
@@ -52,9 +53,7 @@ export async function setColdSessionArchived(
   await docs.set(metaScope, 'state.json', { ...persisted, archived, archivedAt });
   accessor.get(ISessionIndexMirror).record({ ...summary, archived, archivedAt });
   if (archived) {
-    accessor
-      .get(IEventService)
-      .publish({ type: 'event.session.archived', payload: { sessionId } });
+    accessor.get(IEventService).publish(new SessionArchived({ payload: { sessionId } }));
   }
   return 'updated';
 }

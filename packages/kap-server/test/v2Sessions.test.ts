@@ -23,7 +23,7 @@ import {
   getLiveSessionById,
   resumeSessionById,
   sessionDirOf,
-  type GlobalEvent,
+  type Event2,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import {
@@ -621,8 +621,8 @@ describe('server /api/v2/sessions batch archive/restore', () => {
   }
 
   /** Subscribe a bus-event collector; caller disposes the returned sub. */
-  function collectEvents(): { events: GlobalEvent[]; dispose(): void } {
-    const events: GlobalEvent[] = [];
+  function collectEvents(): { events: Event2[]; dispose(): void } {
+    const events: Event2[] = [];
     const sub = core().get(IEventService).subscribe((event) => events.push(event));
     return {
       events,
@@ -707,10 +707,16 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     expect(await listedIds('?meta.archived=true')).toEqual([created.id]);
     expect(await listedIds()).toEqual([]);
 
-    // Same bus event the live lifecycle publishes.
-    expect(events.filter((event) => event.type === 'event.session.archived')).toEqual([
-      { type: 'event.session.archived', payload: { sessionId: created.id } },
-    ]);
+    // Same bus event the live lifecycle publishes (Event2 instances also
+    // carry `time` — compare the meaningful shape).
+    expect(
+      events
+        .filter((event) => event.type === 'event.session.archived')
+        .map((event) => ({
+          type: event.type,
+          payload: (event as { readonly payload?: unknown }).payload,
+        })),
+    ).toEqual([{ type: 'event.session.archived', payload: { sessionId: created.id } }]);
     dispose();
   });
 
@@ -731,7 +737,8 @@ describe('server /api/v2/sessions batch archive/restore', () => {
       events.some(
         (event) =>
           event.type === 'event.session.archived' &&
-          (event.payload as { sessionId: string }).sessionId === created.id,
+          ((event as { readonly payload?: unknown }).payload as { sessionId: string })
+            .sessionId === created.id,
       ),
     ).toBe(true);
     expect(await indexArchived(created.id)).toBe(true);
