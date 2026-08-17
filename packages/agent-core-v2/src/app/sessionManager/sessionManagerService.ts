@@ -1,3 +1,14 @@
+/**
+ * `sessionManager` domain — the App-scope session lifecycle facade.
+ *
+ * Owns the global live-session registry across per-workspace controllers and
+ * routes create / resume / restore / close / archive / delete / fork /
+ * createChild to the owning controller; per-session lifecycle transitions
+ * (and the batch archive critical section) queue on one serialization chain
+ * per session. Cold id→workspace lookups go through `sessionIndex`;
+ * workspace materialization through `workspaces`. App scope.
+ */
+
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
@@ -65,10 +76,6 @@ export class SessionManager implements ISessionManager {
   async resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
     const inflight = this.pendingResumes.get(sessionId);
     if (inflight !== undefined) return inflight;
-    // Register synchronously at the App level: controllerForSession is async,
-    // so the controller's own resuming map only learns about this resume a
-    // few microtasks later — whenResumeSettled must see it from this call's
-    // very first tick.
     const promise = this.serializeLifecycle(sessionId, async () =>
       (await this.controllerForSession(sessionId))?.resume(sessionId, options),
     ).finally(() => this.pendingResumes.delete(sessionId));
@@ -85,15 +92,6 @@ export class SessionManager implements ISessionManager {
     await this.owners.get(sessionId)?.whenResumeSettled(sessionId);
   }
 
-  /**
-   * Per-session lifecycle chain: resume / restore / close / delete / the
-   * batch archive-restore critical section all queue here, so a cold meta
-   * write can never interleave with a materializing resume (which would
-   * later flush its stale in-memory state over the write), a close cannot
-   * complete between the batch's live check and its archive call, and a
-   * delete cannot remove the directory out from under a cold write (which
-   * would resurrect a metadata-only ghost).
-   */
   private serializeLifecycle<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
     const prev = this.lifecycleChains.get(sessionId) ?? Promise.resolve();
     const run = prev.then(work, work);

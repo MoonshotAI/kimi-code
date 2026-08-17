@@ -1,3 +1,14 @@
+/**
+ * Scenario: `setSessionArchivedBatch` cold-path outcome mapping.
+ * Responsibilities: a metadata read failure becomes a per-item internal
+ * error (never not_found), a missing metadata document is not_found, and
+ * the mirrored summary is built from the authoritative persisted metadata
+ * rather than a stale index copy.
+ * Wiring: pure stubs — ISessionManager (serialization passthrough),
+ * ISessionIndex, IAtomicDocumentStore, ISessionIndexMirror, IEventService.
+ * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/workspace/sessionLifecycle/coldSessionArchive.test.ts`.
+ */
+
 import { describe, expect, it } from 'vitest';
 
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
