@@ -463,3 +463,189 @@ describe('EditorKeyboardController Shift-Tab plan toggle', () => {
     expect(handlePlanToggle).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Ctrl-S steering of the TUI queue: plain-text items steer as messages,
+ * slash-skill items fire as real activations into the running turn (never as
+ * literal text), grouped inline-skill submissions stay queued for the drain
+ * path, bash items stay queued — all in queue order.
+ */
+describe('EditorKeyboardController Ctrl-S steering', () => {
+  function createCtrlSHarness(options: {
+    editorText: string;
+    queued: Array<Record<string, unknown>>;
+    engineV2?: boolean;
+    skillCommandMap?: Map<string, string>;
+  }) {
+    const steerMessage = vi.fn();
+    const steerSkillActivation = vi.fn();
+    const updateQueueDisplay = vi.fn();
+    const setText = vi.fn();
+    const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
+      setHistoryFilter: vi.fn() as unknown as (...args: never[]) => unknown,
+      setInputMode: vi.fn() as unknown as (...args: never[]) => unknown,
+      getText: vi.fn(() => options.editorText) as unknown as (...args: never[]) => unknown,
+      setText: setText as unknown as (...args: never[]) => unknown,
+      inputMode: 'prompt' as unknown as (...args: never[]) => unknown,
+    };
+    const host = {
+      state: {
+        editor,
+        activeDialog: null,
+        queuedMessages: options.queued,
+        appState: { streamingPhase: 'waiting', isCompacting: false, model: 'k2' },
+        footer: { setTransientHint: vi.fn() },
+        ui: { requestRender: vi.fn() },
+      },
+      session: { id: 's1' },
+      engineV2: options.engineV2 ?? false,
+      skillCommandMap: options.skillCommandMap ?? new Map(),
+      steerMessage,
+      steerSkillActivation,
+      updateQueueDisplay,
+      validateMediaCapabilities: vi.fn(() => true),
+      showError: vi.fn(),
+      track: vi.fn(),
+      btwPanelController: {
+        cancelRunning: vi.fn(() => false),
+        closeOrCancel: vi.fn(() => false),
+      },
+    } as unknown as EditorKeyboardHost;
+    const controller = new EditorKeyboardController(
+      host,
+      undefined as unknown as ImageAttachmentStore,
+    );
+    controller.install();
+    const onCtrlS = editor['onCtrlS'];
+    if (onCtrlS === undefined) throw new Error('onCtrlS handler not installed');
+    return {
+      host,
+      editor,
+      setText,
+      steerMessage,
+      steerSkillActivation,
+      updateQueueDisplay,
+      onCtrlS: onCtrlS as () => void,
+    };
+  }
+
+  it('steers text as a message, skill items as activations, and keeps bash queued', () => {
+    const { host, steerMessage, steerSkillActivation, updateQueueDisplay, onCtrlS } =
+      createCtrlSHarness({
+        editorText: '',
+        queued: [
+          { text: 'queued text', agentId: 'main' },
+          {
+            text: '/tower status',
+            agentId: 'main',
+            mode: 'skill',
+            skillName: 'tower',
+            skillArgs: 'status',
+          },
+          { text: '!ls', agentId: 'main', mode: 'bash' },
+        ],
+      });
+
+    onCtrlS();
+
+    expect(steerMessage).toHaveBeenCalledWith(host.session, [
+      { text: 'queued text', parts: undefined, imageAttachmentIds: undefined },
+    ]);
+    expect(steerSkillActivation).toHaveBeenCalledWith(host.session, 'tower', 'status');
+    expect(host.state.queuedMessages).toEqual([{ text: '!ls', agentId: 'main', mode: 'bash' }]);
+    expect(updateQueueDisplay).toHaveBeenCalled();
+  });
+
+  it('steers plain queued messages but keeps grouped inline-skill submissions queued', () => {
+    const { host, steerMessage, updateQueueDisplay, onCtrlS } = createCtrlSHarness({
+      editorText: '',
+      queued: [
+        { text: 'plain note', agentId: 'main' },
+        {
+          text: 'check /skill:review',
+          agentId: 'main',
+          inlineSkillActivations: [{ skillName: 'review' }],
+        },
+      ],
+    });
+
+    onCtrlS();
+
+    expect(steerMessage).toHaveBeenCalledWith(host.session, [
+      { text: 'plain note', parts: undefined, imageAttachmentIds: undefined },
+    ]);
+    expect(host.state.queuedMessages).toEqual([
+      {
+        text: 'check /skill:review',
+        agentId: 'main',
+        inlineSkillActivations: [{ skillName: 'review' }],
+      },
+    ]);
+    expect(updateQueueDisplay).toHaveBeenCalled();
+  });
+
+  it('stops steering at the first bundle so later messages keep FIFO order', () => {
+    const { host, steerMessage, onCtrlS } = createCtrlSHarness({
+      editorText: '',
+      queued: [
+        { text: 'earlier note', agentId: 'main' },
+        {
+          text: 'check /skill:review',
+          agentId: 'main',
+          inlineSkillActivations: [{ skillName: 'review' }],
+        },
+        { text: 'later note', agentId: 'main' },
+      ],
+    });
+
+    onCtrlS();
+
+    expect(steerMessage).toHaveBeenCalledWith(host.session, [
+      { text: 'earlier note', parts: undefined, imageAttachmentIds: undefined },
+    ]);
+    expect(host.state.queuedMessages).toEqual([
+      {
+        text: 'check /skill:review',
+        agentId: 'main',
+        inlineSkillActivations: [{ skillName: 'review' }],
+      },
+      { text: 'later note', agentId: 'main' },
+    ]);
+  });
+
+  it('steers nothing when a bundle leads the queue', () => {
+    const { host, steerMessage, onCtrlS } = createCtrlSHarness({
+      editorText: '',
+      queued: [
+        {
+          text: 'check /skill:review',
+          agentId: 'main',
+          inlineSkillActivations: [{ skillName: 'review' }],
+        },
+        { text: 'later note', agentId: 'main' },
+      ],
+    });
+
+    onCtrlS();
+
+    expect(steerMessage).not.toHaveBeenCalled();
+    expect(host.state.queuedMessages).toHaveLength(2);
+  });
+
+  it('leaves an editor draft with inline skill tokens in the editor for the grouped path', () => {
+    const { host, setText, steerMessage, onCtrlS } = createCtrlSHarness({
+      editorText: 'check /skill:review',
+      queued: [{ text: 'plain note', agentId: 'main' }],
+      engineV2: true,
+      skillCommandMap: new Map([['skill:review', 'review']]),
+    });
+
+    onCtrlS();
+
+    expect(steerMessage).toHaveBeenCalledWith(host.session, [
+      { text: 'plain note', parts: undefined, imageAttachmentIds: undefined },
+    ]);
+    expect(setText).not.toHaveBeenCalled();
+    expect(host.state.queuedMessages).toEqual([]);
+  });
+});

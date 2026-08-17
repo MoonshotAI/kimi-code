@@ -405,6 +405,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       // requests have stopped, so no new summaries arrive and the queue just
       // needs its final flush to land in the read model.
       await core.accessor.get(ISessionIndexMirror).drain();
+      fsWatchBridge.dispose();
       core.dispose();
       // `core.dispose()` runs the mirror's, the search service's and the query
       // store's synchronous `dispose()`, whose drains/closes are asynchronous —

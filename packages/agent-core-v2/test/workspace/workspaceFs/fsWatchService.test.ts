@@ -9,8 +9,8 @@
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { LifecycleScope } from '#/app/scopes';
-import { createScopedTestHost, stubPair } from '#/_base/di/test';
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { createServices } from '#/_base/di/test';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
   type HostFsChange,
@@ -36,8 +36,6 @@ function stubWorkspaceContext(): IWorkspaceContext {
     source: 'local',
     meta: { id: 'w', root: WORK_DIR, name: 'proj', createdAt: 1, lastOpenedAt: 1 },
     persistenceScope: 'sessions/w',
-    osBackendId: 'local',
-    persistenceBackendId: 'local',
   };
 }
 
@@ -112,15 +110,18 @@ interface Harness {
 
 function makeWorkspace(gitignore?: string): Harness {
   const watch = fakeHostFsWatch();
-  const host = createScopedTestHost();
-  const workspace = host.child(LifecycleScope.Workspace, 'w1', [
-    stubPair(IWorkspaceContext, stubWorkspaceContext()),
-    stubPair(IWorkspaceDirs, stubWorkspaceDirs()),
-    stubPair(IHostFsWatchService, watch.service),
-    stubPair(IHostFileSystem, fakeHostFs(gitignore)),
-  ]);
-  const svc = workspace.accessor.get(IWorkspaceFsWatchService);
-  disposers.push(() => host.dispose());
+  const disposables = new DisposableStore();
+  const services = createServices(disposables, {
+    additionalServices: (registry) => {
+      registry.defineInstance(IWorkspaceContext, stubWorkspaceContext());
+      registry.defineInstance(IWorkspaceDirs, stubWorkspaceDirs());
+      registry.defineInstance(IHostFsWatchService, watch.service);
+      registry.defineInstance(IHostFileSystem, fakeHostFs(gitignore));
+      registry.define(IWorkspaceFsWatchService, WorkspaceFsWatchService);
+    },
+  });
+  const svc = services.get(IWorkspaceFsWatchService);
+  disposers.push(() => disposables.dispose());
   return { svc, watch };
 }
 

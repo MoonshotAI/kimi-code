@@ -16,6 +16,11 @@ export type JsonObject = { readonly [key: string]: JsonValue };
 
 export type Unsubscribe = () => void;
 
+export interface AgentRuntimeBinding {
+  readonly workspaceId: string;
+  readonly runtimeId: string;
+}
+
 export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
 
 export type {
@@ -110,6 +115,11 @@ export type TextPromptPart = Extract<ContentPart, { type: 'text' }>;
 export type PromptPart = Extract<ContentPart, { type: 'text' | 'image_url' | 'video_url' }>;
 
 export type PromptInput = readonly PromptPart[];
+
+export interface PromptSkillActivation {
+  readonly name: string;
+  readonly args?: string;
+}
 
 export interface KimiHarnessOptions {
   readonly identity?: KimiHostIdentity | undefined;

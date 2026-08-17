@@ -23,8 +23,8 @@ import { ICapabilityService } from '@moonshot-ai/agent-core-v2/app/capability/ca
 import { IBootstrapService } from '@moonshot-ai/agent-core-v2/app/bootstrap/bootstrap';
 import { IEventService } from '@moonshot-ai/agent-core-v2/app/event/event';
 import { IHostFolderBrowser } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
-import { IWorkspaceLifecycleService } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/workspaceLifecycle';
-import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/sessionLifecycle';
+import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2/workspace/workspaceInstance/workspaceInstanceManager';
+import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
@@ -36,6 +36,7 @@ import { IAgentSkillService } from '@moonshot-ai/agent-core-v2/agent/skill/skill
 import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
 import { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
+import { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
 import { IAgentContextMemoryService } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextMemory';
 import { IAgentTokenCountingService } from '@moonshot-ai/agent-core-v2/agent/tokenCounting/tokenCounting';
 import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
@@ -63,8 +64,8 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   capabilityService: ICapabilityService,
   hostFolderBrowser: IHostFolderBrowser,
   bootstrapService: IBootstrapService,
-  workspaceLifecycleService: IWorkspaceLifecycleService,
-  sessionLifecycleService: ISessionLifecycleService,
+  workspaceInstanceManager: IWorkspaceInstanceManager,
+  sessionManager: ISessionManager,
   sessionMetadata: ISessionMetadata,
   sessionInteractionService: ISessionInteractionService,
   sessionApprovalService: ISessionApprovalService,
@@ -76,6 +77,7 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   agentLoopService: IAgentLoopService,
   agentPermissionModeService: IAgentPermissionModeService,
   agentCommandService: IAgentCommandService,
+  agentRuntimeBindingService: IAgentRuntimeBindingService,
   agentContextMemoryService: IAgentContextMemoryService,
   agentTokenCountingService: IAgentTokenCountingService,
   agentActivityView: IAgentActivityView,

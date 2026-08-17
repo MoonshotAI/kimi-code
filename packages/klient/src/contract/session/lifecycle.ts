@@ -1,13 +1,8 @@
 /**
- * `sessionLifecycleService` / `workspaceLifecycleService` — session
- * lifecycle after the Workspace-domain split. The App-scope
- * `workspaceLifecycleService` materializes one handler per workspace
- * (`handlerFor`); the Workspace-scope `sessionLifecycleService` owns that
- * workspace's sessions (create/resume/close/archive/restore/delete/fork/
- * createChild). Mirrors `agent-core-v2/app/workspaceLifecycle/*` and
- * `agent-core-v2/workspace/sessionLifecycle/*`. The engine returns scope
- * handles; over JSON only the plain data fields survive, so the wire keeps
- * `{ id, kind }` (loose — extra fields may appear in-process).
+ * `sessionManager` — App-scope session lifecycle after the Workspace-domain
+ * split. It creates, resumes, closes, archives, restores, deletes, and forks
+ * sessions through the App-owned manager; the engine returns scope handles and
+ * the wire keeps their serializable `{ id, kind }` fields.
  */
 
 import { z } from 'zod';
@@ -55,17 +50,7 @@ export const handleWireSchema = z.looseObject({
   kind: z.string(),
 });
 
-/** `WorkspaceRef` — a `workspaceId` (optional `root` hint) or a bare `root`. */
-export const workspaceRefSchema = z.union([
-  z.object({ workspaceId: z.string(), root: z.string().optional() }),
-  z.object({ root: z.string() }),
-]);
-
-export const workspaceLifecycleContract = {
-  handlerFor: { input: z.tuple([workspaceRefSchema]), output: handleWireSchema },
-} satisfies ServiceContract;
-
-export const sessionLifecycleContract = {
+export const sessionManagerContract = {
   create: { input: z.tuple([createSessionOptionsSchema]), output: handleWireSchema },
   resume: {
     input: z.tuple([z.string(), resumeSessionOptionsSchema.optional()]),

@@ -28,6 +28,7 @@ declare module '#/app/event/eventBus' {
     'agent.status.updated': {
       usage?: UsageStatus;
       swarmMode?: boolean;
+      towerMode?: boolean;
       planMode?: boolean;
       model?: string;
       thinkingEffort?: string;

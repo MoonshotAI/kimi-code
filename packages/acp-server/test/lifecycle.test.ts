@@ -5,10 +5,9 @@ import { fileURLToPath } from 'node:url';
 
 import {
   IOAuthToolkit,
-  ISessionLifecycleService,
+  ISessionManager,
   ISessionMcpHandle,
-  IWorkspaceDirs,
-  IWorkspaceLifecycleService,
+  IWorkspaceInstanceManager,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -93,11 +92,11 @@ describe('acp-server session lifecycle', () => {
   async function sessionMcpEntries(
     c: TestClient,
     sessionId: string,
-  ): Promise<readonly { readonly name: string; readonly status: string }[]> {
-    const handler = await c.server.core.accessor
-      .get(IWorkspaceLifecycleService)
-      .handlerFor({ root: homeDir! });
-    const handle = handler.accessor.get(ISessionLifecycleService).get(sessionId);
+  ): Promise<readonly { readonly name: string; readonly status: string; readonly error?: string }[]> {
+    await c.server.core.accessor
+      .get(IWorkspaceInstanceManager)
+      .getOrCreate({ root: homeDir! });
+    const handle = c.server.core.accessor.get(ISessionManager).get(sessionId);
     expect(handle).toBeDefined();
     const mcp = handle!.accessor.get(ISessionMcpHandle);
     await mcp.ready;
@@ -292,10 +291,10 @@ describe('acp-server session lifecycle', () => {
   );
 
   it(
-    'session/new connects ACP mcpServers as ephemeral session servers',
+    'session/new rejects stdio MCP servers without runtime identity',
     async () => {
       const c = await boot();
-      const created = (await c.send('session/new', {
+      await expect(c.send('session/new', {
         cwd: homeDir,
         mcpServers: [
           {
@@ -305,19 +304,16 @@ describe('acp-server session lifecycle', () => {
             env: [{ name: 'KIMI_TEST_MCP_START_DELAY_MS', value: '0' }],
           },
         ],
-      })) as { sessionId: string };
-      expect(created.sessionId).toMatch(/^session_/);
+      })).rejects.toThrow('ACP stdio MCP server mock does not declare a runtime identity');
 
       // Engine-side assertion: the session scope's MCP handle is the overlay
       // view and the converted server ended up connected under its ACP name.
-      const entries = await sessionMcpEntries(c, created.sessionId);
-      expect(entries.find((e) => e.name === 'mock')?.status).toBe('connected');
     },
     30_000,
   );
 
   it(
-    'session/load forwards mcpServers to the re-materialized session',
+    'session/load rejects stdio MCP servers without runtime identity',
     async () => {
       const c = await boot();
       const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
@@ -325,16 +321,13 @@ describe('acp-server session lifecycle', () => {
       };
       await c.send('session/close', { sessionId: created.sessionId });
 
-      await c.send('session/load', {
+      await expect(c.send('session/load', {
         sessionId: created.sessionId,
         cwd: homeDir,
         mcpServers: [
           { name: 'mock', command: process.execPath, args: [STDIO_MCP_FIXTURE], env: [] },
         ],
-      });
-
-      const entries = await sessionMcpEntries(c, created.sessionId);
-      expect(entries.find((e) => e.name === 'mock')?.status).toBe('connected');
+      })).rejects.toThrow('ACP stdio MCP server mock does not declare a runtime identity');
     },
     30_000,
   );
@@ -355,10 +348,10 @@ describe('acp-server session lifecycle', () => {
 
       // The workspace handler merges create-time dirs into its
       // (ephemeral) additional-dir set.
-      const handler = await c.server.core.accessor
-        .get(IWorkspaceLifecycleService)
-        .handlerFor({ root: homeDir! });
-      const dirs = handler.accessor.get(IWorkspaceDirs);
+      const workspace = await c.server.core.accessor
+        .get(IWorkspaceInstanceManager)
+        .getOrCreate({ root: homeDir! });
+      const dirs = workspace.program.dirs;
       await dirs.ready;
       expect(dirs.additionalDirs).toContain(extraDir);
     },

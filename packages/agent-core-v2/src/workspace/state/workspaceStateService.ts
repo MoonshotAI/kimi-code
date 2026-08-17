@@ -8,9 +8,7 @@
  * Bound at Workspace scope.
  */
 
-import { LifecycleScope } from '#/app/scopes';
 
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { StateRegistry } from '#/_base/state/stateRegistry';
 import { IAppStateService } from '#/app/state/appState';
 
@@ -26,10 +24,3 @@ export class WorkspaceStateService extends StateRegistry implements IWorkspaceSt
   }
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceStateService,
-  WorkspaceStateService,
-  ScopeActivation.OnScopeCreated,
-  'state',
-);

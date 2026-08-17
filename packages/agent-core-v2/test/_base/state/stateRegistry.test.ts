@@ -221,7 +221,7 @@ describe('state services (scoped)', () => {
       'state',
     );
     registerScopedService(
-      LifecycleScope.Workspace,
+      LifecycleScope.App,
       IWorkspaceStateService,
       WorkspaceStateService,
       ScopeActivation.OnScopeCreated,
@@ -247,7 +247,7 @@ describe('state services (scoped)', () => {
   afterEach(() => host.dispose());
 
   function createChain() {
-    const workspace = host.child(LifecycleScope.Workspace, 'w1');
+    const workspace = host.app;
     const session = host.childOf(workspace, LifecycleScope.Session, 's1');
     const agent = host.childOf(session, LifecycleScope.Agent, 'main');
     return { workspace, session, agent };
@@ -292,14 +292,10 @@ describe('state services (scoped)', () => {
     });
   });
 
-  it('cascades inspect from the agent tier up to the app root', () => {
-    const appKey = defineState('test.appOnly', () => 'a');
-    const workspaceKey = defineState('test.workspaceOnly', () => 'w');
+  it('cascades inspect from the agent tier to the session state', () => {
     const sessionKey = defineState('test.sessionCascade', () => 's');
     const agentKey = defineState('test.agentOnly', () => 'g');
-    host.app.accessor.get(IAppStateService).register(appKey);
-    const { workspace, session, agent } = createChain();
-    workspace.accessor.get(IWorkspaceStateService).register(workspaceKey);
+    const { session, agent } = createChain();
     session.accessor.get(ISessionStateService).register(sessionKey);
     const agentState = agent.accessor.get(IAgentStateService);
     agentState.register(agentKey);
@@ -310,15 +306,7 @@ describe('state services (scoped)', () => {
       parent: {
         scope: 'session',
         state: { 'test.sessionCascade': 's' },
-        parent: {
-          scope: 'workspace',
-          state: { 'test.workspaceOnly': 'w' },
-          parent: {
-            scope: 'app',
-            state: { 'test.appOnly': 'a' },
-            parent: undefined,
-          },
-        },
+        parent: undefined,
       },
     });
   });

@@ -82,7 +82,19 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/debug/workspace/{workspace_id}/{service}/{method}",
+      "/api/v1/debug/session/{session_id}/agent/{agent_id}/runtime-binding",
+    ],
+    [
+      "GET",
+      "/api/v1/debug/session/{session_id}/association",
+    ],
+    [
+      "GET",
+      "/api/v1/debug/workspace/{workspace_id}/snapshot",
+    ],
+    [
+      "GET",
+      "/api/v1/debug/workspaces",
     ],
     [
       "GET",
@@ -198,6 +210,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/sessions/{session_id}/runtime",
+    ],
+    [
+      "GET",
       "/api/v1/sessions/{session_id}/skills",
     ],
     [
@@ -295,10 +311,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/debug/session/{session_id}/agent/{agent_id}/{service}/{method}",
-    ],
-    [
-      "POST",
-      "/api/v1/debug/workspace/{workspace_id}/{service}/{method}",
     ],
     [
       "POST",
@@ -403,6 +415,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/sessions/{session_id}/questions/{tail}",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/runtime",
     ],
     [
       "POST",

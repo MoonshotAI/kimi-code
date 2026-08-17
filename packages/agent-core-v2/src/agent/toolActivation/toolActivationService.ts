@@ -42,6 +42,7 @@ import { isToolActive } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 
 import { IAgentToolActivationService } from './toolActivation';
 
@@ -55,6 +56,7 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @IEventBus eventBus: IEventBus,
     @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
   ) {
@@ -64,6 +66,7 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         void this.activate();
       }),
     );
+    this._register(this.runtime.onDidChange(() => this.refreshRuntimeRecords()));
     this._register(
       this.contributions.onDidChange((change) => {
         this.activateRecords(change.added);
@@ -89,6 +92,7 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         const { id, options } = record;
         const source = options.source ?? 'builtin';
         if (this.toolRegistry.resolve(options.name) !== undefined) continue;
+        if (!this.runtimeAllows(record)) continue;
         if (!isToolActive(workspaceVeto, options.name, source)) continue;
         if (!isToolActive(policy, options.name, source)) continue;
         if (options.when !== undefined && !options.when(accessor)) continue;
@@ -101,6 +105,18 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         this._register(registration);
       }
     });
+  }
+
+  private refreshRuntimeRecords(): void {
+    for (const record of this.contributions.items) {
+      if (!this.runtimeAllows(record)) this.deactivateRecord(record);
+    }
+    this.activateRecords(this.contributions.items);
+  }
+
+  private runtimeAllows(record: AgentToolContribution): boolean {
+    const required = record.options.requiredRuntimeCapabilities;
+    return required === undefined || this.runtime.isAvailable(required);
   }
 
   private deactivateRecord(record: AgentToolContribution): void {

@@ -246,6 +246,13 @@ export interface EditorOptions {
 	paddingX?: number;
 	autocompleteMaxVisible?: number;
 	disablePasteBurst?: boolean;
+	/**
+	 * When true, typing `/` after whitespace mid-input also auto-triggers
+	 * autocomplete, so providers can offer inline completions (e.g. inline
+	 * skill selection). The default providers treat such `/` as a path prefix,
+	 * so the default is false to avoid surprising other consumers.
+	 */
+	inlineSlashTrigger?: boolean;
 }
 
 const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
@@ -329,6 +336,7 @@ export class Editor implements Component, Focusable {
 	// Non-bracketed paste-burst fallback
 	private pasteBurst = new PasteBurst();
 	private disablePasteBurst: boolean = false;
+	private inlineSlashTrigger: boolean = false;
 
 	// Prompt history for up/down navigation
 	private history: string[] = [];
@@ -386,6 +394,7 @@ export class Editor implements Component, Focusable {
 		const maxVisible = options.autocompleteMaxVisible ?? 5;
 		this.autocompleteMaxVisible = Number.isFinite(maxVisible) ? Math.max(3, Math.min(20, Math.floor(maxVisible))) : 5;
 		this.disablePasteBurst = options.disablePasteBurst ?? false;
+		this.inlineSlashTrigger = options.inlineSlashTrigger ?? false;
 	}
 
 	/** Set of currently valid paste IDs, for marker-aware segmentation. */
@@ -806,7 +815,11 @@ export class Editor implements Component, Focusable {
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
 
-					if (this.autocompletePrefix.startsWith("/")) {
+					// Slash-command completions submit on confirm (Enter runs the
+					// command); inline completions marked by the provider (e.g. an
+					// inline skill token mid-prompt) are content edits, so confirm
+					// behaves like Tab and never submits.
+					if (this.autocompletePrefix.startsWith("/") && selected.data?.["inlineSkill"] !== true) {
 						this.cancelAutocomplete();
 						// Fall through to submit
 					} else {
@@ -1244,8 +1257,11 @@ export class Editor implements Component, Focusable {
 
 		// Check if we should trigger or update autocomplete
 		if (!this.autocompleteState) {
-			// Auto-trigger for "/" at the start of a line (slash commands)
-			if (char === "/" && this.isAtStartOfMessage()) {
+			// Auto-trigger for "/" at the start of a line (slash commands). When
+			// the editor opts in, also trigger "/" after whitespace mid-input so
+			// the provider can offer inline completions; ordinary prose slashes
+			// (paths, fractions) are left untouched.
+			if (char === "/" && (this.isAtStartOfMessage() || (this.inlineSlashTrigger && this.isAtInlineSlashTrigger()))) {
 				this.tryTriggerAutocomplete();
 			}
 			// Auto-trigger for symbol-based completion like @, #, or provider triggers at token boundaries
@@ -1258,7 +1274,7 @@ export class Editor implements Component, Focusable {
 				}
 			}
 			// Also auto-trigger when typing letters in a slash command or symbol completion context
-			else if (/[a-zA-Z0-9.\-_]/.test(char)) {
+			else if (/[a-zA-Z0-9.:\-_]/.test(char)) {
 				const currentLine = this.state.lines[this.state.cursorLine] || "";
 				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
 				// Check if we're in a slash command (with or without space for arguments)
@@ -1267,6 +1283,12 @@ export class Editor implements Component, Focusable {
 				}
 				// Check if we're in a symbol-based completion context like @, #, or provider triggers
 				else if (this.autocompleteTriggerPattern.test(textBeforeCursor)) {
+					this.tryTriggerAutocomplete();
+				}
+				// Check if we're typing an inline slash token (opt-in trigger):
+				// without this the slash's in-flight request goes stale as the
+				// token grows and no fresh request replaces it.
+				else if (this.isInInlineSlashContext(textBeforeCursor)) {
 					this.tryTriggerAutocomplete();
 				}
 			}
@@ -2215,6 +2237,38 @@ export class Editor implements Component, Focusable {
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 		const beforeCursor = currentLine.slice(0, this.state.cursorCol);
 		return beforeCursor.trim() === "" || beforeCursor.trim() === "/";
+	}
+
+	// Helper method to check if "/" was typed after whitespace mid-input, which
+	// providers can use for inline completions while leaving ordinary prose
+	// slashes (e.g. paths, fractions) untouched. Also covers "/" at the start
+	// of a non-first line, so inline completion works across multi-line input.
+	private isAtInlineSlashTrigger(): boolean {
+		if (this.isAtStartOfMessage()) return false;
+
+		const currentLine = this.state.lines[this.state.cursorLine] || "";
+		const beforeCursor = currentLine.slice(0, this.state.cursorCol);
+		if (!beforeCursor.endsWith("/")) return false;
+
+		// "/" at the start of a subsequent line.
+		if (this.state.cursorLine > 0 && beforeCursor.trim() === "/") {
+			return true;
+		}
+
+		const charBeforeSlash = beforeCursor[beforeCursor.length - 2];
+		return charBeforeSlash === " " || charBeforeSlash === "\t";
+	}
+
+	// Whether the token being typed is an inline slash token (opt-in trigger):
+	// a "/" after whitespace mid-input, or a "/" opening a subsequent line —
+	// isSlashMenuAllowed confines the slash-command menu to the first line,
+	// while the inline trigger deliberately covers later lines too. The
+	// leading slash-command context is owned by isInSlashCommandContext.
+	private isInInlineSlashContext(textBeforeCursor: string): boolean {
+		if (!this.inlineSlashTrigger) return false;
+		if (this.isInSlashCommandContext(textBeforeCursor)) return false;
+		if (/[ \t]\/[a-zA-Z0-9.:\-_]*$/.test(textBeforeCursor)) return true;
+		return this.state.cursorLine > 0 && /^\/[a-zA-Z0-9.:\-_]*$/.test(textBeforeCursor);
 	}
 
 	private isInSlashCommandContext(textBeforeCursor: string): boolean {

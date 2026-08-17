@@ -157,10 +157,11 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
   }
 
   async function post<T>(path: string, body: unknown): Promise<Envelope<T>> {
+    const requestBody = path.endsWith('/terminals') ? { runtime_id: 'local', ...(body as object) } : body;
     const res = await fetch(`${base}${path}`, {
       method: 'POST',
       headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
-      body: JSON.stringify(body),
+      body: JSON.stringify(requestBody),
     } as never);
     return (await res.json()) as Envelope<T>;
   }
@@ -171,6 +172,18 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
     } as never);
     return (await res.json()) as Envelope<T>;
   }
+
+  it('defaults terminal creation to the local runtime when runtime_id is omitted', async () => {
+    const sid = await createSession(work as string);
+    const res = await fetch(`${base}/api/v1/sessions/${sid}/terminals`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({}),
+    } as never);
+    const body = (await res.json()) as Envelope<Terminal>;
+    expect(body.code).toBe(0);
+    expect(body.data.session_id).toBe(sid);
+  });
 
   it('creates terminals for multiple sessions using each session workspace cwd', async () => {
     const rootA = await mkdtemp(join(tmpdir(), 'kimi-server-v2-term-a-'));

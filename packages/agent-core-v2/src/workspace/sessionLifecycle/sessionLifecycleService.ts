@@ -107,19 +107,17 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'pathe';
 import { ulid } from 'ulid';
 
-import { IInstantiationService } from '#/_base/di/instantiation';
+import type { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
 import {
   createScopedChildHandle,
   type ISessionScopeHandle,
-  ScopeActivation,
-  registerScopedService,
 } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { AsyncEmitter, Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/features/plan/configSection';
 import { IAgentPlanService } from '#/features/plan/plan';
+import { LifecycleScope } from '#/app/scopes';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
@@ -134,7 +132,6 @@ import {
 } from '#/app/sessionIndex/sessionIndex';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -144,10 +141,12 @@ import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
 import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
-import { installSessionSeedAdapters } from '#/session/sessionSeed/sessionSeedAdapters';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
+import { ISessionSkillCatalogData } from '#/session/sessionSkillCatalog/skillCatalogData';
+import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { drainSessionMetadataWrites, toEpochMs } from '#/session/sessionMetadata/sessionMetadataService';
-import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { IWireService } from '#/wire/wire';
 import {
@@ -174,6 +173,10 @@ import {
 } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IAgentActivityView } from '#/agent/activityView/activityView';
+import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
+import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
+import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
+import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
 import {
@@ -200,6 +203,13 @@ type MaterializeSessionOptions = Omit<CreateSessionOptions, 'sessionId'> & {
 };
 
 const NO_ABORT = new AbortController().signal;
+
+const SESSION_CREATE_RELOAD_SKILL_SOURCES: readonly string[] = [
+  'user',
+  'explicit',
+  'extra',
+  PLUGIN_SKILL_SOURCE_ID,
+];
 
 // NOTE: stays Disposable — its own 'get' and 'config' collide with the Fiber
 export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
@@ -229,11 +239,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
 
   constructor(
-    @IInstantiationService private readonly instantiation: IInstantiationService,
+    private readonly instantiation: IInstantiationService,
     @IWorkspaceContext private readonly workspaceContext: IWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
-    @IHostEnvironment private readonly hostEnv: IHostEnvironment,
     @ISessionIndex private readonly index: ISessionIndex,
     @ISessionIndexMirror private readonly indexMirror: ISessionIndexMirror,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
@@ -253,13 +262,17 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IPluginAgentProfileLoader
     private readonly pluginAgentProfileLoader: IPluginAgentProfileLoader,
     @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
-    @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
+    @IWorkspaceSkillCatalog private readonly workspaceSkillCatalog: IWorkspaceSkillCatalog,
+    @IWorkspaceInstructionsService private readonly workspaceInstructions: IWorkspaceInstructionsService,
+    @IWorkspaceMcpService private readonly workspaceMcp: IWorkspaceMcpService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IModelService private readonly models: IModelService,
     @IProviderService private readonly providers: IProviderService,
     @IFlagService private readonly flags: IFlagService,
+    onDispose?: () => void,
   ) {
     super();
+    if (onDispose !== undefined) this._register({ dispose: onDispose });
   }
 
   private get workspaceId(): string {
@@ -272,6 +285,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
     const sessionId = opts.sessionId ?? createSessionId();
+    await this.workspaceSkillCatalog
+      .reloadSources(SESSION_CREATE_RELOAD_SKILL_SOURCES)
+      .catch(() => undefined);
     const handle = await this.materializeSession({ ...opts, sessionId });
     try {
       const main =
@@ -321,7 +337,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };
-    await this.hostEnv.ready;
     const handle = createScopedChildHandle(
       this.instantiation,
       LifecycleScope.Session,
@@ -334,14 +349,13 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             _serviceBrand: undefined,
             workspaceKey: workspaceId,
           }),
-          [ISessionProcessRunner, this.processRunner],
+          [ISessionSkillCatalogData, this.workspaceSkillCatalog.sessionData()],
+          [ISessionInstructionsProvider, this.workspaceInstructions.sessionProvider()],
+          [ISessionMcpHandle, this.workspaceMcp.sessionHandle()],
+          [ISessionWorkspaceInfo, this.workspaceDirs.sessionInfo()],
           ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),
         ],
         configureContainer: (container) => {
-          installSessionSeedAdapters(container);
-          // The will-create moment is a business-lifecycle event; the DI
-          // container behind the participation surface stays this service's
-          // implementation detail.
           this._onWillCreateSession.fire({
             sessionId: opts.sessionId,
             readSeed: (id) => container.invokeFunction((accessor) => accessor.get(id)),
@@ -821,13 +835,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  ISessionLifecycleService,
-  SessionLifecycleService,
-  ScopeActivation.OnScopeCreated,
-  'sessionLifecycle',
-);
 
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const items: T[] = [];

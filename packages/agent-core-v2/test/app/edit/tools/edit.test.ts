@@ -12,6 +12,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as posixPath from 'node:path/posix';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -27,6 +28,8 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { Runtime } from '#/runtime/runtime';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
@@ -66,16 +69,39 @@ function buildTool(
   fs: IHostFileSystem,
   env: IHostEnvironment,
   workspace: ISessionWorkspaceContext,
+  appFs: IHostFileSystem = fs,
 ): EditTool {
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
-      reg.defineInstance(IHostFileSystem, fs);
+      reg.defineInstance(IHostFileSystem, appFs);
       reg.defineInstance(IHostEnvironment, env);
       reg.defineInstance(ISessionWorkspaceContext, workspace);
       reg.define(IFileEditService, FileEditService);
     },
   });
-  return new EditTool(ix.get(IFileEditService), env, workspace);
+  const runtimeValue = {
+    identity: { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+    capabilities: new Set(['fs'] as const),
+    environment: env,
+    path: posixPath,
+    workspace: { mapRoots: (roots: { workDir: string; additionalDirs?: readonly string[] }) => roots },
+    fs,
+    status: 'ready',
+    onDidChangeStatus: () => ({ dispose: () => {} }),
+    dispose: () => {},
+  } as unknown as Runtime;
+  const runtime: IAgentRuntimeService = {
+    _serviceBrand: undefined,
+    onDidChange: () => ({ dispose: () => {} }),
+    isAvailable: () => true,
+    inspect: () => runtimeValue,
+    acquire: () => ({
+      runtime: runtimeValue,
+      track: (resource) => resource,
+      dispose: () => {},
+    }),
+  };
+  return new EditTool(ix.get(IFileEditService), runtime, workspace);
 }
 
 function isPromiseLike(
@@ -212,6 +238,29 @@ describe('EditTool', () => {
 
     expect(result.output).toContain('Replaced 1 occurrence');
     expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', 'alpha gamma');
+  });
+
+  it('executes against the selected runtime filesystem instead of the App filesystem', async () => {
+    const runtimeWrite = vi.fn().mockResolvedValue(undefined);
+    const { fs: runtimeFs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue('runtime content'),
+      writeText: runtimeWrite,
+    });
+    const appRead = vi.fn().mockRejectedValue(new Error('App filesystem bypass'));
+    const appWrite = vi.fn().mockRejectedValue(new Error('App filesystem bypass'));
+    const { fs: appFs } = createSpiedEditFs({ readText: appRead, writeText: appWrite });
+    const tool = buildTool(runtimeFs, createTestEnv(), PERMISSIVE_WORKSPACE, appFs);
+
+    const result = await execute(tool, {
+      path: '/tmp/a.txt',
+      old_string: 'content',
+      new_string: 'generation',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(runtimeWrite).toHaveBeenCalledWith('/tmp/a.txt', 'runtime generation');
+    expect(appRead).not.toHaveBeenCalled();
+    expect(appWrite).not.toHaveBeenCalled();
   });
 
   it('expands leading tilde paths using the kaos home directory', async () => {

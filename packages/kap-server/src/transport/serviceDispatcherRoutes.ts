@@ -77,7 +77,6 @@ export function registerServiceDispatcherRoutes(
   const lookup = opts.lookup ?? ((name) => resolveAnyScopedServiceId(core, name));
   const scopeRoutes: { path: string; scopeKind: ScopeKind }[] = [
     { path: `${basePath}/:service/:method`, scopeKind: 'core' },
-    { path: `${basePath}/workspace/:workspace_id/:service/:method`, scopeKind: 'workspace' },
     { path: `${basePath}/session/:session_id/:service/:method`, scopeKind: 'session' },
     {
       path: `${basePath}/session/:session_id/agent/:agent_id/:service/:method`,

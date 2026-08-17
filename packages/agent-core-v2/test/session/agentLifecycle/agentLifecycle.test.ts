@@ -17,11 +17,15 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import '#/agent/profile/profileService';
+import { profileBind } from '#/agent/profile/profileOps';
+import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import '#/agent/permissionMode/permissionModeOps';
+import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { ISessionStateService } from '#/session/state/sessionState';
@@ -36,6 +40,7 @@ import { createMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import '#/agent/mcp/mcpService';
+import { IWireService } from '#/wire/wire';
 import '#/wire/wireService';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
@@ -68,6 +73,11 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import '#/agent/toolActivation/toolActivationService';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { FakeRuntime } from '#/runtime/fakeRuntime';
+import {
+  IRuntimeResolver,
+  IWorkspaceInstanceManager,
+} from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
@@ -187,6 +197,20 @@ describe('AgentLifecycleService', () => {
           ? 'sessions/ws_test/sess_test'
           : `sessions/ws_test/sess_test/${subKey}`,
     } as unknown as ISessionContext);
+    ix.stub(IRuntimeResolver, {
+      _serviceBrand: undefined,
+      inspect: (binding) => new FakeRuntime({ ...binding, generation: `${binding.runtimeId}-one` }),
+      acquire: (binding) => ({
+        runtime: new FakeRuntime({ ...binding, generation: `${binding.runtimeId}-one` }),
+        track: (resource) => resource,
+        dispose: () => {},
+      }),
+    });
+    ix.stub(IWorkspaceInstanceManager, {
+      _serviceBrand: undefined,
+      onDidChange: () => ({ dispose: () => {} }),
+      get: () => undefined,
+    });
     ix.stub(ISessionMetadata, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -603,6 +627,21 @@ describe('AgentLifecycleService', () => {
     expect(permissionModeSetMode).not.toHaveBeenCalled();
   });
 
+  it('restores the runtime binding without persisting a generation', async () => {
+    ix.stub(IAppendLogStore, recordingAppendLog([
+      createWireMetadataRecord(1),
+      { type: 'runtime.set_binding', workspaceId: 'ws_test', runtimeId: 'remote', time: 2 },
+    ]).store);
+
+    const agent = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+
+    expect(agent.accessor.get(IAgentRuntimeBindingService).current).toEqual({
+      workspaceId: 'ws_test',
+      runtimeId: 'remote',
+    });
+    expect(agent.accessor.get(IAgentRuntimeService).inspect().identity.generation).toBe('remote-one');
+  });
+
   it('broadcastPermissionMode sets the mode on every live agent', async () => {
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });
@@ -622,6 +661,24 @@ describe('AgentLifecycleService', () => {
     svc.broadcastPermissionMode('auto');
 
     expect(permissionModeSetMode.mock.calls).toEqual([['auto']]);
+  });
+
+  it('broadcastPermissionMode leaves tower-worker agents pinned to their spawned mode', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    const worker = await svc.create({ agentId: 'worker-1' });
+    worker.accessor.get(IWireService).dispatch(
+      profileBind({
+        profileName: TOWER_WORKER_PROFILE,
+        thinkingEffort: 'off',
+        systemPrompt: '',
+        disallowedTools: [],
+      }),
+    );
+
+    svc.broadcastPermissionMode('manual');
+
+    expect(permissionModeSetMode.mock.calls).toEqual([['manual']]);
   });
 
   it('wires MCP OAuth credentials through the session atomic document store', async () => {
@@ -751,6 +808,22 @@ describe('AgentLifecycleService', () => {
       disallowedTools: ['Bash'],
       subagents: ['explore'],
     });
+  });
+
+  it('fork snapshots the source runtime and remains independent', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const source = await svc.create({ agentId: 'main' });
+    const sourceRuntime = source.accessor.get(IAgentRuntimeBindingService);
+    sourceRuntime.switch('remote');
+
+    const child = await svc.fork('main', { agentId: 'forked-runtime' });
+    const childRuntime = child.accessor.get(IAgentRuntimeBindingService);
+    expect(childRuntime.current.runtimeId).toBe('remote');
+
+    sourceRuntime.switch('local');
+    expect(childRuntime.current.runtimeId).toBe('remote');
+    childRuntime.switch('local');
+    expect(sourceRuntime.current.runtimeId).toBe('local');
   });
 
   it('run throws when the agent does not exist', () => {

@@ -12,7 +12,7 @@ import { IRestGateway } from '#/app/gateway/gateway';
 import { RestGateway } from '#/app/gateway/gatewayService';
 import { ILogService } from '#/_base/log/log';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { createHooks } from '#/hooks';
@@ -112,16 +112,21 @@ describe('RestGateway', () => {
     };
     const handlerHandle = {
       id: 'wd_stub',
-      kind: LifecycleScope.Workspace,
+      kind: 'program',
       accessor: makeAccessor([[ISessionLifecycleService, sessionLifecycle]]),
       dispose: () => {},
     } as const;
-    ix.stub(IWorkspaceLifecycleService, {
+    ix.stub(ISessionManager, {
       _serviceBrand: undefined,
-      onDidMaterializeHandler: () => ({ dispose: () => {} }),
-      handlerFor: () => Promise.resolve(handlerHandle),
-      handlers: { list: () => [handlerHandle] },
-      sessions: { list: () => ['s1'] },
+      create: () => Promise.resolve(sessionHandle),
+      resume: () => Promise.resolve(sessionHandle),
+      get: (id: string) => (id === 's1' ? sessionHandle : undefined),
+      list: () => [sessionHandle],
+      close: () => Promise.resolve(),
+      archive: () => Promise.resolve(),
+      restore: () => Promise.resolve(sessionHandle),
+      delete: () => Promise.resolve(),
+      fork: () => Promise.resolve(sessionHandle),
     });
     ix.stub(ILogService, stubLog());
     ix.set(IRestGateway, new SyncDescriptor(RestGateway));

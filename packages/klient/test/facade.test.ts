@@ -183,6 +183,33 @@ describe('agent profile routing', () => {
   });
 });
 
+describe('agent skill routing', () => {
+  it('promptWithSkills routes to agentSkillService.promptWithSkills with the agent scope', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+
+    channel.result = { turn_id: 7 };
+    await expect(
+      agent.promptWithSkills({
+        input: [{ type: 'text', text: 'Review this change.' }],
+        skills: [{ name: 'review' }, { name: 'security', args: 'src/app.ts' }],
+      }),
+    ).resolves.toEqual({ turn_id: 7 });
+    expect(channel.calls[0]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentSkillService',
+      method: 'promptWithSkills',
+      args: [
+        {
+          input: [{ type: 'text', text: 'Review this change.' }],
+          skills: [{ name: 'review' }, { name: 'security', args: 'src/app.ts' }],
+        },
+      ],
+    });
+  });
+});
+
 describe('session skills routing', () => {
   it('skills.list routes to sessionSkillCatalog.list with the session scope', async () => {
     const channel = new FakeChannel();
@@ -345,61 +372,40 @@ describe('agent mcp / compaction routing', () => {
 });
 
 describe('session lifecycle routing', () => {
-  it('delete resolves the workspace handler and calls the lifecycle delete', async () => {
+  it('delete calls the App session manager', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
-    channel.results.set('sessionIndex.get', SUMMARY);
-    channel.results.set('sessionLifecycleService.delete', undefined);
+    channel.results.set('sessionManager.delete', undefined);
 
     await klient.session('s1').delete();
 
     expect(channel.calls).toEqual([
-      { scope: {}, service: 'sessionIndex', method: 'get', args: ['s1'] },
-      {
-        scope: { workspaceId: 'w1' },
-        service: 'sessionLifecycleService',
-        method: 'delete',
-        args: ['s1'],
-      },
+      { scope: {}, service: 'sessionManager', method: 'delete', args: ['s1'] },
     ]);
   });
 
-  it('delete throws a not-found RPCError when the session is not in the index', async () => {
+  it('restore forwards resume options to the App session manager', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
-    channel.results.set('sessionIndex.get', undefined);
-
-    await expect(klient.session('gone').delete()).rejects.toMatchObject({
-      name: 'RPCError',
-      code: 40404,
-    });
-    expect(channel.calls).toHaveLength(1);
-  });
-
-  it('restore forwards resume options to the lifecycle restore', async () => {
-    const channel = new FakeChannel();
-    const klient = createKlientFromChannel(channel);
-    channel.results.set('sessionIndex.get', SUMMARY);
-    channel.results.set('sessionLifecycleService.restore', { id: 's1', kind: 'session' });
+    channel.results.set('sessionManager.restore', { id: 's1', kind: 'session' });
 
     const opts = {
       mcpServers: { example: { transport: 'stdio' as const, command: 'node' } },
     };
     await expect(klient.session('s1').restore(opts)).resolves.toBe(true);
 
-    expect(channel.calls[1]).toEqual({
-      scope: { workspaceId: 'w1' },
-      service: 'sessionLifecycleService',
+    expect(channel.calls[0]).toEqual({
+      scope: {},
+      service: 'sessionManager',
       method: 'restore',
       args: ['s1', opts],
     });
   });
 
-  it('sessions.create forwards mcpServers to the engine', async () => {
+  it('sessions.create forwards mcpServers to the App session manager', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
-    channel.results.set('workspaceLifecycleService.handlerFor', { id: 'w1', kind: 'workspace' });
-    channel.results.set('sessionLifecycleService.create', { id: 's1', kind: 'session' });
+    channel.results.set('sessionManager.create', { id: 's1', kind: 'session' });
     channel.results.set('sessionMetadata.read', {
       id: 's1',
       createdAt: 1,
@@ -412,9 +418,9 @@ describe('session lifecycle routing', () => {
     };
     await klient.global.sessions.create({ workDir: '/x', mcpServers });
 
-    expect(channel.calls[1]).toMatchObject({
-      scope: { workspaceId: 'w1' },
-      service: 'sessionLifecycleService',
+    expect(channel.calls[0]).toMatchObject({
+      scope: {},
+      service: 'sessionManager',
       method: 'create',
       args: [{ workDir: '/x', mcpServers }],
     });
