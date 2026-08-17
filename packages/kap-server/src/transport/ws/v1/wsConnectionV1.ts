@@ -447,6 +447,10 @@ export class WsConnectionV1 implements BroadcastTarget {
   private async onWatchFs(frame: InboundFrame, isAdd: boolean): Promise<void> {
     const payload = frame.payload ?? {};
     const sessionId = typeof payload['session_id'] === 'string' ? payload['session_id'] : '';
+    const runtimeId =
+      typeof payload['runtime_id'] === 'string' && payload['runtime_id'].length > 0
+        ? payload['runtime_id']
+        : 'local';
     const paths = asStringArray(payload['paths']);
     const bridge = this.fsWatchBridge;
     if (bridge === undefined) {
@@ -456,8 +460,8 @@ export class WsConnectionV1 implements BroadcastTarget {
     let result;
     try {
       result = isAdd
-        ? await bridge.addWatch(this, sessionId, paths)
-        : await bridge.removeWatch(this, sessionId, paths);
+        ? await bridge.addWatch(this, sessionId, paths, runtimeId)
+        : await bridge.removeWatch(this, sessionId, paths, runtimeId);
     } catch (error) {
       this.sendImmediateFrame(
         buildAck(frame.id ?? '', 1, 'internal error', {

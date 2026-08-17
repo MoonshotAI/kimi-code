@@ -18,6 +18,16 @@
  * caching: every consumer of the same log shares one immutable array, so an
  * in-place mutation attempt throws instead of silently polluting the cache —
  * the same contract the wire's frozen state array gave the bare-array state.
+ * Each marker's derivation is additionally memoized per marker object, gated
+ * on the marker's whole pre-marker input segment recurring object-for-object:
+ * `deriveCompactionWindow` synthesizes fresh summary / elision messages on
+ * every call, and without the reuse a mutation behind the last marker (an
+ * append, an undo, the `swarm_mode.exit` pop) would re-derive a window whose
+ * synthesized prefix no longer shares identity with the previous window's,
+ * spuriously failing consumers that verify survivors by identity
+ * (`contextMemory.publishTrailingRemoval`). Replay rehydration replaces
+ * media-bearing survivors with new objects, which fails the identity gate
+ * and forces a fresh derivation with the rehydrated parts.
  *
  * Also owns `mapVisibleIndexToLog`, the inverse positional mapping undo needs
  * to turn a cut inside the visible window back into a log cut: the post-last-
@@ -34,6 +44,33 @@ const visibleWindowCache = new WeakMap<
   readonly ContextMessage[],
   readonly ContextMessage[]
 >();
+
+/**
+ * Per-marker derivation cache, keyed on the marker message object.
+ */
+interface CachedMarkerDerivation {
+  readonly inputs: readonly ContextMessage[];
+  readonly result: readonly ContextMessage[];
+}
+
+const markerDerivationCache = new WeakMap<ContextMessage, CachedMarkerDerivation>();
+
+function deriveWindowForMarker(
+  inputs: readonly ContextMessage[],
+  marker: ContextMessage,
+): readonly ContextMessage[] {
+  const cached = markerDerivationCache.get(marker);
+  if (
+    cached !== undefined &&
+    cached.inputs.length === inputs.length &&
+    cached.inputs.every((message, index) => message === inputs[index])
+  ) {
+    return cached.result;
+  }
+  const result = deriveCompactionWindow(inputs, marker);
+  markerDerivationCache.set(marker, { inputs, result });
+  return result;
+}
 
 export function deriveVisibleMessages(
   log: readonly ContextMessage[],
@@ -74,7 +111,7 @@ function computeVisibleMessages(
     const message = log[i]!;
     if (message.compaction === undefined) continue;
     sawMarker = true;
-    window = deriveCompactionWindow([...window, ...log.slice(cursor, i)], message);
+    window = deriveWindowForMarker([...window, ...log.slice(cursor, i)], message);
     cursor = i + 1;
   }
   if (!sawMarker) return log;

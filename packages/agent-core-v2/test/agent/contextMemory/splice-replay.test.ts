@@ -16,7 +16,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
-import { swarmExit } from '#/agent/swarm/swarmOps';
+import { swarmExit } from '#/features/swarm/swarmOps';
 import {
   ContextModel,
   contextAppendMessage,
@@ -837,6 +837,45 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       records,
     );
     expect(replay.svc.get().map(textOf)).toEqual(['s']);
+  });
+
+  it('verifies a trailing pop after compaction by identity-stable window survivors', () => {
+    const host = buildHost(KEY);
+    const reminder: ContextMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: 'swarm reminder' }],
+      toolCalls: [],
+      origin: { kind: 'injection', variant: 'swarm_mode' },
+    };
+    const splices: { start: number; deleteCount: number }[] = [];
+    disposables.add(
+      host.eventBus.subscribe('context.spliced', (e) => {
+        splices.push({ start: e.start, deleteCount: e.deleteCount });
+      }),
+    );
+
+    host.svc.append(userMessage('u1'), userMessage('u2'));
+    host.wire.dispatch(
+      contextApplyCompaction({
+        summary: 's',
+        contextSummary: 'S',
+        compactedCount: 2,
+        tokensBefore: 10,
+        tokensAfter: 4,
+        keptUserMessageCount: 2,
+      }),
+    );
+    host.svc.append(reminder);
+    const before = host.svc.get();
+    expect(before.at(-1)).toBe(reminder);
+
+    host.wire.dispatch(swarmExit({}));
+
+    // The pop re-derives the window from a new log, but the synthesized
+    // compaction prefix keeps its identity, so the verification passes and
+    // the live splice is published.
+    expect(host.svc.publishTrailingRemoval(before)).toBe(true);
+    expect(splices.at(-1)).toEqual({ start: before.length - 1, deleteCount: 1 });
   });
 
   it('derives identical log and window live and on replay', async () => {

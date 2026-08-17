@@ -1,5 +1,7 @@
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+import { TuiAltScreen, TuiMainScreen } from '@moonshot-ai/pi-tui';
 
 import { createTUIState, type KimiTUIOptions } from '#/tui/kimi-tui';
 import type { AppState } from '#/tui/types';
@@ -84,5 +86,62 @@ describe('createTUIState', () => {
     expect(state.loadingSessions).toBe(false);
     expect(state.sessionsScope).toBe('cwd');
     expect(state.activitySpinner).toBeNull();
+  });
+
+  it('uses the main-screen renderer by default', () => {
+    const state = createTUIState({
+      initialAppState: fakeInitialAppState(),
+      startup: {
+        continueLast: false,
+        yolo: false,
+        auto: false,
+        plan: false,
+      },
+    });
+
+    expect(state.ui).toBeInstanceOf(TuiMainScreen);
+    expect(state.ui.mode).toBe('regular');
+    expect(state.dockContainer).toBeUndefined();
+  });
+
+  it('builds an alternate-screen renderer with a docked layout in fullscreen mode', () => {
+    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
+    const state = createTUIState({
+      initialAppState: fakeInitialAppState(),
+      startup: {
+        continueLast: false,
+        yolo: false,
+        auto: false,
+        plan: false,
+      },
+    });
+    vi.unstubAllEnvs();
+
+    expect(state.ui).toBeInstanceOf(TuiAltScreen);
+    expect(state.ui.mode).toBe('fullscreen');
+
+    // The chrome docks below the transcript ScrollView, in z-order.
+    const dock = state.dockContainer;
+    expect(dock).toBeDefined();
+    expect(dock?.children).toEqual([
+      state.activityContainer,
+      state.todoPanelContainer,
+      state.queueContainer,
+      state.btwPanelContainer,
+      state.editorContainer,
+    ]);
+
+    // The layout root is mounted and the root children list stays empty.
+    expect((state.ui as TuiAltScreen).getLayoutRoot()).toBeDefined();
+    expect(state.ui.children).toHaveLength(0);
+
+    // Mouse capture replaces native terminal link activation / right-click
+    // paste, so both must be routed through renderer callbacks.
+    const internals = state.ui as unknown as {
+      openUrl?: (url: string) => void;
+      onRightClickPaste?: () => void;
+    };
+    expect(typeof internals.openUrl).toBe('function');
+    expect(typeof internals.onRightClickPaste).toBe('function');
   });
 });

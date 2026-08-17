@@ -24,7 +24,11 @@
  * `setDefined` drops those), and the models.dev import swaps aliases in two
  * passes (drop, then re-add onto clean slots). The kosong persistence
  * bridge then pushes the change into the registries, which is also what
- * invalidates the runtime model catalog.
+ * invalidates the runtime model catalog. Each FINAL models-table pass also
+ * folds the `[secondary_model]` subagent pool through
+ * `cascadeSubagentModelPool` (the drop passes deliberately skip it — the
+ * re-add pass is what the pool must agree with), so an import that drops a
+ * pooled alias never leaves a dangling pool for session-start validation.
  *
  * Both third-party fetches — the models.dev directory and the custom-registry
  * import — send the identity snapshot's `outboundUserAgent`, matching what
@@ -53,6 +57,11 @@ import { modelsDevProviderModels, resolveModelsDevImport } from './modelsDev';
 import { DEFAULT_MODEL_SECTION, MODELS_SECTION, PROVIDERS_SECTION } from './configSection';
 import { ModelsDevImportErrors } from './errors';
 import { IKosongConfigService } from './kosongConfig';
+import {
+  SECONDARY_MODEL_SECTION,
+  cascadeSubagentModelPool,
+  type SecondaryModelConfig,
+} from '#/session/subagent/configSection';
 import {
   IModelsDevImportService,
   PROVIDER_ID_PATTERN,
@@ -133,6 +142,19 @@ export class ModelsDevImportService implements IModelsDevImportService {
     return this.config;
   }
 
+  private async cascadePool(
+    config: IConfigService,
+    nextModels: Record<string, unknown>,
+  ): Promise<void> {
+    const cascaded = cascadeSubagentModelPool(
+      config.inspect<SecondaryModelConfig>(SECONDARY_MODEL_SECTION).userValue,
+      nextModels,
+    );
+    if (cascaded !== undefined) {
+      await config.replace(SECONDARY_MODEL_SECTION, cascaded);
+    }
+  }
+
   private async doImportModelsDevProvider(
     options: ImportModelsDevProviderOptions,
   ): Promise<ImportModelsDevProviderResult> {
@@ -201,6 +223,7 @@ export class ModelsDevImportService implements IModelsDevImportService {
       nextModels[`${targetId}/${model.id}`] = modelsDevModelToRecord(targetId, model);
     }
     await config.replace(MODELS_SECTION, nextModels);
+    await this.cascadePool(config, nextModels);
 
     const firstModel = models[0];
     if (firstModel !== undefined) {
@@ -289,6 +312,7 @@ export class ModelsDevImportService implements IModelsDevImportService {
     }
     await config.replace(PROVIDERS_SECTION, applied.providers as ProvidersSection);
     await config.replace(MODELS_SECTION, (applied.models ?? {}) as ModelsSection);
+    await this.cascadePool(config, applied.models ?? {});
 
     const firstEntry = Object.values(entries)[0];
     const firstModelKey = firstEntry === undefined ? undefined : Object.keys(firstEntry.models)[0];

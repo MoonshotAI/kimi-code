@@ -11,7 +11,6 @@
  */
 
 import type { ServiceClassRecipe } from '#/_base/di/fiber';
-import type { ServiceIdentifier } from '#/_base/di/instantiation';
 
 const _featureRecipes: ServiceClassRecipe[] = [];
 
@@ -25,24 +24,4 @@ export function getFeatureRecipes(): readonly ServiceClassRecipe[] {
 
 export function _clearFeatureRecipesForTests(): void {
   _featureRecipes.length = 0;
-}
-
-const _contributedServices: { scope: string; id: ServiceIdentifier<unknown> }[] = [];
-
-export function recordContributedService(scope: string, id: ServiceIdentifier<unknown>): void {
-  if (_contributedServices.some((entry) => entry.scope === scope && entry.id === id)) {
-    return;
-  }
-  _contributedServices.push({ scope, id });
-}
-
-export function getContributedServices(): ReadonlyArray<{
-  scope: string;
-  id: ServiceIdentifier<unknown>;
-}> {
-  return _contributedServices;
-}
-
-export function _clearContributedServicesForTests(): void {
-  _contributedServices.length = 0;
 }

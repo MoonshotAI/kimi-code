@@ -40,12 +40,12 @@
  *     for the root, then composes the skill scan at the edge (see above).
  *   - activate     → `IAgentSkillService` (Agent scope, on the `main` agent) —
  *                    renders the skill prompt and starts a turn with a
- *                    `skill_activation` origin. The returned `Turn` handle is
+ *                    `skill_activation` origin. The returned `{turn_id}` is
  *                    discarded; clients follow progress via the `skill.activated`
  *                    + `turn.*` events emitted by the service on the WS stream.
- *                    The edge then applies the prompt-metadata update
- *                    (`applyPromptMetadataUpdate`) so a first `/<skill>`
- *                    message titles the session, matching the native RPC path.
+ *                    The engine applies the prompt-metadata update itself
+ *                    (main agent only) so a first `/<skill>`
+ *                    message titles the session, matching the native prompt path.
  *                    Optional `attachments` (image/video/file parts, same wire
  *                    shape as prompt content) run through the shared prompt
  *                    media pipeline (`lib/promptMedia.ts`) and are appended to
@@ -84,12 +84,11 @@ import {
   IAgentSkillService,
   IBootstrapService,
   IConfigService,
-  IEventService,
   IFileService,
   IPluginService,
   ISessionContext,
   ISessionIndex,
-  ISessionMetadata,
+  ISessionMediaStore,
   ISessionSkillCatalog,
   ISkillDiscovery,
   ITelemetryService,
@@ -100,10 +99,8 @@ import {
   resumeSessionById,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   SKILL_SOURCE_PRIORITY,
-  applyPromptMetadataUpdate,
   configuredRoots,
   projectRoots,
-  promptMetadataTextFromSkill,
   sessionMediaOriginalsDir,
   userRoots,
   type ContentPart,
@@ -119,8 +116,10 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import {
   assertPromptFileRefs,
+  assertPromptSessionMediaRefs,
   contentToCoreParts,
   resolvePromptMediaFiles,
+  type PromptMediaPreparation,
 } from '../lib/promptMedia';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
@@ -307,6 +306,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         return;
       }
 
+      let preparedMedia: PromptMediaPreparation | undefined;
       try {
         // Attachments run through the same edge pipeline as prompt uploads
         // (validate → materialize → convert) BEFORE the activation starts, so
@@ -332,9 +332,13 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
             );
           }
           await assertPromptFileRefs(attachments, core.accessor.get(IFileService));
+          await assertPromptSessionMediaRefs(
+            attachments,
+            resolved.handle.accessor.get(ISessionMediaStore),
+          );
           const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
           const sessionDir = resolved.handle.accessor.get(ISessionContext).sessionDir;
-          const resolvedContent = await resolvePromptMediaFiles(
+          preparedMedia = await resolvePromptMediaFiles(
             attachments,
             core.accessor.get(IFileService),
             core.accessor.get(IBootstrapService).cacheDir,
@@ -344,25 +348,23 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
               resolveAttachmentsDir: async () => join(sessionDir, 'attachments'),
             },
           );
-          attachmentParts.push(...contentToCoreParts(resolvedContent));
+          attachmentParts.push(...contentToCoreParts(preparedMedia.content));
         }
         const agent = await ensureMainAgent(resolved.handle);
+        // The engine applies the prompt-metadata update itself (main agent
+        // only), so a first `/<skill>` message titles the session (same as
+        // routes/prompts.ts).
         await agent.accessor
           .get(IAgentSkillService)
           .activate({ name: parsed.id, args: req.body.args, content: attachmentParts });
-        // Keep the easy-title behavior of the native RPC / TUI path: a first
-        // `/<skill>` message titles the session (same as routes/prompts.ts).
-        await applyPromptMetadataUpdate(
-          {
-            metadata: resolved.handle.accessor.get(ISessionMetadata),
-            eventService: core.accessor.get(IEventService),
-            sessionId: session_id,
-          },
-          promptMetadataTextFromSkill({ name: parsed.id, args: req.body.args }),
-        );
+        // Intake materialized the session-owned copies — release the
+        // preparation's uploads, and keep them released on the success path.
+        await preparedMedia?.discard();
+        preparedMedia = undefined;
         requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
         reply.send(okEnvelope({ activated: true, skill_name: parsed.id }, req.id));
       } catch (err) {
+        await preparedMedia?.discard();
         sendMappedError(reply, req.id, err);
       }
     },

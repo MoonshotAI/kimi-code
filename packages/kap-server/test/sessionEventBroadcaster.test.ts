@@ -30,9 +30,9 @@ import {
   ISessionInteractionService,
   ISessionMetadata,
   ISessionLifecycleService,
-  IWorkspaceLifecycleService,
+  ISessionManager,
+  IWorkspaceInstanceManager,
   MAIN_AGENT_ID,
-  SECONDARY_DERIVED_MODEL_ID,
   SessionInteractionService,
   StateRegistry,
 } from '@moonshot-ai/agent-core-v2';
@@ -374,7 +374,7 @@ function makeCore(
   };
   const handler = {
     id: 'wd',
-    kind: LifecycleScope.Workspace,
+    kind: 'program',
     accessor: {
       get: (t: unknown) => (t === ISessionLifecycleService ? sessionLifecycle : undefined),
     },
@@ -383,11 +383,16 @@ function makeCore(
   const accessor = {
     get(token: unknown): unknown {
       if (token === IEventService) return eventBus;
-      if (token === IWorkspaceLifecycleService) {
+      if (token === ISessionManager) {
         return {
-          handlers: { list: () => [handler] },
-          sessions: { list: () => [] },
-          onDidMaterializeHandler: () => ({ dispose: () => {} }),
+          get: sessionFor,
+          list: () => [...sessions.keys()].map((sessionId) => sessionFor(sessionId)),
+        };
+      }
+      if (token === IWorkspaceInstanceManager) {
+        return {
+          list: () => [{ program: { accessor: handler.accessor } }],
+          onDidChange: () => ({ dispose: () => {} }),
         };
       }
       return undefined;
@@ -597,49 +602,6 @@ describe('SessionEventBroadcaster', () => {
     });
   });
 
-  it('resolves the secondary derived model id to a display string in status events', async () => {
-    const lc = new FakeLifecycle();
-    const main = lc.addAgent('main');
-    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
-    main.set(IAgentProfileService, {
-      getModel: () => SECONDARY_DERIVED_MODEL_ID,
-      getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
-    });
-    main.set(IAgentUsageService, { status: () => ({}) });
-    main.set(IModelCatalog, {
-      get: (id: string) => {
-        expect(id).toBe(SECONDARY_DERIVED_MODEL_ID);
-        return { id, name: 'kimi-k2-wire', displayName: 'Kimi K2' };
-      },
-    });
-    sessions.set('s1', lc);
-    const { target, envelopes } = collectingTarget();
-    await bc.subscribe('s1', target);
-
-    main.bus.emit(agentEvent('agent.status.updated', {}));
-    // Without a displayName the pointed entry's wire name is shown.
-    main.set(IModelCatalog, {
-      get: (id: string) => ({ id, name: 'kimi-k2-wire' }),
-    });
-    main.bus.emit(agentEvent('agent.status.updated', {}));
-    // A resolution failure falls back to the raw alias.
-    main.set(IModelCatalog, {
-      get: () => {
-        throw new Error('unknown model');
-      },
-    });
-    main.bus.emit(agentEvent('agent.status.updated', {}));
-    await bc.getCursor('s1');
-
-    const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
-    expect(statuses).toHaveLength(3);
-    expect(statuses.map((envelope) => envelope.payload)).toMatchObject([
-      { model: 'Kimi K2' },
-      { model: 'kimi-k2-wire' },
-      { model: SECONDARY_DERIVED_MODEL_ID },
-    ]);
-  });
-
   it('publishes the input cap as the status context limit when declared', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
@@ -823,6 +785,133 @@ describe('SessionEventBroadcaster', () => {
     expect(result.resyncRequired).toBe('buffer_overflow');
     expect(result.currentSeq).toBe(6);
   });
+
+  // The v1 wire contract for `turn.started` is exactly
+  // {type, turnId, origin, prompt?, promptId?, agentId, sessionId} — the
+  // engine-internal `promptAttachments` projection input must never reach the
+  // payload, and a video prompt's frame stays field-identical to the
+  // pre-attachment shape. Events without a `promptId` keep the six-key set.
+  const TURN_STARTED_WIRE_KEYS = ['agentId', 'origin', 'prompt', 'sessionId', 'turnId', 'type'];
+
+  it('forwards the promptId echo on a prompt-opened turn.started (live)', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(
+      agentEvent('turn.started', {
+        turnId: 1,
+        origin: { kind: 'user' },
+        prompt: 'with an exact id',
+        promptId: 'submission-1',
+      }),
+    );
+    await bc.getCursor('s1'); // drain
+
+    const live = envelopes.find((e) => e.type === 'turn.started');
+    expect(live).toBeDefined();
+    expect(live!.payload).toHaveProperty('promptId', 'submission-1');
+    expect(Object.keys(live!.payload as Record<string, unknown>).toSorted()).toEqual(
+      [...TURN_STARTED_WIRE_KEYS, 'promptId'].toSorted(),
+    );
+  });
+
+  it('keeps a video-prompt turn.started wire payload at the pre-attachment field set (live + disk-journal replay)', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(
+      agentEvent('turn.started', {
+        turnId: 1,
+        origin: { kind: 'user' },
+        prompt: 'summarize this clip',
+        promptAttachments: [{ kind: 'video', fileId: 'file_vid_1' }],
+      }),
+    );
+    await bc.getCursor('s1'); // drain between the turn boundaries (see note above)
+
+    const live = envelopes.find(
+      (e) => e.type === 'turn.started' && (e.payload as { turnId?: number }).turnId === 1,
+    );
+    expect(live).toBeDefined();
+    expect(live!.payload).not.toHaveProperty('promptAttachments');
+    expect(Object.keys(live!.payload as Record<string, unknown>).toSorted()).toEqual(
+      TURN_STARTED_WIRE_KEYS,
+    );
+
+    // The journal persists the same stripped envelope: reopen the session
+    // against the same eventsDir (a fresh instance has an empty in-memory
+    // tail, so the cursor replay is served by the on-disk journal) and the
+    // video turn.started still carries exactly the pre-attachment field set.
+    await bc.close(); // flushes the journal write-behind buffer
+    bc = new SessionEventBroadcaster({
+      eventsDir: dir,
+      core: makeCore(sessions, eventBus),
+      maxBufferSize: 20,
+    });
+    const replay = await bc.getBufferedSince('s1', { seq: 0 });
+    expect(replay.resyncRequired).toBe(false);
+    const replayed = replay.events.find(
+      (e) =>
+        e.envelope.type === 'turn.started' &&
+        (e.envelope.payload as { turnId?: number }).turnId === 1,
+    );
+    expect(replayed).toBeDefined();
+    expect(replayed!.envelope.payload).not.toHaveProperty('promptAttachments');
+    expect(Object.keys(replayed!.envelope.payload as Record<string, unknown>).toSorted()).toEqual(
+      TURN_STARTED_WIRE_KEYS,
+    );
+  });
+
+  it.each(['prompt.steered', 'prompt.queued'])(
+    'projects %s content without leaking daemon refs (live + tail replay)',
+    async (type) => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      const { target, envelopes } = collectingTarget();
+      await bc.subscribe('s1', target);
+
+      const ids =
+        type === 'prompt.steered'
+          ? { activePromptId: 'p1', promptIds: ['p2'], steeredAt: '2026-01-01T00:00:02.000Z' }
+          : { promptId: 'p2', queueLength: 1 };
+      main.bus.emit(
+        agentEvent(type, {
+          ...ids,
+          content: [
+            { type: 'text', text: 'look at this' },
+            {
+              type: 'image_url',
+              imageUrl: { url: 'kimi-file://f_img1?path=%2Fabs%2Fsession%2Fmedia%2Ff_img1.png' },
+            },
+          ],
+        }),
+      );
+      await bc.getCursor('s1'); // drain
+
+      const expected = [
+        { type: 'text', text: 'look at this' },
+        { type: 'image', source: { kind: 'session_media', file_id: 'f_img1' } },
+      ];
+      const live = envelopes.find((e) => e.type === type);
+      expect(live).toBeDefined();
+      expect((live!.payload as { content: unknown }).content).toEqual(expected);
+      expect(JSON.stringify(live!.payload)).not.toContain('kimi-file://');
+      expect(JSON.stringify(live!.payload)).not.toContain('/abs/session');
+
+      // Cursor replay within the in-memory tail serves the same projected envelope.
+      const replay = await bc.getBufferedSince('s1', { seq: 0 });
+      const replayed = replay.events.find((e) => e.envelope.type === type);
+      expect(replayed).toBeDefined();
+      expect((replayed!.envelope.payload as { content: unknown }).content).toEqual(expected);
+    },
+  );
 
   it('returns epoch_changed for a mismatched epoch', async () => {
     const lc = new FakeLifecycle();
@@ -1236,6 +1325,64 @@ describe('SessionEventBroadcaster', () => {
         payload: { warnings },
       });
       expect(globalView.deliveries).toEqual(['immediate']);
+    });
+
+    it('fans out event.plugin.changed and event.capability.changed to global targets', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      eventBus.emit({ type: 'event.plugin.changed', payload: {} });
+      eventBus.emit({
+        type: 'event.capability.changed',
+        payload: {
+          capability_id: 'kimi-webbridge',
+          install: { running: true, step: 'download', percent: 42 },
+        },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(2));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.plugin.changed',
+        session_id: '__global__',
+      });
+      expect(globalView.envelopes[1]).toMatchObject({
+        type: 'event.capability.changed',
+        session_id: '__global__',
+        payload: {
+          capability_id: 'kimi-webbridge',
+          install: { running: true, step: 'download', percent: 42 },
+        },
+      });
+      // Progress ticks are live-only (volatile, not journaled); the plugin
+      // change signal stays durable so a reconnecting client can replay it.
+      expect(globalView.envelopes[0]!.volatile).toBeUndefined();
+      expect(globalView.envelopes[1]!.volatile).toBe(true);
+    });
+
+    it('drops malformed event.capability.changed payloads', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      eventBus.emit({ type: 'event.capability.changed', payload: null });
+      eventBus.emit({
+        type: 'event.capability.changed',
+        payload: { capability_id: 7, install: { running: true } },
+      });
+      eventBus.emit({
+        type: 'event.capability.changed',
+        payload: { capability_id: 'kimi-cu' }, // no install object
+      });
+
+      eventBus.emit({
+        type: 'event.capability.changed',
+        payload: { capability_id: 'kimi-cu', install: { running: false } },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.capability.changed',
+        payload: { capability_id: 'kimi-cu', install: { running: false } },
+      });
     });
 
     it('drops malformed event.config.warning payloads', async () => {

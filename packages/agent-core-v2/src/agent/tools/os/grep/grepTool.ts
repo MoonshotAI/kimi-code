@@ -42,14 +42,15 @@ import {
 } from '#/tool/toolContract';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IHostProcessService } from '#/os/interface/hostProcess';
+import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { IHostProcessService } from '#/os/interface/hostProcess';
+import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
-  extendWorkspaceWithSkillRoots,
   resolvePathAccessPath,
   type PathClass,
   isSensitiveFile,
@@ -101,48 +102,63 @@ export class GrepTool implements IGrepTool {
   readonly description = GREP_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GrepInputSchema);
   constructor(
-    @IHostProcessService private readonly processService: IHostProcessService,
-    @IHostFileSystem private readonly fs: IHostFileSystem,
-    @IHostEnvironment private readonly env: IHostEnvironment,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
-  private get workspace(): WorkspaceConfig {
-    return extendWorkspaceWithSkillRoots(
-      {
-        workspaceDir: this.workspaceCtx.workDir,
-        additionalDirs: this.workspaceCtx.additionalDirs,
-      },
-      this.skillCatalog?.catalog.getSkillRoots() ?? [],
-      this.env.pathClass,
-    );
+  private workspace(view: RuntimeWorkspaceView): WorkspaceConfig {
+    return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
   resolveExecution(args: GrepInput): ToolExecution {
+    const inspected = inspectAgentRuntime(this.runtime);
+    const view = new RuntimeWorkspaceView(inspected, {
+      workDir: this.workspaceCtx.workDir,
+      additionalDirs: [
+        ...this.workspaceCtx.additionalDirs,
+        ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
+      ],
+    });
+    const env = { _serviceBrand: undefined, ...inspected.environment, ready: Promise.resolve() };
+    const workspace = this.workspace(view);
     let path: string | undefined;
     if (args.path !== undefined) {
       path = resolvePathAccessPath(args.path, {
-        env: this.env,
-        workspace: this.workspace,
+        env,
+        workspace,
         operation: 'search',
         policy: { guardMode: 'absolute-outside-allowed', checkSensitive: false },
       });
     }
-    const searchPaths = [path ?? this.workspace.workspaceDir];
-    const searchPath = args.path ?? this.workspace.workspaceDir;
+    const searchPaths = [path ?? workspace.workspaceDir];
+    const searchPath = args.path ?? workspace.workspaceDir;
     return {
       accesses: ToolAccesses.searchTree(searchPaths[0]!),
       description: `Searching for '${args.pattern}' in ${searchPath}`,
       display: { kind: 'file_io', operation: 'grep', path: searchPaths[0]! },
       approvalRule: literalRulePattern(this.name, args.pattern),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
-      execute: ({ signal }) => this.execution(args, signal, searchPaths),
+      execute: async ({ signal }) => {
+        const lease = this.runtime.acquire(['fs', 'process']);
+        try {
+          if (lease.runtime.identity.generation !== inspected.identity.generation) {
+            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+          }
+          return await this.execution(lease.runtime.process!, lease.runtime.fs!, env, workspace, args, signal, searchPaths);
+        } finally {
+          lease.dispose();
+        }
+      },
     };
   }
 
   private async execution(
+    processService: IHostProcessService,
+    fs: IHostFileSystem,
+    env: IHostEnvironment,
+    workspace: WorkspaceConfig,
     args: GrepInput,
     signal: AbortSignal,
     searchPaths: string[],
@@ -151,10 +167,10 @@ export class GrepTool implements IGrepTool {
       return { isError: true, output: 'Aborted before search started' };
     }
 
-    const pathClass = this.env.pathClass;
+    const pathClass = env.pathClass;
     let rgPath: string;
     try {
-      const resolution = await ensureRgPath(this.createRgProbe(), {
+      const resolution = await ensureRgPath(this.createRgProbe(processService), {
         signal,
         allowCachedFallback: true,
       });
@@ -176,7 +192,7 @@ export class GrepTool implements IGrepTool {
     let runResult: RunRgResult;
     try {
       const firstRun = await runRgOnce(
-        this.processService,
+        processService,
         buildRgArgs(rgPath, args, searchPaths),
         signal,
       );
@@ -187,7 +203,7 @@ export class GrepTool implements IGrepTool {
 
       if (shouldRetryRipgrepEagain(runResult)) {
         const retryRun = await runRgOnce(
-          this.processService,
+          processService,
           buildRgArgs(rgPath, args, searchPaths, true),
           signal,
         );
@@ -232,7 +248,7 @@ export class GrepTool implements IGrepTool {
     try {
       orderedLines =
         mode === 'files_with_matches' && !timedOut
-          ? await this.sortFilesWithMatchesByMtime(keptLines, signal)
+          ? await this.sortFilesWithMatchesByMtime(fs, keptLines, signal)
           : keptLines;
     } catch (error) {
       if (error instanceof GrepAbortedError) {
@@ -252,7 +268,7 @@ export class GrepTool implements IGrepTool {
     const messages: string[] = [];
     if (filteredSensitive.size > 0) {
       const displayedFilteredPaths = [...filteredSensitive].map((path) =>
-        relativizeIfUnder(path, this.workspace.workspaceDir, pathClass),
+        relativizeIfUnder(path, workspace.workspaceDir, pathClass),
       );
       messages.push(
         `Filtered ${String(filteredSensitive.size)} sensitive file(s): ${displayedFilteredPaths.join(', ')}`,
@@ -287,7 +303,7 @@ export class GrepTool implements IGrepTool {
       formatDisplayLine(
         line,
         mode,
-        this.workspace.workspaceDir,
+        workspace.workspaceDir,
         pathClass,
         contentIncludesLineNumbers,
       ),
@@ -310,12 +326,12 @@ export class GrepTool implements IGrepTool {
     return builder.ok();
   }
 
-  private createRgProbe(): RgProbe {
+  private createRgProbe(processService: IHostProcessService): RgProbe {
     return {
       exec: async (args) => {
         const [command, ...rest] = args;
         if (command === undefined) return { exitCode: -1 };
-        const proc = await this.processService.spawn(command, rest);
+        const proc = await processService.spawn(command, rest);
         try {
           proc.stdin.end();
         } catch {
@@ -324,7 +340,7 @@ export class GrepTool implements IGrepTool {
         proc.stderr.resume();
         const exitCode = await proc.wait();
         try {
-          proc.dispose();
+          void proc.dispose();
         } catch {
         }
         return { exitCode };
@@ -333,6 +349,7 @@ export class GrepTool implements IGrepTool {
   }
 
   private async sortFilesWithMatchesByMtime(
+    fs: IHostFileSystem,
     lines: readonly ParsedGrepLine[],
     signal: AbortSignal,
   ): Promise<ParsedGrepLine[]> {
@@ -346,7 +363,7 @@ export class GrepTool implements IGrepTool {
         let mtime = 0;
         if (path !== undefined) {
           try {
-            const mtimeMs = (await this.fs.stat(path)).mtimeMs ?? 0;
+            const mtimeMs = (await fs.stat(path)).mtimeMs ?? 0;
             mtime = Math.trunc(mtimeMs / 1000);
           } catch {
           }
@@ -359,7 +376,11 @@ export class GrepTool implements IGrepTool {
   }
 }
 
-registerAgentToolService(IGrepTool, GrepTool, { name: 'Grep', domain: 'os/backends' });
+registerAgentToolService(IGrepTool, GrepTool, {
+  name: 'Grep',
+  domain: 'os/backends',
+  requiredRuntimeCapabilities: ['fs', 'process'],
+});
 
 function formatSpawnError(error: unknown): string {
   return errorCode(error) === 'ENOENT'

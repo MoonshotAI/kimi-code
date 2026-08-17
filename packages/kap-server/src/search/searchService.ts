@@ -446,8 +446,10 @@ export class GlobalSearchService implements IGlobalSearchService {
     this.backend = this.flags.enabled(SEARCH_WORKER_FLAG_ID)
       ? new SearchWorkerHost({ dir: indexDir, log: this.log })
       : new InlineSearchBackend({ indexDir, log: this.log });
-    // App-scope OnScopeCreated activation: kick the first full sync off in the
-    // background so server bootstrap never blocks on indexing.
+    // Construction is on-demand (see the registration below): the server
+    // pre-warms the service from start.ts, search requests resolve it per
+    // call. Whenever it IS constructed, kick the first full sync off in the
+    // background so the caller never blocks on indexing.
     this.requestSync();
   }
 
@@ -1097,6 +1099,13 @@ registerScopedService(
   LifecycleScope.App,
   IGlobalSearchService,
   GlobalSearchService,
-  ScopeActivation.OnScopeCreated,
+  // OnDemand, not OnScopeCreated: kap-server's module graph is bundled into
+  // the CLI (the `kimi web` subcommand), so its registrations land in the
+  // global registry of every CLI process, and OnScopeCreated would make even
+  // a plain TUI run spawn the sync worker and open the (potentially large)
+  // search index at startup. The real server pre-warms the service
+  // explicitly in start.ts (`setLiveTranscriptSource`), and the search route
+  // resolves it per request.
+  ScopeActivation.OnDemand,
   'globalSearch',
 );

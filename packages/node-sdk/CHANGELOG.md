@@ -1,5 +1,31 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.18.0
+
+### Minor Changes
+
+- [#2351](https://github.com/MoonshotAI/kimi-code/pull/2351) [`6be2697`](https://github.com/MoonshotAI/kimi-code/commit/6be26978b123bacf1c5ebce52bbeb6f7b7ff0629) Thanks [@7Sageer](https://github.com/7Sageer)! - Add `generateSessionTitle` (v2 engine) for managed AI session titles: optional `force` regeneration over generated/custom titles and selectable conversation excerpts (`user_prompts` / `first_turn` / `digest`). Gated by the experimental `auto_session_title` flag and a managed OAuth login.
+
+### Patch Changes
+
+- [#2916](https://github.com/MoonshotAI/kimi-code/pull/2916) [`7475c2e`](https://github.com/MoonshotAI/kimi-code/commit/7475c2e2e3dd86ac0b8a8d51d4f1d233ed7df797) Thanks [@Grapedge](https://github.com/Grapedge)! - Cascade turn cancellation to the session-level /init run in the v2-backed client.
+
+- [#2916](https://github.com/MoonshotAI/kimi-code/pull/2916) [`7475c2e`](https://github.com/MoonshotAI/kimi-code/commit/7475c2e2e3dd86ac0b8a8d51d4f1d233ed7df797) Thanks [@Grapedge](https://github.com/Grapedge)! - Implement session deletion in the v2-backed client.
+
+- [#2916](https://github.com/MoonshotAI/kimi-code/pull/2916) [`7475c2e`](https://github.com/MoonshotAI/kimi-code/commit/7475c2e2e3dd86ac0b8a8d51d4f1d233ed7df797) Thanks [@Grapedge](https://github.com/Grapedge)! - Support forking a session from a specific turn in the v2-backed client, and reject forking a live session while its turn is running.
+
+## 0.17.0
+
+### Minor Changes
+
+- [#2700](https://github.com/MoonshotAI/kimi-code/pull/2700) [`c9bfe8b`](https://github.com/MoonshotAI/kimi-code/commit/c9bfe8b2c8314ba4ef8806fb3b92ac654c1d1860) Thanks [@7Sageer](https://github.com/7Sageer)! - Remove the secondary-model session API `Session.applyPersistedSecondaryModel`; subagent model selection is configured via `[secondary_model]` in config.toml instead. The `SECONDARY_DERIVED_MODEL_ALIAS` export stays (the v1 engine still synthesizes the entry at runtime, so hosts keep filtering it out of model pickers), and the SDK now also exports `PRIMARY_SUBAGENT_MODEL_CHOICE`, the v2 subagent model pool's reserved `primary` key.
+
+### Patch Changes
+
+- [#2843](https://github.com/MoonshotAI/kimi-code/pull/2843) [`c212ae9`](https://github.com/MoonshotAI/kimi-code/commit/c212ae9715371c0d7939c15e664acbe0d7cf7fc3) Thanks [@sailist](https://github.com/sailist)! - Show project MCP launch targets in the workspace trust prompt, default to declining trust, and resolve fd and stty binaries to absolute paths so untrusted workspaces cannot plant bare-name executables before confirmation.
+
+  `@moonshot-ai/kimi-code-sdk` contract change: `WorkspaceTrustInfo.gatedMcpServers` now carries structured `WorkspaceTrustMcpServerInfo` records (`name`, `transport`, and `command`/`args`/`cwd` or `url`) instead of plain strings, so SDK consumers rendering a trust prompt can show the full launch target.
+
 ## 0.16.0
 
 ### Minor Changes

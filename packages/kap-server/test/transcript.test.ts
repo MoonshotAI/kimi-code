@@ -175,7 +175,11 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       server = undefined;
     }
     if (home !== undefined) {
-      await rm(home, { recursive: true, force: true });
+      // maxRetries: the engine's file log writers flush synchronously on scope
+      // dispose but their trailing async close can still be creating a file
+      // under home after server.close() resolves (ENOTEMPTY on a loaded CI
+      // runner) — same retry pattern as questions.test.ts / fs.test.ts.
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       home = undefined;
     }
   });
@@ -638,6 +642,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const questions = session!.accessor.get(ISessionQuestionService);
     const pending = questions.request(
       {
+        id: 'call_q',
         turnId: 0,
         toolCallId: 'call_q',
         questions: [{ question: 'Pick?', options: [{ label: 'A' }] }],
@@ -808,6 +813,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const questions = session!.accessor.get(ISessionQuestionService);
     const pending = questions.request(
       {
+        id: 'call_q',
         turnId: 0,
         toolCallId: 'call_q',
         questions: [{ question: 'Pick one?', options: [{ label: 'A' }, { label: 'B' }] }],
@@ -1080,6 +1086,80 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       `/api/v1/sessions/${id}/transcript/user-messages?agent_id=main`,
     );
     expect(single.body.data.agents.map((a) => a.agent_id)).toEqual(['main']);
+  });
+
+  it('lists an attachment-only prompt as an empty-string user message (live)', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    // Bind the transcript before publishing live turns.
+    await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+
+    // An upload-only prompt folds to no text: the live turn carries no
+    // `prompt`, only its attachments. The route normalizes the prompt to ""
+    // (the cold rebuild's shape) instead of dropping the message.
+    const bus = mainAgentBus(id);
+    bus.publish(
+      serverEvent({
+        type: 'turn.started',
+        turnId: 1,
+        origin: { kind: 'user' },
+        promptAttachments: [{ kind: 'image', fileId: 'f_upload' }],
+      }),
+    );
+    bus.publish(serverEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+
+    const { body } = await getJson<UserMessagesContract>(
+      `/api/v1/sessions/${id}/transcript/user-messages?agent_id=main`,
+    );
+    expect(body.code).toBe(0);
+    const main = body.data.agents[0]!;
+    expect(main.messages.map((m) => [m.turn_id, m.prompt])).toEqual([['t1', '']]);
+    expect(main.messages[0]!.attachment_ids).toEqual(['t1.att1']);
+    expect(main.attachments).toEqual([
+      expect.objectContaining({
+        attachmentId: 't1.att1',
+        mediaType: 'image/*',
+        source: { kind: 'session_media', fileId: 'f_upload' },
+      }),
+    ]);
+  });
+
+  it('lists an attachment-only prompt as an empty-string user message (cold)', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    // The persisted shape of an upload-only prompt: a single self-contained
+    // daemon-ref media part. The cold projection maps it to one attachment
+    // and an empty prompt text.
+    await seedMainAgentMessages(id, [
+      {
+        role: 'user',
+        content: [
+          { type: 'image_url', imageUrl: { url: 'kimi-file://f_upload?path=%2Ftmp%2Fcache%2Ff_upload.png' } },
+        ],
+        toolCalls: [],
+      } as ContextMessage,
+      { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+    ]);
+
+    // Reboot on the same home — the session drops out of memory (cold path).
+    await server!.close();
+    server = undefined;
+    await boot();
+
+    const { body } = await getJson<UserMessagesContract>(
+      `/api/v1/sessions/${id}/transcript/user-messages?agent_id=main`,
+    );
+    expect(body.code).toBe(0);
+    const main = body.data.agents[0]!;
+    expect(main.messages.map((m) => [m.turn_id, m.prompt])).toEqual([['t0', '']]);
+    expect(main.messages[0]!.attachment_ids).toEqual(['att_1']);
+    expect(main.attachments).toEqual([
+      expect.objectContaining({
+        attachmentId: 'att_1',
+        mediaType: 'image/*',
+        source: { kind: 'session_media', fileId: 'f_upload' },
+      }),
+    ]);
   });
 
   it('answers 40401 for an unknown session and 40001 for a hostile agent id on the user-messages route', async () => {

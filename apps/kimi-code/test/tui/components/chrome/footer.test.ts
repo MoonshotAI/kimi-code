@@ -188,3 +188,38 @@ describe('FooterComponent displayName override', () => {
     expect(footer.render(120).join('\n')).not.toContain('Remote Name');
   });
 });
+
+describe('FooterComponent line-2 hints', () => {
+  function stripAnsi(text: string): string {
+    return text.replaceAll(/\[[0-9;]*m/g, '');
+  }
+
+  it('shows the warning hint on line 2', () => {
+    const footer = new FooterComponent(appState);
+    footer.setWarningHint('Goal objective is too long');
+
+    const line2 = stripAnsi(footer.render(120)[1] ?? '');
+
+    expect(line2).toContain('Goal objective is too long');
+  });
+
+  it('gives the transient hint precedence, then restores the warning hint', () => {
+    const footer = new FooterComponent(appState);
+    footer.setWarningHint('Goal objective is too long');
+
+    footer.setTransientHint('Press Ctrl+C again to exit');
+    expect(stripAnsi(footer.render(120)[1] ?? '')).toContain('Press Ctrl+C again to exit');
+    expect(stripAnsi(footer.render(120)[1] ?? '')).not.toContain('Goal objective is too long');
+
+    footer.setTransientHint(null);
+    expect(stripAnsi(footer.render(120)[1] ?? '')).toContain('Goal objective is too long');
+  });
+
+  it('clears the warning hint with null', () => {
+    const footer = new FooterComponent(appState);
+    footer.setWarningHint('Goal objective is too long');
+    footer.setWarningHint(null);
+
+    expect(stripAnsi(footer.render(120)[1] ?? '')).not.toContain('Goal objective is too long');
+  });
+});

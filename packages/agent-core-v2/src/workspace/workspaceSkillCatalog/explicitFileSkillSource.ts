@@ -10,8 +10,6 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { configuredRoots } from '#/app/skillCatalog/skillRoots';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
@@ -52,10 +50,3 @@ export class ExplicitFileSkillSource implements IExplicitFileSkillSource {
   }
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IExplicitFileSkillSource,
-  ExplicitFileSkillSource,
-  ScopeActivation.OnScopeCreated,
-  'workspaceSkillCatalog',
-);

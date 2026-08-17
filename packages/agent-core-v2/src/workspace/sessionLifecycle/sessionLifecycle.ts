@@ -24,15 +24,13 @@
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
-import type { Event } from '#/_base/event';
+import { type Event, type IWaitUntil } from '#/_base/event';
 import type { BindAgentInput } from '#/agent/profile/profile';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
-import type {
-  SessionCloseReason,
-  SessionCreateSource,
-} from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 
-export type { SessionCloseReason, SessionCreateSource };
+export type SessionCreateSource = 'startup' | 'resume' | 'fork';
+
+export type SessionCloseReason = 'exit' | 'archive';
 
 export interface CreateSessionOptions {
   readonly sessionId?: string;
@@ -53,6 +51,11 @@ export interface ForkSessionOptions {
   readonly newSessionId?: string;
   readonly title?: string;
   readonly metadata?: Record<string, unknown>;
+  /**
+   * Zero-based index of the user-visible turn to retain through. When omitted,
+   * the complete session is copied (the existing fork behavior).
+   */
+  readonly turnIndex?: number;
 }
 
 export interface ResumeSessionOptions {
@@ -124,7 +127,8 @@ export interface ISessionLifecycleService {
   readonly _serviceBrand: undefined;
 
   readonly onWillCreateSession: Event<SessionWillCreateEvent>;
-  readonly onDidCreateSession: Event<SessionCreatedEvent>;
+  readonly onDidCreateSession: Event<SessionCreatedEvent & IWaitUntil>;
+  readonly onWillCloseSession: Event<SessionWillCloseEvent & IWaitUntil>;
   readonly onDidCloseSession: Event<SessionClosedEvent>;
   readonly onDidArchiveSession: Event<SessionArchivedEvent>;
   readonly onDidForkSession: Event<SessionForkedEvent>;

@@ -49,12 +49,53 @@ describe('ImageAttachmentStore', () => {
     expect(att.mime).toBe('image/jpeg');
   });
 
+  it('completes a pending image without changing its attachment id', () => {
+    const s = new ImageAttachmentStore();
+    const att = s.addImage(new Uint8Array([1]), 'image/png', 10, 20);
+
+    const completed = s.completeImage(att, {
+      bytes: new Uint8Array([2, 3]),
+      mime: 'image/jpeg',
+      width: 30,
+      height: 40,
+      fileId: 'file-2',
+    });
+
+    expect(completed).toBe(att);
+    expect(att.id).toBe(1);
+    expect(att.bytes).toEqual(new Uint8Array([2, 3]));
+    expect(att.mime).toBe('image/jpeg');
+    expect(att.placeholder).toBe('[image #1 (30×40)]');
+    const stale = att;
+    s.clear();
+    const fresh = s.addImage(new Uint8Array([9]), 'image/png', 2, 2);
+    expect(s.completeImage(stale, {
+      bytes: new Uint8Array([8]),
+      mime: 'image/png',
+      width: 3,
+      height: 3,
+    })).toBeUndefined();
+    expect(fresh.bytes).toEqual(new Uint8Array([9]));
+  });
+
+  it('records the daemon file-store id when the paste was uploaded (v2)', () => {
+    const s = new ImageAttachmentStore();
+    const att = s.addImage(new Uint8Array([1]), 'image/png', 10, 20, undefined, 'file-abc');
+    expect(att.fileId).toBe('file-abc');
+  });
+
+  it('leaves fileId undefined for attachments that were not uploaded', () => {
+    const s = new ImageAttachmentStore();
+    const att = s.addImage(new Uint8Array([1]), 'image/png', 10, 20);
+    expect(att.fileId).toBeUndefined();
+  });
+
   it('clear() resets ids and empties storage', () => {
     const s = new ImageAttachmentStore();
-    s.addImage(new Uint8Array(), 'image/png', 10, 10);
+    s.addImage(new Uint8Array(), 'image/png', 10, 10, undefined, 'file-1');
     s.addImage(new Uint8Array(), 'image/png', 10, 10);
     expect(s.size()).toBe(2);
-    s.clear();
+    expect(s.clear()).toEqual(['file-1']);
     expect(s.size()).toBe(0);
     const next = s.addImage(new Uint8Array(), 'image/png', 10, 10);
     expect(next.id).toBe(1);
@@ -84,5 +125,70 @@ describe('ImageAttachmentStore', () => {
     expect(s.get(b.id)).toBe(b);
     expect(s.get(a.id)).toBeUndefined();
     expect(s.get(c.id)).toBeUndefined();
+  });
+
+  it('transfers staging file ownership without dropping thumbnail bytes', () => {
+    const s = new ImageAttachmentStore();
+    const bytes = new Uint8Array([1, 2, 3]);
+    const att = s.addImage(bytes, 'image/png', 10, 10, undefined, 'file-1');
+
+    expect(s.takeFileIds([att.id])).toEqual(['file-1']);
+    expect(att.fileId).toBeUndefined();
+    expect(att.bytes).toBe(bytes);
+    expect(s.takeFileIds([att.id])).toEqual([]);
+  });
+
+  it('keeps a daemon upload until every extracted message releases it', () => {
+    const s = new ImageAttachmentStore();
+    const att = s.addImage(new Uint8Array([1]), 'image/png', 10, 10, undefined, 'file-1');
+
+    s.retainFileIds([att.id]);
+    s.retainFileIds([att.id]);
+    expect(s.takeFileIds([att.id])).toEqual([]);
+    expect(att.fileId).toBe('file-1');
+    expect(s.takeFileIds([att.id])).toEqual(['file-1']);
+    expect(att.fileId).toBeUndefined();
+  });
+
+  it('releaseRetains consumes the retain but keeps the staged upload on the attachment', () => {
+    const s = new ImageAttachmentStore();
+    const att = s.addImage(new Uint8Array([1]), 'image/png', 10, 10, undefined, 'file-1');
+
+    s.retainFileIds([att.id]);
+    s.releaseRetains([att.id]);
+    expect(att.fileId).toBe('file-1');
+    // The retain is gone: a later take consumes the upload immediately.
+    expect(s.takeFileIds([att.id])).toEqual(['file-1']);
+    expect(att.fileId).toBeUndefined();
+  });
+
+  it('releaseRetains leaves retains held by other submissions untouched', () => {
+    const s = new ImageAttachmentStore();
+    const att = s.addImage(new Uint8Array([1]), 'image/png', 10, 10, undefined, 'file-1');
+
+    s.retainFileIds([att.id]); // submission A queues
+    s.retainFileIds([att.id]); // submission B queues
+    s.releaseRetains([att.id]); // A is recalled into the editor
+    s.retainFileIds([att.id]); // A's restored draft resubmits
+    // A's consuming turn ends: one retain (B's) is still outstanding, so the
+    // upload survives.
+    expect(s.takeFileIds([att.id])).toEqual([]);
+    expect(att.fileId).toBe('file-1');
+    // B's turn ends: the last retain is gone, the upload is taken.
+    expect(s.takeFileIds([att.id])).toEqual(['file-1']);
+    expect(att.fileId).toBeUndefined();
+  });
+
+  it('rebaseVideoSource repoints a recalled video at its staged cache copy', () => {
+    const s = new ImageAttachmentStore();
+    const att = s.addVideo('video/mp4', '/tmp/original.mp4');
+
+    s.rebaseVideoSource(att.id, '/cache/original.mp4');
+    expect(att.sourcePath).toBe('/cache/original.mp4');
+
+    // Images and unknown ids are ignored.
+    const image = s.addImage(new Uint8Array([1]), 'image/png', 10, 10);
+    s.rebaseVideoSource(image.id, '/cache/nope');
+    expect(s.get(image.id)).toBe(image);
   });
 });

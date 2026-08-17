@@ -1,27 +1,10 @@
 /**
- * `media` domain — request-time video reference resolver contract.
+ * `media` domain — deprecated alias of the request-time media resolver
+ * contract (`mediaResolver`).
  *
- * Rewrites the `kimi-file://` video references a prompt carries in the
- * projected wire messages into a provider-acceptable form (an uploaded
- * `ms://` reference, an inline base64 `data:` part, or a `<video path>` text
- * tag) right before the messages reach the provider — so a `kimi-file://` url
- * never touches the wire. Bound at Agent scope.
+ * Kept under the historical name so existing call sites read unchanged. New
+ * code should import `IAgentMediaResolverService` from `mediaResolver`
+ * directly.
  */
 
-import { createDecorator } from '#/_base/di/instantiation';
-import type { Message } from '#/kosong/contract/message';
-import type { ModelRequester } from '#/kosong/model/modelRequester';
-
-export interface IAgentVideoResolverService {
-  readonly _serviceBrand: undefined;
-
-  resolve(
-    messages: readonly Message[],
-    requester: ModelRequester,
-    signal?: AbortSignal,
-  ): Promise<readonly Message[]>;
-}
-
-export const IAgentVideoResolverService = createDecorator<IAgentVideoResolverService>(
-  'agentVideoResolverService',
-);
+export { IAgentMediaResolverService as IAgentVideoResolverService } from './mediaResolver';

@@ -44,12 +44,25 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     }
   });
 
+  function installTerminalClient(c: TestClient): void {
+    c.onRequest('terminal/create', () => ({ terminalId: 'term-1' }));
+    c.onRequest('terminal/output', () => ({
+      output: 'hello_from_bash\ndelta_stream\n',
+      truncated: false,
+      exitStatus: { exitCode: 0, signal: null },
+    }));
+    c.onRequest('terminal/wait_for_exit', () => ({ exitCode: 0, signal: null }));
+    c.onRequest('terminal/kill', () => ({}));
+    c.onRequest('terminal/release', () => ({}));
+  }
+
   async function boot(clientCapabilities: Record<string, unknown> = {}): Promise<TestClient> {
     homeDir = await mkdtemp(join(tmpdir(), 'acp-e2e-turn-'));
     await writeFakeModelConfig(homeDir);
     scripted = createScriptedProvider();
     client = await createTestClient({ homeDir, extraSeeds: [scripted.seed] });
     await client.send('initialize', { protocolVersion: 1, clientCapabilities });
+    if (clientCapabilities['terminal'] === true) installTerminalClient(client);
     return client;
   }
 
@@ -92,7 +105,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
   }, 30_000);
 
   it('runs a tool call and bridges the approval request to the client', async () => {
-    const c = await boot();
+    const c = await boot({ terminal: true });
     // First model response: a Bash tool call. Second: a short text wrap-up
     // after the tool result is fed back to the model.
     scripted!.mockNextResponse({
@@ -148,8 +161,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       .map((m) => (m.params as { update?: ToolCallUpdate }).update)
       .find((u) => u?.sessionUpdate === 'tool_call_update' && u?.status === 'completed');
     expect(terminal).toBeDefined();
-    const text = terminal?.content?.map((c) => c.content?.text ?? '').join('\n') ?? '';
-    expect(text).toContain('hello_from_bash');
+    expect(JSON.stringify(scripted!.callHistory()[1])).toContain('hello_from_bash');
   }, 30_000);
 
   it('bridges AskUserQuestion through elicitation/create for form-capable clients', async () => {
@@ -394,7 +406,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
   }, 30_000);
 
   it('streams tool-call args deltas: lazy pending CREATE → cumulative update → started upgrade → completed', async () => {
-    const c = await boot();
+    const c = await boot({ terminal: true });
     // Args stream in two fragments; the merge yields the full command.
     scripted!.mockNextResponse(
       { type: 'function', id: 'call_1', name: 'Bash', arguments: '{"command":"ec' },
@@ -458,7 +470,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     const terminal = updates.at(-1);
     expect(terminal?.sessionUpdate).toBe('tool_call_update');
     expect(terminal?.status).toBe('completed');
-    expect(textOf(terminal)).toContain('delta_stream');
+    expect(JSON.stringify(scripted!.callHistory()[1])).toContain('delta_stream');
   }, 30_000);
 
   it('refreshes the tool card title on a status progress update and drops other progress kinds', async () => {
@@ -708,10 +720,10 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
       cwd: homeDir,
       mcpServers: [
         {
+          type: 'http',
           name: 'mock',
-          command: process.execPath,
-          args: [STDIO_MCP_FIXTURE],
-          env: [{ name: 'KIMI_TEST_MCP_START_DELAY_MS', value: '0' }],
+          url: 'http://127.0.0.1:1/mcp',
+          headers: [{ name: 'X-Test-Fixture', value: STDIO_MCP_FIXTURE }],
         },
       ],
     })) as { sessionId: string };
@@ -720,7 +732,7 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
     const { chunk, stopReason } = await runSlash(c, created.sessionId, '/mcp');
     expect(stopReason).toBe('end_turn');
     expect(chunk).toContain('MCP servers (1):');
-    expect(chunk).toContain('- mock (stdio):');
+    expect(chunk).toContain('- mock (http):');
     expect(scripted!.callCount()).toBe(0);
   }, 30_000);
 
@@ -974,7 +986,7 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
     expect(JSON.stringify(secondCall)).toContain('hello_from_terminal');
   }, 30_000);
 
-  it('falls back to local execution when the client does not advertise the capability', async () => {
+  it('rejects Bash without falling back when the client does not advertise terminal capability', async () => {
     const c = await boot({});
     const terminals = fakeTerminalClient(c, 'should_not_be_used\n');
     scriptBashTurn('echo hello_from_bash');
@@ -992,6 +1004,7 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
     // The tool card carries the textual output, exactly as before.
     const completed = toolCallUpdates(c).find((u) => u.status === 'completed');
     const text = completed?.content?.map((entry) => entry.content?.text ?? '').join('\n') ?? '';
-    expect(text).toContain('hello_from_bash');
+    expect(text).not.toContain('hello_from_bash');
+    expect(JSON.stringify(scripted!.callHistory()[1])).toContain('ACP terminal capability is unavailable');
   }, 30_000);
 });

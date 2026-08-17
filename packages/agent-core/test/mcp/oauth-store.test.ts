@@ -76,7 +76,7 @@ describe('MCP OAuth credential identity', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('isolates tokens for the same server name on different URLs', () => {
+  it('isolates tokens for the same server name on different URLs', async () => {
     const store = new JsonFileStore(dir);
     const first = new McpOAuthClientProvider({
       serverName: 'linear',
@@ -89,15 +89,15 @@ describe('MCP OAuth credential identity', () => {
       store,
     });
 
-    first.saveTokens(token('first-token'));
-    second.saveTokens(token('second-token'));
+    await first.saveTokens(token('first-token'));
+    await second.saveTokens(token('second-token'));
 
     expect(first.storeKey).not.toBe(second.storeKey);
     expect(first.tokens()?.access_token).toBe('first-token');
     expect(second.tokens()?.access_token).toBe('second-token');
   });
 
-  it('isolates tokens when distinct server names sanitize to the same prefix', () => {
+  it('isolates tokens when distinct server names sanitize to the same prefix', async () => {
     const store = new JsonFileStore(dir);
     const first = new McpOAuthClientProvider({
       serverName: 'team mcp',
@@ -110,17 +110,17 @@ describe('MCP OAuth credential identity', () => {
       store,
     });
 
-    first.saveTokens(token('space-token'));
-    second.saveTokens(token('bang-token'));
+    await first.saveTokens(token('space-token'));
+    await second.saveTokens(token('bang-token'));
 
     expect(first.storeKey).not.toBe(second.storeKey);
     expect(first.tokens()?.access_token).toBe('space-token');
     expect(second.tokens()?.access_token).toBe('bang-token');
   });
 
-  it('scopes hasTokens to the server URL, not just the configured name', () => {
+  it('scopes hasTokens to the server URL, not just the configured name', async () => {
     const service = new McpOAuthService({ store: new JsonFileStore(dir) });
-    service
+    await service
       .getProvider('linear', 'https://first.example.com/mcp')
       .saveTokens(token('first-token'));
 
@@ -128,13 +128,13 @@ describe('MCP OAuth credential identity', () => {
     expect(service.hasTokens('linear', 'https://second.example.com/mcp')).toBe(false);
   });
 
-  it('removes stored credentials when a server authorization is reset', () => {
+  it('removes stored credentials when a server authorization is reset', async () => {
     const service = new McpOAuthService({ store: new JsonFileStore(dir) });
-    service
+    await service
       .getProvider('linear', 'https://mcp.example.com/mcp')
       .saveTokens(token('access-token'));
 
-    service.invalidate('linear', 'https://mcp.example.com/mcp');
+    await service.invalidate('linear', 'https://mcp.example.com/mcp');
 
     expect(service.hasTokens('linear', 'https://mcp.example.com/mcp')).toBe(false);
   });
@@ -157,6 +157,7 @@ describe('MCP OAuth credential identity', () => {
     expect(provider.clientMetadata.redirect_uris).toEqual(['http://127.0.0.1:45678/callback']);
   });
 });
+
 
 function token(accessToken: string): OAuthTokens {
   return {
@@ -183,28 +184,34 @@ describe('McpOAuthClientProvider.invalidateStaleRegistration', () => {
     });
   }
 
-  it('drops a registration whose redirect_uris miss the current callback', () => {
+  it('drops a registration whose redirect_uris miss the current callback', async () => {
     const provider = makeProvider();
     provider.saveClientInformation({
       client_id: 'c1',
       redirect_uris: ['http://127.0.0.1:11111/callback'],
     });
-    expect(provider.invalidateStaleRegistration('http://127.0.0.1:22222/callback')).toBe(true);
+    await expect(
+      provider.invalidateStaleRegistration('http://127.0.0.1:22222/callback'),
+    ).resolves.toBe(true);
     expect(provider.clientInformation()).toBeUndefined();
   });
 
-  it('keeps a registration that still covers the callback URI', () => {
+  it('keeps a registration that still covers the callback URI', async () => {
     const provider = makeProvider();
     provider.saveClientInformation({
       client_id: 'c1',
       redirect_uris: ['http://127.0.0.1:11111/callback'],
     });
-    expect(provider.invalidateStaleRegistration('http://127.0.0.1:11111/callback')).toBe(false);
+    await expect(
+      provider.invalidateStaleRegistration('http://127.0.0.1:11111/callback'),
+    ).resolves.toBe(false);
     expect(provider.clientInformation()).toMatchObject({ client_id: 'c1' });
   });
 
-  it('is a no-op without a stored registration', () => {
+  it('is a no-op without a stored registration', async () => {
     const provider = makeProvider();
-    expect(provider.invalidateStaleRegistration('http://127.0.0.1:11111/callback')).toBe(false);
+    await expect(
+      provider.invalidateStaleRegistration('http://127.0.0.1:11111/callback'),
+    ).resolves.toBe(false);
   });
 });

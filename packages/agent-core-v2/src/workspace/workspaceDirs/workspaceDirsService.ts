@@ -17,10 +17,8 @@
  * Workspace scope.
  */
 
-import { Service } from '#/_base/di/service';
+import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/_base/state/stateRegistry';
 import { TimeoutTimer } from '#/_base/utils/timer';
@@ -48,7 +46,7 @@ export const workspaceDirsEphemeralDirsKey = defineState<readonly string[]>(
   () => [],
 );
 
-export class WorkspaceDirsService extends Service implements IWorkspaceDirs {
+export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
   declare readonly _serviceBrand: undefined;
 
   private projectRoot: string;
@@ -217,10 +215,3 @@ function sameStringList(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceDirs,
-  WorkspaceDirsService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceDirs',
-);

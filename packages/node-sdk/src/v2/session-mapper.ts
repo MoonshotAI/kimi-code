@@ -70,7 +70,7 @@ export function v2MetaToSessionMeta(meta: V2SessionMeta): SessionMeta {
     createdAt: new Date(meta.createdAt).toISOString(),
     updatedAt: new Date(meta.updatedAt).toISOString(),
     title: meta.title ?? '',
-    isCustomTitle: meta.isCustomTitle ?? false,
+    isCustomTitle: meta.titleKind === 'custom',
     lastPrompt: meta.lastPrompt,
     forkedFrom: meta.forkedFrom,
     workDir: meta.cwd,

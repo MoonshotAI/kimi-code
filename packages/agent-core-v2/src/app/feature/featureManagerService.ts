@@ -8,6 +8,7 @@
  * the previous handle (retract-then-assemble is the caller's cascade).
  */
 
+import type { CollectionView } from '#/_base/di/collection';
 import { Emitter, type Event } from '#/_base/event';
 import type {
   FiberHandle,
@@ -23,6 +24,10 @@ import {
   IFeatureManager,
   type ManagedUnitInfo,
 } from './featureManager';
+import {
+  FeatureServiceContribution,
+  type ContributedFeatureService,
+} from './featureServiceContribution';
 
 export class FeatureManagerService extends Service implements IFeatureManager {
   declare readonly _serviceBrand: undefined;
@@ -31,7 +36,10 @@ export class FeatureManagerService extends Service implements IFeatureManager {
   private readonly _onDidChangeUnits = new Emitter<void>();
   readonly onDidChangeUnits: Event<void> = this._onDidChangeUnits.event;
 
-  constructor() {
+  constructor(
+    @FeatureServiceContribution
+    private readonly _contributedServices: CollectionView<ContributedFeatureService>,
+  ) {
     super();
     this._register(this._onDidChangeUnits);
   }
@@ -96,6 +104,10 @@ export class FeatureManagerService extends Service implements IFeatureManager {
       infos.push({ name, state: handle.state, uid });
     }
     return infos;
+  }
+
+  contributedServices(): readonly ContributedFeatureService[] {
+    return this._contributedServices.items;
   }
 }
 

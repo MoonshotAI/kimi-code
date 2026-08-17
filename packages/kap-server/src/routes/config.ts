@@ -14,8 +14,7 @@
  * that:
  *   - projects `getAll()` (camelCase resolved config) into the snake_case
  *     `ConfigResponse`, redacting provider credentials to `has_api_key`
- *     (mirrors v1 `toConfigResponse`) and hiding the synthesized
- *     `__secondary__` derived entry from `models` (mirrors `GET /models`);
+ *     (mirrors v1 `toConfigResponse`);
  *   - splits v1's flat multi-domain `POST /config` patch into per-domain
  *     `IConfigService.set(domain, value)` calls (snake_case → camelCase);
  *   - republishes the change as a v2 `DomainEvent` on `IEventService`.
@@ -30,7 +29,6 @@
 import {
   IConfigService,
   IEventService,
-  SECONDARY_DERIVED_MODEL_ID,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -132,20 +130,14 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
 // Edge facade — project the v2 resolved config into the v1 `ConfigResponse`
 // wire shape. Top-level domain keys are mapped camelCase→snake_case generically,
 // so this route does not enumerate the config domains; values pass through
-// unchanged except `providers`, whose credentials are redacted to `has_api_key`,
-// and `models`, which drops the internal `__secondary__` derived entry (the
-// only domain-specific transforms). Pure projection: no service calls.
+// unchanged except `providers`, whose credentials are redacted to `has_api_key`
+// (the only domain-specific transform). Pure projection: no service calls.
 // ---------------------------------------------------------------------------
 
 function toConfigResponse(resolved: Record<string, unknown>): ConfigResponse {
   const wire: Record<string, unknown> = {};
   for (const [domain, value] of Object.entries(resolved)) {
-    wire[camelToSnake(domain)] =
-      domain === 'providers'
-        ? toProviderResponses(value)
-        : domain === 'models'
-          ? withoutDerivedSecondaryEntry(value)
-          : value;
+    wire[camelToSnake(domain)] = domain === 'providers' ? toProviderResponses(value) : value;
   }
   // v1 wire echo: surface `yolo` as a derived boolean of the effective default
   // permission mode. `yolo` is not a config domain; it is computed here so the
@@ -167,20 +159,6 @@ interface ProviderLike {
   readonly defaultModel?: unknown;
   readonly apiKey?: unknown;
   readonly oauth?: unknown;
-}
-
-/**
- * The `models` effective view carries the synthesized `__secondary__` derived
- * entry whenever `[secondary_model]` has patch fields. It is an internal
- * routing artifact (hidden from the `GET /models` picker the same way) and
- * can never persist — the overlay's `strip` removes it from `models` writes —
- * so keep it off the wire here too.
- */
-function withoutDerivedSecondaryEntry(value: unknown): unknown {
-  if (!isPlainObject(value) || !(SECONDARY_DERIVED_MODEL_ID in value)) return value;
-  const out: Record<string, unknown> = { ...value };
-  delete out[SECONDARY_DERIVED_MODEL_ID];
-  return out;
 }
 
 function toProviderResponses(value: unknown): Record<string, ProviderResponse> {
@@ -214,14 +192,29 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function convertKeysSnakeToCamel(obj: unknown): unknown {
+/**
+ * Config properties whose values are maps keyed by user-defined identifiers
+ * (provider ids, model aliases, subagent pool aliases, flag names). Those keys
+ * are data, not field names — snake→camel conversion must pass them through
+ * untouched (`fast_model` must not become `fastModel`), while the map *values*
+ * (e.g. a provider's `api_key`) still convert. Preserve mode therefore only
+ * engages from a normal field-name level: an entry key that happens to match
+ * the list (a provider literally named `models`) must not keep its own
+ * children preserved.
+ */
+const MAP_VALUED_CONFIG_KEYS = new Set(['providers', 'models', 'experimental', 'raw']);
+
+function convertKeysSnakeToCamel(obj: unknown, preserveKeys = false): unknown {
   if (Array.isArray(obj)) {
-    return obj.map(convertKeysSnakeToCamel);
+    return obj.map((item) => convertKeysSnakeToCamel(item));
   }
   if (isPlainObject(obj)) {
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj)) {
-      result[snakeToCamel(key)] = convertKeysSnakeToCamel(value);
+      result[preserveKeys ? key : snakeToCamel(key)] = convertKeysSnakeToCamel(
+        value,
+        !preserveKeys && MAP_VALUED_CONFIG_KEYS.has(key),
+      );
     }
     return result;
   }

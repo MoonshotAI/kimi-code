@@ -36,14 +36,14 @@ let registeredInjection:
 const injectorStub: IAgentContextInjectorService = {
   _serviceBrand: undefined,
   register: (name, provider) => {
-    registeredInjection = { name, provider };
+    registeredInjection = { name, provider: provider as ContextInjectionProvider };
     return {
       dispose: () => {
         if (registeredInjection?.provider === provider) registeredInjection = undefined;
       },
     };
   },
-  injectAfterCompaction: async () => {},
+  reconcileWhenIdle: async () => {},
 };
 
 let disposables: DisposableStore;
@@ -177,10 +177,9 @@ describe('AgentPermissionModeService (wire-backed)', () => {
     ix2.stub(IAgentContextInjectorService, {
       _serviceBrand: undefined,
       register: (_name, provider) => {
-        restoredProvider = provider;
+        restoredProvider = provider as ContextInjectionProvider;
         return { dispose: () => {} };
       },
-      injectAfterCompaction: async () => {},
     });
     ix2.set(IAgentStateService, new AgentStateService());
     disposables.add(ix2.createInstance(PermissionModeInjection, svc));

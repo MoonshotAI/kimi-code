@@ -8,6 +8,8 @@
  *   GET    /sessions/{session_id}     get
  *   GET    /sessions/{session_id}/profile
  *   POST   /sessions/{session_id}/profile      update title / metadata / agent_config
+ *   POST   /sessions/{session_id}/title/generate
+ *                                              regenerate title via chat_title
  *   POST   /sessions/{tail}                    action: fork / compact / undo /
  *                                              abort / btw / archive / restore
  *   GET    /sessions/{session_id}/children     list child sessions
@@ -21,7 +23,7 @@
  * the native v2 services directly (the workspace handler's
  * `ISessionLifecycleService.fork` / `archive` / `restore`, reached through the
  * `sessionIndex` → `IWorkspaceLifecycleService.handlerFor` composition,
- * `IAgentFullCompactionService.begin`, `IAgentRPCService.cancel`); there is no
+ * `IAgentFullCompactionService.begin`, `IAgentLoopService.cancelFromUser`); there is no
  * v1-only projection to centralize, so no adapter is involved. `undo` likewise
  * calls `IAgentConversationUndoService.undo` directly (it throws
  * `session.undo_unavailable` with a structured reason) and only borrows
@@ -29,10 +31,12 @@
  * `/sessions/{id}/children` endpoints call `ISessionLifecycleService.createChild`
  * and `ISessionIndex.list({ childOf })` directly — the child markers and
  * parent-title default live in the lifecycle, and the child filter lives in the
- * index. Only `POST /sessions/{id}/profile` (`updateProfile`),
- * `GET /sessions/{id}/status`, and `GET /sessions/{id}/goal` go through
- * `ISessionLegacyService` (the `agent_config` patch, the status rollup, and the
- * current-goal read hold real cross-domain adaptation);
+ * index. `POST /sessions/{id}/profile` is composed at the edge too: both the
+ * title/metadata patch (`sessionProfile.ts`) and the `agent_config` dispatch
+ * (`sessionAgentConfig.ts`) are wire-to-native translations over the native v2
+ * services. Only `GET /sessions/{id}/status` and `GET /sessions/{id}/goal` go
+ * through `ISessionLegacyService` (the status rollup and the current-goal read
+ * hold real cross-domain adaptation);
  * the route forwards each adapter result verbatim, mirroring v1's thin handler.
  * `create`, `fork`, and child creation publish `event.session.created` on the
  * core event bus, matching v1.
@@ -40,10 +44,7 @@
  * `GET /sessions/{id}/warnings` surfaces session-level notices in the v1
  * `{ code, message, severity }` wire shape: the `agents-md-oversized` warning
  * (projected from the main agent's `IAgentProfileService.getAgentsMdWarning()`
- * — computed and cached when the agent binds a profile) and the
- * secondary-model early-validation warning (projected from the Session-scope
- * `ISessionSecondaryModelWarningService` — computed and cached when the main
- * agent is created). An unbound main agent or a valid/unset secondary model
+ * — computed and cached when the agent binds a profile). An unbound main agent
  * yields an empty list, matching v1's "no warning" case.
  *
  * **Wire fidelity**: mirrors v1's `toProtocolSession`
@@ -81,7 +82,7 @@ import {
   IAgentProfileService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
-  IAgentRPCService,
+  IAgentLoopService,
   IAuthSummaryService,
   ISessionActivityView,
   ISessionBtwService,
@@ -89,14 +90,13 @@ import {
   ISessionIndex,
   ISessionMetadata,
   ISessionLegacyService,
-  ISessionSecondaryModelWarningService,
+  ISessionTitleService,
   IEventService,
   IWorkspaceAliases,
-  ISessionLifecycleService,
-  IWorkspaceLifecycleService,
+  ISessionManager,
   IWorkspaceService,
   getLiveSessionById,
-  handlerForSession,
+  programForSession,
   resumeSessionById,
   isError2,
   Error2,
@@ -139,6 +139,8 @@ import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
+import { applySessionAgentConfig } from './sessionAgentConfig';
+import { updateSessionProfile } from './sessionProfile';
 
 interface SessionRouteHost {
   post(
@@ -323,11 +325,8 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       // lifecycle entry point.
       try {
         const touched = await registry.createOrTouch(workDir);
-
-        const handler = await core.accessor.get(IWorkspaceLifecycleService).handlerFor({
-          root: workDir,
-        });
-        const handle = await handler.accessor.get(ISessionLifecycleService).create({
+        const handle = await core.accessor.get(ISessionManager).create({
+          workspaceId: touched.id,
           workDir,
         });
         if (typeof body.title === 'string') {
@@ -615,9 +614,15 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     async (req, reply) => {
       try {
         const { session_id } = req.params;
-        const fields = await core.accessor
-          .get(ISessionLegacyService)
-          .updateProfile(session_id, req.body);
+        const { agent_config, ...profileBody } = req.body;
+        // Both halves of the profile patch are wire-to-native translations
+        // dispatched to the native v2 services at the edge (same direct-call
+        // pattern as fork/compact/undo); title/metadata applies first,
+        // matching the original in-adapter ordering.
+        const fields = await updateSessionProfile(core, session_id, profileBody);
+        if (agent_config !== undefined) {
+          await applySessionAgentConfig(core, session_id, agent_config);
+        }
         const session = toWireSession(fields, fields.root, resolveSessionFacts(core, fields.id));
         // Broadcast the title change to every connection (including clients not
         // subscribed to this session, and covering inactive sessions), so session
@@ -643,6 +648,65 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     updateProfileRoute.path,
     updateProfileRoute.options,
     updateProfileRoute.handler as Parameters<SessionRouteHost['post']>[2],
+  );
+
+  const generateTitleRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions/{session_id}/title/generate',
+      params: sessionIdParamSchema,
+      // Optional body: `{ "force": true }` requests an explicit regeneration
+      // that overwrites an already-generated or user-customized title;
+      // `source` picks the conversation excerpt (`user_prompts` default,
+      // `first_turn`, `digest`).
+      body: z.preprocess(
+        (value) => (value === undefined ? {} : value),
+        z.object({
+          force: z.boolean().optional(),
+          source: z.enum(['user_prompts', 'first_turn', 'digest']).optional(),
+        }),
+      ),
+      success: { data: z.object({ title: z.string() }) },
+      errors: {
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.SESSION_TITLE_UNAVAILABLE]: {},
+      },
+      description: 'Generate the session title via the managed chat_title tool',
+      tags: ['sessions'],
+    },
+    async (req, reply) => {
+      try {
+        const { session_id } = req.params;
+        const handle = await resumeSessionById(core.accessor, session_id);
+        if (handle === undefined) {
+          reply.send(
+            errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} not found`, req.id),
+          );
+          return;
+        }
+        const title = await handle.accessor
+          .get(ISessionTitleService)
+          .generateTitle({ force: req.body.force === true, source: req.body.source });
+        if (title === undefined) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.SESSION_TITLE_UNAVAILABLE,
+              'session title generation is unavailable (no managed OAuth login, no prompt yet, or the backend request failed)',
+              req.id,
+            ),
+          );
+          return;
+        }
+        reply.send(okEnvelope({ title }, req.id));
+      } catch (error) {
+        sendMappedError(reply, req, error);
+      }
+    },
+  );
+  app.post(
+    generateTitleRoute.path,
+    generateTitleRoute.options,
+    generateTitleRoute.handler as Parameters<SessionRouteHost['post']>[2],
   );
 
   const sessionActionRoute = defineRoute(
@@ -693,14 +757,14 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           // Fork lives on the source session's handler; the index routes us
           // there (`session.not_found` for an unknown source, same as the
           // lifecycle's own guard).
-          const forkHandler = await handlerForSession(core.accessor, parsed.id);
+          const forkHandler = await programForSession(core.accessor, parsed.id);
           if (forkHandler === undefined) {
             throw new Error2(
               ErrorCodes.SESSION_NOT_FOUND,
               `session ${parsed.id} does not exist`,
             );
           }
-          const handle = await forkHandler.accessor.get(ISessionLifecycleService).fork({
+          const handle = await core.accessor.get(ISessionManager).fork({
             sourceSessionId: parsed.id,
             title: body.title,
             metadata: body.metadata,
@@ -773,7 +837,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           const agent = await resolveMainAgent(core, parsed.id);
           // No turnId → cancel whatever turn is active; a safe no-op when idle.
           // v1 always reports success once the session exists.
-          await agent.accessor.get(IAgentRPCService).cancel({});
+          agent.accessor.get(IAgentLoopService).cancelFromUser();
           requestLog(req)?.info({ session_id: parsed.id, action: 'abort' }, 'session action completed');
           reply.send(okEnvelope({ aborted: true }, req.id));
           return;
@@ -796,11 +860,11 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         }
 
         if (parsed.action === 'restore') {
-          const restoreHandler = await handlerForSession(core.accessor, parsed.id);
+          const restoreHandler = await programForSession(core.accessor, parsed.id);
           const restored =
             restoreHandler === undefined
               ? undefined
-              : await restoreHandler.accessor.get(ISessionLifecycleService).restore(parsed.id);
+              : await core.accessor.get(ISessionManager).restore(parsed.id);
           if (restored === undefined) {
             throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
           }
@@ -819,15 +883,15 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         // archive — `resume` (not `get`) so archiving a freshly-opened cold
         // session still works; `resume` returns undefined only when the session
         // is unknown or its workspace is gone, reported as `session.not_found`.
-        const archiveHandler = await handlerForSession(core.accessor, parsed.id);
+        const archiveHandler = await programForSession(core.accessor, parsed.id);
         const archived =
           archiveHandler === undefined
             ? undefined
-            : await archiveHandler.accessor.get(ISessionLifecycleService).resume(parsed.id);
+            : await core.accessor.get(ISessionManager).resume(parsed.id);
         if (archived === undefined || archiveHandler === undefined) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
         }
-        await archiveHandler.accessor.get(ISessionLifecycleService).archive(parsed.id);
+        await core.accessor.get(ISessionManager).archive(parsed.id);
         requestLog(req)?.info({ session_id: parsed.id, action: 'archive' }, 'session action completed');
         reply.send(okEnvelope({ archived: true }, req.id));
       } catch (error) {
@@ -934,11 +998,11 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         // `fork`), so no explicit existence check is needed here. The child
         // markers (`parent_session_id` / `child_session_kind`) and the default
         // `Child: <parent>` title are applied by the handler's lifecycle.
-        const childHandler = await handlerForSession(core.accessor, session_id);
+        const childHandler = await programForSession(core.accessor, session_id);
         if (childHandler === undefined) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
         }
-        const handle = await childHandler.accessor.get(ISessionLifecycleService).createChild({
+        const handle = await core.accessor.get(ISessionManager).createChild({
           sourceSessionId: session_id,
           title: req.body.title,
           metadata: req.body.metadata,
@@ -1051,18 +1115,12 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       try {
         // Surface v2 notices in the v1 wire shape. The agents-md warning is
         // computed (and cached) by `IAgentProfileService` when the main agent
-        // binds a profile; the secondary-model warning is computed (and
-        // cached) by `ISessionSecondaryModelWarningService` when the main
-        // agent is created. An unbound main agent / unset secondary model
-        // yields `undefined` → that entry drops out, matching v1's "no
-        // warning" case.
+        // binds a profile; an unbound main agent yields `undefined` → the
+        // entry drops out, matching v1's "no warning" case.
         const agent = await ensureMainAgent(session);
         const agentsMdWarning = agent.accessor.get(IAgentProfileService).getAgentsMdWarning();
-        const secondaryModelWarning = session.accessor
-          .get(ISessionSecondaryModelWarningService)
-          .getSecondaryModelWarning();
-        const warnings = [
-          ...(agentsMdWarning === undefined
+        const warnings =
+          agentsMdWarning === undefined
             ? []
             : [
                 {
@@ -1070,17 +1128,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
                   message: agentsMdWarning,
                   severity: 'warning' as const,
                 },
-              ]),
-          ...(secondaryModelWarning === undefined
-            ? []
-            : [
-                {
-                  code: secondaryModelWarning.code,
-                  message: secondaryModelWarning.message,
-                  severity: 'warning' as const,
-                },
-              ]),
-        ];
+              ];
         reply.send(okEnvelope({ warnings }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -1108,6 +1156,7 @@ export interface SessionWireFields {
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly archived: boolean;
+  readonly archivedAt?: number;
   readonly custom?: Record<string, unknown>;
   readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
@@ -1123,6 +1172,10 @@ export function toWireSession(
     title: fields.title ?? '',
     created_at: new Date(fields.createdAt).toISOString(),
     updated_at: new Date(fields.updatedAt).toISOString(),
+    // Archive moment; sessions archived before the field existed report
+    // nothing (clients fall back to updated_at for display).
+    archived_at:
+      fields.archivedAt === undefined ? undefined : new Date(fields.archivedAt).toISOString(),
     busy: facts.busy,
     main_turn_active: facts.mainTurnActive,
     pending_interaction: facts.pendingInteraction,
@@ -1317,6 +1370,7 @@ function sendMappedError(
         return;
       case 'request.invalid':
       case 'validation.failed':
+      case ErrorCodes.CONFIG_INVALID:
         reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
         return;
     }

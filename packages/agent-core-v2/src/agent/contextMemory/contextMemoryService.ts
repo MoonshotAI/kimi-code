@@ -6,9 +6,9 @@
  * wire state is an append-only folded log; `get()` serves the model-visible
  * window derived by `visibleWindow.deriveVisibleMessages`, while `getLog()`
  * exposes the raw log for integrity checks. Every splice-shaped mutation
- * (`clear` / `applyCompaction` / `undo`) publishes
- * `context.spliced` from the live path only — replay rebuilds silently — and
- * `undo` additionally truncates the measured-anchor ledger when the cut
+ * (`clear` / `applyCompaction` / `undo`, plus verified cross-model trailing
+ * removal) publishes `context.spliced` from the live path only — replay
+ * rebuilds silently — and truncates the measured-anchor ledger when a cut
  * crosses an anchor, letting `tokenCounting` restore the surviving prefix's
  * REAL size from the remaining anchors. Bound at Agent scope.
  */
@@ -97,6 +97,21 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
 
   appendLoopEvent(event: LoopRecordedEvent): void {
     this.wire.dispatch(contextAppendLoopEvent({ event }));
+  }
+
+  publishTrailingRemoval(previous: readonly ContextMessage[]): boolean {
+    const cutIndex = previous.length - 1;
+    if (cutIndex < 0) return false;
+    const current = this.get();
+    if (
+      current.length !== cutIndex ||
+      current.some((message, index) => message !== previous[index])
+    ) {
+      return false;
+    }
+    this.wire.dispatch(...this.sizeOpsForCut(cutIndex));
+    this.publishSplice({ start: cutIndex, deleteCount: 1, messages: [] });
+    return true;
   }
 
   clear(): void {

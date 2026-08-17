@@ -1,0 +1,64 @@
+/**
+ * `tools` domain — `TowerMergeTool` implementation (the `TowerMerge` tool).
+ *
+ * Merges a mission branch through the protocol `TowerStore` rooted at the
+ * session cwd (`sessionContext`); after a successful merge it reports which
+ * unmerged branches touched the same files (they must rebase — their moved
+ * tip then fails the reviewed_commit gate, forcing a re-review). Registered
+ * for the main agent only. Bound at Agent scope.
+ */
+
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { toInputJsonSchema } from '#/tool/input-schema';
+import type { ToolExecution } from '#/tool/toolContract';
+
+import { newTowerStore, runTowerTool } from '../support';
+import DESCRIPTION from './merge.md?raw';
+import { ITowerMergeTool, TowerMergeToolInputSchema, type TowerMergeToolInput } from './merge';
+
+export class TowerMergeTool implements ITowerMergeTool {
+  declare readonly _serviceBrand: undefined;
+  readonly name = 'TowerMerge' as const;
+  readonly description: string = DESCRIPTION;
+  readonly parameters: Record<string, unknown> = toInputJsonSchema(TowerMergeToolInputSchema);
+
+  constructor(@ISessionContext private readonly sessionContext: ISessionContext) {}
+
+  resolveExecution(args: TowerMergeToolInput): ToolExecution {
+    return {
+      description: `Merging tower branch: ${args.branch}`,
+      approvalRule: this.name,
+      execute: () =>
+        runTowerTool(async () => {
+          const store = newTowerStore(this.sessionContext);
+          const { mergeCommit, conflictsWith, noop } = await store.merge(args.branch);
+          if (noop === true) {
+            return {
+              output: [
+                `${args.branch} is a read-only survey with a zero-diff branch — mission marked merged, no git merge needed.`,
+                'Continue with the remaining missions in Dependency Flow order.',
+              ].join('\n'),
+            };
+          }
+          const lines = [
+            `merged ${args.branch} (merge commit ${mergeCommit.slice(0, 7)})`,
+            `full commit: ${mergeCommit}`,
+          ];
+          if (conflictsWith.length > 0) {
+            lines.push(
+              '',
+              'These unmerged branches changed the same files and now likely conflict with the base:',
+              ...conflictsWith.map(
+                (conflict) => `- ${conflict.branch}: ${conflict.files.join(', ')}`,
+              ),
+              'Tell each affected worker (Agent resume) to rebase onto the updated base, resolve, push, and request a re-review.',
+            );
+          } else {
+            lines.push('The mission is now marked merged. Continue with the remaining missions in Dependency Flow order.');
+          }
+          return { output: lines.join('\n') };
+        }),
+    };
+  }
+}
+

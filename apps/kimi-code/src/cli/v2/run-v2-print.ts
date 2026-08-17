@@ -32,8 +32,7 @@ import {
   IOAuthToolkit,
   ISessionCronService,
   ISessionIndex,
-  ISessionLifecycleService,
-  IWorkspaceLifecycleService,
+  ISessionManager,
   ITelemetryService,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
@@ -262,7 +261,7 @@ async function resolveNativeSession(
   defaultModel: string | undefined,
   stderr: PromptOutput,
 ): Promise<ResolvedNativeSession> {
-  const workspaceLifecycle = app.accessor.get(IWorkspaceLifecycleService);
+  const sessions = app.accessor.get(ISessionManager);
   const index = app.accessor.get(ISessionIndex);
 
   // `--agent` selects a catalog profile by name; otherwise `--agent-file`
@@ -379,8 +378,7 @@ async function resolveNativeSession(
   }
 
   const model = requireConfiguredModel(opts.model, defaultModel);
-  const handler = await workspaceLifecycle.handlerFor({ root: workDir });
-  const session = await handler.accessor.get(ISessionLifecycleService).create({
+  const session = await sessions.create({
     workDir,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
     mainAgentBinding: {

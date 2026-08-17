@@ -267,6 +267,8 @@ describe('PluginManager consumption plane', () => {
       '---\nname: root-skill\ndescription: at root\n---\nbody',
       'utf8',
     );
+    // Sibling docs at the plugin root are not skills.
+    await writeFile(path.join(root, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
     const manager = new PluginManager({ kimiHomeDir: home });
     await manager.load();
     await manager.install(root);

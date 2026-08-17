@@ -5,10 +5,12 @@
  * only the native `ContextMessage`, and `services/messages/messageProjection`
  * projects it into this shape at the edge.
  *
- * Media sources come in three kinds: `url`, `base64`, and `file` (a daemon
- * upload id). The `url` kind optionally pairs an `id` — the provider-issued
- * file id behind a reference such as `ms://…` — forwarded on the wire when
- * the provider keys media by id.
+ * Media sources come in four kinds: `url`, `base64`, `file` (a transient
+ * daemon upload id accepted on input), and `session_media` (the canonical
+ * Session-owned copy returned by stored prompt/message projections). The
+ * `url` kind optionally pairs an `id` — the provider-issued file id behind a
+ * reference such as `ms://…` — forwarded on the wire when the provider keys
+ * media by id.
  */
 
 import { z } from 'zod';
@@ -52,6 +54,7 @@ export const imageSourceSchema = z.discriminatedUnion('kind', [
     data: z.string().min(1),
   }),
   z.object({ kind: z.literal('file'), file_id: z.string().min(1) }),
+  z.object({ kind: z.literal('session_media'), file_id: z.string().min(1) }),
 ]);
 export type ImageSource = z.infer<typeof imageSourceSchema>;
 
