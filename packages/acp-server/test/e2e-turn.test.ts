@@ -15,6 +15,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot-ai/agent-core-v2';
+import { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
+import { promptLaunchingKey } from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
+import { IAgentStateService } from '@moonshot-ai/agent-core-v2/agent/state/agentState';
 import { ToolProgress } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -290,6 +293,80 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     const result = (await firstPrompt) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
     expect(scripted!.callCount()).toBe(2);
+  }, 30_000);
+
+  it('streams a scheduled turn while an ACP prompt waits behind it', async () => {
+    const c = await boot();
+    scripted!.mockNextResponse({
+      type: 'function',
+      id: 'call_cron',
+      name: 'Bash',
+      arguments: '{"command":"echo scheduled_turn"}',
+    });
+    scripted!.mockNextText('scheduled turn finished');
+    scripted!.mockNextText('queued prompt answered');
+
+    let answerPermission: ((response: unknown) => void) | undefined;
+    const permissionSeen = new Promise<void>((seen) => {
+      c.onRequest('session/request_permission', () => {
+        seen();
+        return new Promise((resolve) => {
+          answerPermission = resolve;
+        });
+      });
+    });
+
+    const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+      sessionId: string;
+    };
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+
+    const session = getLiveSessionById(c.server.core.accessor, created.sessionId);
+    const agentHandle = session?.accessor.get(IAgentLifecycleService).get('main');
+    const prompts = agentHandle?.accessor.get(IAgentPromptService);
+    const states = agentHandle?.accessor.get(IAgentStateService);
+    expect(prompts).toBeDefined();
+    expect(states).toBeDefined();
+
+    const scheduled = await prompts!.inject({
+      role: 'user',
+      content: [{ type: 'text', text: 'run the scheduled task' }],
+      toolCalls: [],
+      origin: {
+        kind: 'cron_job',
+        jobId: 'scheduled-visibility',
+        cron: '* * * * *',
+        recurring: true,
+        coalescedCount: 1,
+        stale: false,
+      },
+    });
+    expect(scheduled).toBeDefined();
+    await permissionSeen;
+
+    const queuedPrompt = c.send('session/prompt', {
+      sessionId: created.sessionId,
+      prompt: [{ type: 'text', text: 'status?' }],
+    });
+    for (let attempt = 0; attempt < 100 && !states!.get(promptLaunchingKey); attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const promptWaitedForTheScheduledTurn = states!.get(promptLaunchingKey);
+    answerPermission!({ outcome: { outcome: 'selected', optionId: 'approve_once' } });
+    expect(promptWaitedForTheScheduledTurn).toBe(true);
+    const result = (await queuedPrompt) as { stopReason: string };
+    expect(result.stopReason).toBe('end_turn');
+
+    const chunks = c
+      .sessionUpdates()
+      .map((message) =>
+        (message.params as { update?: { sessionUpdate?: string; content?: { text?: string } } })
+          .update,
+      )
+      .filter((update) => update?.sessionUpdate === 'agent_message_chunk')
+      .map((update) => update?.content?.text);
+    expect(chunks).toContain('scheduled turn finished');
+    expect(chunks).toContain('queued prompt answered');
   }, 30_000);
 
   it('settles as cancelled when cancel arrives while the launch is in flight', async () => {

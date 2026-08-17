@@ -103,6 +103,16 @@ function leadingText(blocks: readonly ContentBlock[]): string | undefined {
  */
 const TURN_AGENT_BUSY_CODE = 'turn.agent_busy';
 
+/** Whether a turn was started by the session cron scheduler. */
+function isScheduledTurnOrigin(origin: unknown): boolean {
+  return (
+    typeof origin === 'object' &&
+    origin !== null &&
+    'kind' in origin &&
+    origin.kind === 'cron_job'
+  );
+}
+
 /**
  * Map a prompt-launch rejection (from `agent.prompt` / `agent.activateSkill`)
  * to the JSON-RPC error the client sees.
@@ -194,6 +204,8 @@ export class AcpSession {
   private skills: readonly SkillSummary[] = [];
   /** The in-flight prompt's driver, if any. */
   private driver: TurnDriver | undefined;
+  /** Cron turns whose output must remain visible even without an ACP prompt driver. */
+  private readonly scheduledTurnIds = new Set<number>();
   /**
    * Abort markers of prompts still in their pre-turn image-compression phase
    * (no turn launched yet, so `agent.cancel` has nothing to cancel).
@@ -275,6 +287,11 @@ export class AcpSession {
   async init(): Promise<void> {
     const events = this.agent.events;
     this.subscriptions.push(
+      events.on('turn.started', (event) => {
+        if (isScheduledTurnOrigin(event.origin)) {
+          this.scheduledTurnIds.add(event.turnId);
+        }
+      }),
       events.on('assistant.delta', (event) => {
         this.dispatchTurnEvent(event.turnId, () => {
           this.onAssistantDelta(event);
@@ -393,6 +410,7 @@ export class AcpSession {
     for (const subscription of this.subscriptions.splice(0)) {
       subscription.dispose();
     }
+    this.scheduledTurnIds.clear();
   }
 
   /**
@@ -706,6 +724,13 @@ export class AcpSession {
    * is still unknown (see {@link TurnDriver.early}), otherwise dispatch live.
    */
   private dispatchTurnEvent(turnId: number, dispatch: () => void): void {
+    // A prompt submitted while a cron turn is running waits for that turn's
+    // launch slot. Its driver therefore has no turn id yet; do not buffer and
+    // later discard the scheduled turn's activity behind that pending driver.
+    if (this.scheduledTurnIds.has(turnId)) {
+      dispatch();
+      return;
+    }
     const driver = this.driver;
     if (driver !== undefined && !driver.settled && driver.turnId === undefined) {
       driver.early.push({ turnId, dispatch });
@@ -734,18 +759,23 @@ export class AcpSession {
     return driver;
   }
 
+  /** Whether this ACP session should stream events from the given turn. */
+  private followsTurn(turnId: number): boolean {
+    return this.driverFor(turnId) !== undefined || this.scheduledTurnIds.has(turnId);
+  }
+
   private onAssistantDelta(event: AgentEventPayloads['assistant.delta']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.followsTurn(event.turnId)) return;
     this.emit(assistantDeltaToSessionUpdate(this.sessionId, event));
   }
 
   private onThinkingDelta(event: AgentEventPayloads['thinking.delta']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.followsTurn(event.turnId)) return;
     this.emit(thinkingDeltaToSessionUpdate(this.sessionId, event));
   }
 
   private onToolCallStarted(event: AgentEventPayloads['tool.call.started']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.followsTurn(event.turnId)) return;
     // The klient payload mirrors `ToolCallStartedEvent` (`args` / `display`
     // arrive as `unknown` — cast at this seam).
     const mapped = event as unknown as ToolCallStartedEvent;
@@ -787,7 +817,7 @@ export class AcpSession {
   }
 
   private onToolCallDelta(event: AgentEventPayloads['tool.call.delta']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.followsTurn(event.turnId)) return;
     // The klient payload mirrors `ToolCallDeltaEvent` field-for-field.
     const mapped = event as unknown as ToolCallDeltaEvent;
     const key = acpToolCallId(event.turnId, event.toolCallId);
@@ -809,7 +839,7 @@ export class AcpSession {
   }
 
   private onToolProgress(event: AgentEventPayloads['tool.progress']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.followsTurn(event.turnId)) return;
     // The klient payload mirrors `ToolProgressEvent` field-for-field; the
     // helper forwards only `status` updates with text (as a title refresh)
     // and returns null for everything else, which `emit` drops.
@@ -817,7 +847,7 @@ export class AcpSession {
   }
 
   private onToolResult(event: AgentEventPayloads['tool.result']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.followsTurn(event.turnId)) return;
     const key = acpToolCallId(event.turnId, event.toolCallId);
     const locations = this.toolLocations.get(key);
     this.toolLocations.delete(key);
@@ -905,8 +935,12 @@ export class AcpSession {
   }
 
   private onTurnEnded(event: AgentEventPayloads['turn.ended']): void {
+    const scheduled = this.scheduledTurnIds.delete(event.turnId);
     const driver = this.driverFor(event.turnId);
-    if (driver === undefined) return;
+    if (driver === undefined) {
+      if (scheduled) void this.emitUsageUpdate();
+      return;
+    }
     const error = event.error as { readonly code: string; readonly message?: string } | undefined;
     this.settleDriver(driver, () => {
       // Auth failures must surface as a JSON-RPC `auth_required` error
