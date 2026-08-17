@@ -230,6 +230,10 @@ export function toolResultOutput(content: readonly ContentPart[]): string {
 }
 
 export function contentPartsToText(content: readonly ContentPart[]): string {
+  // A daemon-ref media part is self-contained and renders as a bare
+  // `[image]`/`[video]` placeholder downstream — neither the materialization
+  // path nor the internal `kimi-file://` url may surface as user text. A
+  // standalone `<media path>` tag is user text and stays verbatim.
   return content.map(contentPartToText).join('');
 }
 

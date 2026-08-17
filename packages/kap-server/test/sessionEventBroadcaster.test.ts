@@ -36,6 +36,7 @@ import {
   SessionInteractionService,
   StateRegistry,
 } from '@moonshot-ai/agent-core-v2';
+import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { AgentEvent } from '../src/transport/ws/v1/events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -457,6 +458,29 @@ describe('SessionEventBroadcaster', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  it('preserves a real Event2 time in payload and derives the envelope timestamp from it', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+    const event = new TurnStarted({ turnId: 1, origin: { kind: 'user' } }, 1_700_000_000_123);
+
+    main.bus.emit(event);
+    await bc.getCursor('s1');
+
+    const envelope = envelopes.find((candidate) => candidate.type === 'turn.started');
+    expect(envelope?.timestamp).toBe(new Date(event.time).toISOString());
+    expect(envelope?.payload).toMatchObject({
+      type: 'turn.started',
+      time: event.time,
+      turnId: 1,
+      origin: { kind: 'user' },
+      agentId: 'main',
+      sessionId: 's1',
+    });
+  });
+
   it('stamps monotonic seq on durable events and fans out', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
@@ -785,6 +809,133 @@ describe('SessionEventBroadcaster', () => {
     expect(result.resyncRequired).toBe('buffer_overflow');
     expect(result.currentSeq).toBe(6);
   });
+
+  // The v1 wire contract for `turn.started` is exactly
+  // {type, turnId, origin, prompt?, promptId?, agentId, sessionId} — the
+  // engine-internal `promptAttachments` projection input must never reach the
+  // payload, and a video prompt's frame stays field-identical to the
+  // pre-attachment shape. Events without a `promptId` keep the six-key set.
+  const TURN_STARTED_WIRE_KEYS = ['agentId', 'origin', 'prompt', 'sessionId', 'turnId', 'type'];
+
+  it('forwards the promptId echo on a prompt-opened turn.started (live)', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(
+      agentEvent('turn.started', {
+        turnId: 1,
+        origin: { kind: 'user' },
+        prompt: 'with an exact id',
+        promptId: 'submission-1',
+      }),
+    );
+    await bc.getCursor('s1'); // drain
+
+    const live = envelopes.find((e) => e.type === 'turn.started');
+    expect(live).toBeDefined();
+    expect(live!.payload).toHaveProperty('promptId', 'submission-1');
+    expect(Object.keys(live!.payload as Record<string, unknown>).toSorted()).toEqual(
+      [...TURN_STARTED_WIRE_KEYS, 'promptId'].toSorted(),
+    );
+  });
+
+  it('keeps a video-prompt turn.started wire payload at the pre-attachment field set (live + disk-journal replay)', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(
+      agentEvent('turn.started', {
+        turnId: 1,
+        origin: { kind: 'user' },
+        prompt: 'summarize this clip',
+        promptAttachments: [{ kind: 'video', fileId: 'file_vid_1' }],
+      }),
+    );
+    await bc.getCursor('s1'); // drain between the turn boundaries (see note above)
+
+    const live = envelopes.find(
+      (e) => e.type === 'turn.started' && (e.payload as { turnId?: number }).turnId === 1,
+    );
+    expect(live).toBeDefined();
+    expect(live!.payload).not.toHaveProperty('promptAttachments');
+    expect(Object.keys(live!.payload as Record<string, unknown>).toSorted()).toEqual(
+      TURN_STARTED_WIRE_KEYS,
+    );
+
+    // The journal persists the same stripped envelope: reopen the session
+    // against the same eventsDir (a fresh instance has an empty in-memory
+    // tail, so the cursor replay is served by the on-disk journal) and the
+    // video turn.started still carries exactly the pre-attachment field set.
+    await bc.close(); // flushes the journal write-behind buffer
+    bc = new SessionEventBroadcaster({
+      eventsDir: dir,
+      core: makeCore(sessions, eventBus),
+      maxBufferSize: 20,
+    });
+    const replay = await bc.getBufferedSince('s1', { seq: 0 });
+    expect(replay.resyncRequired).toBe(false);
+    const replayed = replay.events.find(
+      (e) =>
+        e.envelope.type === 'turn.started' &&
+        (e.envelope.payload as { turnId?: number }).turnId === 1,
+    );
+    expect(replayed).toBeDefined();
+    expect(replayed!.envelope.payload).not.toHaveProperty('promptAttachments');
+    expect(Object.keys(replayed!.envelope.payload as Record<string, unknown>).toSorted()).toEqual(
+      TURN_STARTED_WIRE_KEYS,
+    );
+  });
+
+  it.each(['prompt.steered', 'prompt.queued'])(
+    'projects %s content without leaking daemon refs (live + tail replay)',
+    async (type) => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      const { target, envelopes } = collectingTarget();
+      await bc.subscribe('s1', target);
+
+      const ids =
+        type === 'prompt.steered'
+          ? { activePromptId: 'p1', promptIds: ['p2'], steeredAt: '2026-01-01T00:00:02.000Z' }
+          : { promptId: 'p2', queueLength: 1 };
+      main.bus.emit(
+        agentEvent(type, {
+          ...ids,
+          content: [
+            { type: 'text', text: 'look at this' },
+            {
+              type: 'image_url',
+              imageUrl: { url: 'kimi-file://f_img1?path=%2Fabs%2Fsession%2Fmedia%2Ff_img1.png' },
+            },
+          ],
+        }),
+      );
+      await bc.getCursor('s1'); // drain
+
+      const expected = [
+        { type: 'text', text: 'look at this' },
+        { type: 'image', source: { kind: 'session_media', file_id: 'f_img1' } },
+      ];
+      const live = envelopes.find((e) => e.type === type);
+      expect(live).toBeDefined();
+      expect((live!.payload as { content: unknown }).content).toEqual(expected);
+      expect(JSON.stringify(live!.payload)).not.toContain('kimi-file://');
+      expect(JSON.stringify(live!.payload)).not.toContain('/abs/session');
+
+      // Cursor replay within the in-memory tail serves the same projected envelope.
+      const replay = await bc.getBufferedSince('s1', { seq: 0 });
+      const replayed = replay.events.find((e) => e.envelope.type === type);
+      expect(replayed).toBeDefined();
+      expect((replayed!.envelope.payload as { content: unknown }).content).toEqual(expected);
+    },
+  );
 
   it('returns epoch_changed for a mismatched epoch', async () => {
     const lc = new FakeLifecycle();

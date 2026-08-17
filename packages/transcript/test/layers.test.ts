@@ -4,7 +4,7 @@ import { filterOpsForGrade, isAppendOnly, redactSnapshotForGrade } from '#/granu
 import { detachGrades, gradeFor, needsResetOnTransition } from '#/granularity/grade';
 import { paginateTurns } from '#/pagination/paginate';
 import { ViewRegistry } from '#/view/registry';
-import { groupMessagesIntoSnapshot } from '#/history/groupTurns';
+import { groupMessagesIntoSnapshot, type HistoryContentPart } from '#/history/groupTurns';
 import { foldWireRecordFacts, type HistoryWireRecord } from '#/history/foldFacts';
 import {
   transcriptOperationSchema,
@@ -410,6 +410,12 @@ describe('contract schemas', () => {
 });
 
 describe('groupMessagesIntoSnapshot (cold path)', () => {
+  // Single-user-message shell shared by the media ref projection tests below.
+  const snapshotOf = (...parts: HistoryContentPart[]): AgentTranscriptSnapshot =>
+    groupMessagesIntoSnapshot([
+      { role: 'user', content: parts, toolCalls: [], origin: { kind: 'user' } },
+    ]);
+
   it('groups flat messages into turns with folded tool results', () => {
     const snapshot = groupMessagesIntoSnapshot([
       { role: 'system', content: [{ type: 'text', text: 'sys' }] },
@@ -522,6 +528,167 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     const firstTurn = snapshot.items[0];
     if (firstTurn?.kind !== 'turn') throw new Error('expected turn');
     expect(firstTurn.attachmentIds).toEqual(['att_1', 'att_2', 'att_3']);
+  });
+
+  it('maps persisted kimi-file media refs to attachments', () => {
+    // The engine persists an uploaded medium as a self-contained kosong
+    // `image_url` / `video_url` part carrying a `kimi-file://<fileId>` ref:
+    // the part type gives the kind and the ref the file id. A legacy `?path=`
+    // query is tolerated and ignored.
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'video_url',
+            videoUrl: { url: 'kimi-file://file_1' },
+          } as HistoryContentPart,
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'what is this?' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://file_2?path=%2Fcache%2Fshot.png' },
+          } as HistoryContentPart,
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    ]);
+
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'video/*',
+        source: { kind: 'session_media', fileId: 'file_1' },
+      },
+      {
+        attachmentId: 'att_2',
+        mediaType: 'image/*',
+        source: { kind: 'session_media', fileId: 'file_2' },
+      },
+    ]);
+    const videoTurn = snapshot.items[0];
+    const imageTurn = snapshot.items[1];
+    if (videoTurn?.kind !== 'turn' || imageTurn?.kind !== 'turn') {
+      throw new Error('expected turns');
+    }
+    expect(videoTurn.attachmentIds).toEqual(['att_1']);
+    expect(imageTurn.attachmentIds).toEqual(['att_2']);
+    expect(videoTurn.prompt).toBe('');
+    expect(imageTurn.prompt).toBe('what is this?');
+  });
+
+  it('projects a daemon ref in a user-slash turn-opening input like a plain user turn', () => {
+    // A user-slash skill command carrying an uploaded image persists the same
+    // self-contained daemon-ref part; the cold rebuild projects it exactly
+    // like a plain user turn (one attachment on the turn), mirroring the live
+    // `projectTurnPrompt` projection.
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '/gen-docs ' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://file_4?path=%2Fcache%2Fshot.png' },
+          } as HistoryContentPart,
+        ],
+        toolCalls: [],
+        origin: { kind: 'skill_activation', trigger: 'user-slash', skillName: 'gen-docs' } as {
+          kind: string;
+        },
+      },
+    ]);
+
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'image/*',
+        source: { kind: 'session_media', fileId: 'file_4' },
+      },
+    ]);
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['marker', 'turn']);
+    const marker = snapshot.items[0];
+    if (marker?.kind !== 'marker') throw new Error('expected marker');
+    expect((marker.payload as { text: string }).text).toBe('/gen-docs ');
+    const turn = snapshot.items[1];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.prompt).toBe('/gen-docs ');
+    expect(turn.attachmentIds).toEqual(['att_1']);
+  });
+
+  it('keeps a kimi-file ref as a nameless attachment and inline tags as user text', () => {
+    const snapshot = snapshotOf(
+      { type: 'text', text: 'open <image path="/tmp/other.png"></image> please' },
+      {
+        type: 'image_url',
+        imageUrl: { url: 'kimi-file://file_3' },
+      } as HistoryContentPart,
+    );
+
+    // The ref carries no display name; the inline tag inside real user text
+    // stays verbatim (never stripped).
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'image/*',
+        source: { kind: 'session_media', fileId: 'file_3' },
+      },
+    ]);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.attachmentIds).toEqual(['att_1']);
+    expect(turn.prompt).toBe('open <image path="/tmp/other.png"></image> please');
+  });
+
+  it('keeps a legacy tag+ref pair as prompt text plus the ref-derived attachment', () => {
+    // Legacy sessions persist an upload as the pair `<media path>` tag text
+    // part + daemon-ref media part. Tolerated, not folded: the tag stays
+    // user-visible text and the self-contained ref projects on its own.
+    const snapshot = snapshotOf(
+      { type: 'text', text: '<image path="/cache/shot.png"></image>' },
+      {
+        type: 'image_url',
+        imageUrl: { url: 'kimi-file://file_5?path=%2Fcache%2Fshot.png' },
+      } as HistoryContentPart,
+    );
+
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'image/*',
+        source: { kind: 'session_media', fileId: 'file_5' },
+      },
+    ]);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.prompt).toBe('<image path="/cache/shot.png"></image>');
+    expect(turn.attachmentIds).toEqual(['att_1']);
+  });
+
+  it('keeps standalone <media path> tags as prompt text', () => {
+    // The no-closing-tag and extra-attribute forms both exist in persisted
+    // sessions. A standalone tag is user-visible text (or the legacy degrade
+    // form), not markup the read model may eat.
+    const snapshot = snapshotOf(
+      { type: 'text', text: '<image path="/cache/shot.png">' },
+      { type: 'text', text: '<image path="/cache/shot.png" content_type="image/png"></image>' },
+      { type: 'text', text: '<video path="/cache/clip.mp4">' },
+    );
+
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.prompt).toBe(
+      '<image path="/cache/shot.png"><image path="/cache/shot.png" content_type="image/png"></image><video path="/cache/clip.mp4">',
+    );
+    expect(turn.attachmentIds).toBeUndefined();
+    expect(snapshot.attachments).toEqual([]);
   });
 
   it('keeps cold tool calls running until a result is persisted', () => {

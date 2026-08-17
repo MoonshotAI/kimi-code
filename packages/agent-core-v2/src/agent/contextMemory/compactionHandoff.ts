@@ -1,14 +1,11 @@
 /**
- * `contextMemory` domain helper — derives the v1-compatible full-compaction
- * handoff shape for live rewrites, wire replay, and snapshot reducers.
+ * `contextMemory` domain helper — builds the bounded context window produced
+ * by compaction and exposes the shared user-message selection rules used by
+ * live execution and replay.
  *
- * Token budgeting runs through an injectable {@link TokenEstimate}: the live
- * path (`AgentContextMemoryService.applyCompaction`) passes the estimator
- * from `IAgentTokenCountingService` (the raw heuristics — the
- * `[token_counting]` strategy never gates internal estimates); the pure
- * wire-replay / reducer paths keep the same heuristics — their estimate
- * fallback only fires when a record lacks `tokensAfter`, so the measured
- * chain is unaffected.
+ * Estimates token sizes through `kosong`'s contract heuristics (injectable as
+ * `TokenEstimate`) and wraps elision notes through `systemReminder`.
+ * Scope-agnostic.
  */
 
 import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/kosong/contract/tokens';
@@ -24,7 +21,6 @@ export const COMPACTION_ELISION_VARIANT = 'compaction_elision';
 
 type MessageLike = ContextMessage;
 
-/** Injectable token-count estimates; see the file header for who passes what. */
 export interface TokenEstimate {
   readonly text: (text: string) => number;
   readonly message: (message: MessageLike) => number;
@@ -51,15 +47,7 @@ export interface ContextCompactionShapeInput {
   readonly compactedCount: number;
   readonly tokensBefore: number;
   readonly tokensAfter?: number;
-  /** Measured output tokens of the compaction LLM exchange — the REAL size of
-   *  the generated summary. Preferred over the summary-text estimate in the
-   *  `tokensAfter` fallback when present. */
   readonly summaryOutputTokens?: number;
-  /** Estimated fixed request overhead (system prompt + non-deferred tool
-   *  schemas) surviving the compaction; counted into the `tokensAfter`
-   *  fallback so the result stays on the same full-request basis as the
-   *  measured exchange anchors. Live path only — replay reads the persisted
-   *  `tokensAfter` verbatim. */
   readonly requestOverheadTokens?: number;
   readonly keptUserMessageCount?: number;
   readonly keptHeadUserMessageCount?: number;
@@ -138,6 +126,7 @@ export function buildContextCompactionShape(
     messages: [...keptMessages, createCompactionSummaryMessage(contextSummary)],
   };
 }
+
 
 export function buildCompactionSummaryText(summary: string): string {
   const suffix = summary.trim();

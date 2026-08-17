@@ -148,7 +148,7 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { drainSessionMetadataWrites, toEpochMs } from '#/session/sessionMetadata/sessionMetadataService';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
-import { IWireService } from '#/wire/wire';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   AGENT_WIRE_RECORD_KEY,
   createWireMetadataRecord,
@@ -179,6 +179,7 @@ import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
+import { SessionArchived } from './sessionLifecycleEvents';
 import {
   assertForkTurnIndex,
   sliceMainRecordsAtTurn,
@@ -480,10 +481,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const meta = handle.accessor.get(ISessionMetadata);
     await meta.setArchived(true);
     await this.drainAgents(handle);
-    this.event.publish({
-      type: 'event.session.archived',
-      payload: { sessionId },
-    });
+    this.event.publish(new SessionArchived({ payload: { sessionId } }));
     await this.announceWillClose({ sessionId, handle, reason: 'archive' });
     this.sessions.delete(sessionId);
     await drainSessionMetadataWrites();
@@ -744,7 +742,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (sourceHandle !== undefined) {
       const agentHandle = sourceHandle.accessor.get(IAgentLifecycleService).get(agentId);
       if (agentHandle !== undefined) {
-        await agentHandle.accessor.get(IWireService).flush();
+        await agentHandle.accessor.get(IEventDispatcher).flush();
       }
     }
     return collect(

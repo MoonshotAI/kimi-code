@@ -13,7 +13,7 @@ function ending(
   turnId: number,
   reason: PrintTurnEnding['reason'] = 'completed',
 ): PrintTurnEnding {
-  return { type: 'turn.ended', turnId, reason };
+  return { type: 'turn.ended', turnId, reason } as unknown as PrintTurnEnding;
 }
 
 interface ScriptedEntry {

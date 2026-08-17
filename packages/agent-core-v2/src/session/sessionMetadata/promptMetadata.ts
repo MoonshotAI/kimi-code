@@ -15,6 +15,7 @@ import type { IEventService } from '#/app/event/event';
 import { titleFromPromptMetadataText } from '#/agent/prompt/promptMetadataText';
 
 import type { ISessionMetadata, SessionTitleKind } from './sessionMetadata';
+import { SessionMetaUpdated } from './sessionMetaEvents';
 
 export function isUntitled(title: string | undefined): boolean {
   return title === undefined || title.trim().length === 0 || title === 'New Session';
@@ -40,17 +41,18 @@ export async function applyPromptMetadataUpdate(
     patch.titleKind = 'replaceable';
   }
   await target.metadata.update(patch);
-  target.eventService.publish({
-    type: 'session.meta.updated',
-    payload: {
-      agentId: 'main',
-      sessionId: target.sessionId,
-      title: patch.title,
-      patch: {
+  target.eventService.publish(
+    new SessionMetaUpdated({
+      payload: {
+        agentId: 'main',
+        sessionId: target.sessionId,
         title: patch.title,
-        isCustomTitle: patch.titleKind === undefined ? undefined : false,
-        lastPrompt: text,
+        patch: {
+          title: patch.title,
+          isCustomTitle: patch.titleKind === undefined ? undefined : false,
+          lastPrompt: text,
+        },
       },
-    },
-  });
+    }),
+  );
 }

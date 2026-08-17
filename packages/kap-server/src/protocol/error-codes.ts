@@ -130,6 +130,8 @@ export const ErrorCode = {
   /** 当前平台/架构不支持该 capability */
   CAPABILITY_UNSUPPORTED: 40925,
   RUNTIME_UNAVAILABLE: 40926,
+  /** prompt_id 已在该 agent 的历史中使用 */
+  PROMPT_ID_CONFLICT: 40927,
 
   /** approval 60s 超时 */
   APPROVAL_EXPIRED: 41001,

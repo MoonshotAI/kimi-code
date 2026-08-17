@@ -1,5 +1,5 @@
-import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
-import { compressImageForModel, persistOriginalImage, sessionMediaOriginalsDir } from '@moonshot-ai/kimi-code-sdk';
+import type { FileMeta, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
+import { compressImageForModel } from '@moonshot-ai/kimi-code-sdk';
 
 import { ClipboardMediaError, readClipboardMedia } from '#/utils/clipboard/clipboard-image';
 import { parseImageMeta } from '#/utils/image/image-mime';
@@ -13,9 +13,10 @@ import {
   LLM_NOT_SET_MESSAGE,
   NO_ACTIVE_SESSION_MESSAGE,
 } from '../constant/kimi-tui';
+import { IMAGE_STAGING_TTL_SECONDS } from '../constant/media';
 import { formatErrorMessage } from '../utils/event-payload';
-import type { ImageAttachmentStore } from '../utils/image-attachment-store';
-import { extractMediaAttachments } from '../utils/image-placeholder';
+import type { ImageAttachment, ImageAttachmentStore } from '../utils/image-attachment-store';
+import { extractMediaAttachments, imageExtensionForMime } from '../utils/image-placeholder';
 import { extractInlineSkillActivations } from '../utils/inline-skill-tokens';
 import type { PendingExit, QueuedMessage, SteerInputItem } from '../types';
 import type { TUIState } from '../tui-state';
@@ -24,6 +25,11 @@ import type { BtwPanelController } from './btw-panel';
 export interface EditorKeyboardHost {
   state: TUIState;
   session: Session | undefined;
+  /**
+   * True when the TUI runs on the agent-core-v2 engine (startup-selected).
+   * Gates the paste-time upload to the daemon file store; the v1 engine has
+   * no file store and keeps the submit-time inline base64 form.
+   */
   readonly engineV2: boolean;
   cancelInFlight: (() => void) | undefined;
   /**
@@ -43,6 +49,7 @@ export interface EditorKeyboardHost {
     imageAttachmentIds: readonly number[];
     videoAttachmentIds: readonly number[];
   }): boolean;
+  releaseStagingMedia(imageAttachmentIds: readonly number[], paths: readonly string[]): void;
   recallLastQueued(): QueuedMessage | undefined;
   showError(msg: string): void;
   track(event: string, props?: Record<string, unknown>): void;
@@ -334,12 +341,21 @@ export class EditorKeyboardController {
         if (trimmed.length > 0) {
           // Queued items carry the parts extracted when they were submitted
           // (and were already capability-validated then).
-          textRun.push({ text: trimmed, parts: m.parts, imageAttachmentIds: m.imageAttachmentIds });
+          textRun.push({
+            text: trimmed,
+            parts: m.parts,
+            imageAttachmentIds: m.imageAttachmentIds,
+            stagingPaths: m.stagingPaths,
+          });
         }
       }
       let editorExtraction: ReturnType<typeof extractMediaAttachments> | undefined;
       if (!editorIsBash && text.length > 0 && !editorHasInlineSkills && firstBundle === -1) {
         try {
+          // Synchronous path: an image still ingesting in the background
+          // extracts to its inline fallback here (no bounded wait like
+          // `sendNormalUserInput` — this handler cannot await without
+          // interleaving queue/draft edits).
           editorExtraction = extractMediaAttachments(text, this.imageStore);
         } catch (error) {
           // Cache copy failed (e.g. the pasted video's source vanished) —
@@ -354,6 +370,7 @@ export class EditorKeyboardController {
             editorExtraction.imageAttachmentIds.length > 0
               ? editorExtraction.imageAttachmentIds
               : undefined,
+          stagingPaths: editorExtraction.stagingPaths,
         });
       }
       flushTextRun();
@@ -366,22 +383,30 @@ export class EditorKeyboardController {
           editorExtraction !== undefined &&
           !host.validateMediaCapabilities(editorExtraction)
         ) {
+          host.releaseStagingMedia(
+            editorExtraction.imageAttachmentIds,
+            editorExtraction.stagingPaths,
+          );
+          return;
+        }
+        const session = host.session;
+        if (host.state.appState.model.trim().length === 0 || session === undefined) {
+          host.releaseStagingMedia(
+            editorExtraction?.imageAttachmentIds ?? [],
+            editorExtraction?.stagingPaths ?? [],
+          );
+          host.showError(LLM_NOT_SET_MESSAGE);
           return;
         }
         host.state.queuedMessages = queued.filter(
           (m, index) => m.mode === 'bash' || (firstBundle !== -1 && index >= firstBundle),
         );
         if (!editorIsBash && !editorHasInlineSkills && firstBundle === -1) editor.setText('');
-        const session = host.session;
-        if (host.state.appState.model.trim().length === 0 || session === undefined) {
-          host.showError(LLM_NOT_SET_MESSAGE);
-        } else {
-          for (const run of runs) {
-            if (run.kind === 'text') {
-              host.steerMessage(session, run.items);
-            } else {
-              host.steerSkillActivation(session, run.skillName, run.skillArgs);
-            }
+        for (const run of runs) {
+          if (run.kind === 'text') {
+            host.steerMessage(session, run.items);
+          } else {
+            host.steerSkillActivation(session, run.skillName, run.skillArgs);
           }
         }
       }
@@ -524,18 +549,58 @@ export class EditorKeyboardController {
 
     const meta = parseImageMeta(media.bytes);
     if (meta === null) return false;
+
+    // Register the attachment and put its placeholder in the editor before
+    // any of the asynchronous ingestion work below. CustomEditor only holds
+    // keystrokes until this handler settles, so the callback returns right
+    // after the placeholder lands and ingestion continues in the background —
+    // typing never waits on compression or the daemon upload. Submit gives a
+    // pending ingestion a bounded wait (`pendingImageIngestions`) and falls
+    // back to the inline form when it has not finished.
+    const attachment = this.imageStore.addImage(
+      media.bytes,
+      meta.mime,
+      meta.width,
+      meta.height,
+    );
+    this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
+    this.host.state.ui.requestRender();
+    this.host.track('shortcut_paste', { kind: 'image' });
+
+    attachment.pending = this.finishClipboardImagePaste(
+      attachment,
+      media.bytes,
+      meta.mime,
+      meta.width,
+      meta.height,
+    ).catch((error: unknown) => {
+      // The raw attachment and its already-visible placeholder are still a
+      // valid inline fallback when optional ingestion work fails.
+      this.host.showError(`Failed to process pasted image: ${formatErrorMessage(error)}`);
+    });
+    return true;
+  }
+
+  private async finishClipboardImagePaste(
+    attachment: ImageAttachment,
+    originalBytes: Uint8Array,
+    originalMime: string,
+    originalWidth: number,
+    originalHeight: number,
+  ): Promise<void> {
     // Compress at ingestion — a pure data step while building the attachment, so
     // the stored bytes, the inline thumbnail, the `[image #N (W×H)]` placeholder,
     // and the submitted image all agree, and the agent core only ever sees an
     // already-compressed image. Best effort: originals pass through on failure.
-    // When compression changed the bytes, the original is persisted (into the
-    // session's media-originals dir when known, else the temp-dir fallback)
-    // and recorded on the attachment, so submit-time expansion can announce
-    // the compression and point the model at the full-fidelity copy.
+    // When compression changed the bytes, the pre-compression original is kept
+    // on the attachment in memory: the session whose media-originals dir it
+    // belongs in may not exist yet at paste time, so dispatch-time caption
+    // resolution (`resolveOriginalCaptions`) persists it and announces the
+    // compression, pointing the model at the full-fidelity copy.
     // The edge cap comes from the host harness's [image] config (resolved per
     // paste so a config reload applies immediately); hosts without a harness
     // use the env/built-in default.
-    const compressed = await compressImageForModel(media.bytes, meta.mime, {
+    const compressed = await compressImageForModel(originalBytes, originalMime, {
       maxEdge: this.host.harness?.imageLimits?.maxEdgePx(),
       telemetry: {
         client: {
@@ -545,39 +610,65 @@ export class EditorKeyboardController {
         source: 'tui_paste',
       },
     });
-    const sessionDir = this.host.session?.summary?.sessionDir;
     // Dimensions come from the compression result, not parseImageMeta: the
     // compressor reports display space (EXIF orientation applied) — the space
     // the sent image, the caption, and ReadMediaFile region readback share —
     // while parseImageMeta reads the raw pre-rotation header.
-    const attachment = compressed.changed
-      ? this.imageStore.addImage(
-          compressed.data,
-          compressed.mimeType,
-          compressed.width,
-          compressed.height,
-          {
-            path: await persistOriginalImage(
-              media.bytes,
-              meta.mime,
-              sessionDir === undefined ? {} : { dir: sessionMediaOriginalsDir(sessionDir) },
-            ),
-            width: compressed.originalWidth,
-            height: compressed.originalHeight,
-            byteLength: media.bytes.length,
-            mime: meta.mime,
-          },
-        )
-      : this.imageStore.addImage(
-          media.bytes,
-          meta.mime,
-          compressed.width || meta.width,
-          compressed.height || meta.height,
-        );
-    this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
+    const original = compressed.changed
+      ? {
+          bytes: originalBytes,
+          width: compressed.originalWidth,
+          height: compressed.originalHeight,
+          byteLength: originalBytes.length,
+          mime: originalMime,
+        }
+      : undefined;
+    // v2 only: upload the final bytes to the daemon file store so submit-time
+    // expansion emits a `kimi-file://` reference instead of inline base64.
+    const uploaded = await this.uploadImageToDaemonFileStore(
+      compressed.changed ? compressed.data : originalBytes,
+      compressed.changed ? compressed.mimeType : originalMime,
+    );
+    const completed = this.imageStore.completeImage(attachment, {
+      bytes: compressed.changed ? compressed.data : originalBytes,
+      mime: compressed.changed ? compressed.mimeType : originalMime,
+      width: compressed.width || originalWidth,
+      height: compressed.height || originalHeight,
+      original,
+      fileId: uploaded?.id,
+      fileExpiresAt: parseExpiry(uploaded),
+    });
+    if (completed === undefined && uploaded !== undefined) {
+      await this.host.harness?.deleteFile(uploaded.id).catch(() => undefined);
+    }
     this.host.state.ui.requestRender();
-    this.host.track('shortcut_paste', { kind: 'image' });
-    return true;
+  }
+
+  /**
+   * Paste-time upload of the final image bytes to the engine's daemon file
+   * store (agent-core-v2 only), run as part of the background ingestion —
+   * typing never waits on it, and submit only gives it the bounded
+   * `pendingImageIngestions` wait. Best effort: any failure returns undefined,
+   * so the attachment keeps no `fileId` and submit-time expansion falls back
+   * to the inline base64 form.
+   */
+  private async uploadImageToDaemonFileStore(
+    bytes: Uint8Array,
+    mime: string,
+  ): Promise<FileMeta | undefined> {
+    if (!this.host.engineV2) return undefined;
+    const harness = this.host.harness;
+    if (harness === undefined) return undefined;
+    try {
+      const meta = await harness.uploadFile(bytes, {
+        name: `pasted-image.${imageExtensionForMime(mime)}`,
+        mimeType: mime,
+        expiresInSec: IMAGE_STAGING_TTL_SECONDS,
+      });
+      return meta;
+    } catch {
+      return undefined;
+    }
   }
 
   private async openExternalEditor(): Promise<void> {
@@ -620,4 +711,10 @@ export class EditorKeyboardController {
       this.host.setExternalEditorRunning(false);
     }
   }
+}
+
+function parseExpiry(meta: FileMeta | undefined): number | undefined {
+  if (meta?.expires_at === undefined) return undefined;
+  const value = Date.parse(meta.expires_at);
+  return Number.isFinite(value) ? value : undefined;
 }

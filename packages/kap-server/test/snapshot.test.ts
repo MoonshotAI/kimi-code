@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  type DomainEvent,
+  type Event2,
   IAgentBlobService,
   IAgentContextMemoryService,
   IAgentScopeContext,
@@ -242,7 +242,7 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
     if (agents.get('main') === undefined) await agents.create({ agentId: 'main' });
   }
 
-  function emit(sessionId: string, event: DomainEvent): void {
+  function emit(sessionId: string, event: Event2<any>): void {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     const main = session!.accessor.get(IAgentLifecycleService).get('main');
     main!.accessor.get(IEventBus).publish(event);
@@ -278,8 +278,8 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
     emit(sid, {
       type: 'turn.started',
       turnId: 1,
-    } as unknown as DomainEvent); // durable → seq 1
-    emit(sid, { type: 'assistant.delta', turnId: 1, delta: 'Hello' } as unknown as DomainEvent); // volatile
+    } as unknown as Event2<any>); // durable → seq 1
+    emit(sid, { type: 'assistant.delta', turnId: 1, delta: 'Hello' } as unknown as Event2<any>); // volatile
 
     const snap = await snapshot(sid);
     expect(snap.as_of_seq).toBeGreaterThanOrEqual(2);

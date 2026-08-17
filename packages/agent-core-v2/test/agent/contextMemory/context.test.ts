@@ -844,6 +844,32 @@ describe('Agent context', () => {
       expect(withOverhead.messages).toEqual(withoutOverhead.messages);
     });
   });
+
+  describe('legacy compaction layout', () => {
+    it('keeps the verbatim summary followed by the uncompacted tail', () => {
+      const history = [userMessage('old'), userMessage('tail')];
+      const legacySummary: ContextMessage = {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'legacy summary' }],
+        toolCalls: [],
+        origin: { kind: 'compaction_summary' },
+      };
+      const input = {
+        summary: 'legacy summary',
+        legacySummaryMessage: legacySummary,
+        compactedCount: 1,
+        tokensBefore: 100,
+        tokensAfter: 20,
+        legacyTail: true,
+      };
+
+      const shape = buildContextCompactionShape(history, input);
+
+      expect(shape.messages[0]).toBe(legacySummary);
+      expect(shape.messages[1]).toBe(history[1]);
+      expect(shape.messages.map(textOf)).toEqual(['legacy summary', 'tail']);
+    });
+  });
 });
 
 function userMessage(text: string, origin?: ContextMessage['origin']): ContextMessage {

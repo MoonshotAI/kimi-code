@@ -12,6 +12,8 @@ import {
   drainQueryStoreDisposals,
   drainSessionMetadataWrites,
   drainSessionIndexMirror,
+  ConfigWarning,
+  CapabilityChanged,
   IConfigService,
   IEventService,
   IProviderDiscoveryService,
@@ -21,6 +23,7 @@ import {
   IPluginService,
   IWorkspaceService,
   KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+  PluginChanged,
   logSeed,
   resolveConfigPath,
   resolveKimiHome,
@@ -132,6 +135,13 @@ export interface ServerStartOptions {
   readonly allowRemoteTerminals?: boolean;
   readonly authTokenService?: IAuthTokenService;
   readonly disableAuth?: boolean;
+  /**
+   * Custom browser tab title for this web UI instance (the CLI's
+   * `--web-title`). Surfaced as `web_title` in `GET /api/v1/meta` so the web
+   * UI can distinguish multiple instances on different machines. Instance-level
+   * and frozen at boot; omit to let the UI fall back to `<workspace dir> | Kimi Code`.
+   */
+  readonly webTitle?: string;
   /**
    * Optional *additional* credential accepted on the RPC surface (debug REST +
    * WebSocket) alongside the persistent bearer token. Never required and never
@@ -449,10 +459,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           ? { message: diagnostic.message }
           : { domain: diagnostic.domain, message: diagnostic.message },
       );
-    core.accessor.get(IEventService).publish({
-      type: 'event.config.warning',
-      payload: { warnings },
-    });
+    core.accessor.get(IEventService).publish(new ConfigWarning({ payload: { warnings } }));
   };
   const configWarningSubscription = configService.onDidChangeDiagnostics(publishConfigWarnings);
 
@@ -462,14 +469,15 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   // transition through onDidChangeInstall.
   const pluginService = core.accessor.get(IPluginService);
   const pluginChangeSubscription = pluginService.onDidReload(() => {
-    core.accessor.get(IEventService).publish({ type: 'event.plugin.changed', payload: {} });
+    core.accessor.get(IEventService).publish(new PluginChanged({ payload: {} }));
   });
   const capabilityService = core.accessor.get(ICapabilityService);
   const capabilityInstallSubscription = capabilityService.onDidChangeInstall((change) => {
-    core.accessor.get(IEventService).publish({
-      type: 'event.capability.changed',
-      payload: { capability_id: change.id, install: change.install },
-    });
+    core.accessor.get(IEventService).publish(
+      new CapabilityChanged({
+        payload: { capability_id: change.id, install: change.install },
+      }),
+    );
   });
   void configService.ready
     .then(() => {
@@ -549,6 +557,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     broadcaster,
     transcriptService,
     dangerousBypassAuth: opts.disableAuth === true,
+    webTitle: opts.webTitle,
   });
 
   // `/api/v2` — same envelope conventions as v1, domain-grouped payloads.

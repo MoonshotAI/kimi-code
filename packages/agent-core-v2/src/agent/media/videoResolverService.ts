@@ -26,7 +26,6 @@
 import { createHash } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -34,6 +33,7 @@ import type { ContentPart, Message } from '#/kosong/contract/message';
 import type { ModelRequester } from '#/kosong/model/modelRequester';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 
+import { mediaResolvedKey } from './mediaResolverService';
 import { detectFileType, MEDIA_SNIFF_BYTES } from './file-type';
 import { type KimiFileRef, isKimiFileUrl, parseKimiFileUrl } from './kimiFileUrl';
 import { createVideoUploader } from './registerMediaTools';
@@ -53,11 +53,6 @@ const VIDEO_UNAVAILABLE_TEXT =
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-export const mediaResolvedKey = defineState<Map<string, ContentPart>>(
-  'media.resolved',
-  () => new Map(),
-);
-
 export class AgentVideoResolverService implements IAgentVideoResolverService {
   declare readonly _serviceBrand: undefined;
 
@@ -66,9 +61,7 @@ export class AgentVideoResolverService implements IAgentVideoResolverService {
     @IBlobStore private readonly blobs: IBlobStore,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
-  ) {
-    this.states.register(mediaResolvedKey);
-  }
+  ) {}
 
   private get resolved(): Map<string, ContentPart> {
     return this.states.get(mediaResolvedKey);
@@ -204,10 +197,10 @@ function hasKimiFileVideoPart(message: Message): boolean {
 }
 
 function tag(ref: KimiFileRef): ContentPart {
-  if (ref.path === undefined || ref.path.length === 0) {
+  if (ref.fileId.length === 0) {
     return { type: 'text', text: VIDEO_UNAVAILABLE_TEXT };
   }
-  return { type: 'text', text: `<video path="${escapeAttribute(ref.path)}"></video>` };
+  return { type: 'text', text: `<video path="${escapeAttribute(ref.fileId)}"></video>` };
 }
 
 function msFileIdFromUrl(url: string): string | undefined {

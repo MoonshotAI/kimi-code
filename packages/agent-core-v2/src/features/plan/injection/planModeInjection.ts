@@ -11,7 +11,7 @@
  */
 
 import { Service } from '#/_base/di/service';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -40,7 +40,7 @@ export class PlanModeInjection extends Service {
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(planWasActiveKey);
+    this.states.contributeState(planWasActiveKey);
 
     this._register(
       injector.register(PLAN_MODE_INJECTION_VARIANT, async ({ lastInjectedAt: injectedAt }) => {

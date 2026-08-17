@@ -12,7 +12,7 @@
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
 
@@ -26,7 +26,7 @@ export const sessionLogRootLevelKey = defineState<LogLevelState>('sessionLog.roo
 }));
 
 function seedRootLevel(states: ISessionStateService, level: LogLevel): LogLevelState {
-  states.register(sessionLogRootLevelKey);
+  states.contributeState(sessionLogRootLevelKey);
   states.set(sessionLogRootLevelKey, { level });
   return states.get(sessionLogRootLevelKey);
 }

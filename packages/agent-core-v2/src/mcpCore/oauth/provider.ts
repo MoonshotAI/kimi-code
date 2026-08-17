@@ -21,6 +21,11 @@
  * authorization endpoint ("invalid redirect URI", rendered only in the
  * user's browser). Dropping it lets `auth()` re-register.
  *
+ * Every token write gains an `obtained_at` epoch-ms stamp
+ * ({@link StoredMcpOAuthTokens}) so token-state readers can compute the
+ * absolute expiry (`expires_in` alone is relative); the MCP SDK only reads
+ * the standard fields, so the extra key is inert.
+ *
  * `clientName` is the product token for the default label
  * (`<clientName> (<serverName>)`), carrying the configured custom identity; it
  * is ignored when `clientLabel` states the whole label explicitly.
@@ -55,6 +60,10 @@ export interface McpOAuthProviderOptions {
   readonly store: McpOAuthStore;
   readonly clientLabel?: string;
   readonly clientName?: string;
+}
+
+export interface StoredMcpOAuthTokens extends OAuthTokens {
+  readonly obtained_at?: number;
 }
 
 export class McpOAuthClientProvider implements OAuthClientProvider {
@@ -149,8 +158,9 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
-    this.tokensCache = tokens;
-    await this.store.write(`${this.storeKey}${TOKENS_SUFFIX}`, tokens);
+    const stamped: StoredMcpOAuthTokens = { ...tokens, obtained_at: Date.now() };
+    this.tokensCache = stamped;
+    await this.store.write(`${this.storeKey}${TOKENS_SUFFIX}`, stamped);
   }
 
   redirectToAuthorization(url: URL): void {

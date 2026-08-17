@@ -1,34 +1,39 @@
 /**
- * `goal` domain — wire Model (`GoalModel`) and the `goal.create`
- * (`createGoal`) / `goal.update` (`updateGoal`) / `goal.clear` (`clearGoal`)
- * Ops for the per-agent goal lifecycle.
+ * `goal` domain — the `goalKey` state, the durable `goal.create`
+ * (`GoalCreate`) / `goal.update` (`GoalUpdate`) / `goal.clear` (`GoalClear`) /
+ * `forked` (`GoalForked`) events for the per-agent goal lifecycle, and the
+ * live-only `goal.updated` observable (`GoalUpdated`).
  *
- * Declares the current goal as `GoalState | null` (initial `null`); `GoalState`
- * holds the persistent, replayable fields — identity, objective, status,
- * `turnsUsed` / `tokensUsed`, the accumulated `wallClockMs`, the current
- * active interval's epoch-ms `wallClockResumedAt`, `budgetLimits`, and
- * `terminalReason`. The persistence contract charges an active interval from
- * its persisted create/resume anchor through the first recovery clock read,
- * then folds that interval into `wallClockMs` while recovery pauses the goal.
- * This intentionally includes unobservable crash downtime: a monotonic clock
+ * The state holds `GoalState | null` (initial `null`); `GoalState` holds the
+ * persistent, replayable fields — identity, objective, status, `turnsUsed` /
+ * `tokensUsed`, the accumulated `wallClockMs`, the current active interval's
+ * epoch-ms `wallClockResumedAt`, `budgetLimits`, and `terminalReason`. The
+ * persistence contract charges an active interval from its persisted
+ * create/resume anchor through the first recovery clock read, then folds that
+ * interval into `wallClockMs` while recovery pauses the goal. This
+ * intentionally includes unobservable crash downtime: a monotonic clock
  * cannot span processes, while learning the crash instant would require
  * periodic durable writes. System-clock rollback is clamped to zero. The
  * 1.4 -> 1.5 compatibility transform (also applied before sealing
  * envelope-less logs) derives missing create/resume/checkpoint anchors from
- * those records' existing epoch-ms `time` stamps. The
- * non-deterministic values stay OUT of `apply`: `goalId` and the wall-clock
- * anchor/totals are computed by the live service and carried in Op payloads.
- * Each `apply` returns the same reference when nothing changes so the wire's
- * reference-equality gate stays quiet. The `goal.updated` fact is
- * published live to `IEventBus` by the service (declared here via
- * interface-merge); `wire.restore` rebuilds the Model silently and the
- * service's `wire.hooks.onDidRestore`
+ * those records' existing epoch-ms `time` stamps. The durable classes are the
+ * wire-protocol record vocabulary: their `serialize()` output is the on-disk
+ * record (flat payload, epoch-ms `time`), byte-compatible with the retired op
+ * encoding. The non-deterministic values stay OUT of the folds: `goalId` and
+ * the wall-clock anchor/totals are computed by the live service and carried
+ * in event payloads. Each fold keeps the same reference when nothing changes
+ * so the state's reference-equality stays quiet. The `GoalUpdated` fact is
+ * dispatched live by the service (observable, never on replay); restore
+ * rebuilds the state silently and the service's `dispatcher.hooks.onDidRestore`
  * forces a replayed `active` goal back to `paused`.
  */
 
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+
 import { z } from 'zod';
 
-import { defineModel } from '#/wire/model';
+import { Event2 } from '#/app/event/event2';
+import { defineState } from '#/state/state';
 
 import type {
   GoalBudgetLimits,
@@ -52,8 +57,6 @@ export interface GoalState {
 
 export type GoalModelState = GoalState | null;
 
-export const GoalModel = defineModel<GoalModelState>('goal', () => null);
-
 const GoalStatusSchema = z.enum(['active', 'paused', 'blocked', 'complete']);
 
 const GoalActorSchema = z.enum(['user', 'model', 'runtime', 'system']);
@@ -66,104 +69,115 @@ const GoalBudgetLimitsSchema = z
   })
   .strict();
 
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'goal.updated': {
-      snapshot: GoalSnapshot | null;
-      change?: GoalChange;
-    };
-  }
+const goalCreateSchema = z
+  .object({
+    goalId: z.string(),
+    objective: z.string(),
+    completionCriterion: z.string().optional(),
+    wallClockResumedAt: z.number().finite().nonnegative().optional(),
+    status: GoalStatusSchema.optional(),
+    actor: GoalActorSchema.optional(),
+    budgetLimits: GoalBudgetLimitsSchema.optional(),
+  })
+  .strip();
+
+export class GoalCreate extends Event2<z.infer<typeof goalCreateSchema>> {
+  static override readonly type = 'goal.create';
+  static override readonly durable = true;
+  static override readonly schema = goalCreateSchema;
+}
+export interface GoalCreate extends z.infer<typeof goalCreateSchema> {}
+
+const goalUpdateSchema = z
+  .object({
+    goalId: z.string().optional(),
+    status: GoalStatusSchema.optional(),
+    reason: z.string().optional(),
+    turnsUsed: z.number().finite().nonnegative().optional(),
+    tokensUsed: z.number().finite().nonnegative().optional(),
+    wallClockMs: z.number().finite().nonnegative().optional(),
+    wallClockResumedAt: z.number().finite().nonnegative().optional(),
+    budgetLimits: GoalBudgetLimitsSchema.optional(),
+    actor: GoalActorSchema.optional(),
+  })
+  .strip();
+
+export class GoalUpdate extends Event2<z.infer<typeof goalUpdateSchema>> {
+  static override readonly type = 'goal.update';
+  static override readonly durable = true;
+  static override readonly schema = goalUpdateSchema;
+}
+export interface GoalUpdate extends z.infer<typeof goalUpdateSchema> {}
+
+const goalClearSchema = z.object({});
+
+export class GoalClear extends Event2<z.infer<typeof goalClearSchema>> {
+  static override readonly type = 'goal.clear';
+  static override readonly durable = true;
+  static override readonly schema = goalClearSchema;
+}
+export interface GoalClear extends z.infer<typeof goalClearSchema> {}
+
+const goalForkedSchema = z.object({});
+
+export class GoalForked extends Event2<z.infer<typeof goalForkedSchema>> {
+  static override readonly type = 'forked';
+  static override readonly durable = true;
+  static override readonly schema = goalForkedSchema;
+}
+export interface GoalForked extends z.infer<typeof goalForkedSchema> {}
+
+export interface GoalUpdatedPayload {
+  snapshot: GoalSnapshot | null;
+  change?: GoalChange;
 }
 
-declare module '#/wire/types' {
-  interface PersistedOpMap {
-    'goal.create': typeof createGoal;
-    'goal.update': typeof updateGoal;
-    'goal.clear': typeof clearGoal;
-    forked: typeof forkGoal;
-  }
+export class GoalUpdated extends Event2<GoalUpdatedPayload> {
+  static override readonly type = 'goal.updated';
+  static override readonly observable = true;
 }
+export interface GoalUpdated extends GoalUpdatedPayload {}
 
-export const createGoal = GoalModel.defineOp('goal.create', {
-  schema: z
-    .object({
-      goalId: z.string(),
-      objective: z.string(),
-      completionCriterion: z.string().optional(),
-      wallClockResumedAt: z.number().finite().nonnegative().optional(),
-      status: GoalStatusSchema.optional(),
-      actor: GoalActorSchema.optional(),
-      budgetLimits: GoalBudgetLimitsSchema.optional(),
-    })
-    .strip(),
-  apply: (_s, p) => ({
-    goalId: p.goalId,
-    objective: p.objective,
-    completionCriterion: p.completionCriterion,
-    status: 'active',
+export const goalKey = defineState('goal', (): GoalModelState => null).replayable({
+  schema: z.custom<GoalModelState>(),
+})
+  .on(GoalCreate, (_s, e) => ({
+    goalId: e.goalId,
+    objective: e.objective,
+    completionCriterion: e.completionCriterion,
+    status: 'active' as const,
     turnsUsed: 0,
     tokensUsed: 0,
     wallClockMs: 0,
-    wallClockResumedAt: p.wallClockResumedAt,
+    wallClockResumedAt: e.wallClockResumedAt,
     budgetLimits: {},
-  }),
-});
-
-export const updateGoal = GoalModel.defineOp('goal.update', {
-  schema: z
-    .object({
-      goalId: z.string().optional(),
-      status: GoalStatusSchema.optional(),
-      reason: z.string().optional(),
-      turnsUsed: z.number().finite().nonnegative().optional(),
-      tokensUsed: z.number().finite().nonnegative().optional(),
-      wallClockMs: z.number().finite().nonnegative().optional(),
-      wallClockResumedAt: z.number().finite().nonnegative().optional(),
-      budgetLimits: GoalBudgetLimitsSchema.optional(),
-      actor: GoalActorSchema.optional(),
-    })
-    .strip(),
-  apply: (s, p) => {
-    if (s === null) return null;
-    let next: GoalState | undefined;
-    if (p.status !== undefined && p.status !== s.status) {
-      next = {
-        ...(next ?? s),
-        status: p.status,
-        terminalReason: p.status === 'active' ? undefined : p.reason,
-        wallClockResumedAt:
-          p.status === 'active' ? p.wallClockResumedAt : undefined,
-      };
+  }))
+  .on(GoalUpdate, (s, e) => {
+    if (s === null) return;
+    if (e.status !== undefined && e.status !== s.status) {
+      s.status = e.status;
+      s.terminalReason = e.status === 'active' ? undefined : e.reason;
+      s.wallClockResumedAt = e.status === 'active' ? e.wallClockResumedAt : undefined;
     }
-    if (p.turnsUsed !== undefined && p.turnsUsed !== s.turnsUsed) {
-      next = { ...(next ?? s), turnsUsed: p.turnsUsed };
+    if (e.turnsUsed !== undefined && e.turnsUsed !== s.turnsUsed) {
+      s.turnsUsed = e.turnsUsed;
     }
-    if (p.tokensUsed !== undefined && p.tokensUsed !== s.tokensUsed) {
-      next = { ...(next ?? s), tokensUsed: p.tokensUsed };
+    if (e.tokensUsed !== undefined && e.tokensUsed !== s.tokensUsed) {
+      s.tokensUsed = e.tokensUsed;
     }
-    if (p.wallClockMs !== undefined && p.wallClockMs !== s.wallClockMs) {
-      next = { ...(next ?? s), wallClockMs: p.wallClockMs };
+    if (e.wallClockMs !== undefined && e.wallClockMs !== s.wallClockMs) {
+      s.wallClockMs = e.wallClockMs;
     }
     if (
-      p.wallClockResumedAt !== undefined &&
-      (p.status ?? s.status) === 'active' &&
-      p.wallClockResumedAt !== s.wallClockResumedAt
+      e.wallClockResumedAt !== undefined &&
+      (e.status ?? s.status) === 'active' &&
+      e.wallClockResumedAt !== s.wallClockResumedAt
     ) {
-      next = { ...(next ?? s), wallClockResumedAt: p.wallClockResumedAt };
+      s.wallClockResumedAt = e.wallClockResumedAt;
     }
-    if (p.budgetLimits !== undefined && p.budgetLimits !== s.budgetLimits) {
-      next = { ...(next ?? s), budgetLimits: p.budgetLimits };
+    if (e.budgetLimits !== undefined && e.budgetLimits !== s.budgetLimits) {
+      s.budgetLimits = e.budgetLimits;
     }
-    return next ?? s;
-  },
-});
-
-export const clearGoal = GoalModel.defineOp('goal.clear', {
-  schema: z.object({}),
-  apply: () => null,
-});
-
-export const forkGoal = GoalModel.defineOp('forked', {
-  schema: z.object({}),
-  apply: () => null,
-});
+  })
+  .on(GoalClear, () => null)
+  .on(GoalForked, () => null);

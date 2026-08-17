@@ -95,10 +95,11 @@ function fakeFs(
   };
   const lstatImpl = async (p: string) => {
     if (fileMap.has(p)) {
+      const c = fileMap.get(p)!;
       return {
         isFile: true,
         isDirectory: false,
-        size: fileMap.get(p)!.length,
+        size: Buffer.isBuffer(c) ? c.length : Buffer.byteLength(c),
         mtimeMs: 1000,
         ino: 1,
       };
@@ -789,6 +790,30 @@ describe('WorkspaceFsService.read', () => {
     expect(result.content).toBe(utf16.toString('base64'));
   });
 
+  it('reads UTF-8 Chinese log content as text instead of throwing fs.is_binary', async () => {
+    const log = '2026-08-16 INFO 启动完成 ✅\n2026-08-16 INFO 处理请求 🚀 成功\n'.repeat(50);
+    const fs = makeSession({ 'app.log': log }, emptyHandler);
+    const result = await fs.read({
+      path: 'app.log',
+      offset: 0,
+      length: 1024 * 1024,
+      encoding: 'utf-8',
+    });
+    expect(result.content).toBe(log);
+    expect(result.encoding).toBe('utf-8');
+    expect(result.is_binary).toBe(false);
+    expect(result.mime).toBe('text/plain');
+    expect(result.truncated).toBe(false);
+  });
+
+  it('returns utf-8 rather than base64 for UTF-8 Chinese text in auto mode', async () => {
+    const fs = makeSession({ 'app.log': '中文日志 ✅\n' }, emptyHandler);
+    const result = await fs.read({ path: 'app.log', offset: 0, length: 1024, encoding: 'auto' });
+    expect(result.content).toBe('中文日志 ✅\n');
+    expect(result.encoding).toBe('utf-8');
+    expect(result.is_binary).toBe(false);
+  });
+
   it('throws fs.is_directory for a directory', async () => {
     const fs = makeSession({ 'src/a.ts': '' }, emptyHandler);
     await expect(
@@ -873,6 +898,12 @@ describe('WorkspaceFsService.resolveDownload', () => {
     expect(res.mime).toBe('text/plain');
     expect(res.etag).toBeTypeOf('string');
     expect(res.modifiedAt).toBeInstanceOf(Date);
+  });
+
+  it('resolves a UTF-8 Chinese log as text/plain', async () => {
+    const fs = makeSession({ 'app.log': '启动完成 ✅ 中文日志内容\n'.repeat(20) }, emptyHandler);
+    const res = await fs.resolveDownload('app.log');
+    expect(res.mime).toBe('text/plain');
   });
 
   it('throws fs.is_directory for a directory', async () => {

@@ -43,6 +43,12 @@ export interface MetaRouteOptions {
    */
   readonly dangerousBypassAuth: boolean;
   /**
+   * Custom browser tab title for this instance (the CLI's `--web-title`).
+   * Surfaced as `web_title` in the `/meta` payload; instance-level and frozen
+   * at boot, so it joins the frozen static fields. Omitted when unset.
+   */
+  readonly webTitle?: string;
+  /**
    * Resolves the effective experimental-flag map (flag id → enabled) at
    * request time. Backed by `IFlagService.snapshot()` in production; tests may
    * stub it. May return a promise — the handler awaits it, so flag state
@@ -67,6 +73,7 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
     open_in_apps: [],
     dangerous_bypass_auth: opts.dangerousBypassAuth,
     backend: 'v2' as const,
+    web_title: opts.webTitle,
   });
 
   const route = defineRoute(

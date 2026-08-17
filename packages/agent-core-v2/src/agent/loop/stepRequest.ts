@@ -29,6 +29,7 @@ export type StepRequestAdmission =
 export interface TurnSeed {
   readonly input: readonly ContentPart[];
   readonly origin: PromptOrigin;
+  readonly promptId?: string;
 }
 
 export interface StepRequestOptions {

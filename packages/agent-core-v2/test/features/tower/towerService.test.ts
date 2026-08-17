@@ -20,8 +20,10 @@ import type {
 import { TowerStore } from '#/features/tower/protocol/index';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { AgentTowerService } from '#/features/tower/towerService';
-import { TowerModel } from '#/features/tower/towerOps';
-import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
+import { towerKey } from '#/features/tower/towerOps';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
+import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { ToolCall } from '#/kosong/contract/message';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
@@ -33,7 +35,12 @@ import { ToolAccesses } from '#/tool/toolContract';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
-import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
+import {
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+  restoreTestEventDispatcher,
+  testWireScope,
+} from '../../wire/stubs';
 
 const execFileAsync = promisify(execFile);
 
@@ -104,6 +111,7 @@ describe('AgentTowerService', () => {
       log: ix.get(IAppendLogStore),
       eventBus: ix.get(IEventBus),
     });
+    registerTestEventDispatcher(ix);
     ix.set(IAgentTowerService, new SyncDescriptor(AgentTowerService));
   });
   afterEach(() => disposables.dispose());
@@ -121,8 +129,14 @@ describe('AgentTowerService', () => {
 
   it('enter / exit toggle isActive and emit agent.status.updated via wire', () => {
     const tower = ix.get(IAgentTowerService);
-    const events: DomainEvent[] = [];
-    disposables.add(ix.get(IEventBus).subscribe((e) => events.push(e)));
+    const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
+    disposables.add(
+      ix.get(IEventBus).subscribe((e) => {
+        if (e.type === 'agent.status.updated') {
+          events.push({ type: e.type, towerMode: (e as AgentStatusUpdated).towerMode });
+        }
+      }),
+    );
 
     expect(tower.isActive).toBe(false);
     tower.enter();
@@ -138,8 +152,14 @@ describe('AgentTowerService', () => {
 
   it('enter / exit are idempotent while already in that state', () => {
     const tower = ix.get(IAgentTowerService);
-    const events: DomainEvent[] = [];
-    disposables.add(ix.get(IEventBus).subscribe((e) => events.push(e)));
+    const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
+    disposables.add(
+      ix.get(IEventBus).subscribe((e) => {
+        if (e.type === 'agent.status.updated') {
+          events.push({ type: e.type, towerMode: (e as AgentStatusUpdated).towerMode });
+        }
+      }),
+    );
 
     tower.exit();
     expect(tower.isActive).toBe(false);
@@ -167,16 +187,18 @@ describe('AgentTowerService', () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    const fresh = registerTestAgentWire(ix2, testWireScope('wire', 'tower-replay'), {
+    registerTestAgentWire(ix2, testWireScope('wire', 'tower-replay'), {
       log: ix2.get(IAppendLogStore),
     });
-    await restoreTestAgentWire(
-      fresh,
+    const dispatcher = registerTestEventDispatcher(ix2);
+    ix2.get(IAgentStateService).contributeState(towerKey);
+    await restoreTestEventDispatcher(
+      dispatcher,
       ix2.get(IAppendLogStore),
       testWireScope('wire', 'tower-replay'),
       records,
     );
-    expect(fresh.getModel(TowerModel)).toBe(true);
+    expect(ix2.get(IAgentStateService).get(towerKey)).toBe(true);
   });
 
   it('replays legacy v1 tower_mode records written without a payload', async () => {
@@ -189,16 +211,18 @@ describe('AgentTowerService', () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    const fresh = registerTestAgentWire(ix2, testWireScope('wire', 'tower-legacy'), {
+    registerTestAgentWire(ix2, testWireScope('wire', 'tower-legacy'), {
       log: ix2.get(IAppendLogStore),
     });
-    await restoreTestAgentWire(
-      fresh,
+    const dispatcher = registerTestEventDispatcher(ix2);
+    ix2.get(IAgentStateService).contributeState(towerKey);
+    await restoreTestEventDispatcher(
+      dispatcher,
       ix2.get(IAppendLogStore),
       testWireScope('wire', 'tower-legacy'),
       records,
     );
-    expect(fresh.getModel(TowerModel)).toBe(true);
+    expect(ix2.get(IAgentStateService).get(towerKey)).toBe(true);
   });
 
   it('leaves AskUserQuestion alone while tower mode is active (the tower may ask)', async () => {

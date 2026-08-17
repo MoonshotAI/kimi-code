@@ -39,6 +39,7 @@ import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
+  type CallExpression,
   Node,
   Project,
   SyntaxKind,
@@ -95,6 +96,12 @@ interface KeyDef {
   readonly file: string;
   readonly exported: boolean;
   readonly declaration: VariableDeclaration;
+  /** Present when the key chains `.replayable(...)` — the key is materialized into the Agent-scope state service. */
+  readonly replayable?: {
+    readonly durable: boolean;
+    readonly undoable: boolean;
+    readonly folds: readonly string[];
+  };
 }
 
 interface Registration {
@@ -125,13 +132,21 @@ const FEATURES_RECEIVER_SCOPE: Readonly<Record<string, ScopeDir>> = {
   IAgentStateService: 'agent',
 };
 
+/** Resolve the scope from the contributeState-call receiver's state-service type. */
+function receiverScope(
+  expression: PropertyAccessExpression,
+  checker: TypeChecker,
+): ScopeDir | undefined {
+  const typeName = checker.getTypeAtLocation(expression.getExpression()).getSymbol()?.getName();
+  return typeName === undefined ? undefined : FEATURES_RECEIVER_SCOPE[typeName];
+}
+
 function featuresRegisterScope(
   expression: PropertyAccessExpression,
   checker: TypeChecker,
   sf: SourceFile,
 ): ScopeDir {
-  const typeName = checker.getTypeAtLocation(expression.getExpression()).getSymbol()?.getName();
-  const scope = typeName === undefined ? undefined : FEATURES_RECEIVER_SCOPE[typeName];
+  const scope = receiverScope(expression, checker);
   if (scope === undefined) {
     throw new Error(
       `[gen-state-manifest] cannot resolve the state-service scope of '${expression.getText()}' ` +
@@ -181,20 +196,68 @@ function collectKeyDefs(project: Project): Map<VariableDeclaration, KeyDef> {
       for (const declaration of statement.getDeclarations()) {
         const initializer = declaration.getInitializer();
         if (initializer === undefined || !Node.isCallExpression(initializer)) continue;
-        if (initializer.getExpression().getText() !== 'defineState') continue;
-        const [nameArg] = initializer.getArguments();
-        if (nameArg === undefined || !Node.isStringLiteral(nameArg)) continue;
+        const parsed = parseDefineStateChain(initializer);
+        if (parsed === undefined) continue;
         defs.set(declaration, {
           constName: declaration.getName(),
-          keyName: nameArg.getLiteralValue(),
+          keyName: parsed.keyName,
           file: sf.getFilePath(),
           exported: statement.isExported(),
           declaration,
+          replayable: parsed.replayable,
         });
       }
     }
   }
   return defs;
+}
+
+/**
+ * Walk a `defineState('name', ...)` / `.replayable({...})` / `.undoable(...)` /
+ * `.on(Event, fold)` call chain down to the `defineState` call; returns the key
+ * name plus the replayable metadata when the chain promotes the key.
+ */
+function parseDefineStateChain(
+  initializer: CallExpression,
+): { keyName: string; replayable?: KeyDef['replayable'] } | undefined {
+  let durable = true;
+  let undoable = false;
+  let replayable = false;
+  const folds: string[] = [];
+  let current: CallExpression = initializer;
+  for (;;) {
+    const expression = current.getExpression();
+    if (Node.isIdentifier(expression) && expression.getText() === 'defineState') {
+      const [nameArg] = current.getArguments();
+      if (nameArg === undefined || !Node.isStringLiteral(nameArg)) return undefined;
+      return {
+        keyName: nameArg.getLiteralValue(),
+        replayable: replayable ? { durable, undoable, folds } : undefined,
+      };
+    }
+    if (!Node.isPropertyAccessExpression(expression)) return undefined;
+    const method = expression.getName();
+    if (method === 'replayable') {
+      replayable = true;
+      const [arg] = current.getArguments();
+      if (arg !== undefined && Node.isObjectLiteralExpression(arg)) {
+        const durableProp = arg.getProperty('durable');
+        if (durableProp !== undefined && Node.isPropertyAssignment(durableProp)) {
+          durable = durableProp.getInitializer()?.getText() !== 'false';
+        }
+      }
+    } else if (method === 'undoable') {
+      undoable = true;
+    } else if (method === 'on') {
+      const [eventArg] = current.getArguments();
+      if (eventArg !== undefined) folds.unshift(eventArg.getText());
+    } else {
+      return undefined;
+    }
+    const inner = expression.getExpression();
+    if (!Node.isCallExpression(inner)) return undefined;
+    current = inner;
+  }
 }
 
 /** Resolve a `.register(...)` argument back to its `defineState` constant. */
@@ -219,14 +282,17 @@ function collectRegistrations(
 ): Registration[] {
   const checker = project.getTypeChecker();
   const registrations: Registration[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, string>();
   for (const sf of project.getSourceFiles()) {
     const fileScope = scopeDirOf(sf.getFilePath());
     const featuresFile = isFeaturesFile(sf.getFilePath());
     if (fileScope === undefined && !featuresFile) continue;
     for (const call of sf.getDescendantsOfKind(SyntaxKind.CallExpression)) {
       const expression = call.getExpression();
-      if (!Node.isPropertyAccessExpression(expression) || expression.getName() !== 'register') {
+      if (
+        !Node.isPropertyAccessExpression(expression) ||
+        expression.getName() !== 'contributeState'
+      ) {
         continue;
       }
       const args = call.getArguments();
@@ -234,7 +300,7 @@ function collectRegistrations(
       if (args.length !== 1 || arg === undefined || !Node.isIdentifier(arg)) continue;
       const def = resolveKeyDef(arg, defs);
       if (def === undefined) continue;
-      const scope = fileScope ?? featuresRegisterScope(expression, checker, sf);
+      const scope = receiverScope(expression, checker) ?? fileScope ?? featuresRegisterScope(expression, checker, sf);
       if (!def.exported) {
         throw new Error(
           `[gen-state-manifest] state key '${def.keyName}' (${srcRelative(def.file)}) is ` +
@@ -242,12 +308,14 @@ function collectRegistrations(
         );
       }
       const dedupe = `${scope}:${def.keyName}`;
-      if (seen.has(dedupe)) {
+      const seenFile = seen.get(dedupe);
+      if (seenFile !== undefined) {
+        if (seenFile === sf.getFilePath()) continue;
         throw new Error(
           `[gen-state-manifest] state key '${def.keyName}' is registered twice in ${scope} scope.`,
         );
       }
-      seen.add(dedupe);
+      seen.set(dedupe, sf.getFilePath());
       registrations.push({ def, scope });
     }
   }
@@ -786,6 +854,16 @@ function renderManifest(
     for (const file of [...byFile.keys()].toSorted()) {
       lines.push(`  // ${srcRelative(file)}`);
       for (const r of byFile.get(file) ?? []) {
+        if (r.def.replayable !== undefined) {
+          const meta = r.def.replayable;
+          const flags = [
+            meta.durable ? 'durable' : 'transient',
+            ...(meta.undoable ? ['undoable'] : []),
+          ];
+          lines.push(
+            `  // replayable · ${flags.join(' · ')} — folds: ${meta.folds.length > 0 ? meta.folds.join(', ') : '(protocol only)'}`,
+          );
+        }
         const rendered = renderer.renderKeyType(r.def).split('\n');
         rendered[rendered.length - 1] += ';';
         lines.push(`  '${r.def.keyName}': ${rendered[0]}`, ...rendered.slice(1).map((l) => `  ${l}`));
@@ -810,8 +888,12 @@ function renderManifest(
     '// Workspace-scope IWorkspaceStateService, the Session-scope',
     '// ISessionStateService, or the Agent-scope IAgentStateService (see',
     '// src/_base/state/stateRegistry.ts), collected statically from the',
-    '// `states.register(...)` call sites — a key defined via',
-    '// defineState but never registered does not appear here. Each entry shows the',
+    '// `states.contributeState(...)` call sites and the replayable key chains — a',
+    '// `defineState(...).replayable(...)` key is contributed into the Agent-scope',
+    '// service by its owner service at construction, and',
+    '// carries a `// replayable · durable|transient · undoable? — folds: ...` line.',
+    '// Replayable values are excluded from snapshot()/inspect(). A key defined via',
+    '// defineState but never registered nor replayable does not appear here. Each entry shows the',
     '// compile-time StateKey<T> value type fully expanded inline, so the manifest is',
     '// self-contained (no imports, no helper declarations). A named type is marked',
     '// at its expansion site with a `/* TypeName — source/file.ts */` comment; a',
@@ -860,6 +942,23 @@ function buildAll(): BuildResult {
   const defs = collectKeyDefs(project);
   const registrations = collectRegistrations(project, defs);
   const registered = new Set(registrations.map((r) => r.def));
+  for (const def of defs.values()) {
+    if (def.replayable === undefined) continue;
+    if (!registered.has(def)) {
+      throw new Error(
+        `[gen-state-manifest] replayable state key '${def.keyName}' (${srcRelative(def.file)}) is ` +
+          'never contributed — its owner service must contributeState it into the Agent-scope state service.',
+      );
+    }
+    for (const registration of registrations) {
+      if (registration.def === def && registration.scope !== 'agent') {
+        throw new Error(
+          `[gen-state-manifest] replayable state key '${def.keyName}' (${srcRelative(def.file)}) is ` +
+            `contributed into the ${registration.scope} scope — replayable keys belong to the Agent scope.`,
+        );
+      }
+    }
+  }
   const unregistered = [...defs.values()].filter((def) => !registered.has(def));
   const model: StateManifestModel = { registrations, unregistered };
   const { manifest, warnings } = renderManifest(model, project);

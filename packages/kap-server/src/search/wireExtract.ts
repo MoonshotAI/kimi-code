@@ -25,6 +25,8 @@
  * Kept free of any service / filesystem dependency so it is unit-testable.
  */
 
+import { matchSingleMediaPathTag } from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
+
 export interface ExtractedWireMessage {
   readonly role: 'user' | 'assistant';
   readonly text: string;
@@ -153,18 +155,24 @@ interface ContentPartLike {
   readonly text?: unknown;
 }
 
+/**
+ * The user-visible text of a persisted message: text parts concatenated,
+ * skipping standalone `<media path>` tag parts. A standalone tag is machine
+ * markup (the upload residue of legacy sessions, or the model-facing degrade
+ * form) and carries the materialization path, so it must never reach the
+ * index — matching the other read models, which never treat it as searchable
+ * prose either. A tag embedded in larger user text is indexed with that text:
+ * stripping there would eat user content.
+ */
 function textOfContent(content: unknown): string {
   if (!Array.isArray(content)) return '';
   let text = '';
-  for (const part of content as readonly ContentPartLike[]) {
-    if (
-      part !== null &&
-      typeof part === 'object' &&
-      part.type === 'text' &&
-      typeof part.text === 'string'
-    ) {
-      text += part.text;
-    }
+  for (const raw of content as readonly unknown[]) {
+    if (raw === null || typeof raw !== 'object') continue;
+    const part = raw as ContentPartLike;
+    if (part.type !== 'text' || typeof part.text !== 'string') continue;
+    if (matchSingleMediaPathTag(part.text) !== undefined) continue;
+    text += part.text;
   }
   return text;
 }

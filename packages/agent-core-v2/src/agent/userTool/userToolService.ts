@@ -1,17 +1,17 @@
 /**
  * `userTool` domain — `IAgentUserToolService` implementation.
  *
- * Holds the set of host-registered user tools in the `wire` `UserToolModel`
- * (`Map<string, UserToolRegistration>`), mutating it only through the
- * `tools.register_user_tool` / `tools.unregister_user_tool` Ops
- * (`wire.dispatch(...)`). The live side effects — `registry.register` +
+ * Holds the set of host-registered user tools in the `userToolKey` state
+ * (`Map<string, UserToolRegistration>`), mutating it only through the durable
+ * `ToolsRegisterUserTool` / `ToolsUnregisterUserTool` events
+ * (`dispatcher.dispatch(...)`). The live side effects — `registry.register` +
  * `profile.addActiveTool` (and the matching dispose / `removeActiveTool`) — run
- * after the dispatch, and are re-derived from the rebuilt Model by
- * `wire.hooks.onDidRestore` after `wire.restore`, so a resumed agent re-registers
- * exactly the tools the persisted ops describe without re-firing any live
- * notification.
+ * after the dispatch, and are re-derived from the rebuilt state by the
+ * dispatcher's `onDidRestore` hook after restore, so a resumed agent
+ * re-registers exactly the tools the persisted records describe without
+ * re-firing any live notification.
  * The restore re-registers into the tool registry only: the active-tool set is
- * owned by the persisted `ActiveToolsModel`, so the ephemeral `addActiveTool`
+ * owned by the persisted `profileActiveToolsKey`, so the ephemeral `addActiveTool`
  * overlay is not rebuilt (it is live-only by design). The per-tool
  * `IDisposable` handles stay live-only (they cannot be persisted).
  * Bound at Agent scope.
@@ -32,10 +32,15 @@ import type {
 } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
-import { IWireService } from '#/wire/wire';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentUserToolService, type UserToolRegistration } from './userTool';
-import { registerUserTool, unregisterUserTool, UserToolModel } from './userToolOps';
+import {
+  ToolsRegisterUserTool,
+  ToolsUnregisterUserTool,
+  userToolKey,
+} from './userToolOps';
 
 interface UserToolExecutionRequest {
   readonly turnId?: number;
@@ -53,11 +58,13 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
-    @IWireService private readonly wire: IWireService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
     super();
+    this.agentState.contributeState(userToolKey);
     this._register(
-      this.wire.hooks.onDidRestore.register('user-tool', async (_ctx, next) => {
+      this.dispatcher.hooks.onDidRestore.register('user-tool', async (_ctx, next) => {
         this.restoreRegisteredTools();
         await next();
       }),
@@ -65,7 +72,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
   }
 
   list(): readonly UserToolRegistration[] {
-    return [...this.wire.getModel(UserToolModel).values()];
+    return [...this.agentState.get(userToolKey).values()];
   }
 
   inheritUserTools(parent: IAgentUserToolService): void {
@@ -75,18 +82,18 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
   }
 
   register(input: UserToolRegistration): void {
-    this.wire.dispatch(registerUserTool(input));
+    void this.dispatcher.dispatch(new ToolsRegisterUserTool(input));
     this.applyRegister(input);
   }
 
   unregister(name: string): void {
-    this.wire.dispatch(unregisterUserTool({ name }));
+    void this.dispatcher.dispatch(new ToolsUnregisterUserTool({ name }));
     this.applyUnregister(name);
   }
 
   private restoreRegisteredTools(): void {
     const persistedActive = this.profile.getActiveToolNames();
-    for (const registration of this.wire.getModel(UserToolModel).values()) {
+    for (const registration of this.agentState.get(userToolKey).values()) {
       const activate =
         persistedActive === undefined || persistedActive.includes(registration.name);
       this.applyRegister(registration, { activate });

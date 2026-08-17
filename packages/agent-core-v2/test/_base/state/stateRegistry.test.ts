@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { LifecycleScope } from '#/app/scopes';
 import {
   ScopeActivation,
@@ -7,7 +8,8 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, type ScopedTestHost } from '#/_base/di/test';
 import { BugIndicatingError } from '#/_base/errors/errors';
-import { defineState, StateRegistry, type StateChange } from '#/_base/state/stateRegistry';
+import { StateRegistry, type StateChange } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { IAppStateService } from '#/app/state/appState';
 import { AppStateService } from '#/app/state/appStateService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
@@ -23,13 +25,13 @@ describe('StateRegistry', () => {
 
   it('returns the initial value after register', () => {
     const registry = new StateRegistry();
-    registry.register(countKey);
+    registry.contributeState(countKey);
     expect(registry.get(countKey)).toBe(0);
   });
 
   it('reads back the value written by set', () => {
     const registry = new StateRegistry();
-    registry.register(countKey);
+    registry.contributeState(countKey);
     registry.set(countKey, 42);
     expect(registry.get(countKey)).toBe(42);
   });
@@ -37,8 +39,8 @@ describe('StateRegistry', () => {
   it('reports registered keys through has and entries', () => {
     const registry = new StateRegistry();
     expect(registry.has(countKey)).toBe(false);
-    registry.register(countKey);
-    registry.register(nameKey);
+    registry.contributeState(countKey);
+    registry.contributeState(nameKey);
     expect(registry.has(countKey)).toBe(true);
     expect(registry.entries()).toEqual([
       ['test.count', 0],
@@ -48,13 +50,13 @@ describe('StateRegistry', () => {
 
   it('rejects duplicate registration', () => {
     const registry = new StateRegistry();
-    registry.register(countKey);
-    expect(() => registry.register(countKey)).toThrow(BugIndicatingError);
+    registry.contributeState(countKey);
+    expect(() => registry.contributeState(countKey)).toThrow(BugIndicatingError);
   });
 
   it('removes the key and value when its registration is disposed', () => {
     const registry = new StateRegistry();
-    const registration = registry.register(countKey);
+    const registration = registry.contributeState(countKey);
     registry.set(countKey, 42);
 
     registration.dispose();
@@ -67,11 +69,11 @@ describe('StateRegistry', () => {
 
   it('re-registers with the initial value and ignores stale disposal', () => {
     const registry = new StateRegistry();
-    const first = registry.register(countKey);
+    const first = registry.contributeState(countKey);
     registry.set(countKey, 42);
     first.dispose();
 
-    const second = registry.register(countKey);
+    const second = registry.contributeState(countKey);
     expect(registry.get(countKey)).toBe(0);
 
     first.dispose();
@@ -82,13 +84,13 @@ describe('StateRegistry', () => {
 
   it('isolates listeners between registrations', () => {
     const registry = new StateRegistry();
-    const first = registry.register(countKey);
+    const first = registry.contributeState(countKey);
     const oldSeen: number[] = [];
     registry.onDidChange(countKey)((value) => oldSeen.push(value));
     registry.set(countKey, 1);
     first.dispose();
 
-    const second = registry.register(countKey);
+    const second = registry.contributeState(countKey);
     const newSeen: number[] = [];
     registry.onDidChange(countKey)((value) => newSeen.push(value));
     registry.set(countKey, 2);
@@ -106,8 +108,8 @@ describe('StateRegistry', () => {
 
   it('notifies onDidChange only for the key that was set', () => {
     const registry = new StateRegistry();
-    registry.register(countKey);
-    registry.register(nameKey);
+    registry.contributeState(countKey);
+    registry.contributeState(nameKey);
     const seen: number[] = [];
     registry.onDidChange(countKey)((value) => seen.push(value));
     registry.set(nameKey, 'bob');
@@ -118,8 +120,8 @@ describe('StateRegistry', () => {
 
   it('notifies onDidChangeAny for every set', () => {
     const registry = new StateRegistry();
-    registry.register(countKey);
-    registry.register(nameKey);
+    registry.contributeState(countKey);
+    registry.contributeState(nameKey);
     const seen: StateChange[] = [];
     registry.onDidChangeAny((change) => seen.push(change));
     registry.set(countKey, 1);
@@ -132,13 +134,23 @@ describe('StateRegistry', () => {
 
   it('silences change events after dispose', () => {
     const registry = new StateRegistry();
-    registry.register(countKey);
+    registry.contributeState(countKey);
     const seen: StateChange[] = [];
     registry.onDidChangeAny((change) => seen.push(change));
     registry.dispose();
     registry.set(countKey, 1);
     expect(seen).toEqual([]);
     expect(registry.get(countKey)).toBe(1);
+  });
+
+  it('excludes snapshotExcluded keys from snapshot but keeps them in entries', () => {
+    const hiddenKey = defineState('test.hidden', () => ({ big: true }));
+    const registry = new StateRegistry();
+    registry.contributeState({ ...hiddenKey, snapshotExcluded: true });
+    registry.contributeState(defineState('test.visible', () => 1));
+    expect(registry.entries().map(([name]) => name)).toEqual(['test.hidden', 'test.visible']);
+    expect(registry.snapshot()).toEqual({ 'test.visible': 1 });
+    expect(registry.get(hiddenKey)).toEqual({ big: true });
   });
 
   it('snapshots Maps as plain objects and Sets as arrays', () => {
@@ -149,7 +161,7 @@ describe('StateRegistry', () => {
       flag: true,
     }));
     const registry = new StateRegistry();
-    registry.register(richKey);
+    registry.contributeState(richKey);
     expect(registry.snapshot()).toEqual({
       'test.rich': { map: { a: 1 }, set: ['x', 'y'], list: [1, 2], flag: true },
     });
@@ -159,7 +171,7 @@ describe('StateRegistry', () => {
     const id = { id: 1 };
     const pairKey = defineState('test.pairs', () => new Map<object, string>([[id, 'one']]));
     const registry = new StateRegistry();
-    registry.register(pairKey);
+    registry.contributeState(pairKey);
     expect(registry.snapshot()).toEqual({ 'test.pairs': [[{ id: 1 }, 'one']] });
   });
 
@@ -170,7 +182,7 @@ describe('StateRegistry', () => {
       return obj;
     });
     const registry = new StateRegistry();
-    registry.register(trickyKey);
+    registry.contributeState(trickyKey);
     expect(registry.snapshot()).toEqual({
       'test.tricky': { value: 2, self: '(circular)' },
     });
@@ -180,7 +192,7 @@ describe('StateRegistry', () => {
     const shared = { v: 1 };
     const sharedKey = defineState('test.shared', () => ({ a: shared, b: shared }));
     const registry = new StateRegistry();
-    registry.register(sharedKey);
+    registry.contributeState(sharedKey);
     expect(registry.snapshot()).toEqual({ 'test.shared': { a: { v: 1 }, b: { v: 1 } } });
   });
 
@@ -196,7 +208,7 @@ describe('StateRegistry', () => {
       nullProto: Object.assign(Object.create(null) as Record<string, unknown>, { v: 1 }),
     }));
     const registry = new StateRegistry();
-    registry.register(mixedKey);
+    registry.contributeState(mixedKey);
     expect(registry.snapshot()).toEqual({
       'test.mixed': {
         plain: { nested: [1, { ok: true }] },
@@ -268,7 +280,7 @@ describe('state services (scoped)', () => {
     const sessionKey = defineState('test.sessionOnly', () => 'seed');
     const { workspace, session, agent } = createChain();
     const sessionState = session.accessor.get(ISessionStateService);
-    sessionState.register(sessionKey);
+    sessionState.contributeState(sessionKey);
     sessionState.set(sessionKey, 'live');
     expect(sessionState.get(sessionKey)).toBe('live');
     expect(agent.accessor.get(IAgentStateService).has(sessionKey)).toBe(false);
@@ -284,7 +296,7 @@ describe('state services (scoped)', () => {
   it('omits the parent link when a registry has no cascade parent', () => {
     const loneKey = defineState('test.lone', () => 0);
     const registry = new StateRegistry();
-    registry.register(loneKey);
+    registry.contributeState(loneKey);
     expect(registry.inspect()).toEqual({
       scope: 'unknown',
       state: { 'test.lone': 0 },
@@ -296,9 +308,9 @@ describe('state services (scoped)', () => {
     const sessionKey = defineState('test.sessionCascade', () => 's');
     const agentKey = defineState('test.agentOnly', () => 'g');
     const { session, agent } = createChain();
-    session.accessor.get(ISessionStateService).register(sessionKey);
+    session.accessor.get(ISessionStateService).contributeState(sessionKey);
     const agentState = agent.accessor.get(IAgentStateService);
-    agentState.register(agentKey);
+    agentState.contributeState(agentKey);
 
     expect(agentState.inspect()).toEqual({
       scope: 'agent',
@@ -308,6 +320,55 @@ describe('state services (scoped)', () => {
         state: { 'test.sessionCascade': 's' },
         parent: undefined,
       },
+    });
+  });
+
+  describe('replayable contribution boundary', () => {
+    const replayableKey = defineState('test.replayable', () => 0).replayable({
+      schema: z.custom<number>(),
+    });
+
+    it('rejects replayable keys on the base registry and non-agent scopes', () => {
+      expect(() => new StateRegistry().contributeState(replayableKey)).toThrow(BugIndicatingError);
+      expect(() => new AppStateService().contributeState(replayableKey)).toThrow(BugIndicatingError);
+      expect(() => new WorkspaceStateService().contributeState(replayableKey)).toThrow(
+        BugIndicatingError,
+      );
+      expect(() => new SessionStateService().contributeState(replayableKey)).toThrow(
+        BugIndicatingError,
+      );
+    });
+
+    it('accepts replayable keys on the agent scope and lists them', () => {
+      const agentState = new AgentStateService();
+      agentState.contributeState(replayableKey);
+      expect(agentState.get(replayableKey)).toBe(0);
+      expect(agentState.replayableKeys().map((key) => key.name)).toEqual(['test.replayable']);
+    });
+
+    it('notifies replayable contributions synchronously', () => {
+      const agentState = new AgentStateService();
+      const seen: string[] = [];
+      const subscription = agentState.onDidContributeReplayable((key) => {
+        seen.push(key.name);
+      });
+      agentState.contributeState(replayableKey);
+      expect(seen).toEqual(['test.replayable']);
+      subscription.dispose();
+      const otherKey = defineState('test.replayable.other', () => 0).replayable({
+        schema: z.custom<number>(),
+      });
+      agentState.contributeState(otherKey);
+      expect(seen).toEqual(['test.replayable']);
+    });
+
+    it('drops a replayable key from the list when its contribution is disposed', () => {
+      const agentState = new AgentStateService();
+      const registration = agentState.contributeState(replayableKey);
+      expect(agentState.replayableKeys()).toHaveLength(1);
+      registration.dispose();
+      expect(agentState.replayableKeys()).toHaveLength(0);
+      expect(agentState.has(replayableKey)).toBe(false);
     });
   });
 });

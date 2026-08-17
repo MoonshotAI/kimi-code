@@ -163,14 +163,22 @@ describe('KimiCore plugin RPCs', () => {
       .getProvider('plugin-demo:remote', 'https://mcp.example.test/service')
       .saveTokens({ access_token: 'plugin-test-token', token_type: 'Bearer' });
     await core.setPluginMcpServerEnabled({ id: 'demo', server: 'remote', enabled: true });
-    await core.addGlobalMcpServer({
-      server: {
-        name: 'plugin-demo:remote',
-        transport: 'http',
-        url: 'https://global.example.test/service',
-        auth: 'oauth',
-      },
-    });
+    // The management API rejects a user-level add that would shadow the
+    // plugin entry, so the colliding enabled server is written directly.
+    await writeFile(
+      path.join(home, 'mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          global: { command: 'global-mcp', env: { GLOBAL_SECRET: 'global-secret-value' } },
+          'plugin-demo:remote': {
+            transport: 'http',
+            url: 'https://global.example.test/service',
+            auth: 'oauth',
+          },
+        },
+      }),
+      'utf8',
+    );
     const locator = { source: 'plugin', pluginId: 'demo', serverName: 'remote' } as const;
     await expect(core.beginMcpServerAuth({ locator })).rejects.toThrow(
       'is shared by multiple enabled servers',

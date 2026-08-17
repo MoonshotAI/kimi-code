@@ -10,25 +10,23 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
-import { contextApplyCompaction } from '#/agent/contextMemory/contextOps';
-import {
-  CHECKPOINTED_MODELS,
-  type Checkpointed,
-} from '#/agent/contextMemory/conversationTime';
+import { ContextApplyCompaction } from '#/agent/contextMemory/contextEvents';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
-import { TurnModel } from '#/agent/loop/turnOps';
+import { turnKey } from '#/agent/loop/turnOps';
 import { IAgentPlanService } from '#/features/plan/plan';
-import { PlanModel } from '#/features/plan/planOps';
+import { planKey } from '#/features/plan/planOps';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
+import { ContextUndone } from '#/agent/undo/undoService';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { TodoModel, todoSet } from '#/session/todo/todoOps';
-import { defineModel } from '#/wire/model';
+import { todoKey, ToolsUpdateStore } from '#/session/todo/todoOps';
+import { type ReplayableStateKey } from '#/state/state';
 import { IWireService } from '#/wire/wire';
 
 import { createTestAgent, execEnvServices, telemetryServices, type TestAgentContext } from '../../harness';
@@ -201,10 +199,11 @@ describe('AgentConversationUndoService', () => {
   it('refuses loudly when a legacy compaction leaves anchors without checkpoints', async () => {
     setup();
     const undo = ctx.get(IAgentConversationUndoService);
-    const wire = ctx.get(IWireService);
     ctx.appendTurnExchange('u1', 'a1');
     ctx.appendTurnExchange('u2', 'a2');
-    wire.dispatch(contextApplyCompaction({ summary: 'legacy summary', compactedCount: 2 }));
+    await ctx.dispatcher.dispatch(
+      new ContextApplyCompaction({ summary: 'legacy summary', compactedCount: 2 }),
+    );
     expect(ctx.context.get().map((m) => m.role)).toEqual(['user', 'user', 'assistant']);
 
     await expect(undo.undo(1)).rejects.toMatchObject({
@@ -218,11 +217,12 @@ describe('AgentConversationUndoService', () => {
     setup();
     const undo = ctx.get(IAgentConversationUndoService);
     ctx.appendTurnExchange('u1', 'a1');
-    const defective = defineModel<Checkpointed<unknown>>('testDefective', () => ({
-      current: null,
-      checkpoints: [],
-    }));
-    CHECKPOINTED_MODELS.push(defective);
+    const defective = {
+      name: 'testDefective',
+      initial: () => null,
+      replayable: { undoable: {}, folds: new Map() },
+    } as unknown as ReplayableStateKey<unknown>;
+    const registration = ctx.agentState.contributeState(defective);
 
     try {
       await expect(undo.undo(1)).rejects.toMatchObject({
@@ -235,7 +235,7 @@ describe('AgentConversationUndoService', () => {
         },
       });
     } finally {
-      CHECKPOINTED_MODELS.splice(CHECKPOINTED_MODELS.indexOf(defective), 1);
+      registration.dispose();
     }
     expect(ctx.context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
   });
@@ -243,33 +243,35 @@ describe('AgentConversationUndoService', () => {
   it('restores todos to their pre-turn value', async () => {
     setup();
     const undo = ctx.get(IAgentConversationUndoService);
-    const wire = ctx.get(IWireService);
     ctx.appendTurnExchange('u1', 'a1');
-    wire.dispatch(todoSet({ key: 'todo', value: [{ title: 'kept', status: 'pending' }] }));
+    await ctx.dispatcher.dispatch(
+      new ToolsUpdateStore({ key: 'todo', value: [{ title: 'kept', status: 'pending' }] }),
+    );
     ctx.appendTurnExchange('u2', 'a2');
-    wire.dispatch(todoSet({ key: 'todo', value: [{ title: 'doomed', status: 'pending' }] }));
+    await ctx.dispatcher.dispatch(
+      new ToolsUpdateStore({ key: 'todo', value: [{ title: 'doomed', status: 'pending' }] }),
+    );
 
     await undo.undo(1);
 
-    expect(wire.getModel(TodoModel).current).toEqual([{ title: 'kept', status: 'pending' }]);
+    expect(ctx.agentState.get(todoKey)).toEqual([{ title: 'kept', status: 'pending' }]);
   });
 
   it('restores plan mode and its telemetry mirror to their pre-turn value', async () => {
     setup();
     const undo = ctx.get(IAgentConversationUndoService);
-    const wire = ctx.get(IWireService);
     ctx.appendTurnExchange('u1', 'a1');
     ctx.appendTurnExchange('u2', 'a2');
     await ctx.get(IAgentPlanService).enter('plan-x', false);
     const restoredModes: boolean[] = [];
-    const subscription = ctx.get(IEventBus).subscribe('agent.status.updated', (event) => {
+    const subscription = ctx.get(IEventBus).subscribe(AgentStatusUpdated, (event) => {
       if (event.planMode !== undefined) restoredModes.push(event.planMode);
     });
 
     try {
       await undo.undo(1);
 
-      expect(wire.getModel(PlanModel).current.active).toBe(false);
+      expect(ctx.agentState.get(planKey).active).toBe(false);
       expect(ctx.get(IAgentTelemetryContextService).get().mode).toBe('agent');
       expect(restoredModes).toEqual([false]);
     } finally {
@@ -280,14 +282,13 @@ describe('AgentConversationUndoService', () => {
   it('does not roll back world-time turn bookkeeping', async () => {
     setup();
     const undo = ctx.get(IAgentConversationUndoService);
-    const wire = ctx.get(IWireService);
     ctx.appendTurnExchange('u1', 'a1');
     ctx.appendTurnExchange('u2', 'a2');
-    expect(wire.getModel(TurnModel).nextTurnId).toBe(2);
+    expect(ctx.agentState.get(turnKey).nextTurnId).toBe(2);
 
     await undo.undo(1);
 
-    expect(wire.getModel(TurnModel).nextTurnId).toBe(2);
+    expect(ctx.agentState.get(turnKey).nextTurnId).toBe(2);
   });
 
   it('flushes state reconciliation before publishing undo', async () => {
@@ -307,7 +308,7 @@ describe('AgentConversationUndoService', () => {
         order.push('state');
       },
     });
-    const subscription = ctx.get(IEventBus).subscribe('context.undone', () => {
+    const subscription = ctx.get(IEventBus).subscribe(ContextUndone, () => {
       order.push('context.undone');
     });
     ctx.appendTurnExchange('u1', 'a1');
@@ -347,7 +348,7 @@ describe('AgentConversationUndoService', () => {
         },
       });
       const undone: number[] = [];
-      const subscription = ctx.get(IEventBus).subscribe('context.undone', ({ turns }) => {
+      const subscription = ctx.get(IEventBus).subscribe(ContextUndone, ({ turns }) => {
         undone.push(turns);
       });
       ctx.appendTurnExchange('u1', 'a1');
@@ -476,7 +477,7 @@ describe('AgentConversationUndoService', () => {
       new Error('metadata write failed'),
     );
     const undone: number[] = [];
-    const subscription = ctx.get(IEventBus).subscribe('context.undone', ({ turns }) => {
+    const subscription = ctx.get(IEventBus).subscribe(ContextUndone, ({ turns }) => {
       undone.push(turns);
     });
 

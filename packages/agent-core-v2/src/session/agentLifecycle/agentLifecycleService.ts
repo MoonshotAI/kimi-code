@@ -38,15 +38,16 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
-import { PermissionModeConfiguredModel } from '#/agent/permissionMode/permissionModeOps';
+import { permissionModeConfiguredKey } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
-import { ProfileModel } from '#/agent/profile/profileOps';
+import { profileKey } from '#/agent/profile/profileOps';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { abortError } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -55,8 +56,12 @@ import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/r
 import '#/agent/runtimeBinding/runtimeBindingService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
+import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
+import { interactionKey } from '#/session/interaction/interactionOps';
 import { IWireService } from '#/wire/wire';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   type AgentListFilter,
@@ -95,6 +100,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     super();
     this._register(this.onDidCreate((handle) => this.subscribeInteractionBus(handle)));
     this._register(
+      this.onDidCreate((handle) => {
+        handle.accessor.get(IAgentStateService).contributeState(interactionKey);
+      }),
+    );
+    this._register(
       this.onDidDispose((agentId) => {
         const d = this.interactionBusDisposables.get(agentId);
         if (d !== undefined) {
@@ -115,7 +125,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (this.interactionBusDisposables.has(handle.id)) return;
     const d = handle.accessor
       .get(IEventBus)
-      .subscribe('turn.ended', (e) => this.interaction.cancelPendingForTurn(e.turnId));
+      .subscribe(TurnEnded, (e) => this.interaction.cancelPendingForTurn(e.turnId));
     this.interactionBusDisposables.set(handle.id, d);
   }
 
@@ -180,7 +190,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         labels: opts.labels,
       });
       this.onDidCreateEmitter.fire(handle);
-      await wire.restore();
+      await handle.accessor.get(IEventDispatcher).restore();
       await this.bindBootstrap(handle, opts);
       await handle.accessor.get(IAgentToolActivationService).activate();
       return handle;
@@ -201,9 +211,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (opts.binding !== undefined) {
       await handle.accessor.get(IAgentProfileService).bind(opts.binding);
     }
-    const wire = handle.accessor.get(IWireService);
     const permissionMode = this.config.get<PermissionMode>(DEFAULT_PERMISSION_MODE_SECTION);
-    const hasRestoredPermissionMode = wire.getModel(PermissionModeConfiguredModel);
+    const hasRestoredPermissionMode = handle.accessor
+      .get(IAgentStateService)
+      .get(permissionModeConfiguredKey);
     if (permissionMode !== undefined && !hasRestoredPermissionMode) {
       handle.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
     }
@@ -266,7 +277,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       // the profile name is read off the wire model, not the profile service,
       // so the broadcast never has to materialize one.
       if (
-        handle.accessor.get(IWireService).getModel(ProfileModel).profileName ===
+        handle.accessor.get(IAgentStateService).get(profileKey).profileName ===
         TOWER_WORKER_PROFILE
       ) {
         continue;
@@ -284,6 +295,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const compaction = handle.accessor.get(IAgentFullCompactionService).compacting;
     const compactionSettled = compaction?.promise.catch(() => undefined) ?? Promise.resolve();
     const reason = abortError('Agent removed');
+    const prompt = handle.accessor.get(IAgentPromptService);
     for (const turnId of loop.status().pendingTurnIds) {
       loop.cancel(turnId, reason);
     }
@@ -291,7 +303,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (compaction !== null && !compaction.abortController.signal.aborted) {
       compaction.abortController.abort(reason);
     }
-    await Promise.all([loop.settled(), compactionSettled]);
+    await Promise.all([loop.settled(), compactionSettled, prompt.drain(reason)]);
     handle.dispose();
     this.onDidDisposeEmitter.fire(agentId);
   }

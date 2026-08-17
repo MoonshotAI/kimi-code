@@ -16,7 +16,7 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import {
   IAgentContextInjectorService,
   type ContextInjectionContext,
@@ -48,7 +48,7 @@ export class AgentDateChangeService extends Disposable implements IAgentDateChan
     @ISessionContext private readonly sessionContext: ISessionContext,
   ) {
     super();
-    this._register(this.states.register(dateChangeSeedKey));
+    this._register(this.states.contributeState(dateChangeSeedKey));
     this._register(
       injector.register<DateInjectionDisclosure>(
         DATE_CHANGE_INJECTION_VARIANT,

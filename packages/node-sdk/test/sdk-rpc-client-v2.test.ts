@@ -20,8 +20,10 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  buildDaemonFileUrl,
   createKimiHarnessV2,
   ErrorCodes,
+  isDaemonFileUrl,
   KimiHarness,
   removeProviderFromConfig,
   SDKRpcClientV2,
@@ -272,6 +274,32 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
         expect(typeof feature.enabled).toBe('boolean');
         expect(typeof feature.defaultEnabled).toBe('boolean');
       }
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('uploadFile stores bytes through the klient files facade', async () => {
+    const { harness } = await makeHarness();
+    try {
+      const bytes = new Uint8Array([137, 80, 78, 71]);
+      const meta = await harness.uploadFile(bytes, {
+        name: 'pixel.png',
+        mimeType: 'image/png',
+        expiresInSec: 60,
+      });
+      expect(meta.id.startsWith('f_')).toBe(true);
+      expect(meta.name).toBe('pixel.png');
+      expect(meta.media_type).toBe('image/png');
+      expect(meta.size).toBe(bytes.length);
+      expect(typeof meta.created_at).toBe('string');
+      expect(typeof meta.expires_at).toBe('string');
+
+      // Re-export smoke only — helper behavior is pinned by agent-core-v2's
+      // mediaRef tests.
+      expect(isDaemonFileUrl(buildDaemonFileUrl(meta.id))).toBe(true);
+      await harness.deleteFile(meta.id);
+      await expect(harness.deleteFile(meta.id)).rejects.toThrow(/file not found/);
     } finally {
       await harness.close();
     }

@@ -64,6 +64,7 @@ import {
   PROVIDERS_SECTION,
   THINKING_SECTION,
 } from '#/app/kosongConfig/configSection';
+import { ModelCatalogChanged } from '#/app/kosongConfig/discovery';
 import {
   IProviderService,
   type OAuthRef,
@@ -381,7 +382,7 @@ export class OAuthService extends Disposable implements IOAuthService {
 
     const result = { changed, unchanged, failed };
     if (result.changed.length > 0) {
-      this.events.publish({ type: 'event.model_catalog.changed', payload: result });
+      this.events.publish(new ModelCatalogChanged({ payload: result }));
     }
     return result;
   }

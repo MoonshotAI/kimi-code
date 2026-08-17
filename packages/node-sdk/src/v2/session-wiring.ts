@@ -42,7 +42,7 @@ import {
   ISessionInteractionService,
   ISessionQuestionService,
   MAIN_AGENT_ID,
-  type DomainEvent,
+  type Event2,
   type IAgentScopeHandle,
   type IDisposable,
   type Interaction,
@@ -268,7 +268,7 @@ export class SessionEventWiring {
  * two client-facing packages so the core engine stays free of v1
  * wire-compatibility concerns.
  */
-function withStatusSnapshot(agent: IAgentScopeHandle, event: DomainEvent): DomainEvent {
+function withStatusSnapshot(agent: IAgentScopeHandle, event: Event2<any>): Event2<any> {
   const profile = agent.accessor.get(IAgentProfileService) as IAgentProfileService | undefined;
   const usageService = agent.accessor.get(IAgentUsageService) as IAgentUsageService | undefined;
   const tokenCounting = agent.accessor.get(IAgentTokenCountingService) as
@@ -282,11 +282,10 @@ function withStatusSnapshot(agent: IAgentScopeHandle, event: DomainEvent): Domai
   const contextTokens = tokenCounting.statusSize();
   const capabilities = profile.getModelCapabilities();
   const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
-  return {
-    ...event,
+  return Object.assign({}, event, {
     usage: usageService.status(),
     contextTokens,
     maxContextTokens,
     model: profile.getModel(),
-  } as unknown as DomainEvent;
+  }) as unknown as Event2<any>;
 }

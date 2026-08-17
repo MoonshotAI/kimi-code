@@ -14,13 +14,15 @@
 import type { AttachmentId } from './ids';
 
 /**
- * Where the frontend fetches the bytes. Mirrors the engine's media source
- * kinds minus `base64` — inline data is deliberately dropped rather than
- * shipped over the transcript API.
+ * Where the frontend fetches the bytes. `file` addresses the process-global
+ * upload store; `session_media` addresses canonical media owned by the
+ * transcript's session. Inline base64 data is deliberately dropped rather
+ * than shipped over the transcript API.
  */
 export type AttachmentSource =
   | { readonly kind: 'url'; readonly url: string }
-  | { readonly kind: 'file'; readonly fileId: string };
+  | { readonly kind: 'file'; readonly fileId: string }
+  | { readonly kind: 'session_media'; readonly fileId: string };
 
 export interface TranscriptAttachment {
   readonly attachmentId: AttachmentId;

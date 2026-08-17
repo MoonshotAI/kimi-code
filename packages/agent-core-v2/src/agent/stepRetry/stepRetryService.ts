@@ -7,7 +7,9 @@
  * at the head of the queue after exponential backoff (`retryBackoffDelays`).
  * The loop only learns that the error was caught; the retry rides the normal
  * step numbering and consumes `maxSteps` budget like any other step. Each
- * claimed failure publishes `turn.step.retrying`. Consecutive attempts are
+ * claimed failure dispatches the transient `turn.step.retrying` observable
+ * (`TurnStepRetrying`) through `state` (`IEventDispatcher`). Consecutive
+ * attempts are
  * counted per failed driver and reset when any step succeeds (`onDidFinishStep`)
  * or a new turn starts. The mutable retry state (`lastFailedDriverId`,
  * `failedAttempts`) is registered into `agentState` (`IAgentStateService`) and
@@ -15,10 +17,12 @@
  * so the handler registers before the first turn runs.
  */
 
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import {
   DEFAULT_MAX_RETRY_ATTEMPTS,
   readRetryAfterMs,
@@ -29,18 +33,20 @@ import {
 import { isRetryableGenerateError } from '#/kosong/contract/errors';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
+import { Event2 } from '#/app/event/event2';
 import { unwrapErrorCause } from '#/errors';
 import {
   IAgentLoopService,
   type LoopErrorContext,
 } from '#/agent/loop/loop';
 import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
+import { TurnStarted } from '#/agent/loop/turnEvents';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentStepRetryService } from './stepRetry';
 
-export interface TurnStepRetryingEvent {
-  readonly type: 'turn.step.retrying';
+export interface TurnStepRetryingPayload {
   readonly turnId: number;
   readonly step: number;
   readonly stepId?: string;
@@ -53,11 +59,11 @@ export interface TurnStepRetryingEvent {
   readonly statusCode?: number;
 }
 
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'turn.step.retrying': TurnStepRetryingEvent;
-  }
+export class TurnStepRetrying extends Event2<TurnStepRetryingPayload> {
+  static override readonly type = 'turn.step.retrying';
+  static override readonly observable = true;
 }
+export interface TurnStepRetrying extends TurnStepRetryingPayload {}
 
 export const stepRetryLastFailedDriverIdKey = defineState<string | undefined>(
   'stepRetry.lastFailedDriverId',
@@ -76,11 +82,12 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
     @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IConfigService private readonly config: IConfigService,
     @IEventBus private readonly eventBus: IEventBus,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(stepRetryLastFailedDriverIdKey);
-    this.states.register(stepRetryFailedAttemptsKey);
+    this.states.contributeState(stepRetryLastFailedDriverIdKey);
+    this.states.contributeState(stepRetryFailedAttemptsKey);
     this._register(
       this.loopService.registerLoopErrorHandler({
         id: 'step-retry',
@@ -94,7 +101,7 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
         await next();
       }),
     );
-    this._register(this.eventBus.subscribe('turn.started', () => this.resetAttempts()));
+    this._register(this.eventBus.subscribe(TurnStarted, () => this.resetAttempts()));
   }
 
   private get lastFailedDriverId(): string | undefined {
@@ -141,17 +148,18 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
     const error = unwrapErrorCause(context.error);
     const delayMs =
       readRetryAfterMs(error) ?? retryBackoffDelays(maxAttempts)[this.failedAttempts - 1] ?? 0;
-    this.eventBus.publish({
-      type: 'turn.step.retrying',
-      turnId: context.turnId,
-      step: context.step,
-      stepId: context.stepId,
-      failedAttempt: this.failedAttempts,
-      nextAttempt: this.failedAttempts + 1,
-      maxAttempts,
-      delayMs,
-      ...retryErrorFields(error),
-    });
+    void this.dispatcher.dispatch(
+      new TurnStepRetrying({
+        turnId: context.turnId,
+        step: context.step,
+        stepId: context.stepId,
+        failedAttempt: this.failedAttempts,
+        nextAttempt: this.failedAttempts + 1,
+        maxAttempts,
+        delayMs,
+        ...retryErrorFields(error),
+      }),
+    );
     await sleepForRetry(delayMs, context.signal);
 
     if (context.currentStep?.signal.aborted === true) return false;
