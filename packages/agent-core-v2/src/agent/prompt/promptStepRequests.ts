@@ -73,7 +73,11 @@ export class PromptStepRequest extends UserMessageStepRequest {
   }
 
   override get turnSeed(): TurnSeed {
-    return { input: this.message.content, origin: this.message.origin ?? USER_PROMPT_ORIGIN };
+    return {
+      input: this.message.content,
+      origin: this.message.origin ?? USER_PROMPT_ORIGIN,
+      promptId: this.message.id,
+    };
   }
 }
 

@@ -354,6 +354,7 @@ export const attachmentSchema = z.object({
     .discriminatedUnion('kind', [
       z.object({ kind: z.literal('url'), url: z.string() }),
       z.object({ kind: z.literal('file'), fileId: z.string() }),
+      z.object({ kind: z.literal('session_media'), fileId: z.string() }),
     ])
     .optional(),
   placeholder: z.string().optional(),

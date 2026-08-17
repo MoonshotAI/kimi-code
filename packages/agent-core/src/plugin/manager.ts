@@ -19,8 +19,8 @@ import {
   type PluginCommandDef,
   type PluginGithubMetadata,
   type PluginInfo,
+  type PluginMcpServerEntry,
   type PluginMcpServerInfo,
-  type PluginMcpServerRuntimeConfig,
   type PluginRecord,
   type PluginSource,
   type PluginSummary,
@@ -254,30 +254,44 @@ export class PluginManager {
 
   enabledMcpServers(): Record<string, McpServerConfig> {
     const out: Record<string, McpServerConfig> = {};
-    for (const server of this.mcpServers()) {
-      if (!server.enabled) continue;
-      out[server.runtimeName] = server.config;
+    for (const entry of this.mcpServerEntries()) {
+      if (entry.config.enabled === false) continue;
+      out[entry.name] = withMcpServerEnabled(entry.config, true);
     }
     return out;
   }
 
-  mcpServers(): readonly PluginMcpServerRuntimeConfig[] {
-    const out: PluginMcpServerRuntimeConfig[] = [];
+  /**
+   * Every MCP server declared by a healthy plugin manifest, with the final
+   * effective config the engine would run: the `plugin-<id>:` runtime rename,
+   * the plugin environment / cwd constraints, the folded enabled flag (plugin
+   * disabled or per-server override → `enabled: false`), and — when the caller
+   * passes `managedEnv` — the host-managed Kimi env for stdio servers. This is
+   * the single contributor surface the MCP registry and live-session sync read;
+   * config ownership stays in the manifest, so entries are read-only for the
+   * management plane.
+   */
+  mcpServerEntries(options?: {
+    readonly managedEnv?: Record<string, string>;
+  }): readonly PluginMcpServerEntry[] {
+    const out: PluginMcpServerEntry[] = [];
     for (const record of this.records.values()) {
       if (record.state !== 'ok' || record.manifest === undefined) continue;
-      for (const [serverName, config] of Object.entries(record.manifest.mcpServers ?? {})) {
-        const enabled = record.enabled && isMcpServerEnabled(record, serverName, config);
-        const runtimeName = pluginMcpRuntimeName(record.id, serverName);
+      for (const [name, config] of Object.entries(record.manifest.mcpServers ?? {})) {
+        const enabled = record.enabled && isMcpServerEnabled(record, name, config);
+        let effective = withPluginMcpRuntime(
+          withMcpServerEnabled(config, enabled),
+          record.root,
+          this.kimiHomeDir,
+        );
+        if (options?.managedEnv !== undefined && effective.transport === 'stdio') {
+          effective = { ...effective, env: { ...effective.env, ...options.managedEnv } };
+        }
         out.push({
+          name: pluginMcpRuntimeName(record.id, name),
+          config: effective,
           pluginId: record.id,
-          serverName,
-          runtimeName,
-          enabled,
-          config: withPluginMcpRuntime(
-            withMcpServerEnabled(config, enabled),
-            record.root,
-            this.kimiHomeDir,
-          ),
+          serverName: name,
         });
       }
     }

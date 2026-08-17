@@ -26,6 +26,10 @@ export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability
 export type {
   AgentReplayRecord,
   AgentBackgroundTaskInfo,
+  AppMcpServerAuthState,
+  AppMcpServerConfig,
+  AppMcpServerDescriptor,
+  AppMcpServerInspection,
   BackgroundConfig,
   BackgroundTaskInfo,
   BackgroundTaskStatus,
@@ -49,7 +53,10 @@ export type {
   KimiConfig,
   KimiConfigPatch,
   LoopControl,
+  McpManagedServerInfo,
   McpServerInfo,
+  McpServerLocator,
+  McpServerSource,
   McpStartupMetrics,
   ModelAlias,
   MoonshotServiceConfig,
@@ -104,6 +111,17 @@ export interface WorkspaceTrustInfo {
   readonly trusted: boolean;
   /** Safe descriptions of project-level MCP servers that trusting would enable. */
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
+}
+
+/** Metadata of one upload in the engine's daemon file store. */
+export type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
+
+/** Input for `uploadFile`: the upload's display name and MIME type. */
+export interface UploadFileOptions {
+  readonly name: string;
+  readonly mimeType?: string;
+  /** Optional daemon-side TTL for staging uploads. */
+  readonly expiresInSec?: number;
 }
 
 export interface CreateGoalInput {

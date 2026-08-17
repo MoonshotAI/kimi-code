@@ -1,7 +1,7 @@
 import type { OAuthClientInformationFull, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { describe, expect, it } from 'vitest';
 
-import { McpOAuthClientProvider } from '#/mcpCore/oauth/provider';
+import { McpOAuthClientProvider, type StoredMcpOAuthTokens } from '#/mcpCore/oauth/provider';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { mcpOAuthStoreKey, sanitizeStoreKey } from '#/mcpCore/oauth/store';
 
@@ -79,6 +79,33 @@ describe('MCP OAuth credential identity', () => {
 
     await expect(service.hasTokens('linear', 'https://first.example.com/mcp')).resolves.toBe(true);
     await expect(service.hasTokens('linear', 'https://second.example.com/mcp')).resolves.toBe(false);
+  });
+
+  it('stamps saved tokens with obtained_at, in cache and on disk', async () => {
+    const store = createMemoryMcpOAuthStore();
+    const provider = new McpOAuthClientProvider({
+      serverName: 'linear',
+      serverUrl: 'https://first.example.com/mcp',
+      store,
+    });
+    await provider.ready;
+
+    const before = Date.now();
+    await provider.saveTokens(token('stamped-token'));
+    const after = Date.now();
+
+    const stamped = (await provider.tokens()) as StoredMcpOAuthTokens | undefined;
+    expect(stamped?.obtained_at).toBeGreaterThanOrEqual(before);
+    expect(stamped?.obtained_at).toBeLessThanOrEqual(after);
+
+    // A fresh provider over the same store reads the stamp back from disk.
+    const reloaded = new McpOAuthClientProvider({
+      serverName: 'linear',
+      serverUrl: 'https://first.example.com/mcp',
+      store,
+    });
+    await reloaded.ready;
+    await expect(reloaded.tokens()).resolves.toMatchObject({ obtained_at: stamped?.obtained_at });
   });
 
   it('uses stored client redirect URI when no active OAuth callback is running', async () => {

@@ -12,11 +12,13 @@ import type { KimiAuthFacade } from '#/auth';
 import type { SDKRpcClientBase } from '#/rpc';
 import type {
   AuthenticateMcpServerOptions,
+  AppMcpServerInspection,
   CapabilityStatus,
   ConfigDiagnostics,
   CreateSessionOptions,
   ExportSessionInput,
   ExportSessionResult,
+  FileMeta,
   ForkSessionInput,
   GenerateSessionTitleInput,
   GetConfigOptions,
@@ -25,8 +27,10 @@ import type {
   KimiConfigPatch,
   KimiHostIdentity,
   ListSessionsOptions,
+  McpManagedServerInfo,
   McpServerConfig,
   McpServerInfo,
+  McpServerLocator,
   McpTestResult,
   PluginCommandDef,
   PluginInfo,
@@ -42,6 +46,7 @@ import type {
   TelemetryContextPatch,
   TelemetryProperties,
   TestMcpServerOptions,
+  UploadFileOptions,
   WorkspaceTrustInfo,
 } from '#/types';
 
@@ -418,6 +423,20 @@ export class KimiHarness {
     return this.rpc.getExperimentalFeatures();
   }
 
+  /**
+   * Upload media bytes to the engine's file store; pair the returned meta
+   * with `buildDaemonFileUrl` to reference the file from a prompt.
+   * agent-core-v2 only — the v1 engine throws `not_implemented`.
+   */
+  async uploadFile(data: Uint8Array, options: UploadFileOptions): Promise<FileMeta> {
+    return this.rpc.uploadFile(data, options);
+  }
+
+  /** Delete a daemon upload owned by a client-side staging operation. */
+  async deleteFile(fileId: string): Promise<void> {
+    return this.rpc.deleteFile(fileId);
+  }
+
   async ensureConfigFile(): Promise<void> {
     await this.ensureConfigFileImpl();
   }
@@ -448,24 +467,53 @@ export class KimiHarness {
     return this.rpc.replaceConfigSections(sections);
   }
 
-  /** User-global MCP entries from `<KIMI_CODE_HOME>/mcp.json` only. */
-  async listMcpServers(): Promise<readonly McpServerConfig[]> {
-    return this.rpc.listGlobalMcpServers();
+  /**
+   * The unified MCP management view: user-level `<KIMI_CODE_HOME>/mcp.json`
+   * entries (mutable), plus read-only project-layer entries when `cwd` is
+   * given and plugin-contributed entries — each tagged with its `source`,
+   * `origin`, and `mutable` flag.
+   */
+  async listMcpServers(
+    options: { readonly cwd?: string } = {},
+  ): Promise<readonly McpManagedServerInfo[]> {
+    return this.rpc.listGlobalMcpServers(options);
   }
 
-  async listMcpServerAuthStatuses(): Promise<readonly GlobalMcpServerAuthStatus[]> {
-    return this.rpc.listGlobalMcpServerAuthStatuses();
+  /** One entry of the unified MCP management view, resolved by name. */
+  async getMcpServer(
+    name: string,
+    options: { readonly cwd?: string } = {},
+  ): Promise<McpManagedServerInfo> {
+    return this.rpc.getGlobalMcpServer(name, options);
   }
 
-  async addMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {
+  async listMcpServerAuthStatuses(
+    options: { readonly cwd?: string; readonly verify?: boolean } = {},
+  ): Promise<readonly GlobalMcpServerAuthStatus[]> {
+    return this.rpc.listGlobalMcpServerAuthStatuses(options);
+  }
+
+  /**
+   * The app-level MCP catalog (global + plugin entries) with live
+   * authorization state: OAuth candidates are probed with a real connection,
+   * so a stored-but-rejected grant surfaces as `oauth-expired` and an
+   * unreachable one as `unavailable`.
+   */
+  async inspectAppMcpServers(
+    targets?: readonly McpServerLocator[],
+  ): Promise<readonly AppMcpServerInspection[]> {
+    return this.rpc.inspectAppMcpServers(targets);
+  }
+
+  async addMcpServer(server: McpServerConfig): Promise<readonly McpManagedServerInfo[]> {
     return this.rpc.addGlobalMcpServer(server);
   }
 
-  async updateMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {
+  async updateMcpServer(server: McpServerConfig): Promise<readonly McpManagedServerInfo[]> {
     return this.rpc.updateGlobalMcpServer(server);
   }
 
-  async removeMcpServer(name: string): Promise<readonly McpServerConfig[]> {
+  async removeMcpServer(name: string): Promise<readonly McpManagedServerInfo[]> {
     return this.rpc.removeGlobalMcpServer(name);
   }
 
@@ -494,11 +542,53 @@ export class KimiHarness {
     return this.rpc.resetGlobalMcpServerAuth(name);
   }
 
+  /**
+   * The locator-addressed variant of {@link authenticateMcpServer}: plugin
+   * servers are addressed by `pluginId` + manifest-local `serverName`, so the
+   * flow works even when the runtime name collides with a global entry.
+   */
+  async authenticateAppMcpServer(
+    locator: McpServerLocator,
+    options: AuthenticateMcpServerOptions,
+  ): Promise<void> {
+    const started = await this.rpc.beginMcpServerAuth(locator);
+    if (started.status === 'already-authorized') return;
+    try {
+      const opened = await options.onAuthorizationUrl(started.authorizationUrl);
+      if (opened === false) {
+        throw new KimiError(ErrorCodes.REQUEST_INVALID, 'MCP OAuth authorization was cancelled');
+      }
+      await this.rpc.completeMcpServerAuth(
+        { flowId: started.flowId, timeoutMs: options.timeoutMs },
+        options.signal,
+      );
+    } catch (error) {
+      await this.rpc.cancelMcpServerAuth(started.flowId).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /** The locator-addressed variant of {@link resetMcpServerAuth}. */
+  async resetAppMcpServerAuth(locator: McpServerLocator): Promise<void> {
+    return this.rpc.resetMcpServerAuth(locator);
+  }
+
   async testMcpServer(
     name: string,
     options: TestMcpServerOptions = {},
   ): Promise<McpTestResult> {
     return this.rpc.testGlobalMcpServer(name, options);
+  }
+
+  /**
+   * Probe a full inline MCP server config without saving it first — the
+   * config counterpart of {@link testMcpServer}.
+   */
+  async testMcpServerConfig(
+    server: McpServerConfig,
+    options: TestMcpServerOptions = {},
+  ): Promise<McpTestResult> {
+    return this.rpc.testGlobalMcpServerConfig(server, options);
   }
 
   async close(): Promise<void> {

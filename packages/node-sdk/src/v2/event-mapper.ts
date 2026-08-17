@@ -67,6 +67,14 @@ export function translateDomainEvent(
 ): Event | undefined {
   if (DROPPED_DOMAIN_EVENT_TYPES.has(event.type)) return undefined;
   const type = RENAMED_DOMAIN_EVENT_TYPES[event.type] ?? event.type;
+  if (event.type === 'turn.started') {
+    // `promptAttachments` is an internal transcript-projection input, not part
+    // of the public event contract — kap-server strips it from the WS wire
+    // event, so the in-process SDK drops it too, keeping both consumers on the
+    // same `turn.started` field set.
+    const { promptAttachments: _internal, ...publicFields } = event;
+    return { ...publicFields, type, sessionId, agentId } as unknown as Event;
+  }
   return { ...event, type, sessionId, agentId } as unknown as Event;
 }
 
