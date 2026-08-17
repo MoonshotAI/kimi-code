@@ -1431,8 +1431,16 @@ function isGlobalEvent(type: string): boolean {
   );
 }
 
-function isAgentLifecycleEvent(type: string): boolean {
-  return type === 'agent.created' || type === 'agent.disposed';
+function isControlPlaneLifecycleEvent(type: string): boolean {
+  return (
+    type === 'agent.created' ||
+    type === 'agent.disposed' ||
+    type === 'subagent.spawned' ||
+    type === 'subagent.started' ||
+    type === 'subagent.suspended' ||
+    type === 'subagent.completed' ||
+    type === 'subagent.failed'
+  );
 }
 
 /**
@@ -1441,9 +1449,8 @@ function isAgentLifecycleEvent(type: string): boolean {
  * `filter`:
  *   - `filter === undefined` → receive every agent (legacy session-grained
  *     behavior);
- *   - global events (session/workspace/config) and agent lifecycle events
- *     (`agent.created` / `agent.disposed`) are not per-agent stream content
- *     and always pass;
+ *   - global events (session/workspace/config) and control-plane lifecycle
+ *     events are not per-agent stream content and always pass;
  *   - events without a string `agentId` (should not happen on the v1 wire,
  *     where the broadcaster stamps every event) pass defensively rather than
  *     being dropped;
@@ -1452,7 +1459,7 @@ function isAgentLifecycleEvent(type: string): boolean {
 function matchesAgentFilter(envelope: EventEnvelope, filter: AgentFilter): boolean {
   if (filter === undefined) return true;
   if (isGlobalEvent(envelope.type)) return true;
-  if (isAgentLifecycleEvent(envelope.type)) return true;
+  if (isControlPlaneLifecycleEvent(envelope.type)) return true;
   const payload = envelope.payload;
   const agentId =
     typeof payload === 'object' && payload !== null
@@ -1541,7 +1548,7 @@ const TRANSCRIPT_PROJECTED_EVENT_TYPES: ReadonlySet<string> = new Set([
  * the transcript stream:
  *   - `spec === undefined` → nothing is suppressed (legacy connections see
  *     every `session_event`);
- *   - global events and agent lifecycle events are never suppressed;
+ *   - global events and control-plane lifecycle events are never suppressed;
  *   - events without a string `agentId` pass defensively (same rule as the
  *     agent allowlist);
  *   - an 'off' grade for the emitting agent suppresses nothing;
@@ -1554,7 +1561,7 @@ function suppressedByTranscript(
 ): boolean {
   if (spec === undefined) return false;
   if (isGlobalEvent(envelope.type)) return false;
-  if (isAgentLifecycleEvent(envelope.type)) return false;
+  if (isControlPlaneLifecycleEvent(envelope.type)) return false;
   const payload = envelope.payload;
   const agentId =
     typeof payload === 'object' && payload !== null
