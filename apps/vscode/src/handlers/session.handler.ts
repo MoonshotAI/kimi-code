@@ -156,7 +156,11 @@ export const sessionHandlers: Record<string, Handler<any, any>> = {
       }
     } catch (error) {
       ctx.logError("Unable to restore background task statuses", error);
-      ctx.broadcast(Events.BackgroundTasksChanged, [], ctx.webviewId);
+      ctx.broadcast(
+        Events.BackgroundTasksChanged,
+        { sessionId: runtime.id, tasks: [] },
+        ctx.webviewId,
+      );
     }
 
     ctx.fileManager.clearTracked(ctx.webviewId);

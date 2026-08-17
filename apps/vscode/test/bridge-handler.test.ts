@@ -516,7 +516,11 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
       "view-1",
     );
 
-    expect(broadcast).toHaveBeenCalledWith(Events.BackgroundTasksChanged, [], "view-1");
+    expect(broadcast).toHaveBeenCalledWith(
+      Events.BackgroundTasksChanged,
+      { sessionId: "session-1", tasks: [] },
+      "view-1",
+    );
   });
 
   it("returns a readable error when persisted session state is corrupt without wedging the bridge", async () => {

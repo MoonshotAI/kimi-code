@@ -1,5 +1,5 @@
 import { Methods } from "../../shared/bridge";
-import type { BackgroundTaskInfo } from "../../shared/legacy-sdk";
+import type { BackgroundTasksChangedPayload } from "../../shared/types";
 import type { Handler } from "./types";
 
 interface TaskIdParams {
@@ -11,11 +11,11 @@ interface TaskOutputParams extends TaskIdParams {
 }
 
 export const tasksHandlers: Record<string, Handler<any, any>> = {
-  [Methods.ListBackgroundTasks]: async (_, ctx): Promise<BackgroundTaskInfo[]> => {
+  [Methods.ListBackgroundTasks]: async (_, ctx): Promise<BackgroundTasksChangedPayload> => {
     const runtime = ctx.getSession();
-    if (runtime === undefined) return [];
+    if (runtime === undefined) return { sessionId: null, tasks: [] };
     const tasks = await runtime.listBackgroundTasks();
-    return [...tasks];
+    return { sessionId: runtime.id, tasks: [...tasks] };
   },
 
   [Methods.GetBackgroundTaskOutput]: async (

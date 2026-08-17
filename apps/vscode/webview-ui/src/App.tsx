@@ -13,14 +13,18 @@ import { useChatStore, useSettingsStore, useTasksStore } from "./stores";
 import { bridge, Events } from "./services";
 import { useAppInit, resolveAppView } from "./hooks/useAppInit";
 import { isPreflightError } from "shared/errors";
-import type { UIStreamEvent, StreamError, ExtensionConfig } from "shared/types";
-import type { BackgroundTaskInfo } from "shared/legacy-sdk";
+import type {
+  BackgroundTasksChangedPayload,
+  UIStreamEvent,
+  StreamError,
+  ExtensionConfig,
+} from "shared/types";
 import "./styles/index.css";
 
 function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
   const { processEvent, startNewConversation, sessionId } = useChatStore();
   const { setMCPServers, setExtensionConfig, extensionConfig } = useSettingsStore();
-  const setTasks = useTasksStore((s) => s.setTasks);
+  const applyTaskSnapshot = useTasksStore((s) => s.applySnapshot);
 
   useEffect(() => {
     return bridge.on(Events.StreamEvent, (event: UIStreamEvent) => {
@@ -42,7 +46,9 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
   useEffect(() => {
     const unsubs = [
       bridge.on(Events.MCPServersChanged, setMCPServers),
-      bridge.on(Events.BackgroundTasksChanged, (tasks: BackgroundTaskInfo[]) => setTasks(tasks)),
+      bridge.on(Events.BackgroundTasksChanged, (payload: BackgroundTasksChangedPayload) => {
+        applyTaskSnapshot(payload);
+      }),
       bridge.on(Events.ExtensionConfigChanged, ({ config }: { config: ExtensionConfig }) => setExtensionConfig(config)),
       bridge.on(Events.FocusInput, () => document.querySelector<HTMLTextAreaElement>("textarea")?.focus()),
       bridge.on(Events.NewConversation, () => {
@@ -52,7 +58,7 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
       }),
     ];
     return () => unsubs.forEach((u) => u());
-  }, [setMCPServers, setExtensionConfig, startNewConversation, setTasks]);
+  }, [setMCPServers, setExtensionConfig, startNewConversation, applyTaskSnapshot]);
 
   useEffect(() => {
     if (!extensionConfig.enableNewConversationShortcut) return;

@@ -108,6 +108,7 @@ export interface ChatState {
   retryLastMessage: () => void;
   processEvent: (event: UIStreamEvent) => void;
   loadSession: (sessionId: string, events: UIStreamEvent[]) => Promise<void>;
+  restoreSession: (sessionId: string, prepare?: () => Promise<void>) => Promise<boolean>;
   startNewConversation: () => Promise<void>;
   abort: () => void;
   addDraftMedia: (id: string, dataUri?: string) => void;
@@ -127,6 +128,8 @@ export interface ChatState {
 }
 
 let handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+let restoreSequence = 0;
+let restoreQueue = Promise.resolve();
 
 function clearHandshakeTimer() {
   if (handshakeTimer) {
@@ -267,6 +270,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       clearHandshakeTimer();
     }
 
+    if (event.type === "session_start" && "sessionId" in event && event.sessionId) {
+      useTasksStore.getState().setSession(event.sessionId);
+    }
+
     set(
       produce((draft: ChatState) => {
         processEvent(draft, event);
@@ -291,6 +298,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await bridge.abortChat();
     }
 
+    useTasksStore.getState().setSession(sessionId);
     set({
       sessionId,
       messages: [],
@@ -334,8 +342,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
     useApprovalStore.getState().clearRequests();
   },
 
+  restoreSession: (sessionId, prepare) => {
+    const sequence = ++restoreSequence;
+    const committedSessionId = get().sessionId;
+    useTasksStore.getState().setSession(sessionId);
+
+    const restore = restoreQueue.then(async () => {
+      try {
+        if (sequence !== restoreSequence) return false;
+        await prepare?.();
+        if (sequence !== restoreSequence) return false;
+        const events = await bridge.loadSessionHistory(sessionId);
+        if (sequence !== restoreSequence) return false;
+        await get().loadSession(sessionId, events);
+        return true;
+      } catch (error) {
+        if (sequence !== restoreSequence) return false;
+        const tasksStore = useTasksStore.getState();
+        tasksStore.setSession(committedSessionId);
+        await tasksStore.refreshTasks().catch(() => undefined);
+        if (sequence !== restoreSequence) return false;
+        throw error;
+      }
+    });
+    restoreQueue = restore.then(() => undefined, () => undefined);
+    return restore;
+  },
+
   startNewConversation: async () => {
     clearHandshakeTimer();
+    restoreSequence += 1;
 
     // Abort any ongoing stream before starting new conversation
     const { isStreaming: wasStreaming } = get();
@@ -361,7 +397,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       planMode: false,
     });
     useApprovalStore.getState().clearRequests();
-    useTasksStore.getState().setTasks([]);
+    useTasksStore.getState().setSession(null);
   },
 
   abort: () => {

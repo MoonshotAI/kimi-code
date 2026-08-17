@@ -446,7 +446,7 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
 
       expect(broadcasts).toContainEqual({
         event: Events.BackgroundTasksChanged,
-        data: [info],
+        data: { sessionId: "session-1", tasks: [info] },
         webviewId: "view-1",
       });
     });
@@ -538,7 +538,7 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
       expect(broadcasts).toEqual([
         {
           event: Events.BackgroundTasksChanged,
-          data: [info],
+          data: { sessionId: "session-1", tasks: [info] },
           webviewId: "view-2",
         },
       ]);
@@ -576,7 +576,7 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
 
       expect(broadcasts).toContainEqual({
         event: Events.BackgroundTasksChanged,
-        data: [mainTask, workerTask],
+        data: { sessionId: "session-1", tasks: [mainTask, workerTask] },
         webviewId: "view-1",
       });
     });

@@ -15,7 +15,11 @@ import type {
 } from "../../shared/legacy-sdk";
 import { Events } from "../../shared/bridge";
 import { getUserMessage } from "../../shared/errors";
-import type { ErrorPhase, UIStreamEvent } from "../../shared/types";
+import type {
+  BackgroundTasksChangedPayload,
+  ErrorPhase,
+  UIStreamEvent,
+} from "../../shared/types";
 import {
   adaptSdkEvent,
   createEventAdapterState,
@@ -192,7 +196,8 @@ export class SessionRuntime {
     this.ensureOpen();
     const tasks = await this.listBackgroundTasks();
     if (!this.closed && this.webviewIds.has(webviewId)) {
-      this.broadcast(Events.BackgroundTasksChanged, tasks, webviewId);
+      const payload: BackgroundTasksChangedPayload = { sessionId: this.id, tasks: [...tasks] };
+      this.broadcast(Events.BackgroundTasksChanged, payload, webviewId);
     }
     return tasks;
   }
@@ -676,8 +681,9 @@ export class SessionRuntime {
     this.backgroundTasks.set(wireInfo.taskId, wireInfo);
     this.backgroundTaskOwners.set(wireInfo.taskId, agentId);
     const tasks = [...this.backgroundTasks.values()];
+    const payload: BackgroundTasksChangedPayload = { sessionId: this.id, tasks };
     for (const webviewId of this.webviewIds) {
-      this.broadcast(Events.BackgroundTasksChanged, tasks, webviewId);
+      this.broadcast(Events.BackgroundTasksChanged, payload, webviewId);
     }
 
     const key = wireInfo.status === "running"

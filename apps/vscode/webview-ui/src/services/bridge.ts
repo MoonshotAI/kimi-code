@@ -1,7 +1,6 @@
 import { Methods, Events } from "shared/bridge";
 import type {
   ApprovalResponse,
-  BackgroundTaskInfo,
   ContentPart,
   MCPServerConfig,
   SessionInfo,
@@ -12,6 +11,7 @@ import type {
 } from "shared/legacy-sdk";
 import type {
   FileChange,
+  BackgroundTasksChangedPayload,
   SessionConfig,
   ExtensionConfig,
   WorkspaceStatus,
@@ -297,7 +297,7 @@ class Bridge {
   }
 
   listBackgroundTasks() {
-    return this.call<BackgroundTaskInfo[]>(Methods.ListBackgroundTasks);
+    return this.call<BackgroundTasksChangedPayload>(Methods.ListBackgroundTasks);
   }
 
   getBackgroundTaskOutput(taskId: string, tail?: number) {
