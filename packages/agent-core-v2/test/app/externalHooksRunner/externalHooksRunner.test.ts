@@ -255,6 +255,45 @@ describe('ExternalHooksRunnerService', () => {
     await expect(runner.fireAndForgetTrigger('Notification')).resolves.toEqual([]);
   });
 
+  it('warns about a non-zero hook exit without changing fail-open behavior', async () => {
+    const warnings: Array<[string, unknown]> = [];
+    const command = nodeCommand(
+      'process.stderr.write(["bad hook", "second line"].join(String.fromCharCode(10))); process.exit(1);',
+    );
+    const runner = makeHookRunner([{ event: 'UserPromptSubmit', command, timeout: 5 }], {
+      onWarn: (message, payload) => warnings.push([message, payload]),
+    });
+
+    const results = await runner.trigger('UserPromptSubmit');
+
+    expect(results[0]?.action).toBe('allow');
+    expect(warnings).toEqual([
+      [
+        'external hook command failed',
+        {
+          event: 'UserPromptSubmit',
+          command,
+          exitCode: 1,
+          timedOut: undefined,
+          stderr: 'bad hook',
+        },
+      ],
+    ]);
+  });
+
+  it('does not warn about an intentional exit-code-2 block', async () => {
+    const onWarn = vi.fn();
+    const runner = makeHookRunner(
+      [{ event: 'PreToolUse', command: nodeCommand('process.exit(2);'), timeout: 5 }],
+      { onWarn },
+    );
+
+    const results = await runner.trigger('PreToolUse');
+
+    expect(results[0]?.action).toBe('block');
+    expect(onWarn).not.toHaveBeenCalled();
+  });
+
   it('invokes onTriggered with (event,target,count) and onResolved with (event,target,action)', async () => {
     const triggered: Array<[string, string, number]> = [];
     const resolved: Array<[string, string, string]> = [];

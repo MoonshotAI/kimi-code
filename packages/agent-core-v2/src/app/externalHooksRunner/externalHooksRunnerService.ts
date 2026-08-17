@@ -7,7 +7,8 @@
  * `runMatchedHooks`. The App-scope `IHostProcessService` is injected here and
  * threaded down to `runHook`, so hook commands spawn through the shared host
  * process service (cross-platform kill, hidden console on Windows) rather than
- * `node:child_process` directly. Per-call caller facts (`cwd` defaulting to
+ * `node:child_process` directly, and reports operational hook failures through
+ * the App-scope `ILogService`. Per-call caller facts (`cwd` defaulting to
  * bootstrap cwd, `sessionId`, `signal`, payload) flow in through the args, so
  * this service keeps no per-scope state; the one payload field it contributes
  * itself is `clientType` (the host platform from bootstrap client identity),
@@ -15,6 +16,7 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
+import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
@@ -47,6 +49,7 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     @IPluginService private readonly plugins: IPluginService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostProcessService private readonly hostProcess: IHostProcessService,
+    @ILogService private readonly log: ILogService,
     private readonly callbacks: HookRunCallbacks = {},
   ) {
     super();
@@ -113,7 +116,19 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
           ...args.inputData,
         },
       },
-      this.callbacks,
+      {
+        ...this.callbacks,
+        onFailed: (failedEvent, command, result) => {
+          this.log.warn('external hook command failed', {
+            event: failedEvent,
+            command,
+            exitCode: result.exitCode,
+            timedOut: result.timedOut,
+            stderr: firstStderrLine(result.stderr),
+          });
+          this.callbacks.onFailed?.(failedEvent, command, result);
+        },
+      },
     );
   }
 
@@ -136,6 +151,11 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     this.byEvent = indexHooks([...(configured ?? []), ...pluginHooks]);
     this._onDidReload.fire();
   }
+}
+
+function firstStderrLine(stderr: string | undefined): string | undefined {
+  const line = stderr?.split(/\r?\n/, 1)[0]?.trim();
+  return line === '' ? undefined : line;
 }
 
 registerScopedService(

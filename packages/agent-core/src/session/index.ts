@@ -282,6 +282,15 @@ export class Session {
     this.hookEngine = new HookEngine(options.hooks, {
       cwd: options.kaos.getcwd(),
       sessionId: options.id,
+      onFailed: (event, command, result) => {
+        this.log.warn('external hook command failed', {
+          event,
+          command,
+          exitCode: result.exitCode,
+          timedOut: result.timedOut,
+          stderr: firstStderrLine(result.stderr),
+        });
+      },
     });
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.toolKaos = options.kaos;
@@ -1428,4 +1437,9 @@ function initCompletionReminder(agentsMd: string): string {
     'Latest AGENTS.md file content:',
     latest,
   ].join('\n');
+}
+
+function firstStderrLine(stderr: string | undefined): string | undefined {
+  const line = stderr?.split(/\r?\n/, 1)[0]?.trim();
+  return line === '' ? undefined : line;
 }

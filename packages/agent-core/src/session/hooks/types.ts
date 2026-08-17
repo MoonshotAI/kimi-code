@@ -64,9 +64,12 @@ export type HookResolvedCallback = (
   durationMs: number,
 ) => void;
 
+export type HookFailedCallback = (event: string, command: string, result: HookResult) => void;
+
 export interface HookEngineOptions {
   readonly cwd?: string;
   readonly sessionId?: string;
   readonly onTriggered?: HookTriggeredCallback;
   readonly onResolved?: HookResolvedCallback;
+  readonly onFailed?: HookFailedCallback;
 }
