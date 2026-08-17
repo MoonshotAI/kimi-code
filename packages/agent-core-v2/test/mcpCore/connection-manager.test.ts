@@ -148,7 +148,7 @@ describe('McpConnectionManager', () => {
   it('connect with the identical config is a no-op for a live entry', async () => {
     // Config reconcilers and explicit SDK callers can both upsert the same
     // server; the second writer must not tear down the first's handshake.
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     const statuses: string[] = [];
     cm.onStatusChange((entry) => statuses.push(`${entry.name}:${entry.status}`));
     try {
