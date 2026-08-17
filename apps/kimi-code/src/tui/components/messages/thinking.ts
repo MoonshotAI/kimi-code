@@ -8,6 +8,8 @@
  * 'preview' scrolls the last few streamed lines; 'stats' hides the text and
  * shows an approximate token count plus the elapsed thinking time instead,
  * leaving a one-line "Thought for …" summary once thinking finishes.
+ * Replayed thinking has no persisted duration, so untimed blocks fall back
+ * to a plain "Thought for a while" summary instead of a fabricated 0s.
  */
 
 import { Text, truncateToWidth, type Component, type TUI } from '@moonshot-ai/pi-tui';
@@ -26,12 +28,22 @@ import { formatTokenCount } from '#/utils/usage/usage-format';
 
 export type ThinkingRenderMode = 'live' | 'finalized';
 
+export interface ThinkingComponentOptions {
+  mode?: ThinkingRenderMode;
+  ui?: TUI;
+  liveDisplay?: ThinkingLiveDisplay;
+  /** False for replayed blocks: their duration is not persisted, so no elapsed
+   * time is shown anywhere. */
+  timed?: boolean;
+}
+
 export class ThinkingComponent implements Component {
   private text: string;
   private showMarker: boolean;
   private mode: ThinkingRenderMode;
   private readonly liveDisplay: ThinkingLiveDisplay;
   private readonly startedAt: number;
+  private readonly timed: boolean;
   private finalizedElapsedSeconds: number | undefined;
   private expanded = false;
   private readonly ui: TUI | undefined;
@@ -48,18 +60,17 @@ export class ThinkingComponent implements Component {
   constructor(
     text: string,
     showMarker: boolean = true,
-    mode: ThinkingRenderMode = 'finalized',
-    ui?: TUI,
-    liveDisplay: ThinkingLiveDisplay = 'preview',
+    options: ThinkingComponentOptions = {},
   ) {
     this.text = text;
     this.showMarker = showMarker;
-    this.mode = mode;
-    this.ui = ui;
-    this.liveDisplay = liveDisplay;
+    this.mode = options.mode ?? 'finalized';
+    this.ui = options.ui;
+    this.liveDisplay = options.liveDisplay ?? 'preview';
+    this.timed = options.timed ?? true;
     this.startedAt = Date.now();
     this.textComponent = new Text(this.styled(text), 0, 0);
-    if (mode === 'live') {
+    if (this.mode === 'live') {
       this.startSpinner();
     }
   }
@@ -126,8 +137,10 @@ export class ThinkingComponent implements Component {
         // No tokenizer is available to the client, and reasoning-token usage
         // only arrives at step end — so the live count is a chars/4 estimate.
         const approxTokens = Math.ceil(this.text.length / 4);
-        const elapsedSeconds = Math.floor((Date.now() - this.startedAt) / 1000);
-        const stats = `(~${formatTokenCount(approxTokens)} tokens · ${formatThinkingDuration(elapsedSeconds)})`;
+        const tokens = `~${formatTokenCount(approxTokens)} tokens`;
+        const stats = this.timed
+          ? `(${tokens} · ${formatThinkingDuration(Math.floor((Date.now() - this.startedAt) / 1000))})`
+          : `(${tokens})`;
         rendered = ['', spinner + currentTheme.fg('textDim', `thinking... ${stats}`)];
       } else {
         const visibleLines =
@@ -142,10 +155,14 @@ export class ThinkingComponent implements Component {
       }
     } else if (this.liveDisplay === 'stats' && !this.expanded) {
       // Stats mode leaves a one-line summary instead of the content preview;
-      // ctrl+o expands into the full text.
+      // ctrl+o expands into the full text. Untimed (replayed) blocks have no
+      // persisted duration, so they get a plain "a while" instead of a fake 0s.
       const p = this.showMarker ? currentTheme.fg('textDim', STATUS_BULLET) : MESSAGE_INDENT;
       const hint = this.text.length > 0 ? ' (ctrl+o to expand)' : '';
-      const summary = `Thought for ${formatThinkingDuration(this.finalizedElapsedSeconds ?? 0)}${hint}`;
+      const duration = this.timed
+        ? formatThinkingDuration(this.finalizedElapsedSeconds ?? 0)
+        : 'a while';
+      const summary = `Thought for ${duration}${hint}`;
       // Both prefixes occupy two cells (STATUS_BULLET is '● ').
       const summaryWidth = Math.max(0, width - MESSAGE_INDENT.length);
       rendered = [

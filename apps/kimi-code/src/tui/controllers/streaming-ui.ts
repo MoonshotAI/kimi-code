@@ -636,13 +636,13 @@ export class StreamingUIController {
     if (this._activeThinkingComponent === undefined) {
       this._pendingAgentGroup = null;
       this._pendingReadGroup = null;
-      this._activeThinkingComponent = new ThinkingComponent(
-        fullText,
-        true,
-        'live',
-        state.ui,
-        state.appState.thinkingLiveDisplay ?? 'preview',
-      );
+      this._activeThinkingComponent = new ThinkingComponent(fullText, true, {
+        mode: 'live',
+        ui: state.ui,
+        liveDisplay: state.appState.thinkingLiveDisplay ?? 'preview',
+        // Replayed thinking has no persisted duration — mark it untimed.
+        timed: !state.appState.isReplaying,
+      });
       if (state.toolOutputExpanded) this._activeThinkingComponent.setExpanded(true);
       state.transcriptContainer.addChild(this._activeThinkingComponent);
     } else {
