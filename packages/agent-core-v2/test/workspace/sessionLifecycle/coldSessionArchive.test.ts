@@ -4,8 +4,13 @@ import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiati
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventService } from '#/app/event/event';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
-import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
+import {
+  ISessionIndex,
+  ISessionIndexMirror,
+  type SessionSummary,
+} from '#/app/sessionIndex/sessionIndex';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import {
   setSessionArchivedBatch,
 } from '#/workspace/sessionLifecycle/coldSessionArchive';
@@ -23,16 +28,22 @@ function accessor(
   };
 }
 
-const summary = {
+const summary: SessionSummary = {
   id: 's1',
   workspaceId: 'wd',
   cwd: '/workspace',
   createdAt: 1,
   updatedAt: 1,
   archived: false,
-} as const;
+};
 
-function coldPathAccessor(storeGet: () => Promise<unknown>): ServicesAccessor {
+interface ColdPathOptions {
+  readonly storeGet: () => Promise<SessionMeta | undefined>;
+  readonly indexSummary?: SessionSummary;
+  readonly onMirrorRecord?: (recorded: SessionSummary) => void;
+}
+
+function coldPathAccessor(options: ColdPathOptions): ServicesAccessor {
   return accessor([
     [
       ISessionManager,
@@ -42,10 +53,13 @@ function coldPathAccessor(storeGet: () => Promise<unknown>): ServicesAccessor {
         get: () => undefined,
       },
     ],
-    [ISessionIndex, { get: async () => summary }],
+    [ISessionIndex, { get: async () => options.indexSummary ?? summary }],
     [IBootstrapService, { scope: () => 'sessions' }],
-    [IAtomicDocumentStore, { get: storeGet, set: async () => {} }],
-    [ISessionIndexMirror, { record: () => {} }],
+    [IAtomicDocumentStore, { get: options.storeGet, set: async () => {} }],
+    [
+      ISessionIndexMirror,
+      { record: (recorded: SessionSummary) => options.onMirrorRecord?.(recorded) },
+    ],
     [IEventService, { publish: () => {} }],
   ]);
 }
@@ -53,8 +67,10 @@ function coldPathAccessor(storeGet: () => Promise<unknown>): ServicesAccessor {
 describe('setSessionArchivedBatch', () => {
   it('maps a metadata read failure to a per-item internal error, not not_found', async () => {
     const outcomes = await setSessionArchivedBatch(
-      coldPathAccessor(async () => {
-        throw new Error('disk on fire');
+      coldPathAccessor({
+        storeGet: async () => {
+          throw new Error('disk on fire');
+        },
       }),
       ['s1'],
       true,
@@ -64,12 +80,42 @@ describe('setSessionArchivedBatch', () => {
 
   it('maps a missing metadata document to not_found', async () => {
     const outcomes = await setSessionArchivedBatch(
-      coldPathAccessor(async () => undefined),
+      coldPathAccessor({ storeGet: async () => undefined }),
       ['s1'],
       true,
     );
     expect(outcomes).toEqual([
       { id: 's1', ok: false, reason: 'not_found', message: 'session s1 does not exist' },
     ]);
+  });
+
+  it('mirrors the persisted metadata, not a stale index summary', async () => {
+    const recorded: SessionSummary[] = [];
+    const outcomes = await setSessionArchivedBatch(
+      coldPathAccessor({
+        indexSummary: { ...summary, title: 'stale', lastPrompt: 'stale-p', updatedAt: 1 },
+        storeGet: async () => ({
+          id: 's1',
+          title: 'fresh',
+          lastPrompt: 'fresh-p',
+          createdAt: 1,
+          updatedAt: 9,
+          archived: false,
+        }),
+        onMirrorRecord: (r) => recorded.push(r),
+      }),
+      ['s1'],
+      true,
+    );
+    expect(outcomes).toEqual([{ id: 's1', ok: true }]);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({
+      workspaceId: 'wd',
+      title: 'fresh',
+      lastPrompt: 'fresh-p',
+      updatedAt: 9,
+      archived: true,
+    });
+    expect(typeof recorded[0]?.archivedAt).toBe('number');
   });
 });

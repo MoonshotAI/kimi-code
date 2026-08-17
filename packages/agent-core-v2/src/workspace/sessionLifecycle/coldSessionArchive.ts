@@ -51,8 +51,24 @@ export async function setColdSessionArchived(
   const persisted = await docs.get<SessionMeta>(metaScope, 'state.json');
   if (persisted === undefined) return 'not_found';
   const archivedAt = archived ? Date.now() : undefined;
-  await docs.set(metaScope, 'state.json', { ...persisted, archived, archivedAt });
-  accessor.get(ISessionIndexMirror).record({ ...summary, archived, archivedAt });
+  const nextMeta: SessionMeta = { ...persisted, archived, archivedAt };
+  await docs.set(metaScope, 'state.json', nextMeta);
+  // Mirror from the AUTHORITATIVE persisted meta — the index summary can lag
+  // behind it (a failed/lagging mirror), and recording the stale copy would
+  // regress fresher fields (title, last prompt, timestamps) in the list API.
+  // The summary only contributes what meta does not own (workspaceId…).
+  accessor.get(ISessionIndexMirror).record({
+    ...summary,
+    cwd: nextMeta.cwd ?? summary.cwd,
+    title: nextMeta.title,
+    lastPrompt: nextMeta.lastPrompt,
+    createdAt: nextMeta.createdAt,
+    updatedAt: nextMeta.updatedAt,
+    custom: nextMeta.custom,
+    lastTurnReason: nextMeta.lastTurnReason,
+    archived,
+    archivedAt,
+  });
   if (archived) {
     accessor.get(IEventService).publish(new SessionArchived({ payload: { sessionId } }));
   }
