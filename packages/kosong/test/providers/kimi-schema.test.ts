@@ -1,4 +1,5 @@
 import { derefJsonSchema, normalizeKimiToolSchema } from '#/providers/kimi-schema';
+import Ajv from 'ajv';
 import { describe, expect, it, vi } from 'vitest';
 
 describe('derefJsonSchema', () => {
@@ -277,6 +278,15 @@ describe('derefJsonSchema', () => {
     expect(result['definitions']).toBeUndefined();
   });
 });
+
+/**
+ * Structure-only view: the variant summary appended to `description` has its
+ * own tests, so structural assertions below drop it.
+ */
+function structureOf(schema: Record<string, unknown>): Record<string, unknown> {
+  const { description: _description, ...rest } = normalizeKimiToolSchema(schema);
+  return rest;
+}
 
 describe('normalizeKimiToolSchema', () => {
   it.each([
@@ -753,19 +763,95 @@ describe('normalizeKimiToolSchema', () => {
     });
   });
 
-  it('preserves combinators while normalizing their schema branches', () => {
+  it('preserves nested combinators while normalizing their schema branches', () => {
     const schema = {
-      anyOf: [{ enum: ['auto', 'manual'] }, { const: false }],
-      oneOf: [
-        {
-          properties: {
-            strategy: { enum: ['replace', 'insert'] },
-          },
+      type: 'object',
+      properties: {
+        pick: {
+          anyOf: [{ enum: ['auto', 'manual'] }, { const: false }],
+          oneOf: [
+            {
+              properties: {
+                strategy: { enum: ['replace', 'insert'] },
+              },
+            },
+          ],
+          allOf: [
+            {
+              items: { const: 1 },
+            },
+          ],
         },
-      ],
-      allOf: [
+      },
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        pick: {
+          anyOf: [
+            { enum: ['auto', 'manual'], type: 'string' },
+            { const: false, type: 'boolean' },
+          ],
+          oneOf: [
+            {
+              type: 'object',
+              properties: {
+                strategy: { enum: ['replace', 'insert'], type: 'string' },
+              },
+            },
+          ],
+          allOf: [
+            {
+              type: 'array',
+              items: { const: 1, type: 'integer' },
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it('flattens a root union into a single typed object root', () => {
+    // Regression: an MCP server published a tool whose root schema declared
+    // both `type: 'object'` and a three-way `anyOf`. Moonshot rejects `type`
+    // next to `anyOf` AND requires the parameters root to carry
+    // `type: "object"`, so a root union is unrepresentable on the wire:
+    // object branches merge into the root — properties first-wins, `required`
+    // keeps only fields every branch requires, and the exactly-one-of intent
+    // stays in the description (the MCP server still enforces it).
+    const schema = {
+      type: 'object',
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      description: 'Provide exactly one of the documented input variants.',
+      anyOf: [
         {
-          items: { const: 1 },
+          type: 'object',
+          properties: {
+            filename: { type: 'string', minLength: 1 },
+            content: { type: 'string', maxLength: 1024 },
+          },
+          required: ['filename', 'content'],
+          additionalProperties: false,
+        },
+        {
+          type: 'object',
+          properties: {
+            filename: { type: 'string', minLength: 1 },
+            source_url: { type: 'string', minLength: 1 },
+          },
+          required: ['filename', 'source_url'],
+          additionalProperties: false,
+        },
+        {
+          type: 'object',
+          properties: {
+            source_id: { type: 'string', minLength: 1 },
+          },
+          required: ['source_id'],
+          additionalProperties: false,
         },
       ],
     };
@@ -773,25 +859,960 @@ describe('normalizeKimiToolSchema', () => {
     const result = normalizeKimiToolSchema(schema);
 
     expect(result).toEqual({
+      type: 'object',
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      // The variant structure is unrepresentable on the wire, so it is
+      // restated in the description — otherwise the model only sees a bag of
+      // merged properties.
+      description: [
+        'Provide exactly one of the documented input variants.',
+        'Valid argument variants (at least one must match): ' +
+          '(1) required: filename, content. ' +
+          '(2) required: filename, source_url. ' +
+          '(3) required: source_id.',
+      ].join('\n\n'),
+      properties: {
+        filename: { type: 'string', minLength: 1 },
+        content: { type: 'string', maxLength: 1024 },
+        source_url: { type: 'string', minLength: 1 },
+        source_id: { type: 'string', minLength: 1 },
+      },
+    });
+  });
+
+  it('collapses a root required-variant union onto the object root', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        a: { type: 'string' },
+        b: { type: 'string' },
+      },
+      anyOf: [{ required: ['a'] }, { required: ['b'] }],
+    };
+
+    const result = structureOf(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        a: { type: 'string' },
+        b: { type: 'string' },
+      },
+    });
+  });
+
+  it('keeps fields required by every branch of a flattened root union', () => {
+    const schema = {
+      type: 'object',
       anyOf: [
-        { enum: ['auto', 'manual'], type: 'string' },
-        { const: false, type: 'boolean' },
-      ],
-      oneOf: [
         {
           type: 'object',
-          properties: {
-            strategy: { enum: ['replace', 'insert'], type: 'string' },
-          },
+          properties: { id: { type: 'string' }, a: { type: 'string' } },
+          required: ['id', 'a'],
+          additionalProperties: false,
         },
-      ],
-      allOf: [
         {
-          type: 'array',
-          items: { const: 1, type: 'integer' },
+          type: 'object',
+          properties: { id: { type: 'string' }, b: { type: 'string' } },
+          required: ['id', 'b'],
+          additionalProperties: false,
         },
       ],
+    };
+
+    const result = structureOf(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        a: { type: 'string' },
+        b: { type: 'string' },
+      },
+      required: ['id'],
     });
-    expect(result).not.toHaveProperty('type');
   });
+
+  it('flattens a root union produced by $ref sibling merging', () => {
+    const schema = {
+      type: 'object',
+      $ref: '#/$defs/Input',
+      $defs: {
+        Input: {
+          anyOf: [
+            {
+              type: 'object',
+              properties: { a: { type: 'string' } },
+              required: ['a'],
+              additionalProperties: false,
+            },
+            {
+              type: 'object',
+              properties: { b: { type: 'string' } },
+              required: ['b'],
+              additionalProperties: false,
+            },
+          ],
+        },
+      },
+    };
+
+    const result = structureOf(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        a: { type: 'string' },
+        b: { type: 'string' },
+      },
+    });
+  });
+
+  it('rebuilds an empty object root when a root union has no object branches', () => {
+    const schema = {
+      type: 'integer',
+      anyOf: [{ const: 1.5 }],
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {},
+    });
+  });
+
+  it('treats patternProperties branches as unconstrained for undeclared keys', () => {
+    const schema = {
+      type: 'object',
+      anyOf: [
+        {
+          properties: { value: { type: 'string' } },
+          additionalProperties: false,
+        },
+        {
+          patternProperties: { '^value$': { type: 'number' } },
+          additionalProperties: false,
+        },
+      ],
+    };
+
+    const result = structureOf(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {},
+    });
+  });
+
+  it('omits typeless branch property schemas that type completion would narrow', () => {
+    const schema = {
+      type: 'object',
+      anyOf: [
+        {
+          properties: { value: { type: 'string' } },
+          additionalProperties: false,
+        },
+        {
+          properties: { value: { description: 'Any JSON value' } },
+          additionalProperties: false,
+        },
+      ],
+    };
+
+    const result = structureOf(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {},
+    });
+  });
+
+  it('keeps typeless enum contributions whose completion is value-exact', () => {
+    const schema = {
+      type: 'object',
+      anyOf: [
+        {
+          properties: { value: { enum: ['a'] } },
+          additionalProperties: false,
+        },
+        {
+          properties: { value: { enum: ['b'] } },
+          additionalProperties: false,
+        },
+      ],
+    };
+
+    const result = structureOf(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        value: {
+          anyOf: [
+            { enum: ['a'], type: 'string' },
+            { enum: ['b'], type: 'string' },
+          ],
+        },
+      },
+    });
+  });
+
+  it('drops required entries for properties omitted from a flattened root union', () => {
+    // The property is unconstrained (a patternProperties branch may cover it),
+    // so it is omitted — a `required` naming a property that is not in
+    // `properties` is rejected outright by the validator.
+    const schema = {
+      type: 'object',
+      anyOf: [
+        {
+          properties: { value: { type: 'string' } },
+          required: ['value'],
+          additionalProperties: false,
+        },
+        {
+          patternProperties: { '^value$': { type: 'number' } },
+          required: ['value'],
+          additionalProperties: false,
+        },
+      ],
+    };
+
+    const result = structureOf(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {},
+    });
+  });
+
+  it('flattens a typeless root union with an any-object branch to an open object', () => {
+    const schema = {
+      anyOf: [true, { required: ['value'] }],
+    };
+
+    expect(structureOf(schema)).toEqual({
+      type: 'object',
+      properties: {},
+    });
+    // The union accepts any object, so no combination is listed — but the
+    // field name would otherwise disappear entirely.
+    expect(normalizeKimiToolSchema(schema)['description']).toBe(
+      'Fields without their own schema entry:\n- value',
+    );
+  });
+
+  it('keeps root properties but drops branch constraints when a branch accepts any object', () => {
+    const schema = {
+      type: 'object',
+      properties: { a: { type: 'string' } },
+      anyOf: [
+        {},
+        {
+          properties: { b: { type: 'number' } },
+          required: ['b'],
+          additionalProperties: false,
+        },
+      ],
+    };
+
+    expect(structureOf(schema)).toEqual({
+      type: 'object',
+      properties: { a: { type: 'string' } },
+    });
+    expect(normalizeKimiToolSchema(schema)['description']).toBe(
+      'Fields without their own schema entry:\n- b',
+    );
+  });
+
+  it('drops an explicit false branch from a nested union', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        x: {
+          type: 'object',
+          anyOf: [false, { properties: { a: { type: 'string' } } }],
+        },
+      },
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        x: {
+          anyOf: [{ properties: { a: { type: 'string' } }, type: 'object' }],
+        },
+      },
+    });
+  });
+
+  it('splits a mixed-type enum branch into per-type variants', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        x: {
+          type: ['string', 'number'],
+          anyOf: [{ enum: ['a', 1] }],
+        },
+      },
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        x: {
+          anyOf: [
+            {
+              anyOf: [
+                { type: 'string', enum: ['a'] },
+                { type: 'integer', enum: [1] },
+              ],
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it('leaves the root own property schemas to the type-completion pass', () => {
+    // Flattening does not change what completion does to the root's own
+    // properties: a typeless schema is still completed to `string` exactly as
+    // it would be without a union. The superset guarantee is about the
+    // flattening step, not about this long-standing completion behavior.
+    const schema = {
+      type: 'object',
+      properties: { value: { description: 'Any JSON value' } },
+      anyOf: [{ required: ['value'] }],
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: { value: { description: 'Any JSON value', type: 'string' } },
+      required: ['value'],
+    });
+    expect(normalizeKimiToolSchema({ type: 'object', properties: schema.properties })).toEqual({
+      type: 'object',
+      properties: { value: { description: 'Any JSON value', type: 'string' } },
+    });
+  });
+
+  it('names fields that lost their schema entry in the variant summary', () => {
+    // An open branch forces `source_url` out of `properties` (constraining it
+    // would narrow), so its name and description survive only in the summary.
+    const schema = {
+      type: 'object',
+      anyOf: [
+        {
+          properties: { text: { type: 'string' } },
+          required: ['text'],
+          additionalProperties: {},
+        },
+        {
+          properties: {
+            source_url: { type: 'string', description: 'A publicly reachable HTTPS URL.' },
+          },
+          required: ['source_url'],
+          additionalProperties: false,
+        },
+      ],
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    // `text` is only constrained by the closed branch, so it survives;
+    // `source_url` cannot be constrained without narrowing the open branch.
+    expect(result['properties']).toEqual({ text: { type: 'string' } });
+    expect(result['description']).toBe(
+      [
+        'Valid argument variants (at least one must match): ' +
+          '(1) required: text. (2) required: source_url.',
+        'Fields without their own schema entry:\n' +
+          '- source_url — A publicly reachable HTTPS URL.',
+      ].join('\n\n'),
+    );
+  });
+
+  it('reports an exclusive union as exactly one variant', () => {
+    const schema = {
+      type: 'object',
+      oneOf: [
+        { properties: { a: { type: 'string' } }, required: ['a'], additionalProperties: false },
+        { properties: { b: { type: 'string' } }, required: ['b'], additionalProperties: false },
+      ],
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result['description']).toBe(
+      'Valid argument variants (exactly one must match): (1) required: a. (2) required: b.',
+    );
+  });
+
+  it('lists optional branch fields alongside the required ones', () => {
+    const schema = {
+      type: 'object',
+      anyOf: [
+        {
+          properties: { a: { type: 'string' }, note: { type: 'string' } },
+          required: ['a'],
+          additionalProperties: false,
+        },
+        {
+          properties: { b: { type: 'string' } },
+          required: ['b'],
+          additionalProperties: false,
+        },
+      ],
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result['description']).toBe(
+      'Valid argument variants (at least one must match): ' +
+        '(1) required: a; optional: note. (2) required: b.',
+    );
+  });
+
+  it('adds no variant summary when a single branch carries the whole union', () => {
+    const schema = {
+      type: 'object',
+      properties: { value: { type: 'string' } },
+      anyOf: [{ required: ['value'] }],
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).not.toHaveProperty('description');
+  });
+
+  it('keeps an opaque branch from narrowing the flattened root', () => {
+    // `not: { type: 'null' }` accepts every object, but it is neither an
+    // object-constraining branch nor a recognizable any-object one; ignoring
+    // it would pin the other branch's constraints onto the root and reject
+    // inputs the original accepts.
+    const schema = {
+      type: 'object',
+      anyOf: [
+        { not: { type: 'null' } },
+        {
+          properties: { a: { type: 'string', description: 'The a field.' } },
+          required: ['a'],
+          additionalProperties: false,
+        },
+      ],
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(structureOf(schema)).toEqual({ type: 'object', properties: {} });
+    expect(result['description']).toBe(
+      'Fields without their own schema entry:\n- a — The a field.',
+    );
+  });
+
+  it('reports the unrestricted variant of an exclusive union', () => {
+    // A `{}` member of a oneOf does not make the union accept every object —
+    // it makes every other variant invalid. Widening is still the only
+    // representable option, so the structure is spelled out instead.
+    const schema = {
+      type: 'object',
+      oneOf: [{}, { required: ['mode'] }],
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(structureOf(schema)).toEqual({ type: 'object', properties: {} });
+    expect(result['description']).toBe(
+      [
+        'Valid argument variants (exactly one must match): (1) any object. (2) required: mode.',
+        'Fields without their own schema entry:\n- mode',
+      ].join('\n\n'),
+    );
+  });
+
+  it('merges conflicting branch property schemas into a nested union', () => {
+    // A first-wins merge would keep only the string variant and reject
+    // `{ value: 1 }`, which the original schema accepts — the flattened root
+    // must stay a superset of the original object inputs.
+    const schema = {
+      type: 'object',
+      anyOf: [
+        { properties: { value: { type: 'string' } }, required: ['value'] },
+        { properties: { value: { type: 'number' } }, required: ['value'] },
+      ],
+    };
+
+    const result = structureOf(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        value: { anyOf: [{ type: 'string' }, { type: 'number' }] },
+      },
+      required: ['value'],
+    });
+  });
+
+  it('omits a property constraint that an open branch leaves unconstrained', () => {
+    // The second branch has no `additionalProperties` bound, so it accepts
+    // any value for `a`; pinning `a` to the first branch's schema at the
+    // root would reject inputs the original schema allows.
+    const schema = {
+      type: 'object',
+      anyOf: [
+        {
+          properties: { a: { type: 'string' } },
+          required: ['a'],
+          additionalProperties: false,
+        },
+        {
+          properties: { b: { type: 'string' } },
+          required: ['b'],
+        },
+      ],
+    };
+
+    const result = structureOf(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        b: { type: 'string' },
+      },
+    });
+  });
+
+  it('repairs type next to a combinator on nested property schemas', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        mode: {
+          type: 'string',
+          anyOf: [{ enum: ['fast'] }, { enum: ['safe'] }],
+        },
+        window: {
+          type: 'integer',
+          oneOf: [{ minimum: 1 }, { maximum: -1 }],
+        },
+      },
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        mode: {
+          anyOf: [
+            { enum: ['fast'], type: 'string' },
+            { enum: ['safe'], type: 'string' },
+          ],
+        },
+        window: {
+          oneOf: [
+            { minimum: 1, type: 'integer' },
+            { maximum: -1, type: 'integer' },
+          ],
+        },
+      },
+    });
+  });
+
+  it('copies a nested type array verbatim into typeless combinator branches', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        x: {
+          type: ['object', 'null'],
+          anyOf: [{ properties: { a: { type: 'string' } } }],
+        },
+      },
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        x: {
+          anyOf: [{ properties: { a: { type: 'string' } }, type: ['object', 'null'] }],
+        },
+      },
+    });
+  });
+
+  it('pushes the parent type into nested branches and removes dead ones', () => {
+    // Original semantics of x: object AND (string OR not-null) — only objects
+    // match (the string branch is unsatisfiable). The parent constraint must
+    // survive on every remaining branch, not silently widen.
+    const schema = {
+      type: 'object',
+      properties: {
+        x: {
+          type: 'object',
+          anyOf: [{ type: 'string' }, { not: { const: null } }],
+        },
+      },
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        x: {
+          anyOf: [{ not: { const: null, type: 'null' }, type: 'object' }],
+        },
+      },
+    });
+  });
+
+  it('narrows a nested branch type to its intersection with the parent type', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        x: {
+          type: ['string', 'integer'],
+          anyOf: [{ type: ['integer', 'boolean'] }, { type: 'number' }, { minLength: 2 }],
+        },
+      },
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        x: {
+          anyOf: [
+            { type: 'integer' },
+            { type: 'integer' },
+            { minLength: 2, type: ['string', 'integer'] },
+          ],
+        },
+      },
+    });
+  });
+
+  it('replaces nested boolean true branches with the parent type constraint', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        x: {
+          type: 'object',
+          anyOf: [true, { properties: { a: { type: 'string' } } }],
+        },
+      },
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        x: {
+          anyOf: [{ type: 'object' }, { properties: { a: { type: 'string' } }, type: 'object' }],
+        },
+      },
+    });
+  });
+
+  it('intersects an inherited nested type with enum inference instead of overwriting it', () => {
+    // The enum/const type repair must not widen a branch beyond the parent
+    // constraint it inherited: the inherited type participates in the
+    // intersection rather than being replaced by the inferred value type.
+    const schema = {
+      type: 'object',
+      properties: {
+        x: {
+          type: ['string', 'integer'],
+          anyOf: [{ enum: ['x'] }],
+        },
+      },
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        x: {
+          anyOf: [{ enum: ['x'], type: 'string' }],
+        },
+      },
+    });
+  });
+
+  it('removes a nested branch whose enum values conflict with the inherited type', () => {
+    // object AND enum-of-strings matches nothing — the branch is dead and
+    // must not come back as a plain string enum.
+    const schema = {
+      type: 'object',
+      properties: {
+        x: {
+          type: 'object',
+          anyOf: [{ enum: ['x'] }, { properties: { a: { type: 'string' } } }],
+        },
+      },
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        x: {
+          anyOf: [{ properties: { a: { type: 'string' } }, type: 'object' }],
+        },
+      },
+    });
+  });
+
+  it('kills a nested const branch whose value does not satisfy the inherited type', () => {
+    // integer AND const 1.5 matches nothing; symmetric type algebra would
+    // keep the branch as `number` and start accepting 1.5. A union with no
+    // live branch is dropped, relaxing to the parent constraint — neither
+    // `anyOf: []` nor a boolean branch is accepted on the wire.
+    const schema = {
+      type: 'object',
+      properties: {
+        x: {
+          type: 'integer',
+          anyOf: [{ const: 1.5 }],
+        },
+      },
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        x: {
+          type: 'integer',
+        },
+      },
+    });
+  });
+
+  it('keeps a nested const branch whose value satisfies the inherited type', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        x: {
+          type: 'number',
+          anyOf: [{ const: 2 }],
+        },
+      },
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        x: {
+          anyOf: [{ const: 2, type: 'integer' }],
+        },
+      },
+    });
+  });
+
+  it('filters nested enum members by the inherited type instead of widening it', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        x: {
+          type: 'integer',
+          anyOf: [{ enum: [1, 1.5] }],
+        },
+      },
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        x: {
+          anyOf: [{ enum: [1], type: 'integer' }],
+        },
+      },
+    });
+  });
+});
+
+describe('flattened roots stay a superset of the original object inputs', () => {
+  // Differential check: any object the original schema accepts must still be
+  // accepted by the normalized schema — the wire schema may only widen, the
+  // MCP server performs the final validation. Scope: the flattening step.
+  // The root's own property schemas keep whatever the type-completion pass
+  // does to them, union or not (see the test above), so these fixtures state
+  // branch-local constraints rather than relying on typeless root properties.
+  const cases: { name: string; schema: Record<string, unknown>; samples: unknown[] }[] = [
+    {
+      name: 'conflicting property variants',
+      schema: {
+        type: 'object',
+        anyOf: [
+          { properties: { value: { type: 'string' } }, required: ['value'] },
+          { properties: { value: { type: 'number' } }, required: ['value'] },
+        ],
+      },
+      samples: [{ value: 'x' }, { value: 1 }, { value: true }, {}],
+    },
+    {
+      name: 'exactly-one-of tool variants with closed branches',
+      schema: {
+        type: 'object',
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              filename: { type: 'string', minLength: 1 },
+              content: { type: 'string' },
+            },
+            required: ['filename', 'content'],
+            additionalProperties: false,
+          },
+          {
+            type: 'object',
+            properties: {
+              filename: { type: 'string', minLength: 1 },
+              source_url: { type: 'string' },
+            },
+            required: ['filename', 'source_url'],
+            additionalProperties: false,
+          },
+          {
+            type: 'object',
+            properties: { source_id: { type: 'string' } },
+            required: ['source_id'],
+            additionalProperties: false,
+          },
+        ],
+      },
+      samples: [
+        { filename: 'a.txt', content: 'x' },
+        { filename: 'a.txt', source_url: 'https://example.com/f' },
+        { source_id: '123' },
+        { filename: 'a.txt' },
+        {},
+      ],
+    },
+    {
+      name: 'open branch accepting extra keys',
+      schema: {
+        type: 'object',
+        anyOf: [
+          {
+            properties: { a: { type: 'string' } },
+            required: ['a'],
+            additionalProperties: false,
+          },
+          {
+            properties: { b: { type: 'string' } },
+            required: ['b'],
+          },
+        ],
+      },
+      samples: [{ a: 'x' }, { b: 'y' }, { b: 'y', a: 123 }, { a: 123 }],
+    },
+    {
+      name: 'patternProperties branch allowing the same key',
+      schema: {
+        type: 'object',
+        anyOf: [
+          { properties: { value: { type: 'string' } }, additionalProperties: false },
+          { patternProperties: { '^value$': { type: 'number' } }, additionalProperties: false },
+        ],
+      },
+      samples: [{ value: 'x' }, { value: 1 }, { value: true }],
+    },
+    {
+      name: 'typeless branch property accepting any JSON value',
+      schema: {
+        type: 'object',
+        anyOf: [
+          { properties: { value: { type: 'string' } }, additionalProperties: false },
+          { properties: { value: { description: 'Any JSON value' } }, additionalProperties: false },
+        ],
+      },
+      samples: [{ value: 'x' }, { value: 1 }, { value: { nested: true } }],
+    },
+    {
+      name: 'required entries for an omitted property',
+      schema: {
+        type: 'object',
+        anyOf: [
+          {
+            properties: { value: { type: 'string' } },
+            required: ['value'],
+            additionalProperties: false,
+          },
+          {
+            patternProperties: { '^value$': { type: 'number' } },
+            required: ['value'],
+            additionalProperties: false,
+          },
+        ],
+      },
+      samples: [{ value: 'x' }, { value: 1 }, {}],
+    },
+    {
+      name: 'branch accepting any object',
+      schema: {
+        type: 'object',
+        anyOf: [{}, { properties: { b: { type: 'number' } }, required: ['b'] }],
+      },
+      samples: [{}, { b: 1 }, { b: 'x' }, { other: true }],
+    },
+    {
+      name: 'opaque branch accepting every object',
+      schema: {
+        type: 'object',
+        anyOf: [
+          { not: { type: 'null' } },
+          { properties: { a: { type: 'string' } }, required: ['a'], additionalProperties: false },
+        ],
+      },
+      samples: [{}, { a: 'x' }, { a: 123 }, { other: true }],
+    },
+    {
+      name: 'exclusive union with an unrestricted member',
+      schema: {
+        type: 'object',
+        oneOf: [{}, { properties: { a: { type: 'string' } }, required: ['a'] }],
+      },
+      samples: [{}, { a: 123 }, { other: 1 }],
+    },
+    {
+      name: 'required variants over shared root properties',
+      schema: {
+        type: 'object',
+        properties: { a: { type: 'string' }, b: { type: 'string' } },
+        anyOf: [{ required: ['a'] }, { required: ['b'] }],
+      },
+      samples: [{ a: 'x' }, { b: 'y' }, { a: 1 }, {}],
+    },
+  ];
+
+  for (const { name, schema, samples } of cases) {
+    it(`accepts every originally-valid object: ${name}`, () => {
+      const ajv = new Ajv({ strict: false });
+      const original = ajv.compile(schema);
+      const normalized = ajv.compile(normalizeKimiToolSchema(schema));
+      for (const sample of samples) {
+        if (original(sample)) {
+          expect(normalized(sample), `sample ${JSON.stringify(sample)}`).toBe(true);
+        }
+      }
+    });
+  }
 });
