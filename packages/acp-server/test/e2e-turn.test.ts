@@ -18,9 +18,9 @@ import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot
 import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
 import { ToolProgress } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { mapPromptLaunchError } from '../src/session';
+import { AcpSession, mapPromptLaunchError } from '../src/session';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
 import { writeFakeModelConfig } from './_helpers/fakeModelConfig';
 import { solidPngBase64 } from './_helpers/png';
@@ -368,6 +368,79 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(chunks).toContain('scheduled turn finished');
     expect(chunks).toContain('queued prompt answered');
   }, 30_000);
+
+  it('does not cancel an active scheduled turn while a queued prompt awaits its turn id', async () => {
+    const createEvents = () => {
+      const listeners = new Map<string, Set<(event: unknown) => void>>();
+      return {
+        on(name: string, listener: (event: unknown) => void) {
+          const registered = listeners.get(name) ?? new Set<(event: unknown) => void>();
+          registered.add(listener);
+          listeners.set(name, registered);
+          return { dispose: () => registered.delete(listener) };
+        },
+        emit(name: string, event: unknown) {
+          for (const listener of listeners.get(name) ?? []) listener(event);
+        },
+      };
+    };
+    const agentEvents = createEvents();
+    const sessionEvents = createEvents();
+    let resolveLaunch: ((result: { turn_id: number } | undefined) => void) | undefined;
+    const launch = new Promise<{ turn_id: number } | undefined>((resolve) => {
+      resolveLaunch = resolve;
+    });
+    const cancel = vi.fn(async (_payload?: { turnId?: number }) => undefined);
+    const agent = {
+      events: agentEvents,
+      getModel: async () => '',
+      getThinking: async () => 'off',
+      getContext: async () => ({ history: [], tokenCount: 0 }),
+      prompt: vi.fn(() => launch),
+      cancel,
+    };
+    const sessionHandle = {
+      agent: () => agent,
+      events: sessionEvents,
+      skills: { list: async () => [] },
+      interactions: { list: async () => [], respond: async () => undefined },
+      get: async () => ({}),
+    };
+    const klient = {
+      session: () => sessionHandle,
+      global: { kosong: { listModels: async () => [] } },
+    };
+    const conn = { sessionUpdate: async () => undefined };
+    const acpConnection = { onTerminalCreated: () => () => undefined };
+    const acpSession = new AcpSession(
+      conn as unknown as ConstructorParameters<typeof AcpSession>[0],
+      klient as unknown as ConstructorParameters<typeof AcpSession>[1],
+      'scheduled-cancel-safety',
+      acpConnection as unknown as ConstructorParameters<typeof AcpSession>[3],
+      false,
+    );
+    await acpSession.init();
+    agentEvents.emit('turn.started', { turnId: 41, origin: { kind: 'cron_job' } });
+    const prompt = acpSession.prompt([{ type: 'text', text: 'status?' }]);
+    for (let attempt = 0; attempt < 10 && agent.prompt.mock.calls.length === 0; attempt += 1) {
+      await Promise.resolve();
+    }
+    expect(agent.prompt).toHaveBeenCalledOnce();
+
+    acpSession.cancel();
+    expect(cancel).not.toHaveBeenCalled();
+
+    resolveLaunch!({ turn_id: 42 });
+    for (let attempt = 0; attempt < 10 && cancel.mock.calls.length === 0; attempt += 1) {
+      await Promise.resolve();
+    }
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledWith({ turnId: 42 });
+
+    agentEvents.emit('turn.ended', { turnId: 42, reason: 'cancelled' });
+    await expect(prompt).resolves.toEqual({ stopReason: 'cancelled' });
+    acpSession.dispose();
+  });
 
   it('settles as cancelled when cancel arrives while the launch is in flight', async () => {
     const c = await boot();

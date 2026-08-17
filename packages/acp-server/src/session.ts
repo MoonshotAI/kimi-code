@@ -1022,17 +1022,22 @@ export class AcpSession {
       // The launch round-trip has not returned the turn id yet. The engine's
       // cancel payload makes turnId optional — an empty call cancels whatever
       // turn is active (the same contract kap-server's cancel route relies
-      // on) — and concurrent prompts are rejected, so the active turn can only
-      // be this driver's. Flag the driver too: when the id lands, the launch
-      // handler re-issues a precisely-addressed cancel, and a no-launch
-      // outcome settles `cancelled` instead of `end_turn`.
+      // on). A tracked scheduled turn may still be active while this prompt's
+      // turn is queued, so an unaddressed cancel would terminate the scheduled
+      // work instead. In that case only flag the driver and wait for its id;
+      // otherwise keep the immediate best-effort cancel for a prompt turn that
+      // started before its launch response arrived. The launch handler always
+      // re-issues a precisely-addressed cancel once the id lands, and a
+      // no-launch outcome settles `cancelled` instead of `end_turn`.
       driver.cancelRequested = true;
-      void this.agent.cancel().catch((error) => {
-        log.warn('acp: cancel (unaddressed) failed', {
-          sessionId: this.sessionId,
-          error: error instanceof Error ? error.message : String(error),
+      if (this.scheduledTurnIds.size === 0) {
+        void this.agent.cancel().catch((error) => {
+          log.warn('acp: cancel (unaddressed) failed', {
+            sessionId: this.sessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
         });
-      });
+      }
       return;
     }
     void this.agent.cancel({ turnId }).catch((error) => {
