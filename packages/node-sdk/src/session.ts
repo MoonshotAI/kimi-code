@@ -12,6 +12,7 @@ import type {
   AddAdditionalDirOptions,
   AddAdditionalDirResult,
   AgentCommandInfo,
+  AgentRuntimeBinding,
   BackgroundTaskInfo,
   CapabilityStatus,
   CompactOptions,
@@ -20,12 +21,14 @@ import type {
   GoalSnapshot,
   GoalToolResult,
   JsonObject,
+  McpServerConfig,
   McpServerInfo,
   McpStartupMetrics,
   PermissionMode,
   PluginInfo,
   PluginSummary,
   PromptInput,
+  PromptSkillActivation,
   ReloadSessionOptions,
   ReloadSummary,
   ResumedSessionState,
@@ -134,11 +137,34 @@ export class Session {
     this.rpc.setQuestionHandler(this.id, handler);
   }
 
-  async prompt(input: string | PromptInput): Promise<void> {
+  async prompt(input: string | PromptInput, options?: { promptId?: string }): Promise<void> {
     this.ensureOpen();
+    if (options?.promptId !== undefined && options.promptId.length === 0) {
+      throw new TypeError('promptId must not be empty');
+    }
     await this.rpc.prompt({
       sessionId: this.id,
       input: normalizePromptInput(input),
+      promptId: options?.promptId,
+    });
+  }
+
+  /**
+   * Submit one prompt with one or more skill activations bundled into the
+   * same user message: the skills are validated up front (an unknown name
+   * rejects the whole submission), rendered ahead of the prompt in the same
+   * turn, and the bundle undoes as a single anchor. Requires the
+   * agent-core-v2 engine.
+   */
+  async promptWithSkills(
+    input: string | PromptInput,
+    skills: readonly PromptSkillActivation[],
+  ): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.promptWithSkills({
+      sessionId: this.id,
+      input: normalizePromptInput(input),
+      skills,
     });
   }
 
@@ -226,6 +252,21 @@ export class Session {
       ErrorCodes.SESSION_MODEL_EMPTY,
     );
     await this.rpc.setModel({ sessionId: this.id, model: normalized });
+  }
+
+  async getRuntime(): Promise<AgentRuntimeBinding> {
+    this.ensureOpen();
+    return this.rpc.getRuntime({ sessionId: this.id });
+  }
+
+  async switchRuntime(runtimeId: string): Promise<AgentRuntimeBinding> {
+    this.ensureOpen();
+    const normalized = normalizeRequiredString(
+      runtimeId,
+      'Session runtime cannot be empty',
+      ErrorCodes.REQUEST_INVALID,
+    );
+    return this.rpc.switchRuntime({ sessionId: this.id, runtimeId: normalized });
   }
 
   async setThinking(effort: ThinkingEffort): Promise<void> {
@@ -532,9 +573,33 @@ export class Session {
     return this.rpc.getMcpStartupMetrics({ sessionId: this.id });
   }
 
-  async reconnectMcpServer(name: string): Promise<void> {
+  /**
+   * Connect an MCP server in this live session. `persist: true` also writes
+   * the user-level `mcp.json` (the entry becomes a mutable `global` one);
+   * otherwise it stays a session-local `caller` entry.
+   */
+  async addMcpServer(
+    server: McpServerConfig,
+    options: { readonly persist?: boolean } = {},
+  ): Promise<McpServerInfo> {
     this.ensureOpen();
-    await this.rpc.reconnectMcpServer({ sessionId: this.id, name });
+    return this.rpc.addSessionMcpServer({
+      sessionId: this.id,
+      server,
+      persist: options.persist,
+    });
+  }
+
+  /**
+   * Reconnect a server. Without `config` the session re-resolves the current
+   * effective config from the unified registry (file edits and plugin
+   * enable/disable land here). With `config`, the entry is replaced with the
+   * given full config — a plugin-contributed server rejects this because its
+   * config is read-only, owned by the plugin manifest.
+   */
+  async reconnectMcpServer(name: string, config?: McpServerConfig): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.reconnectMcpServer({ sessionId: this.id, name, config });
   }
 
   async listPlugins(): Promise<readonly PluginSummary[]> {

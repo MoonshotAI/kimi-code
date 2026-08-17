@@ -1,5 +1,5 @@
 import { createControlledPromise } from '@antfu/utils';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
@@ -36,8 +36,10 @@ import {
   type AgentMeta,
   type SessionMetadataChangedEvent,
 } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { ILogService } from '#/_base/log/log';
+import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import {
   AgentRunBatch,
   resolveSwarmMaxConcurrency,
@@ -880,6 +882,7 @@ describe('SessionSwarmService metadata compatibility', () => {
   let createAgent: ReturnType<typeof vi.fn>;
   let runAgent: ReturnType<typeof vi.fn>;
   let eventBus: IEventBus;
+  let resolverAcquire: Mock<(binding: unknown, required: unknown) => void>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -933,10 +936,20 @@ describe('SessionSwarmService metadata compatibility', () => {
         agents[agentId] = meta;
       },
     });
-    ix.stub(ISessionProcessRunner, {
+    resolverAcquire = vi.fn();
+    ix.stub(IRuntimeResolver, {
       _serviceBrand: undefined,
-      exec: async () => {
-        throw new Error('unexpected process exec');
+      acquire: (binding: unknown, required: unknown) => {
+        resolverAcquire(binding, required);
+        const runtime = new FakeRuntime({ workspaceId: 'w1', runtimeId: 'local', generation: 'g1' });
+        Object.assign(runtime, {
+          process: { spawn: async () => { throw new Error('unexpected process exec'); } },
+        });
+        return {
+          runtime,
+          track: <T,>(resource: T): T => resource,
+          dispose: () => {},
+        };
       },
     });
     ix.stub(ILogService, stubLog());
@@ -1052,6 +1065,34 @@ describe('SessionSwarmService metadata compatibility', () => {
         },
         labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
       }),
+    );
+  });
+
+  it('inherits the caller runtime binding on spawned children', async () => {
+    handles.set(
+      'main',
+      agentHandle('main', lifecycle, eventBus, {}, new Map([
+        [IAgentRuntimeBindingService, {
+          _serviceBrand: undefined,
+          current: { workspaceId: 'w1', runtimeId: 'acp:s1' },
+          switch: () => {},
+          onDidChange: Event.None,
+        }],
+      ])),
+    );
+    const service = ix.get(ISessionSwarmService);
+
+    await service.run({
+      callerAgentId: 'main',
+      tasks: [spawnSessionTask('src/a.ts')],
+    });
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ runtimeId: 'acp:s1' }),
+    );
+    expect(resolverAcquire).toHaveBeenCalledWith(
+      { workspaceId: 'w1', runtimeId: 'acp:s1' },
+      ['process'],
     );
   });
 
@@ -1406,6 +1447,14 @@ function agentHandle(
         const service = services.get(serviceId);
         if (service !== undefined) return service;
         if (serviceId === IAgentProfileService) return profile;
+        if (serviceId === IAgentRuntimeBindingService) {
+          return {
+            _serviceBrand: undefined,
+            current: { workspaceId: 'w1', runtimeId: 'local' },
+            switch: () => {},
+            onDidChange: Event.None,
+          } as unknown as IAgentRuntimeBindingService;
+        }
         if (serviceId === IAgentPermissionModeService) return permissionMode;
         if (serviceId === IAgentLoopService) {
           return {

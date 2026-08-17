@@ -30,7 +30,7 @@ export type RunRgOutcome = RunRgResult | { readonly kind: 'aborted' };
 
 function disposeProcess(proc: IHostProcess): void {
   try {
-    proc.dispose();
+    void proc.dispose();
   } catch {
   }
 }

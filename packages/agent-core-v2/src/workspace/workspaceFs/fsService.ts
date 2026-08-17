@@ -19,8 +19,6 @@
  * session of the workspace.
  */
 
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-
 import {
   type FsDiffRequest,
   type FsDiffResponse,
@@ -58,13 +56,10 @@ const FsWireErrorCode = {
 } as const;
 import ignore, { type Ignore } from 'ignore';
 
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { decodeUtfText, detectTextEncoding, type UtfTextEncoding } from '#/_base/text/encoding';
+import { classifyTextSample, decodeUtfText } from '#/_base/text/encoding';
 import {
   buildEtag,
   countLines,
-  detectBinary,
   FS_BINARY_SAMPLE_BYTES,
   guessLanguageId,
   guessMime,
@@ -72,7 +67,8 @@ import {
 import { ErrorCodes, Error2, isError2, unwrapErrorCause } from '#/errors';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
-import { ISessionProcessRunner } from '#/session/process/processRunner';
+import type { RuntimePath } from '#/runtime/runtime';
+import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
@@ -108,35 +104,40 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   private realRootsCache: { readonly key: string; readonly roots: readonly string[] } | undefined =
     undefined;
   private readonly workDir: string;
+  private readonly workspaceId: string;
+  private readonly path: RuntimePath;
 
   constructor(
     @IWorkspaceContext workspace: IWorkspaceContext,
     @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
-    @ISessionProcessRunner private readonly runner: ISessionProcessRunner,
+    @IRuntimeResolver private readonly resolver: IRuntimeResolver,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IWorkspaceGitService private readonly git: IWorkspaceGitService,
+    private readonly runtimeId = 'local',
   ) {
-    this.workDir = resolve(workspace.cwd);
+    this.workspaceId = workspace.workspaceId;
+    this.path = resolver.inspect({ workspaceId: workspace.workspaceId, runtimeId }).path;
+    this.workDir = this.path.resolve(workspace.cwd);
   }
 
   private resolvePathInput(rel: string): string {
-    return isAbsolute(rel) ? resolve(rel) : resolve(this.workDir, rel);
+    return this.path.isAbsolute(rel) ? this.path.resolve(rel) : this.path.resolve(this.workDir, rel);
   }
 
   private isWithinWorkspace(absPath: string): boolean {
-    const target = resolve(absPath);
+    const target = this.path.resolve(absPath);
     if (target === this.workDir) return true;
-    const rel = relative(this.workDir, target);
-    if (rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)) return true;
+    const rel = this.path.relative(this.workDir, target);
+    if (rel !== '' && !rel.startsWith('..') && !this.path.isAbsolute(rel)) return true;
     return this.workspaceDirs.additionalDirs.some((dir) => {
-      const r = relative(resolve(dir), target);
-      return r === '' || (!r.startsWith('..') && !isAbsolute(r));
+      const r = this.path.relative(this.path.resolve(dir), target);
+      return r === '' || (!r.startsWith('..') && !this.path.isAbsolute(r));
     });
   }
 
   private absOf(rel: string): string {
-    return rel === '' || rel === '.' ? this.workDir : join(this.workDir, rel);
+    return rel === '' || rel === '.' ? this.workDir : this.path.join(this.workDir, rel);
   }
 
   async list(req: FsListRequest): Promise<FsListResponse> {
@@ -257,20 +258,14 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const sampleSize = Math.min(FS_BINARY_SAMPLE_BYTES, st.size);
     const sample =
       sampleSize === 0 ? new Uint8Array() : await this.hostFs.readBytes(abs, sampleSize);
-    let isBinary = detectBinary(sample);
-
-    // Trust encoding detection over the binary heuristic: a binary-looking
-    // sample can still be UTF-16 LE/BE text, and a BOM-marked UTF-16 file
-    // may not look binary at all (CJK-only content carries no zero bytes).
-    // Both are transcoded to UTF-8 so text clients can display them.
-    let transcodeEncoding: UtfTextEncoding | undefined;
-    if (req.encoding !== 'base64') {
-      const detection = detectTextEncoding(sample);
-      if (!detection.seemsBinary && detection.encoding !== 'utf-8') {
-        transcodeEncoding = detection.encoding;
-        isBinary = false;
-      }
-    }
+    const classification = classifyTextSample(sample);
+    const transcodeEncoding =
+      !classification.isBinary && classification.encoding !== 'utf-8' && req.encoding !== 'base64'
+        ? classification.encoding
+        : undefined;
+    const isBinary =
+      classification.isBinary ||
+      (classification.encoding !== 'utf-8' && transcodeEncoding === undefined);
 
     if (isBinary && req.encoding === 'utf-8') {
       throw new Error2(ErrorCodes.FS_IS_BINARY, `file is binary: ${req.path}`, {
@@ -367,7 +362,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     } catch (err) {
       throw mapFsError(err, req.path);
     }
-    const name = rel === '.' ? basename(this.workDir) : basename(abs);
+    const name = rel === '.' ? this.path.basename(this.workDir) : this.path.basename(abs);
     return buildFsEntry(rel, name, st, true);
   }
 
@@ -384,7 +379,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       resolved.map(async ({ raw, rel, abs }) => {
         try {
           const st = await this.hostFs.lstat(abs);
-          const name = rel === '.' ? basename(this.workDir) : basename(abs);
+          const name = rel === '.' ? this.path.basename(this.workDir) : this.path.basename(abs);
           entries[raw] = buildFsEntry(rel, name, st, false);
         } catch {
           entries[raw] = null;
@@ -414,7 +409,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       throw err;
     }
     const st = await this.hostFs.lstat(abs);
-    return buildFsEntry(rel, basename(abs), st, false);
+    return buildFsEntry(rel, this.path.basename(abs), st, false);
   }
 
   async resolvePath(relPath: string): Promise<FsPathResolved> {
@@ -446,7 +441,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const sampleSize = Math.min(FS_BINARY_SAMPLE_BYTES, st.size);
     const sample =
       sampleSize === 0 ? new Uint8Array() : await this.hostFs.readBytes(abs, sampleSize);
-    const isBinary = detectBinary(sample);
+    const classification = classifyTextSample(sample);
+    const isBinary = classification.isBinary || classification.encoding !== 'utf-8';
     return {
       absolute: abs,
       relative: rel,
@@ -577,7 +573,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     args.push(req.pattern);
     args.push('.');
 
-    const proc = await this.runner.exec([rgPath, ...args], { cwd: this.workDir });
+    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId: this.runtimeId }, ['process']);
+    const proc = await lease.runtime.process!.spawn(rgPath, args, { cwd: this.workDir });
 
     const acc = new RgJsonAccumulator(req);
     let killed = false;
@@ -621,6 +618,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         void proc.dispose();
       } catch {
       }
+      lease.dispose();
     }
 
     return acc.finish(signal.aborted, Date.now() - startedAt);
@@ -743,7 +741,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const ig = ignore();
     ig.add('.git/');
     try {
-      const contents = await this.hostFs.readText(join(this.workDir, '.gitignore'));
+      const contents = await this.hostFs.readText(this.path.join(this.workDir, '.gitignore'));
       ig.add(contents);
     } catch {
     }
@@ -753,19 +751,22 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
   private async resolveRg(): Promise<RgResolution | null> {
     if (this.rgResolution !== undefined) return this.rgResolution;
+    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId: this.runtimeId }, ['process']);
     const probe: RgProbe = {
-      exec: (args) => runCommand(this.runner, args, { cwd: this.workDir }),
+      exec: (args) => runCommand(lease.runtime.process!, args, { cwd: this.workDir }),
     };
     try {
       this.rgResolution = await ensureRgPath(probe);
     } catch {
       this.rgResolution = null;
+    } finally {
+      lease.dispose();
     }
     return this.rgResolution;
   }
 
   private async realRoots(): Promise<readonly string[]> {
-    const dirs = [this.workDir, ...this.workspaceDirs.additionalDirs.map((d) => resolve(d))];
+    const dirs = [this.workDir, ...this.workspaceDirs.additionalDirs.map((d) => this.path.resolve(d))];
     const key = dirs.join('\n');
     if (this.realRootsCache?.key === key) return this.realRootsCache.roots;
     const roots: string[] = [];
@@ -786,12 +787,12 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     for (let i = 0; i < 256; i++) {
       try {
         const real = await this.hostFs.realpath(current);
-        return tail.length === 0 ? real : join(real, ...tail.reverse());
+        return tail.length === 0 ? real : this.path.join(real, ...tail.reverse());
       } catch (err) {
         if (!isMissingPathError(err)) throw err;
-        const parent = dirname(current);
+        const parent = this.path.dirname(current);
         if (parent === current) return abs;
-        tail.push(basename(current));
+        tail.push(this.path.basename(current));
         current = parent;
       }
     }
@@ -804,7 +805,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         details: { path: inputPath, reason: 'empty' },
       });
     }
-    if (isAbsolute(inputPath)) {
+    if (this.path.isAbsolute(inputPath)) {
       throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (absolute)`, {
         details: { path: inputPath, reason: 'absolute' },
       });
@@ -823,7 +824,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     }
     const resolved = await this.realpathExistingPrefix(abs);
     const roots = await this.realRoots();
-    if (!roots.some((root) => isInsideOrEqual(resolved, root))) {
+    if (!roots.some((root) => isInsideOrEqual(this.path, resolved, root))) {
       throw new Error2(
         ErrorCodes.FS_PATH_ESCAPES,
         `path "${inputPath}" escapes workspace through a symlink`,
@@ -836,9 +837,9 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   private toRel(abs: string): string {
     const cwd = this.workDir;
     if (abs === cwd) return '.';
-    const rel = relative(cwd, abs);
+    const rel = this.path.relative(cwd, abs);
     if (rel === '') return '.';
-    return rel.split(sep).join('/');
+    return rel.split(this.path.separator).join('/');
   }
 }
 
@@ -1024,11 +1025,11 @@ function isMissingPathError(err: unknown): boolean {
   return code === 'ENOENT' || code === 'ENOTDIR';
 }
 
-function isInsideOrEqual(child: string, parent: string): boolean {
-  const rel = relative(parent, child);
+function isInsideOrEqual(path: RuntimePath, child: string, parent: string): boolean {
+  const rel = path.relative(parent, child);
   if (rel === '') return true;
   if (rel.startsWith('..')) return false;
-  if (isAbsolute(rel)) return false;
+  if (path.isAbsolute(rel)) return false;
   return true;
 }
 
@@ -1063,10 +1064,3 @@ function toWireError(err: unknown): { code: number; msg: string } {
   };
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceFsService,
-  WorkspaceFsService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceFs',
-);

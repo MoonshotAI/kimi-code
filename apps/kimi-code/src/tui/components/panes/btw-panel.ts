@@ -9,6 +9,7 @@ import chalk from 'chalk';
 
 import { THINKING_PREVIEW_LINES } from '../../constant/rendering';
 import { currentTheme } from '../../theme';
+import type { InlineSkillActivation } from '../../types';
 import { createMarkdownOptions } from '../../utils/markdown-options';
 
 type BtwPanelPhase = 'running' | 'done' | 'failed';
@@ -31,7 +32,10 @@ interface BtwBodyRender {
 export interface BtwPanelOptions {
   readonly markdownTheme: MarkdownTheme;
   readonly canUseScrollKeys: () => boolean;
-  readonly onPrompt: (prompt: string) => void;
+  readonly onPrompt: (
+    prompt: string,
+    inlineSkillActivations?: readonly InlineSkillActivation[],
+  ) => void;
   readonly terminalRows: () => number;
 }
 
@@ -45,7 +49,7 @@ export class BtwPanelComponent implements Component {
 
   constructor(private readonly options: BtwPanelOptions) {}
 
-  submit(prompt: string): void {
+  submit(prompt: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void {
     const normalized = prompt.trim();
     if (normalized.length === 0 || this.isRunning()) return;
     this.followTail = true;
@@ -57,7 +61,7 @@ export class BtwPanelComponent implements Component {
       thinking: '',
       phase: 'running',
     });
-    this.options.onPrompt(normalized);
+    this.options.onPrompt(normalized, inlineSkillActivations);
   }
 
   addTransientNotice(message: string): void {

@@ -320,6 +320,57 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).not.toContain('Goal complete');
   });
 
+  it('renders an uploaded image daemon ref as a bare placeholder on replay', async () => {
+    // An uploaded image persists as a self-contained `kimi-file://` part; on
+    // replay it renders as a bare `[image]` placeholder — neither the
+    // materialization path nor the internal url may surface.
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          { type: 'text', text: 'what is this? ' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
+          },
+        ],
+        { origin: { kind: 'user' } },
+      ),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('what is this?');
+    expect(transcript).toContain('[image]');
+    expect(transcript).not.toContain('/Users/alice');
+    expect(transcript).not.toContain('kimi-file');
+  });
+
+  it('keeps the tag of a legacy upload pair as user text on replay', async () => {
+    // Legacy history paired the daemon ref with an `<image path>` tag. The
+    // pairing is gone: the tag is plain user text and replays verbatim while
+    // the ref still renders as `[image]`.
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          { type: 'text', text: 'what is this? ' },
+          { type: 'text', text: '<image path="/Users/alice/media/f_1.png"></image>' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
+          },
+        ],
+        { origin: { kind: 'user' } },
+      ),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('what is this?');
+    expect(transcript).toContain('[image]');
+    expect(transcript).toContain('<image path="/Users/alice/media/f_1.png"></image>');
+    expect(transcript).not.toContain('kimi-file');
+  });
+
   it('unescapes bash tag delimiters when replaying shell output', async () => {
     const driver = await replayIntoDriver([
       message(

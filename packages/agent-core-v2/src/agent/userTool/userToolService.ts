@@ -17,6 +17,8 @@
  * Bound at Agent scope.
  */
 
+import { randomUUID } from 'node:crypto';
+
 import { type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
@@ -126,8 +128,9 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
     name: string,
     args: unknown,
   ): Promise<ExecutableToolResult> {
+    const id = `user_tool_${randomUUID()}`;
     const request = this.interaction.request<UserToolExecutionRequest, ExecutableToolResult>({
-      id: context.toolCallId,
+      id,
       kind: 'user_tool',
       payload: {
         turnId: context.turnId,
@@ -143,7 +146,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
       return await abortable(request, context.signal);
     } catch (error) {
       if (context.signal.aborted) {
-        this.interaction.respond(context.toolCallId, {
+        this.interaction.respond(id, {
           output: `User tool "${name}" was aborted.`,
           isError: true,
         });

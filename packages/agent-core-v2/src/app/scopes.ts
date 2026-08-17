@@ -11,14 +11,12 @@ import { setScopeTopology } from '#/_base/di/scope';
 
 export enum LifecycleScope {
   App = 'app',
-  Workspace = 'workspace',
   Session = 'session',
   Agent = 'agent',
 }
 
 export const SCOPE_TOPOLOGY: readonly LifecycleScope[] = [
   LifecycleScope.App,
-  LifecycleScope.Workspace,
   LifecycleScope.Session,
   LifecycleScope.Agent,
 ];

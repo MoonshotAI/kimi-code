@@ -8,18 +8,27 @@ import {
   IAgentLifecycleService,
   IAgentPluginCommandService,
   IAgentPromptService,
+  IAgentRuntimeBindingService,
   IAgentShellCommandService,
   IAppendLogStore,
   IDebugEventsService,
+  IEventService,
   IInstantiationService,
   IPluginService,
   ISessionIndex,
+  ISessionManager,
   ISessionMetadata,
-  ISessionLifecycleService,
+  IWorkspaceInstanceManager,
   IWorkspaceService,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
-import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2';
+import type {
+  AgentRuntimeBindingSnapshot,
+  ServiceIdentifier,
+  SessionWorkspaceAssociationSnapshot,
+  WorkspaceInstanceSnapshot,
+} from '@moonshot-ai/agent-core-v2';
+import { FakeRuntime } from '@moonshot-ai/agent-core-v2/runtime/fakeRuntime';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -63,14 +72,12 @@ interface GoalToolResultWire {
 // name — exactly how the typed client composes URLs, so the test never hardcodes
 // a channel name that could drift from the token.
 function rpc(
-  scope: 'core' | 'workspace' | 'session' | 'agent',
+  scope: 'core' | 'session' | 'agent',
   service: ServiceIdentifier<unknown>,
   method: string,
-  ids: { wid?: string; sid?: string; aid?: string } = {},
+  ids: { sid?: string; aid?: string } = {},
 ): string {
   if (scope === 'core') return `/api/v1/debug/${String(service)}/${method}`;
-  if (scope === 'workspace')
-    return `/api/v1/debug/workspace/${ids.wid}/${String(service)}/${method}`;
   if (scope === 'session') return `/api/v1/debug/session/${ids.sid}/${String(service)}/${method}`;
   return `/api/v1/debug/session/${ids.sid}/agent/${ids.aid}/${String(service)}/${method}`;
 }
@@ -187,6 +194,10 @@ describe('server-v2 /api/v1/debug RPC', () => {
     });
     // Framework plumbing stays out of the listing.
     expect(meta?.methods.map((m) => m.name)).not.toContain('dispose');
+
+    const prompts = byName.get('agentPromptService');
+    expect(prompts?.methods.map((m) => m.name)).toContain('enqueue');
+    expect(prompts?.methods.map((m) => m.name)).not.toContain('reserve');
   });
 
   it('reaches a runtime-contributed Service absent from /channels (decorator-name fallback)', async () => {
@@ -246,6 +257,58 @@ describe('server-v2 /api/v1/debug RPC', () => {
     );
     expect(got.body.code).toBe(0);
     expect(got.body.data.root).toBe(cwd);
+  });
+
+  it('exposes workspace, session association, and agent binding business snapshots', async () => {
+    const sessionId = await createSession(home as string);
+    await createMainAgent(sessionId);
+    const summary = await server!.core.accessor.get(ISessionIndex).get(sessionId);
+    expect(summary).toBeDefined();
+    const workspaceId = summary!.workspaceId;
+
+    const workspace = await call<WorkspaceInstanceSnapshot>(
+      'GET',
+      `/api/v1/debug/workspace/${workspaceId}/snapshot`,
+    );
+    expect(workspace.body.data).toMatchObject({
+      metadata: { id: workspaceId, root: home },
+      lifecycle: 'active',
+      program: {
+        binding: { workspaceId, runtimeId: 'local' },
+      },
+      runtimes: {
+        workspaceId,
+        runtimes: [{ runtimeId: 'local', status: 'ready' }],
+      },
+    });
+    expect(workspace.body.data).not.toHaveProperty('accessor');
+    expect(workspace.body.data).not.toHaveProperty('container');
+
+    const association = await call<SessionWorkspaceAssociationSnapshot>(
+      'GET',
+      `/api/v1/debug/session/${sessionId}/association`,
+    );
+    expect(association.body.data).toEqual({
+      sessionId,
+      workspaceId,
+      cwd: home,
+    });
+
+    const binding = await call<AgentRuntimeBindingSnapshot>(
+      'GET',
+      `/api/v1/debug/session/${sessionId}/agent/main/runtime-binding`,
+    );
+    expect(binding.body.data).toMatchObject({
+      binding: { workspaceId, runtimeId: 'local' },
+      available: true,
+      runtime: { runtimeId: 'local', status: 'ready' },
+    });
+
+    const legacy = await fetch(
+      `${base}/api/v1/debug/workspace/${workspaceId}/workspaceTrust/get`,
+      { headers: authHeaders(server as RunningServer) },
+    );
+    expect(legacy.status).toBe(404);
   });
 
   it('rejects createOrTouch for a missing root directory (40409)', async () => {
@@ -323,14 +386,71 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(body.data.lifecycle).toBe('ready');
   });
 
+  it('exposes runtime binding through REST and debug dispatcher contracts', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const dispatched = await call<{ workspaceId: string; runtimeId: string }>(
+      'POST',
+      rpc('agent', IAgentRuntimeBindingService, 'get', { sid: id, aid: 'main' }),
+    );
+    expect(dispatched.body.data.runtimeId).toBe('local');
+
+    const current = await call<{ workspace_id: string; runtime_id: string }>(
+      'GET',
+      `/api/v1/sessions/${id}/runtime`,
+    );
+    expect(current.body.data).toMatchObject({ runtime_id: 'local' });
+
+    const invalid = await call<null>(
+      'POST',
+      `/api/v1/sessions/${id}/runtime`,
+      { runtime_id: 'missing-runtime' },
+    );
+    expect(invalid.body.code).toBe(40420);
+
+    const unchanged = await call<{ workspace_id: string; runtime_id: string }>(
+      'GET',
+      `/api/v1/sessions/${id}/runtime`,
+    );
+    expect(unchanged.body.data).toEqual(current.body.data);
+
+    const provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
+      id: 'debug-remote-provider',
+      imports: { root: [], imports: [], local: [] },
+      attach: async (context, host) => {
+        host.registerRuntime(new FakeRuntime({
+          workspaceId: context.id,
+          runtimeId: 'remote',
+          generation: 'remote-two',
+        }));
+        return { dispose: () => {} };
+      },
+    });
+    try {
+      const switched = await call<{ workspace_id: string; runtime_id: string }>(
+        'POST',
+        `/api/v1/sessions/${id}/runtime`,
+        { runtime_id: 'remote' },
+      );
+      expect(switched.body.data.runtime_id).toBe('remote');
+      const snapshot = await call<AgentRuntimeBindingSnapshot>(
+        'GET',
+        `/api/v1/debug/session/${id}/agent/main/runtime-binding`,
+      );
+      expect(snapshot.body.data).toMatchObject({
+        binding: { workspaceId: current.body.data.workspace_id, runtimeId: 'remote' },
+        available: true,
+        runtime: { runtimeId: 'remote', generation: 'remote-two', status: 'ready' },
+      });
+    } finally {
+      await provider.dispose();
+    }
+  });
+
   it('archives a session', async () => {
     const id = await createSession(home as string);
-    const workspaceId = (await server!.core.accessor.get(ISessionIndex).get(id))!.workspaceId;
-    const { body } = await call<null>(
-      'POST',
-      rpc('workspace', ISessionLifecycleService, 'archive', { wid: workspaceId }),
-      id,
-    );
+    const { body } = await call<null>('POST', rpc('core', ISessionManager, 'archive'), id);
     expect(body.code).toBe(0);
     // archive is a method on the handler's session lifecycle service; its
     // single argument is the session id.
@@ -338,6 +458,116 @@ describe('server-v2 /api/v1/debug RPC', () => {
   });
 
   // --- Agent scope ----------------------------------------------------------
+
+  it('submits a prompt and returns the turn id', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const { body } = await call<{ turn_id: number }>(
+      'POST',
+      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' }),
+      { input: [{ type: 'text', text: 'hello' }] },
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.turn_id).toBe(0);
+  });
+
+  it('maps a duplicate promptId to 40927 before metadata changes', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const path = rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' });
+
+    const first = await call<{ turn_id: number }>('POST', path, {
+      input: [{ type: 'text', text: 'first prompt' }],
+      promptId: 'submission-1',
+    });
+    expect(first.body.code).toBe(0);
+
+    const duplicate = await call<null>('POST', path, {
+      input: [{ type: 'text', text: 'must not become metadata' }],
+      promptId: 'submission-1',
+    });
+    expect(duplicate.body.code).toBe(40927);
+
+    const metadata = await call<SessionMetaWire>(
+      'POST',
+      rpc('session', ISessionMetadata, 'read', { sid: id }),
+    );
+    expect(metadata.body.data.lastPrompt).toBe('first prompt');
+  });
+
+  it('rejects disabledTools before bind without mutating prompt metadata', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const { body } = await call<null>(
+      'POST',
+      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' }),
+      {
+        input: [{ type: 'text', text: 'must not become metadata' }],
+        disabledTools: ['Bash'],
+      },
+    );
+    expect(body.code).toBe(40001);
+
+    const metadata = await call<SessionMetaWire>(
+      'POST',
+      rpc('session', ISessionMetadata, 'read', { sid: id }),
+    );
+    expect(metadata.body.data.title).toBeUndefined();
+    expect(metadata.body.data.lastPrompt).toBeUndefined();
+  });
+
+  it('derives the session title and lastPrompt from the first prompt', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const events: { type: string; payload: unknown }[] = [];
+    const sub = (server as RunningServer).core.accessor
+      .get(IEventService)
+      .subscribe((event) => events.push(event));
+
+    const { body } = await call<{ turn_id: number }>(
+      'POST',
+      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' }),
+      { input: [{ type: 'text', text: 'hello title' }] },
+    );
+    expect(body.code).toBe(0);
+    sub.dispose();
+
+    const meta = await call<SessionMetaWire>('POST', rpc('session', ISessionMetadata, 'read', { sid: id }));
+    expect(meta.body.code).toBe(0);
+    expect(meta.body.data.title).toBe('hello title');
+    expect(meta.body.data.lastPrompt).toBe('hello title');
+
+    const updated = events.find((e) => e.type === 'session.meta.updated');
+    expect(updated).toBeDefined();
+    const payload = updated?.payload as
+      | { title?: string; patch?: { lastPrompt?: string } }
+      | undefined;
+    expect(payload?.title).toBe('hello title');
+    expect(payload?.patch?.lastPrompt).toBe('hello title');
+  });
+
+  it('keeps a custom title and only refreshes lastPrompt on a later prompt', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const renamed = await call<null>('POST', rpc('session', ISessionMetadata, 'setTitle', { sid: id }), 'keep-me');
+    expect(renamed.body.code).toBe(0);
+
+    const { body } = await call<{ turn_id: number }>(
+      'POST',
+      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' }),
+      { input: [{ type: 'text', text: 'should not become the title' }] },
+    );
+    expect(body.code).toBe(0);
+
+    const meta = await call<SessionMetaWire>('POST', rpc('session', ISessionMetadata, 'read', { sid: id }));
+    expect(meta.body.code).toBe(0);
+    expect(meta.body.data.title).toBe('keep-me');
+    expect(meta.body.data.lastPrompt).toBe('should not become the title');
+  });
 
   it('runs a shell command through the shell command service', async () => {
     const id = await createSession(home as string);

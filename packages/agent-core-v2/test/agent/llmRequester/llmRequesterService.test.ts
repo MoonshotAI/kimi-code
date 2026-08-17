@@ -12,7 +12,7 @@
  */
 
 import { createControlledPromise } from '@antfu/utils';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
@@ -32,7 +32,7 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { IAgentVideoResolverService } from '#/agent/media/videoResolver';
+import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
@@ -43,7 +43,12 @@ import {
   APIStatusError,
 } from '#/kosong/contract/errors';
 import { emptyUsage, type TokenUsage } from '#/kosong/contract/usage';
-import type { Message } from '#/kosong/contract/message';
+import {
+  isToolCall,
+  type Message,
+  type StreamedMessagePart,
+  type ToolCall,
+} from '#/kosong/contract/message';
 import type { ThinkingEffort } from '#/kosong/contract/provider';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
@@ -141,6 +146,8 @@ function createService(
     | undefined,
   options: {
     readonly thinkingLevel?: ThinkingEffort;
+    readonly mediaResolver?: Partial<IAgentMediaResolverService>;
+    readonly contextMessages?: Message[];
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
@@ -173,7 +180,7 @@ function createService(
     },
   };
   const usage = { record: () => undefined, status: () => ({}) };
-  const context = { get: () => history };
+  const context = { get: () => options.contextMessages ?? history };
   const tools = { list: () => [] };
   const config: Partial<IConfigService> = {
     get: (() => undefined) as IConfigService['get'],
@@ -196,7 +203,7 @@ function createService(
 
   ix.stub(IAgentContextMemoryService, context);
   ix.stub(IAgentToolSelectService, toolSelect);
-  ix.stub(IAgentVideoResolverService, { resolve: async (messages) => messages });
+  ix.stub(IAgentMediaResolverService, options.mediaResolver ?? { resolve: async (messages) => messages });
   if (projector === undefined) {
     ix.set(
       IAgentContextProjectorService,
@@ -799,5 +806,147 @@ describe('AgentLLMRequesterService trace id', () => {
     expect(
       telemetryRecords.find((record) => record.event === 'api_error')?.properties?.['trace_id'],
     ).toBeUndefined();
+  });
+});
+
+describe('AgentLLMRequesterService media resolver wiring', () => {
+  it('resolves the projected messages through the DI-injected media resolver', async () => {
+    const requester = createRequester({ value: 0 }, null);
+    const resolve = vi.fn(async (messages: readonly Message[], _requester: ModelRequester) => messages);
+    const { service } = createService(requester, undefined, {
+      mediaResolver: { resolve },
+    });
+
+    await service.request();
+
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(resolve.mock.calls[0]?.[1]).toBe(requester);
+  });
+});
+
+describe('AgentLLMRequesterService tool call id normalization', () => {
+  function createScriptedRequester(
+    script: { ids: string[]; error?: Error }[],
+  ): ModelRequester {
+    const base = createRequester({ value: 0 });
+    let callIndex = 0;
+    return {
+      model: base.model,
+      request: async function* () {
+        const step = script[Math.min(callIndex++, script.length - 1)]!;
+        if (step.error !== undefined) {
+          if (step.ids.length > 0) {
+            yield {
+              type: 'part',
+              part: {
+                type: 'function',
+                id: step.ids[0]!,
+                name: 'Bash',
+                arguments: null,
+                _streamIndex: 0,
+              },
+            } satisfies ModelRequestEvent;
+          }
+          throw step.error;
+        }
+        const toolCalls: ToolCall[] = [];
+        for (const [index, id] of step.ids.entries()) {
+          yield {
+            type: 'part',
+            part: { type: 'function', id, name: 'Bash', arguments: null, _streamIndex: index },
+          } satisfies ModelRequestEvent;
+          yield {
+            type: 'part',
+            part: { type: 'tool_call_part', argumentsPart: '{"command":"ls"}', index },
+          } satisfies ModelRequestEvent;
+          toolCalls.push({ type: 'function', id, name: 'Bash', arguments: '{"command":"ls"}' });
+        }
+        yield {
+          type: 'finish',
+          message: { role: 'assistant', content: [], toolCalls },
+          providerFinishReason: 'completed',
+          rawFinishReason: 'stop',
+          id: 'resp-1',
+        } satisfies ModelRequestEvent;
+      },
+    };
+  }
+
+  it('passes provider-unique ids through unchanged', async () => {
+    const parts: StreamedMessagePart[] = [];
+    const { service } = createService(
+      createScriptedRequester([{ ids: ['call_1', 'call_2'] }]),
+      undefined,
+    );
+
+    const result = await service.request({}, (part) => {
+      parts.push(part);
+    });
+
+    expect(result.message.toolCalls.map((c) => c.id)).toEqual(['call_1', 'call_2']);
+    expect(parts.filter(isToolCall).map((p) => p.id)).toEqual(['call_1', 'call_2']);
+  });
+
+  it('rewrites an id repeated across responses and keeps streamed parts consistent', async () => {
+    const parts: StreamedMessagePart[] = [];
+    const { service } = createService(
+      createScriptedRequester([{ ids: ['Bash_0'] }, { ids: ['Bash_0'] }]),
+      undefined,
+    );
+
+    const first = await service.request({}, (part) => {
+      parts.push(part);
+    });
+    const second = await service.request({}, (part) => {
+      parts.push(part);
+    });
+
+    expect(first.message.toolCalls[0]!.id).toBe('Bash_0');
+    expect(second.message.toolCalls[0]!.id).toBe('Bash_0__2');
+    expect(parts.filter(isToolCall).map((p) => p.id)).toEqual(['Bash_0', 'Bash_0__2']);
+  });
+
+  it('rewrites duplicates within a single response', async () => {
+    const { service } = createService(
+      createScriptedRequester([{ ids: ['Bash_0', 'Bash_0'] }]),
+      undefined,
+    );
+
+    const result = await service.request();
+
+    expect(result.message.toolCalls.map((c) => c.id)).toEqual(['Bash_0', 'Bash_0__2']);
+  });
+
+  it('rolls claims back when the attempt fails mid-stream', async () => {
+    const { service } = createService(
+      createScriptedRequester([
+        { ids: ['Bash_9'], error: new Error('stream boom') },
+        { ids: ['Bash_9'] },
+      ]),
+      undefined,
+    );
+
+    await expect(service.request()).rejects.toThrow('stream boom');
+    const retry = await service.request();
+    expect(retry.message.toolCalls[0]!.id).toBe('Bash_9');
+  });
+
+  it('rewrites an id that already exists in the restored context', async () => {
+    const { service } = createService(
+      createScriptedRequester([{ ids: ['Bash_0'] }]),
+      undefined,
+      {
+        contextMessages: [
+          {
+            role: 'assistant',
+            content: [],
+            toolCalls: [{ type: 'function', id: 'Bash_0', name: 'Bash', arguments: '{}' }],
+          },
+        ],
+      },
+    );
+
+    const result = await service.request();
+    expect(result.message.toolCalls[0]!.id).toBe('Bash_0__2');
   });
 });

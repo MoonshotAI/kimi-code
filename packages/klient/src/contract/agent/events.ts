@@ -34,6 +34,8 @@ export const turnStartedEventSchema = z.object({
   origin: z.unknown(),
   /** The turn's extracted prompt text (present when the turn opened with a text part). */
   prompt: z.string().optional(),
+  /** The prompt record id when the turn was opened by a prompt submission. */
+  promptId: z.string().optional(),
 });
 
 export const turnEndedEventSchema = z.object({

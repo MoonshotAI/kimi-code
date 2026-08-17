@@ -10,7 +10,10 @@
  * envelope while non-empty unversioned logs are rejected. Removal awaits the
  * agent task manager's graceful exit policy before draining turns and full
  * compaction, then disposing the child scope. Fans session-level
- * permission-mode switches out to every live agent. Bound at Session scope.
+ * permission-mode switches out to every live agent — except
+ * `tower-worker`-profile agents, which TowerSpawn pins to `auto` (they run
+ * detached and unattended); the broadcast leaves them on `auto`. Bound at
+ * Session scope.
  *
  * No agent id is special here: the main agent is simply the agent created
  * with the conventional `MAIN_AGENT_ID`, and `fork` requires its source to
@@ -37,6 +40,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import { PermissionModeConfiguredModel } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import { ProfileModel } from '#/agent/profile/profileOps';
+import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -46,8 +51,11 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { abortError } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
+import '#/agent/runtimeBinding/runtimeBindingService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
+import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { IWireService } from '#/wire/wire';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -154,6 +162,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         seeds: [
           [IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope })],
           [ITelemetryService, this.telemetry.withContext({ agent_id: agentId })],
+          [IAgentRuntimeBindingSeed, {
+            _serviceBrand: undefined,
+            binding: { workspaceId: this.ctx.workspaceId, runtimeId: opts.runtimeId ?? 'local' },
+          }],
         ],
       },
     ) as IAgentScopeHandle;
@@ -210,7 +222,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         details: { agentId: opts.agentId },
       });
     }
-    const child = await this.create({ agentId: opts?.agentId, forkedFrom: source.id });
+    const child = await this.create({
+      agentId: opts?.agentId,
+      runtimeId: source.accessor.get(IAgentRuntimeBindingService).current.runtimeId,
+      forkedFrom: source.id,
+    });
 
     const sourceData = source.accessor.get(IAgentProfileService).data();
     const childProfile = child.accessor.get(IAgentProfileService);
@@ -247,6 +263,15 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
   broadcastPermissionMode(mode: PermissionMode): void {
     for (const handle of this.handles.values()) {
+      // Tower workers/reviewers stay pinned to auto (see the file header) —
+      // the profile name is read off the wire model, not the profile service,
+      // so the broadcast never has to materialize one.
+      if (
+        handle.accessor.get(IWireService).getModel(ProfileModel).profileName ===
+        TOWER_WORKER_PROFILE
+      ) {
+        continue;
+      }
       handle.accessor.get(IAgentPermissionModeService).setMode(mode);
     }
   }
@@ -260,6 +285,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const compaction = handle.accessor.get(IAgentFullCompactionService).compacting;
     const compactionSettled = compaction?.promise.catch(() => undefined) ?? Promise.resolve();
     const reason = abortError('Agent removed');
+    const prompt = handle.accessor.get(IAgentPromptService);
     for (const turnId of loop.status().pendingTurnIds) {
       loop.cancel(turnId, reason);
     }
@@ -267,7 +293,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (compaction !== null && !compaction.abortController.signal.aborted) {
       compaction.abortController.abort(reason);
     }
-    await Promise.all([loop.settled(), compactionSettled]);
+    await Promise.all([loop.settled(), compactionSettled, prompt.drain(reason)]);
     handle.dispose();
     this.onDidDisposeEmitter.fire(agentId);
   }

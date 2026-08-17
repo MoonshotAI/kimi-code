@@ -40,7 +40,7 @@ model = "k3"
 max_context_size = 1048576
 capabilities = [ "thinking", "always_thinking", "image_in", "video_in", "tool_use" ]
 display_name = "K3"
-support_efforts = [ "max" ]
+support_efforts = [ "low", "high", "max" ]
 default_effort = "max"
 
 [models."kimi-code/kimi-for-coding"]
@@ -220,7 +220,7 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 default_model = "kimi-code/kimi-for-coding-highspeed"
 [secondary_model.models]
 "kimi-code/k3" = "难题选它。擅长复杂推理、算法设计、深度调试、数学和系统性难题。"
-"kimi-code/kimi-for-coding-highspeed" = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
+"kimi-code/kimi-for-coding-highspeed" = "速度快但单价较高。适合日常重构、代码解释、小改动、总结等看重响应速度的任务。"
 "kimi-code/kimi-for-coding" = "均衡的编码主力。适合大多数功能开发和代码修改任务。"
 ```
 
@@ -236,22 +236,25 @@ force = true
 
 设置 `force` 后不再提供 `model` 参数（与完全未配置时一样），每次派生都绑定 `default_model`；显式传入 `model`（包括 `"primary"`）会报错。`force` 必须搭配 `default_model`，且不能与 `[secondary_model.models]` 表同时使用——表的意义在于提供选择，而 force 取消了选择。
 
-利用自然解析会落到所绑定模型的默认 effort 这一点，可以给池中不同条目配不同的 Thinking 档位：为同一个底层模型再注册一个 `[models]` 条目作为「变体」，用 [`[models."<alias>".overrides]`](#模型覆盖项) 只覆盖 `default_effort`，再把两个别名都放进模型池——main agent 挑选别名时便同时选定了档位：
+利用自然解析会落到所绑定模型的默认 effort 这一点，可以给池中不同条目配不同的 Thinking 档位：为同一个底层模型再注册一个 `[models]` 条目作为「变体」，用 [`[models."<alias>".overrides]`](#模型覆盖项) 只覆盖 `default_effort`，再把两个别名都放进模型池——main agent 挑选别名时便同时选定了档位。有两个前提：底层模型必须声明了 `support_efforts`（`managed:kimi-code` 下目前只有 k3 系列声明了档位）；且变体是独立条目，不会继承被指向条目的字段——`capabilities`、`support_efforts` 等元数据要完整照抄，否则 `default_effort` 不生效（它必须是 `support_efforts` 列表中的值）：
 
 ```toml
-# "kimi-code/kimi-for-coding-highspeed" 由 /login 提供；这里为同一模型注册一个高档位变体
-[models.kimi-for-coding-highspeed-deep]
+# "kimi-code/k3" 由 /login 提供（默认 high 档）；这里为同一模型注册一个 max 档位变体
+[models.k3-max]
 provider = "managed:kimi-code"
-model = "kimi-for-coding-highspeed"
+model = "k3"
+max_context_size = 1048576
+capabilities = [ "thinking", "always_thinking", "image_in", "video_in", "tool_use" ]
+support_efforts = [ "low", "high", "max" ]
 
-[models.kimi-for-coding-highspeed-deep.overrides]
-default_effort = "high"
+[models.k3-max.overrides]
+default_effort = "max"
 
 [secondary_model]
-default_model = "kimi-code/kimi-for-coding-highspeed"
+default_model = "kimi-code/k3"
 [secondary_model.models]
-"kimi-code/kimi-for-coding-highspeed" = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
-kimi-for-coding-highspeed-deep = "同一模型的高 Thinking 档位。适合较难的子任务。"
+"kimi-code/k3" = "默认 high 档位。适合大多数实现、分析和多轮交互任务。"
+k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 ```
 
 注意 `default_effort` 是模型级默认值：一旦设置了全局 `[thinking].effort`，它对 main agent 和 subagent 都优先生效，变体的默认档位只在全局未设置时起作用。取值与回落规则同 [`[models]` 条目的 `default_effort`](#models)。

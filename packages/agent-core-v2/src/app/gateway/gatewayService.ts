@@ -19,8 +19,7 @@ import {
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { Error2, ErrorCodes } from '#/errors';
 import { ILogService } from '#/_base/log/log';
-import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
-import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentLoopService } from '#/agent/loop/loop';
 
@@ -30,7 +29,7 @@ export class RestGateway implements IRestGateway {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IWorkspaceLifecycleService private readonly workspaceLifecycle: IWorkspaceLifecycleService,
+    @ISessionManager private readonly sessions: ISessionManager,
     @ILogService private readonly log: ILogService,
   ) { }
 
@@ -52,11 +51,7 @@ export class RestGateway implements IRestGateway {
   }
 
   private liveSession(sessionId: string) {
-    for (const handler of this.workspaceLifecycle.handlers.list()) {
-      const handle = handler.accessor.get(ISessionLifecycleService).get(sessionId);
-      if (handle !== undefined) return handle;
-    }
-    return undefined;
+    return this.sessions.get(sessionId);
   }
 
   async prompt(

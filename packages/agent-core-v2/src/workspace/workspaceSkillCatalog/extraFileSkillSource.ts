@@ -13,8 +13,6 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import {
@@ -69,10 +67,3 @@ export class ExtraFileSkillSource extends Disposable implements IExtraFileSkillS
   }
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IExtraFileSkillSource,
-  ExtraFileSkillSource,
-  ScopeActivation.OnScopeCreated,
-  'workspaceSkillCatalog',
-);

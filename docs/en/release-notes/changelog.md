@@ -6,6 +6,20 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.36.1 (2026-08-14)
+
+### Features
+
+- web: Generate session titles with AI (experimental). Off by default — set `KIMI_CODE_EXPERIMENTAL_AUTO_SESSION_TITLE=1` (or the master flag `KIMI_CODE_EXPERIMENTAL_FLAG=1`) to turn it on.
+
+### Polish
+
+- web: Polish the Plan, Goal, and Swarm toggles in the composer, which now live in the + menu next to the input box.
+
+### Bug Fixes
+
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 0.36.0 (2026-08-13)
 
 ### Features

@@ -16,6 +16,7 @@ import {
   agentMcpContract,
   agentPermissionModeContract,
   agentPlanContract,
+  agentRuntimeBindingContract,
   agentProfileContract,
   agentPromptContract,
   agentShellCommandContract,
@@ -30,6 +31,7 @@ import { catalogContract } from './global/catalog.js';
 import { providerDiscoveryContract } from './global/providerDiscovery.js';
 import { configContract } from './global/config.js';
 import { envContract } from './global/env.js';
+import { filesContract } from './global/files.js';
 import { flagsContract } from './global/flags.js';
 import { hostFsContract } from './global/hostFs.js';
 import { modelsContract } from './global/models.js';
@@ -39,10 +41,7 @@ import { sessionsContract } from './global/sessions.js';
 import { workspacesContract } from './global/workspaces.js';
 import { sessionApprovalContract } from './session/approval.js';
 import { sessionInteractionContract } from './session/interaction.js';
-import {
-  sessionLifecycleContract,
-  workspaceLifecycleContract,
-} from './session/lifecycle.js';
+import { sessionManagerContract } from './session/lifecycle.js';
 import { sessionMetadataContract } from './session/metadata.js';
 import { sessionQuestionContract } from './session/question.js';
 import { sessionSkillCatalogContract } from './session/skills.js';
@@ -64,9 +63,8 @@ export const globalContract: KlientContract = {
   capabilityService: capabilitiesContract,
   hostFolderBrowser: hostFsContract,
   bootstrapService: envContract,
-  // workspace scope (+ the app-registered handler registry)
-  workspaceLifecycleService: workspaceLifecycleContract,
-  sessionLifecycleService: sessionLifecycleContract,
+  fileService: filesContract,
+  sessionManager: sessionManagerContract,
   // session scope
   sessionMetadata: sessionMetadataContract,
   sessionInteractionService: sessionInteractionContract,
@@ -80,6 +78,7 @@ export const globalContract: KlientContract = {
   agentLoopService: agentLoopContract,
   agentPermissionModeService: agentPermissionModeContract,
   agentCommandService: agentCommandContract,
+  agentRuntimeBindingService: agentRuntimeBindingContract,
   agentContextMemoryService: agentContextMemoryContract,
   agentTokenCountingService: agentTokenCountingContract,
   agentActivityView: agentActivityViewContract,

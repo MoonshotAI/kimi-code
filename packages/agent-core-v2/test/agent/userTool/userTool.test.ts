@@ -203,6 +203,79 @@ describe('AgentUserToolService (wire-backed)', () => {
     expect(modelOf(wire)).toBe(before);
   });
 
+  it('execute parks under a minted interaction id and keeps the provider toolCallId on the payload', async () => {
+    const parked: { id: string | undefined; kind: string; payload: unknown }[] = [];
+    const responses: { id: string; response: unknown }[] = [];
+    let settle: ((result: unknown) => void) | undefined;
+    const interactionStub = {
+      _serviceBrand: undefined,
+      request: (req: { id?: string; kind: string; payload: unknown }) => {
+        parked.push({ id: req.id, kind: req.kind, payload: req.payload });
+        return new Promise((resolve) => {
+          settle = resolve;
+        });
+      },
+      respond: (id: string, response: unknown) => {
+        responses.push({ id, response });
+      },
+      onDidResolve: () => ({ dispose: () => undefined }),
+      onDidChangePending: () => ({ dispose: () => undefined }),
+    } as unknown as ISessionInteractionService;
+
+    const ixExec = disposables.add(new TestInstantiationService());
+    ixExec.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ixExec.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ixExec.set(IAgentStateService, new AgentStateService());
+    ixExec.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
+    ixExec.stub(IAgentProfileService, createProfileStub());
+    ixExec.stub(ISessionInteractionService, interactionStub);
+    ixExec.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
+    registerTestAgentWire(ixExec, testWireScope(SCOPE, 'user-tool-exec'), {
+      log: ixExec.get(IAppendLogStore),
+    });
+    const execSvc = ixExec.get(IAgentUserToolService);
+    const execRegistry = ixExec.get(IAgentToolRegistryService);
+    execSvc.register(toolA);
+
+    const tool = execRegistry.resolve(toolA.name);
+    expect(tool).toBeDefined();
+    const execution = await tool!.resolveExecution({ query: 'x' });
+    if (!('execute' in execution)) throw new Error('expected a runnable execution');
+
+    const resultPromise = execution.execute({
+      turnId: 1,
+      toolCallId: 'Bash_0',
+      signal: new AbortController().signal,
+    });
+    expect(parked).toHaveLength(1);
+    expect(parked[0]!.id).toMatch(/^user_tool_/);
+    expect(parked[0]!.payload).toEqual({
+      turnId: 1,
+      toolCallId: 'Bash_0',
+      name: toolA.name,
+      args: { query: 'x' },
+    });
+    settle!({ output: 'done', isError: false });
+    await expect(resultPromise).resolves.toEqual({ output: 'done', isError: false });
+
+    const controller = new AbortController();
+    const aborted = execution.execute({
+      turnId: 1,
+      toolCallId: 'Bash_0',
+      signal: controller.signal,
+    });
+    controller.abort();
+    await expect(aborted).rejects.toThrow();
+    expect(parked).toHaveLength(2);
+    expect(parked[1]!.id).not.toBe(parked[0]!.id);
+    expect(responses).toEqual([
+      {
+        id: parked[1]!.id,
+        response: { output: `User tool "${toolA.name}" was aborted.`, isError: true },
+      },
+    ]);
+  });
+
   it('treats a disclosure change as a new registration state', () => {
     svc.register(toolA);
     const before = modelOf(wire);

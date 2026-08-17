@@ -32,7 +32,7 @@
 
 import {
   IHostFileSystem,
-  IWorkspaceLifecycleService,
+  IWorkspaceInstanceManager,
   IWorkspaceService,
   IWorkspaceSessions,
   IWorkspaceTrust,
@@ -318,10 +318,10 @@ async function resolveTrust(
     );
     return undefined;
   }
-  const handle = await core
-    .accessor.get(IWorkspaceLifecycleService)
-    .handlerFor({ workspaceId, root: ws.root });
-  return handle.accessor.get(IWorkspaceTrust);
+  const workspace = await core
+    .accessor.get(IWorkspaceInstanceManager)
+    .getOrCreate({ workspaceId, root: ws.root });
+  return workspace.program.trust;
 }
 
 // ---------------------------------------------------------------------------

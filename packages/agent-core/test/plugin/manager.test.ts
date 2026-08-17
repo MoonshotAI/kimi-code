@@ -473,13 +473,12 @@ describe('PluginManager', () => {
     await manager.setMcpServerEnabled('demo', 'finance', false);
 
     expect(manager.enabledMcpServers()).not.toHaveProperty('plugin-demo:finance');
-    expect(manager.mcpServers()).toContainEqual(
+    expect(manager.mcpServerEntries()).toContainEqual(
       expect.objectContaining({
         pluginId: 'demo',
         serverName: 'finance',
-        runtimeName: 'plugin-demo:finance',
-        enabled: false,
-        config: expect.objectContaining({ command: 'finance-mcp' }),
+        name: 'plugin-demo:finance',
+        config: expect.objectContaining({ command: 'finance-mcp', enabled: false }),
       }),
     );
     expect(manager.summaries()[0]).toEqual(
@@ -586,12 +585,12 @@ describe('PluginManager', () => {
     await manager.setEnabled('demo', false);
 
     expect(manager.enabledMcpServers()).toEqual({});
-    expect(manager.mcpServers()).toContainEqual(
+    expect(manager.mcpServerEntries()).toContainEqual(
       expect.objectContaining({
         pluginId: 'demo',
         serverName: 'finance',
-        runtimeName: 'plugin-demo:finance',
-        enabled: false,
+        name: 'plugin-demo:finance',
+        config: expect.objectContaining({ enabled: false }),
       }),
     );
   });

@@ -96,7 +96,6 @@ export interface IScopeHandle<K extends ScopeKind = ScopeKind> {
 }
 
 export type IAppScopeHandle = IScopeHandle<'app'>;
-export type IWorkspaceScopeHandle = IScopeHandle<'workspace'>;
 export type ISessionScopeHandle = IScopeHandle<'session'>;
 export type IAgentScopeHandle = IScopeHandle<'agent'>;
 
