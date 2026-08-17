@@ -4,7 +4,12 @@
  * Assigns prompt and message identities, serializes user prompts through an
  * active slot and FIFO, converts selected pending prompts into active-turn
  * steers, settles lifecycle handles, and keeps system input outside the prompt
- * resource model. `submit` / `submitSteer` are the wire-facing user entry
+ * resource model. Daemon-backed media in a prompt (normal or steered) is
+ * materialized into the session media store before the request is queued; a
+ * steered record leaves the queue only after that copy, revalidated as still
+ * pending and still facing the same active turn, and is restored when the
+ * turn vanished meanwhile, so every handle always launches or settles.
+ * `submit` / `submitSteer` are the wire-facing user entry
  * points: they track `input_steer` through `telemetry`, persist the derived
  * title/lastPrompt through `sessionMetadata` for the main agent only
  * (publishing the live update through `event`), enqueue, and settle
@@ -317,15 +322,20 @@ export class AgentPromptService implements IAgentPromptService {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
     }
     const selected = this.pending.filter((item) => ids.has(item.id));
+    const activeAtEntry = this.active;
     const message: ContextMessage = {
       role: 'user', content: selected.flatMap((item) => item.message.content), toolCalls: [], origin: USER_PROMPT_ORIGIN,
     };
     const { message: rerouted, captions } = this.extractCompressionCaptions(message);
-    // Materialize BEFORE the records leave the queue: the file copy awaits,
-    // and the active turn may finish meanwhile — records removed earlier
-    // would never launch or settle in that case.
     await this.materializeDaemonRefs(rerouted);
-    for (const item of selected) this.pending.splice(this.pending.indexOf(item), 1);
+    // The copy yields: settle/abort may have consumed some records and the
+    // active turn may have rotated. Only records still pending steer, and
+    // only into the turn that was active at entry.
+    const stillPending = selected.filter((item) => this.pending.includes(item));
+    if (stillPending.length === 0 || this.active === undefined || this.active !== activeAtEntry) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
+    }
+    for (const item of stillPending) this.pending.splice(this.pending.indexOf(item), 1);
     const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
       void this.dispatcher.dispatch(
         new TurnSteer({ input: materialized.content, origin: materialized.origin ?? USER_PROMPT_ORIGIN }),
@@ -333,18 +343,15 @@ export class AgentPromptService implements IAgentPromptService {
     }, () => {});
     const turn = (await this.loop.enqueue(request).assigned).turn;
     if (turn === undefined) {
-      // The active turn finished while the media copy ran: restore the
-      // records to the queue so startNext can launch them as fresh prompts
-      // instead of dropping their handles unsettled.
-      this.pending.unshift(...selected);
+      this.pending.unshift(...stillPending);
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
     }
-    for (const item of selected) { item.state = 'steered'; item.launchedDeferred.resolve(turn); }
-    this.steered.set(this.active.id, [...(this.steered.get(this.active.id) ?? []), ...selected]);
+    for (const item of stillPending) { item.state = 'steered'; item.launchedDeferred.resolve(turn); }
+    this.steered.set(this.active.id, [...(this.steered.get(this.active.id) ?? []), ...stillPending]);
     void this.dispatcher.dispatch(
-      new PromptSteered({ activePromptId: this.active.id, promptIds: selected.map((x) => x.id), content: rerouted.content as ContentPart[], steeredAt: new Date().toISOString() }),
+      new PromptSteered({ activePromptId: this.active.id, promptIds: stillPending.map((x) => x.id), content: rerouted.content as ContentPart[], steeredAt: new Date().toISOString() }),
     );
-    return selected.map((item) => item.handle);
+    return stillPending.map((item) => item.handle);
   }
 
   abort(promptId: string, reason: Error = userCancellationReason()): boolean {
