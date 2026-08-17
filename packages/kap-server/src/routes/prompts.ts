@@ -339,6 +339,12 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         }
         const parts = contentToCoreParts(resolvedContent);
         if (req.body.skills !== undefined) {
+          // Settlement tracking installs before enqueue: a hook-blocked
+          // bundle completes synchronously inside the call, and a fast
+          // launch can settle just as early. The daemon upload is the
+          // resolver's fallback when intake degraded, so cleanup fires only
+          // once the bundle's lifecycle (or its steer parent's) settles.
+          const settlement = watchPromptSettlements(resolved.events);
           // Bundled skill submission: the engine validates every skill up
           // front, records one activation event per skill, and enqueues a
           // single user message (rendered skill blocks first, then the
@@ -349,12 +355,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             skills: req.body.skills,
           });
           enqueued = true;
-          // Staging releases only when the bundle's turn lifecycle settles
-          // (or its steer parent's): the daemon upload is the resolver's
-          // fallback when intake degraded, so it must outlive the request.
-          deferDiscardUntilPromptSettles(resolved.events, result.prompt_id, () =>
-            preparedMedia?.discard(),
-          );
+          settlement.settle(result.prompt_id, () => preparedMedia?.discard());
           reply.send(
             okEnvelope(
               {
@@ -512,46 +513,64 @@ export function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][num
 }
 
 /**
- * Deferred media-staging cleanup for a bundled submission: the daemon
+ * Settlement tracker for bundled submissions' media staging. The daemon
  * upload is the request-time resolver's fallback whenever intake degraded
- * (materialization is best-effort by design), so the staging blob must
- * outlive the bundle's request. Cleanup therefore fires only when the
- * bundle's turn lifecycle settles (`prompt.completed` / `prompt.aborted`
- * with the bundle's id). A bundle steered into an active turn resolves its
- * refs during the parent's request, and the engine publishes
- * completed/aborted only for the parent — so `prompt.steered` (matching
- * `promptIds`) re-targets the cleanup at the parent (`activePromptId`)
- * instead of discarding at steer time.
+ * (materialization is best-effort by design), so it must outlive the
+ * bundle's request: cleanup fires only when the bundle's turn lifecycle
+ * settles (`prompt.completed` / `prompt.aborted`). A bundle steered into
+ * an active turn resolves its refs during the parent's request, and the
+ * engine publishes completed/aborted only for the parent — so
+ * `prompt.steered` (matching `promptIds`) re-targets the cleanup at the
+ * parent (`activePromptId`).
+ *
+ * The tracker installs BEFORE the submission is enqueued: a hook-blocked
+ * prompt completes synchronously inside the submission call, and an
+ * exceptionally fast launch can settle just as early — both land in the
+ * buffered `settledIds` instead of racing past a late subscription.
  */
-export function deferDiscardUntilPromptSettles(
-  events: IEventService,
-  promptId: string,
-  discard: () => void | Promise<void>,
-): void {
-  const watched = new Set([promptId]);
+export function watchPromptSettlements(events: IEventService): {
+  settle(promptId: string, discard: () => void | Promise<void>): void;
+} {
+  const settledIds = new Set<string>();
+  const parentOf = new Map<string, string>();
+  let armed: { id: string; discard: () => void | Promise<void> } | undefined;
   const subscription = events.subscribe((event) => {
     if (event.type === 'prompt.steered') {
       const steered = event as {
         readonly promptIds?: unknown;
         readonly activePromptId?: unknown;
       };
-      if (
-        Array.isArray(steered.promptIds) &&
-        steered.promptIds.includes(promptId) &&
-        typeof steered.activePromptId === 'string'
-      ) {
-        watched.add(steered.activePromptId);
+      if (Array.isArray(steered.promptIds) && typeof steered.activePromptId === 'string') {
+        for (const childId of steered.promptIds) {
+          if (typeof childId === 'string') parentOf.set(childId, steered.activePromptId);
+        }
+        if (armed !== undefined && steered.promptIds.includes(armed.id)) {
+          armed = { id: steered.activePromptId, discard: armed.discard };
+        }
       }
       return;
     }
-    if (
-      (event.type === 'prompt.completed' || event.type === 'prompt.aborted') &&
-      watched.has((event as { readonly promptId?: unknown }).promptId as string)
-    ) {
+    if (event.type !== 'prompt.completed' && event.type !== 'prompt.aborted') return;
+    const id = (event as { readonly promptId?: unknown }).promptId;
+    if (typeof id !== 'string') return;
+    settledIds.add(id);
+    if (armed !== undefined && armed.id === id) {
+      const { discard } = armed;
+      armed = undefined;
       subscription.dispose();
       void discard();
     }
   });
+  return {
+    settle(promptId: string, discard: () => void | Promise<void>): void {
+      if (settledIds.has(promptId) || settledIds.has(parentOf.get(promptId) ?? '')) {
+        subscription.dispose();
+        void discard();
+        return;
+      }
+      armed = { id: promptId, discard };
+    },
+  };
 }
 
 

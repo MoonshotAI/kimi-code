@@ -20,7 +20,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
-import { deferDiscardUntilPromptSettles, projectPromptSnapshot } from '../src/routes/prompts';
+import { projectPromptSnapshot, watchPromptSettlements } from '../src/routes/prompts';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
@@ -417,7 +417,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
   });
 
-  it('discards queued bundle staging on the prompt lifecycle events', async () => {
+  it('cleans bundled staging through the settlement tracker', async () => {
     const handlers: Array<(event: { type: string; promptId?: string; promptIds?: string[]; activePromptId?: string }) => void> = [];
     const events = {
       subscribe(
@@ -427,23 +427,27 @@ describe('server-v2 /api/v1 prompts', () => {
         return { dispose: vi.fn() };
       },
     };
-    const discard = vi.fn();
-    deferDiscardUntilPromptSettles(events as never, 'msg_1', discard);
 
+    const discard = vi.fn();
+    const tracker = watchPromptSettlements(events as never);
+    tracker.settle('msg_1', discard);
     handlers[0]!({ type: 'prompt.completed', promptId: 'msg_other' });
-    expect(discard).not.toHaveBeenCalled();
     handlers[0]!({ type: 'turn.started' });
     expect(discard).not.toHaveBeenCalled();
     handlers[0]!({ type: 'prompt.completed', promptId: 'msg_1' });
     expect(discard).toHaveBeenCalledTimes(1);
 
-    const second = vi.fn();
-    deferDiscardUntilPromptSettles(events as never, 'msg_2', second);
-    handlers[1]!({ type: 'prompt.aborted', promptId: 'msg_2' });
-    expect(second).toHaveBeenCalledTimes(1);
+    // A hook-blocked bundle completes synchronously inside the submission
+    // call, before `settle` runs: the buffered event must still clean up.
+    const blockedDiscard = vi.fn();
+    const blockedTracker = watchPromptSettlements(events as never);
+    handlers[1]!({ type: 'prompt.completed', promptId: 'msg_blocked' });
+    blockedTracker.settle('msg_blocked', blockedDiscard);
+    expect(blockedDiscard).toHaveBeenCalledTimes(1);
 
     const steered = vi.fn();
-    deferDiscardUntilPromptSettles(events as never, 'msg_3', steered);
+    const steeredTracker = watchPromptSettlements(events as never);
+    steeredTracker.settle('msg_3', steered);
     handlers[2]!({ type: 'prompt.steered', promptIds: ['msg_3'], activePromptId: 'msg_parent' });
     expect(steered).not.toHaveBeenCalled();
     handlers[2]!({ type: 'prompt.completed', promptId: 'msg_other' });
@@ -451,11 +455,11 @@ describe('server-v2 /api/v1 prompts', () => {
     handlers[2]!({ type: 'prompt.completed', promptId: 'msg_parent' });
     expect(steered).toHaveBeenCalledTimes(1);
 
-    const unrelatedSteer = vi.fn();
-    deferDiscardUntilPromptSettles(events as never, 'msg_4', unrelatedSteer);
-    handlers[3]!({ type: 'prompt.steered', promptIds: ['msg_other'], activePromptId: 'msg_parent' });
-    handlers[3]!({ type: 'prompt.completed', promptId: 'msg_parent' });
-    expect(unrelatedSteer).not.toHaveBeenCalled();
+    const aborted = vi.fn();
+    const abortedTracker = watchPromptSettlements(events as never);
+    abortedTracker.settle('msg_4', aborted);
+    handlers[3]!({ type: 'prompt.aborted', promptId: 'msg_4' });
+    expect(aborted).toHaveBeenCalledTimes(1);
   });
 
   it('makes the first three REST prompts available to title generation', async () => {
