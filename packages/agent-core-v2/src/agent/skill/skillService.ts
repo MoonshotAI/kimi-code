@@ -48,6 +48,7 @@ import {
   IAgentSkillService,
   type PromptSkillActivation,
   type PromptWithSkillsInput,
+  type PromptWithSkillsResult,
   type SkillActivationInput,
 } from './skill';
 import { skillActivate } from './skillOps';
@@ -136,7 +137,7 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     return { turn_id: turn.id };
   }
 
-  async promptWithSkills(input: PromptWithSkillsInput): Promise<PromptLaunchResult | undefined> {
+  async promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult> {
     if (input.input.length === 0) {
       throw new Error2(ErrorCodes.REQUEST_INVALID, 'promptWithSkills requires a non-empty prompt');
     }
@@ -172,9 +173,22 @@ export class AgentSkillService extends Service implements IAgentSkillService {
         },
       },
     });
-    if (handle.state === 'pending') return undefined;
+    if (handle.state === 'pending') {
+      return {
+        prompt_id: handle.id,
+        user_message_id: handle.userMessageId,
+        created_at: handle.createdAt,
+        state: handle.state,
+      };
+    }
     const turn = await handle.launched;
-    return turn === undefined ? undefined : { turn_id: turn.id };
+    return {
+      turn_id: turn?.id,
+      prompt_id: handle.id,
+      user_message_id: handle.userMessageId,
+      created_at: handle.createdAt,
+      state: handle.state,
+    };
   }
 
   recordModelToolActivation(origin: SkillActivationOrigin): void {

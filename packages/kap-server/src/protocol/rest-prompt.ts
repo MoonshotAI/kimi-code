@@ -2,8 +2,15 @@
  *   POST /v1/sessions/{sid}/prompts
  *     Body:  PromptSubmission { content, metadata?, agent_id?, profile?, model?, thinking?,
  *              permission_mode?, plan_mode?, swarm_mode?, goal_objective?, goal_control?,
- *              disabled_tools? }
+ *              disabled_tools?, skills? }
  *     Reply: PromptSubmitResult { prompt_id, user_message_id, status, content, created_at }
+ *
+ *     `skills` (optional, non-empty) submits a bundled skill prompt through
+ *     `IAgentSkillService.promptWithSkills`: every named skill is validated up
+ *     front (an unknown name rejects the whole submission), one `skill.activated`
+ *     event fires per skill, and the prompt enqueues as a single user message
+ *     with the rendered skill blocks preceding the caller's content — one turn,
+ *     one undo unit. Each entry is `{ name, args? }` (activation by name only).
  *
  *   GET /v1/sessions/{sid}/prompts
  *     Reply: { active: PromptItem | null, queued: PromptItem[] }
@@ -29,6 +36,12 @@ import {
 export { promptPermissionModeSchema, promptThinkingSchema };
 export type { PromptPermissionMode, PromptThinking } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
+export const promptSkillActivationSchema = z.object({
+  name: z.string().min(1),
+  args: z.string().optional(),
+});
+export type PromptSkillActivation = z.infer<typeof promptSkillActivationSchema>;
+
 export const promptSubmissionSchema = z.object({
   content: z.array(messageContentSchema).min(1),
   metadata: z.record(z.string(), z.unknown()).optional(),
@@ -47,6 +60,9 @@ export const promptSubmissionSchema = z.object({
   // bound profile's own deny always survives. Omit to keep the persisted
   // value, send `[]` to clear the client portion.
   disabled_tools: z.array(z.string()).optional(),
+  // Bundled skill submission: every named skill activates with the prompt as
+  // a single bundled user message (one turn, one undo unit).
+  skills: z.array(promptSkillActivationSchema).min(1).optional(),
 });
 export type PromptSubmission = z.infer<typeof promptSubmissionSchema>;
 

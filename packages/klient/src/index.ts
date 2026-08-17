@@ -74,6 +74,7 @@ export type {
   PlanData,
   PromptLaunchResult,
   PromptWithSkillsInput,
+  PromptWithSkillsResult,
   SetModelResult,
   ShellCommandResult,
   ThinkingLevel,

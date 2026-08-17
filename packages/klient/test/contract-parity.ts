@@ -166,6 +166,7 @@ import {
   promptPayloadSchema,
   promptSkillActivationSchema,
   promptWithSkillsPayloadSchema,
+  promptWithSkillsResultSchema,
   runCommandPayloadSchema,
   runShellCommandPayloadSchema,
   runtimeBindingSchema,
@@ -576,6 +577,11 @@ const _steerPayload: AssertWireToEngine<typeof steerPayloadSchema, SteerPayload>
 const _activateSkillPayload: AssertWire<typeof activateSkillPayloadSchema, ActivateSkillPayload> =
   true;
 const _promptLaunchResult: AssertWire<typeof promptLaunchResultSchema, PromptLaunchResult> = true;
+type PromptWithSkillsResult = Awaited<ReturnType<IAgentSkillService['promptWithSkills']>>;
+const _promptWithSkillsResult: AssertWire<
+  typeof promptWithSkillsResultSchema,
+  PromptWithSkillsResult
+> = true;
 const _cancelPayload: AssertWire<typeof cancelPayloadSchema, CancelPayload> = true;
 const _runShellCommandPayload: AssertWire<
   typeof runShellCommandPayloadSchema,

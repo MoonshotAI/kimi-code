@@ -14,6 +14,7 @@ import {
   IAgentProfileService,
   IAgentToolPolicyService,
   IAgentPromptService,
+  IAgentSkillService,
   IAuthSummaryService,
   IEventService,
   IFileService,
@@ -115,6 +116,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   }
   return {
     prompt: agent.accessor.get(IAgentPromptService),
+    skill: agent.accessor.get(IAgentSkillService),
     auth: agent.accessor.get(IAuthSummaryService),
     profile: agent.accessor.get(IAgentProfileService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
@@ -202,7 +204,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.PROMPT_ALREADY_COMPLETED]: { dataSchema: z.object({ aborted: z.literal(false) }) },
       },
-      description: 'Submit a prompt to a session',
+      description: 'Submit a prompt to a session, optionally with bundled skill activations',
       tags: ['prompts'],
       operationId: 'submitPrompt',
     },
@@ -270,6 +272,35 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           }
         }
         const parts = contentToCoreParts(resolvedContent);
+        if (req.body.skills !== undefined) {
+          // Bundled skill submission: the engine validates every skill up
+          // front, records one activation event per skill, and enqueues a
+          // single user message (rendered skill blocks first, then the
+          // caller's parts). It owns the prompt-metadata update for the main
+          // agent, so this edge skips its own to avoid a double write.
+          const result = await resolved.skill.promptWithSkills({
+            input: parts,
+            skills: req.body.skills,
+          });
+          reply.send(
+            okEnvelope(
+              {
+                prompt_id: result.prompt_id,
+                user_message_id: result.user_message_id,
+                status:
+                  result.state === 'running' || result.state === 'steered'
+                    ? 'running'
+                    : result.state === 'blocked'
+                      ? 'blocked'
+                      : 'queued',
+                content: corePartsToProtocol(parts),
+                created_at: result.created_at,
+              },
+              req.id,
+            ),
+          );
+          return;
+        }
         const session = await resolveSession(core, session_id);
         await applyPromptMetadataUpdate({
           metadata: session.accessor.get(ISessionMetadata),
@@ -450,6 +481,12 @@ function sendMappedError(
       case 'request.invalid':
       case 'validation.failed':
         reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
+        return;
+      case 'skill.not_found':
+        reply.send(errEnvelope(ErrorCode.SKILL_NOT_FOUND, err.message, requestId, err.stack));
+        return;
+      case 'skill.type_unsupported':
+        reply.send(errEnvelope(ErrorCode.SKILL_NOT_ACTIVATABLE, err.message, requestId, err.stack));
         return;
       case 'auth.provisioning_required':
         reply.send({

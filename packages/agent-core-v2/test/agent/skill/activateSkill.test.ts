@@ -89,7 +89,10 @@ describe('promptWithSkills', () => {
       input: [{ type: 'text', text: 'Review this change.' }],
       skills: [{ name: 'review' }, { name: 'security' }],
     });
-    expect(launched?.turn_id).toBe(0);
+    expect(launched.turn_id).toBe(0);
+    expect(launched.prompt_id).toBeTruthy();
+    expect(launched.user_message_id).toBeTruthy();
+    expect(launched.state).toBe('running');
     await ctx.untilTurnEnd();
 
     expect(ctx.llmCalls).toHaveLength(1);

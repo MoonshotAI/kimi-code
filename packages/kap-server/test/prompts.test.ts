@@ -216,6 +216,51 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(Array.isArray(list.body.data.queued)).toBe(true);
   });
 
+  it('submits a bundled skill prompt through the skills field', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'Review this change.' }],
+      skills: [{ name: 'update-config' }, { name: 'check-kimi-code-docs' }],
+    });
+    expect(submitted.body.code).toBe(0);
+    expect(submitted.body.data.prompt_id).toMatch(/^msg_/);
+    expect(['running', 'queued']).toContain(submitted.body.data.status);
+    expect(submitted.body.data.content).toEqual([{ type: 'text', text: 'Review this change.' }]);
+
+    // The bundled prompt lands as one user message with every activation on
+    // its origin and the rendered skill blocks ahead of the caller's text.
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const agent = session!.accessor.get(IAgentLifecycleService).get('main');
+    const history = agent!.accessor.get(IAgentContextMemoryService).get();
+    const bundled = history.find((message) => message.origin?.kind === 'user');
+    expect(bundled?.origin).toMatchObject({
+      kind: 'user',
+      skillActivations: [{ skillName: 'update-config' }, { skillName: 'check-kimi-code-docs' }],
+    });
+    const texts = bundled?.content
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text);
+    expect(texts?.[texts.length - 1]).toBe('Review this change.');
+  });
+
+  it('rejects a bundled submission with an unknown skill and records nothing', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'Review this change.' }],
+      skills: [{ name: 'does-not-exist' }],
+    });
+    expect(submitted.body.code).toBe(40415);
+
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const agent = session!.accessor.get(IAgentLifecycleService).get('main');
+    const history = agent!.accessor.get(IAgentContextMemoryService).get();
+    expect(history.filter((message) => message.origin?.kind === 'user')).toHaveLength(0);
+  });
+
   it('makes the first three REST prompts available to title generation', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
