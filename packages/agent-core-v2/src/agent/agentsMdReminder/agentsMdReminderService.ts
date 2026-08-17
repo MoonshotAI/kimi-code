@@ -20,8 +20,8 @@ import { IBashParserService } from '#/app/bashParser/bashParser';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { AgentsMdReminderShownEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { normalizeUserPath } from '#/tool/path-access';
 import {
@@ -71,8 +71,7 @@ export class AgentAgentsMdReminderService
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionContext private readonly sessionContext: ISessionContext,
-    @IHostFileSystem private readonly fs: IHostFileSystem,
-    @IHostEnvironment private readonly env: IHostEnvironment,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IBashParserService private readonly bashParser: IBashParserService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -118,12 +117,17 @@ export class AgentAgentsMdReminderService
 
   private async ensureSeeded(): Promise<void> {
     if (this.states.get(agentsMdReminderSeededKey)) return;
-    const { paths } = await loadAgentsMdDetailed(
-      { fs: this.fs, homeDir: this.env.homeDir },
-      this.agentCwd,
-      this.bootstrap.homeDir,
-    );
-    this.seedInjected(paths, this.agentCwd);
+    const lease = this.runtime.acquire(['fs']);
+    try {
+      const { paths } = await loadAgentsMdDetailed(
+        { fs: lease.runtime.fs!, homeDir: lease.runtime.environment.homeDir },
+        this.agentCwd,
+        this.bootstrap.homeDir,
+      );
+      this.seedInjected(paths, this.agentCwd);
+    } finally {
+      lease.dispose();
+    }
   }
 
   private async probeAndRemind(ctx: ToolDidExecuteContext): Promise<void> {
@@ -170,6 +174,9 @@ export class AgentAgentsMdReminderService
 
   private targetDirs(ctx: ToolDidExecuteContext): { dirs: string[]; selfKnown: string[] } {
     const selfKnown: string[] = [];
+    const lease = this.runtime.acquire();
+    const env = lease.runtime.environment;
+    lease.dispose();
     switch (ctx.toolCall.name) {
       case 'Read':
       case 'Edit':
@@ -182,9 +189,9 @@ export class AgentAgentsMdReminderService
         const command = stringArg(args, 'command');
         if (command === undefined) return { dirs: [], selfKnown };
         const cwdArg = stringArg(args, 'cwd');
-        const base = hostPath(this.sessionContext.cwd, this.env.pathClass);
+        const base = hostPath(this.sessionContext.cwd, env.pathClass);
         const normalizedCwdArg =
-          cwdArg === undefined ? undefined : normalizeUserPath(cwdArg, this.env.pathClass);
+          cwdArg === undefined ? undefined : normalizeUserPath(cwdArg, env.pathClass);
         const effectiveCwd =
           normalizedCwdArg === undefined
             ? base
@@ -202,8 +209,8 @@ export class AgentAgentsMdReminderService
         const targets = extractBashTargetDirs(
           parsed.root,
           effectiveCwd,
-          this.env.homeDir,
-        ).map((target) => hostPath(target, this.env.pathClass));
+          env.homeDir,
+        ).map((target) => hostPath(target, env.pathClass));
         if (normalizedCwdArg !== undefined && !targets.includes(effectiveCwd)) {
           targets.unshift(effectiveCwd);
         }
@@ -239,26 +246,32 @@ export class AgentAgentsMdReminderService
   }
 
   private async probeDir(dir: string): Promise<string[]> {
-    const anchor = await this.nearestExistingDir(dir);
-    if (anchor === undefined) return [];
-    const deps = { fs: this.fs };
-    const projectRoot = await findProjectRoot(deps, anchor);
-    const chain = dirsRootToLeaf(anchor, projectRoot);
-    const found: string[] = [];
-    for (const chainDir of chain) {
-      const candidates = agentsMdCandidatePaths(chainDir);
-      if (candidates.every((candidate) => this.known.has(normalize(candidate)))) continue;
-      for (const path of await findAgentsMdInDir(deps, chainDir)) {
-        found.push(normalize(path));
+    const lease = this.runtime.acquire(['fs']);
+    try {
+      const fs = lease.runtime.fs!;
+      const anchor = await this.nearestExistingDir(fs, dir);
+      if (anchor === undefined) return [];
+      const deps = { fs };
+      const projectRoot = await findProjectRoot(deps, anchor);
+      const chain = dirsRootToLeaf(anchor, projectRoot);
+      const found: string[] = [];
+      for (const chainDir of chain) {
+        const candidates = agentsMdCandidatePaths(chainDir);
+        if (candidates.every((candidate) => this.known.has(normalize(candidate)))) continue;
+        for (const path of await findAgentsMdInDir(deps, chainDir)) {
+          found.push(normalize(path));
+        }
       }
+      return found;
+    } finally {
+      lease.dispose();
     }
-    return found;
   }
 
-  private async nearestExistingDir(path: string): Promise<string | undefined> {
+  private async nearestExistingDir(fs: IHostFileSystem, path: string): Promise<string | undefined> {
     let current = path;
     for (;;) {
-      const stat = await this.fs.stat(current).catch(() => undefined);
+      const stat = await fs.stat(current).catch(() => undefined);
       if (stat?.isDirectory === true) return current;
       const parent = dirname(current);
       if (parent === current) return undefined;

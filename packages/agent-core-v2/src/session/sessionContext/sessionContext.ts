@@ -13,6 +13,12 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ScopeSeed } from '#/_base/di/scope';
 
+export interface SessionWorkspaceAssociationSnapshot {
+  readonly sessionId: string;
+  readonly workspaceId: string;
+  readonly cwd: string;
+}
+
 export interface ISessionContext {
   readonly _serviceBrand: undefined;
 
@@ -26,6 +32,16 @@ export interface ISessionContext {
 
 export const ISessionContext: ServiceIdentifier<ISessionContext> =
   createDecorator<ISessionContext>('sessionContext');
+
+export function snapshotSessionWorkspaceAssociation(
+  context: ISessionContext,
+): SessionWorkspaceAssociationSnapshot {
+  return {
+    sessionId: context.sessionId,
+    workspaceId: context.workspaceId,
+    cwd: context.cwd,
+  };
+}
 
 export function sessionContextSeed(ctx: ISessionContext): ScopeSeed {
   return [[ISessionContext as ServiceIdentifier<unknown>, ctx]];

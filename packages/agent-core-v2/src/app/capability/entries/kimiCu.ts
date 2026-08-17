@@ -433,7 +433,7 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
     }
   }
 
-  async function install(report: CapabilityInstallReporter): Promise<void> {
+  async function install(report: CapabilityInstallReporter): Promise<string | undefined> {
     if (!supported) {
       throw new Error(`kimi-cu is only supported on macOS (current: ${ctx.platform})`);
     }
@@ -514,6 +514,7 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
         { timeout: PERMISSIONS_TIMEOUT_MS },
       ).catch(() => undefined);
     }
+    return undefined;
   }
 
   return {
@@ -630,7 +631,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     };
   }
 
-  async function install(report: CapabilityInstallReporter): Promise<void> {
+  async function install(report: CapabilityInstallReporter): Promise<string | undefined> {
     if (!supported) {
       throw new Error(
         `kimi-cu is only supported on macOS or Windows x64 (current: ${ctx.platform}/${ctx.arch})`,
@@ -710,6 +711,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
         );
       }
     }
+    return undefined;
   }
 
   return {

@@ -1,5 +1,11 @@
 # @moonshot-ai/pi-tui
 
+## 0.84.3
+
+### Patch Changes
+
+- [#2917](https://github.com/MoonshotAI/kimi-code/pull/2917) [`6cf315b`](https://github.com/MoonshotAI/kimi-code/commit/6cf315b7bdea8a04cfaeba1bb8931c1730853aec) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Stop GFM autolinks at CJK/full-width punctuation so a bare URL followed by CJK text no longer swallows the CJK characters into the link target.
+
 ## 0.84.2
 
 ### Patch Changes

@@ -70,6 +70,8 @@ const V2_ONLY_RECORD_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
+  'tower_mode.enter',
+  'tower_mode.exit',
   'task.started',
   'task.terminated',
   'interaction.request',
@@ -77,7 +79,12 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'plan.revision',
   'interruptionReminder.recorded',
   'plugin.session_start',
+  'runtime.set_binding',
   'turn.ended',
+  'prompt.accepted',
+  'token_counting.measured',
+  'token_counting.truncated',
+  'token_counting.rebased',
 ]);
 
 describe('v1 wire vocabulary', () => {

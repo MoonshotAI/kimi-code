@@ -8,7 +8,7 @@
  */
 
 /** Which scope a route resolves before dispatching. */
-export type ScopeKind = 'core' | 'workspace' | 'session' | 'agent';
+export type ScopeKind = 'core' | 'session' | 'agent';
 
 /** The client-facing channel contract (request/response + future events). */
 export interface IChannel {

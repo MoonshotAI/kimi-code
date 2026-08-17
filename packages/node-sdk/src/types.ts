@@ -16,11 +16,20 @@ export type JsonObject = { readonly [key: string]: JsonValue };
 
 export type Unsubscribe = () => void;
 
+export interface AgentRuntimeBinding {
+  readonly workspaceId: string;
+  readonly runtimeId: string;
+}
+
 export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
 
 export type {
   AgentReplayRecord,
   AgentBackgroundTaskInfo,
+  AppMcpServerAuthState,
+  AppMcpServerConfig,
+  AppMcpServerDescriptor,
+  AppMcpServerInspection,
   BackgroundConfig,
   BackgroundTaskInfo,
   BackgroundTaskStatus,
@@ -44,7 +53,10 @@ export type {
   KimiConfig,
   KimiConfigPatch,
   LoopControl,
+  McpManagedServerInfo,
   McpServerInfo,
+  McpServerLocator,
+  McpServerSource,
   McpStartupMetrics,
   ModelAlias,
   MoonshotServiceConfig,
@@ -101,6 +113,17 @@ export interface WorkspaceTrustInfo {
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
 }
 
+/** Metadata of one upload in the engine's daemon file store. */
+export type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
+
+/** Input for `uploadFile`: the upload's display name and MIME type. */
+export interface UploadFileOptions {
+  readonly name: string;
+  readonly mimeType?: string;
+  /** Optional daemon-side TTL for staging uploads. */
+  readonly expiresInSec?: number;
+}
+
 export interface CreateGoalInput {
   readonly objective: string;
   readonly replace?: boolean;
@@ -110,6 +133,11 @@ export type TextPromptPart = Extract<ContentPart, { type: 'text' }>;
 export type PromptPart = Extract<ContentPart, { type: 'text' | 'image_url' | 'video_url' }>;
 
 export type PromptInput = readonly PromptPart[];
+
+export interface PromptSkillActivation {
+  readonly name: string;
+  readonly args?: string;
+}
 
 export interface KimiHarnessOptions {
   readonly identity?: KimiHostIdentity | undefined;

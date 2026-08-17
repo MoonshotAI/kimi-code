@@ -239,11 +239,12 @@ describe('kimi-webbridge entry', () => {
       optional: true,
     });
     const reports: string[] = [];
-    await entry.install((step) => reports.push(step));
+    const note = await entry.install((step) => reports.push(step));
 
     expect(plugins.installs).toEqual([
       'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip',
     ]);
+    expect(note).toBe('user-skill-migrated');
     expect(reports).toContain('standalone-skill-migration');
     await expect(access(path.join(kimiHome, 'skills', 'kimi-webbridge'))).rejects.toThrow();
     await expect(access(path.join(userHome, '.agents', 'skills', 'kimi-webbridge'))).rejects.toThrow();
@@ -302,8 +303,9 @@ describe('kimi-webbridge entry', () => {
       makeCtx({ plugins: plugins.service, hostProcess: host.service, fetchImpl }),
     );
 
-    await entry.install(() => {});
+    const note = await entry.install(() => {});
     expect(host.calls).toEqual([]);
+    expect(note).toBeUndefined();
   });
 
   it('reinstalls the latest binary and plugin for a ready capability', async () => {

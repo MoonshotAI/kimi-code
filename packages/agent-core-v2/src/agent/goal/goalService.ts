@@ -526,7 +526,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     if (objective.length > MAX_GOAL_OBJECTIVE_LENGTH) {
       throw new Error2(
         ErrorCodes.GOAL_OBJECTIVE_TOO_LONG,
-        `Goal objective cannot exceed ${MAX_GOAL_OBJECTIVE_LENGTH} characters`,
+        `Goal objective cannot exceed ${MAX_GOAL_OBJECTIVE_LENGTH} characters. Put long content in a file and reference the file path.`,
       );
     }
     return objective;

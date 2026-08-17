@@ -2,9 +2,11 @@ import { chmod, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2';
+import { IModelCatalog, IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2';
+import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
+import { FakeRuntime } from '@moonshot-ai/agent-core-v2/runtime/fakeRuntime';
 import { ErrorCode } from '../src/protocol/error-codes';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -102,14 +104,27 @@ describe('server-v2 /api/v1 fs routes', () => {
     return body.data.id;
   }
 
-  async function postFs<T>(id: string, action: string, body: unknown): Promise<Envelope<T>> {
+  async function postFs<T>(id: string, action: string, body: unknown, runtimeId = 'local'): Promise<Envelope<T>> {
     const res = await fetch(`${base}/api/v1/sessions/${id}/fs:${action}`, {
       method: 'POST',
       headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
-      body: JSON.stringify(body),
+      body: JSON.stringify({ runtime_id: runtimeId, ...(body as object) }),
     } as never);
     return (await res.json()) as Envelope<T>;
   }
+
+  it('defaults fs actions to the local runtime when runtime_id is omitted', async () => {
+    await writeFile(join(work!, 'a.txt'), 'hello');
+    const id = await createSession();
+    const res = await fetch(`${base}/api/v1/sessions/${id}/fs:stat`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ path: 'a.txt' }),
+    } as never);
+    const body = (await res.json()) as Envelope<FsEntryWire>;
+    expect(body.code).toBe(0);
+    expect(body.data.name).toBe('a.txt');
+  });
 
   it('fs:stat returns a file entry with the protocol shape', async () => {
     await writeFile(join(work!, 'a.txt'), 'hello');
@@ -141,6 +156,44 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(body.data.content).toBe('hello world');
     expect(body.data.encoding).toBe('utf-8');
     expect(body.data.size).toBe(11);
+  });
+
+  it('fs:read uses the selected non-local runtime and mapped workspace root', async () => {
+    await writeFile(join(work!, 'selected.txt'), 'local');
+    const remote = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-'));
+    await writeFile(join(remote, 'selected.txt'), 'remote');
+    const id = await createSession();
+    const provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
+      id: 'remote-test-provider',
+      imports: { root: [], imports: [], local: [] },
+      attach: async (context, host) => {
+        const runtime = Object.assign(
+          new FakeRuntime(
+            { workspaceId: context.id, runtimeId: 'remote-test', generation: 'remote-generation' },
+            {
+              capabilities: ['fs'],
+              mapWorkspaceRoots: () => ({ workDir: remote, additionalDirs: [] }),
+            },
+          ),
+          { fs: new HostFileSystem() },
+        );
+        const registration = host.registerRuntime(runtime);
+        return { dispose: () => registration.remove() };
+      },
+    });
+    try {
+      const body = await postFs<{ content: string }>(
+        id,
+        'read',
+        { path: 'selected.txt' },
+        'remote-test',
+      );
+      expect(body.code).toBe(0);
+      expect(body.data.content).toBe('remote');
+    } finally {
+      await provider.dispose();
+      await rm(remote, { recursive: true, force: true });
+    }
   });
 
   it('fs:read maps a directory to FS_IS_DIRECTORY', async () => {
@@ -292,7 +345,7 @@ describe('server-v2 /api/v1 fs routes', () => {
       const body = await postFs<null>(id, 'read', { path: 'docs/secret.txt' });
       expect(body.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
 
-      const res = await fetch(`${base}/api/v1/sessions/${id}/fs/docs/secret.txt:download`, {
+      const res = await fetch(`${base}/api/v1/sessions/${id}/fs/docs/secret.txt:download?runtime_id=local`, {
         headers: authHeaders(server as RunningServer),
       } as never);
       const downloadBody = (await res.json()) as Envelope<null>;
@@ -329,7 +382,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     await writeFile(join(work!, 'a.txt'), 'download-me');
     const id = await createSession();
 
-    const res = await fetch(`${base}/api/v1/sessions/${id}/fs/a.txt:download`, {
+    const res = await fetch(`${base}/api/v1/sessions/${id}/fs/a.txt:download?runtime_id=local`, {
       headers: authHeaders(server as RunningServer),
     } as never);
     expect(res.status).toBe(200);
@@ -338,10 +391,42 @@ describe('server-v2 /api/v1 fs routes', () => {
     const etag = res.headers.get('etag');
     expect(etag).toBeTruthy();
 
-    const cached = await fetch(`${base}/api/v1/sessions/${id}/fs/a.txt:download`, {
+    const cached = await fetch(`${base}/api/v1/sessions/${id}/fs/a.txt:download?runtime_id=local`, {
       headers: authHeaders(server as RunningServer, { 'if-none-match': etag as string }),
     } as never);
     expect(cached.status).toBe(304);
+  });
+
+  it('GET fs/{path}:download defaults to the local runtime when runtime_id is omitted', async () => {
+    await writeFile(join(work!, 'b.txt'), 'compat-download');
+    const id = await createSession();
+
+    const res = await fetch(`${base}/api/v1/sessions/${id}/fs/b.txt:download`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('compat-download');
+  });
+
+  it('GET fs/{path}:download untracks the stream from the runtime generation after completion', async () => {
+    await writeFile(join(work!, 'c.txt'), 'tracked-download');
+    const id = await createSession();
+    const instance = server!.core.accessor.get(IWorkspaceInstanceManager).findByRoot(work!);
+    expect(instance).toBeDefined();
+    const generations = (instance!.runtimes as unknown as {
+      currentGenerations: Map<string, { resources: Set<unknown> }>;
+    }).currentGenerations;
+    const resources = generations.get('local')!.resources;
+    const baseline = resources.size;
+
+    for (let i = 0; i < 2; i += 1) {
+      const res = await fetch(`${base}/api/v1/sessions/${id}/fs/c.txt:download?runtime_id=local`, {
+        headers: authHeaders(server as RunningServer),
+      } as never);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('tracked-download');
+      await vi.waitFor(() => expect(resources.size).toBe(baseline));
+    }
   });
 
   // -------------------------------------------------------------------------
@@ -352,7 +437,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     const res = await fetch(`${base}/api/v1/workspace/fs:search`, {
       method: 'POST',
       headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
-      body: JSON.stringify(body),
+      body: JSON.stringify({ runtime_id: 'local', ...(body as object) }),
     } as never);
     return (await res.json()) as Envelope<T>;
   }
@@ -393,6 +478,18 @@ describe('server-v2 /api/v1 fs routes', () => {
     });
     expect(body.code).toBe(0);
     expect(body.data.items.map((i) => i.path)).toContain('eta.ts');
+  });
+
+  it('workspace fs:search defaults to the local runtime when runtime_id is omitted', async () => {
+    await writeFile(join(work!, 'theta.ts'), '');
+    const res = await fetch(`${base}/api/v1/workspace/fs:search`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ workspace: work, query: 'theta' }),
+    } as never);
+    const body = (await res.json()) as Envelope<{ items: { path: string }[]; truncated: boolean }>;
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('theta.ts');
   });
 
   it('workspace fs:search maps an unknown ref to WORKSPACE_NOT_FOUND', async () => {

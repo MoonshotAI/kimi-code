@@ -91,6 +91,23 @@ describe('promptSubmissionSchema', () => {
     expect(parsed.plan_mode).toBe(false);
   });
 
+  it('preserves a client-chosen prompt_id through parsing', () => {
+    const parsed = promptSubmissionSchema.parse({
+      content: [{ type: 'text', text: 'hi' }],
+      prompt_id: 'client-prompt-1',
+    });
+    expect(parsed.prompt_id).toBe('client-prompt-1');
+  });
+
+  it('rejects an empty prompt_id', () => {
+    expect(
+      promptSubmissionSchema.safeParse({
+        content: [{ type: 'text', text: 'hi' }],
+        prompt_id: '',
+      }).success,
+    ).toBe(false);
+  });
+
   it('rejects empty content array', () => {
     expect(
       promptSubmissionSchema.safeParse({

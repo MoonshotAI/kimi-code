@@ -9,7 +9,6 @@ import {
   ErrorCodes,
   IAgentGoalService,
   IAgentLifecycleService,
-  IWorkspaceLifecycleService,
   Error2,
   getLiveSessionById,
   type IScopeHandle,
@@ -45,10 +44,6 @@ export async function resolveScope(
   switch (scopeKind) {
     case 'core':
       return core;
-    case 'workspace': {
-      const workspaceId = params['workspace_id'] ?? '';
-      return core.accessor.get(IWorkspaceLifecycleService).handlerFor({ workspaceId });
-    }
     case 'session': {
       const sessionId = params['session_id'] ?? '';
       const session = getLiveSessionById(core.accessor, sessionId);

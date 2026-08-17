@@ -102,6 +102,7 @@ import {
 
 import { toWireApproval } from '../../../routes/approvals';
 import { toWireQuestion } from '../../../routes/questions';
+import { projectPromptContentParts } from '../../../services/messages/messageProjection';
 import { readLegacyStatus, toLegacyPhase } from '../../../services/legacyStatus/legacyStatus';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
 import { InFlightTurnTracker } from './inFlightTurnTracker';
@@ -904,6 +905,32 @@ export class SessionEventBroadcaster {
       );
       return;
     }
+    if (event.type === 'event.plugin.changed') {
+      // Plugin set mutations (install/enable/disable/remove from ANY client)
+      // fan out so every host re-reads instead of caching stale rows. Bare
+      // signal by design — the payload is the services' own REST surfaces.
+      void this.dispatchGlobal({
+        type: 'event.plugin.changed',
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(GLOBAL_SESSION_ID, 'event.plugin.changed', error),
+      );
+      return;
+    }
+    if (event.type === 'event.capability.changed') {
+      const payload = capabilityChangedPayload(event.payload);
+      if (payload === undefined) return;
+      void this.dispatchGlobal({
+        type: 'event.capability.changed',
+        ...payload,
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(GLOBAL_SESSION_ID, 'event.capability.changed', error),
+      );
+      return;
+    }
     if (event.type === 'event.config.warning') {
       const payload = configWarningPayload(event.payload);
       if (payload === undefined) return;
@@ -1128,7 +1155,35 @@ export class SessionEventBroadcaster {
     // ported from the former `record.signal(agentEvent)` call sites); the declared
     // `DomainEventMap` payload types are deliberately wider than the protocol
     // contract, hence the assertion via `unknown`.
-    const wireEvent = { ...event, agentId, sessionId } as unknown as Event;
+    let wireEvent: Event;
+    if (event.type === 'turn.started') {
+      // `promptAttachments` is an internal transcript-projection input, not part
+      // of the v1 wire contract (`turnStartedEventSchema` stops at
+      // {type, turnId, origin, prompt?, promptId?}). Strip it at the edge so the
+      // payload — video-prompt turns included — keeps exactly the
+      // pre-attachment field set (plus the optional `promptId` echo). The
+      // journal records this same stripped envelope, so the one strip covers
+      // live fan-out and every replay path (memory tail + cursor read).
+      const { promptAttachments: _internal, ...wireFields } = event;
+      wireEvent = { ...wireFields, agentId, sessionId } as unknown as Event;
+    } else if (event.type === 'prompt.steered' || event.type === 'prompt.queued') {
+      // `content` arrives as raw engine content parts carrying internal
+      // `kimi-file://<id>` daemon references. Each self-contained ref
+      // projects to one `{kind:'session_media'}` part, so neither the
+      // transient upload nor the internal URL leaves the process (for
+      // steered, the declared `promptSteeredEventSchema` content is
+      // `messageContentSchema`).
+      // Projecting before the journal write covers live fan-out and every
+      // replay path with one mapping.
+      wireEvent = {
+        ...event,
+        content: projectPromptContentParts(event.content),
+        agentId,
+        sessionId,
+      } as unknown as Event;
+    } else {
+      wireEvent = { ...event, agentId, sessionId } as unknown as Event;
+    }
     const volatile = isVolatileSignal(event.type);
     state.queue = state.queue
       .then(() => this.dispatch(state, wireEvent, volatile))
@@ -1380,6 +1435,8 @@ function isGlobalEvent(type: string): boolean {
     type.startsWith('event.session.') ||
     type.startsWith('event.workspace.') ||
     type.startsWith('event.config.') ||
+    type.startsWith('event.plugin.') ||
+    type.startsWith('event.capability.') ||
     type.startsWith('event.di.')
   );
 }
@@ -1691,6 +1748,35 @@ function sessionCreatedPayload(
  * entry rejects the whole batch — the publisher always sends the full current
  * warning set, so a partial frame would be a lie by omission.
  */
+interface CapabilityChangedPayload {
+  capability_id: string;
+  install: {
+    running: boolean;
+    step?: string;
+    percent?: number;
+    error?: string;
+    note?: string;
+  };
+}
+
+function capabilityChangedPayload(payload: unknown): CapabilityChangedPayload | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const id = (payload as { capability_id?: unknown }).capability_id;
+  if (typeof id !== 'string' || id.length === 0) return undefined;
+  const install = (payload as { install?: unknown }).install;
+  if (typeof install !== 'object' || install === null) return undefined;
+  const running = (install as { running?: unknown }).running;
+  if (typeof running !== 'boolean') return undefined;
+  const out: CapabilityChangedPayload['install'] = { running };
+  for (const key of ['step', 'error', 'note'] as const) {
+    const value = (install as Record<string, unknown>)[key];
+    if (typeof value === 'string') out[key] = value;
+  }
+  const percent = (install as { percent?: unknown }).percent;
+  if (typeof percent === 'number') out.percent = percent;
+  return { capability_id: id, install: out };
+}
+
 function configWarningPayload(payload: unknown): { warnings: ConfigWarningItem[] } | undefined {
   if (typeof payload !== 'object' || payload === null) return undefined;
   const warnings = (payload as { warnings?: unknown }).warnings;

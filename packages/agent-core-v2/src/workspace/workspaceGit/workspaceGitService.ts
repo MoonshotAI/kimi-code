@@ -6,9 +6,8 @@
  * Bound at Workspace scope.
  */
 
-import { LifecycleScope } from '#/app/scopes';
 
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { type FsDiffResponse, type FsGitStatusResponse, IGitService } from '#/app/git/git';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
@@ -19,22 +18,15 @@ export class WorkspaceGitService implements IWorkspaceGitService {
 
   constructor(
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
-    @IGitService private readonly git: IGitService,
+    @ref(IGitService) private readonly git: LiveRef<IGitService>,
   ) {}
 
   status(pathFilter?: ReadonlySet<string>): Promise<FsGitStatusResponse> {
-    return this.git.status(this.workspace.cwd, pathFilter);
+    return this.git.current!.status(this.workspace.cwd, pathFilter);
   }
 
   diff(relPath: string, absPath: string): Promise<FsDiffResponse> {
-    return this.git.diff(this.workspace.cwd, relPath, absPath);
+    return this.git.current!.diff(this.workspace.cwd, relPath, absPath);
   }
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceGitService,
-  WorkspaceGitService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceGit',
-);

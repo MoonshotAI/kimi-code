@@ -8,7 +8,7 @@ import type { TokenUsage } from '#/kosong/contract/usage';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IWireService } from '#/wire/wire';
 
-import { createTestAgent, type TestAgentContext } from '../../harness';
+import { createTestAgent, InMemoryWireRecordPersistence, type TestAgentContext } from '../../harness';
 
 function totalOf(usage: TokenUsage | undefined): number {
   if (usage === undefined) return 0;
@@ -195,6 +195,35 @@ describe('Agent token counting', () => {
       expect(counting.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
     } finally {
       void estimated.dispose();
+    }
+  });
+
+  it('keeps the measured size across a close → resume round trip', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    const live = createTestAgent({ persistence });
+    try {
+      live.appendTurnExchange('u1', 'a1', 1_000);
+      live.appendTurnExchange('u2', 'a2', 2_000);
+      const liveCounting = live.get(IAgentTokenCountingService);
+      expect(liveCounting.statusSize()).toBe(2_000);
+      await live.get(IWireService).flush();
+
+      expect(persistence.records.map((record) => record.type)).toContain('token_counting.measured');
+
+      const resumed = createTestAgent({ persistence, autoConfigure: false });
+      try {
+        await resumed.restorePersisted();
+        const resumedCounting = resumed.get(IAgentTokenCountingService);
+        expect(resumed.get(IWireService).getModel(TokenCountingModel)).toEqual(
+          live.get(IWireService).getModel(TokenCountingModel),
+        );
+        expect(resumedCounting.latestMeasured()).toBe(2_000);
+        expect(resumedCounting.statusSize()).toBe(liveCounting.statusSize());
+      } finally {
+        await resumed.dispose();
+      }
+    } finally {
+      await live.dispose();
     }
   });
 

@@ -15,7 +15,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import type { ISessionProcessRunner } from '#/session/process/processRunner';
+import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { createFakeHostFs, createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
 import {
   createCommandRunner,
@@ -26,7 +26,7 @@ import {
 
 interface PlanFakes {
   readonly fs: IHostFileSystem;
-  readonly runner: ISessionProcessRunner;
+  readonly runner: IHostProcessService;
 }
 
 function createPlanFakes(overrides: Partial<IHostFileSystem> = {}): PlanFakes {
@@ -119,13 +119,13 @@ describe('Plan service', () => {
     }) as IHostFileSystem;
   }
 
-  function delegatingRunner(): ISessionProcessRunner {
+  function delegatingRunner(): IHostProcessService {
     return new Proxy(createPlanFakes().runner, {
       get(_target, prop, receiver) {
         const value = Reflect.get(activeFakes.runner, prop, receiver);
         return typeof value === 'function' ? value.bind(activeFakes.runner) : value;
       },
-    }) as ISessionProcessRunner;
+    }) as IHostProcessService;
   }
 
   function useFakes(fakes: PlanFakes): void {
@@ -499,7 +499,7 @@ describe('Plan service', () => {
       const { files, fakes: baseFakes } = createPlanFileFakes(undefined);
       const fakes: PlanFakes = {
         fs: baseFakes.fs,
-        runner: createFakeProcessRunner({ exec }),
+        runner: createFakeProcessRunner({ spawn: exec }),
       };
       useFakes(fakes);
       useTools(['ExitPlanMode', 'Bash']);
@@ -714,8 +714,9 @@ describe('Plan service', () => {
         [wire] permission.set_mode         { "mode": "yolo", "time": "<time>" }
         [wire] plan_mode.enter             { "id": "test-plan", "time": "<time>" }
         [emit] agent.status.updated        { "planMode": true }
+        [wire] prompt.accepted             { "promptId": "<msg-1>", "time": "<time>" }
         [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Inspect without mutating files" } ], "origin": { "kind": "user" }, "time": "<time>" }
-        [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Inspect without mutating files" }
+        [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Inspect without mutating files", "promptId": "<msg-1>" }
         [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
         [emit] context.spliced             { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Inspect without mutating files" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
         [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Inspect without mutating files" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
@@ -733,6 +734,7 @@ describe('Plan service', () => {
         [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "streaming", "stream": "tool_call", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
         [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 565, "output": 23, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
         [emit] agent.status.updated        { "usage": { "byModel": { "mock-model": { "inputOther": 565, "output": 23, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 565, "output": 23, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 565, "output": 23, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+        [wire] token_counting.measured     { "length": 3, "tokens": 588, "time": "<time>" }
         [emit] agent.status.updated        { "contextTokens": 588 }
         [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "I will inspect safely." } }, "time": "<time>" }
         [emit] tool.call.started           { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf plan-safe", "timeout": 60 }, "description": "Running: printf plan-safe", "display": { "kind": "command", "command": "printf plan-safe", "cwd": "<cwd>", "language": "bash" } }
@@ -752,6 +754,7 @@ describe('Plan service', () => {
         [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "streaming", "stream": "assistant", "step": 2, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
         [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 592, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
         [emit] agent.status.updated        { "usage": { "byModel": { "mock-model": { "inputOther": 1157, "output": 35, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 1157, "output": 35, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 1157, "output": 35, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+        [wire] token_counting.measured     { "length": 5, "tokens": 604, "time": "<time>" }
         [emit] agent.status.updated        { "contextTokens": 604 }
         [emit] turn.step.completed         { "turnId": 0, "step": 2, "stepId": "<uuid-4>", "usage": { "inputOther": 592, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
         [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 2, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
@@ -791,8 +794,9 @@ describe('Plan service', () => {
         [wire] permission.set_mode         { "mode": "yolo", "time": "<time>" }
         [wire] plan_mode.enter             { "id": "test-plan", "time": "<time>" }
         [emit] agent.status.updated        { "planMode": true }
+        [wire] prompt.accepted             { "promptId": "<msg-1>", "time": "<time>" }
         [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Remove forbidden.txt" } ], "origin": { "kind": "user" }, "time": "<time>" }
-        [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Remove forbidden.txt" }
+        [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Remove forbidden.txt", "promptId": "<msg-1>" }
         [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
         [emit] context.spliced             { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Remove forbidden.txt" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
         [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Remove forbidden.txt" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
@@ -810,6 +814,7 @@ describe('Plan service', () => {
         [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "streaming", "stream": "tool_call", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
         [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 562, "output": 23, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
         [emit] agent.status.updated        { "usage": { "byModel": { "mock-model": { "inputOther": 562, "output": 23, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 562, "output": 23, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 562, "output": 23, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+        [wire] token_counting.measured     { "length": 3, "tokens": 585, "time": "<time>" }
         [emit] agent.status.updated        { "contextTokens": 585 }
         [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "I will mutate a file." } }, "time": "<time>" }
         [emit] tool.call.started           { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "args": { "command": "rm forbidden.txt", "timeout": 60 }, "description": "Running: rm forbidden.txt", "display": { "kind": "command", "command": "rm forbidden.txt", "cwd": "<cwd>", "language": "bash" } }
@@ -829,6 +834,7 @@ describe('Plan service', () => {
         [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "streaming", "stream": "assistant", "step": 2, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
         [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 588, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
         [emit] agent.status.updated        { "usage": { "byModel": { "mock-model": { "inputOther": 1150, "output": 32, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 1150, "output": 32, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 1150, "output": 32, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+        [wire] token_counting.measured     { "length": 5, "tokens": 597, "time": "<time>" }
         [emit] agent.status.updated        { "contextTokens": 597 }
         [emit] turn.step.completed         { "turnId": 0, "step": 2, "stepId": "<uuid-4>", "usage": { "inputOther": 588, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
         [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 2, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }

@@ -20,6 +20,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   renameSync,
   unlinkSync,
   writeSync,
@@ -82,6 +83,15 @@ export class JsonFileStore {
       return JSON.parse(raw) as T;
     } catch {
       return undefined;
+    }
+  }
+
+  /** Filenames in the store dir ending with `suffix`; empty when the dir is missing. */
+  list(suffix: string): string[] {
+    try {
+      return readdirSync(this.dir).filter((file) => file.endsWith(suffix));
+    } catch {
+      return [];
     }
   }
 

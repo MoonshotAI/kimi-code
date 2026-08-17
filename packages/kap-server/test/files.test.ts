@@ -1,5 +1,5 @@
 /**
- * `/api/v1/files` end-to-end for the v2 server.
+ * `/api/v1/files` and session-canonical media downloads end-to-end for the v2 server.
  *
  * Mirrors the v1 server's files e2e (upload → download → delete → 404,
  * large uploads with no size cap, unknown ids, index persistence across
@@ -12,6 +12,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import {
+  getLiveSessionById,
+  IFileService,
+  ISessionManager,
+  ISessionMediaStore,
+} from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -110,6 +116,64 @@ function buildMultipart(parts: {
     body: Buffer.concat(chunks),
     contentType: `multipart/form-data; boundary=${boundary}`,
   };
+}
+
+async function createSession(r: RunningServer): Promise<string> {
+  const res = await appOf(r).inject({
+    method: 'POST',
+    url: '/api/v1/sessions',
+    payload: { metadata: { cwd: home } },
+    headers: { 'content-type': 'application/json' },
+  });
+  const envelope = res.json() as Envelope<{ id: string }>;
+  if (envelope.code !== 0 || envelope.data === null) {
+    throw new Error(`failed to create session: ${res.body}`);
+  }
+  return envelope.data.id;
+}
+
+async function uploadFile(
+  r: RunningServer,
+  data: Buffer,
+  name: string,
+  mediaType: string,
+): Promise<{ id: string; name: string; media_type: string; size: number }> {
+  const multipart = buildMultipart({
+    file: { fieldName: 'file', filename: name, contentType: mediaType, data },
+  });
+  const res = await appOf(r).inject({
+    method: 'POST',
+    url: '/api/v1/files',
+    payload: multipart.body,
+    headers: { 'content-type': multipart.contentType },
+  });
+  const envelope = res.json() as Envelope<{
+    id: string;
+    name: string;
+    media_type: string;
+    size: number;
+  }>;
+  if (envelope.code !== 0 || envelope.data === null) {
+    throw new Error(`failed to upload file: ${res.body}`);
+  }
+  return envelope.data;
+}
+
+async function materializeUploadedFile(
+  r: RunningServer,
+  sessionId: string,
+  meta: { id: string; name: string; media_type: string; size: number },
+): Promise<void> {
+  const session = getLiveSessionById(r.core.accessor, sessionId);
+  if (session === undefined) throw new Error(`session ${sessionId} is not live`);
+  const uploaded = await r.core.accessor.get(IFileService).get(meta.id);
+  await session.accessor.get(ISessionMediaStore).materialize({
+    fileId: meta.id,
+    name: meta.name,
+    mimeType: meta.media_type,
+    size: meta.size,
+    stream: () => uploaded.stream(),
+  });
 }
 
 describe('POST /api/v1/files (server-v2)', () => {
@@ -331,5 +395,138 @@ describe('POST /api/v1/files (server-v2)', () => {
     });
     expect(res.statusCode).toBe(200);
     expect((res.json() as Envelope).code).toBe(40001);
+  });
+});
+
+describe('GET /api/v1/sessions/{session_id}/media/{file_id} (server-v2)', () => {
+  it('serves the session copy after the transient upload is deleted', async () => {
+    const r = await boot();
+    const data = Buffer.from('canonical image bytes');
+    const sessionId = await createSession(r);
+    const meta = await uploadFile(r, data, 'pasted image.png', 'image/png');
+    await materializeUploadedFile(r, sessionId, meta);
+
+    await appOf(r).inject({ method: 'DELETE', url: `/api/v1/files/${meta.id}` });
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${sessionId}/media/${meta.id}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('image/png');
+    expect(res.headers['content-length']).toBe(String(data.length));
+    expect(String(res.headers['content-disposition'])).toMatch(
+      /inline; filename="pasted image\.png"/,
+    );
+    expect(res.rawPayload).toEqual(data);
+  });
+
+  it('serves the staged upload before intake materializes the session copy', async () => {
+    const r = await boot();
+    const data = Buffer.from('staged upload bytes');
+    const sessionId = await createSession(r);
+    const meta = await uploadFile(r, data, 'staged.png', 'image/png');
+
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${sessionId}/media/${meta.id}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('image/png');
+    expect(res.headers['content-length']).toBe(String(data.length));
+    expect(res.rawPayload).toEqual(data);
+  });
+
+  it('returns file-not-found when neither the session store nor the staged upload holds it', async () => {
+    const r = await boot();
+    const sessionId = await createSession(r);
+
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${sessionId}/media/f_does_not_exist`,
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect((res.json() as Envelope).code).toBe(40407);
+  });
+
+  it('serves a requested byte range from the session copy', async () => {
+    const r = await boot();
+    const data = Buffer.from('0123456789abcdefghijklmnopqrstuvwxyz');
+    const sessionId = await createSession(r);
+    const meta = await uploadFile(r, data, 'clip.mp4', 'video/mp4');
+    await materializeUploadedFile(r, sessionId, meta);
+
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${sessionId}/media/${meta.id}`,
+      headers: { range: 'bytes=4-9' },
+    });
+
+    expect(res.statusCode).toBe(206);
+    expect(res.headers['content-type']).toBe('video/mp4');
+    expect(res.headers['content-range']).toBe(`bytes 4-9/${data.length}`);
+    expect(res.headers['content-length']).toBe('6');
+    expect(res.rawPayload).toEqual(data.subarray(4, 10));
+  });
+
+  it('serves the session copy after a server restart', async () => {
+    let r = await boot();
+    const data = Buffer.from('restart-safe media');
+    const sessionId = await createSession(r);
+    const meta = await uploadFile(r, data, 'restart.png', 'image/png');
+    await materializeUploadedFile(r, sessionId, meta);
+    await appOf(r).inject({ method: 'DELETE', url: `/api/v1/files/${meta.id}` });
+
+    await r.close();
+    server = undefined;
+    r = await boot();
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${sessionId}/media/${meta.id}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('image/png');
+    expect(res.rawPayload).toEqual(data);
+  });
+
+  it('serves the copied media from a forked session', async () => {
+    const r = await boot();
+    const data = Buffer.from('forked media');
+    const sessionId = await createSession(r);
+    const meta = await uploadFile(r, data, 'fork.png', 'image/png');
+    await materializeUploadedFile(r, sessionId, meta);
+    const fork = await r.core.accessor.get(ISessionManager).fork({
+      sourceSessionId: sessionId,
+    });
+
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${fork.id}/media/${meta.id}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('image/png');
+    expect(String(res.headers['content-disposition'])).toMatch(/filename="fork\.png"/);
+    expect(res.rawPayload).toEqual(data);
+  });
+
+  it('returns session-not-found after the owning session is deleted', async () => {
+    const r = await boot();
+    const data = Buffer.from('delete-owned media');
+    const sessionId = await createSession(r);
+    const meta = await uploadFile(r, data, 'delete.png', 'image/png');
+    await materializeUploadedFile(r, sessionId, meta);
+    await r.core.accessor.get(ISessionManager).delete(sessionId);
+
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${sessionId}/media/${meta.id}`,
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect((res.json() as Envelope).code).toBe(40401);
   });
 });

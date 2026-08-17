@@ -25,6 +25,7 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { IDisposable } from '#/_base/di/lifecycle';
 import type { Event } from '#/_base/event';
 import type { AgentProfileContribution } from './agentProfileContribution';
 
@@ -46,6 +47,7 @@ export interface IAgentProfileRegistry {
   readonly onDidChange: Event<AgentProfileRegistryChange>;
 
   entries(): readonly AgentProfileRegistration[];
+  register(registration: AgentProfileRegistration): IDisposable;
 }
 
 export const IAgentProfileRegistry: ServiceIdentifier<IAgentProfileRegistry> =

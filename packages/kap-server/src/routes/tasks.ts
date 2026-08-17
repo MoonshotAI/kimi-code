@@ -375,6 +375,15 @@ function toWireTask(
   if (info.kind === 'agent' && info.thinkingEffort !== undefined) {
     base.thinking_effort = info.thinkingEffort;
   }
+  if (info.kind === 'agent' && info.agentId !== undefined) {
+    base.agent_id = info.agentId;
+  }
+  if (info.kind === 'agent' && info.subagentType !== undefined) {
+    base.subagent_type = info.subagentType;
+  }
+  if (info.kind === 'agent' && info.parentToolCallId !== undefined) {
+    base.parent_tool_call_id = info.parentToolCallId;
+  }
   if (output !== undefined) {
     base.output_preview = output.preview;
     base.output_bytes = output.bytes;

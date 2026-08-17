@@ -10,7 +10,9 @@
  * document always carries the `agents` / `custom` maps — seeded at creation,
  * backfilled and persisted on load for documents written before the seeding
  * existed (without touching `updatedAt`, so a format heal never reorders
- * session listings). `updatedAt` tracks content activity only: management
+ * session listings) — and `archived` always reads back as a boolean:
+ * documents written before the flag existed (including v1-engine documents,
+ * which never carry it) normalize to not-archived at load. `updatedAt` tracks content activity only: management
  * writes (rename via `setTitle`, archive/restore via `setArchived`, the
  * generated-title write-back) keep the persisted value through
  * `touchUpdatedAt: false`, an explicit `patch.updatedAt` always wins (fork
@@ -305,6 +307,7 @@ export function normalizeSessionMeta(raw: SessionMeta, sessionId: string): Sessi
     titleKind,
     createdAt: toEpochMs(legacyCreatedAt),
     updatedAt: toEpochMs(legacyUpdatedAt),
+    archived: clean.archived === true,
   };
 }
 

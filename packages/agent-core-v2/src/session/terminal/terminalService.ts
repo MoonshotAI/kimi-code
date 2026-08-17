@@ -23,10 +23,13 @@ import type {
   TerminalOutputMessage,
   TerminalProcess,
 } from '#/os/interface/terminal';
-import { IHostTerminalService } from '#/os/interface/terminal';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+
+import type { RuntimeLease } from '#/runtime/runtime';
+import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
@@ -35,6 +38,7 @@ const DEFAULT_MAX_BUFFERED_FRAMES = 2000;
 interface TerminalRecord {
   terminal: Terminal;
   process: TerminalProcess;
+  lease: RuntimeLease;
   sinks: Map<string, TerminalAttachSink>;
   buffer: TerminalFrame[];
   nextSeq: number;
@@ -70,7 +74,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
   private readonly records = new Map<string, TerminalRecord>();
 
   constructor(
-    @IHostTerminalService private readonly terminalService: IHostTerminalService,
+    @IRuntimeResolver private readonly runtimeResolver: IRuntimeResolver,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @ISessionContext private readonly sessionContext: ISessionContext,
   ) {
@@ -78,14 +82,23 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
   }
 
   async create(input: CreateTerminalRequest): Promise<Terminal> {
-    const cwd =
-      input.cwd === undefined
-        ? this.workspace.workDir
-        : this.workspace.assertAllowed(input.cwd, 'execute');
-    const shell = input.shell ?? defaultShell();
     const cols = input.cols ?? DEFAULT_COLS;
     const rows = input.rows ?? DEFAULT_ROWS;
-    const process = await this.terminalService.spawn({ cwd, shell, cols, rows });
+    const lease = this.runtimeResolver.acquire(
+      { workspaceId: this.sessionContext.workspaceId, runtimeId: input.runtime_id },
+      ['terminal'],
+    );
+    const view = new RuntimeWorkspaceView(lease.runtime, this.workspace);
+    const cwd = input.cwd === undefined ? view.workDir : view.resolve(input.cwd);
+    const shell = input.shell ?? lease.runtime.environment.shellPath;
+    let process: TerminalProcess;
+    try {
+      process = await lease.runtime.terminal!.spawn({ cwd, shell, cols, rows });
+      lease.track({ dispose: () => process.kill() });
+    } catch (error) {
+      lease.dispose();
+      throw error;
+    }
     const terminal: Terminal = {
       id: `term_${randomUUID()}`,
       session_id: this.sessionContext.sessionId,
@@ -99,6 +112,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
     const record: TerminalRecord = {
       terminal,
       process,
+      lease,
       sinks: new Map(),
       buffer: [],
       nextSeq: 0,
@@ -172,6 +186,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
   override dispose(): void {
     for (const record of this.records.values()) {
       disposeAll(record.disposables);
+      record.lease.dispose();
       try {
         record.process.kill();
       } catch {
@@ -227,6 +242,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
     this.pushFrame(record, frame);
     disposeAll(record.disposables);
     record.disposables = [];
+    record.lease.dispose();
   }
 
   private pushFrame(record: TerminalRecord, frame: TerminalFrame): void {
@@ -248,10 +264,6 @@ function disposeAll(items: Iterable<IDisposable>): void {
 
 function frameSeq(frame: TerminalFrame): number {
   return frame.type === 'terminal_output' ? frame.seq : Number.MAX_SAFE_INTEGER;
-}
-
-function defaultShell(): string {
-  return process.env['SHELL'] || '/bin/sh';
 }
 
 registerScopedService(

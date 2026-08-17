@@ -40,7 +40,6 @@ export interface InspectClient {
   /** Bearer token in use, when any. */
   readonly token?: string;
   core<T extends object>(id: ServiceRef<T>): ServiceProxy<T>;
-  workspace(workspaceId: string): InspectAgentHandle;
   session(sessionId: string): InspectSessionHandle;
 }
 
@@ -69,9 +68,6 @@ export function createInspectClient(options: InspectClientOptions): InspectClien
     baseUrl: url,
     token: options.token,
     core: (id) => proxy('', id),
-    workspace: (workspaceId) => ({
-      service: (id) => proxy(`/workspace/${encodeURIComponent(workspaceId)}`, id),
-    }),
     session: (sessionId) => {
       const scopePath = `/session/${encodeURIComponent(sessionId)}`;
       return {

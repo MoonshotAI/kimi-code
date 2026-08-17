@@ -27,17 +27,22 @@ import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
   AgentCommandInfo,
+  AgentRuntimeBinding,
+  AppMcpServerInspection,
   BackgroundTaskInfo,
   ConfigDiagnostics,
   CreateSessionOptions,
   ExportSessionInput,
   ExportSessionResult,
   CreateGoalInput,
+  FileMeta,
   ForkSessionInput,
   GenerateSessionTitleInput,
   GetConfigOptions,
   GlobalMcpServerAuthStatus,
+  McpManagedServerInfo,
   McpServerConfig,
+  McpServerLocator,
   GoalSnapshot,
   GoalToolResult,
   JsonObject,
@@ -56,6 +61,7 @@ import type {
   SessionStatus,
   SessionUsage,
   PromptInput,
+  PromptSkillActivation,
   RenameSessionInput,
   ResumeSessionInput,
   ResumedSessionSummary,
@@ -64,6 +70,7 @@ import type {
   SkillSummary,
   PluginCommandDef,
   Unsubscribe,
+  UploadFileOptions,
   WorkspaceTrustInfo,
 } from '#/types';
 
@@ -72,6 +79,22 @@ const MAIN_AGENT_ID = 'main';
 export interface SessionPromptRpcInput {
   readonly sessionId: string;
   readonly input: PromptInput;
+  /**
+   * Client-managed session tool denylist (full-replace semantics), forwarded
+   * to engines with profile tool gating. Omit to keep the persisted value;
+   * `[]` clears the client portion.
+   */
+  readonly disabledTools?: readonly string[];
+  /**
+   * Client-chosen prompt record id, unique for the Agent's persisted history
+   * and echoed on the consuming turn's `turn.started` (`promptId`). Honored by
+   * the v2 RPC client only.
+   */
+  readonly promptId?: string;
+}
+
+export interface SessionPromptWithSkillsRpcInput extends SessionPromptRpcInput {
+  readonly skills: readonly PromptSkillActivation[];
 }
 
 export interface SessionIdRpcInput {
@@ -132,8 +155,19 @@ export interface RunCommandRpcInput extends SessionIdRpcInput {
   readonly args?: string | undefined;
 }
 
+export interface SwitchSessionRuntimeRpcInput extends SessionIdRpcInput {
+  readonly runtimeId: string;
+}
+
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
   readonly name: string;
+  /**
+   * Optional full replacement config (the "name + full config" channel).
+   * Omitted: the session re-resolves the effective config from the unified
+   * registry instead of reusing the boot-time snapshot. Plugin-contributed
+   * entries reject an explicit config (theirs is read-only).
+   */
+  readonly config?: McpServerConfig;
 }
 
 type ResolvedCoreAPI = RPCMethods<CoreAPI>;
@@ -330,27 +364,68 @@ export abstract class SDKRpcClientBase {
     );
   }
 
-  async listGlobalMcpServers(): Promise<readonly McpServerConfig[]> {
-    const rpc = await this.getRpc();
-    return rpc.listGlobalMcpServers({});
+  /**
+   * Upload media bytes to the engine's daemon file store; pair the returned
+   * meta with `buildDaemonFileUrl` to reference the file from a prompt. Only
+   * the v2 client wires this (through the klient files facade) — the v1
+   * client has no file service and throws `not_implemented`.
+   */
+  uploadFile(_data: Uint8Array, _options: UploadFileOptions): Promise<FileMeta> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support file upload.',
+    );
   }
 
-  async listGlobalMcpServerAuthStatuses(): Promise<readonly GlobalMcpServerAuthStatus[]> {
-    const rpc = await this.getRpc();
-    return rpc.listGlobalMcpServerAuthStatuses({});
+  deleteFile(_fileId: string): Promise<void> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support file deletion.',
+    );
   }
 
-  async addGlobalMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {
+  async listGlobalMcpServers(
+    options: { readonly cwd?: string } = {},
+  ): Promise<readonly McpManagedServerInfo[]> {
+    const rpc = await this.getRpc();
+    return rpc.listGlobalMcpServers({ cwd: options.cwd });
+  }
+
+  async getGlobalMcpServer(
+    name: string,
+    options: { readonly cwd?: string } = {},
+  ): Promise<McpManagedServerInfo> {
+    const rpc = await this.getRpc();
+    return rpc.getGlobalMcpServer({ name, cwd: options.cwd });
+  }
+
+  async listGlobalMcpServerAuthStatuses(
+    options: { readonly cwd?: string; readonly verify?: boolean } = {},
+  ): Promise<readonly GlobalMcpServerAuthStatus[]> {
+    const rpc = await this.getRpc();
+    return rpc.listGlobalMcpServerAuthStatuses({ cwd: options.cwd, verify: options.verify });
+  }
+
+  async inspectAppMcpServers(
+    targets?: readonly McpServerLocator[],
+  ): Promise<readonly AppMcpServerInspection[]> {
+    const rpc = await this.getRpc();
+    return rpc.inspectAppMcpServers({ targets });
+  }
+
+  async addGlobalMcpServer(server: McpServerConfig): Promise<readonly McpManagedServerInfo[]> {
     const rpc = await this.getRpc();
     return rpc.addGlobalMcpServer({ server });
   }
 
-  async updateGlobalMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {
+  async updateGlobalMcpServer(
+    server: McpServerConfig,
+  ): Promise<readonly McpManagedServerInfo[]> {
     const rpc = await this.getRpc();
     return rpc.updateGlobalMcpServer({ server });
   }
 
-  async removeGlobalMcpServer(name: string): Promise<readonly McpServerConfig[]> {
+  async removeGlobalMcpServer(name: string): Promise<readonly McpManagedServerInfo[]> {
     const rpc = await this.getRpc();
     return rpc.removeGlobalMcpServer({ name });
   }
@@ -358,6 +433,11 @@ export abstract class SDKRpcClientBase {
   async beginGlobalMcpServerAuth(name: string): Promise<BeginGlobalMcpServerAuthResult> {
     const rpc = await this.getRpc();
     return rpc.beginGlobalMcpServerAuth({ name });
+  }
+
+  async beginMcpServerAuth(locator: McpServerLocator): Promise<BeginGlobalMcpServerAuthResult> {
+    const rpc = await this.getRpc();
+    return rpc.beginMcpServerAuth({ locator });
   }
 
   async completeGlobalMcpServerAuth(
@@ -368,14 +448,32 @@ export abstract class SDKRpcClientBase {
     return rpc.completeGlobalMcpServerAuth(input, { signal });
   }
 
+  async completeMcpServerAuth(
+    input: { readonly flowId: string; readonly timeoutMs?: number },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.completeMcpServerAuth(input, { signal });
+  }
+
   async cancelGlobalMcpServerAuth(flowId: string): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.cancelGlobalMcpServerAuth({ flowId });
   }
 
+  async cancelMcpServerAuth(flowId: string): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.cancelMcpServerAuth({ flowId });
+  }
+
   async resetGlobalMcpServerAuth(name: string): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.resetGlobalMcpServerAuth({ name });
+  }
+
+  async resetMcpServerAuth(locator: McpServerLocator): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.resetMcpServerAuth({ locator });
   }
 
   async testGlobalMcpServer(
@@ -386,6 +484,18 @@ export abstract class SDKRpcClientBase {
     return rpc.testGlobalMcpServer({ name, cwd: options.cwd });
   }
 
+  /**
+   * Probe a full inline (unsaved) MCP server config — the `server` channel of
+   * the engine's `testGlobalMcpServer`, so nothing has to be persisted first.
+   */
+  async testGlobalMcpServerConfig(
+    server: McpServerConfig,
+    options: { readonly cwd?: string } = {},
+  ): Promise<McpTestResult> {
+    const rpc = await this.getRpc();
+    return rpc.testGlobalMcpServer({ server, cwd: options.cwd });
+  }
+
   async prompt(input: SessionPromptRpcInput): Promise<void> {
     const agentId = this.interactiveAgentId;
     const rpc = await this.getRpc();
@@ -394,6 +504,19 @@ export abstract class SDKRpcClientBase {
       agentId,
       input: input.input,
     });
+  }
+
+  /**
+   * Grouped skill activation + prompt submission. Only the v2 engine
+   * (`SDKRpcClientV2`) implements it; the v1 route has no combined-submission
+   * RPC, so the base fails loudly instead of degrading into N+1 turns.
+   */
+  async promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void> {
+    void input;
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'promptWithSkills requires the agent-core-v2 engine.',
+    );
   }
 
   async runShellCommand(input: {
@@ -812,7 +935,29 @@ export abstract class SDKRpcClientBase {
 
   async reconnectMcpServer(input: ReconnectMcpServerRpcInput): Promise<void> {
     const rpc = await this.getRpc();
-    return rpc.reconnectMcpServer({ sessionId: input.sessionId, name: input.name });
+    return rpc.reconnectMcpServer({
+      sessionId: input.sessionId,
+      name: input.name,
+      config: input.config,
+    });
+  }
+
+  /**
+   * Connect an MCP server in a live session. `persist: true` also writes the
+   * user-level `mcp.json` (the entry becomes a mutable `global` one);
+   * otherwise it stays a session-local `caller` entry.
+   */
+  async addSessionMcpServer(input: {
+    readonly sessionId: string;
+    readonly server: McpServerConfig;
+    readonly persist?: boolean;
+  }): Promise<McpServerInfo> {
+    const rpc = await this.getRpc();
+    return rpc.addSessionMcpServer({
+      sessionId: input.sessionId,
+      server: input.server,
+      persist: input.persist,
+    });
   }
 
   async listPlugins(): Promise<readonly PluginSummary[]> {
@@ -893,6 +1038,16 @@ export abstract class SDKRpcClientBase {
       ErrorCodes.NOT_IMPLEMENTED,
       'This SDK client does not support contributed commands.',
     );
+  }
+
+  async getRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding> {
+    void input;
+    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'This SDK client does not support runtimes.');
+  }
+
+  async switchRuntime(input: SwitchSessionRuntimeRpcInput): Promise<AgentRuntimeBinding> {
+    void input;
+    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'This SDK client does not support runtimes.');
   }
 
   onEvent(listener: (event: Event) => void): Unsubscribe {

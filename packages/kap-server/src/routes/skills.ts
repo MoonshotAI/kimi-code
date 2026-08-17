@@ -88,6 +88,7 @@ import {
   IPluginService,
   ISessionContext,
   ISessionIndex,
+  ISessionMediaStore,
   ISessionSkillCatalog,
   ISkillDiscovery,
   ITelemetryService,
@@ -115,8 +116,10 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import {
   assertPromptFileRefs,
+  assertPromptSessionMediaRefs,
   contentToCoreParts,
   resolvePromptMediaFiles,
+  type PromptMediaPreparation,
 } from '../lib/promptMedia';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
@@ -303,6 +306,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         return;
       }
 
+      let preparedMedia: PromptMediaPreparation | undefined;
       try {
         // Attachments run through the same edge pipeline as prompt uploads
         // (validate → materialize → convert) BEFORE the activation starts, so
@@ -328,9 +332,13 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
             );
           }
           await assertPromptFileRefs(attachments, core.accessor.get(IFileService));
+          await assertPromptSessionMediaRefs(
+            attachments,
+            resolved.handle.accessor.get(ISessionMediaStore),
+          );
           const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
           const sessionDir = resolved.handle.accessor.get(ISessionContext).sessionDir;
-          const resolvedContent = await resolvePromptMediaFiles(
+          preparedMedia = await resolvePromptMediaFiles(
             attachments,
             core.accessor.get(IFileService),
             core.accessor.get(IBootstrapService).cacheDir,
@@ -340,7 +348,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
               resolveAttachmentsDir: async () => join(sessionDir, 'attachments'),
             },
           );
-          attachmentParts.push(...contentToCoreParts(resolvedContent));
+          attachmentParts.push(...contentToCoreParts(preparedMedia.content));
         }
         const agent = await ensureMainAgent(resolved.handle);
         // The engine applies the prompt-metadata update itself (main agent
@@ -349,9 +357,14 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         await agent.accessor
           .get(IAgentSkillService)
           .activate({ name: parsed.id, args: req.body.args, content: attachmentParts });
+        // Intake materialized the session-owned copies — release the
+        // preparation's uploads, and keep them released on the success path.
+        await preparedMedia?.discard();
+        preparedMedia = undefined;
         requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
         reply.send(okEnvelope({ activated: true, skill_name: parsed.id }, req.id));
       } catch (err) {
+        await preparedMedia?.discard();
         sendMappedError(reply, req.id, err);
       }
     },

@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/kap-server",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Kimi Code server backed by the DI × Scope agent engine (agent-core-v2)",
   "type": "module",
@@ -34,6 +34,7 @@
     "bcryptjs": "^2.4.3",
     "fastify": "^5.1.0",
     "pino": "^9.5.0",
+    "semver": "^7.7.4",
     "smol-toml": "^1.6.1",
     "ulid": "^3.0.1",
     "ws": "^8.18.0",
@@ -41,6 +42,7 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
+    "@types/semver": "^7.7.0",
     "@types/ws": "^8.18.0",
     "tsx": "^4.21.0"
   }
