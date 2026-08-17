@@ -1,18 +1,3 @@
-/**
- * `hostFs` domain — error codes, `HostFsError`, and the `toHostFsError`
- * boundary translator.
- *
- * Every `IHostFileSystem` backend translates raw OS failures (Node
- * `ErrnoException`, and whatever a future non-Node backend throws) into a
- * `HostFsError` at its boundary, so consumers branch on a stable `code`
- * (`os.fs.*`) instead of platform errnos. `toHostFsError` is a pure function
- * shared by all backends; it is idempotent — an error that is already a
- * `HostFsError` passes through untouched.
- *
- * `os.fs.unavailable` covers non-errno resource failures (fs.watch unsupported,
- * fd exhaustion, …); `os.fs.unknown` is the fallback for unrecognized errnos.
- */
-
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2, type Error2Options } from '#/_base/errors/errors';
 

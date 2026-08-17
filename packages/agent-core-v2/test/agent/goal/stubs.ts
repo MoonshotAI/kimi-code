@@ -1,8 +1,4 @@
-/**
- * Shared stubs for goal tests.
- */
-
-import type { IAgentSwarmService } from '#/agent/swarm/swarm';
+import type { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 
 export function stubAgentSwarm(): IAgentSwarmService {
   return {

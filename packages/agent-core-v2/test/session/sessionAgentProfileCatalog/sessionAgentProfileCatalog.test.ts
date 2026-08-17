@@ -1,18 +1,3 @@
-/**
- * Scenario: the Session-scope agent-profile catalog projection over the
- * App-scope `IAgentProfileRegistry` fold.
- *
- * Exercises `SessionAgentProfileCatalogService` directly: the registry fold
- * is fed through real containers (contributor units on the same
- * `this.provide` path the production loaders take) while the catalog itself
- * is hand-constructed — the suite verifies the projection rules:
- * relevant-entry filtering by the seeded workspace key, priority-ordered
- * name dedup, the builtin-override rule, change-event fan-out, and the read
- * surface (`get` / `list` / `getDefault` / `inspect`). Run:
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog.test.ts`.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { createDecorator } from '#/_base/di/instantiation';

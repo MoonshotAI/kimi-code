@@ -1,15 +1,3 @@
-/**
- * `permissionRules` domain — `permission` config-section schema and TOML
- * transforms.
- *
- * Owns the `[permission]` configuration section (the persisted permission
- * rules), including the snake_case ↔ camelCase TOML transforms that reshape the
- * on-disk `deny` / `allow` / `ask` lists and the `tool`/`match` shorthand into
- * the in-memory `rules` array. Self-registered at module load via
- * `registerConfigSection`, so the `config` domain never imports this domain's
- * types.
- */
-
 import { z } from 'zod';
 
 import { registerConfigSection } from '#/app/config/configSectionContributions';

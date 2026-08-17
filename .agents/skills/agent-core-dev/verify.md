@@ -21,7 +21,7 @@ Walk the stages you touched and confirm:
 - **Design** — scope follows state identity; no `Map<sessionId, …>` at `App`; dependency arrows do not make a foundational layer know an upstream one; no cycle was routed around.
 - **Implement** — no `new` on `@IService`-carrying classes; `@IX` on constructor params only (service params after static params); interface + impl carry `_serviceBrand`; decorator names unique; coded errors only; flags for unreleased behavior.
 - **Test** — SUT resolved by interface; stubs under `test/`; scope tests re-register after `_clearScopedRegistryForTests()`; teardown through one `DisposableStore`.
-- **Files** — header comments describe role + scope only; registration runs from the impl file's top level; the new domain is exported from `src/index.ts`.
+- **Files** — no comments (exported-symbol JSDoc excepted); registration runs from the impl file's top level; the new domain is exported from `src/index.ts`.
 
 Then re-read the [global red lines](SKILL.md#global-red-lines) once — they catch most cross-stage mistakes in a single scan.
 

@@ -1,31 +1,3 @@
-/**
- * `mcpCore` domain — `McpOAuthService`, the per-process OAuth orchestrator
- * for MCP HTTP servers.
- *
- * Owns one {@link McpOAuthClientProvider} per server/resource and mediates the
- * synthetic `mcp__<server>__authenticate` tool flow:
- *
- *  1. `getProvider(serverName, serverUrl)` returns the cached provider. It is
- *     only attached when the server has no static bearer token configured
- *     **and** the provider has stored tokens for that same server URL —
- *     first-time connections that lack tokens skip the provider entirely so a
- *     401 surfaces as `UnauthorizedError` from the transport instead of being
- *     swallowed by an in-flight `auth()` attempt.
- *  2. `beginAuthorization(serverName, serverUrl)` spins up a one-shot
- *     localhost callback listener, sets the redirect URL on the provider,
- *     and drives the SDK `auth()` orchestrator forward until it surfaces an
- *     authorization URL. It returns that URL plus a `complete()` callback
- *     that finishes the code exchange once the user finishes the browser
- *     flow.
- *  3. After `complete()` resolves successfully the provider has tokens on
- *     disk; the caller (the synthetic tool) drives a manager-level
- *     `reconnect` to swap the synthetic tool out for the real MCP tools.
- *
- * `resolveClientName` supplies the product token for provider default labels,
- * consulted per provider so an identity configured after this service is
- * constructed still applies.
- */
-
 import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 
 import { ErrorCodes, Error2, isError2 } from '#/errors';

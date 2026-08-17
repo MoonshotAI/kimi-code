@@ -195,7 +195,7 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
-  it('resolves skill commands and blocks them while busy', () => {
+  it('resolves skill commands and keeps them resolvable while busy (queued downstream)', () => {
     const skillCommandMap = new Map([['skill:review', 'review']]);
 
     expect(resolve('/skill:review src/app.ts', { skillCommandMap })).toEqual({
@@ -205,13 +205,14 @@ describe('resolveSlashCommandInput', () => {
       args: 'src/app.ts',
     });
     expect(resolve('/skill:review src/app.ts', { skillCommandMap, isStreaming: true })).toEqual({
-      kind: 'blocked',
+      kind: 'skill',
       commandName: 'skill:review',
-      reason: 'streaming',
+      skillName: 'review',
+      args: 'src/app.ts',
     });
   });
 
-  it('resolves unprefixed built-in skill commands and blocks them while busy', () => {
+  it('resolves unprefixed built-in skill commands and keeps them resolvable while busy', () => {
     const skillCommandMap = new Map([['mcp-config', 'mcp-config']]);
 
     expect(resolve('/mcp-config', { skillCommandMap })).toEqual({
@@ -221,9 +222,10 @@ describe('resolveSlashCommandInput', () => {
       args: '',
     });
     expect(resolve('/mcp-config', { skillCommandMap, isCompacting: true })).toEqual({
-      kind: 'blocked',
+      kind: 'skill',
       commandName: 'mcp-config',
-      reason: 'compacting',
+      skillName: 'mcp-config',
+      args: '',
     });
   });
 

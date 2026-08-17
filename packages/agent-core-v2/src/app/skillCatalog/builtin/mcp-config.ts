@@ -1,7 +1,3 @@
-/**
- * `skillCatalog` domain — builtin `mcp-config` skill definition.
- */
-
 import type { SkillDefinition } from '#/app/skillCatalog/types';
 import { parseSkillText } from '#/app/skillCatalog/parser';
 import MCP_CONFIG_BODY from './mcp-config.md?raw';

@@ -1,9 +1,3 @@
-/**
- * Kap server boot tests — exercise the public server lifecycle, App-scope
- * seeds, instance registration, loopback routes, and owned resource cleanup
- * with real local storage and loopback sockets.
- */
-
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -86,8 +80,6 @@ describe('server-v2 boot', () => {
     expect(typeof authBody.data.ready).toBe('boolean');
     expect(authBody.data.providers_count).toBeGreaterThanOrEqual(0);
 
-    // Poll with no flow in flight → null payload; exercises the v2 IOAuthService
-    // wiring without starting a real (networked) device-code flow.
     const oauthPoll = await authedFetch(server, base, '/api/v1/oauth/login');
     expect(oauthPoll.status).toBe(200);
     const oauthBody = await oauthPoll.json() as { code: number; data: null };
@@ -118,13 +110,9 @@ describe('server-v2 boot', () => {
     };
     expect(metaBody.data.server_version).toBe('9.9.9-host');
 
-    // The engine version is also what the instance registry advertises to
-    // status/ps clients.
     const [instance] = await listLiveServerInstances(home);
     expect(instance?.serverVersion).toBe('9.9.9-host');
 
-    // ... while the default product User-Agent and the engine's client
-    // identity come from the host identity.
     const defaults = server.core.accessor.get(IHostRequestHeaders);
     expect(defaults.headers['User-Agent']).toBe('test-host/9.9.9-host');
     expect(server.core.accessor.get(IBootstrapService).clientIdentity).toEqual({
@@ -148,8 +136,6 @@ describe('server-v2 boot', () => {
     expect(defaults.headers['X-Msh-Version']).toBe('0.0.0-test');
     expect(defaults.headers['X-Msh-Platform']).toBe('test_platform');
 
-    // Restart on the same homeDir with a host-provided seed; it must win over
-    // the default (a host can always re-seed the port with its own instance).
     await server.close();
     server = undefined;
     server = await startServer({
@@ -178,7 +164,6 @@ describe('server-v2 boot', () => {
       '/skills/explicit',
     ]);
 
-    // Without skillDirs the resolved args carry no explicit dirs.
     await server.close();
     server = undefined;
     server = await startServer({
@@ -271,7 +256,6 @@ function closeNetServer(server: Server): Promise<void> {
   return new Promise((resolve) => server.close(() => resolve()));
 }
 
-/** Find `port` such that both `port` and `port + 1` are free to bind. */
 async function allocateAdjacentFreePair(
   host = '127.0.0.1',
 ): Promise<{ port: number; next: number }> {
@@ -355,7 +339,6 @@ describe('listenWithPortRetry', () => {
         maxRetries: 3,
       }),
     ).rejects.toMatchObject({ code: 'EADDRINUSE' });
-    // initial attempt + 3 retries, then the cap throws.
     expect(attempts).toEqual([5000, 5001, 5002, 5003]);
   });
 
@@ -394,8 +377,6 @@ describe('server-v2 boot — port retry', () => {
   it('retries on port+1 and advertises the bound port in the instance registry', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-port-retry-'));
     const { port, next } = await allocateAdjacentFreePair();
-    // Occupy the requested port with a raw TCP server (a "third-party" process
-    // from the server's point of view — it is not a registered kimi instance).
     const occupant = await listenOnPort('127.0.0.1', port);
     try {
       server = await startServer({
@@ -406,9 +387,6 @@ describe('server-v2 boot — port retry', () => {
         logLevel: 'silent',
       });
 
-      // Bound to the next available port (>= next); the registry advertises it
-      // so status/kill/ps work. On Windows a recently-closed probe port can
-      // linger in TIME_WAIT, so the retry may land on port+2 instead of port+1.
       expect(server.port).toBeGreaterThanOrEqual(next);
       const [instance] = await listLiveServerInstances(home);
       expect(instance?.port).toBe(server.port);

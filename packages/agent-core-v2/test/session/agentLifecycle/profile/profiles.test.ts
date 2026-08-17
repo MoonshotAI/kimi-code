@@ -1,0 +1,18 @@
+import { describe, expect, it } from 'vitest';
+
+import { getAgentProfileContributions } from '#/app/agentProfileCatalog/contribution';
+import '#/session/agentLifecycle/profile/profiles';
+
+function profile(name: string) {
+  const found = getAgentProfileContributions().find((p) => p.name === name);
+  expect(found, `builtin profile "${name}" is registered`).toBeDefined();
+  return found!;
+}
+
+describe('builtin agent profiles', () => {
+  it('wires TowerInit into the default profile', () => {
+    const agent = profile('agent');
+    expect(agent.tools).toContain('TowerInit');
+    expect(agent.subagents).toBeUndefined();
+  });
+});

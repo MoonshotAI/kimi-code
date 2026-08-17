@@ -1,11 +1,3 @@
-/**
- * `todo` domain — todo item data shape and pure render helpers.
- *
- * `TodoItem` / `TodoStatus` are the persistent shape carried by the
- * `tools.update_store` (`key: 'todo'`) wire record. Pure and scope-less — no
- * scoped state lives here.
- */
-
 export const TODO_LIST_TOOL_NAME = 'TodoList' as const;
 
 export type TodoStatus = 'pending' | 'in_progress' | 'done';

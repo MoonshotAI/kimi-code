@@ -1,5 +1,15 @@
 import { escapeXml } from '#/_base/utils/xml-escape';
+import { promptMetadataTextFromText } from '#/agent/prompt/promptMetadataText';
 import type { SkillSource } from '#/app/skillCatalog/types';
+
+import type { SkillActivationInput } from './skill';
+
+export function promptMetadataTextFromSkill(input: SkillActivationInput): string | undefined {
+  const args = input.args?.trim();
+  return promptMetadataTextFromText(
+    args === undefined || args.length === 0 ? `/${input.name}` : `/${input.name} ${args}`,
+  );
+}
 
 export type SkillPromptTrigger = 'user-slash' | 'model-tool' | 'nested-skill';
 

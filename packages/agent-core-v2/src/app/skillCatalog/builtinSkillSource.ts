@@ -1,17 +1,3 @@
-/**
- * `skillCatalog` domain — builtin `ISkillSource` producer.
- *
- * Yields the code-defined `BUILTIN_SKILLS` as the lowest-priority contribution
- * (`builtin`, priority 0) so extra / user / workspace / plugin skills override
- * it on name collision. Bound at App scope.
- *
- * Product-documentation skills are filtered here rather than downstream: their
- * names sit in the system prompt for the whole session, and being the
- * lowest-priority source this one loads first and is kept for the life of the
- * handler — hence the wait for config readiness, and the change event that
- * lets the catalog reload it when the switch is toggled.
- */
-
 import { Emitter, type Event } from '#/_base/event';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';

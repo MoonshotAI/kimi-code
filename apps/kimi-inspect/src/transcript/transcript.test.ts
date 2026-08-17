@@ -16,9 +16,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { WsLike } from '../channel/wsLike';
 import {
+  fetchTranscriptAttachment,
   fetchTranscriptOps,
   fetchTranscriptPage,
   fetchTranscriptPlan,
+  transcriptAttachmentUrl,
   type TranscriptPage,
 } from './api';
 import {
@@ -43,6 +45,44 @@ function turnItem(n: number): TranscriptTurn {
 function stepHeader(stepId: string, ordinal: number): StepHeader {
   return { kind: 'step', stepId, turnId: stepId.split('.')[0] ?? 't1', ordinal, state: 'running' };
 }
+
+describe('transcript attachments', () => {
+  it('maps each attachment locator to its transport route', () => {
+    expect(
+      transcriptAttachmentUrl('http://h:1', 's 1', { kind: 'file', fileId: 'f 1' }),
+    ).toBe('http://h:1/api/v1/files/f%201');
+    expect(
+      transcriptAttachmentUrl('http://h:1', 's 1', {
+        kind: 'session_media',
+        fileId: 'f 1',
+      }),
+    ).toBe('http://h:1/api/v1/sessions/s%201/media/f%201');
+    expect(
+      transcriptAttachmentUrl('http://h:1', 's1', {
+        kind: 'url',
+        url: 'https://example.com/a.png',
+      }),
+    ).toBe('https://example.com/a.png');
+  });
+
+  it('fetches stored attachment bytes with bearer auth', async () => {
+    const fetchImpl = vi.fn(async () => new Response('media-bytes', { status: 200 }));
+
+    const blob = await fetchTranscriptAttachment({
+      baseUrl: 'http://h:1',
+      token: 'tok',
+      sessionId: 's1',
+      source: { kind: 'session_media', fileId: 'f_1' },
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://h:1/api/v1/sessions/s1/media/f_1',
+      { headers: { authorization: 'Bearer tok' } },
+    );
+    await expect(blob.text()).resolves.toBe('media-bytes');
+  });
+});
 
 const textFrameUpsert = (turnId: string, stepId: string, frameId: string, text: string) => ({
   op: 'frame.upsert' as const,

@@ -12,7 +12,10 @@ import { FeatureManagerService } from '#/app/feature/featureManagerService';
 import { LifecycleScope } from '#/app/scopes';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
 import { FeatureAssemblyService } from '#/features/featureAssemblyService';
-import { _clearFeatureRecipesForTests, registerFeature } from '#/features/featureRegistry';
+import {
+  _clearFeatureRecipesForTests,
+  registerFeature,
+} from '#/features/featureRegistry';
 
 import { IDebugEventsService } from '#/features/debugEvents/debugEvents';
 import { DebugEventsFeature } from '#/features/debugEvents/debugEventsFeature';
@@ -48,6 +51,11 @@ describe('DebugEventsFeature — App-scope introspection service', () => {
     const host = createScopedTestHost();
     const manager = host.app.accessor.get(IFeatureManager);
     expect(manager.units().map((unit) => unit.name)).toContain('debugEvents');
+    expect(
+      manager
+        .contributedServices()
+        .some((entry) => entry.scope === LifecycleScope.App && entry.id === IDebugEventsService),
+    ).toBe(true);
 
     const result = host.app.accessor.get(IDebugEventsService).subscriptions();
     expect(result).toMatchObject({
@@ -59,6 +67,11 @@ describe('DebugEventsFeature — App-scope introspection service', () => {
     await host.app.instantiation.cascade.whenIdle();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(() => host.app.accessor.get(IDebugEventsService)).toThrow();
+    expect(
+      manager
+        .contributedServices()
+        .some((entry) => entry.scope === LifecycleScope.App && entry.id === IDebugEventsService),
+    ).toBe(false);
     host.dispose();
   });
 });

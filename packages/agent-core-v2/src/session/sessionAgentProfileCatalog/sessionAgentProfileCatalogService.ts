@@ -1,22 +1,3 @@
-/**
- * `sessionAgentProfileCatalog` domain — `ISessionAgentProfileCatalog`
- * implementation.
- *
- * Projects the App-scope `IAgentProfileRegistry` into this session's merged
- * profile view. The relevant entries are the global ones (builtin) plus the
- * ones tagged with the seeded workspace key (user / plugin / extra /
- * workspace / explicit); they are re-merged on every registry change (the
- * projection is a cheap full recompute — merge, never incremental patching).
- * Merge rules, applied per profile name: candidates are collected from every
- * relevant entry (deduped within an entry, highest priority first); the first
- * candidate wins, except that replacing a same-name `builtin` profile
- * requires `override: true` in the frontmatter — a non-override collision is
- * warned about and skipped to the next candidate. `ready` resolves
- * immediately: the registry is already populated when this service is
- * constructed, and every later change arrives through `onDidChange`. Bound at
- * Session scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope } from '#/app/scopes';
@@ -44,7 +25,6 @@ interface ProfileCandidate {
   readonly priority: number;
 }
 
-// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class SessionAgentProfileCatalogService
   extends Disposable
   implements ISessionAgentProfileCatalog

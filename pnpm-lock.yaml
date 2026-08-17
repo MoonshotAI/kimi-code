@@ -661,6 +661,9 @@ importers:
       ignore:
         specifier: ^5.3.2
         version: 5.3.2
+      immer:
+        specifier: ^11.1.0
+        version: 11.1.11
       jimp:
         specifier: ^1.6.1
         version: 1.6.1
@@ -685,6 +688,9 @@ importers:
       retry:
         specifier: 0.13.1
         version: 0.13.1
+      semver:
+        specifier: ^7.7.4
+        version: 7.7.4
       smol-toml:
         specifier: ^1.6.1
         version: 1.6.1
@@ -719,6 +725,9 @@ importers:
       '@types/retry':
         specifier: 0.12.0
         version: 0.12.0
+      '@types/semver':
+        specifier: ^7.7.0
+        version: 7.7.1
       '@types/sinon':
         specifier: ^21.0.1
         version: 21.0.1
@@ -783,6 +792,9 @@ importers:
       pino:
         specifier: ^9.5.0
         version: 9.14.0
+      semver:
+        specifier: ^7.7.4
+        version: 7.7.4
       smol-toml:
         specifier: ^1.6.1
         version: 1.6.1
@@ -799,6 +811,9 @@ importers:
       '@types/bcryptjs':
         specifier: ^2.4.6
         version: 2.4.6
+      '@types/semver':
+        specifier: ^7.7.0
+        version: 7.7.1
       '@types/ws':
         specifier: ^8.18.0
         version: 8.18.1
@@ -13276,7 +13291,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.0.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@25.0.1)(msw@2.15.0(@types/node@22.19.17)(typescript@6.0.2))(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
+      vitest: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@25.0.1)(msw@2.15.0(@types/node@22.19.17)(typescript@6.0.2))(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
 
   '@vitest/expect@4.1.4':
     dependencies:

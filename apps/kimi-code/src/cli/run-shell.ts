@@ -1,4 +1,4 @@
-import { execSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -29,6 +29,7 @@ import { startupTrace } from '#/utils/startup-trace';
 import { currentTheme, getColorPalette } from '#/tui/theme';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
+import { resolveCommandPath } from '#/utils/process/resolve-command';
 
 import type { CLIOptions } from './options';
 import { resolveAgentProfileSelection } from './agent-selection';
@@ -155,28 +156,34 @@ export async function runShell(
   };
 
   let savedStty: string | undefined;
-  // stty is a POSIX command and never works on Windows; skip it there instead
-  // of relying on the catch — a bare command name would resolve a planted
-  // `stty.exe` from the current directory before the workspace trust gate.
-  if (process.platform !== 'win32') {
+  // stty runs before tui.start() reaches the workspace trust gate, so it must
+  // never be resolved by name through PATH: a `.` or empty PATH segment would
+  // let an untrusted checkout plant an `stty` executable and run it pre-trust.
+  // resolveCommandPath returns an absolute path and refuses hits inside the
+  // cwd; when it cannot resolve stty, skip the save/restore entirely — it is
+  // best-effort terminal hygiene, not required for startup.
+  // stty is also POSIX-only, so skip it on Windows instead of relying on the
+  // catch below.
+  const sttyPath = process.platform === 'win32' ? undefined : resolveCommandPath('stty');
+  if (sttyPath !== undefined) {
     try {
       // stty operates on the terminal behind stdin, so stdin must be the TTY —
       // piping /dev/null (ignore) makes stty fail with "not a tty".
-      const saved = execSync('stty -g', {
+      const saved = execFileSync(sttyPath, ['-g'], {
         encoding: 'utf8',
         stdio: ['inherit', 'pipe', 'ignore'],
       });
-      savedStty = typeof saved === 'string' ? saved.trim() : undefined;
-      execSync('stty -ixon', { stdio: ['inherit', 'ignore', 'ignore'] });
+      savedStty = saved.trim();
+      execFileSync(sttyPath, ['-ixon'], { stdio: ['inherit', 'ignore', 'ignore'] });
     } catch {
       /* ignore */
     }
   }
   const restoreStty = (): void => {
-    if (savedStty === undefined) return;
+    if (sttyPath === undefined || savedStty === undefined) return;
     const args = savedStty.split(/\s+/).filter((arg) => arg.length > 0);
     if (args.length === 0) return;
-    spawnSync('stty', args, { stdio: ['inherit', 'ignore', 'ignore'] });
+    spawnSync(sttyPath, args, { stdio: ['inherit', 'ignore', 'ignore'] });
   };
 
   // If we crash without going through KimiTUI.stop(), the terminal is left in
@@ -224,7 +231,7 @@ export async function runShell(
     const sessionId = tui.getCurrentSessionId();
     const hasContent = tui.hasSessionContent();
     setCrashPhase('shutdown');
-    trackLifecycle('exit', { duration_ms: Date.now() - startedAt });
+    trackLifecycle('exit', { duration_ms: Date.now() - startedAt, tui_mode: tui.state.ui.mode });
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
     const gutter = ' '.repeat(CHROME_GUTTER);
     process.stdout.write(`${gutter}Bye!\n`);
@@ -262,11 +269,12 @@ export async function runShell(
       config_ms: configMs,
       init_ms: initMs,
       mcp_ms: mcpMs,
+      tui_mode: tui.state.ui.mode,
     });
   } catch (error) {
     removeCrashHandlers();
     setCrashPhase('shutdown');
-    trackLifecycle('exit', { duration_ms: Date.now() - startedAt });
+    trackLifecycle('exit', { duration_ms: Date.now() - startedAt, tui_mode: tui.state.ui.mode });
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
     await harness.close();
     throw error;

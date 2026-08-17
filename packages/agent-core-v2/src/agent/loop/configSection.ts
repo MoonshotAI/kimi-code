@@ -1,25 +1,3 @@
-/**
- * `loop` domain — `loopControl` config-section schema, env bindings, and
- * TOML transforms.
- *
- * Owns the `[loop_control]` configuration section (step / retry / context-size
- * limits). Renamed keys are declared through the config domain's deprecation
- * mechanism (`deprecations`): a deprecated key in `config.toml` no longer
- * applies and reports a warning pointing at its replacement — this covers the
- * `max_retries_per_step` → `max_attempts_per_step` rename and the older
- * `max_steps_per_run` → `max_steps_per_turn` one. The step and retry budgets
- * also accept operational env overrides (`KIMI_LOOP_MAX_STEPS_PER_TURN` /
- * `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP`; the former
- * `KIMI_LOOP_MAX_RETRIES_PER_STEP` still resolves as a deprecated fallback
- * with a warning); `config` resolves each field as `env > config.toml >
- * default` and re-applies the env binding on every read. Self-registered at
- * module load via `registerConfigSection`.
- *
- * While a field's env var is set, `stripEnvBoundFields` restores its env-free
- * raw value before `set`/`replace` persists, so an env override echoed
- * back through a config write can never leak into `config.toml`.
- */
-
 import { z } from 'zod';
 
 import { type EnvBindings, envBindings, stripEnvBoundFields } from '#/app/config/config';

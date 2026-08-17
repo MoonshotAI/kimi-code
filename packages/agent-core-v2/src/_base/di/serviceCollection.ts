@@ -1,12 +1,3 @@
-/**
- * `di` domain — `ServiceCollection`: the dynamic registry (L1).
- *
- * Maps a service id to its recipe (`SyncDescriptor`) or materialized instance.
- * Every write stamps the entry with a container-monotonic `uid` (a generation
- * marker used for introspection and history — it plays no role in change
- * detection) and fires the token's availability event with `{ oldUid, newUid }`.
- */
-
 import { Emitter } from '../event';
 import { SyncDescriptor } from './descriptors';
 import type { ServiceIdentifier } from './instantiation';
@@ -25,17 +16,14 @@ export interface AvailabilityChange {
 }
 
 export class ServiceCollection {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private readonly _entries = new Map<ServiceIdentifier<any>, ServiceCollectionEntry<any>>();
   private readonly _emitters = new Map<
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ServiceIdentifier<any>,
     Emitter<AvailabilityChange>
   >();
   private _nextUid = 0;
 
   constructor(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ...entries: ReadonlyArray<readonly [ServiceIdentifier<any>, unknown]>
   ) {
     for (const [id, value] of entries) {
@@ -102,17 +90,14 @@ export class ServiceCollection {
     return prev.value as T | SyncDescriptor<T> | undefined;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   entry(id: ServiceIdentifier<any>): ServiceCollectionEntry | undefined {
     return this._entries.get(id);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   uidOf(id: ServiceIdentifier<any>): number | undefined {
     return this._entries.get(id)?.uid;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   configOf(id: ServiceIdentifier<any>): unknown {
     return this._entries.get(id)?.config;
   }
@@ -124,7 +109,6 @@ export class ServiceCollection {
     return this._emitterFor(id).event(listener);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   has(id: ServiceIdentifier<any>): boolean {
     return this._entries.has(id);
   }
@@ -135,7 +119,6 @@ export class ServiceCollection {
 
   forEach(
     callback: (
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       id: ServiceIdentifier<any>,
       value: unknown,
     ) => void,

@@ -1,5 +1,6 @@
 import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
+import { extractInlineSkillActivations } from '../utils/inline-skill-tokens';
 import type { SlashCommandHost } from './dispatch';
 
 export async function handleBtwCommand(host: SlashCommandHost, args: string): Promise<void> {
@@ -13,7 +14,14 @@ export async function handleBtwCommand(host: SlashCommandHost, args: string): Pr
 
   try {
     const agentId = await session.startBtw();
-    host.btwPanelController.open(agentId, prompt);
+    const activations = host.engineV2
+      ? extractInlineSkillActivations(prompt, host.skillCommandMap, { includeLeading: true })
+      : [];
+    host.btwPanelController.open(
+      agentId,
+      prompt,
+      activations.length > 0 ? activations : undefined,
+    );
   } catch (error) {
     host.showError(`Failed to start /btw: ${formatErrorMessage(error)}`);
   }

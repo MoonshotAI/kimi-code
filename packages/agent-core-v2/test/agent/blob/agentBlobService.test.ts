@@ -1,21 +1,3 @@
-/**
- * Scenario: the agent blob service offloads large inline media (data URIs) into
- * content-addressed blobs and loads them back on read.
- *
- * Responsibilities asserted:
- *  - sub-threshold data URIs pass through unchanged (and keep the same array ref)
- *  - large data URIs become `blobref:` URLs and are persisted under the agent scope
- *  - offload is non-mutating, idempotent, and handles every media container
- *  - load restores blobrefs, leaves other URLs alone, and substitutes a
- *    placeholder when the blob is missing
- *  - content-addressing deduplicates identical payloads and isolates per agent
- *
- * Wiring: real `BlobStoreService` over the in-memory storage backend, with the
- * service resolved through the DI scope tree — no stubbed boundary, no real fs.
- *
- * Run: `pnpm test -- test/blob/agentBlobService.test.ts`
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { ContentPart } from '#/kosong/contract/message';

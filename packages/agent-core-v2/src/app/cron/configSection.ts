@@ -1,12 +1,3 @@
-/**
- * `cron` domain — cron operational-config section env bindings.
- *
- * Declares the `KIMI_CRON_*` environment bindings for the cron operational
- * toggles (debug / jitter / stale / killswitch / manual tick / clock /
- * poll interval). Applied to the effective `cron` value by `config`; never
- * persisted to `config.toml`.
- */
-
 import { type ConfigStripEnv, type EnvBindings, envBindings } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 

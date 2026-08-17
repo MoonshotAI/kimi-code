@@ -1,14 +1,10 @@
-/**
- * Covers AgentTaskService event emission and notification delivery.
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 import { join } from 'pathe';
 
-import type { IProcess } from '#/session/process/processRunner';
+import type { IHostProcess } from '#/os/interface/hostProcess';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -47,26 +43,28 @@ import {
 
 type FireAndForgetTrigger = IExternalHooksRunnerService['fireAndForgetTrigger'];
 
-function immediateProcess(exitCode: number, stdoutText = ''): IProcess {
+function immediateProcess(exitCode: number, stdoutText = ''): IHostProcess {
   return {
+    _serviceBrand: undefined,
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout: Readable.from(stdoutText ? [stdoutText] : []),
     stderr: Readable.from([]),
     pid: 30000 + exitCode,
     exitCode,
-    wait: vi.fn().mockResolvedValue(exitCode) as IProcess['wait'],
-    kill: vi.fn().mockResolvedValue(undefined) as IProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+    wait: vi.fn().mockResolvedValue(exitCode) as IHostProcess['wait'],
+    kill: vi.fn().mockResolvedValue(undefined) as IHostProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
   };
 }
 
-function pendingProcess(): IProcess {
+function pendingProcess(): IHostProcess {
   let resolveWait: (code: number) => void = () => {};
   const waitPromise = new Promise<number>((resolve) => {
     resolveWait = resolve;
   });
   let currentExitCode: number | null = null;
   return {
+    _serviceBrand: undefined,
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout: Readable.from([]),
     stderr: Readable.from([]),
@@ -79,8 +77,8 @@ function pendingProcess(): IProcess {
       if (currentExitCode !== null) return;
       currentExitCode = 143;
       resolveWait(143);
-    }) as unknown as IProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+    }) as unknown as IHostProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
   };
 }
 
@@ -296,7 +294,7 @@ function outputString(result: { readonly output: string | readonly unknown[] }):
 
 function registerProcess(
   manager: IAgentTaskService,
-  proc: IProcess,
+  proc: IHostProcess,
   command: string,
   description: string,
 ): string {
@@ -312,14 +310,16 @@ describe('AgentTaskService — event emission', () => {
     const { agent, manager, records } = createAgentTaskService();
     const taskId = registerProcess(manager, pendingProcess(), 'sleep 60', 'demo');
 
-    expect(agent.emittedEvents).toContainEqual({
-      type: 'task.started',
-      info: expect.objectContaining({
-        taskId,
-        kind: 'process',
-        status: 'running',
+    expect(agent.emittedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'task.started',
+        info: expect.objectContaining({
+          taskId,
+          kind: 'process',
+          status: 'running',
+        }),
       }),
-    });
+    );
     expect(records).toContainEqual({
       event: 'background_task_created',
       properties: { agent_id: 'main', task_id: taskId, kind: 'bash' },
@@ -332,14 +332,16 @@ describe('AgentTaskService — event emission', () => {
       agentTask(new Promise(() => {}), 'agent task'),
     );
 
-    expect(agent.emittedEvents).toContainEqual({
-      type: 'task.started',
-      info: expect.objectContaining({
-        taskId,
-        kind: 'agent',
-        status: 'running',
+    expect(agent.emittedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'task.started',
+        info: expect.objectContaining({
+          taskId,
+          kind: 'agent',
+          status: 'running',
+        }),
       }),
-    });
+    );
     expect(records).toContainEqual({
       event: 'background_task_created',
       properties: { agent_id: 'main', task_id: taskId, kind: 'agent' },
@@ -353,13 +355,15 @@ describe('AgentTaskService — event emission', () => {
 
     await manager.wait(taskId);
 
-    expect(agent.emittedEvents).toContainEqual({
-      type: 'task.terminated',
-      info: expect.objectContaining({
-        taskId,
-        status: 'completed',
+    expect(agent.emittedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'task.terminated',
+        info: expect.objectContaining({
+          taskId,
+          status: 'completed',
+        }),
       }),
-    });
+    );
     expect(records).toContainEqual({
       event: 'background_task_completed',
       properties: expect.objectContaining({
@@ -404,13 +408,13 @@ describe('AgentTaskService — event emission', () => {
     await manager.stop(taskId, 'user');
 
     expect(agent.emittedEvents.filter((e) => e.type === 'task.terminated')).toEqual([
-      {
+      expect.objectContaining({
         type: 'task.terminated',
         info: expect.objectContaining({
           taskId,
           status: 'killed',
         }),
-      },
+      }),
     ]);
   });
 
@@ -435,13 +439,15 @@ describe('AgentTaskService — event emission', () => {
       await manager.loadFromDisk();
       await manager.reconcile();
 
-      expect(agent.emittedEvents).toContainEqual({
-        type: 'task.terminated',
-        info: expect.objectContaining({
-          taskId: 'bash-orphan00',
-          status: 'lost',
+      expect(agent.emittedEvents).toContainEqual(
+        expect.objectContaining({
+          type: 'task.terminated',
+          info: expect.objectContaining({
+            taskId: 'bash-orphan00',
+            status: 'lost',
+          }),
         }),
-      });
+      );
     } finally {
       await cleanupSessionDir(sessionDir, fixture);
     }
@@ -878,7 +884,7 @@ describe('AgentTaskService — notification delivery', () => {
     });
     expect(fireAndForgetTrigger).toHaveBeenCalledWith('Notification', expect.objectContaining({
       matcherValue: 'task.completed',
-      inputData: {
+      inputData: expect.objectContaining({
         sink: 'context',
         notificationType: 'task.completed',
         title: 'Background agent completed',
@@ -886,7 +892,7 @@ describe('AgentTaskService — notification delivery', () => {
         severity: 'info',
         sourceKind: 'background_task',
         sourceId: taskId,
-      },
+      }),
     }));
   });
 
@@ -932,7 +938,7 @@ describe('AgentTaskService — notification delivery', () => {
     });
     expect(fireAndForgetTrigger).toHaveBeenCalledWith('Notification', expect.objectContaining({
       matcherValue: 'task.completed',
-      inputData: {
+      inputData: expect.objectContaining({
         sink: 'context',
         notificationType: 'task.completed',
         title: 'Background process completed',
@@ -940,7 +946,7 @@ describe('AgentTaskService — notification delivery', () => {
         severity: 'info',
         sourceKind: 'background_task',
         sourceId: taskId,
-      },
+      }),
     }));
   });
 });

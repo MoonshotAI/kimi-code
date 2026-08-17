@@ -1,22 +1,10 @@
-/**
- * `sessionActivity` domain — `ISessionOutcomeMirror` implementation.
- *
- * Persists the main agent's terminal turn outcomes through `ISessionMetadata`
- * (observed via `agentLifecycle` and the main agent's `eventBus`), so the
- * session index keeps reporting them across restarts. Persisted on turn end
- * (completed/failed, or a user's stop), cleared when a new turn starts, and
- * backfilled from a cold resume's restored outcome — backfills never bump
- * `updatedAt`, and programmatic aborts (including scope-teardown cancels)
- * are deliberately never persisted live (a close-induced abort produces no
- * write here), and backfills only apply to a pure resume (no turn started in
- * this process — a live turn end owns its write, recency bump included). Writes are deduped against the last value this
- * process persisted. Bound at Session scope.
- */
-
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { IEventBus } from '#/app/event/eventBus';
+import { AgentActivityUpdated } from '#/agent/activityView/activityView';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnEnded } from '#/agent/loop/turnOps';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
@@ -69,35 +57,31 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
     const subscription = new DisposableStore();
     this.mainSubscription = subscription;
     subscription.add(
-      bus.subscribe('turn.ended', (event) => {
-        if (event.type !== 'turn.ended') return;
-        const reason = (event as { reason?: unknown }).reason;
-        const interruptReason = (event as { interruptReason?: unknown }).interruptReason;
-        if (reason === 'completed') {
+      bus.subscribe(TurnEnded, (event) => {
+        if (event.reason === 'completed') {
           this.write('completed');
           return;
         }
-        if (reason === 'failed' || reason === 'blocked') {
+        if (event.reason === 'failed' || event.reason === 'blocked') {
           this.write('failed');
           return;
         }
-        if (reason === 'cancelled' && interruptReason === 'user_cancelled') {
+        if (event.reason === 'cancelled' && event.interruptReason === 'user_cancelled') {
           this.write('cancelled');
         }
       }),
     );
     subscription.add(
-      bus.subscribe('turn.started', () => {
+      bus.subscribe(TurnStarted, () => {
         this.turnStartedHere = true;
         this.write(undefined);
       }),
     );
     subscription.add(
-      bus.subscribe('agent.activity.updated', (event) => {
+      bus.subscribe(AgentActivityUpdated, (event) => {
         if (this.turnStartedHere) return;
         if (this.lastPersisted !== undefined) return;
-        const lastTurn = (event as { lastTurn?: { reason?: unknown } }).lastTurn;
-        const reason = lastTurn?.reason;
+        const reason = event.lastTurn?.reason;
         if (reason === 'completed' || reason === 'cancelled') {
           this.write(reason, { touchUpdatedAt: false });
         } else if (reason === 'failed' || reason === 'blocked') {

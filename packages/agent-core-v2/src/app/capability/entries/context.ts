@@ -1,10 +1,3 @@
-/**
- * Shared context injected into capability entries. Every field is
- * constructor-wired by `CapabilityService`; tests substitute fakes
- * (temp dirs, fake fetch, fake plugin service) rather than touching the
- * host.
- */
-
 import type { IPluginService } from '#/app/plugin/plugin';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 

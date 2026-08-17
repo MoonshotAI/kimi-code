@@ -1,13 +1,4 @@
-/**
- * `feature` domain — `FeatureManagerService`: the App-scope unit manager.
- *
- * See `featureManager.ts` for the domain contract. Implementation notes:
- * managed units are assembled through this unit's own `this.provide`, so
- * they anchor on its book (manager death retracts them all); the managed set
- * is keyed by unit name — a second `provideUnit` of the same name replaces
- * the previous handle (retract-then-assemble is the caller's cascade).
- */
-
+import type { CollectionView } from '#/_base/di/collection';
 import { Emitter, type Event } from '#/_base/event';
 import type {
   FiberHandle,
@@ -23,6 +14,10 @@ import {
   IFeatureManager,
   type ManagedUnitInfo,
 } from './featureManager';
+import {
+  FeatureServiceContribution,
+  type ContributedFeatureService,
+} from './featureServiceContribution';
 
 export class FeatureManagerService extends Service implements IFeatureManager {
   declare readonly _serviceBrand: undefined;
@@ -31,7 +26,10 @@ export class FeatureManagerService extends Service implements IFeatureManager {
   private readonly _onDidChangeUnits = new Emitter<void>();
   readonly onDidChangeUnits: Event<void> = this._onDidChangeUnits.event;
 
-  constructor() {
+  constructor(
+    @FeatureServiceContribution
+    private readonly _contributedServices: CollectionView<ContributedFeatureService>,
+  ) {
     super();
     this._register(this._onDidChangeUnits);
   }
@@ -43,9 +41,7 @@ export class FeatureManagerService extends Service implements IFeatureManager {
     opts?: FiberProvideOptions,
   ): FiberHandle<T>;
   provideUnit(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     first: ServiceRecipe | ServiceIdentifier<any>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     second?: any,
     third?: FiberProvideOptions,
   ): FiberHandle {
@@ -96,6 +92,10 @@ export class FeatureManagerService extends Service implements IFeatureManager {
       infos.push({ name, state: handle.state, uid });
     }
     return infos;
+  }
+
+  contributedServices(): readonly ContributedFeatureService[] {
+    return this._contributedServices.items;
   }
 }
 
