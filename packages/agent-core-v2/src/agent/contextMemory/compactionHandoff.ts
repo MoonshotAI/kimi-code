@@ -1,6 +1,11 @@
 /**
- * Builds the bounded context window produced by compaction and exposes the
- * shared user-message selection rules used by live execution and replay.
+ * `contextMemory` domain helper — builds the bounded context window produced
+ * by compaction and exposes the shared user-message selection rules used by
+ * live execution and replay.
+ *
+ * Estimates token sizes through `kosong`'s contract heuristics (injectable as
+ * `TokenEstimate`) and wraps elision notes through `systemReminder`.
+ * Scope-agnostic.
  */
 
 import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/kosong/contract/tokens';
