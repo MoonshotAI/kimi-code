@@ -16,6 +16,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { projectPromptSnapshot } from '../src/routes/prompts';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
@@ -244,6 +245,41 @@ describe('server-v2 /api/v1 prompts', () => {
       .filter((part) => part.type === 'text')
       .map((part) => part.text);
     expect(texts?.[texts.length - 1]).toBe('Review this change.');
+
+    // The list projection shows the same caller-only content as the submit
+    // response (the stored skill blocks are not projected back).
+    const projected = projectPromptSnapshot({
+      id: 'msg_1',
+      userMessageId: 'msg_1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      state: 'running',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'rendered skill block' },
+          { type: 'text', text: 'Review this change.' },
+        ],
+        toolCalls: [],
+        origin: {
+          kind: 'user',
+          skillActivations: [{ activationId: 'a1', skillName: 'update-config' }],
+        },
+      },
+    });
+    expect(projected.content).toEqual([{ type: 'text', text: 'Review this change.' }]);
+    const plain = projectPromptSnapshot({
+      id: 'msg_2',
+      userMessageId: 'msg_2',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      state: 'pending',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'plain question' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+    expect(plain.content).toEqual([{ type: 'text', text: 'plain question' }]);
   });
 
   it('rejects a bundled submission with an unknown skill and records nothing', async () => {
@@ -278,6 +314,19 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(agent!.accessor.get(IAgentPermissionModeService).mode).toBe('manual');
     const history = agent!.accessor.get(IAgentContextMemoryService).get();
     expect(history.filter((message) => message.origin?.kind === 'user')).toHaveLength(0);
+  });
+
+  it('rejects an unknown bundled skill without materializing the main agent', async () => {
+    const id = await createSession(home as string);
+
+    const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'Review this change.' }],
+      skills: [{ name: 'does-not-exist' }],
+    });
+    expect(submitted.body.code).toBe(40415);
+
+    const session = getLiveSessionById(server!.core.accessor, id);
+    expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
   });
 
   it('makes the first three REST prompts available to title generation', async () => {

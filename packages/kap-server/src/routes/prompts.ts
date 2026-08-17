@@ -120,7 +120,6 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   return {
     prompt: agent.accessor.get(IAgentPromptService),
     skill: agent.accessor.get(IAgentSkillService),
-    skillCatalog: session.accessor.get(ISessionSkillCatalog),
     auth: agent.accessor.get(IAuthSummaryService),
     profile: agent.accessor.get(IAgentProfileService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
@@ -248,12 +247,17 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         // mutated: a bad `file_id` must not create the agent, register `main`
         // in session metadata, or touch the session's controls.
         await assertPromptFileRefs(req.body.content, core.accessor.get(IFileService));
-        const resolved = await resolvePrompt(core, session_id, req.body.agent_id);
+        // A cold resume loads the session but does not create the main agent;
+        // bundled-skill preflight runs at this point precisely so a rejected
+        // bundle cannot even mutate session metadata by registering `main`.
+        const session = await resolveSession(core, session_id);
         if (req.body.skills !== undefined) {
-          // Bundled skills validate before any media materialization or
-          // control override: a rejected bundle leaves the session untouched.
-          await assertActivatableSkills(resolved.skillCatalog, req.body.skills);
+          await assertActivatableSkills(
+            session.accessor.get(ISessionSkillCatalog),
+            req.body.skills,
+          );
         }
+        const resolved = await resolvePromptFromSession(session, req.body.agent_id);
         await resolved.auth.ensureReady();
 
         // Media resolution runs BEFORE any control mutation, so a failed
@@ -336,7 +340,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           );
           return;
         }
-        const session = await resolveSession(core, session_id);
         await applyPromptMetadataUpdate({
           metadata: session.accessor.get(ISessionMetadata),
           eventService: core.accessor.get(IEventService),
@@ -441,15 +444,21 @@ function projectPromptHandle(handle: PromptHandle) {
   return projectPromptSnapshot(handle);
 }
 
-function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][number]) {
+export function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][number]) {
   const status = prompt.state === 'running' || prompt.state === 'steered'
     ? 'running'
     : prompt.state === 'blocked' ? 'blocked' : 'queued';
+  const origin = prompt.message.origin;
+  // A bundled prompt stores the rendered skill blocks ahead of the caller's
+  // parts; project the caller's parts only, so the listed content matches the
+  // submit response for the same prompt.
+  const bundled = origin?.kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0;
+  const content = bundled === 0 ? prompt.message.content : prompt.message.content.slice(bundled);
   return {
     prompt_id: prompt.id,
     user_message_id: prompt.userMessageId,
     status,
-    content: corePartsToProtocol(prompt.message.content),
+    content: corePartsToProtocol(content),
     created_at: prompt.createdAt,
   };
 }
