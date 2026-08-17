@@ -774,6 +774,8 @@ export class AcpSession {
    *  - Auth-coded errors (`AUTH_LOGIN_REQUIRED`, `PROVIDER_AUTH_ERROR`)
    *    surface as `RequestError.authRequired()` so the ACP client can
    *    drive its own re-auth UX rather than a generic internal error.
+   *  - `CONTEXT_OVERFLOW` surfaces as an internal error carrying its public,
+   *    actionable provider message.
    *  - Everything else becomes `RequestError.internalError(...)` with
    *    the stack/message logged to the agent log file but NOT exposed
    *    to the client (the JSON-RPC layer would otherwise leak details).
@@ -1230,13 +1232,10 @@ export class AcpSession {
           if (!isFromMainAgent(event)) return;
           settled = true;
           if (event.reason === 'failed') {
-            // Failures bubble up via the SDK `error` payload. Phase 11.1
-            // upgrades the prior "log + resolve end_turn" behaviour to
-            // route auth-coded failures through `RequestError.authRequired()`
-            // so the client can trigger its re-auth UX. Other failure
-            // codes still resolve with `end_turn` (the spec discourages
-            // signaling errors through `stopReason`; the failure is
-            // observable in the log).
+            // Failures bubble up via the SDK `error` payload. Auth failures
+            // trigger the client's re-auth UX, while context overflow keeps
+            // the provider's actionable limit message. Other failure codes
+            // still resolve with `end_turn` and remain observable in the log.
             log.warn('acp: turn ended with failed reason', {
               sessionId,
               error: event.error,
@@ -1245,9 +1244,9 @@ export class AcpSession {
             startedToolCalls.clear();
             this.currentTurnId = undefined;
             unsub();
-            const authErr = authRequiredFromPayload(event.error);
-            if (authErr) {
-              reject(authErr);
+            const requestError = promptRequestErrorFromPayload(event.error);
+            if (requestError) {
+              reject(requestError);
               return;
             }
           } else {
@@ -1454,13 +1453,11 @@ export class AcpSession {
  * Map a Kimi SDK error (raw `Error`, `KimiError`, or `KimiErrorPayload`)
  * into the ACP {@link RequestError} shape used by the JSON-RPC layer.
  *
- * Auth-coded inputs (`auth.login_required`, `provider.auth_error`)
- * become `RequestError.authRequired()` so the client can drive its own
- * re-auth UX. Everything else becomes `RequestError.internalError(...)`
- * with the raw error logged to the agent log file but NOT exposed in
- * the JSON-RPC response — the client only sees the canonical
- * "session prompt failed" message, preventing accidental leakage of
- * stack frames or PII through the wire.
+ * Auth-coded inputs (`auth.login_required`, `provider.auth_error`) become
+ * `RequestError.authRequired()` so the client can drive its own re-auth UX.
+ * `context.overflow` carries its public provider message; everything else
+ * becomes `RequestError.internalError(...)` with the raw error logged but not
+ * exposed, preventing accidental leakage of stack frames or PII.
  *
  * The kimi-cli Python reference performs the same mapping at
  * `kimi-cli/src/kimi_cli/acp/session.py:218-247`; this is the TS port.
@@ -1593,13 +1590,13 @@ function detectLeadingSlashIntent(
 }
 
 function mapPromptError(err: unknown, sessionId: string): RequestError {
-  const authErr = authRequiredFromUnknown(err);
-  if (authErr) {
-    log.warn('acp: prompt rejected with auth error; mapping to authRequired', {
+  const requestError = promptRequestErrorFromUnknown(err);
+  if (requestError) {
+    log.warn('acp: prompt rejected with a public provider error', {
       sessionId,
       error: err instanceof Error ? err.message : String(err),
     });
-    return authErr;
+    return requestError;
   }
   log.error('acp: prompt failed', {
     sessionId,
@@ -1609,22 +1606,18 @@ function mapPromptError(err: unknown, sessionId: string): RequestError {
 }
 
 /**
- * Inspect a {@link KimiErrorPayload} (as carried on `turn.ended`
- * failed events) and return a `RequestError.authRequired()` if its
- * `code` is one of the auth-required codes; otherwise `undefined`.
+ * Inspect a {@link KimiErrorPayload} carried on a failed `turn.ended` event
+ * and map public auth/context failures to their ACP request error.
  *
- * Kept separate from {@link authRequiredFromUnknown} because the
+ * Kept separate from {@link promptRequestErrorFromUnknown} because the
  * `turn.ended` event hands us a serialized payload (no class identity
- * to branch on) — we only need the `code` discriminator here.
+ * to branch on).
  */
-function authRequiredFromPayload(
-  payload: { readonly code: unknown } | undefined,
+function promptRequestErrorFromPayload(
+  payload: { readonly code: unknown; readonly message?: unknown } | undefined,
 ): RequestError | undefined {
   if (!payload) return undefined;
-  if (isAuthErrorCode(payload.code)) {
-    return RequestError.authRequired();
-  }
-  return undefined;
+  return promptRequestError(payload.code, payload.message);
 }
 
 /**
@@ -1640,19 +1633,25 @@ function isAuthErrorCode(code: unknown): boolean {
 }
 
 /**
- * Best-effort detection of "auth required" for the `session.prompt(...)`
- * rejection path. The thrown value MAY be:
+ * Best-effort mapping for the `session.prompt(...)` rejection path. The
+ * thrown value MAY be:
  *  - A `KimiError` instance with a recognized `code` field.
  *  - A plain object that happens to expose a `code` (covers RPC-layer
  *    deserialized payloads that lost class identity).
  *  - Anything else — returns `undefined`.
  */
-function authRequiredFromUnknown(err: unknown): RequestError | undefined {
+function promptRequestErrorFromUnknown(err: unknown): RequestError | undefined {
   if (err && typeof err === 'object' && 'code' in err) {
-    const code = (err as { code?: unknown }).code;
-    if (isAuthErrorCode(code)) {
-      return RequestError.authRequired();
-    }
+    const coded = err as { code?: unknown; message?: unknown };
+    return promptRequestError(coded.code, coded.message);
+  }
+  return undefined;
+}
+
+function promptRequestError(code: unknown, message: unknown): RequestError | undefined {
+  if (isAuthErrorCode(code)) return RequestError.authRequired();
+  if (code === ErrorCodes.CONTEXT_OVERFLOW && typeof message === 'string' && message.length > 0) {
+    return RequestError.internalError(undefined, message);
   }
   return undefined;
 }

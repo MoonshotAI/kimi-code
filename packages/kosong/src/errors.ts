@@ -349,6 +349,7 @@ const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [
   /context[ _-]?length/,
   /(?:context[ _-]?window.*exceed|exceed.*context[ _-]?window)/,
   /maximum context/,
+  /supports?\s+only\s+[\d,.]+\s*[km]?\s+context/,
   /exceed(?:ed|s|ing)?\s+(?:the\s+)?max(?:imum)?\s+tokens?/,
   /(?:too many tokens.*(?:prompt|input|context)|(?:prompt|input|context).*too many tokens)/,
   /prompt is too long.*maximum/,
@@ -483,7 +484,9 @@ export function parseRetryAfterMs(headers: unknown): number | null {
 }
 
 export function isContextOverflowStatusError(statusCode: number, message: string): boolean {
-  if (statusCode !== 400 && statusCode !== 413 && statusCode !== 422) return false;
+  if (statusCode !== 400 && statusCode !== 401 && statusCode !== 413 && statusCode !== 422) {
+    return false;
+  }
   const lowerMessage = message.toLowerCase();
   return CONTEXT_OVERFLOW_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }

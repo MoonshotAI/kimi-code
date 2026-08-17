@@ -5,6 +5,7 @@ import {
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
+  isContextOverflowStatusError,
 } from '@moonshot-ai/kosong';
 
 import { KimiError } from './classes';
@@ -58,8 +59,9 @@ export function makeErrorPayload(
  *
  * Recognized errors:
  * - `KimiError`: passthrough.
- * - `APIStatusError`: 429 -> rate_limit, 401 -> auth_error, otherwise -> api_error.
- *   Exception: a quota-exhausted 429 maps to api_error (retryable: false) —
+ * - `APIStatusError`: context-limit wording -> context.overflow, 429 ->
+ *   rate_limit, 401 -> auth_error, otherwise -> api_error. A quota-exhausted
+ *   429 maps to api_error (retryable: false) —
  *   the rate_limit code would re-mint a rate-limit error across the wire
  *   boundary and drive the swarm requeue/suspend loop, which cannot help
  *   until the account is recharged.
@@ -84,11 +86,13 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
     const code: KimiErrorCode =
       error instanceof APIProviderQuotaExhaustedError
         ? ErrorCodes.PROVIDER_API_ERROR
-        : error.statusCode === 429
-          ? ErrorCodes.PROVIDER_RATE_LIMIT
-          : error.statusCode === 401
-            ? ErrorCodes.PROVIDER_AUTH_ERROR
-            : ErrorCodes.PROVIDER_API_ERROR;
+        : isContextOverflowStatusError(error.statusCode, error.message)
+          ? ErrorCodes.CONTEXT_OVERFLOW
+          : error.statusCode === 429
+            ? ErrorCodes.PROVIDER_RATE_LIMIT
+            : error.statusCode === 401
+              ? ErrorCodes.PROVIDER_AUTH_ERROR
+              : ErrorCodes.PROVIDER_API_ERROR;
     return {
       code,
       message: sanitizeStatusErrorMessage(error.message),

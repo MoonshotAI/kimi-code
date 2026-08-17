@@ -21,7 +21,11 @@ import type {
   ProviderConfig as KosongProviderConfig,
   ProviderRequestAuth,
 } from '@moonshot-ai/kosong';
-import { APIStatusError, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
+import {
+  APIStatusError,
+  isContextOverflowStatusError,
+  UNKNOWN_CAPABILITY,
+} from '@moonshot-ai/kosong';
 
 import { mapOAuthTokenError } from '#/oauth-error';
 
@@ -110,7 +114,10 @@ export class KimiForCodingProvider implements ModelProvider {
         try {
           return await request(auth);
         } catch (error) {
-          const is401 = error instanceof APIStatusError && error.statusCode === 401;
+          const is401 =
+            error instanceof APIStatusError &&
+            error.statusCode === 401 &&
+            !isContextOverflowStatusError(error.statusCode, error.message);
           if (!is401) throw error;
           if (refreshed) {
             throw new KimiError(

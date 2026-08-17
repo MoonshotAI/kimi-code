@@ -11,18 +11,23 @@
  * The driver itself turns per-turn input (systemPrompt / tools / messages)
  * into the `ModelRequestEvent` stream via the contract's `generate(...)`, measures
  * stream timing (`buildStreamTiming`), and owns the auth-refresh replay: a
- * 401 against a refreshable (OAuth) auth provider triggers one forced token
- * refresh and exactly one replay; a 401 that survives the replay means the
- * provider rejected the account itself, so it is surfaced through
- * `translateProviderError` as `provider.auth_error` carrying the provider's
- * message instead of a misleading re-login prompt.
+ * credential 401 against a refreshable (OAuth) auth provider triggers one
+ * forced token refresh and exactly one replay; a credential 401 that survives
+ * the replay means the provider rejected the account itself, so it is surfaced
+ * through `translateProviderError` as `provider.auth_error` carrying the
+ * provider's message instead of a misleading re-login prompt.
  *
  * Constructed by `ModelCatalog` — plain constructor args, no DI.
  */
 
 import { AsyncEventQueue } from '#/_base/asyncEventQueue';
 import type { VideoURLPart } from '#/kosong/contract/message';
-import { APIStatusError, isAbortError, VideoUploadUnsupportedError } from '#/kosong/contract/errors';
+import {
+  APIStatusError,
+  isAbortError,
+  isContextOverflowStatusError,
+  VideoUploadUnsupportedError,
+} from '#/kosong/contract/errors';
 import { generate, type GenerateResult } from '#/kosong/contract/generate';
 import type {
   ChatProvider,
@@ -211,7 +216,11 @@ export class ModelRequesterImpl implements ModelRequester {
 }
 
 function isUnauthorizedStatusError(error: unknown): error is APIStatusError {
-  return error instanceof APIStatusError && error.statusCode === 401;
+  return (
+    error instanceof APIStatusError &&
+    error.statusCode === 401 &&
+    !isContextOverflowStatusError(error.statusCode, error.message)
+  );
 }
 
 type MutableModelRequestTiming = { -readonly [K in keyof ModelRequestTiming]: ModelRequestTiming[K] };

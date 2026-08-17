@@ -4,6 +4,7 @@ import {
   APIStatusError,
   classifyKimiQuotaError,
   getModelCapability,
+  isContextOverflowStatusError,
   UNKNOWN_CAPABILITY,
 } from '@moonshot-ai/kosong';
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
@@ -214,7 +215,13 @@ export class ProviderManager implements ModelProvider {
         try {
           return await request(auth);
         } catch (error) {
-          if (!(error instanceof APIStatusError) || error.statusCode !== 401) throw error;
+          if (
+            !(error instanceof APIStatusError) ||
+            error.statusCode !== 401 ||
+            isContextOverflowStatusError(error.statusCode, error.message)
+          ) {
+            throw error;
+          }
           if (refreshed) {
             const reason = error.message.replaceAll('\r', '');
             throw new KimiError(

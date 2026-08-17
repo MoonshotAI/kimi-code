@@ -1,4 +1,4 @@
-import { classifyKimiQuotaError } from '@moonshot-ai/kosong';
+import { APIStatusError, classifyKimiQuotaError } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
 import type { KimiConfig, ModelAlias } from '../../src/config';
@@ -1036,6 +1036,31 @@ describe('ProviderManager OAuth auth', () => {
     await expect(resolveAuth!(async () => 'ok')).rejects.toMatchObject({
       code: ErrorCodes.AUTH_LOGIN_REQUIRED,
     });
+  });
+
+  it('surfaces a context-overflow 401 without refreshing credentials', async () => {
+    const tokenCalls: Array<boolean | undefined> = [];
+    const manager = new ProviderManager({
+      config: oauthConfig(),
+      resolveOAuthTokenProvider: () => ({
+        getAccessToken(options) {
+          tokenCalls.push(options?.force);
+          return Promise.resolve('oauth-token');
+        },
+      }),
+    });
+    const overflow = new APIStatusError(401, 'example-256k supports only 256K context.');
+    let requestCount = 0;
+
+    const resolveAuth = manager.resolveAuth('kimi-code/kimi-for-coding');
+    const caught = await resolveAuth!(async () => {
+      requestCount += 1;
+      throw overflow;
+    }).catch((error: unknown) => error);
+
+    expect(caught).toBe(overflow);
+    expect(requestCount).toBe(1);
+    expect(tokenCalls).toEqual([undefined]);
   });
 });
 

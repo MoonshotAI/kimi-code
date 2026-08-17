@@ -2165,6 +2165,13 @@ describe('Agent turn flow', () => {
       statusCode: 401,
     },
     {
+      name: '401 context overflow status',
+      createError: () =>
+        new APIStatusError(401, 'example-256k supports only 256K context.', 'req-context-401'),
+      errorType: 'context_overflow',
+      statusCode: 401,
+    },
+    {
       name: '403 status',
       createError: () => new APIStatusError(403, 'Forbidden', 'req-403'),
       errorType: 'auth',

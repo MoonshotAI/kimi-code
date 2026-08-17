@@ -243,6 +243,31 @@ describe('ModelRequesterImpl request execution', () => {
     expect(authCalls).toEqual([{}, { force: true }]);
   });
 
+  it('surfaces a context-overflow 401 without refreshing credentials', async () => {
+    const provider = new FakeChatProvider();
+    provider.handler = () =>
+      Promise.reject(new APIStatusError(401, 'example-256k supports only 256K context.'));
+    const authCalls: Array<{ force?: boolean }> = [];
+    const requester = new ModelRequesterImpl(
+      modelWith({
+        canRefresh: true,
+        getAuth: (options) => {
+          authCalls.push(options ?? {});
+          return Promise.resolve({ apiKey: 'tok' });
+        },
+      }),
+      registryReturning(provider),
+    );
+
+    const failure = await collect(requester.request(INPUT)).catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      code: ProtocolErrors.codes.CONTEXT_OVERFLOW,
+      message: 'example-256k supports only 256K context.',
+    });
+    expect(provider.calls).toHaveLength(1);
+    expect(authCalls).toEqual([{}]);
+  });
+
   it('surfaces a replay-surviving 401 as provider.auth_error', async () => {
     const provider = new FakeChatProvider();
     provider.handler = () => Promise.reject(new APIStatusError(401, 'account rejected'));

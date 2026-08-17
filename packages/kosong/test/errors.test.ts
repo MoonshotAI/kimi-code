@@ -228,6 +228,7 @@ describe('normalizeAPIStatusError', () => {
   it.each([
     [400, 'Context length exceeded'],
     [400, 'Exceeded max tokens'],
+    [401, 'example-256k supports only 256K context.'],
     [413, 'Context length exceeded'],
     [422, 'Maximum context window exceeded'],
     [400, 'context_length_exceeded'],
@@ -243,7 +244,6 @@ describe('normalizeAPIStatusError', () => {
   });
 
   it.each([
-    [401, 'Context length exceeded'],
     [500, 'Context length exceeded'],
     [400, 'Bad request'],
     [422, 'Invalid tool schema'],

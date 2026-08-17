@@ -52,7 +52,8 @@ export function sanitizeStatusErrorMessage(message: string): string {
   return normalized.replaceAll('\r', '');
 }
 
-function codeForStatusError(statusCode: number): ProviderErrorCode {
+function codeForStatusError(statusCode: number, message: string): ProviderErrorCode {
+  if (isContextOverflowStatusError(statusCode, message)) return CONTEXT_OVERFLOW_ERROR_CODE;
   if (statusCode === 429) return PROVIDER_RATE_LIMIT_ERROR_CODE;
   if (statusCode === 401 || statusCode === 403) return PROVIDER_AUTH_ERROR_CODE;
   if (statusCode === 529) return PROVIDER_OVERLOADED_ERROR_CODE;
@@ -102,7 +103,7 @@ export class APIStatusError extends ChatProviderError {
     requestId?: string | null,
     retryAfterMs?: number | null,
     traceId?: string | null,
-    code: ProviderErrorCode = codeForStatusError(statusCode),
+    code: ProviderErrorCode = codeForStatusError(statusCode, message),
   ) {
     super(sanitizeStatusErrorMessage(message), code, {
       details: { statusCode, requestId: requestId ?? null, traceId: traceId ?? null },
@@ -292,6 +293,7 @@ const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [
   /context[ _-]?length/,
   /(?:context[ _-]?window.*exceed|exceed.*context[ _-]?window)/,
   /maximum context/,
+  /supports?\s+only\s+[\d,.]+\s*[km]?\s+context/,
   /exceed(?:ed|s|ing)?\s+(?:the\s+)?max(?:imum)?\s+tokens?/,
   /(?:too many tokens.*(?:prompt|input|context)|(?:prompt|input|context).*too many tokens)/,
   /prompt is too long.*maximum/,
@@ -401,7 +403,9 @@ export function parseTraceId(headers: unknown): string | null {
 }
 
 export function isContextOverflowStatusError(statusCode: number, message: string): boolean {
-  if (statusCode !== 400 && statusCode !== 413 && statusCode !== 422) return false;
+  if (statusCode !== 400 && statusCode !== 401 && statusCode !== 413 && statusCode !== 422) {
+    return false;
+  }
   const lowerMessage = message.toLowerCase();
   return CONTEXT_OVERFLOW_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }

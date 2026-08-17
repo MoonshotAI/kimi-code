@@ -1025,9 +1025,14 @@ export class TurnFlow {
 
         return result.stopReason;
       } catch (error) {
+        const isCompactionContextOverflow =
+          isKimiError(error) &&
+          error.code === ErrorCodes.CONTEXT_OVERFLOW &&
+          error.details?.['reason'] === 'compaction_context_overflow';
         const isContextOverflow =
-          error instanceof APIContextOverflowError ||
-          (isKimiError(error) && error.code === ErrorCodes.CONTEXT_OVERFLOW);
+          !isCompactionContextOverflow &&
+          (error instanceof APIContextOverflowError ||
+            (isKimiError(error) && error.code === ErrorCodes.CONTEXT_OVERFLOW));
         const estimatedRequestTokens = isContextOverflow
           ? this.agent.fullCompaction.estimateCurrentRequestTokens()
           : undefined;
@@ -1552,11 +1557,11 @@ function classifyApiError(error: unknown, summary: KimiErrorPayload): ApiErrorCl
   const statusCode = apiStatusCode(error) ?? summaryStatusCode(summary);
   if (statusCode !== undefined) {
     if (statusCode === 429) return { errorType: 'rate_limit', statusCode };
-    if (statusCode === 401 || statusCode === 403) return { errorType: 'auth', statusCode };
-    if (statusCode >= 500) return { errorType: '5xx_server', statusCode };
     if (isContextOverflowStatusError(statusCode, summary.message)) {
       return { errorType: 'context_overflow', statusCode };
     }
+    if (statusCode === 401 || statusCode === 403) return { errorType: 'auth', statusCode };
+    if (statusCode >= 500) return { errorType: '5xx_server', statusCode };
     if (statusCode >= 400) return { errorType: '4xx_client', statusCode };
     return { errorType: 'api', statusCode };
   }
