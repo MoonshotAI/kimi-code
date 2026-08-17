@@ -305,7 +305,8 @@ export type ImageSource =
   // A daemon-referenced upload materialized into the session's own media
   // store: the bytes are fetched from the session-scoped media route (the
   // session id travels on the enclosing message/attachment), not the global
-  // /files store. Projection-side only — never submitted back.
+  // /files store. It can be submitted back to its owning session; the daemon
+  // rejects the reference when the target session does not own it.
   | { kind: 'sessionMedia'; fileId: string };
 
 /** Attachment parts a skill activation can carry — the media/file subset of

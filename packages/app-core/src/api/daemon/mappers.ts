@@ -327,10 +327,7 @@ export function toWireMessageContent(app: AppMessageContent): WireMessageContent
       } else if (src.kind === 'file') {
         wireSrc = { kind: 'file', file_id: src.fileId };
       } else if (src.kind === 'sessionMedia') {
-        // A projection-side source has no submittable wire form: the daemon
-        // rejects the session-scoped id as an unknown upload, which is the
-        // honest failure — silently dropping the part would lose user content.
-        wireSrc = { kind: 'file', file_id: src.fileId };
+        wireSrc = { kind: 'session_media', file_id: src.fileId };
       } else {
         wireSrc = { kind: 'url', url: src.url };
       }

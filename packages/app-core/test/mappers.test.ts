@@ -2,7 +2,7 @@
 // daemon wire ↔ app message mapping for media sources: a `session_media`
 // projection (a daemon media reference materialized into the session's own
 // media store) must stay distinct from a global-upload `file` source on the
-// way in, and has no submittable form on the way out.
+// way in and preserve that session-scoped kind on the way out.
 // Run: pnpm exec vitest run packages/app-core/test/mappers.test.ts
 
 import { describe, expect, it } from 'vitest';
@@ -46,9 +46,9 @@ describe('toAppMessage media sources', () => {
 });
 
 describe('toWireMessageContent media sources', () => {
-  it('maps a sessionMedia source to a file reference the daemon rejects — never dropped silently', () => {
+  it('keeps a sessionMedia source in the session-scoped wire namespace', () => {
     expect(
       toWireMessageContent({ type: 'image', source: { kind: 'sessionMedia', fileId: 'f_sess' } }),
-    ).toEqual({ type: 'image', source: { kind: 'file', file_id: 'f_sess' } });
+    ).toEqual({ type: 'image', source: { kind: 'session_media', file_id: 'f_sess' } });
   });
 });

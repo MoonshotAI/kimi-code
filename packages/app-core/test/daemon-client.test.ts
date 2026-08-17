@@ -578,4 +578,27 @@ describe('DaemonKimiWebApi session media', () => {
     );
     expect(blob.size).toBe(3);
   });
+
+  it('preserves the session_media source kind in prompt submissions', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      envelope({
+        prompt_id: 'prompt-1',
+        user_message_id: 'message-1',
+        status: 'running',
+        content: [],
+        created_at: '2026-01-01T00:00:00.000Z',
+      }),
+    );
+
+    await createApi().submitPrompt('sess/1', {
+      content: [{ type: 'image', source: { kind: 'sessionMedia', fileId: 'f_abc' } }],
+    });
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://daemon.test/api/v1/sessions/sess%2F1/prompts');
+    if (typeof init.body !== 'string') throw new Error('expected JSON request body');
+    expect(JSON.parse(init.body)).toMatchObject({
+      content: [{ type: 'image', source: { kind: 'session_media', file_id: 'f_abc' } }],
+    });
+  });
 });
