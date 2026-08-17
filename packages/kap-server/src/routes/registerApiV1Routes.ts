@@ -90,6 +90,12 @@ export interface RegisterApiV1RoutesOptions {
    * flag).
    */
   readonly dangerousBypassAuth?: boolean;
+  /**
+   * Custom browser tab title for this instance, surfaced as `web_title` in the
+   * `/meta` payload. Set by `start.ts` from the `webTitle` server option (the
+   * CLI's `--web-title` flag).
+   */
+  readonly webTitle?: string;
 }
 
 export async function registerApiV1Routes(
@@ -112,6 +118,7 @@ export async function registerApiV1Routes(
         serverId: ulid(),
         startedAt: new Date().toISOString(),
         dangerousBypassAuth: opts.dangerousBypassAuth === true,
+        webTitle: opts.webTitle,
         getExperimentalFlags: async () => {
           // Same edge-facade contract as the config route: never project
           // config-derived state before the initial load settles — an early

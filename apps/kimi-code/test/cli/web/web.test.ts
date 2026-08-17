@@ -103,6 +103,7 @@ describe('kimi web', () => {
     expect(longs).toContain('--dangerous-bypass-auth');
     expect(longs).toContain('--log-level');
     expect(longs).toContain('--debug-endpoints');
+    expect(longs).toContain('--web-title');
     // web opens the browser by default → the option is the negative --no-open.
     expect(longs).toContain('--no-open');
     // The background/daemon era flags are gone: the server always runs in the
@@ -468,6 +469,32 @@ describe('`kimi web` option threading', () => {
     );
 
     expect(calls.options).toMatchObject({ logLevel: 'debug' });
+  });
+
+  it('passes --web-title through to the runner', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const { runner, calls } = makeRunner();
+    const { stdout, stderr } = makeIo();
+
+    await handleWebCommand(
+      { port: '58627', webTitle: 'My Dev Box', open: false },
+      { startServerForeground: runner, openUrl: vi.fn(), stdout, stderr },
+    );
+
+    expect(calls.options).toMatchObject({ webTitle: 'My Dev Box' });
+  });
+
+  it('leaves webTitle undefined when --web-title is not passed', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const { runner, calls } = makeRunner();
+    const { stdout, stderr } = makeIo();
+
+    await handleWebCommand(
+      { port: '58627', open: false },
+      { startServerForeground: runner, openUrl: vi.fn(), stdout, stderr },
+    );
+
+    expect(calls.options?.webTitle).toBeUndefined();
   });
 
   it('rejects an invalid --log-level before calling the runner', async () => {

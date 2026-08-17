@@ -50,6 +50,13 @@ export const metaResponseSchema = z.object({
    * probing routes.
    */
   backend: z.enum(['v1', 'v2']).optional(),
+  /**
+   * Custom browser tab title for this instance, set by the host at boot
+   * (the CLI's `--web-title`). Instance-level and frozen at registration —
+   * never changes for the life of the process. Absent when unset: the web UI
+   * then falls back to `<workspace dir> | Kimi Code`.
+   */
+  web_title: z.string().optional(),
 });
 
 export type MetaResponse = z.infer<typeof metaResponseSchema>;

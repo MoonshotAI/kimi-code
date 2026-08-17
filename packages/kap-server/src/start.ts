@@ -133,6 +133,13 @@ export interface ServerStartOptions {
   readonly authTokenService?: IAuthTokenService;
   readonly disableAuth?: boolean;
   /**
+   * Custom browser tab title for this web UI instance (the CLI's
+   * `--web-title`). Surfaced as `web_title` in `GET /api/v1/meta` so the web
+   * UI can distinguish multiple instances on different machines. Instance-level
+   * and frozen at boot; omit to let the UI fall back to `<workspace dir> | Kimi Code`.
+   */
+  readonly webTitle?: string;
+  /**
    * Optional *additional* credential accepted on the RPC surface (debug REST +
    * WebSocket) alongside the persistent bearer token. Never required and never
    * the only gate: the persistent token always protects the RPC surface. Leave
@@ -549,6 +556,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     broadcaster,
     transcriptService,
     dangerousBypassAuth: opts.disableAuth === true,
+    webTitle: opts.webTitle,
   });
 
   // `/api/v2` — same envelope conventions as v1, domain-grouped payloads.
