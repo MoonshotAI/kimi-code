@@ -317,19 +317,28 @@ export class AgentPromptService implements IAgentPromptService {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
     }
     const selected = this.pending.filter((item) => ids.has(item.id));
-    for (const item of selected) this.pending.splice(this.pending.indexOf(item), 1);
     const message: ContextMessage = {
       role: 'user', content: selected.flatMap((item) => item.message.content), toolCalls: [], origin: USER_PROMPT_ORIGIN,
     };
     const { message: rerouted, captions } = this.extractCompressionCaptions(message);
+    // Materialize BEFORE the records leave the queue: the file copy awaits,
+    // and the active turn may finish meanwhile — records removed earlier
+    // would never launch or settle in that case.
     await this.materializeDaemonRefs(rerouted);
+    for (const item of selected) this.pending.splice(this.pending.indexOf(item), 1);
     const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
       void this.dispatcher.dispatch(
         new TurnSteer({ input: materialized.content, origin: materialized.origin ?? USER_PROMPT_ORIGIN }),
       );
     }, () => {});
     const turn = (await this.loop.enqueue(request).assigned).turn;
-    if (turn === undefined) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
+    if (turn === undefined) {
+      // The active turn finished while the media copy ran: restore the
+      // records to the queue so startNext can launch them as fresh prompts
+      // instead of dropping their handles unsettled.
+      this.pending.unshift(...selected);
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
+    }
     for (const item of selected) { item.state = 'steered'; item.launchedDeferred.resolve(turn); }
     this.steered.set(this.active.id, [...(this.steered.get(this.active.id) ?? []), ...selected]);
     void this.dispatcher.dispatch(
