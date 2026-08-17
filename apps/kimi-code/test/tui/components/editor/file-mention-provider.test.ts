@@ -640,4 +640,143 @@ describe('FileMentionProvider', () => {
       expect(result?.items.map((item) => item.label)).toContain('shared/');
     });
   });
+
+  describe('inline skill completion', () => {
+    const REVIEW_COMMAND = {
+      name: 'skill:review',
+      aliases: [],
+      description: 'Review changes',
+    };
+    const SECURITY_COMMAND = {
+      name: 'skill:security',
+      aliases: [],
+      description: 'Check security',
+    };
+    const SKILL_NAMES = new Set(['skill:review', 'skill:security']);
+
+    function skillProvider(
+      commands: ConstructorParameters<typeof FileMentionProvider>[0] = [
+        REVIEW_COMMAND,
+        SECURITY_COMMAND,
+        HELP_COMMAND,
+      ],
+    ) {
+      return new FileMentionProvider(
+        commands,
+        workDir,
+        NO_FD,
+        [],
+        () => 'prompt',
+        SKILL_NAMES,
+      );
+    }
+
+    it('offers skill-only suggestions for a `/` after whitespace mid-input', async () => {
+      const provider = skillProvider();
+      const line = 'hello /';
+      const result = await provider.getSuggestions([line], 0, line.length, { signal: ctrl() });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/');
+      expect(result!.items.map((item) => item.value).sort()).toEqual([
+        'skill:review',
+        'skill:security',
+      ]);
+    });
+
+    it('filters inline suggestions by the typed prefix', async () => {
+      const provider = skillProvider();
+      const line = 'hello /rev';
+      const result = await provider.getSuggestions([line], 0, line.length, { signal: ctrl() });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/rev');
+      expect(result!.items.map((item) => item.value)).toEqual(['skill:review']);
+    });
+
+    it('offers the skill picker for a `/` at the start of a later line', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['first line', '/'], 1, 1, { signal: ctrl() });
+
+      expect(result).not.toBeNull();
+      expect(result!.items.map((item) => item.value).sort()).toEqual([
+        'skill:review',
+        'skill:security',
+      ]);
+    });
+
+    it('stays in skill-only mode while typing a token on a later line', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['first line', '/rev'], 1, 4, {
+        signal: ctrl(),
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/rev');
+      expect(result!.items.map((item) => item.value)).toEqual(['skill:review']);
+    });
+
+    it('offers inline skills on an indented later line', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['first line', '  /skill:rev'], 1, 12, {
+        signal: ctrl(),
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/skill:rev');
+      expect(result!.items.map((item) => item.value)).toEqual(['skill:review']);
+    });
+
+    it('offers inline skills for an indented token on the first line', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['  /skill:rev'], 0, 12, { signal: ctrl() });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/skill:rev');
+      expect(result!.items.map((item) => item.value)).toEqual(['skill:review']);
+    });
+
+    it('does not leak built-in commands onto later lines', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['first line', '/hel'], 1, 4, {
+        signal: ctrl(),
+      });
+
+      expect(result?.items.map((item) => item.value) ?? []).not.toContain('help');
+    });
+
+    it('returns null for a prose slash when no skills are registered', async () => {
+      const provider = new FileMentionProvider([HELP_COMMAND], workDir, NO_FD, [], () => 'prompt');
+      const line = 'hello /';
+      const result = await provider.getSuggestions([line], 0, line.length, { signal: ctrl() });
+      expect(result).toBeNull();
+    });
+
+    it('keeps slash-command argument completions ahead of inline skills', async () => {
+      const provider = skillProvider([ADD_DIR_COMMAND, REVIEW_COMMAND]);
+      const line = '/add-dir /';
+      const result = await provider.getSuggestions([line], 0, line.length, {
+        signal: ctrl(),
+        force: false,
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.items.map((item) => item.value)).toEqual(['/tmp/shared/']);
+    });
+
+    it('applyCompletion preserves the slash and appends a trailing space', () => {
+      const provider = skillProvider();
+      const line = 'hello /rev';
+      const result = provider.applyCompletion(
+        [line],
+        0,
+        line.length,
+        { value: 'skill:review', label: 'skill:review', data: { inlineSkill: true } },
+        '/rev',
+      );
+
+      expect(result.lines[0]).toBe('hello /skill:review ');
+      expect(result.cursorCol).toBe('hello /skill:review '.length);
+    });
+  });
 });

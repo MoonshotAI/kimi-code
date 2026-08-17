@@ -24,8 +24,6 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { TimeoutTimer } from '#/_base/utils/timer';
@@ -231,10 +229,3 @@ function sortKeysDeep(value: unknown): unknown {
   return value;
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceMcpConfigService,
-  WorkspaceMcpConfigService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceMcpConfig',
-);

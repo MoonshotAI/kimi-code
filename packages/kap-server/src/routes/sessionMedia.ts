@@ -32,7 +32,7 @@ import {
   IFileService,
   isFileError,
 } from '@moonshot-ai/agent-core-v2/app/file/fileService';
-import { resumeSessionById } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/sessionLookup';
+import { resumeSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
 import type { Scope } from '@moonshot-ai/agent-core-v2/_base/di/scope';
 import { z } from 'zod';
 

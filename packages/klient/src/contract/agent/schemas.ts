@@ -47,6 +47,17 @@ export const promptPayloadSchema = z.object({
   promptId: z.string().min(1).optional(),
 });
 
+/** Same shape as `PromptSkillActivation` in the engine. */
+export const promptSkillActivationSchema = z.object({
+  name: z.string(),
+  args: z.string().optional(),
+});
+
+/** Same shape as `PromptWithSkillsInput` in the engine. */
+export const promptWithSkillsPayloadSchema = promptPayloadSchema.extend({
+  skills: z.array(promptSkillActivationSchema).min(1),
+});
+
 /** Same shape as `SteerPayload` in the engine. */
 export const steerPayloadSchema = z.object({
   input: z.array(promptPartSchema),
@@ -89,6 +100,11 @@ export const setModelPayloadSchema = z.object({
 export const setModelResultSchema = z.object({
   model: z.string(),
   providerName: z.string().optional(),
+});
+
+export const runtimeBindingSchema = z.object({
+  workspaceId: z.string(),
+  runtimeId: z.string(),
 });
 
 export const permissionModeSchema = z.enum(['manual', 'yolo', 'auto']);

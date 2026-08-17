@@ -29,6 +29,7 @@ import { IPluginService } from '#/app/plugin/plugin';
 import type { ReloadSummary } from '#/app/plugin/types';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
   IHostFsWatchService,
@@ -36,11 +37,9 @@ import {
   type IHostFsWatchHandle,
 } from '#/os/interface/hostFsWatch';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
-import {
-  ISessionLifecycleService,
-  type SessionWillCreateEvent,
-} from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
@@ -81,7 +80,7 @@ describe('Workspace MCP initialization', () => {
       strict: true,
       additionalServices: (reg) => {
         reg.definePartialInstance(IBootstrapService, { homeDir });
-        reg.definePartialInstance(IWorkspaceContext, { cwd });
+        reg.definePartialInstance(IWorkspaceContext, { cwd, workspaceId: 'test-workspace' });
         reg.definePartialInstance(IPluginService, {
           enabledMcpServers: async () => ({}),
           onDidReload: Event.None as Event<ReloadSummary>,
@@ -89,6 +88,11 @@ describe('Workspace MCP initialization', () => {
         reg.definePartialInstance(IMcpOAuthStore, createMemoryMcpOAuthStore());
         reg.defineInstance(ILogService, stubLog());
         reg.defineInstance(ITelemetryService, noopTelemetryService);
+        const runtime = Object.assign(
+          new FakeRuntime({ workspaceId: 'test-workspace', runtimeId: 'local', generation: 'test-generation' }, { capabilities: ['process'] }),
+          { process: new HostProcessService() },
+        );
+        reg.defineInstance(IRuntimeResolver, { _serviceBrand: undefined, inspect: () => runtime, acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }) });
         reg.definePartialInstance(IConfigService, {
           ready,
           get: (<T = unknown>(domain: string): T =>
@@ -108,9 +112,6 @@ describe('Workspace MCP initialization', () => {
           onDidChange: Event.None as IWorkspaceTrust['onDidChange'],
         });
         reg.define(IWorkspaceMcpConfigService, WorkspaceMcpConfigService);
-        reg.definePartialInstance(ISessionLifecycleService, {
-          onWillCreateSession: Event.None as Event<SessionWillCreateEvent>,
-        });
         registerAgentIdentityStub(reg);
         reg.define(IWorkspaceMcpService, WorkspaceMcpService);
       },
@@ -128,6 +129,7 @@ describe('Workspace MCP initialization', () => {
         transport: 'stdio',
         command: process.execPath,
         args: [stdioFixture],
+        runtime_id: 'local',
       },
     });
     const service = createWorkspaceMcpService(ready);
@@ -148,6 +150,7 @@ describe('Workspace MCP initialization', () => {
         transport: 'stdio',
         command: process.execPath,
         args: [slowToolStdioFixture],
+        runtime_id: 'local',
         env: { KIMI_TEST_MCP_TOOL_DELAY_MS: '300' },
       },
     });

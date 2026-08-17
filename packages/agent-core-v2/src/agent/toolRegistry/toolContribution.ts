@@ -39,6 +39,7 @@ import type {
   ToolDisclosure,
   ToolSource,
 } from '#/tool/toolContract';
+import type { RuntimeCapability } from '#/runtime/runtime';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AnyAgentTool = AgentTool<any>;
@@ -51,6 +52,7 @@ export interface AgentToolContributionOptions {
   readonly source?: ToolSource;
   readonly disclosure?: ToolDisclosure;
   readonly when?: (accessor: ServicesAccessor) => boolean;
+  readonly requiredRuntimeCapabilities?: readonly RuntimeCapability[];
   readonly domain?: string;
 }
 

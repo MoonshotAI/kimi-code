@@ -471,7 +471,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     job.turn.state = 'running';
     this.activeTurnJob = job;
     const projection = isDisplayablePromptOrigin(origin)
-      ? projectTurnPrompt(job.seed.input)
+      ? projectTurnPrompt(job.seed.input, origin)
       : undefined;
     this.eventBus.publish({
       type: 'turn.started',

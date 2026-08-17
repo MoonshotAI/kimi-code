@@ -358,6 +358,17 @@ describe('server-v2 /api/v1 fs:content', () => {
     expect(res.headers.get('content-type')).toContain('text/plain');
   });
 
+  it('serves a UTF-8 Chinese .log file as text/plain', async () => {
+    const file = join(dir as string, 'server.log');
+    const log = '2026-08-16 INFO 启动完成 ✅\n'.repeat(100);
+    await writeFile(file, log);
+
+    const res = await getContent(file);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/plain');
+    expect(await res.text()).toBe(log);
+  });
+
   it('serves binary files byte-for-byte with an octet-stream fallback mime', async () => {
     const file = join(dir as string, 'blob.bin');
     const original = Buffer.from([0x00, 0x01, 0x02, 0xff, 0xfe, 0x00, 0x10, 0x80]);

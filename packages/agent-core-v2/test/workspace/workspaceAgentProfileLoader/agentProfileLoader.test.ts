@@ -118,8 +118,6 @@ function workspaceContextStub(workDir: string): IWorkspaceContext {
     source: 'local',
     meta: { id: 'wd_test', root: workDir, name: 'test', createdAt: 0, lastOpenedAt: 0 },
     persistenceScope: 'sessions/wd_test',
-    osBackendId: 'local',
-    persistenceBackendId: 'local',
   };
 }
 

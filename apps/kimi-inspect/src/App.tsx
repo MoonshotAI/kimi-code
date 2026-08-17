@@ -18,8 +18,7 @@
  * chat timeline.
  */
 
-import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
-import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/sessionLifecycle';
+import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import { useEffect, useState } from 'react';
 
 import type { AuditTrail } from './audit/trail';
@@ -61,14 +60,10 @@ export function App() {
     setReady(false);
     setResumeError(null);
     klient
-      .core(ISessionIndex)
-      .get(sessionId)
-      .then((summary) => {
-        if (summary === undefined) throw new Error(`session ${sessionId} does not exist`);
-        return klient
-          .workspace(summary.workspaceId)
-          .service(ISessionLifecycleService)
-          .resume(sessionId);
+      .core(ISessionManager)
+      .resume(sessionId)
+      .then((session) => {
+        if (session === undefined) throw new Error(`session ${sessionId} does not exist`);
       })
       .then(() => {
         if (!cancelled) setReady(true);

@@ -29,7 +29,7 @@ import {
 import { renderNotificationXml } from '#/agent/task/notificationXml';
 import { AgentTaskService } from '#/agent/task/taskService';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
-import type { IProcess } from '#/session/process/processRunner';
+import type { IHostProcess } from '#/os/interface/hostProcess';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -380,7 +380,7 @@ describe('AgentTaskService', () => {
       wait: () => wait,
       kill,
       dispose: vi.fn().mockResolvedValue(undefined),
-    } as unknown as IProcess;
+    } as unknown as IHostProcess;
     const svc = ix.get(IAgentTaskService);
     svc.registerTask(new ProcessTask(proc, 'ignore-term', 'long-running process'));
     await Promise.resolve();
@@ -426,7 +426,7 @@ describe('AgentTaskService', () => {
       wait: () => wait,
       kill: vi.fn().mockResolvedValue(undefined),
       dispose: vi.fn().mockResolvedValue(undefined),
-    } as unknown as IProcess;
+    } as unknown as IHostProcess;
     const svc = ix.get(IAgentTaskService);
     svc.registerTask(new ProcessTask(proc, 'keep-running', 'long-running process'));
     await Promise.resolve();
@@ -715,7 +715,7 @@ describe('AgentTaskService', () => {
   const LIMIT_BYTES = 16 * MiB;
 
   function streamingProcess(chunks: string[]): {
-    proc: IProcess;
+    proc: IHostProcess;
     kill: ReturnType<typeof vi.fn>;
   } {
     const stdout = Readable.from(chunks);
@@ -740,12 +740,12 @@ describe('AgentTaskService', () => {
       wait: () => waitP,
       kill,
       dispose: vi.fn().mockResolvedValue(undefined),
-    } as unknown as IProcess;
+    } as unknown as IHostProcess;
     return { proc, kill };
   }
 
   function sigtermIgnoringProcess(chunks: string[]): {
-    proc: IProcess;
+    proc: IHostProcess;
     kill: ReturnType<typeof vi.fn>;
   } {
     const stdout = Readable.from(chunks);
@@ -772,7 +772,7 @@ describe('AgentTaskService', () => {
       wait: () => waitP,
       kill,
       dispose: vi.fn().mockResolvedValue(undefined),
-    } as unknown as IProcess;
+    } as unknown as IHostProcess;
     return { proc, kill };
   }
 

@@ -17,6 +17,7 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { CHECKPOINTED_MODELS, type Checkpointed } from '#/agent/contextMemory/conversationTime';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -86,8 +87,12 @@ interface StopTaskPayload { readonly taskId: string; readonly reason?: string }
 interface UndoHistoryPayload { readonly count: number }
 interface UnregisterToolPayload { readonly name: string }
 import { type UsageStatus } from '#/agent/usage/usage';
-import { IAgentSkillService, type SkillActivationInput } from '#/agent/skill/skill';
+import { IAgentSkillService, type PromptWithSkillsInput, type SkillActivationInput } from '#/agent/skill/skill';
 import { AgentSkillService } from '#/agent/skill/skillService';
+import { IAgentRuntimeBindingSeed } from '#/agent/runtimeBinding/runtimeBinding';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { RuntimeLease } from '#/runtime/runtime';
+import { LocalRuntime } from '#/runtime/localRuntime';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import type {
   ExecutableToolOutput as ToolOutput,
@@ -135,9 +140,10 @@ import {
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IHostFileSystem,
+  IHostFsWatchService,
+  IHostProcessService,
   ISessionBtwService,
   ISessionContext,
-  ISessionProcessRunner,
   IAgentScopeContext,
   IAgentShellCommandService,
   IAgentStepRetryService,
@@ -173,11 +179,11 @@ import {
   type ServiceIdentifier,
 } from '#/index';
 import {
-  ISessionLifecycleService,
   type SessionCreatedEvent,
   type SessionWillCloseEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IEventBus } from '#/app/event/eventBus';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
 import { promptTurn } from '#/agent/loop/turnOps';
@@ -206,7 +212,7 @@ import {
   type InteractionPendingChangedEvent,
   type InteractionResolution,
 } from '#/session/interaction/interaction';
-import type { IProcess } from '#/session/process/processRunner';
+import type { IHostProcess } from '#/os/interface/hostProcess';
 import { ISessionQuestionService, type QuestionResult } from '#/session/question/question';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionSwarmService } from '#/features/swarm/session/sessionSwarm';
@@ -329,6 +335,7 @@ type RpcPromise<T> = Promise<T> & {
 
 interface AgentRpcPassthroughAPI {
   prompt: (payload: PromptPayload) => Promisable<PromptLaunchResult | undefined>;
+  promptWithSkills: (payload: PromptWithSkillsInput) => Promisable<PromptLaunchResult | undefined>;
   steer: (payload: SteerPayload) => Promisable<PromptLaunchResult | undefined>;
   cancel: (payload: CancelPayload) => void;
   undoHistory: (payload: UndoHistoryPayload) => Promisable<number>;
@@ -503,31 +510,28 @@ function defineServiceValue<T>(
 
 export interface ExecEnvOverride {
   readonly hostFs?: IHostFileSystem | Partial<IHostFileSystem>;
-  readonly processRunner?: ISessionProcessRunner | Partial<ISessionProcessRunner>;
+  readonly processRunner?: IHostProcessService | Partial<IHostProcessService>;
 }
 
 export function execEnvServices(override: ExecEnvOverride = {}): TestAgentServiceOverride {
   const session = sessionServices((reg) => {
-    if (override.processRunner !== undefined) {
-      reg.defineInstance(
-        ISessionProcessRunner,
-        resolveProcessRunnerOverride(override.processRunner),
-      );
-    }
     reg.defineDescriptor(
       ISessionWorkspaceContext,
       new SyncDescriptor(SessionWorkspaceContextService),
     );
   });
-  if (override.hostFs === undefined) return session;
-
-  const hostFs = resolveHostFsOverride(override.hostFs);
-  return [
-    appServices((reg) => {
-      reg.defineInstance(IHostFileSystem, hostFs);
-    }),
-    session,
-  ];
+  const app = appServices((reg) => {
+    if (override.processRunner !== undefined) {
+      reg.defineInstance(
+        IHostProcessService,
+        resolveProcessRunnerOverride(override.processRunner),
+      );
+    }
+    if (override.hostFs !== undefined) {
+      reg.defineInstance(IHostFileSystem, resolveHostFsOverride(override.hostFs));
+    }
+  });
+  return [app, session];
 }
 
 function resolveHostFsOverride(input: IHostFileSystem | Partial<IHostFileSystem>): IHostFileSystem {
@@ -555,16 +559,16 @@ function isFullHostFs(input: unknown): boolean {
 }
 
 function resolveProcessRunnerOverride(
-  input: ISessionProcessRunner | Partial<ISessionProcessRunner>,
-): ISessionProcessRunner {
+  input: IHostProcessService | Partial<IHostProcessService>,
+): IHostProcessService {
   if (
     typeof input === 'object' &&
     input !== null &&
-    typeof (input as ISessionProcessRunner).exec === 'function'
+    typeof (input as IHostProcessService).spawn === 'function'
   ) {
-    return input as ISessionProcessRunner;
+    return input as IHostProcessService;
   }
-  return createFakeProcessRunner(input as Partial<ISessionProcessRunner>);
+  return createFakeProcessRunner(input as Partial<IHostProcessService>);
 }
 
 export function homeDirServices(homeDir: string | undefined): TestAgentServiceOverride {
@@ -776,21 +780,22 @@ export function swarmServices(
   ];
 }
 
-export function createCommandRunner(stdout: string, exitCode = 0): ISessionProcessRunner {
-  function createProcess(): IProcess {
+export function createCommandRunner(stdout: string, exitCode = 0): IHostProcessService {
+  function createProcess(): IHostProcess {
     return {
+      _serviceBrand: undefined,
       stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
       stdout: Readable.from([stdout]),
       stderr: Readable.from(['']),
       pid: 42,
       exitCode,
-      wait: vi.fn().mockResolvedValue(exitCode) as IProcess['wait'],
-      kill: vi.fn().mockResolvedValue(undefined) as IProcess['kill'],
-      dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+      wait: vi.fn().mockResolvedValue(exitCode),
+      kill: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn(),
     };
   }
   return createFakeProcessRunner({
-    exec: vi.fn().mockImplementation(async () => createProcess()),
+    spawn: vi.fn().mockImplementation(async () => createProcess()),
   });
 }
 
@@ -1153,6 +1158,7 @@ export class AgentTestContext {
             );
           }
           reg.defineInstance(IHostTerminalService, createHostTerminalService());
+          reg.defineInstance(IHostFileSystem, new HostFileSystem());
           reg.defineInstance(
             IHostEnvironment,
             {
@@ -1209,7 +1215,7 @@ export class AgentTestContext {
               scope: (subKey?: string): string =>
                 subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
             });
-            reg.definePartialInstance(ISessionLifecycleService, {
+            reg.definePartialInstance(ISessionManager, {
               onDidCreateSession: Event.None as Event<SessionCreatedEvent & IWaitUntil>,
               onWillCloseSession: Event.None as Event<SessionWillCloseEvent & IWaitUntil>,
             });
@@ -1283,6 +1289,31 @@ export class AgentTestContext {
       seeds: collectScopeSeed(
         [
           (reg) => {
+            reg.defineInstance(IAgentRuntimeBindingSeed, {
+              _serviceBrand: undefined,
+              binding: { workspaceId: 'workspace-1', runtimeId: 'local' },
+            });
+            const runtime = new LocalRuntime(
+              'workspace-1',
+              this.root.accessor.get(IHostEnvironment),
+              this.root.accessor.get(IHostFileSystem),
+              this.root.accessor.get(IHostProcessService),
+              this.root.accessor.get(IHostFsWatchService),
+              this.root.accessor.get(IHostTerminalService),
+            );
+            reg.defineInstance<IAgentRuntimeService>(IAgentRuntimeService, {
+              _serviceBrand: undefined,
+              onDidChange: () => ({ dispose: () => {} }),
+              isAvailable: (required = []) => required.every((capability) => runtime.capabilities.has(capability)),
+              inspect: () => runtime,
+              acquire: (required = []): RuntimeLease => {
+                const missing = required.filter((capability) => !runtime.capabilities.has(capability));
+                if (missing.length > 0) {
+                  throw new Error(`test runtime missing capabilities: ${missing.join(', ')}`);
+                }
+                return { runtime, track: (resource) => resource, dispose: () => {} };
+              },
+            });
             reg.defineDescriptor(
               IWireService,
               new SyncDescriptor(WireService),
@@ -2065,6 +2096,7 @@ export class AgentTestContext {
   private createRpcPassthroughAdapters(): AgentRpcPassthroughAPI {
     return {
       prompt: (payload) => this.get(IAgentPromptService).submit(payload),
+      promptWithSkills: (payload) => this.get(IAgentSkillService).promptWithSkills(payload),
       steer: (payload) => this.get(IAgentPromptService).submitSteer(payload),
       cancel: (payload) => this.get(IAgentLoopService).cancelFromUser(payload.turnId),
       undoHistory: (payload) => this.get(IAgentConversationUndoService).undo(payload.count),

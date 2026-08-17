@@ -28,6 +28,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IntervalTimer } from '#/_base/utils/timer';
 import { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IModelService } from '#/kosong/model/model';
 import {
   ISessionAgentProfileCatalog,
@@ -40,7 +41,6 @@ import {
   ISessionSubagentService,
 } from '#/session/subagent/subagent';
 import {
-  ISessionLifecycleService,
   type SessionCloseReason,
   type SessionCreateSource,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
@@ -62,7 +62,7 @@ export class SessionExternalHooksService
 
   constructor(
     @ISessionContext private readonly context: ISessionContext,
-    @ISessionLifecycleService lifecycle: ISessionLifecycleService,
+    @ISessionManager lifecycle: ISessionManager,
     @ISessionSubagentService subagents: ISessionSubagentService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionAgentProfileCatalog private readonly profiles: ISessionAgentProfileCatalog,
@@ -87,20 +87,26 @@ export class SessionExternalHooksService
           .catch(() => undefined);
       }),
     );
-    this._register(
-      lifecycle.onDidCreateSession((event) => {
-        if (event.sessionId !== this.context.sessionId) return;
-        if (event.source !== 'fork') {
-          event.waitUntil(this.triggerSessionStart(event.source));
-        }
-      }),
-    );
-    this._register(
-      lifecycle.onWillCloseSession((event) => {
-        if (event.sessionId !== this.context.sessionId) return;
-        event.waitUntil(this.triggerSessionEnd(event.reason));
-      }),
-    );
+    const onDidCreate = lifecycle.onDidCreateSession;
+    if (onDidCreate !== undefined) {
+      this._register(
+        onDidCreate((event) => {
+          if (event.sessionId !== this.context.sessionId) return;
+          if (event.source !== 'fork') {
+            event.waitUntil(this.triggerSessionStart(event.source));
+          }
+        }),
+      );
+    }
+    const onWillClose = lifecycle.onWillCloseSession;
+    if (onWillClose !== undefined) {
+      this._register(
+        onWillClose((event) => {
+          if (event.sessionId !== this.context.sessionId) return;
+          event.waitUntil(this.triggerSessionEnd(event.reason));
+        }),
+      );
+    }
     this._register(
       subagents.hooks.onWillStartAgentTask.register('externalHooks', async (ctx, next) => {
         await this.runSubagentStart(ctx);

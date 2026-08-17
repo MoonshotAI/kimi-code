@@ -20,8 +20,9 @@
 
 import { dirname } from 'pathe';
 
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { type HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -32,7 +33,6 @@ import {
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {
-  extendWorkspaceWithSkillRoots,
   resolvePathAccessPath,
   type WorkspaceConfig,
 } from '#/tool/path-access';
@@ -48,27 +48,29 @@ export class WriteTool implements IWriteTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(WriteInputSchema);
 
   constructor(
-    @IHostFileSystem private readonly fs: IHostFileSystem,
-    @IHostEnvironment private readonly env: IHostEnvironment,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
-  private get workspaceConfig(): WorkspaceConfig {
-    return extendWorkspaceWithSkillRoots(
-      {
-        workspaceDir: this.workspaceCtx.workDir,
-        additionalDirs: this.workspaceCtx.additionalDirs,
-      },
-      this.skillCatalog?.catalog.getSkillRoots() ?? [],
-      this.env.pathClass,
-    );
+  private workspaceConfig(view: RuntimeWorkspaceView): WorkspaceConfig {
+    return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
   resolveExecution(args: WriteInput): ToolExecution {
+    const inspected = inspectAgentRuntime(this.runtime);
+    const view = new RuntimeWorkspaceView(inspected, {
+      workDir: this.workspaceCtx.workDir,
+      additionalDirs: [
+        ...this.workspaceCtx.additionalDirs,
+        ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
+      ],
+    });
+    const env = { _serviceBrand: undefined, ...inspected.environment, ready: Promise.resolve() };
+    const workspace = this.workspaceConfig(view);
     const path = resolvePathAccessPath(args.path, {
-      env: this.env,
-      workspace: this.workspaceConfig,
+      env,
+      workspace,
       operation: 'write',
     });
     return {
@@ -78,16 +80,26 @@ export class WriteTool implements IWriteTool {
       approvalRule: literalRulePattern(this.name, path),
       matchesRule: (ruleArgs) =>
         matchesPathRuleSubject(ruleArgs, path, {
-          cwd: this.workspaceConfig.workspaceDir,
-          pathClass: this.env.pathClass,
-          homeDir: this.env.homeDir,
+          cwd: workspace.workspaceDir,
+          pathClass: env.pathClass,
+          homeDir: env.homeDir,
         }),
-      execute: () => this.execution(args, path),
+      execute: async () => {
+        const lease = this.runtime.acquire(['fs']);
+        try {
+          if (lease.runtime.identity.generation !== inspected.identity.generation) {
+            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+          }
+          return await this.execution(lease.runtime.fs!, args, path);
+        } finally {
+          lease.dispose();
+        }
+      },
     };
   }
 
-  private async execution(args: WriteInput, safePath: string): Promise<ExecutableToolResult> {
-    const parentError = await this.ensureParentDirectory(safePath);
+  private async execution(fs: IHostFileSystem, args: WriteInput, safePath: string): Promise<ExecutableToolResult> {
+    const parentError = await this.ensureParentDirectory(fs, safePath);
     if (parentError !== undefined) {
       return { isError: true, output: parentError };
     }
@@ -95,9 +107,9 @@ export class WriteTool implements IWriteTool {
     try {
       const mode = args.mode ?? 'overwrite';
       if (mode === 'append') {
-        await this.fs.appendText(safePath, args.content);
+        await fs.appendText(safePath, args.content);
       } else {
-        await this.fs.writeText(safePath, args.content);
+        await fs.writeText(safePath, args.content);
       }
       const bytesWritten = Buffer.byteLength(args.content, 'utf8');
       return {
@@ -118,15 +130,15 @@ export class WriteTool implements IWriteTool {
     }
   }
 
-  private async ensureParentDirectory(safePath: string): Promise<string | undefined> {
+  private async ensureParentDirectory(fs: IHostFileSystem, safePath: string): Promise<string | undefined> {
     const parent = dirname(safePath);
     let stat: HostFileStat;
     try {
-      stat = await this.fs.stat(parent);
+      stat = await fs.stat(parent);
     } catch (error) {
       if ((unwrapErrorCause(error) as { code?: unknown } | null)?.code === 'ENOENT') {
         try {
-          await this.fs.mkdir(parent, { recursive: true });
+          await fs.mkdir(parent, { recursive: true });
           return undefined;
         } catch (mkdirError) {
           return mkdirError instanceof Error ? mkdirError.message : String(mkdirError);
@@ -141,4 +153,8 @@ export class WriteTool implements IWriteTool {
   }
 }
 
-registerAgentToolService(IWriteTool, WriteTool, { name: 'Write', domain: 'os/backends' });
+registerAgentToolService(IWriteTool, WriteTool, {
+  name: 'Write',
+  domain: 'os/backends',
+  requiredRuntimeCapabilities: ['fs'],
+});

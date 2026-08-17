@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 import { join } from 'pathe';
-import type { IProcess } from '#/session/process/processRunner';
+import type { IHostProcess } from '#/os/interface/hostProcess';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -33,7 +33,7 @@ function createTaskService(homedir: string): TaskServiceFixture {
 
 function registerProcess(
   manager: IAgentTaskService,
-  proc: IProcess,
+  proc: IHostProcess,
   command: string,
   description: string,
 ): string {
@@ -103,16 +103,17 @@ async function waitForTaskNotifications(
   }
 }
 
-function immediateProcess(exitCode: number, stdoutText = ''): IProcess {
+function immediateProcess(exitCode: number, stdoutText = ''): IHostProcess {
   return {
+    _serviceBrand: undefined,
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout: Readable.from(stdoutText ? [stdoutText] : []),
     stderr: Readable.from([]),
     pid: 50000 + exitCode,
     exitCode,
-    wait: vi.fn().mockResolvedValue(exitCode) as IProcess['wait'],
-    kill: vi.fn().mockResolvedValue(undefined) as IProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+    wait: vi.fn().mockResolvedValue(exitCode) as IHostProcess['wait'],
+    kill: vi.fn().mockResolvedValue(undefined) as IHostProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
   };
 }
 

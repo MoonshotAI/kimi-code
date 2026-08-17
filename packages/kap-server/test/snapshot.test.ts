@@ -22,7 +22,8 @@ import {
   ISessionMetadata,
   ISessionLifecycleService,
   IWireService,
-  IWorkspaceLifecycleService,
+  ISessionManager,
+  ITelemetryService,
   IWorkspaceService,
   getLiveSessionById,
   resumeSessionById,
@@ -108,10 +109,15 @@ describe('server-v2 snapshot route enrichment', () => {
           },
         ],
         [
-          IWorkspaceLifecycleService,
-          { handlerFor: async () => handler, handlers: { list: () => [] } },
+          ISessionManager,
+          {
+            resume: async () => session,
+            get: () => undefined,
+            list: () => [],
+          },
         ],
         [IWorkspaceService, { get: async () => ({ root: '/workspace' }) }],
+        [ITelemetryService, { withContext: () => ({ track2: () => {} }) }],
         [
           IAppendLogStore,
           {

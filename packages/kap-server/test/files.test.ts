@@ -14,9 +14,8 @@ import { join } from 'node:path';
 
 import {
   getLiveSessionById,
-  handlerForSession,
   IFileService,
-  ISessionLifecycleService,
+  ISessionManager,
   ISessionMediaStore,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -499,9 +498,7 @@ describe('GET /api/v1/sessions/{session_id}/media/{file_id} (server-v2)', () => 
     const sessionId = await createSession(r);
     const meta = await uploadFile(r, data, 'fork.png', 'image/png');
     await materializeUploadedFile(r, sessionId, meta);
-    const handler = await handlerForSession(r.core.accessor, sessionId);
-    if (handler === undefined) throw new Error(`workspace handler for ${sessionId} not found`);
-    const fork = await handler.accessor.get(ISessionLifecycleService).fork({
+    const fork = await r.core.accessor.get(ISessionManager).fork({
       sourceSessionId: sessionId,
     });
 
@@ -522,9 +519,7 @@ describe('GET /api/v1/sessions/{session_id}/media/{file_id} (server-v2)', () => 
     const sessionId = await createSession(r);
     const meta = await uploadFile(r, data, 'delete.png', 'image/png');
     await materializeUploadedFile(r, sessionId, meta);
-    const handler = await handlerForSession(r.core.accessor, sessionId);
-    if (handler === undefined) throw new Error(`workspace handler for ${sessionId} not found`);
-    await handler.accessor.get(ISessionLifecycleService).delete(sessionId);
+    await r.core.accessor.get(ISessionManager).delete(sessionId);
 
     const res = await appOf(r).inject({
       method: 'GET',

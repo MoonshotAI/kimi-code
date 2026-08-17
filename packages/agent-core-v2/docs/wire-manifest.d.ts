@@ -21,7 +21,7 @@
 // owning model offloads inline media to blob storage), cross-reducers
 // (foreign models that also reduce this record on dispatch and replay).
 
-// Index (50 record types)
+// Index (53 record types)
 //   config.update                      profile                     persisted  src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory               persisted  src/agent/contextMemory/contextOps.ts
 //   context.append_message             contextMemory               persisted  src/agent/contextMemory/contextOps.ts
@@ -54,19 +54,22 @@
 //   plugin.session_start               pluginSessionStartSnapshot  persisted  src/agent/plugin/agentPluginOps.ts
 //   profile.bind                       profile                     persisted  src/agent/profile/profileOps.ts
 //   prompt.accepted                    promptAdmission             persisted  src/agent/prompt/promptOps.ts
+//   runtime.set_binding                runtimeBinding              persisted  src/agent/runtimeBinding/runtimeBindingOps.ts
 //   skill.activate                     skill                       transient  src/agent/skill/skillOps.ts
 //   swarm_mode.enter                   swarm                       persisted  src/features/swarm/swarmOps.ts
 //   swarm_mode.exit                    swarm                       persisted  src/features/swarm/swarmOps.ts
 //   task.started                       task                        persisted  src/agent/task/taskOps.ts
 //   task.terminated                    task                        persisted  src/agent/task/taskOps.ts
-//   token_counting.measured            tokenCounting               transient  src/agent/tokenCounting/tokenCountingOps.ts
-//   token_counting.rebased             tokenCounting               transient  src/agent/tokenCounting/tokenCountingOps.ts
-//   token_counting.truncated           tokenCounting               transient  src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.measured            tokenCounting               persisted  src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.rebased             tokenCounting               persisted  src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.truncated           tokenCounting               persisted  src/agent/tokenCounting/tokenCountingOps.ts
 //   tools.register_user_tool           userTool                    persisted  src/agent/userTool/userToolOps.ts
 //   tools.reset_active_tools           profile.activeTools         persisted  src/agent/profile/profileOps.ts
 //   tools.set_active_tools             profile.activeTools         persisted  src/agent/profile/profileOps.ts
 //   tools.unregister_user_tool         userTool                    persisted  src/agent/userTool/userToolOps.ts
 //   tools.update_store                 todo                        persisted  src/session/todo/todoOps.ts
+//   tower_mode.enter                   tower                       persisted  src/features/tower/towerOps.ts
+//   tower_mode.exit                    tower                       persisted  src/features/tower/towerOps.ts
 //   turn.cancel                        turn                        persisted  src/agent/loop/turnOps.ts
 //   turn.ended                         turn                        persisted  src/agent/loop/turnOps.ts
 //   turn.prompt                        turn                        persisted  src/agent/loop/turnOps.ts
@@ -492,6 +495,16 @@ interface PromptAcceptedPayload {
 }
 
 /**
+ * model: runtimeBinding · persisted
+ * owner: src/agent/runtimeBinding/runtimeBindingOps.ts
+ */
+interface RuntimeSetBindingPayload {
+  _name: 'runtime.set_binding';
+  workspaceId: string;
+  runtimeId: string;
+}
+
+/**
  * model: skill · toEvent
  * owner: src/agent/skill/skillOps.ts
  */
@@ -550,7 +563,7 @@ interface TaskTerminatedPayload {
 }
 
 /**
- * model: tokenCounting · toEvent
+ * model: tokenCounting · persisted · toEvent
  * owner: src/agent/tokenCounting/tokenCountingOps.ts
  */
 interface TokenCountingMeasuredPayload {
@@ -560,7 +573,7 @@ interface TokenCountingMeasuredPayload {
 }
 
 /**
- * model: tokenCounting · toEvent
+ * model: tokenCounting · persisted · toEvent
  * owner: src/agent/tokenCounting/tokenCountingOps.ts
  */
 interface TokenCountingRebasedPayload {
@@ -571,7 +584,7 @@ interface TokenCountingRebasedPayload {
 }
 
 /**
- * model: tokenCounting · toEvent
+ * model: tokenCounting · persisted · toEvent
  * owner: src/agent/tokenCounting/tokenCountingOps.ts
  */
 interface TokenCountingTruncatedPayload {
@@ -627,6 +640,22 @@ interface ToolsUpdateStorePayload {
   _name: 'tools.update_store';
   key: string;
   value: any;
+}
+
+/**
+ * model: tower · persisted · toEvent
+ * owner: src/features/tower/towerOps.ts
+ */
+interface TowerModeEnterPayload {
+  _name: 'tower_mode.enter';
+}
+
+/**
+ * model: tower · persisted · toEvent
+ * owner: src/features/tower/towerOps.ts
+ */
+interface TowerModeExitPayload {
+  _name: 'tower_mode.exit';
 }
 
 /**
@@ -769,6 +798,7 @@ interface WirePayloadMap {
   "plugin.session_start": PluginSessionStartPayload;
   "profile.bind": ProfileBindPayload;
   "prompt.accepted": PromptAcceptedPayload;
+  "runtime.set_binding": RuntimeSetBindingPayload;
   "skill.activate": SkillActivatePayload;
   "swarm_mode.enter": SwarmModeEnterPayload;
   "swarm_mode.exit": SwarmModeExitPayload;
@@ -782,6 +812,8 @@ interface WirePayloadMap {
   "tools.set_active_tools": ToolsSetActiveToolsPayload;
   "tools.unregister_user_tool": ToolsUnregisterUserToolPayload;
   "tools.update_store": ToolsUpdateStorePayload;
+  "tower_mode.enter": TowerModeEnterPayload;
+  "tower_mode.exit": TowerModeExitPayload;
   "turn.cancel": TurnCancelPayload;
   "turn.ended": TurnEndedPayload;
   "turn.prompt": TurnPromptPayload;

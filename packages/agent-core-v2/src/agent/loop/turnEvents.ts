@@ -13,7 +13,9 @@
  * is self-contained (`daemonFileRefFromPart`): its kind comes from the part
  * type and its file id from the reference, so the projection needs no
  * tag+ref pairing — the referenced media rides as
- * {@link TurnStartedEvent.promptAttachments}.
+ * {@link TurnStartedEvent.promptAttachments}. When the turn's prompt bundles
+ * skill activations, their rendered blocks (prepended to the content, one
+ * text part per skill) are excluded from the extracted text.
  * `turn.started` also echoes the prompt record id as
  * {@link TurnStartedEvent.promptId} when the turn was opened by a prompt
  * submission, so submitters can bind their own bookkeeping (e.g. staged
@@ -64,9 +66,14 @@ export interface TurnPromptProjection {
   readonly attachments?: readonly TurnPromptAttachment[];
 }
 
-export function projectTurnPrompt(input: readonly ContentPart[]): TurnPromptProjection {
+export function projectTurnPrompt(
+  input: readonly ContentPart[],
+  origin?: PromptOrigin,
+): TurnPromptProjection {
+  const bundledBlocks = origin?.kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0;
   const text = input
     .filter((part): part is TextPart => part.type === 'text')
+    .slice(bundledBlocks)
     .map((part) => part.text)
     .join('');
   const media = input.flatMap((part) => {

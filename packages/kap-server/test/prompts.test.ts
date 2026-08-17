@@ -272,7 +272,7 @@ describe('server-v2 /api/v1 prompts', () => {
       content: [{ type: 'text', text: 'must not become metadata' }],
       prompt_id: 'submission-1',
     });
-    expect(duplicate.body.code).toBe(40924);
+    expect(duplicate.body.code).toBe(40927);
 
     const session = getLiveSessionById(server!.core.accessor, id);
     expect((await session!.accessor.get(ISessionMetadata).read()).lastPrompt).toBe('first prompt');
@@ -284,7 +284,7 @@ describe('server-v2 /api/v1 prompts', () => {
       content: [{ type: 'text', text: 'must not survive a cold resume' }],
       prompt_id: 'submission-1',
     });
-    expect(afterResume.body.code).toBe(40924);
+    expect(afterResume.body.code).toBe(40927);
     const resumed = getLiveSessionById(server!.core.accessor, id);
     expect((await resumed!.accessor.get(ISessionMetadata).read()).lastPrompt).toBe('first prompt');
   });

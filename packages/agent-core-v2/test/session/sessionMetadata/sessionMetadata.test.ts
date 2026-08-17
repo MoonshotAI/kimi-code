@@ -161,6 +161,21 @@ describe('SessionMetadata', () => {
     expect(next.updatedAt).toBe(1234);
   });
 
+  it('reads a loaded document without the archived field as not-archived', async () => {
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      agents: {},
+      custom: {},
+    });
+
+    const meta = ix.get(ISessionMetadata);
+    expect(await meta.read()).toMatchObject({ id: 's1', archived: false });
+  });
+
   it('mirrors a boolean archived to the read model even when the loaded document lacks the field', async () => {
     const store = ix.get(IAtomicDocumentStore);
     await store.set(META_SCOPE, 'state.json', {

@@ -23,6 +23,13 @@
 
 export type UtfTextEncoding = 'utf-8' | 'utf-16le' | 'utf-16be';
 
+export interface TextClassification {
+  readonly isBinary: boolean;
+  readonly encoding: UtfTextEncoding;
+}
+
+export const FS_BINARY_NONPRINTABLE_FRACTION = 0.3;
+
 export interface TextEncodingDetection {
   /**
    * Detected encoding. `'utf-8'` when no signal points elsewhere (also the
@@ -51,16 +58,7 @@ const UTF16BE_BOM = [0xfe, 0xff] as const;
 const UTF16LE_BOM = [0xff, 0xfe] as const;
 const UTF8_BOM = [0xef, 0xbb, 0xbf] as const;
 
-/**
- * Detect the encoding of a text file from its leading bytes.
- *
- * Known limitation inherited from the reference implementation: a BOM-less
- * UTF-16 file whose content carries no zero bytes at all (e.g. purely CJK
- * text) is reported as `'utf-8'`; strict UTF-8 decoding of it will then fail
- * or produce garbage. Notepad and most editors write a BOM, so this is rare
- * in practice.
- */
-export function detectTextEncoding(sample: Uint8Array): TextEncodingDetection {
+function sniffTextEncoding(sample: Uint8Array): TextEncodingDetection {
   // Always trust a BOM first.
   if (sample.length >= 2) {
     const b0 = sample[0]!;
@@ -99,6 +97,67 @@ export function detectTextEncoding(sample: Uint8Array): TextEncodingDetection {
     return { encoding: 'utf-16be', seemsBinary: false };
   }
   return { encoding: 'utf-8', seemsBinary: true };
+}
+
+export function classifyTextSample(sample: Uint8Array): TextClassification {
+  const sniffed = sniffTextEncoding(sample);
+  if (sniffed.seemsBinary || sniffed.encoding !== 'utf-8') {
+    return { isBinary: sniffed.seemsBinary, encoding: sniffed.encoding };
+  }
+  if (sample.includes(0)) {
+    return { isBinary: true, encoding: 'utf-8' };
+  }
+  let end = sample.length;
+  for (let i = Math.max(0, sample.length - 3); i < sample.length; i++) {
+    const b = sample[i]!;
+    const expected =
+      b >= 0xc2 && b <= 0xdf ? 2 : b >= 0xe0 && b <= 0xef ? 3 : b >= 0xf0 && b <= 0xf4 ? 4 : 0;
+    if (expected === 0 || i + expected <= sample.length) continue;
+    let validPrefix = true;
+    for (let j = i + 1; j < sample.length; j++) {
+      const cb = sample[j]!;
+      if (cb < 0x80 || cb > 0xbf) {
+        validPrefix = false;
+        break;
+      }
+    }
+    if (validPrefix) {
+      end = i;
+      break;
+    }
+  }
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(sample.subarray(0, end));
+  } catch {
+    return { isBinary: true, encoding: 'utf-8' };
+  }
+  let nonPrintable = 0;
+  let total = 0;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    total++;
+    if (cp === 9 || cp === 10 || cp === 13) continue;
+    if (cp < 32 || (cp >= 0x7f && cp <= 0x9f)) nonPrintable++;
+  }
+  if (total > 0 && nonPrintable / total > FS_BINARY_NONPRINTABLE_FRACTION) {
+    return { isBinary: true, encoding: 'utf-8' };
+  }
+  return { isBinary: false, encoding: 'utf-8' };
+}
+
+/**
+ * Detect the encoding of a text file from its leading bytes.
+ *
+ * Known limitation inherited from the reference implementation: a BOM-less
+ * UTF-16 file whose content carries no zero bytes at all (e.g. purely CJK
+ * text) is reported as `'utf-8'`; strict UTF-8 decoding of it will then fail
+ * or produce garbage. Notepad and most editors write a BOM, so this is rare
+ * in practice.
+ */
+export function detectTextEncoding(sample: Uint8Array): TextEncodingDetection {
+  const classification = classifyTextSample(sample);
+  return { encoding: classification.encoding, seemsBinary: classification.isBinary };
 }
 
 /**

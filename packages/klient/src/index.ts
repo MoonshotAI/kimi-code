@@ -75,6 +75,7 @@ export type {
   McpServerEntry,
   PlanData,
   PromptLaunchResult,
+  PromptWithSkillsInput,
   SetModelResult,
   ShellCommandResult,
   ThinkingLevel,

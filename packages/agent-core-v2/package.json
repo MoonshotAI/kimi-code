@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/agent-core-v2",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "private": true,
   "description": "The unified agent engine for Kimi (v2 — DI Scope architecture)",
   "license": "MIT",
@@ -77,6 +77,7 @@
     "pathe": "^2.0.3",
     "picomatch": "^4.0.4",
     "retry": "0.13.1",
+    "semver": "^7.7.4",
     "smol-toml": "^1.6.1",
     "socks": "^2.8.9",
     "tar": "^7.5.13",
@@ -90,6 +91,7 @@
     "@types/js-yaml": "^4.0.9",
     "@types/picomatch": "^4.0.3",
     "@types/retry": "0.12.0",
+    "@types/semver": "^7.7.0",
     "@types/sinon": "^21.0.1",
     "@types/tar": "^7.0.87",
     "@types/yauzl": "^2.10.3",

@@ -30,7 +30,8 @@ import {
   ISessionInteractionService,
   ISessionMetadata,
   ISessionLifecycleService,
-  IWorkspaceLifecycleService,
+  ISessionManager,
+  IWorkspaceInstanceManager,
   MAIN_AGENT_ID,
   SessionInteractionService,
   StateRegistry,
@@ -373,7 +374,7 @@ function makeCore(
   };
   const handler = {
     id: 'wd',
-    kind: LifecycleScope.Workspace,
+    kind: 'program',
     accessor: {
       get: (t: unknown) => (t === ISessionLifecycleService ? sessionLifecycle : undefined),
     },
@@ -382,11 +383,16 @@ function makeCore(
   const accessor = {
     get(token: unknown): unknown {
       if (token === IEventService) return eventBus;
-      if (token === IWorkspaceLifecycleService) {
+      if (token === ISessionManager) {
         return {
-          handlers: { list: () => [handler] },
-          sessions: { list: () => [] },
-          onDidMaterializeHandler: () => ({ dispose: () => {} }),
+          get: sessionFor,
+          list: () => [...sessions.keys()].map((sessionId) => sessionFor(sessionId)),
+        };
+      }
+      if (token === IWorkspaceInstanceManager) {
+        return {
+          list: () => [{ program: { accessor: handler.accessor } }],
+          onDidChange: () => ({ dispose: () => {} }),
         };
       }
       return undefined;
@@ -1319,6 +1325,64 @@ describe('SessionEventBroadcaster', () => {
         payload: { warnings },
       });
       expect(globalView.deliveries).toEqual(['immediate']);
+    });
+
+    it('fans out event.plugin.changed and event.capability.changed to global targets', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      eventBus.emit({ type: 'event.plugin.changed', payload: {} });
+      eventBus.emit({
+        type: 'event.capability.changed',
+        payload: {
+          capability_id: 'kimi-webbridge',
+          install: { running: true, step: 'download', percent: 42 },
+        },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(2));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.plugin.changed',
+        session_id: '__global__',
+      });
+      expect(globalView.envelopes[1]).toMatchObject({
+        type: 'event.capability.changed',
+        session_id: '__global__',
+        payload: {
+          capability_id: 'kimi-webbridge',
+          install: { running: true, step: 'download', percent: 42 },
+        },
+      });
+      // Progress ticks are live-only (volatile, not journaled); the plugin
+      // change signal stays durable so a reconnecting client can replay it.
+      expect(globalView.envelopes[0]!.volatile).toBeUndefined();
+      expect(globalView.envelopes[1]!.volatile).toBe(true);
+    });
+
+    it('drops malformed event.capability.changed payloads', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      eventBus.emit({ type: 'event.capability.changed', payload: null });
+      eventBus.emit({
+        type: 'event.capability.changed',
+        payload: { capability_id: 7, install: { running: true } },
+      });
+      eventBus.emit({
+        type: 'event.capability.changed',
+        payload: { capability_id: 'kimi-cu' }, // no install object
+      });
+
+      eventBus.emit({
+        type: 'event.capability.changed',
+        payload: { capability_id: 'kimi-cu', install: { running: false } },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.capability.changed',
+        payload: { capability_id: 'kimi-cu', install: { running: false } },
+      });
     });
 
     it('drops malformed event.config.warning payloads', async () => {

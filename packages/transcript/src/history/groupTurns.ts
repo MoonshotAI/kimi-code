@@ -235,6 +235,26 @@ export function groupMessagesIntoSnapshot(
         }
         continue;
       }
+      const bundled = bundledSkillActivations(message);
+      if (bundled.length > 0) {
+        // The v2 engine bundles a prompt's inline skill activations into the
+        // prompt message itself: one rendered text part per skill precedes
+        // the caller's parts in the content, and the origin carries every
+        // activation. Expand the persisted bundle back into per-skill markers
+        // so a cold rebuild shows the same cards the live events produced.
+        const parts = message.content ?? [];
+        bundled.forEach((activation, index) => {
+          const block = parts[index];
+          pushMarker('skill', {
+            text: block !== undefined && block.type === 'text' && 'text' in block ? block.text : '',
+            origin: { kind: 'skill_activation', trigger: 'user-slash', ...activation },
+          });
+        });
+        const callerMessage = { ...message, content: parts.slice(bundled.length) };
+        const opening = foldTurnOpeningInput(callerMessage);
+        startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+        continue;
+      }
       const opening = foldTurnOpeningInput(message);
       startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
       continue;
@@ -356,6 +376,28 @@ function mapOrigin(message: HistoryMessage): TurnOrigin {
     default:
       return { kind: 'other', payload: origin };
   }
+}
+
+interface BundledSkillActivation {
+  readonly activationId: string;
+  readonly skillName: string;
+  readonly skillArgs?: string;
+  readonly skillType?: string;
+  readonly skillPath?: string;
+  readonly skillSource?: string;
+}
+
+function bundledSkillActivations(message: HistoryMessage): readonly BundledSkillActivation[] {
+  if (message.origin?.kind !== 'user') return [];
+  const activations = (message.origin as { readonly skillActivations?: unknown }).skillActivations;
+  if (!Array.isArray(activations)) return [];
+  return activations.filter(
+    (activation): activation is BundledSkillActivation =>
+      typeof activation === 'object' &&
+      activation !== null &&
+      typeof (activation as { activationId?: unknown }).activationId === 'string' &&
+      typeof (activation as { skillName?: unknown }).skillName === 'string',
+  );
 }
 
 function textOf(message: HistoryMessage): string {

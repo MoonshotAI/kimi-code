@@ -9,6 +9,7 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 export interface FileEditInput {
   readonly path: string;
@@ -25,7 +26,7 @@ export type FileEditResult =
 export interface IFileEditService {
   readonly _serviceBrand: undefined;
 
-  edit(input: FileEditInput): Promise<FileEditResult>;
+  edit(input: FileEditInput, fs?: IHostFileSystem): Promise<FileEditResult>;
 }
 
 export const IFileEditService: ServiceIdentifier<IFileEditService> =
