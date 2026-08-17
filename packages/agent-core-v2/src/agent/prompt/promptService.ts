@@ -109,6 +109,23 @@ interface Record extends PromptSnapshot {
   handle: PromptHandle;
 }
 
+function mergeSteerMessages(records: readonly Record[]): ContextMessage {
+  const skillActivations = records.flatMap((item) =>
+    item.message.origin?.kind === 'user' ? (item.message.origin.skillActivations ?? []) : [],
+  );
+  return {
+    role: 'user',
+    content: records.flatMap((item) => item.message.content),
+    toolCalls: [],
+    origin: skillActivations.length === 0 ? USER_PROMPT_ORIGIN : { kind: 'user', skillActivations },
+  };
+}
+
+function stripBundledSkillBlocks(message: ContextMessage): readonly ContentPart[] {
+  const bundled = message.origin?.kind === 'user' ? (message.origin.skillActivations?.length ?? 0) : 0;
+  return bundled === 0 ? message.content : message.content.slice(bundled);
+}
+
 export const promptLaunchingKey = defineState<boolean>('prompt.launching', () => false);
 
 export class AgentPromptService implements IAgentPromptService {
@@ -285,22 +302,27 @@ export class AgentPromptService implements IAgentPromptService {
     }
     const selected = this.pending.filter((item) => ids.has(item.id));
     const activeAtEntry = this.active;
-    const message: ContextMessage = {
-      role: 'user', content: selected.flatMap((item) => item.message.content), toolCalls: [], origin: USER_PROMPT_ORIGIN,
-    };
-    const { message: rerouted, captions } = this.extractCompressionCaptions(message);
+    const { message: rerouted, captions } = this.extractCompressionCaptions(mergeSteerMessages(selected));
     await this.materializeDaemonRefs(rerouted);
     const stillPending = selected.filter((item) => this.pending.includes(item));
     if (stillPending.length === 0 || this.active === undefined || this.active !== activeAtEntry) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
     }
+    const steerInput = stillPending.length === selected.length
+      ? { message: rerouted, captions }
+      : this.extractCompressionCaptions(mergeSteerMessages(stillPending));
     for (const item of stillPending) this.pending.splice(this.pending.indexOf(item), 1);
-    const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
+    const request = new SteerStepRequest(steerInput.message, steerInput.captions, this.reminders, (materialized) => {
       void this.dispatcher.dispatch(
         new TurnSteer({ input: materialized.content, origin: materialized.origin ?? USER_PROMPT_ORIGIN }),
       );
     }, () => {});
-    const turn = (await this.loop.enqueue(request).assigned).turn;
+    let turn: Turn | undefined;
+    try {
+      turn = (await this.loop.enqueue(request).assigned).turn;
+    } catch {
+      turn = undefined;
+    }
     if (turn === undefined) {
       this.pending.unshift(...stillPending);
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
@@ -308,7 +330,7 @@ export class AgentPromptService implements IAgentPromptService {
     for (const item of stillPending) { item.state = 'steered'; item.launchedDeferred.resolve(turn); }
     this.steered.set(this.active.id, [...(this.steered.get(this.active.id) ?? []), ...stillPending]);
     void this.dispatcher.dispatch(
-      new PromptSteered({ activePromptId: this.active.id, promptIds: stillPending.map((x) => x.id), content: rerouted.content as ContentPart[], steeredAt: new Date().toISOString() }),
+      new PromptSteered({ activePromptId: this.active.id, promptIds: stillPending.map((x) => x.id), content: stripBundledSkillBlocks(steerInput.message) as ContentPart[], steeredAt: new Date().toISOString() }),
     );
     return stillPending.map((item) => item.handle);
   }
