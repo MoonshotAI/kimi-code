@@ -357,6 +357,37 @@ describe('McpOAuthService single-flight refresh', () => {
     expect(authServer.counts.refresh).toBe(1);
   }, 15000);
 
+  it('emits tokens-invalidated when the SDK invalidates a rejected refresh grant', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.stopProactiveRefresh());
+    cleanups.push(() => rm(fixture.storeDir, { recursive: true, force: true }));
+    const authServer = await startFakeAuthServer({ rejectRefreshToken: true });
+    const provider = fixture.service.getProvider(SERVER_NAME, SERVER_URL);
+    provider.saveDiscoveryState(authServerState(authServer.url).discovery);
+    provider.saveClientInformation(authServerState(authServer.url).client);
+    await provider.saveTokens({
+      access_token: 'stale-access-token',
+      refresh_token: 'stale-refresh-token',
+      token_type: 'Bearer',
+    });
+
+    // The dead refresh token is rejected with invalid_grant, so the SDK
+    // invalidates the 'tokens' scope and the durable grant is dropped. That
+    // must broadcast the invalidation like a user-driven reset, or sessions
+    // sharing the credential keep their doomed connections until their own
+    // 401s.
+    await expect(fixture.service.refresh(SERVER_NAME, SERVER_URL)).rejects.toThrow(
+      /requires an interactive login/,
+    );
+    expect(fixture.service.tokenState(SERVER_NAME, SERVER_URL).hasTokens).toBe(false);
+    expect(fixture.events).toContainEqual({
+      type: 'tokens-invalidated',
+      serverName: SERVER_NAME,
+      serverUrl: SERVER_URL,
+      scope: 'tokens',
+    });
+  }, 15000);
+
   it('does not resurrect tokens cleared between a grant fetch and the SDK save', async () => {
     const fixture = makeFixture();
     cleanups.push(() => fixture.service.stopProactiveRefresh());

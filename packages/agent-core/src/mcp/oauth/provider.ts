@@ -254,13 +254,18 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
       await this.clearCredentials(scope);
       return;
     }
-    const shouldClearRelatedCredentials = await this.tokenTransaction.invalidateFromSdk(scope);
-    if (!shouldClearRelatedCredentials) return;
+    const tokensInvalidated = await this.tokenTransaction.invalidateFromSdk(scope);
+    if (!tokensInvalidated) return;
     if (scope === 'all') {
       await this.clearCredentials('client');
       await this.clearCredentials('discovery');
       this._codeVerifier = undefined;
     }
+    // The SDK-driven invalidation actually dropped the durable grant, so
+    // broadcast it like a user-driven reset: sessions sharing this credential
+    // flip to needs-auth now instead of keeping doomed connections until
+    // they each hit their own 401.
+    this.onCredentialsInvalidated?.(scope);
   }
 
   /** Explicit user-driven reset; unlike the SDK invalidation hook, never preserves tokens. */
