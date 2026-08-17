@@ -418,9 +418,9 @@ describe('server-v2 /api/v1 prompts', () => {
   });
 
   it('discards queued bundle staging on the prompt lifecycle events', async () => {
-    const handlers: Array<(event: { type: string; promptId?: string }) => void> = [];
+    const handlers: Array<(event: { type: string; promptId?: string; promptIds?: string[] }) => void> = [];
     const events = {
-      subscribe(handler: (event: { type: string; promptId?: string }) => void) {
+      subscribe(handler: (event: { type: string; promptId?: string; promptIds?: string[] }) => void) {
         handlers.push(handler);
         return { dispose: vi.fn() };
       },
@@ -439,6 +439,13 @@ describe('server-v2 /api/v1 prompts', () => {
     deferDiscardUntilPromptSettles(events as never, 'msg_2', second);
     handlers[1]!({ type: 'prompt.aborted', promptId: 'msg_2' });
     expect(second).toHaveBeenCalledTimes(1);
+
+    const steered = vi.fn();
+    deferDiscardUntilPromptSettles(events as never, 'msg_3', steered);
+    handlers[2]!({ type: 'prompt.steered', promptIds: ['msg_other'] });
+    expect(steered).not.toHaveBeenCalled();
+    handlers[2]!({ type: 'prompt.steered', promptIds: ['msg_parent', 'msg_3'] });
+    expect(steered).toHaveBeenCalledTimes(1);
   });
 
   it('makes the first three REST prompts available to title generation', async () => {

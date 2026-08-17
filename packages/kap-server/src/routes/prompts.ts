@@ -514,9 +514,13 @@ export function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][num
  * Deferred media-staging cleanup for a queued bundled submission: the
  * bundle's prompt intake only runs when its turn pops (or settles), so the
  * staging upload is discarded on the matching `prompt.completed` /
- * `prompt.aborted` lifecycle event rather than eagerly at submit time.
- * Mirrors the plain path's `launched`/`completion`-raced discard, which the
- * `promptWithSkills` result shape cannot express.
+ * `prompt.aborted` lifecycle event rather than eagerly at submit time. A
+ * bundle steered into the active turn is consumed at steer time and the
+ * engine publishes completed/aborted only for the parent, so the
+ * `prompt.steered` event (matching `promptIds`) counts as its
+ * intake-completion signal too. Mirrors the plain path's
+ * `launched`/`completion`-raced discard, which the `promptWithSkills`
+ * result shape cannot express.
  */
 export function deferDiscardUntilPromptSettles(
   events: IEventService,
@@ -524,10 +528,16 @@ export function deferDiscardUntilPromptSettles(
   discard: () => void | Promise<void>,
 ): void {
   const subscription = events.subscribe((event) => {
-    if (
-      (event.type === 'prompt.completed' || event.type === 'prompt.aborted') &&
-      (event as { readonly promptId?: unknown }).promptId === promptId
-    ) {
+    const settles =
+      ((event.type === 'prompt.completed' || event.type === 'prompt.aborted') &&
+        (event as { readonly promptId?: unknown }).promptId === promptId) ||
+      (event.type === 'prompt.steered' &&
+        (
+          (event as { readonly promptIds?: unknown }).promptIds as
+            | readonly string[]
+            | undefined
+        )?.includes(promptId) === true);
+    if (settles) {
       subscription.dispose();
       void discard();
     }
