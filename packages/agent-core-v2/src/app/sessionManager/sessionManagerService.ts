@@ -3,10 +3,11 @@
  *
  * Owns the global live-session registry across per-workspace controllers and
  * routes create / resume / restore / close / archive / delete / fork /
- * createChild to the owning controller; per-session lifecycle transitions
- * (and the batch archive critical section) queue on one serialization chain
- * per session. Cold id→workspace lookups go through `sessionIndex`;
- * workspace materialization through `workspaces`. App scope.
+ * createChild to the owning controller; per-session work (resume / restore /
+ * close / delete / fork / createChild and the batch archive critical
+ * section) queues on one serialization chain per session. Cold
+ * id→workspace lookups go through `sessionIndex`; workspace
+ * materialization through `workspaces`. App scope.
  */
 
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -139,25 +140,29 @@ export class SessionManager implements ISessionManager {
   }
 
   async fork(options: ForkSessionOptions): Promise<ISessionScopeHandle> {
-    const controller = await this.controllerForSession(options.sourceSessionId);
-    if (controller === undefined) {
-      throw new Error2(
-        ErrorCodes.SESSION_NOT_FOUND,
-        `session ${options.sourceSessionId} does not exist`,
-      );
-    }
-    return controller.fork(options);
+    return this.serializeLifecycle(options.sourceSessionId, async () => {
+      const controller = await this.controllerForSession(options.sourceSessionId);
+      if (controller === undefined) {
+        throw new Error2(
+          ErrorCodes.SESSION_NOT_FOUND,
+          `session ${options.sourceSessionId} does not exist`,
+        );
+      }
+      return controller.fork(options);
+    });
   }
 
   async createChild(options: CreateChildSessionOptions): Promise<ISessionScopeHandle> {
-    const controller = await this.controllerForSession(options.sourceSessionId);
-    if (controller === undefined) {
-      throw new Error2(
-        ErrorCodes.SESSION_NOT_FOUND,
-        `session ${options.sourceSessionId} does not exist`,
-      );
-    }
-    return controller.createChild(options);
+    return this.serializeLifecycle(options.sourceSessionId, async () => {
+      const controller = await this.controllerForSession(options.sourceSessionId);
+      if (controller === undefined) {
+        throw new Error2(
+          ErrorCodes.SESSION_NOT_FOUND,
+          `session ${options.sourceSessionId} does not exist`,
+        );
+      }
+      return controller.createChild(options);
+    });
   }
 
   dispose(): void {
