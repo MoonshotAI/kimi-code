@@ -101,6 +101,7 @@ import {
 
 import { toWireApproval } from '../../../routes/approvals';
 import { toWireQuestion } from '../../../routes/questions';
+import { projectPromptContentParts } from '../../../services/messages/messageProjection';
 import { readLegacyStatus, toLegacyPhase } from '../../../services/legacyStatus/legacyStatus';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
 import { InFlightTurnTracker } from './inFlightTurnTracker';
@@ -1154,7 +1155,22 @@ export class SessionEventBroadcaster {
     // ported from the former `record.signal(agentEvent)` call sites); the declared
     // `Event2` payload types are deliberately wider than the protocol
     // contract, hence the assertion via `unknown`.
-    const wireEvent = Object.assign({}, event, { agentId, sessionId }) as unknown as Event;
+    let wireEvent: Event;
+    if (event.type === 'turn.started') {
+      const { promptAttachments: _internal, ...wireFields } = event as typeof event & {
+        promptAttachments?: unknown;
+      };
+      wireEvent = Object.assign({}, wireFields, { agentId, sessionId }) as unknown as Event;
+    } else if (event.type === 'prompt.steered' || event.type === 'prompt.queued') {
+      const content = (event as unknown as { content: Parameters<typeof projectPromptContentParts>[0] }).content;
+      wireEvent = Object.assign({}, event, {
+        content: projectPromptContentParts(content),
+        agentId,
+        sessionId,
+      }) as unknown as Event;
+    } else {
+      wireEvent = Object.assign({}, event, { agentId, sessionId }) as unknown as Event;
+    }
     const volatile = isVolatileSignal(event.type);
     state.queue = state.queue
       .then(() => this.dispatch(state, wireEvent, volatile))

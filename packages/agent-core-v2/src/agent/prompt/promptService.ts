@@ -38,6 +38,8 @@ import { IAgentSystemReminderService } from '#/agent/systemReminder/systemRemind
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { IFileService } from '#/app/file/fileService';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IEventService } from '#/app/event/event';
 import { Event2 } from '#/app/event/event2';
@@ -53,12 +55,14 @@ import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetad
 
 import {
   IAgentPromptService,
+  promptAdmission,
   type PromptCompletion,
   type PromptHandle,
   type PromptInput,
   type PromptLaunchResult,
   type PromptPayload,
   type PromptQueueSnapshot,
+  type PromptReservation,
   type PromptSnapshot,
   type PromptState,
   type PromptSubmitContext,
@@ -66,7 +70,10 @@ import {
 } from './prompt';
 import { promptMetadataTextFromContentParts } from './promptMetadataText';
 import { PromptStepRequest, RetryStepRequest, SteerStepRequest } from './promptStepRequests';
-import { promptAdmissionKey } from './promptOps';
+import { PromptAccepted, promptAdmissionKey } from './promptOps';
+import { daemonFileRefFromPart } from '#/agent/media/mediaRef';
+import { materializePromptDaemonRefs } from '#/agent/media/promptMediaIntake';
+import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 
 export interface PromptCompletedPayload {
   readonly promptId: string;
@@ -131,6 +138,7 @@ export class AgentPromptService implements IAgentPromptService {
   private active: (Record & { turn: Turn }) | undefined;
   private readonly pending: Record[] = [];
   private readonly steered = new Map<string, Record[]>();
+  private readonly reservedPromptIds = new Set<string>();
   private fullCompactionService: IAgentFullCompactionService | undefined;
   readonly hooks = { onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>() };
 
@@ -140,6 +148,7 @@ export class AgentPromptService implements IAgentPromptService {
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly states: IAgentStateService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -162,6 +171,35 @@ export class AgentPromptService implements IAgentPromptService {
 
   private set launching(value: boolean) {
     this.states.set(promptLaunchingKey, value);
+  }
+
+  [promptAdmission](promptId?: string): PromptReservation {
+    if (promptId !== undefined && promptId.length === 0) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_id must not be empty');
+    }
+    const accepted = this.states.get(promptAdmissionKey);
+    let id = promptId ?? newMessageId();
+    while (accepted.has(id) || this.reservedPromptIds.has(id)) {
+      if (promptId !== undefined) {
+        throw new Error2(ErrorCodes.PROMPT_ID_CONFLICT, `prompt_id '${id}' is already in use`);
+      }
+      id = newMessageId();
+    }
+    this.reservedPromptIds.add(id);
+    let submitted = false;
+    return {
+      id,
+      submit: async (message) => {
+        if (submitted) throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt reservation already submitted');
+        submitted = true;
+        this.reservedPromptIds.delete(id);
+        await this.dispatcher.dispatch(new PromptAccepted({ promptId: id }));
+        return this.enqueue({ id, message });
+      },
+      dispose: () => {
+        this.reservedPromptIds.delete(id);
+      },
+    };
   }
 
   async enqueue(input: PromptInput): Promise<PromptHandle> {
@@ -195,16 +233,31 @@ export class AgentPromptService implements IAgentPromptService {
   }
 
   async submit(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
-    await this.updatePromptMetadata(promptMetadataTextFromContentParts(payload.input));
-    const handle = await this.enqueue({ message: {
-      role: 'user',
-      content: [...payload.input],
-      toolCalls: [],
-      origin: { kind: 'user' },
-    } });
-    if (handle.state === 'pending') return undefined;
-    const turn = await handle.launched;
-    return turn === undefined ? undefined : { turn_id: turn.id };
+    const reservation = this[promptAdmission](payload.promptId);
+    try {
+      if (payload.disabledTools !== undefined) {
+        try {
+          await this.toolPolicy.setSessionDisabledTools(payload.disabledTools);
+        } catch (error) {
+          throw new Error2(
+            ErrorCodes.REQUEST_INVALID,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }
+      await this.updatePromptMetadata(promptMetadataTextFromContentParts(payload.input));
+      const handle = await reservation.submit({
+        role: 'user',
+        content: [...payload.input],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      });
+      if (handle.state === 'pending') return undefined;
+      const turn = await handle.launched;
+      return turn === undefined ? undefined : { turn_id: turn.id };
+    } finally {
+      reservation.dispose();
+    }
   }
 
   async submitSteer(payload: SteerPayload): Promise<PromptLaunchResult | undefined> {
@@ -325,6 +378,11 @@ export class AgentPromptService implements IAgentPromptService {
     try {
       if (this.fullCompaction.compacting !== null && this.loop.status().state !== 'running') { this.pending.unshift(item); return; }
       const { message, captions } = this.extractCompressionCaptions(item.message);
+      if (message.content.some((part) => daemonFileRefFromPart(part) !== undefined)) {
+        const files = this.instantiation.invokeFunction((accessor) => accessor.get(IFileService));
+        const mediaStore = this.instantiation.invokeFunction((accessor) => accessor.get(ISessionMediaStore));
+        await materializePromptDaemonRefs(message.content, { files, mediaStore });
+      }
       if (await this.blockedByHook(message, false)) {
         this.appendPrompt(message, captions); item.state = 'blocked'; item.launchedDeferred.resolve(undefined);
         item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'blocked' });

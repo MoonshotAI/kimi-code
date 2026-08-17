@@ -128,6 +128,7 @@ import type {
   TextFrame,
   ToolCallFrame,
   ToolFrameProgress,
+  TranscriptAttachment,
   TranscriptFrame,
   TranscriptInteraction,
   TranscriptMarker,
@@ -251,11 +252,14 @@ export type ProjectorToolFrameLookup = (toolCallId: string) => ToolFrameRecord |
  */
 export type ProjectorStepOrdinalLookup = (turnId: string) => number | undefined;
 
+export type ProjectorTurnLookup = (turnId: string) => TurnHeader | undefined;
+
 /** Optional producer-store lookups that let the projector adopt seeded state. */
 export interface ProjectorLookups {
   readonly stepFrames?: ProjectorFrameLookup;
   readonly toolFrame?: ProjectorToolFrameLookup;
   readonly stepOrdinal?: ProjectorStepOrdinalLookup;
+  readonly turn?: ProjectorTurnLookup;
 }
 
 interface OpenTextFrame {
@@ -396,9 +400,21 @@ export class AgentTranscriptProjector {
     turnId: number;
     origin: unknown;
     prompt?: string;
+    promptAttachments?: readonly { kind: 'image' | 'video' | 'audio'; fileId: string }[];
   }): TranscriptOperation[] {
     const n = event.turnId;
     const turnId = `t${n}`;
+    const ops: TranscriptOperation[] = [];
+    const attachmentIds: string[] = [];
+    for (const input of event.promptAttachments ?? []) {
+      const attachment: TranscriptAttachment = {
+        attachmentId: `${turnId}.att${attachmentIds.length + 1}`,
+        mediaType: `${input.kind}/*`,
+        source: { kind: 'session_media', fileId: input.fileId },
+      };
+      ops.push({ op: 'attachment.upsert', attachment });
+      attachmentIds.push(attachment.attachmentId);
+    }
     this.currentTurn = {
       kind: 'turn',
       turnId,
@@ -406,12 +422,14 @@ export class AgentTranscriptProjector {
       state: 'running',
       origin: mapTurnOrigin(event.origin),
       prompt: event.prompt,
+      attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       startedAt: nowIso(),
     };
     this.currentStep = undefined;
     this.openText = undefined;
     this.openThinking = undefined;
-    return [{ op: 'turn.upsert', turn: this.currentTurn }];
+    ops.push({ op: 'turn.upsert', turn: this.currentTurn });
+    return ops;
   }
 
   private onTurnEnded(event: {
@@ -431,7 +449,8 @@ export class AgentTranscriptProjector {
       this.currentStep = step;
       ops.push({ op: 'step.upsert', turnId: step.turnId, step });
     }
-    const prev = this.currentTurn?.turnId === turnId ? this.currentTurn : undefined;
+    const prev =
+      this.currentTurn?.turnId === turnId ? this.currentTurn : this.lookups?.turn?.(turnId);
     const state = mapTurnEndState(event.reason);
     this.currentTurn = {
       kind: 'turn',
@@ -440,6 +459,7 @@ export class AgentTranscriptProjector {
       state,
       origin: prev?.origin ?? { kind: 'other' },
       prompt: prev?.prompt,
+      attachmentIds: prev?.attachmentIds,
       startedAt: prev?.startedAt,
       endedAt: nowIso(),
       durationMs: event.durationMs,

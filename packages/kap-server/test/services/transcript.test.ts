@@ -154,7 +154,7 @@ describe('AgentTranscriptProjector', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
     const ops: TranscriptOperation[] = [];
-    const feed = (event: DomainEvent): void => {
+    const feed = (event: ProjectorBusEvent): void => {
       const mapped = projector.map(event);
       ops.push(...mapped);
       tx.apply(mapped);
@@ -1582,7 +1582,7 @@ describe('AgentTranscriptProjector', () => {
   it('projects prompt.steered media content to the wire shape (no daemon ref or path leak)', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(
       ev({

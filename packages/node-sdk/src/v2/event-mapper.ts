@@ -67,6 +67,12 @@ export function translateDomainEvent(
 ): Event | undefined {
   if (DROPPED_DOMAIN_EVENT_TYPES.has(event.type)) return undefined;
   const type = RENAMED_DOMAIN_EVENT_TYPES[event.type] ?? event.type;
+  if (event.type === 'turn.started') {
+    const { promptAttachments: _internal, ...publicFields } = event as Event2<any> & {
+      promptAttachments?: unknown;
+    };
+    return Object.assign({}, publicFields, { type, sessionId, agentId }) as unknown as Event;
+  }
   return Object.assign({}, event, { type, sessionId, agentId }) as unknown as Event;
 }
 

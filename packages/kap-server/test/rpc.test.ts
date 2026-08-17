@@ -525,7 +525,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     const events: { type: string; payload: unknown }[] = [];
     const sub = (server as RunningServer).core.accessor
       .get(IEventService)
-      .subscribe((event) => events.push(event));
+      .subscribe((event) => events.push(event as unknown as { type: string; payload: unknown }));
 
     const { body } = await call<{ turn_id: number }>(
       'POST',

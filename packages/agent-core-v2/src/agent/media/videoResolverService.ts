@@ -61,9 +61,7 @@ export class AgentVideoResolverService implements IAgentVideoResolverService {
     @IBlobStore private readonly blobs: IBlobStore,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
-  ) {
-    this.states.contributeState(mediaResolvedKey);
-  }
+  ) {}
 
   private get resolved(): Map<string, ContentPart> {
     return this.states.get(mediaResolvedKey);

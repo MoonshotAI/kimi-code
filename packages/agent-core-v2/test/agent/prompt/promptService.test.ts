@@ -22,6 +22,7 @@ import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IEventBus } from '#/app/event/eventBus';
 import { IEventService } from '#/app/event/event';
 import { EventBusService } from '#/app/event/eventBusService';
@@ -70,6 +71,7 @@ function harness() {
       reg.defineInstance(IAgentBlobService, noopBlob);
       reg.define(IEventDispatcher, EventDispatcherService);
       reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+      reg.definePartialInstance(IAgentToolPolicyService, { setSessionDisabledTools: async () => {} });
       reg.defineInstance(IAgentFullCompactionService, fullCompaction);
       reg.define(IEventBus, EventBusService);
       reg.define(IAgentSystemReminderService, AgentSystemReminderService);
