@@ -31,6 +31,8 @@ export function makeHookRunner(
       reason: string | undefined,
       durationMs: number,
     ) => void;
+    /** Emit when the backing config gains/loses hook sections (mirrors `IConfigService.onDidChangeConfiguration`). */
+    onDidChangeConfiguration?: Event<void>;
   } = {},
 ): ExternalHooksRunnerService {
   return new ExternalHooksRunnerService(
@@ -38,6 +40,7 @@ export function makeHookRunner(
       _serviceBrand: undefined,
       ready: Promise.resolve(),
       get: (section: string) => (section === HOOKS_SECTION ? hooks : undefined),
+      onDidChangeConfiguration: options.onDidChangeConfiguration ?? Event.None,
     } as unknown as IConfigService,
     {
       _serviceBrand: undefined,
