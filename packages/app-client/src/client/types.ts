@@ -33,6 +33,9 @@ interface GitStatusEntry {
 export type PromptAttachment = {
   fileId: string;
   kind: 'image' | 'video' | 'file';
+  /** Set for media restored from a session transcript. The file id then
+      belongs to that session's canonical media store, not the upload store. */
+  sessionId?: string;
   name?: string;
   mediaType?: string;
   size?: number;

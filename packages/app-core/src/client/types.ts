@@ -419,7 +419,7 @@ export interface QueuedPromptView {
   attachmentCount: number;
   /** Attachments waiting with this prompt, with resolved URLs for thumbnails
       (file attachments render an icon chip, no thumbnail). */
-  attachments?: { fileId: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[];
+  attachments?: TurnAttachment[];
 }
 
 /** Horizontal alignment of the conversation reading column within the pane. */

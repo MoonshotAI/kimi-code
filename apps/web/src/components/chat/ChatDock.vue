@@ -6,7 +6,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ActivationBadges, ApprovalBlock, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, UIQuestion } from '../../types';
+import type { ActivationBadges, ApprovalBlock, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, TurnAttachment, UIQuestion } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, SessionPlan, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
 import type { ManagedMembership, PromptAttachment } from '../../composables/useKimiWebClient';
@@ -259,7 +259,7 @@ function openLatestPlan(): void {
 
 const composerRef = ref<{
   loadForEdit: (value: string) => boolean;
-  loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]) => void;
+  loadAttachmentsForEdit: (atts: TurnAttachment[]) => void;
   focus: () => void;
   anyPopupOpen?: boolean;
   isEmpty?: () => boolean;
@@ -300,7 +300,7 @@ function loadForEdit(value: string): boolean {
   return true;
 }
 
-function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
+function loadAttachmentsForEdit(atts: TurnAttachment[]): void {
   composerRef.value?.loadAttachmentsForEdit(atts);
 }
 

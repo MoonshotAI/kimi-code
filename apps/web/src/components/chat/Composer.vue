@@ -9,7 +9,7 @@ import { buildSlashItems, parseSlash, SKILL_COMMAND_PREFIX } from '@moonshot-ai/
 import { formatTokens } from '@moonshot-ai/app-core/lib';
 import type { IconName } from '@moonshot-ai/app-client/icons';
 import type { FileItem } from './MentionMenu.vue';
-import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView, ToolMedia } from '../../types';
+import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView, ToolMedia, TurnAttachment } from '../../types';
 import type { AppGoal, AppModel, AppSkill, ThinkingLevel } from '../../api/types';
 import {
   commitLevel,
@@ -24,6 +24,7 @@ import { useSlashMenu } from '@moonshot-ai/app-client/composables';
 import { useMentionMenu } from '@moonshot-ai/app-client/composables';
 import { useComposerDraft } from '@moonshot-ai/app-client/composables';
 import { useAttachmentUpload, type Attachment } from '@moonshot-ai/app-client/composables';
+import { toPromptAttachment } from '@moonshot-ai/app-client/client';
 import { openFileAttachment } from '@moonshot-ai/app-client/lib';
 import { getKimiWebApi } from '../../api';
 import { openUpgrade } from '@moonshot-ai/app-core/lib';
@@ -513,17 +514,11 @@ function focus(): void {
   // or if focus is triggered during an animation/transition.
   textareaRef.value?.focus({ preventScroll: true });
 }
-function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
+function loadAttachmentsForEdit(atts: TurnAttachment[]): void {
   loadAttachments(atts);
 }
 
 // defineExpose lives below the toolbar dropdown refs (see anyPopupOpen).
-
-// Build the wire-bound attachment payload: images/videos only need the fileId,
-// while file parts also carry name/mediaType/size for the daemon's file shape.
-function toPromptAttachment(a: Attachment): PromptAttachment {
-  return { fileId: a.fileId!, kind: a.kind, name: a.name, mediaType: a.mediaType, size: a.size };
-}
 
 // Chip primary action: media opens the lightbox preview; a generic file opens
 // in a new tab (browser-renderable types) or downloads, once its upload has
@@ -551,6 +546,7 @@ const previewMedia = computed<ToolMedia | null>(() => {
     url: att.previewUrl,
     path: att.name,
     fileId: att.previewUrl.startsWith('blob:') ? undefined : att.fileId,
+    sessionId: att.previewUrl.startsWith('blob:') ? undefined : att.sessionId,
   };
 });
 
@@ -1461,6 +1457,7 @@ function selectModel(modelId: string): void {
                 :name="att.name"
                 :url="att.previewUrl"
                 :file-id="att.fileId"
+                :session-id="att.sessionId"
                 :uploading="att.uploading"
                 :error="att.error"
                 removable

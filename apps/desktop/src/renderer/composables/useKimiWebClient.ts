@@ -64,6 +64,7 @@ import { applyRecordDiff } from '@moonshot-ai/app-core/client';
 import { useAppearance } from '@moonshot-ai/app-core';
 import { useNotification, shouldNotifyCompletion } from '@moonshot-ai/app-client/composables';
 import {
+  promptAttachmentToTurnAttachment,
   useModelProviderState,
   useSideChat,
   useTaskPoller,
@@ -2854,8 +2855,8 @@ const activationBadges = computed<ActivationBadges>(() => {
 });
 
 /** Queued messages for the active session, rendered inline at the tail of the
-    transcript. Carries attachment thumbnails (resolved via getFileUrl) so image
-    prompts don't render as empty bubbles. */
+    transcript. Carries attachment thumbnails resolved from their owning store
+    so image prompts don't render as empty bubbles. */
 const queued = computed<QueuedPromptView[]>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return [];
@@ -2866,12 +2867,7 @@ const queued = computed<QueuedPromptView[]>(() => {
     id: q.id ?? q.text,
     text: q.text,
     attachmentCount: q.attachments?.length ?? 0,
-    attachments: q.attachments?.map((a) => ({
-      fileId: a.fileId,
-      kind: a.kind,
-      url: api.getFileUrl(a.fileId),
-      name: a.name,
-    })),
+    attachments: q.attachments?.map((a) => promptAttachmentToTurnAttachment(api, a)),
   }));
 });
 

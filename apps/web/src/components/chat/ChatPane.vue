@@ -1160,6 +1160,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
                 :url="att.url"
                 :kind="att.kind"
                 :file-id="att.fileId"
+                :session-id="att.sessionId"
                 media-class="q-img"
                 :controls="false"
                 muted

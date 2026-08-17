@@ -1,8 +1,43 @@
 // packages/app-client/src/client/attachmentsToContent.ts
 // Pure TS — no Vue, no side effects.
 
-import type { AppSkillAttachment } from '@moonshot-ai/app-core/api';
+import type { AppSkillAttachment, KimiWebApi } from '@moonshot-ai/app-core/api';
+import type { TurnAttachment } from '@moonshot-ai/app-core/client';
+import type { Attachment } from '../composables/useAttachmentUpload';
 import type { PromptAttachment } from './types';
+
+/** Collapse a ready Composer attachment into the prompt payload shape. The
+ *  caller filters out attachments without a file id before invoking this. */
+export function toPromptAttachment(att: Attachment): PromptAttachment {
+  return {
+    fileId: att.fileId!,
+    kind: att.kind,
+    sessionId: att.kind === 'file' ? undefined : att.sessionId,
+    name: att.name,
+    mediaType: att.mediaType,
+    size: att.size,
+  };
+}
+
+/** Rebuild a prompt attachment for Composer/queue display without losing which
+ *  daemon store owns the file id. */
+export function promptAttachmentToTurnAttachment(
+  api: Pick<KimiWebApi, 'getFileUrl' | 'getSessionMediaUrl'>,
+  att: PromptAttachment,
+): TurnAttachment {
+  const sessionId = att.kind === 'file' ? undefined : att.sessionId;
+  return {
+    kind: att.kind,
+    url: sessionId
+      ? api.getSessionMediaUrl(sessionId, att.fileId)
+      : api.getFileUrl(att.fileId),
+    fileId: att.fileId,
+    sessionId,
+    name: att.name,
+    mediaType: att.mediaType,
+    size: att.size,
+  };
+}
 
 /**
  * Build the wire-bound content parts for uploaded attachments: images/videos
@@ -16,8 +51,14 @@ export function attachmentsToContent(
 ): AppSkillAttachment[] {
   const parts: AppSkillAttachment[] = [];
   for (const att of attachments ?? []) {
-    if (att.kind === 'video') parts.push({ type: 'video', source: { kind: 'file', fileId: att.fileId } });
-    else if (att.kind === 'file') {
+    if (att.kind === 'video') {
+      parts.push({
+        type: 'video',
+        source: att.sessionId
+          ? { kind: 'sessionMedia', fileId: att.fileId }
+          : { kind: 'file', fileId: att.fileId },
+      });
+    } else if (att.kind === 'file') {
       parts.push({
         type: 'file',
         fileId: att.fileId,
@@ -25,7 +66,14 @@ export function attachmentsToContent(
         mediaType: att.mediaType || 'application/octet-stream',
         size: att.size ?? 0,
       });
-    } else parts.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
+    } else {
+      parts.push({
+        type: 'image',
+        source: att.sessionId
+          ? { kind: 'sessionMedia', fileId: att.fileId }
+          : { kind: 'file', fileId: att.fileId },
+      });
+    }
   }
   return parts;
 }
