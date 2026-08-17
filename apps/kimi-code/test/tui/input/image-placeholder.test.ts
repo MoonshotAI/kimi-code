@@ -546,7 +546,7 @@ describe('resolveOriginalCaptions', () => {
     }
   });
 
-  it('notes an unpreserved original when persistence fails', () => {
+  it('notes an unpreserved original when persistence fails, then retries at a later dispatch', () => {
     const dir = makeTempDir();
     try {
       // A file where the target directory must be created breaks persistence.
@@ -561,17 +561,55 @@ describe('resolveOriginalCaptions', () => {
       });
       const r = extractMediaAttachments(att.placeholder, store);
 
-      const resolved = resolveOriginalCaptions(
+      const failed = resolveOriginalCaptions(
         r.parts,
         r.imageAttachmentIds,
         store,
         join(occupied, 'sub'),
       );
 
-      expect(att.original?.path).toBeNull();
-      const caption = resolved[0];
+      const caption = failed[0];
       if (caption?.type !== 'text') throw new Error('expected caption text part');
       expect(caption.text).toMatch(/not preserved/i);
+      // The failure is not terminal: the path stays unset and the bytes are
+      // retained, so a later dispatch retries the write.
+      expect(att.original?.path).toBeUndefined();
+      expect(att.original?.bytes).toBeDefined();
+
+      const retried = resolveOriginalCaptions(r.parts, r.imageAttachmentIds, store, dir);
+
+      expect(att.original?.path?.startsWith(dir)).toBe(true);
+      const retryCaption = retried[0];
+      if (retryCaption?.type !== 'text') throw new Error('expected caption text part');
+      expect(retryCaption.text).toContain(att.original!.path!);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips the caption when ingestion landed after extraction (stale inline part)', () => {
+    const dir = makeTempDir();
+    try {
+      const store = new ImageAttachmentStore();
+      const rawBytes = new Uint8Array([1, 2, 3, 4]);
+      // Extraction raced the background ingestion: the part encodes the raw
+      // paste bytes…
+      const att = store.addImage(rawBytes, 'image/png', 2600, 2600);
+      const r = extractMediaAttachments(att.placeholder, store);
+      // …then ingestion completed, recording the compressed form. Captioning
+      // now would describe an image the model did not receive.
+      store.completeImage(att, {
+        bytes: new Uint8Array([1, 2, 3]),
+        mime: 'image/png',
+        width: 2000,
+        height: 2000,
+        original: { bytes: rawBytes, width: 2600, height: 2600, byteLength: 4, mime: 'image/png' },
+      });
+
+      const resolved = resolveOriginalCaptions(r.parts, r.imageAttachmentIds, store, dir);
+
+      expect(resolved).toHaveLength(1);
+      expect(resolved[0]?.type).toBe('image_url');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

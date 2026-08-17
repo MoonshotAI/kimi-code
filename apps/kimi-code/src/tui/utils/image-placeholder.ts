@@ -481,12 +481,29 @@ function pushText(parts: PromptPart[], segment: string): void {
   parts.push({ type: 'text', text: segment });
 }
 
-function imagePartForAttachment(att: ImageAttachment): PromptPart {
+function imagePartForAttachment(att: ImageAttachment): Extract<PromptPart, { type: 'image_url' }> {
   const base64 = Buffer.from(att.bytes).toString('base64');
   return {
     type: 'image_url',
     imageUrl: { url: `data:${att.mime};base64,${base64}` },
   };
+}
+
+/**
+ * Is this image part still what the attachment holds? Extraction encodes the
+ * attachment as of extraction time; a paste whose background ingestion
+ * (compression/daemon upload) landed afterwards mutated it, leaving the part
+ * carrying the pre-compression form — which no caption may describe.
+ */
+function imagePartMatchesAttachment(
+  part: Extract<PromptPart, { type: 'image_url' }>,
+  attachment: ImageAttachment,
+): boolean {
+  const url = part.imageUrl.url;
+  if (url.startsWith('kimi-file://')) {
+    return attachment.fileId !== undefined && url === buildDaemonFileUrl(attachment.fileId);
+  }
+  return url === imagePartForAttachment(attachment).imageUrl.url;
 }
 
 /**
@@ -588,12 +605,22 @@ export function resolveOriginalCaptions(
       out.push(part);
       continue;
     }
+    // The part was encoded from the attachment at extraction; a paste whose
+    // background ingestion landed afterwards mutated it (compressed bytes,
+    // daemon file id), leaving the part carrying the pre-compression form.
+    // Caption only when the two still agree — otherwise the caption would
+    // describe an image the model did not receive.
+    if (!imagePartMatchesAttachment(part, attachment)) {
+      out.push(part);
+      continue;
+    }
     const original = attachment.original;
     if (original.path === undefined && original.bytes !== undefined) {
-      store.setOriginalPath(
-        attachment.id,
-        persistOriginalImageSync(original.bytes, original.mime, originalsDir),
-      );
+      // A persistence failure (unwritable dir, full disk) leaves the path
+      // unset — and the bytes retained — so a later dispatch retries; this
+      // dispatch captions without a readback path.
+      const path = persistOriginalImageSync(original.bytes, original.mime, originalsDir);
+      if (path !== null) store.setOriginalPath(attachment.id, path);
     }
     const caption = buildImageCompressionCaption({
       original: {
