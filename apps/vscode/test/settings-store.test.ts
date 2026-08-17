@@ -11,6 +11,7 @@ import { MCP_SECRET_MASK } from "../shared/legacy-sdk";
 const boundary = vi.hoisted(() => ({
   saveConfig: vi.fn(),
   streamChat: vi.fn(),
+  steerChat: vi.fn(),
   abortChat: vi.fn(),
   trackFiles: vi.fn(),
   toastError: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock("@/services", () => ({
   bridge: {
     saveConfig: boundary.saveConfig,
     streamChat: boundary.streamChat,
+    steerChat: boundary.steerChat,
     abortChat: boundary.abortChat,
     trackFiles: boundary.trackFiles,
   },
@@ -55,6 +57,8 @@ beforeEach(() => {
   boundary.saveConfig.mockReset();
   boundary.streamChat.mockReset();
   boundary.streamChat.mockResolvedValue({ done: false });
+  boundary.steerChat.mockReset();
+  boundary.steerChat.mockResolvedValue({ ok: true });
   boundary.abortChat.mockReset();
   boundary.abortChat.mockResolvedValue({ aborted: true });
   boundary.trackFiles.mockReset();
@@ -447,5 +451,39 @@ describe("Webview mid-turn warnings", () => {
     await vi.waitFor(() => {
       expect(boundary.streamChat).toHaveBeenCalledTimes(2);
     });
+  });
+});
+
+describe("Webview queued messages", () => {
+  it("keeps host slash commands queued instead of steering them as model input", async () => {
+    useChatStore.setState({
+      isStreaming: true,
+      queue: [{ id: "auto-command", content: "/auto", model: "plain" }],
+    });
+
+    await useChatStore.getState().steerQueued("auto-command");
+
+    expect(boundary.steerChat).not.toHaveBeenCalled();
+    expect(useChatStore.getState().queue).toEqual([
+      { id: "auto-command", content: "/auto", model: "plain" },
+    ]);
+
+    useChatStore.getState().processEvent({ type: "stream_complete", result: { status: "finished" } });
+    await vi.waitFor(() => {
+      expect(boundary.streamChat).toHaveBeenCalledWith("/auto", "plain", "off", false, undefined);
+    });
+    expect(useChatStore.getState().queue).toEqual([]);
+  });
+
+  it("still steers ordinary queued follow-ups", async () => {
+    useChatStore.setState({
+      isStreaming: true,
+      queue: [{ id: "follow-up", content: "also update the tests", model: "plain" }],
+    });
+
+    await useChatStore.getState().steerQueued("follow-up");
+
+    expect(boundary.steerChat).toHaveBeenCalledWith("also update the tests");
+    expect(useChatStore.getState().queue).toEqual([]);
   });
 });
