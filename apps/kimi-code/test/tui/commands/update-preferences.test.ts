@@ -45,6 +45,7 @@ describe('update preference commands', () => {
       disablePasteBurst: false,
       renderLatex: true,
       cacheExpiryHint: true,
+      thinkingLiveDisplay: 'preview',
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: false },
       statusLine: { items: null, command: null },
@@ -76,6 +77,31 @@ describe('update preference commands', () => {
 
     expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
       expect.objectContaining({ renderLatex: false }),
+    );
+  });
+
+  it('preserves a thinking_live_display opt-in when saving an unrelated preference', async () => {
+    mocks.saveTuiConfig.mockClear();
+    const host = {
+      state: {
+        appState: {
+          theme: 'auto' as const,
+          editorCommand: null,
+          thinkingLiveDisplay: 'stats' as const,
+          notifications: { enabled: true, condition: 'unfocused' as const },
+          upgrade: { autoInstall: true },
+        },
+        theme: { palette: darkColors },
+      },
+      setAppState: vi.fn(),
+      showStatus: vi.fn(),
+      track: vi.fn(),
+    };
+
+    await applyUpdatePreferenceChoice(host, false);
+
+    expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ thinkingLiveDisplay: 'stats' }),
     );
   });
 });
