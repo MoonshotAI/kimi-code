@@ -15,9 +15,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot-ai/agent-core-v2';
+import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
-import { promptLaunchingKey } from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
-import { IAgentStateService } from '@moonshot-ai/agent-core-v2/agent/state/agentState';
 import { ToolProgress } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -323,10 +322,10 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
 
     const session = getLiveSessionById(c.server.core.accessor, created.sessionId);
     const agentHandle = session?.accessor.get(IAgentLifecycleService).get('main');
+    const loop = agentHandle?.accessor.get(IAgentLoopService);
     const prompts = agentHandle?.accessor.get(IAgentPromptService);
-    const states = agentHandle?.accessor.get(IAgentStateService);
+    expect(loop).toBeDefined();
     expect(prompts).toBeDefined();
-    expect(states).toBeDefined();
 
     const scheduled = await prompts!.inject({
       role: 'user',
@@ -348,12 +347,13 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       sessionId: created.sessionId,
       prompt: [{ type: 'text', text: 'status?' }],
     });
-    for (let attempt = 0; attempt < 100 && !states!.get(promptLaunchingKey); attempt++) {
+    for (let attempt = 0; attempt < 100 && loop!.status().pendingTurnIds.length === 0; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    const promptWaitedForTheScheduledTurn = states!.get(promptLaunchingKey);
+    const queuedStatus = loop!.status();
     answerPermission!({ outcome: { outcome: 'selected', optionId: 'approve_once' } });
-    expect(promptWaitedForTheScheduledTurn).toBe(true);
+    expect(queuedStatus.activeTurnId).toBe(scheduled!.id);
+    expect(queuedStatus.pendingTurnIds).toHaveLength(1);
     const result = (await queuedPrompt) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
 
