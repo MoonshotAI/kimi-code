@@ -626,6 +626,10 @@ export function messagesToTurns(
     startNo?: number;
     /** Fired for every emitted turn with the source messages that produced it. */
     collect?: (turn: ChatTurn, sources: readonly AppMessage[]) => void;
+    /** Builds the src URL for a session-media attachment (a daemon media
+     *  reference materialized into the session's own media store). Without it
+     *  the attachment still renders — AuthMedia fetches the bytes with auth. */
+    getSessionMediaUrl?: (sessionId: string, fileId: string) => string;
   },
 ): ChatTurn[] {
   const turns: ChatTurn[] = [];
@@ -812,13 +816,24 @@ export function messagesToTurns(
 
   function resolveMediaUrl(
     c: AppMessage['content'][number],
-  ): { url: string; kind: 'image' | 'video'; fileId?: string } | undefined {
+    sessionId: string,
+  ): { url: string; kind: 'image' | 'video'; fileId?: string; sessionId?: string } | undefined {
     if (c.type === 'image' || c.type === 'video') {
       const kind = c.type;
       const src = c.source;
       if (src.kind === 'url') return { url: src.url, kind };
       if (src.kind === 'base64') return { url: `data:${src.mediaType};base64,${src.data}`, kind };
       if (src.kind === 'file' && getFileUrl) return { url: getFileUrl(src.fileId), kind, fileId: src.fileId };
+      // A daemon media reference: the fileId addresses the session media
+      // store, so the attachment keeps the session id for the authed fetch.
+      if (src.kind === 'sessionMedia') {
+        return {
+          url: options?.getSessionMediaUrl?.(sessionId, src.fileId) ?? '',
+          kind,
+          fileId: src.fileId,
+          sessionId,
+        };
+      }
     }
     if (c.type === 'file' && getFileUrl) {
       if (c.mediaType.startsWith('image/')) return { url: getFileUrl(c.fileId), kind: 'image', fileId: c.fileId };
@@ -1054,13 +1069,14 @@ export function messagesToTurns(
             textParts.push(stripped);
           }
         }
-        const media = resolveMediaUrl(c);
+        const media = resolveMediaUrl(c, msg.sessionId);
         if (media) {
           attachments.push({
             url: media.url,
             kind: media.kind,
             name: c.type === 'file' ? c.name : undefined,
             fileId: media.fileId,
+            sessionId: media.sessionId,
           });
           continue;
         }

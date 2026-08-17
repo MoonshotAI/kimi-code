@@ -230,7 +230,11 @@ export type WireMessageContent =
 export type WireImageSource =
   | { kind: 'url'; url: string }
   | { kind: 'base64'; media_type: string; data: string }
-  | { kind: 'file'; file_id: string };
+  | { kind: 'file'; file_id: string }
+  // The session-owned canonical media copy (fetch via
+  // /sessions/{id}/media/{file_id}, not /files). It can be submitted back to
+  // the same session; the daemon rejects it when the target session lacks it.
+  | { kind: 'session_media'; file_id: string };
 
 export interface WireMessage {
   id: string;

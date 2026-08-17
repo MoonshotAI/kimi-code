@@ -20,6 +20,8 @@ const props = withDefaults(
     /** When present, image bytes are fetched with auth (a bare file URL
         401s); local object URLs take precedence and skip the refetch. */
     fileId?: string;
+    /** Set when `fileId` addresses the session media store, not /files. */
+    sessionId?: string;
     /** Composer: upload in flight — spinner badge over the thumb. */
     uploading?: boolean;
     /** Composer: upload failed — danger border, info badge. */
@@ -75,6 +77,7 @@ const staticTile = computed(
         :url="url!"
         :kind="kind"
         :file-id="isLocalUrl ? undefined : fileId"
+        :session-id="isLocalUrl ? undefined : sessionId"
         media-class="media-thumb-media"
         :controls="false"
         muted

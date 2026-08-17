@@ -640,7 +640,7 @@ const chatLayoutStyle = computed(() => ({
 }));
 type ComposerHandle = {
   loadForEdit: (value: string) => boolean | void;
-  loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]) => void;
+  loadAttachmentsForEdit: (atts: TurnAttachment[]) => void;
   focus: () => void;
   /** True while any composer popup (model/permission dropdown, slash/mention
    *  menu) is open — such a popup owns Escape. */

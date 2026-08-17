@@ -1,6 +1,7 @@
 <!-- apps/kimi-web/src/components/chat/AuthMedia.vue
      Renders a user-uploaded image/video whose bytes live in the daemon file
-     store. The bare getFileUrl(fileId) 401s when used as a <video>/<img> src
+     store (global /files, or the session media store when `sessionId` is set).
+     The bare getFileUrl(fileId) 401s when used as a <video>/<img> src
      because the browser loads those natively and never attaches our Bearer
      credential — so when a fileId is present we fetch the bytes through the
      authenticated API client and play from a page-local blob URL instead. -->
@@ -16,6 +17,10 @@ const props = withDefaults(
     /** File-store id. When present the bytes are fetched with auth and played
      *  from a blob URL; otherwise `url` is used directly (e.g. a data: URL). */
     fileId?: string;
+    /** Set when `fileId` addresses the session media store (a daemon media
+     *  reference): the bytes come from the session-scoped media route
+     *  (`/sessions/{id}/media/{fileId}`) instead of the global /files store. */
+    sessionId?: string;
     mediaClass?: string;
     /** Video: show native controls. Defaults to true (chat bubble); queue
      *  thumbnails pass false. */
@@ -57,7 +62,9 @@ async function resolve(): Promise<void> {
   }
   if (!visible.value) return; // defer until near the viewport
   try {
-    const blob = await getKimiWebApi().getFileBlob(props.fileId);
+    const blob = props.sessionId
+      ? await getKimiWebApi().getSessionMediaBlob(props.sessionId, props.fileId)
+      : await getKimiWebApi().getFileBlob(props.fileId);
     const url = URL.createObjectURL(blob);
     if (disposed || seq !== requestSeq) {
       URL.revokeObjectURL(url);
@@ -72,7 +79,7 @@ async function resolve(): Promise<void> {
   }
 }
 
-watch(() => [props.fileId, props.url, visible.value] as const, resolve, { immediate: true });
+watch(() => [props.fileId, props.sessionId, props.url, visible.value] as const, resolve, { immediate: true });
 
 onMounted(() => {
   if (typeof IntersectionObserver === 'function' && mediaEl.value) {

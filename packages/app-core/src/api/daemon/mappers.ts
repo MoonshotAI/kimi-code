@@ -228,6 +228,9 @@ function toAppImageSource(src: WireImageSource): ImageSource {
   if (src.kind === 'file') {
     return { kind: 'file', fileId: src.file_id };
   }
+  if (src.kind === 'session_media') {
+    return { kind: 'sessionMedia', fileId: src.file_id };
+  }
   return { kind: 'url', url: src.url };
 }
 
@@ -323,6 +326,8 @@ export function toWireMessageContent(app: AppMessageContent): WireMessageContent
         wireSrc = { kind: 'base64', media_type: src.mediaType, data: src.data };
       } else if (src.kind === 'file') {
         wireSrc = { kind: 'file', file_id: src.fileId };
+      } else if (src.kind === 'sessionMedia') {
+        wireSrc = { kind: 'session_media', file_id: src.fileId };
       } else {
         wireSrc = { kind: 'url', url: src.url };
       }

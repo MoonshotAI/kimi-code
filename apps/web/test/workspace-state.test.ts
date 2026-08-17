@@ -2213,6 +2213,37 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     ]);
   });
 
+  it('drains queued session-media attachments without changing their namespace', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [
+        {
+          text: 'queued media',
+          attachments: [
+            { fileId: 'f_img', kind: 'image', sessionId: 'sess_1' },
+            { fileId: 'f_vid', kind: 'video', sessionId: 'sess_1' },
+          ],
+        },
+      ],
+    };
+    const ws = useWorkspaceState(state, promptDeps());
+
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: true });
+
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({
+        content: [
+          { type: 'text', text: 'queued media' },
+          { type: 'image', source: { kind: 'sessionMedia', fileId: 'f_img' } },
+          { type: 'video', source: { kind: 'sessionMedia', fileId: 'f_vid' } },
+        ],
+      }),
+    );
+  });
+
   // Regression: re-opening a session after a failed drain must NOT fire the
   // stuck queued prompts (with their stale attachments) out of nowhere.
   it('does not drain the queue on a bare session-open snapshot with no locally witnessed prompt', () => {
@@ -2418,6 +2449,35 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     await settle();
     expect(state.queuedBySession.sess_1).toEqual([]);
     expect(apiMock.submitPrompt).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps session-media attachments in their namespace when steering a running turn', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [
+        {
+          text: 'queued media',
+          attachments: [{ fileId: 'f_img', kind: 'image', sessionId: 'sess_1' }],
+        },
+      ],
+    };
+    const ws = useWorkspaceState(state, promptDeps());
+
+    await ws.steerPrompt('live media', [
+      { fileId: 'f_vid', kind: 'video', sessionId: 'sess_1' },
+    ]);
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({
+        content: [
+          { type: 'text', text: 'queued media\n\nlive media' },
+          { type: 'image', source: { kind: 'sessionMedia', fileId: 'f_img' } },
+          { type: 'video', source: { kind: 'sessionMedia', fileId: 'f_vid' } },
+        ],
+      }),
+    );
   });
 
   it('restores the merged queue entries when a steer submit is definitively rejected', async () => {
@@ -2806,6 +2866,8 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     await ws.submitPromptInternal('sess_1', 'look at these', [
       { fileId: 'f_img', kind: 'image' },
       { fileId: 'f_vid', kind: 'video' },
+      { fileId: 'f_history_img', kind: 'image', sessionId: 'sess_1' },
+      { fileId: 'f_history_vid', kind: 'video', sessionId: 'sess_1' },
       { fileId: 'f_pdf', kind: 'file', name: 'a.pdf', mediaType: 'application/pdf', size: 42 },
     ]);
 
@@ -2816,6 +2878,8 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
           { type: 'text', text: 'look at these' },
           { type: 'image', source: { kind: 'file', fileId: 'f_img' } },
           { type: 'video', source: { kind: 'file', fileId: 'f_vid' } },
+          { type: 'image', source: { kind: 'sessionMedia', fileId: 'f_history_img' } },
+          { type: 'video', source: { kind: 'sessionMedia', fileId: 'f_history_vid' } },
           { type: 'file', fileId: 'f_pdf', name: 'a.pdf', mediaType: 'application/pdf', size: 42 },
         ],
       }),

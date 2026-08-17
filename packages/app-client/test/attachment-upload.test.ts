@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import { useAttachmentUpload, type Attachment } from '../src/composables/useAttachmentUpload';
+import {
+  attachmentsToContent,
+  promptAttachmentToTurnAttachment,
+  toPromptAttachment,
+} from '../src/client/attachmentsToContent';
 import { noopProductTracker, setProductTracker } from '../src/contracts';
 
 // The composable registers its paste listener and cleanup via onMounted /
@@ -13,7 +18,7 @@ vi.mock('vue', async (importOriginal) => {
 });
 
 // The api is injected; stub the file-byte fetch.
-const apiMock = { getFileBlob: vi.fn() };
+const apiMock = { getFileBlob: vi.fn(), getSessionMediaBlob: vi.fn() };
 
 type UploadImage = (
   file: Blob,
@@ -46,6 +51,7 @@ describe('useAttachmentUpload', () => {
     (globalThis.URL as unknown as { createObjectURL: unknown }).createObjectURL = createObjectURL;
     (globalThis.URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = revokeObjectURL;
     apiMock.getFileBlob.mockClear();
+    apiMock.getSessionMediaBlob.mockClear();
   });
 
   afterEach(() => {
@@ -185,6 +191,64 @@ describe('useAttachmentUpload', () => {
     ]);
 
     expect(apiMock.getFileBlob).toHaveBeenCalledWith('f_img');
+    await vi.waitFor(() => {
+      expect(att.attachments.value[0].previewUrl).toBe('blob:mock-url');
+    });
+  });
+
+  it('preserves queued session media through edit, preview loading, and resend', async () => {
+    apiMock.getSessionMediaBlob.mockResolvedValue(new Blob(['x']));
+    const att = setup(undefined, 'sess_1');
+    const mediaUrlApi = {
+      getFileUrl: vi.fn((fileId: string) => `https://example.test/api/v1/files/${fileId}`),
+      getSessionMediaUrl: vi.fn((sessionId: string, fileId: string) =>
+        `https://example.test/api/v1/sessions/${sessionId}/media/${fileId}`),
+    };
+    att.loadAttachments(
+      [
+        {
+          fileId: 'f_session_img',
+          kind: 'image',
+          sessionId: 'sess_1',
+          name: 'history.png',
+          mediaType: 'image/png',
+          size: 42,
+        },
+        {
+          fileId: 'f_session_vid',
+          kind: 'video',
+          sessionId: 'sess_1',
+          name: 'history.mp4',
+          mediaType: 'video/mp4',
+          size: 84,
+        },
+      ].map((queued) => promptAttachmentToTurnAttachment(mediaUrlApi, queued)),
+    );
+
+    expect(apiMock.getSessionMediaBlob).toHaveBeenCalledWith('sess_1', 'f_session_img');
+    expect(apiMock.getFileBlob).not.toHaveBeenCalled();
+    expect(att.attachments.value[0]).toMatchObject({
+      fileId: 'f_session_img',
+      kind: 'image',
+      sessionId: 'sess_1',
+      name: 'history.png',
+      mediaType: 'image/png',
+      size: 42,
+      uploading: false,
+    });
+    expect(att.attachments.value[1]).toMatchObject({
+      fileId: 'f_session_vid',
+      kind: 'video',
+      sessionId: 'sess_1',
+      name: 'history.mp4',
+      mediaType: 'video/mp4',
+      size: 84,
+      uploading: false,
+    });
+    expect(attachmentsToContent(att.attachments.value.map(toPromptAttachment))).toEqual([
+      { type: 'image', source: { kind: 'sessionMedia', fileId: 'f_session_img' } },
+      { type: 'video', source: { kind: 'sessionMedia', fileId: 'f_session_vid' } },
+    ]);
     await vi.waitFor(() => {
       expect(att.attachments.value[0].previewUrl).toBe('blob:mock-url');
     });

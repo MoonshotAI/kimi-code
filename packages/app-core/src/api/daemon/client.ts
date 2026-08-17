@@ -1788,6 +1788,20 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return this.http.getBlob(`/files/${encodeURIComponent(fileId)}`);
   }
 
+  getSessionMediaUrl(sessionId: string, fileId: string): string {
+    return buildRestUrl(
+      this.opts.origin,
+      `/sessions/${encodeURIComponent(sessionId)}/media/${encodeURIComponent(fileId)}`,
+    );
+  }
+
+  /** Session media store counterpart of getFileBlob — same auth rule. */
+  async getSessionMediaBlob(sessionId: string, fileId: string): Promise<Blob> {
+    return this.http.getBlob(
+      `/sessions/${encodeURIComponent(sessionId)}/media/${encodeURIComponent(fileId)}`,
+    );
+  }
+
   /** Read any host file by ABSOLUTE path via the daemon's global fs:content
    *  (server-v2 addition). Unlike the session fs:read, there is no workspace
    *  prefix gate, so files outside the active cwd (e.g. a worktree the turn

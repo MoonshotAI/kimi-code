@@ -62,6 +62,7 @@ import { applyRecordDiff } from '@moonshot-ai/app-core/client';
 import { useAppearance } from '@moonshot-ai/app-core';
 import { useNotification, shouldNotifyCompletion } from '@moonshot-ai/app-client/composables';
 import {
+  promptAttachmentToTurnAttachment,
   useModelProviderState,
   useSideChat,
   useTaskPoller,
@@ -2566,6 +2567,8 @@ const activeTurnRetry = computed<AppTurnRetry | undefined>(() => {
 // its own previous output), so a plain computed preserves the old synchronous
 // pull semantics while reuse happens inside each re-evaluation.
 const getFileUrlById = (fileId: string): string => getKimiWebApi().getFileUrl(fileId);
+const getSessionMediaUrl = (sessionId: string, fileId: string): string =>
+  getKimiWebApi().getSessionMediaUrl(sessionId, fileId);
 // Hoisted empty fallback: a fresh `[]` literal per projection would break the
 // projector's approvals-identity reuse gate (see turnsProjector.ts).
 const NO_PENDING_APPROVALS: AppApprovalRequest[] = [];
@@ -2578,6 +2581,7 @@ const turns = computed<ChatTurn[]>(() => {
     messages: (rawState.messagesBySession[sid] ?? []).filter((m) => !hiddenIds.has(m.id)),
     approvals: rawState.approvalsBySession[sid] ?? NO_PENDING_APPROVALS,
     getFileUrl: getFileUrlById,
+    getSessionMediaUrl,
     sessionActive: turnActive.value,
     planReviewByToolCallId: rawState.planReviewByToolCallId,
     plansByToolCallId: plansBySession[sid],
@@ -2803,8 +2807,8 @@ const activationBadges = computed<ActivationBadges>(() => {
 });
 
 /** Queued messages for the active session, rendered inline at the tail of the
-    transcript. Carries attachment thumbnails (resolved via getFileUrl) so image
-    prompts don't render as empty bubbles. */
+    transcript. Carries attachment thumbnails resolved from their owning store
+    so image prompts don't render as empty bubbles. */
 const queued = computed<QueuedPromptView[]>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return [];
@@ -2815,12 +2819,7 @@ const queued = computed<QueuedPromptView[]>(() => {
     id: q.id ?? q.text,
     text: q.text,
     attachmentCount: q.attachments?.length ?? 0,
-    attachments: q.attachments?.map((a) => ({
-      fileId: a.fileId,
-      kind: a.kind,
-      url: api.getFileUrl(a.fileId),
-      name: a.name,
-    })),
+    attachments: q.attachments?.map((a) => promptAttachmentToTurnAttachment(api, a)),
   }));
 });
 
@@ -3812,6 +3811,7 @@ export function useKimiWebClient() {
     findBashCommandForTask,
     auxiliaryTranscripts,
     getFileUrl: getFileUrlById,
+    getSessionMediaUrl,
     todos,
     goal,
     sessionPlans,

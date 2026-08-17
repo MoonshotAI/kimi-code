@@ -16,6 +16,7 @@
 
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { KimiWebApi } from '@moonshot-ai/app-core/api';
+import type { TurnAttachment } from '@moonshot-ai/app-core/client';
 import { track } from '../contracts';
 import { partitionDroppedItems } from '@moonshot-ai/app-core/lib';
 
@@ -36,6 +37,9 @@ export interface Attachment {
   uploading: boolean;
   /** Resolved daemon file id (set after upload completes) */
   fileId?: string;
+  /** Set when `fileId` belongs to the session media store rather than the
+      global upload store. */
+  sessionId?: string;
   /** True if upload failed */
   error?: boolean;
 }
@@ -48,7 +52,7 @@ type UploadImage = (
 export interface AttachmentUploadDeps {
   /** Authenticated file-byte fetch — a bare getFileUrl src 401s under daemon
       auth, so protected thumbnails load through the API client. */
-  api: Pick<KimiWebApi, 'getFileBlob'>;
+  api: Pick<KimiWebApi, 'getFileBlob' | 'getSessionMediaBlob'>;
   /** Upload a blob; resolves to the daemon file id, or null on failure.
       Getter so a prop change is picked up. Undefined disables attaching. */
   uploadImage: () => UploadImage | undefined;
@@ -346,7 +350,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
    *  fetch an authenticated blob URL so the thumbnail doesn't 401. Replaces any
    *  unsent draft attachments (mirroring loadForEdit(text), which overwrites) so
    *  a later submit sends exactly the edited message's files, not a mix. */
-  function loadAttachments(atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[], targetSid?: string, opts?: { append?: boolean }): void {
+  function loadAttachments(atts: readonly TurnAttachment[], targetSid?: string, opts?: { append?: boolean }): void {
     const sid = targetSid ?? sessionId() ?? '';
     if (opts?.append !== true) {
       for (const existing of attachmentsBySession.value[sid] ?? []) revokeAttachment(existing);
@@ -369,10 +373,16 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
           previewUrl: att.kind === 'file' ? undefined : att.url,
           uploading: false,
           fileId: att.fileId,
+          sessionId: att.sessionId,
+          mediaType: att.mediaType,
+          size: att.size,
         };
         setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), entry]);
         if (att.kind === 'image' && !isData && !isBlob) {
-          void api.getFileBlob(att.fileId).then((blob) => {
+          const blobRequest = att.sessionId
+            ? api.getSessionMediaBlob(att.sessionId, att.fileId)
+            : api.getFileBlob(att.fileId);
+          void blobRequest.then((blob) => {
             const blobUrl = URL.createObjectURL(blob);
             const current = attachmentsBySession.value[sid] ?? [];
             if (!current.some((a) => a.localId === localId)) {

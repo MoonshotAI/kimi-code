@@ -132,6 +132,9 @@ export interface ToolMedia {
   /** File-store id when the media is an uploaded file. The preview fetches its
    *  bytes with the Bearer credential (a bare getFileUrl src 401s in <img>). */
   fileId?: string;
+  /** Set only when `fileId` addresses the session media store (a daemon media
+   *  reference): the preview fetches via the session-scoped media route. */
+  sessionId?: string;
 }
 
 /** Payload of the `openMedia` event chain (tool cards → App): opens the
@@ -277,6 +280,10 @@ export interface TurnAttachment {
   kind: 'image' | 'video' | 'file';
   url: string;
   fileId?: string;
+  /** Set only when `fileId` addresses the session media store (a daemon
+      media reference) rather than the global upload store — the byte fetch
+      must go through the session-scoped media route with this session id. */
+  sessionId?: string;
   name?: string;
   mediaType?: string;
   size?: number;
@@ -412,7 +419,7 @@ export interface QueuedPromptView {
   attachmentCount: number;
   /** Attachments waiting with this prompt, with resolved URLs for thumbnails
       (file attachments render an icon chip, no thumbnail). */
-  attachments?: { fileId: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[];
+  attachments?: TurnAttachment[];
 }
 
 /** Horizontal alignment of the conversation reading column within the pane. */

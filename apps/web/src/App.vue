@@ -29,6 +29,7 @@ import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient } from './composables/useKimiWebClient';
 import { getKimiWebApi } from './api';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
+import { promptAttachmentToTurnAttachment } from '@moonshot-ai/app-client/client';
 import type { PromptAttachment } from './composables/useKimiWebClient';
 import type { OpenMediaRequest, ToolMedia, TurnAttachment } from './types';
 import { usePageTitle } from '@moonshot-ai/app-client/composables';
@@ -710,12 +711,7 @@ async function handleInterrupt(): Promise<void> {
 // included) — the same mechanism as edit-and-resend for history messages.
 function toEditableAttachments(atts: PromptAttachment[]): TurnAttachment[] {
   const api = getKimiWebApi();
-  return atts.map((a) => ({
-    kind: a.kind,
-    url: api.getFileUrl(a.fileId),
-    fileId: a.fileId,
-    name: a.name,
-  }));
+  return atts.map((a) => promptAttachmentToTurnAttachment(api, a));
 }
 
 // Sign-in gate, shared by every path that submits work (plain sends and

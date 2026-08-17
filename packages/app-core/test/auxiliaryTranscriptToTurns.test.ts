@@ -231,6 +231,59 @@ describe('auxiliaryTranscriptToTurns', () => {
       { kind: 'text', text: 'The checks passed.' },
     ]);
   });
+
+  it('maps a session_media transcript attachment to a session-scoped turn attachment', () => {
+    const input = snapshot();
+    const source = input.items[0];
+    if (source?.kind !== 'turn') throw new Error('expected turn fixture');
+    const turns = auxiliaryTranscriptToTurns(
+      {
+        ...input,
+        items: [{ ...source, attachmentIds: ['att-1'] }],
+        attachments: [{
+          attachmentId: 'att-1',
+          mediaType: 'image/*',
+          name: 'f_1.png',
+          source: { kind: 'session_media', fileId: 'f_1' },
+        }],
+      },
+      undefined,
+      undefined,
+      {
+        sessionId: 'sess-1',
+        getSessionMediaUrl: (sessionId, fileId) => `media://${sessionId}/${fileId}`,
+      },
+    );
+
+    expect(turns[0]?.attachments).toEqual([
+      { kind: 'image', url: 'media://sess-1/f_1', fileId: 'f_1', sessionId: 'sess-1' },
+    ]);
+  });
+
+  it('keeps a global file transcript attachment on the upload-store source', () => {
+    const input = snapshot();
+    const source = input.items[0];
+    if (source?.kind !== 'turn') throw new Error('expected turn fixture');
+    const turns = auxiliaryTranscriptToTurns(
+      {
+        ...input,
+        items: [{ ...source, attachmentIds: ['att-1'] }],
+        attachments: [{
+          attachmentId: 'att-1',
+          mediaType: 'image/*',
+          name: 'f_9.png',
+          source: { kind: 'file', fileId: 'f_9' },
+        }],
+      },
+      (fileId) => `files://${fileId}`,
+      undefined,
+      { sessionId: 'sess-1' },
+    );
+
+    expect(turns[0]?.attachments).toEqual([
+      { kind: 'image', url: 'files://f_9', fileId: 'f_9' },
+    ]);
+  });
 });
 
 function snapshot(): AgentTranscriptSnapshot {

@@ -301,7 +301,13 @@ export type AppMessageContent =
 export type ImageSource =
   | { kind: 'url'; url: string }
   | { kind: 'base64'; mediaType: string; data: string }
-  | { kind: 'file'; fileId: string };
+  | { kind: 'file'; fileId: string }
+  // A daemon-referenced upload materialized into the session's own media
+  // store: the bytes are fetched from the session-scoped media route (the
+  // session id travels on the enclosing message/attachment), not the global
+  // /files store. It can be submitted back to its owning session; the daemon
+  // rejects the reference when the target session does not own it.
+  | { kind: 'sessionMedia'; fileId: string };
 
 /** Attachment parts a skill activation can carry — the media/file subset of
     AppMessageContent (text stays in the skill's `args`). */
@@ -1308,6 +1314,10 @@ export interface KimiWebApi {
   getFileUrl(fileId: string): string;
   /** Fetch a file's bytes with auth — feed the resulting Blob to a blob URL for <video>/<img> src. */
   getFileBlob(fileId: string): Promise<Blob>;
+  /** Session-owned canonical media copy (a `session_media` projection source). */
+  getSessionMediaUrl(sessionId: string, fileId: string): string;
+  /** Same auth rule as getFileBlob — a bare URL 401s when fed to <video>/<img> src. */
+  getSessionMediaBlob(sessionId: string, fileId: string): Promise<Blob>;
 
   /** Read any host file by ABSOLUTE path via the daemon's global fs:content.
    *  No workspace prefix gate (unlike session fs:read); a missing file surfaces

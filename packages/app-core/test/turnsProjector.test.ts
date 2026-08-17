@@ -196,3 +196,37 @@ describe('createTurnsProjector', () => {
     expect(second[0]).not.toBe(first[0]);
   });
 });
+
+describe('messagesToTurns session-media attachments', () => {
+  const getSessionMediaUrl = (sessionId: string, fileId: string): string =>
+    `media://${sessionId}/${fileId}`;
+
+  it('maps a sessionMedia image part to an attachment carrying the session id', () => {
+    const u1 = message('u1', 'user', [
+      text('look at this'),
+      { type: 'image', source: { kind: 'sessionMedia', fileId: 'f_1' } },
+    ]);
+    const turns = messagesToTurns([u1], [], undefined, true, {}, {}, { getSessionMediaUrl });
+    expect(turns[0]?.attachments).toEqual([
+      { kind: 'image', url: 'media://session-1/f_1', fileId: 'f_1', sessionId: 'session-1' },
+    ]);
+  });
+
+  it('keeps a global-upload file source on the global file URL (no session id)', () => {
+    const u1 = message('u1', 'user', [
+      { type: 'image', source: { kind: 'file', fileId: 'f_9' } },
+    ]);
+    const turns = messagesToTurns(
+      [u1],
+      [],
+      (fileId) => `files://${fileId}`,
+      true,
+      {},
+      {},
+      { getSessionMediaUrl },
+    );
+    expect(turns[0]?.attachments).toEqual([
+      { kind: 'image', url: 'files://f_9', fileId: 'f_9' },
+    ]);
+  });
+});

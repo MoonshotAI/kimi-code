@@ -32,6 +32,7 @@ export interface TurnsProjectInput {
   messages: AppMessage[];
   approvals: AppApprovalRequest[];
   getFileUrl?: (fileId: string) => string;
+  getSessionMediaUrl?: (sessionId: string, fileId: string) => string;
   sessionActive?: boolean;
   planReviewByToolCallId?: Record<string, { plan: string; path?: string }>;
   plansByToolCallId?: Record<string, SessionPlan>;
@@ -53,6 +54,7 @@ export function createTurnsProjector(): TurnsProjector {
   let prevPlanReviewEntries: Record<string, { plan: string; path?: string }> | null = null;
   let prevPlanEntries: Record<string, SessionPlan> | null = null;
   let prevGetFileUrl: TurnsProjectInput['getFileUrl'];
+  let prevGetSessionMediaUrl: TurnsProjectInput['getSessionMediaUrl'];
   let prevSessionActive = true;
   // Sidecar: source message span per emitted turn (the core reports them via
   // `collect`; kept out of the turn objects so the shape stays untouched).
@@ -87,7 +89,8 @@ export function createTurnsProjector(): TurnsProjector {
       approvals === prevApprovals &&
       planReviewUnchanged &&
       plansUnchanged &&
-      input.getFileUrl === prevGetFileUrl;
+      input.getFileUrl === prevGetFileUrl &&
+      input.getSessionMediaUrl === prevGetSessionMediaUrl;
 
     let reuseCount = 0;
     let cursor = 0;
@@ -130,7 +133,7 @@ export function createTurnsProjector(): TurnsProjector {
       sessionActive,
       planReview,
       plans,
-      { startNo, collect },
+      { startNo, collect, getSessionMediaUrl: input.getSessionMediaUrl },
     );
     const next = reuseCount > 0 ? [...prevTurns.slice(0, reuseCount), ...suffixTurns] : suffixTurns;
 
@@ -139,6 +142,7 @@ export function createTurnsProjector(): TurnsProjector {
     prevPlanReviewEntries = { ...planReview };
     prevPlanEntries = { ...plans };
     prevGetFileUrl = input.getFileUrl;
+    prevGetSessionMediaUrl = input.getSessionMediaUrl;
     prevSessionActive = sessionActive;
     return next;
   };
