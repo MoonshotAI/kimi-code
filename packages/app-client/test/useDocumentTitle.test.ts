@@ -5,7 +5,7 @@ import {
   formatDocumentTitle,
   useDocumentTitle,
   workspaceRootBasename,
-} from './useDocumentTitle';
+} from '../src/composables/useDocumentTitle';
 
 // Runs in the node environment: the composable only computes the base title
 // (writing document.title is usePageTitle's job), so no DOM is needed.

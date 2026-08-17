@@ -1,16 +1,15 @@
-// apps/kimi-web/test/workspaceStateFlatPaging.test.ts
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+// packages/app-client/test/workspaceStateFlatPaging.test.ts
+// Merged from the two apps' identical copies (web + desktop differed only in
+// the api/track mock wiring, now the deps registry).
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computed } from 'vue';
 
-const { getKimiWebApiMock } = vi.hoisted(() => ({
-  getKimiWebApiMock: vi.fn(),
-}));
-
-vi.mock('../src/api', () => ({ getKimiWebApi: getKimiWebApiMock }));
-
 import { DaemonApiError } from '@moonshot-ai/app-core/api';
-import { useWorkspaceState } from '../src/composables/client/useWorkspaceState';
-import type { V2Session, V2SessionsPage } from '../src/api/types';
+import type { V2Session, V2SessionsPage } from '@moonshot-ai/app-core/api';
+import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
+import { useWorkspaceState } from '../src/client/useWorkspaceState';
+
+const getKimiWebApiMock = vi.fn();
 
 /** Minimal v2 item: the flat paging path reads workspace/meta/activity + git. */
 function v2Item(
@@ -85,6 +84,11 @@ function createState({ pooledIds = [], pages, seeded = true }: SetupOptions) {
 describe('loadMoreFlatSessions — paging loop', () => {
   beforeEach(() => {
     getKimiWebApiMock.mockReset();
+    setKimiClientDeps({ api: () => getKimiWebApiMock(), t: (key) => key });
+  });
+
+  afterEach(() => {
+    resetKimiClientDeps();
   });
 
   it('keeps paging past empty and hidden-workspace pages until visible rows land', async () => {

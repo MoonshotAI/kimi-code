@@ -29,7 +29,7 @@ import WorkspaceGroup from './WorkspaceGroup.vue';
 import PinnedSessionList from './PinnedSessionList.vue';
 import SessionRow from './SessionRow.vue';
 import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
-import { SESSIONS_EXPAND_BATCH } from '../composables/client/useWorkspaceState';
+import { SESSIONS_EXPAND_BATCH } from '@moonshot-ai/app-client/client';
 import { Icon, IconButton, Kbd, Menu, MenuItem, Tooltip } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();

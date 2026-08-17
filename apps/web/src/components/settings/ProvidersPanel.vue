@@ -9,7 +9,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppProvider } from '../../api/types';
-import { useKimiWebClient } from '../../composables/useKimiWebClient';
+import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { isManagedOAuthProvider, providerModelRows } from '@moonshot-ai/app-core/lib';
 import AddProviderFlow from './AddProviderFlow.vue';
 import ProviderForm from './ProviderForm.vue';

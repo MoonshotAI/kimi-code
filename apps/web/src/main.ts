@@ -4,16 +4,29 @@ import { KimiWebClientFacadeKey } from '@moonshot-ai/app-core';
 import { KimiI18nKey, type KimiI18nApi } from '@moonshot-ai/app-i18n';
 import App from './App.vue';
 import i18n from './i18n';
-import { useKimiWebClient } from './composables/useKimiWebClient';
+import { useKimiWebClient, setKimiClientDeps } from '@moonshot-ai/app-client/client';
 import { isDesktop } from '@moonshot-ai/app-core/lib';
 import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
-import { installClientErrorCapture } from './debug/trace';
+import { installClientErrorCapture, sessionExportTraceToJsonl, traceClientEvent, traceKeyEvent } from './debug/trace';
+import { getKimiWebApi } from './api';
 import '@fontsource-variable/jetbrains-mono/wght.css';
 import './style.css';
 
 // Always retain bounded metadata for uncaught failures. With ?debug=1 / the
 // debug flag, console output is included too; HMR restores listeners/wrappers.
 installClientErrorCapture();
+
+// Wire the shared client singletons' platform seams (app-client/client): the
+// composed api singleton, i18n translator, and trace ring. The optional
+// desktop hooks (native terminal / session intent / plugins shelf) stay at
+// their no-op defaults here.
+setKimiClientDeps({
+  api: getKimiWebApi,
+  t: (key, params) => (params === undefined ? i18n.global.t(key) : i18n.global.t(key, params)),
+  traceClientEvent,
+  traceKeyEvent: (event, info) => traceKeyEvent(event as never, info),
+  sessionExportTraceToJsonl,
+});
 
 const app = createApp(App).use(i18n);
 // Hand packages (e.g. app-markdown) a translator without forcing them to import

@@ -10,8 +10,8 @@ import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ConversationStatus, PermissionMode } from '../../types';
 import type { AppModel, AppSession, ManagedUserInfo, ThinkingLevel } from '../../api/types';
-import type { ColorScheme, FontScale } from '../../composables/useKimiWebClient';
-import { useKimiWebClient } from '../../composables/useKimiWebClient';
+import type { ColorScheme, FontScale } from '@moonshot-ai/app-client/client';
+import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import {
   commitLevel,

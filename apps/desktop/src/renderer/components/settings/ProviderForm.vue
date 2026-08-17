@@ -9,7 +9,7 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppProvider } from '../../api/types';
-import { useKimiWebClient } from '../../composables/useKimiWebClient';
+import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import {
   buildAddProviderInput,
   buildUpdateProviderInput,

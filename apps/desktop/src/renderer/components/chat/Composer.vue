@@ -30,7 +30,7 @@ import { resolvedBinding } from '../../composables/useShortcuts';
 import { openFileAttachment, createComposerEditor, type ComposerEditorApi } from '@moonshot-ai/app-client/lib';
 import { getKimiWebApi } from '../../api';
 import { openUpgrade } from '@moonshot-ai/app-core/lib';
-import type { ManagedMembership, PromptAttachment } from '../../composables/useKimiWebClient';
+import type { ManagedMembership, PromptAttachment } from '@moonshot-ai/app-client/client';
 import AttachmentChip from './AttachmentChip.vue';
 import MediaLightbox from './MediaLightbox.vue';
 import MediaThumb from './MediaThumb.vue';

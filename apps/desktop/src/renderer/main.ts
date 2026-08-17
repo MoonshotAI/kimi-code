@@ -4,13 +4,17 @@ import { KimiWebClientFacadeKey } from '@moonshot-ai/app-core';
 import { KimiI18nKey, type KimiI18nApi } from '@moonshot-ai/app-i18n';
 import App from './App.vue';
 import i18n from './i18n';
-import { useKimiWebClient } from './composables/useKimiWebClient';
+import { useKimiWebClient, setKimiClientDeps } from '@moonshot-ai/app-client/client';
 import { initVibrancy } from './composables/useVibrancy';
 import { isDesktop, isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
-import { installClientErrorCapture } from './debug/trace';
+import { installClientErrorCapture, sessionExportTraceToJsonl, traceClientEvent, traceKeyEvent } from './debug/trace';
 import { setProductTracker } from '@moonshot-ai/app-client/contracts';
 import { productTracker } from './lib/track';
+import { getKimiWebApi } from './api';
+import { nativeTerminalDraftKey, useNativeTerminal } from './composables/useNativeTerminal';
+import { handlePluginsShelfEvent } from './composables/usePlugins';
+import { consumeSessionIntent } from './lib/session-intent';
 import '@fontsource-variable/jetbrains-mono/wght.css';
 import './style.css';
 
@@ -22,6 +26,26 @@ installClientErrorCapture();
 // the shared composables' events reach the main process; web keeps the
 // default no-op (it does not emit these events).
 setProductTracker(productTracker);
+
+// Wire the shared client singletons' platform seams (app-client/client): the
+// composed api singleton, i18n translator, trace ring, plus desktop's native
+// terminal teardown / session intent / plugins shelf fan-out. Web registers
+// only the first group — the optional hooks stay no-op there.
+setKimiClientDeps({
+  api: getKimiWebApi,
+  t: (key, params) => (params === undefined ? i18n.global.t(key) : i18n.global.t(key, params)),
+  traceClientEvent,
+  traceKeyEvent: (event, info) => traceKeyEvent(event as never, info),
+  sessionExportTraceToJsonl,
+  onSessionDestroyed: (sessionId) => useNativeTerminal().destroySession(sessionId),
+  onWorkspaceDestroyed: (workspaceId, _root, sessionIds) => {
+    const terminals = useNativeTerminal();
+    for (const id of sessionIds) terminals.destroySession(id);
+    terminals.destroySession(nativeTerminalDraftKey(workspaceId));
+  },
+  consumeSessionIntent,
+  onPluginsShelfEvent: (event) => handlePluginsShelfEvent(event as never),
+});
 
 const app = createApp(App).use(i18n);
 // Hand packages (e.g. app-markdown) a translator without forcing them to import

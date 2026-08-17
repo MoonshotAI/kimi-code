@@ -1,12 +1,20 @@
-// Vue state composable — the only place that imports both src/api/* and src/types.ts.
-// Components consume computed view props and call actions; they never touch the API or reducer.
+// Vue state composable — the shared client facade singleton. Components consume
+// computed view props and call actions; they never touch the API or reducer.
+// Platform differences arrive via ./deps injection (api / t / tracer / native
+// terminal / telemetry), registered by each app's composition root.
 
 import { computed, reactive, ref, watch } from 'vue';
-import { i18n } from '../i18n';
-import { formatDuration as formatTaskDuration } from '../components/chatTurnRendering';
-import { traceClientEvent, traceKeyEvent } from '../debug/trace';
-import { getKimiWebApi } from '../api';
-import { isDaemonApiError, isDaemonNetworkError, isDaemonTimeoutError } from '../api/errors';
+import { formatDuration as formatTaskDuration } from '@moonshot-ai/app-core/lib';
+import {
+  getKimiWebApi,
+  notifyPluginsShelfEvent,
+  notifySessionDestroyed,
+  notifyWorkspaceDestroyed,
+  t,
+  traceClientEvent,
+  traceKeyEvent,
+} from './deps';
+import { isDaemonApiError, isDaemonNetworkError, isDaemonTimeoutError } from '@moonshot-ai/app-core/api';
 import {
   buildWorkspaceRecencyKeys,
   currentActivityKeys,
@@ -18,6 +26,7 @@ import {
   type WorkspaceSortMode,
 } from '@moonshot-ai/app-core/lib';
 import { logError, logWarn } from '@moonshot-ai/app-core/lib';
+import { track } from '../contracts';
 import { mergeWorkspaces } from '@moonshot-ai/app-core/lib';
 import { basename } from '@moonshot-ai/app-core/lib';
 import { insertSessionByRecency, sessionDisplayStatus } from '@moonshot-ai/app-core/lib';
@@ -60,15 +69,13 @@ import {
 } from '@moonshot-ai/app-core/client';
 import { applyRecordDiff } from '@moonshot-ai/app-core/client';
 import { useAppearance } from '@moonshot-ai/app-core';
-import { useNotification, shouldNotifyCompletion } from '@moonshot-ai/app-client/composables';
-import {
-  promptAttachmentToTurnAttachment,
-  useModelProviderState,
-  useSideChat,
-  useTaskPoller,
-} from '@moonshot-ai/app-client/client';
-import type { ExtendedState, ManagedMembership } from '@moonshot-ai/app-client/client';
-import { createAuxiliaryTranscriptPool } from '@moonshot-ai/app-client/composables';
+import { useNotification, shouldNotifyCompletion } from '../composables/useNotification';
+import { promptAttachmentToTurnAttachment } from './attachmentsToContent';
+import { useModelProviderState } from './useModelProviderState';
+import { useSideChat } from './useSideChat';
+import { useTaskPoller } from './useTaskPoller';
+import type { ExtendedState, ManagedMembership } from './types';
+import { createAuxiliaryTranscriptPool } from '../composables/useAuxiliaryTranscripts';
 import {
   beginLocalTurn,
   FLAT_SESSIONS_PAGE_SIZE,
@@ -76,11 +83,11 @@ import {
   SESSIONS_INITIAL_PAGE_SIZE,
   settleLocalTurn,
   useWorkspaceState,
-} from './client/useWorkspaceState';
-import { useDocumentTitle } from './useDocumentTitle';
+} from './useWorkspaceState';
+import { useDocumentTitle } from '../composables/useDocumentTitle';
 
 const appearance = useAppearance();
-const notification = useNotification({ t: (k, p) => (p === undefined ? i18n.global.t(k) : i18n.global.t(k, p)) });
+const notification = useNotification({ t });
 import type {
   AppEvent,
   AppApprovalRequest,
@@ -106,7 +113,7 @@ import type {
   KimiEventMeta,
   ManagedUserInfo,
   ThinkingLevel,
-} from '../api/types';
+} from '@moonshot-ai/app-core/api';
 import {
   createInitialState,
   reduceAppEvent,
@@ -140,7 +147,7 @@ import type {
   Workspace,
   WorkspaceGroup,
   WorkspaceView,
-} from '../types';
+} from '@moonshot-ai/app-core/client/types';
 
 // ---------------------------------------------------------------------------
 // Internal reactive state (plain object wrapped in reactive())
@@ -306,14 +313,14 @@ function shortenHome(path: string, home: string | null): string {
 }
 
 // The facade state shape (ExtendedState) and the prompt-attachment /
-// managed-membership types live in @moonshot-ai/app-client/client so the
-// client-layer modules can sit in the package. Re-exported here so existing
+// managed-membership types live in ./types so the client-layer modules can sit
+// in the package. Re-exported here so existing
 // `import type { … } from './useKimiWebClient'` callers keep working.
 export type {
   ExtendedState,
   ManagedMembership,
   PromptAttachment,
-} from '@moonshot-ai/app-client/client';
+} from './types';
 
 const rawState: ExtendedState = reactive({
   ...createInitialState(),
@@ -323,7 +330,7 @@ const rawState: ExtendedState = reactive({
   dangerousBypassAuth: false,
   backend: 'v1',
   experimentalFlags: {},
-  workspaceName: 'kimi-web',
+  workspaceName: 'kimi-code',
   connection: 'disconnected' as ConnectionState,
   permission: loadPermissionFromStorage(),
   // Resolved per session/model once the catalog/session is known (loadModels
@@ -927,7 +934,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     warnings: rawState.warnings,
   };
   const next = reduceAppEvent(snapshot, event, { sessionId, seq }, {
-    t: (k, p) => (p === undefined ? i18n.global.t(k) : i18n.global.t(k, p)),
+    t: (k, p) => (p === undefined ? t(k) : t(k, p)),
   });
   // Assign back to the reactive proxy — but ONLY the slices the event actually
   // changed. cloneState gives every slice a fresh identity per event, so the
@@ -1002,6 +1009,13 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   // cleanup lives here too.
   if (event.type === 'sessionDeleted') {
     unpinSession(event.sessionId);
+    // Same teardown for its terminal bucket (bypasses the App.vue callbacks).
+    // Injected by desktop; a no-op on web.
+    notifySessionDestroyed(event.sessionId);
+  }
+  // A remote ARCHIVE arrives as sessionUpdated — same terminal teardown.
+  if (event.type === 'sessionUpdated' && event.session.archived === true) {
+    notifySessionDestroyed(event.session.id);
   }
 }
 
@@ -1236,7 +1250,7 @@ function scheduleSessionWorkBaselineRetry(error: unknown): void {
     1000 * 2 ** sessionWorkBaselineRetryAttempt,
   );
   sessionWorkBaselineRetryAttempt += 1;
-  logWarn('[kimi-web] session work reconciliation incomplete; retrying', error);
+  logWarn('[kimi-code] session work reconciliation incomplete; retrying', error);
   sessionWorkBaselineRetryTimer = setTimeout(() => {
     sessionWorkBaselineRetryTimer = null;
     if (rawState.connected) void reconcileSessionWorkAfterReconnect();
@@ -1403,7 +1417,14 @@ async function reconcileSessionWorkAfterReconnect(): Promise<void> {
 // WS subscription (lazy, only when a session is selected)
 // ---------------------------------------------------------------------------
 
-function connectEventsIfNeeded(): void {
+// connection_lost only counts drops AFTER the first established connection —
+// the initial connect attempt failing is startup, not a lost connection.
+let wsEverConnected = false;
+let wsDisconnectedAt: number | null = null;
+
+// Exported (desktop-only consumer: the settings plugins shelf — web's copy
+// needs no such export; see docs/native-todos.md).
+export function connectEventsIfNeeded(): void {
   if (eventConn !== null) return;
   // Guard: jsdom and some environments have no WebSocket
   if (typeof WebSocket === 'undefined') return;
@@ -1423,7 +1444,28 @@ function connectEventsIfNeeded(): void {
         appEvent.type === 'workspaceUpdated' ||
         appEvent.type === 'workspaceDeleted'
       ) {
+        if (appEvent.type === 'workspaceDeleted') {
+          // Terminal teardown mirrors the App.vue confirm-delete cleanup.
+          // Injected by desktop (native PTYs); a no-op on web.
+          const sessionIds = rawState.sessions
+            .filter(
+              (session) =>
+                session.workspaceId === appEvent.workspaceId ||
+                session.cwd === appEvent.root,
+            )
+            .map((session) => session.id);
+          notifyWorkspaceDestroyed(appEvent.workspaceId, appEvent.root, sessionIds);
+        }
         workspaceState.applyWorkspaceEvent(appEvent);
+        return;
+      }
+      // Plugin/capability lifecycle fan-out feeds the desktop settings plugins
+      // shelf. Web registers no handler — the events fall through to the
+      // normal reducer path.
+      if (
+        (appEvent.type === 'pluginsChanged' || appEvent.type === 'capabilityChanged') &&
+        notifyPluginsShelfEvent(appEvent)
+      ) {
         return;
       }
       const isWorkEvent = appEvent.type === 'sessionWorkChanged';
@@ -1518,7 +1560,7 @@ function connectEventsIfNeeded(): void {
       });
       pushWarning({
         severity: 'error',
-        title: i18n.global.t('warnings.wsTitle'),
+        title: t('warnings.wsTitle'),
         message: msg,
         details: [warningDetail('message', msg)].filter(
           (detail): detail is AppNoticeDetail => detail !== undefined,
@@ -1532,7 +1574,19 @@ function connectEventsIfNeeded(): void {
       });
       rawState.connected = connected;
       rawState.connection = connected ? 'connected' : 'disconnected';
-      if (!connected) {
+      if (connected) {
+        if (wsDisconnectedAt !== null) {
+          track('connection_restored', {
+            duration_ms: Math.min(Date.now() - wsDisconnectedAt, 86_400_000),
+          });
+          wsDisconnectedAt = null;
+        }
+        wsEverConnected = true;
+      } else {
+        if (wsEverConnected && wsDisconnectedAt === null) {
+          track('connection_lost', {});
+          wsDisconnectedAt = Date.now();
+        }
         sessionWorkBaselineRun = null;
         sessionActivityWatermarkBySession.clear();
         cancelSessionWorkBaselineRetry();
@@ -1607,7 +1661,7 @@ function isSessionNotFoundError(err: unknown): boolean {
 
 function warningDetail(labelKey: string, value: unknown): AppNoticeDetail | undefined {
   if (value === undefined || value === null || value === '') return undefined;
-  return { label: i18n.global.t(`warnings.details.${labelKey}`), value: formatDetailValue(value) };
+  return { label: t(`warnings.details.${labelKey}`), value: formatDetailValue(value) };
 }
 
 function formatDetailValue(value: unknown): string {
@@ -1721,20 +1775,20 @@ function operationFailureNotice(
     opts.title ??
     (network
       ? timeout
-        ? i18n.global.t('warnings.daemonTimeoutTitle')
-        : i18n.global.t('warnings.daemonNetworkTitle')
+        ? t('warnings.daemonTimeoutTitle')
+        : t('warnings.daemonNetworkTitle')
       : api
-        ? i18n.global.t('warnings.daemonApiTitle')
-        : i18n.global.t('warnings.operationFailedTitle'));
+        ? t('warnings.daemonApiTitle')
+        : t('warnings.operationFailedTitle'));
   const message =
     opts.message ??
     (network
       ? timeout
-        ? i18n.global.t('warnings.daemonTimeoutMessage')
-        : i18n.global.t('warnings.daemonNetworkMessage')
+        ? t('warnings.daemonTimeoutMessage')
+        : t('warnings.daemonNetworkMessage')
       : api
         ? err.message
-        : i18n.global.t('warnings.operationFailedMessage'));
+        : t('warnings.operationFailedMessage'));
   return {
     severity: 'error',
     title,
@@ -1751,7 +1805,7 @@ function pushWarning(warning: AppWarning): void {
 // handler. Matched by severity + the localized wsTitle (the same i18n instance
 // used to push it), so other errors are left untouched.
 function dismissWsError(): void {
-  const title = i18n.global.t('warnings.wsTitle');
+  const title = t('warnings.wsTitle');
   const next = rawState.warnings.filter(
     (w) => !(typeof w === 'object' && w !== null && w.severity === 'error' && w.title === title),
   );
@@ -1767,7 +1821,7 @@ function pushOperationFailure(
 ): void {
   // Always-on logging: a surfaced failure must be diagnosable from the console
   // and from the exported web log (session export), not just from the toast.
-  logError(`[kimi-web] operation failed: ${operation}`, err);
+  logError(`[kimi-code] operation failed: ${operation}`, err);
   const api = isDaemonApiError(err);
   const network = isDaemonNetworkError(err);
   traceKeyEvent('operation:failed', {
@@ -1797,7 +1851,7 @@ const GOAL_ERROR_KEYS: Record<number, string> = {
 function goalErrorMessage(err: unknown): string | undefined {
   if (!isDaemonApiError(err) || err.code === undefined) return undefined;
   const key = GOAL_ERROR_KEYS[err.code];
-  return key ? i18n.global.t(key) : undefined;
+  return key ? t(key) : undefined;
 }
 
 async function handleSessionNotFound(sessionId: string): Promise<void> {
@@ -1807,7 +1861,7 @@ async function handleSessionNotFound(sessionId: string): Promise<void> {
 
   const next = rawState.sessions[0];
   if (next) {
-    await workspaceState.selectSession(next.id, { urlMode: 'replace' });
+    await workspaceState.selectSession(next.id, { urlMode: 'replace', skipTrack: true });
   } else {
     setActiveSessionId(undefined);
     rawState.sessionLoading = false;
@@ -1822,7 +1876,7 @@ async function pullSessionWarnings(sessionId: string): Promise<void> {
   sessionWarningsPulled.add(sessionId);
   try {
     const warnings = await getKimiWebApi().getSessionWarnings(sessionId);
-    const label = i18n.global.t('warnings.noteLabel');
+    const label = t('warnings.noteLabel');
     for (const warning of warnings) {
       pushWarning(`${label}: ${warning.message}`);
     }
@@ -1982,8 +2036,8 @@ async function syncSessionFromSnapshot(
       return 'not-found';
     }
     pushOperationFailure('getSessionSnapshot', err, {
-      title: i18n.global.t('warnings.sessionSnapshotTitle'),
-      message: i18n.global.t('warnings.sessionSnapshotMessage'),
+      title: t('warnings.sessionSnapshotTitle'),
+      message: t('warnings.sessionSnapshotMessage'),
       sessionId,
     });
     return 'failed';
@@ -2098,7 +2152,7 @@ function formatTime(iso: string): string {
     const now = Date.now();
     const diffMs = now - d.getTime();
     const diffH = diffMs / 3600000;
-    if (diffMs < 60000) return i18n.global.t('sessions.justNow');
+    if (diffMs < 60000) return t('sessions.justNow');
     if (diffH < 1) return `${Math.round(diffMs / 60000)}m`;
     if (diffH < 24) return `${Math.round(diffH)}h`;
     const diffD = diffMs / 86400000;
@@ -2400,14 +2454,14 @@ function toUiTask(task: AppTask): TaskItem {
     const elapsed = Math.round(durationMs / 1000);
     const m = Math.floor(elapsed / 60);
     const s = elapsed % 60;
-    timing = i18n.global.t('tasks.timingRunning', { time: `${m}:${String(s).padStart(2, '0')}` });
+    timing = t('tasks.timingRunning', { time: `${m}:${String(s).padStart(2, '0')}` });
   } else if (task.completedAt && task.startedAt && !task.completedAtEstimated) {
     durationMs = new Date(task.completedAt).getTime() - new Date(task.startedAt).getTime();
-    timing = i18n.global.t('tasks.timingDone', {
+    timing = t('tasks.timingDone', {
       time: formatTaskDuration(durationMs, {
-        h: i18n.global.t('status.timeUnitHour'),
-        m: i18n.global.t('status.timeUnitMinute'),
-        s: i18n.global.t('status.timeUnitSecond'),
+        h: t('status.timeUnitHour'),
+        m: t('status.timeUnitMinute'),
+        s: t('status.timeUnitSecond'),
       }),
     });
   } else {
@@ -3744,7 +3798,7 @@ function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: b
       sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
       promptId: finishedPromptId,
       onClick: () => {
-        void workspaceState.selectSession(sid);
+        void workspaceState.selectSession(sid, { source: 'notification' });
       },
     });
   }
@@ -3767,7 +3821,7 @@ function onQuestionRequested(sid: string, question: AppQuestionRequest): void {
     questionPreview: preview,
     questionId: question.questionId,
     onClick: () => {
-      void workspaceState.selectSession(sid);
+      void workspaceState.selectSession(sid, { source: 'notification' });
     },
   });
 }
@@ -3780,7 +3834,7 @@ function onApprovalRequested(sid: string, approval: AppApprovalRequest): void {
     toolName: approval.toolName,
     approvalId: approval.approvalId,
     onClick: () => {
-      void workspaceState.selectSession(sid);
+      void workspaceState.selectSession(sid, { source: 'notification' });
     },
   });
 }

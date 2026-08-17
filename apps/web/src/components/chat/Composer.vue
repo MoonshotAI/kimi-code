@@ -28,7 +28,7 @@ import { toPromptAttachment } from '@moonshot-ai/app-client/client';
 import { openFileAttachment } from '@moonshot-ai/app-client/lib';
 import { getKimiWebApi } from '../../api';
 import { openUpgrade } from '@moonshot-ai/app-core/lib';
-import type { ManagedMembership, PromptAttachment } from '../../composables/useKimiWebClient';
+import type { ManagedMembership, PromptAttachment } from '@moonshot-ai/app-client/client';
 import AttachmentChip from './AttachmentChip.vue';
 import MediaLightbox from './MediaLightbox.vue';
 import MediaThumb from './MediaThumb.vue';

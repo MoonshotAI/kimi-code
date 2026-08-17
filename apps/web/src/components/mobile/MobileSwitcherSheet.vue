@@ -9,7 +9,7 @@ import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session, WorkspaceGroup, WorkspaceView } from '../../types';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
-import { SESSIONS_EXPAND_BATCH } from '../../composables/client/useWorkspaceState';
+import { SESSIONS_EXPAND_BATCH } from '@moonshot-ai/app-client/client';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/app-ui';
 

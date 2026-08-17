@@ -15,7 +15,7 @@ import SessionEmojiPicker from './SessionEmojiPicker.vue';
 // Telemetry (desktop-only fork block, see docs/native-todos.md): the web copy
 // of this file drops this import and the track() call in applyEmoji.
 import { track } from '../lib/track';
-import { useKimiWebClient } from '../composables/useKimiWebClient';
+import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { sessionDisplayStatus } from '@moonshot-ai/app-core/lib';
 
 const { t } = useI18n();

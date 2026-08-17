@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, OpenMediaRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, TurnAttachment, UIQuestion, WorkspaceView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, SessionPlan, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
-import type { ManagedMembership, PromptAttachment } from '../../composables/useKimiWebClient';
+import type { ManagedMembership, PromptAttachment } from '@moonshot-ai/app-client/client';
 import ChatPane from './ChatPane.vue';
 import ChatHeader from './ChatHeader.vue';
 import Composer from './Composer.vue';

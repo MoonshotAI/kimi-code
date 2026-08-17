@@ -1,23 +1,24 @@
 // Scenario: workspace/session actions exposed by useWorkspaceState.
 // Responsibilities: observable state and error reporting across load, paging, and user actions.
 // Wiring: the composable is real; daemon requests and unrelated facade collaborators are stubbed.
-// Run: pnpm --filter kimi-code-web exec vitest run test/workspace-state.test.ts
+// Run: cd packages/app-client && npx vitest run test/workspace-state.test.ts
 
 import { computed, ref, type Ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppApprovalRequest, AppQuestionRequest, AppSession, AppTask, ManagedUserInfo, ManagedUserInfoResult } from '../src/api/types';
-import { DaemonApiError } from '../src/api/errors';
+import type { AppApprovalRequest, AppQuestionRequest, AppSession, AppTask, KimiWebApi, ManagedUserInfo, ManagedUserInfoResult } from '@moonshot-ai/app-core/api';
+import { DaemonApiError } from '@moonshot-ai/app-core/api';
 import { createInitialState, reduceAppEvent } from '@moonshot-ai/app-core/api';
 import { mergeWorkspaces } from '@moonshot-ai/app-core/lib';
 import { foldDaemonThinkingLevel } from '@moonshot-ai/app-core/lib';
 import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides } from '@moonshot-ai/app-core/lib';
 import { insertSessionByRecency } from '@moonshot-ai/app-core/lib';
-import { useWorkspaceState, forgetLocalTurnState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
-import type { ExtendedState } from '../src/composables/useKimiWebClient';
-import { clearTrace, traceKeyEvent } from '../src/debug/trace';
-import { i18n } from '../src/i18n';
+import { createKimiI18n } from '@moonshot-ai/app-i18n';
+import type { Translator } from '@moonshot-ai/app-core/contracts';
+import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
+import type { ExtendedState } from '../src/client/types';
+import { useWorkspaceState, forgetLocalTurnState, type UseWorkspaceStateDeps } from '../src/client/useWorkspaceState';
 
-const apiMock = vi.hoisted(() => ({
+const apiMock = {
   abortPrompt: vi.fn(),
   abortSession: vi.fn(),
   addWorkspace: vi.fn(),
@@ -41,11 +42,72 @@ const apiMock = vi.hoisted(() => ({
   getMeta: vi.fn(),
   listSessions: vi.fn(),
   listWorkspaces: vi.fn(),
-}));
+};
 
-vi.mock('../src/api', () => ({
-  getKimiWebApi: () => apiMock,
-}));
+// Real i18n (the export-failure test asserts on localized copy); the client
+// modules receive the translator through the deps registry.
+const i18n = createKimiI18n({ locale: 'en' });
+const t: Translator = (key, params) => (params === undefined ? i18n.global.t(key) : i18n.global.t(key, params));
+
+// Deps-registry stand-ins for the app's debug/trace module: traceKeyEvent
+// records into a local ring, and the session-export serializer mirrors the
+// real ring's metadata-only whitelist projection (free-text fields like
+// `text` never enter a session export). The whitelist matches the real
+// pushExportTrace key for key; the real ring's event-name gate, string
+// truncation, and byte cap are not mirrored (no test exercises them).
+const EXPORT_TRACE_INFO_KEYS = [
+  'sessionId',
+  'status',
+  'operation',
+  'seq',
+  'durationMs',
+  'messageCount',
+  'contentCount',
+  'mediaCount',
+  'sessionCount',
+  'workspaceCount',
+  'promptId',
+  'zipBytes',
+  'errorName',
+  'errorCode',
+  'requestId',
+  'phase',
+  'httpStatus',
+  'fatal',
+  'line',
+  'col',
+] as const;
+const traceRecords: Array<Record<string, unknown>> = [];
+
+function clearTraceRecords(): void {
+  traceRecords.length = 0;
+}
+
+function recordKeyEvent(event: string, info?: Record<string, unknown>): void {
+  const entry: Record<string, unknown> = { ts: 0, event };
+  for (const key of EXPORT_TRACE_INFO_KEYS) {
+    const value = info?.[key];
+    if (value !== undefined) entry[key] = value;
+  }
+  traceRecords.push(entry);
+}
+
+function exportTraceRecordsToJsonl(): string {
+  return traceRecords.map((entry) => JSON.stringify(entry)).join('\n');
+}
+
+beforeEach(() => {
+  setKimiClientDeps({
+    api: () => apiMock as unknown as KimiWebApi,
+    t,
+    traceKeyEvent: recordKeyEvent,
+    sessionExportTraceToJsonl: exportTraceRecordsToJsonl,
+  });
+});
+
+afterEach(() => {
+  resetKimiClientDeps();
+});
 
 function createSession(): AppSession {
   return {
@@ -338,7 +400,7 @@ describe('useWorkspaceState — exportSession', () => {
 
   beforeEach(() => {
     apiMock.exportSession.mockReset();
-    clearTrace();
+    clearTraceRecords();
     anchor = { href: '', download: '', click: vi.fn(), remove: vi.fn() };
     append = vi.fn();
     createObjectURL = vi.fn(() => 'blob:session-export');
@@ -351,7 +413,7 @@ describe('useWorkspaceState — exportSession', () => {
   });
 
   afterEach(() => {
-    clearTrace();
+    clearTraceRecords();
     vi.unstubAllGlobals();
   });
 
@@ -363,7 +425,7 @@ describe('useWorkspaceState — exportSession', () => {
       mediaCount: 0,
       text: secret,
     };
-    traceKeyEvent('prompt:start', metadata);
+    recordKeyEvent('prompt:start', metadata);
     const blob = new Blob(['zip']);
     apiMock.exportSession.mockResolvedValue({ blob, fileName: 'sess_1.zip' });
     const workspace = useWorkspaceState(createState(), createDeps());

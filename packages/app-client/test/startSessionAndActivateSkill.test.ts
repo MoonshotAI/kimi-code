@@ -1,18 +1,12 @@
 import { computed, ref } from 'vue';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AppSession } from '../../src/renderer/api/types';
-
-const { getKimiWebApiMock, trackMock } = vi.hoisted(() => ({
-  getKimiWebApiMock: vi.fn(),
-  trackMock: vi.fn(),
-}));
-
-vi.mock('../../src/renderer/api', () => ({ getKimiWebApi: getKimiWebApiMock }));
-vi.mock('../../src/renderer/lib/track', () => ({ track: trackMock }));
-
-import { useWorkspaceState } from '../../src/renderer/composables/client/useWorkspaceState';
+import type { AppSession } from '@moonshot-ai/app-core/api';
+import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
+import { useWorkspaceState } from '../src/client/useWorkspaceState';
 import { ackThinkingPending, foldDaemonThinkingLevel } from '@moonshot-ai/app-core/lib';
+
+const getKimiWebApiMock = vi.fn();
 
 const MODEL_DEFAULT_LEVEL = 'high';
 const DRAFT_PICK_LEVEL = 'max';
@@ -180,7 +174,11 @@ function createWorkspaceState() {
 describe('startSessionAndActivateSkill', () => {
   beforeEach(() => {
     getKimiWebApiMock.mockReset();
-    trackMock.mockReset();
+    setKimiClientDeps({ api: () => getKimiWebApiMock(), t: (key) => key });
+  });
+
+  afterEach(() => {
+    resetKimiClientDeps();
   });
 
   it('persists the seeded draft thinking level so the profile /status fold cannot clobber it', async () => {

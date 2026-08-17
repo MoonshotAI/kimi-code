@@ -1,17 +1,13 @@
 import { computed, ref } from 'vue';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AppSession } from '../../src/renderer/api/types';
+import type { AppSession } from '@moonshot-ai/app-core/api';
+import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
+import { useWorkspaceState } from '../src/client/useWorkspaceState';
+import { noopProductTracker, setProductTracker } from '../src/contracts';
 
-const { getKimiWebApiMock, trackMock } = vi.hoisted(() => ({
-  getKimiWebApiMock: vi.fn(),
-  trackMock: vi.fn(),
-}));
-
-vi.mock('../../src/renderer/api', () => ({ getKimiWebApi: getKimiWebApiMock }));
-vi.mock('../../src/renderer/lib/track', () => ({ track: trackMock }));
-
-import { useWorkspaceState } from '../../src/renderer/composables/client/useWorkspaceState';
+const getKimiWebApiMock = vi.fn();
+const trackMock = vi.fn();
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -119,6 +115,13 @@ describe('session selection source', () => {
   beforeEach(() => {
     getKimiWebApiMock.mockReset();
     trackMock.mockReset();
+    setKimiClientDeps({ api: () => getKimiWebApiMock(), t: (key) => key });
+    setProductTracker({ track: trackMock });
+  });
+
+  afterEach(() => {
+    resetKimiClientDeps();
+    setProductTracker(noopProductTracker);
   });
 
   it('keeps a source bound to its selection when a stale fetch finishes first', async () => {

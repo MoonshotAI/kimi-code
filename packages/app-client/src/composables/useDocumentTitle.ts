@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/useDocumentTitle.ts
+// packages/app-client/src/composables/useDocumentTitle.ts
 // Computes the base browser tab title for this instance so several Kimi Code
 // Web tabs (e.g. one per dev machine) are distinguishable.
 //

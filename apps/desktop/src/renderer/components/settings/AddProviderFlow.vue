@@ -12,7 +12,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppCatalogProvider } from '../../api/types';
-import { useKimiWebClient } from '../../composables/useKimiWebClient';
+import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { PROVIDER_ID_PATTERN } from '@moonshot-ai/app-core/lib';
 import ProviderForm from './ProviderForm.vue';
 import {

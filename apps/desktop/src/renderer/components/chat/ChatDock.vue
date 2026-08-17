@@ -9,7 +9,7 @@ import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, TurnAttachment, UIQuestion } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, SessionPlan, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
-import type { ManagedMembership, PromptAttachment } from '../../composables/useKimiWebClient';
+import type { ManagedMembership, PromptAttachment } from '@moonshot-ai/app-client/client';
 import Composer from './Composer.vue';
 import GoalPanel from './dock/GoalPanel.vue';
 import PlanPanel from './dock/PlanPanel.vue';

@@ -41,7 +41,7 @@ import SessionRow from './SessionRow.vue';
 import { isMacosDesktop, isWindowsDesktop } from '@moonshot-ai/app-core/lib';
 import { useVibrancy } from '../composables/useVibrancy';
 import { resolvedBindingKeys } from '../composables/useShortcuts';
-import { SESSIONS_EXPAND_BATCH } from '../composables/client/useWorkspaceState';
+import { SESSIONS_EXPAND_BATCH } from '@moonshot-ai/app-client/client';
 import { track } from '../lib/track';
 import type { SessionCreatedSource } from '../../shared/track-events';
 import { Icon, IconButton, Kbd, Menu, MenuItem, Pill, Tooltip } from '@moonshot-ai/app-ui';

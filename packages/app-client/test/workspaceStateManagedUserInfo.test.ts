@@ -1,17 +1,11 @@
 import { ref } from 'vue';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ManagedUserInfo, ManagedUserInfoResult } from '../../src/renderer/api/types';
+import type { ManagedUserInfo, ManagedUserInfoResult } from '@moonshot-ai/app-core/api';
+import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
+import { useWorkspaceState } from '../src/client/useWorkspaceState';
 
-const { getKimiWebApiMock, trackMock } = vi.hoisted(() => ({
-  getKimiWebApiMock: vi.fn(),
-  trackMock: vi.fn(),
-}));
-
-vi.mock('../../src/renderer/api', () => ({ getKimiWebApi: getKimiWebApiMock }));
-vi.mock('../../src/renderer/lib/track', () => ({ track: trackMock }));
-
-import { useWorkspaceState } from '../../src/renderer/composables/client/useWorkspaceState';
+const getKimiWebApiMock = vi.fn();
 
 const profile: ManagedUserInfo = {
   userId: 'u_1',
@@ -57,6 +51,11 @@ function flushUserInfo(): Promise<void> {
 describe('checkAuth — managed account profile', () => {
   beforeEach(() => {
     getKimiWebApiMock.mockReset();
+    setKimiClientDeps({ api: () => getKimiWebApiMock(), t: (key) => key });
+  });
+
+  afterEach(() => {
+    resetKimiClientDeps();
   });
 
   it('stores the profile after an authenticated checkAuth (fire-and-forget /oauth/userinfo)', async () => {
@@ -247,6 +246,11 @@ describe('checkAuth — managed account profile', () => {
 describe('checkAuth — managed membership', () => {
   beforeEach(() => {
     getKimiWebApiMock.mockReset();
+    setKimiClientDeps({ api: () => getKimiWebApiMock(), t: (key) => key });
+  });
+
+  afterEach(() => {
+    resetKimiClientDeps();
   });
 
   it('derives member when the profile loads', async () => {

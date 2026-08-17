@@ -3,10 +3,10 @@
  * useKimiWebClient singleton. Responsibilities: queued deltas flush in order
  * around an authoritative snapshot, and a stale snapshot never overwrites a
  * newer session object. Wiring: real client against a mocked api singleton.
- * Run: pnpm --filter kimi-code-web exec vitest run test/event-batcher.test.ts
+ * Run: cd packages/app-client && npx vitest run test/event-batcher.test.ts
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   AppSession,
@@ -14,14 +14,22 @@ import type {
   KimiEventConnection,
   KimiEventHandlers,
   KimiWebApi,
-} from '../src/api/types';
+} from '@moonshot-ai/app-core/api';
 import type { PendingAppEvent } from '@moonshot-ai/app-core/client';
+import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 
-const clientApiMock = vi.hoisted(() => ({}));
+const clientApiMock: Record<string, unknown> = {};
 
-vi.mock('../src/api', () => ({
-  getKimiWebApi: () => clientApiMock,
-}));
+// The client modules resolve the api through the deps registry at call time
+// (the registry cell lives on globalThis, so the fresh module graph after
+// vi.resetModules below still sees this registration).
+beforeEach(() => {
+  setKimiClientDeps({ api: () => clientApiMock as unknown as KimiWebApi, t: (key) => key });
+});
+
+afterEach(() => {
+  resetKimiClientDeps();
+});
 
 interface DeltaOptions {
   sessionId?: string;
@@ -220,7 +228,7 @@ describe('useKimiWebClient (resync integration)', () => {
     Object.assign(clientApiMock, api);
 
     try {
-      const { useKimiWebClient } = await import('../src/composables/useKimiWebClient');
+      const { useKimiWebClient } = await import('../src/client/useKimiWebClient');
       const client = useKimiWebClient();
       await client.load();
       const assistantText = (): string | undefined =>
@@ -409,7 +417,7 @@ describe('useKimiWebClient (snapshot recency guard)', () => {
     Object.assign(clientApiMock, api);
 
     try {
-      const { useKimiWebClient } = await import('../src/composables/useKimiWebClient');
+      const { useKimiWebClient } = await import('../src/client/useKimiWebClient');
       const client = useKimiWebClient();
       await client.load();
       await client.selectSession('s-local-newer');

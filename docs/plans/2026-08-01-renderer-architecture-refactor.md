@@ -509,7 +509,7 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 - 验收：`pnpm test` 2356 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅ / `check:style` 29 findings 与基线同 ✅；**desktop 侧埋点冒烟**（notification_shown / attachment_added / oauth_login_step 各触发一次，主进程日志可见）**+ 双端发消息冒烟待人工补**。
 - 无 changeset（纯重构）。
 
-### P7a — 🚧 进行中（2026-08-12 本地实施 + 验收完成；待提交 PR，合并后本条转「已完成」）
+### P7a — 已完成（2026-08-12 本地实施 + 验收；PR #208 合入 main squash d11a8c89）
 
 - 完成：三个 client 状态模块（`useTaskPoller` / `useSideChat` / `useModelProviderState`）+ `attachmentsToContent` 收编 `packages/app-client/src/client/`（新 `./client` 出口，归属矩阵指定位置），两端 8 个副本文件删除。
 - **实测与计划的大幅偏差（有利）**：§1.1 登记的 184 行 `useModelProviderState` 分叉（web toast vs desktop inline banner 错误处理）在 main 上已自行收敛——三模块实测仅头注释 + 6 处日志前缀差异（`useSideChat` 字节一致、`useTaskPoller` 仅头注释）。**R4 产品确认不再必要**，web 侧表单组件无需适配。
@@ -519,4 +519,19 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 - **`useTaskPoller` 的 tasksBySession 整体替换按计划保留原样**（P9+ 拆解期修复清单）。
 - **测试**：task-poller（3 例）/ side-chat（5 例）随迁（`vi.mock` api 单例 → deps 注入 apiMock）；两端字节相同的 `modelThinking.test.ts`（各 61 例）确认对 useKimiWebClient 仅 type import，迁入包内一份、删两端——P1 台账登记的「P7 后清理」完成。总数 2356→2295（净 -61 即此），文件 154→153。
 - 验收：`pnpm test` 2295 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅ / `check:style` 29 findings 与基线同 ✅；**provider 增删改全流程冒烟（两端）+ 双端发消息冒烟待人工补**。
+- 无 changeset（纯重构）。
+
+### P7b — 本地实施 + 验收完成（2026-08-17；待提交 PR，合并后本条转「已完成」）
+
+- 完成：两大单例（`useKimiWebClient.ts` 4072 行 / `useWorkspaceState.ts` 3687 行）`git mv` 自 desktop 副本进 `packages/app-client/src/client/`，web 副本删除——**双份副本正式消灭**：`apps/web/src/composables/` 只剩 `useDialogFocus`，desktop `composables/` 只剩专属文件（useNativeTerminal / usePlugins / useShortcuts 等），`composables/client/` 目录两端均消失。两端 38 个文件 import 改指 `@moonshot-ai/app-client/client`。
+- **注入缝落地（`client/deps.ts` 注册表）**：`KimiClientDeps` = `api` / `t` + 可选 `traceClientEvent` / `traceKeyEvent` / `sessionExportTraceToJsonl` / `onSessionDestroyed` / `onWorkspaceDestroyed` / `consumeSessionIntent` / `onPluginsShelfEvent`；`setKimiClientDeps` 在两端 `main.ts`（composition root）注册，web 只注册 api/t/trace 三项，可选 hook 全 no-op 即 web 现状。registry cell 存 `globalThis`——`vi.resetModules` 后 fresh module graph 仍共享同一注册表，单例集成测试（event-batcher / goal-turn-end 等的动态 import 模式）接线零特殊处理。
+- **模块级求值问题与对策（计划未预判）**：`useKimiWebClient` 模块级构造 4 个子组合式时调用 `getKimiWebApi()`，而注册发生在 main.ts body（imports 求值之后）——包内 `getKimiWebApi()` 改为返回**稳定 lazy facade（Proxy）**，方法查找在调用时才解析注册实例。由此 P7a 四个子模块与全部 40+ 处 `getKimiWebApi()` 调用点**零改动**，无需 provider 形态改造。
+- **计划外新增注入缝**：plugins shelf（计划写就后 desktop #217 长出）——`onPluginsShelfEvent` hook；web 不注册时 pluginsChanged/capabilityChanged 落回原 reducer 路径（行为逐字保持）。`connectEventsIfNeeded` 改由包导出，desktop plugins shelf 消费不变。
+- **telemetry 收编**：`track` 改走 P6 的 `contracts.track`（web no-op 即现状）；`session-intent` 为可选 hook（默认返回 fallback）；`SessionCreatedSource` 联合类型包内本地定义（P6 `NotificationKind` 先例，desktop 主进程 zod schema 仍是运行时边界）。
+- **行为对齐点（web 跟随 desktop，随 PR 描述逐条声明）**：日志前缀 `[kimi-code]`、`workspaceName` 兜底 `kimi-code`、`selectSession` 的 `skipTrack`/`source` 参数链、connection_lost/restored 追踪（web 侧 track no-op，无实际事件）。
+- **测试**：13 个文件随迁进 `packages/app-client/test/`（`vi.mock` api/track → `setKimiClientDeps` / `setProductTracker` 注册模式）：8 个计划内 + 5 个出清——`goal-turn-end` / `apply-event-slices` / `session-work-reconnect`（同单例集成模式，原清单漏登记，src 一删即红），两份 `workspaceStateGitStatus` 副本删除（包内已含相同覆盖）；`workspaceStateFlatPaging` 双份合并。trace 断言换录制假桩（`sessionExportTraceToJsonl` 假桩按真实实现的白名单投影序列化，保住 webLog 脱敏断言语义）；workspace-state 用 `createKimiI18n({ locale: 'en' })`。总数 2527（main 已大幅前进，与 P7a 的 2295 不可直接比）。
+- **验收**：`pnpm test` 2527 ✅ / `typecheck`（两端）仅 `app-core/src/client/auxiliaryTranscriptToTurns.ts:231-232` 两个 **main 存量 error**（f88775da #251 引入，已用 origin/main worktree 复核实测，与本 PR 无关，建议独立小修）✅ / `lint` 0 error（5 warning 均在 app-core 存量，迁移文件零 findings）✅ / `build` ✅ / `check:style` 29 findings 与基线同 ✅。
+- **尾巴**：① ~~会话全链路冒烟待人工补~~ **已完成（2026-08-17，agent-browser 双端实测）**：临时工作区（/tmp 两个 git repo）+ 独立 server 实例（58628，不碰用户 58627 进程）下——web：新建（draft→session）/选择/归档/prompt/Bash 工具/审批批准/AskUserQuestion 选择提交/工作区增删/杀 server 后页面不重载自动重连并恢复流式，全过；desktop（外部 server 模式 + CDP）：同清单全过，另验证原生工作区选择面板正常打开。存量会话与工作区零触碰，测试产物已清理（3 个测试会话已归档、两个临时工作区已注销）。② 存量行为确认非回归：server 不广播 `event.workspace.created`（REST 建的工作区其他客户端 reload 才见）；③ 根 AGENTS.md「开发顺序」条目涉及双副本同步的措辞待 P18 核对。
+- **Review（2026-08-17，4 代理分切面全量）**：移动文件逐 hunk diff / 注入缝与接线 / import 重接与导出完整性 / 测试迁移保真度四切面，无 blocker/major。跟进修复（commit ea220f7d）：① 补掉唯一漏网的 `[kimi-web]` 前缀（session-work 重试日志，两端 main 存量同行，desktop 日志输出因此变一行）；② native-todos.md 两条指向 `useKimiWebClient.ts` 的分叉条目就地更新为注入 hook 现状（全文重写仍留 P18）；③ trace 假桩白名单去掉 `busy`（真实 export ring 不投影它）并修正注释；④ 两端 App.vue 同桶重复 value import 合并。PR 描述对齐声明补 `logout` 一条。记录在案不修：immediate watcher 安全性依赖「模块求值时 workspaces 为空」隐式不变量（当前可证明安全）。
+- **合 main（2026-08-17 晚，#242 web document.title）**：冲突为两个 web 副本的 modify/delete——按 P1 既定口径，main 侧修改落进包内正本后 `git rm` 旧路径。`useDocumentTitle`（#242 新增、web 侧文件）连同其测试迁包（包单例不能 import app 侧模块），`webTitle`/`documentBaseTitle`/applyMeta 赋值/facade 导出 4 个 hunk 逐字补进包单例（其中 `webTitle: ''`、types 字段、applyMeta 行已被 rename-merge 自动落进包内，diff 核实零丢失）。desktop 标题行为不变（`usePageTitle({ running })` 静态标题，isDesktop 分支）。注意坑：`git mv` 后的文件再被 perl 改会出现 AM 状态——merge commit 里漏了头注释/测试 import 两处路径修正，追加 ec72a2b7 补齐。验收：test 2541 ✅ / typecheck 仅 2 个 main 存量 ✅ / lint 0 error ✅ / build ✅；PR mergeable=CLEAN。
 - 无 changeset（纯重构）。

@@ -12,6 +12,7 @@ export * from './useSidebarLayout';
 export * from './useTerminal';
 export * from './useFilePreview';
 export * from './useDetailPanel';
+export * from './useDocumentTitle';
 export * from './usePageTitle';
 export * from './useNotification';
 export * from './useAttachmentUpload';

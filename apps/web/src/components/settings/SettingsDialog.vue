@@ -5,7 +5,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useKimiWebClient } from '../../composables/useKimiWebClient';
+import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import type { AppSession } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
@@ -14,7 +14,7 @@ import ProvidersPanel from './ProvidersPanel.vue';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
 import { useUpdateStatus, type UpdateCheckResult } from '@moonshot-ai/app-client/composables';
-import type { ColorScheme, FontScale } from '../../composables/useKimiWebClient';
+import type { ColorScheme, FontScale } from '@moonshot-ai/app-client/client';
 import type { AppConfig, AppModel, ManagedUserInfo, ManagedUsageResult } from '../../api/types';
 import PlanUsageCard from './PlanUsageCard.vue';
 import SecondaryModelPicker from './SecondaryModelPicker.vue';

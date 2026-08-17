@@ -22,7 +22,7 @@ import { useI18n } from 'vue-i18n';
 import { Button, EmptyState, Icon, IconButton, Input, Link, Spinner, Switch } from '@moonshot-ai/app-ui';
 import type { AppPluginMarketplaceEntry, AppPluginSummary } from '@moonshot-ai/app-core';
 import { CUSTOM_INSTALL_ROW_ID, capabilityRowShowsInstall, usePlugins, type CapabilityRow } from '../../composables/usePlugins';
-import { connectEventsIfNeeded } from '../../composables/useKimiWebClient';
+import { connectEventsIfNeeded } from '@moonshot-ai/app-client/client';
 
 const { t } = useI18n();
 const {

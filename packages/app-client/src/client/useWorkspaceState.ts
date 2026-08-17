@@ -1,33 +1,35 @@
-// apps/web/src/composables/client/useWorkspaceState.ts
+// packages/app-client/src/client/useWorkspaceState.ts
 // Workspace/session actions: session lifecycle, workspace CRUD, prompt
 // submission + queueing, approvals/questions/tasks, mode toggles, goals,
 // file/diff/git actions, auth/config, and URL<->session routing.
 //
 // The event reducer wiring (applyEvent, connectEventsIfNeeded, eventConn) and
 // the view-model computeds stay in the facade; cross-dependencies are injected
-// here as params.
+// here as params. Platform differences (api / translator / tracer / telemetry /
+// session intent) arrive via ./deps.
 
 import { reactive, type ComputedRef, type Ref } from 'vue';
-import { getKimiWebApi } from '../../api';
-import { i18n } from '../../i18n';
-import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
-import { isDaemonApiError } from '../../api/errors';
+import { consumeSessionIntent, getKimiWebApi, sessionExportTraceToJsonl, t, traceKeyEvent, type SessionCreatedSource } from './deps';
+import { useConfirmDialog } from '../composables/useConfirmDialog';
+import { isDaemonApiError } from '@moonshot-ai/app-core/api';
 import { SERVER_AUTH_UNAUTHORIZED_CODE, isPageTokenMismatchError, isPlaceholderSessionUsage, toAppSessionFromV2, SESSION_EXPORT_TOO_LARGE_CODE } from '@moonshot-ai/app-core/api';
 import type {
   AppConfig,
   AppInFlightTurn,
   AppMessage,
+  AppMessageContent,
   AppSession,
   AppWarning,
   AppWorkspace,
   ApprovalDecision,
   ApprovalResponse,
+  FsBrowseResult,
   FsEntry,
   KimiEventConnection,
   QuestionResponse,
   SessionPlanReview,
   V2SessionsPage,
-} from '../../api/types';
+} from '@moonshot-ai/app-core/api';
 import {
   loadPinnedSessions,
   loadWorkspaceNameOverrides,
@@ -41,25 +43,22 @@ import { parseDiff } from '@moonshot-ai/app-core/client';
 import { workspaceRootKey } from '@moonshot-ai/app-core/lib';
 import { pathRelativeTo } from '@moonshot-ai/app-core/lib';
 import { buildFullDiffTexts, type DiffFullTexts } from '@moonshot-ai/app-core/client';
-import { sessionExportTraceToJsonl, traceKeyEvent } from '../../debug/trace';
 import { readSessionIdFromLocation, sessionUrl } from '@moonshot-ai/app-core/lib';
 import { ackThinkingPending, markThinkingPending } from '@moonshot-ai/app-core/lib';
-import { attachmentsToContent } from '@moonshot-ai/app-client/client';
+import { attachmentsToContent } from './attachmentsToContent';
 import type { SessionUrlMode } from '@moonshot-ai/app-core/lib';
-import { track } from '../../lib/track';
-import { consumeSessionIntent } from '../../lib/session-intent';
-import type { SessionCreatedSource } from '../../../shared/track-events';
+import { track } from '../contracts';
 import type {
   ActivityState,
   ConversationStatus,
   DiffViewLine,
   PermissionMode,
   WorkspaceView,
-} from '../../types';
-import type { ExtendedState, PromptAttachment } from '../useKimiWebClient';
-import type { UseModelProviderState } from '@moonshot-ai/app-client/client';
-import type { UseSideChat } from '@moonshot-ai/app-client/client';
-import type { UseTaskPoller } from '@moonshot-ai/app-client/client';
+} from '@moonshot-ai/app-core/client/types';
+import type { ExtendedState, PromptAttachment } from './types';
+import type { UseModelProviderState } from './useModelProviderState';
+import type { UseSideChat } from './useSideChat';
+import type { UseTaskPoller } from './useTaskPoller';
 
 const MESSAGES_PAGE_SIZE = 50;
 // Sessions fetched per workspace on first load — keeps the initial request
@@ -366,7 +365,6 @@ export interface UseWorkspaceStateDeps {
 }
 
 export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceStateDeps) {
-  const { t } = i18n.global;
   const { confirm } = useConfirmDialog();
   const {
     taskPoller,
@@ -1860,7 +1858,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    * add-workspace folder browser. Defensive: returns an empty path on error so
    * the dialog can fall back to the paste-path field.
    */
-  async function browseFs(path?: string): Promise<import('../../api/types').FsBrowseResult> {
+  async function browseFs(path?: string): Promise<FsBrowseResult> {
     try {
       const api = getKimiWebApi();
       return await api.browseFs(path);
@@ -2087,7 +2085,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     let thinkingToken = rawState.pendingThinkingBySession[sid];
     try {
       const api = getKimiWebApi();
-      const content: import('../../api/types').AppMessageContent[] = [];
+      const content: AppMessageContent[] = [];
       if (text) content.push({ type: 'text', text });
       content.push(...attachmentsToContent(attachments));
       if (content.length === 0) {
@@ -2316,7 +2314,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
 
     // Optimistic transcript echo while prompt.submitted round-trips.
-    const content: import('../../api/types').AppMessageContent[] = [];
+    const content: AppMessageContent[] = [];
     if (merged) content.push({ type: 'text', text: merged });
     content.push(...attachmentsToContent(mergedAttachments));
     const tempId = nextOptimisticMsgId();

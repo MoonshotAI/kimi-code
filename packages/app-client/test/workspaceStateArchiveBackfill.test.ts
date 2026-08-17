@@ -1,14 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { getKimiWebApiMock, trackMock } = vi.hoisted(() => ({
-  getKimiWebApiMock: vi.fn(),
-  trackMock: vi.fn(),
-}));
+import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
+import { useWorkspaceState } from '../src/client/useWorkspaceState';
 
-vi.mock('../../src/renderer/api', () => ({ getKimiWebApi: getKimiWebApiMock }));
-vi.mock('../../src/renderer/lib/track', () => ({ track: trackMock }));
-
-import { useWorkspaceState } from '../../src/renderer/composables/client/useWorkspaceState';
+const getKimiWebApiMock = vi.fn();
 
 const BASE = 1_700_000_000_000;
 const WS = 'ws1';
@@ -84,6 +79,11 @@ function ids(sessions: { id: string }[]): string[] {
 describe('archiveSession — backfill and cursor re-anchoring', () => {
   beforeEach(() => {
     getKimiWebApiMock.mockReset();
+    setKimiClientDeps({ api: () => getKimiWebApiMock(), t: (key) => key });
+  });
+
+  afterEach(() => {
+    resetKimiClientDeps();
   });
 
   it('archiving a middle row fetches the next page to restore the loaded count', async () => {

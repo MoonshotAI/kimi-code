@@ -1,14 +1,13 @@
-// apps/kimi-web/test/workspaceStateGitStatus.test.ts
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+// packages/app-client/test/workspaceStateGitStatus.test.ts
+// Merged from the two apps' identical copies (web + desktop differed only in
+// the api/track mock wiring, now the deps/tracker registries).
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { getKimiWebApiMock } = vi.hoisted(() => ({
-  getKimiWebApiMock: vi.fn(),
-}));
+import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
+import { useWorkspaceState } from '../src/client/useWorkspaceState';
+import type { AppSession } from '@moonshot-ai/app-core/api';
 
-vi.mock('../src/api', () => ({ getKimiWebApi: getKimiWebApiMock }));
-
-import { useWorkspaceState } from '../src/composables/client/useWorkspaceState';
-import type { AppSession } from '../src/api/types';
+const getKimiWebApiMock = vi.fn();
 
 interface GitStatusResult {
   branch: string;
@@ -51,6 +50,11 @@ function createState(sessions: Array<Pick<AppSession, 'id'> & Partial<AppSession
 describe('loadGitStatus — pullRequest mirror into the sessions pool', () => {
   beforeEach(() => {
     getKimiWebApiMock.mockReset();
+    setKimiClientDeps({ api: () => getKimiWebApiMock(), t: (key) => key });
+  });
+
+  afterEach(() => {
+    resetKimiClientDeps();
   });
 
   it('mirrors a fresh PR onto the pooled session so the sidebar chip updates', async () => {

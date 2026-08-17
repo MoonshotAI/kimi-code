@@ -7,23 +7,29 @@
  * O(sessions × workspaces)); genuinely changed state must still propagate.
  * Wiring: the composable is real; daemon requests and the WS connection are
  * stubbed, events are injected through the captured handlers.
- * Run: pnpm --filter kimi-code-web exec vitest run test/apply-event-slices.test.ts
+ * Run: cd packages/app-client && npx vitest run test/apply-event-slices.test.ts
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AppSession,
   AppSessionSnapshot,
   KimiEventConnection,
   KimiEventHandlers,
   KimiWebApi,
-} from '../src/api/types';
+} from '@moonshot-ai/app-core/api';
+import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 
-const clientApiMock = vi.hoisted(() => ({}));
+const clientApiMock: Record<string, unknown> = {};
 
-vi.mock('../src/api', () => ({
-  getKimiWebApi: () => clientApiMock,
-}));
+// The client modules resolve the api through the deps registry at call time.
+beforeEach(() => {
+  setKimiClientDeps({ api: () => clientApiMock as unknown as KimiWebApi, t: (key) => key });
+});
+
+afterEach(() => {
+  resetKimiClientDeps();
+});
 
 const sessionId = 'session-1';
 
@@ -155,7 +161,7 @@ describe('useKimiWebClient (applyEvent slice isolation)', () => {
     Object.assign(clientApiMock, api);
 
     try {
-      const { useKimiWebClient } = await import('../src/composables/useKimiWebClient');
+      const { useKimiWebClient } = await import('../src/client/useKimiWebClient');
       const client = useKimiWebClient();
       await client.load();
       const assistantText = (): string | undefined =>
