@@ -2,14 +2,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { findBuiltInSlashCommand, resolveSlashCommandAvailability } from '#/tui/commands/index';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
-import { handleWebCommand, webSessionUrl } from '#/tui/commands/web';
+import {
+  handleRemoteControlCommand,
+  handleWebCommand,
+  webSessionUrl,
+} from '#/tui/commands/web';
 
 const mocks = vi.hoisted(() => ({
   startServerForeground: vi.fn(),
+  startRemoteControl: vi.fn(),
   tryResolveServerToken: vi.fn(),
   getDataDir: vi.fn(() => '/tmp/kimi-home'),
   openUrl: vi.fn(),
 }));
+
+vi.mock('#/cli/sub/web/remote-control', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#/cli/sub/web/remote-control')>();
+  return { ...actual, startRemoteControl: mocks.startRemoteControl };
+});
 
 vi.mock('#/cli/sub/web/run', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/cli/sub/web/run')>();
@@ -60,6 +70,13 @@ describe('web slash command', () => {
   it('is registered as an always-available built-in', () => {
     const command = findBuiltInSlashCommand('web');
     expect(command).toBeDefined();
+    expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
+  });
+
+  it('registers /remote-control and /rc as the same always-available built-in', () => {
+    const command = findBuiltInSlashCommand('remote-control');
+    expect(command).toBeDefined();
+    expect(findBuiltInSlashCommand('rc')).toBe(command);
     expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
   });
 });
@@ -116,6 +133,52 @@ describe('handleWebCommand', () => {
     expect(written).toContain('Kimi server ready');
     expect(written).toContain('Ctrl+C');
     expect(written).toContain('/sessions/ses-1');
+    writeSpy.mockRestore();
+  });
+});
+
+describe('handleRemoteControlCommand', () => {
+  it('starts the tunnel after the server and opens a token-free session URL', async () => {
+    vi.clearAllMocks();
+    mocks.getDataDir.mockReturnValue('/tmp/kimi-home');
+    mocks.tryResolveServerToken.mockReturnValue('local-server-token');
+    const close = vi.fn(async () => {});
+    mocks.startRemoteControl.mockResolvedValue({
+      deviceId: 'device-1',
+      url: 'https://api.kimi.com/coding-relay/code/rc/devices/device-1/?rc=1&from=kimi_code_cli',
+      close,
+    });
+    mocks.startServerForeground.mockImplementation(
+      async (
+        _options: unknown,
+        hooks: {
+          onReady?: (origin: string) => void | Promise<void>;
+          onShutdown?: (reason: string) => void | Promise<void>;
+        },
+      ) => {
+        await hooks.onReady?.('http://127.0.0.1:58627');
+        await hooks.onShutdown?.('SIGINT');
+      },
+    );
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const host = makeHost();
+
+    await handleRemoteControlCommand(host);
+    const task = host.setExitForegroundTask.mock.calls[0]![0] as () => Promise<void>;
+    await task();
+
+    expect(mocks.startRemoteControl).toHaveBeenCalledWith({
+      homeDir: '/tmp/kimi-home',
+      localOrigin: 'http://127.0.0.1:58627',
+      localServerToken: 'local-server-token',
+    });
+    expect(mocks.openUrl).toHaveBeenCalledWith(
+      'https://api.kimi.com/coding-relay/code/rc/devices/device-1/sessions/ses-1?rc=1&from=kimi_code_cli',
+    );
+    const written = writeSpy.mock.calls.map((call) => String(call[0])).join('');
+    expect(written).not.toContain('local-server-token');
+    expect(written).not.toContain('#token=');
+    expect(close).toHaveBeenCalledOnce();
     writeSpy.mockRestore();
   });
 });

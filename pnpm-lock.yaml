@@ -73,6 +73,10 @@ importers:
         version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@25.0.1)(msw@2.15.0(@types/node@22.19.17)(typescript@6.0.2))(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
 
   apps/kimi-code:
+    dependencies:
+      ws:
+        specifier: ^8.20.0
+        version: 8.20.0
     devDependencies:
       '@moonshot-ai/acp-adapter':
         specifier: workspace:^
@@ -113,6 +117,9 @@ importers:
       '@types/semver':
         specifier: ^7.7.0
         version: 7.7.1
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
       '@types/yazl':
         specifier: ^2.4.6
         version: 2.4.6
