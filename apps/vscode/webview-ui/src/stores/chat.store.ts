@@ -307,7 +307,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       planMode: false,
     });
     useApprovalStore.getState().clearRequests();
-    useTasksStore.getState().setTasks([]);
 
     for (const event of events) {
       get().processEvent(event);

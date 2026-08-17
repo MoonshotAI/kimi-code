@@ -242,6 +242,7 @@ export class KimiRuntime {
   private wrapSession(session: Session, legacyApproval: LegacyApprovalFlags): SessionRuntime {
     const runtime = new SessionRuntime({
       session,
+      withInteractiveAgent: (agentId, fn) => this.harness.withInteractiveAgent(agentId, fn),
       legacyApproval,
       broadcast: this.broadcast,
       captureBaseline: this.captureBaseline,

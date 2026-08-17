@@ -76,7 +76,10 @@ function TaskOutput({ task }: { task: BackgroundTaskInfo }) {
       bridge
         .getBackgroundTaskOutput(task.taskId, OUTPUT_TAIL_BYTES)
         .then((result) => {
-          if (!cancelled) setOutput(result.output);
+          if (!cancelled) {
+            setOutput(result.output);
+            setError(null);
+          }
         })
         .catch((loadError: unknown) => {
           if (!cancelled) setError(loadError instanceof Error ? loadError.message : String(loadError));

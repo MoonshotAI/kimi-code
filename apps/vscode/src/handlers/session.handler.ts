@@ -149,17 +149,15 @@ export const sessionHandlers: Record<string, Handler<any, any>> = {
     // transcript (isVisibleUserMessage), so restore their terminal status as
     // status cards — the same shape live task events produce.
     try {
-      const tasks = await runtime.session.listBackgroundTasks({ activeOnly: false });
+      const tasks = await runtime.announceBackgroundTasks(ctx.webviewId);
       for (const info of tasks) {
         if (!isBackgroundTaskTerminal(info.status)) continue;
         history.push({ type: "BackgroundTaskStatus", payload: { info }, _sessionId: runtime.id });
       }
     } catch (error) {
       ctx.logError("Unable to restore background task statuses", error);
+      ctx.broadcast(Events.BackgroundTasksChanged, [], ctx.webviewId);
     }
-    await runtime.announceBackgroundTasks(ctx.webviewId).catch((error: unknown) => {
-      ctx.logError("Unable to announce background tasks", error);
-    });
 
     ctx.fileManager.clearTracked(ctx.webviewId);
     const baseline = baselineSession(runtime.summary ?? {

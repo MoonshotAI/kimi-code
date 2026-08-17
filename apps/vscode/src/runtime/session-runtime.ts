@@ -33,6 +33,7 @@ export type RuntimeBroadcast = (event: string, data: unknown, webviewId?: string
 
 export interface SessionRuntimeOptions {
   readonly session: Session;
+  readonly withInteractiveAgent: <T>(agentId: string, fn: () => T) => T;
   readonly legacyApproval: LegacyApprovalFlags;
   readonly broadcast: RuntimeBroadcast;
   readonly captureBaseline: (
@@ -76,6 +77,7 @@ export class SessionRuntime {
   readonly session: Session;
 
   private readonly broadcast: RuntimeBroadcast;
+  private readonly withInteractiveAgent: SessionRuntimeOptions["withInteractiveAgent"];
   private readonly captureBaseline: SessionRuntimeOptions["captureBaseline"];
   private readonly log: SessionRuntimeOptions["log"];
   private readonly webviewIds = new Set<string>();
@@ -95,11 +97,13 @@ export class SessionRuntime {
   private legacyApproval: LegacyApprovalFlags;
   private closed = false;
   private readonly backgroundTasks = new Map<string, BackgroundTaskInfo>();
+  private readonly backgroundTaskOwners = new Map<string, string>();
   /** Dedupe keys for transcript status cards: `started:<taskId>` and `<taskId>:<status>`. */
   private readonly backgroundTranscripted = new Set<string>();
 
   constructor(options: SessionRuntimeOptions) {
     this.session = options.session;
+    this.withInteractiveAgent = options.withInteractiveAgent;
     this.broadcast = options.broadcast;
     this.captureBaseline = options.captureBaseline;
     this.log = options.log;
@@ -184,13 +188,66 @@ export class SessionRuntime {
    * view opens or re-enters a session so the tasks badge matches engine truth
    * even after a webview reload.
    */
-  async announceBackgroundTasks(webviewId: string): Promise<void> {
+  async announceBackgroundTasks(webviewId: string): Promise<readonly BackgroundTaskInfo[]> {
     this.ensureOpen();
-    const tasks = await this.session.listBackgroundTasks({ activeOnly: false });
-    if (this.closed || !this.webviewIds.has(webviewId)) return;
+    const tasks = await this.listBackgroundTasks();
+    if (!this.closed && this.webviewIds.has(webviewId)) {
+      this.broadcast(Events.BackgroundTasksChanged, tasks, webviewId);
+    }
+    return tasks;
+  }
+
+  async listBackgroundTasks(): Promise<readonly BackgroundTaskInfo[]> {
+    this.ensureOpen();
+    const nextTasks = new Map<string, BackgroundTaskInfo>();
+    const nextOwners = new Map<string, string>();
+
+    for (const agentId of this.backgroundTaskAgentIds()) {
+      try {
+        const tasks = await this.withInteractiveAgent(agentId, () =>
+          this.session.listBackgroundTasks({ activeOnly: false }),
+        );
+        for (const task of tasks) {
+          nextTasks.set(task.taskId, task);
+          nextOwners.set(task.taskId, agentId);
+        }
+      } catch (error) {
+        if (agentId === "main") throw error;
+        this.log(`Unable to list background tasks for agent ${agentId}`, error);
+        for (const [taskId, owner] of this.backgroundTaskOwners) {
+          if (owner !== agentId) continue;
+          const task = this.backgroundTasks.get(taskId);
+          if (task !== undefined) {
+            nextTasks.set(taskId, task);
+            nextOwners.set(taskId, owner);
+          }
+        }
+      }
+    }
+
     this.backgroundTasks.clear();
-    for (const task of tasks) this.backgroundTasks.set(task.taskId, task);
-    this.broadcast(Events.BackgroundTasksChanged, [...this.backgroundTasks.values()], webviewId);
+    this.backgroundTaskOwners.clear();
+    for (const [taskId, task] of nextTasks) this.backgroundTasks.set(taskId, task);
+    for (const [taskId, owner] of nextOwners) this.backgroundTaskOwners.set(taskId, owner);
+    return [...this.backgroundTasks.values()];
+  }
+
+  async getBackgroundTaskOutput(taskId: string, tail?: number): Promise<string> {
+    this.ensureOpen();
+    const agentId = this.backgroundTaskOwners.get(taskId) ?? "main";
+    return this.withInteractiveAgent(agentId, () =>
+      this.session.getBackgroundTaskOutput(taskId, { tail }),
+    );
+  }
+
+  async stopBackgroundTask(taskId: string): Promise<void> {
+    this.ensureOpen();
+    const agentId = this.backgroundTaskOwners.get(taskId) ?? "main";
+    await this.withInteractiveAgent(agentId, () =>
+      this.session.stopBackgroundTask(taskId, {
+        reason: "Stopped from VS Code tasks panel",
+      }),
+    );
   }
 
   async prompt(input: string | LegacyContentPart[]): Promise<PromptResult> {
@@ -478,7 +535,7 @@ export class SessionRuntime {
     }
 
     if (event.type === "background.task.started" || event.type === "background.task.terminated") {
-      this.handleBackgroundTaskEvent(event.info);
+      this.handleBackgroundTaskEvent(event.info, event.agentId);
     }
 
     if (event.type === "turn.step.retrying") {
@@ -614,9 +671,10 @@ export class SessionRuntime {
    * Track background tasks for the tasks badge and mirror lifecycle transitions
    * into the transcript as status cards, matching the CLI's `/tasks` behavior.
    */
-  private handleBackgroundTaskEvent(info: SdkBackgroundTaskInfo): void {
+  private handleBackgroundTaskEvent(info: SdkBackgroundTaskInfo, agentId: string): void {
     const wireInfo: BackgroundTaskInfo = info;
     this.backgroundTasks.set(wireInfo.taskId, wireInfo);
+    this.backgroundTaskOwners.set(wireInfo.taskId, agentId);
     const tasks = [...this.backgroundTasks.values()];
     for (const webviewId of this.webviewIds) {
       this.broadcast(Events.BackgroundTasksChanged, tasks, webviewId);
@@ -632,6 +690,14 @@ export class SessionRuntime {
       payload: { info: wireInfo },
       _sessionId: this.id,
     });
+  }
+
+  private backgroundTaskAgentIds(): readonly string[] {
+    const agentIds = new Set<string>(["main"]);
+    const resumeState = this.session.getResumeState();
+    for (const agentId of Object.keys(resumeState?.agents ?? {})) agentIds.add(agentId);
+    for (const agentId of this.backgroundTaskOwners.values()) agentIds.add(agentId);
+    return [...agentIds];
   }
 
   private settlePrompt(result: PromptResult): void {
