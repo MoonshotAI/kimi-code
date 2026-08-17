@@ -3,7 +3,7 @@
  * fallback from expiring daemon uploads to bytes retained by the TUI.
  */
 
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,7 @@ import {
   extractMediaAttachments,
   makeExtractionResendable,
   pendingImageIngestions,
+  persistOriginalImageSync,
   refreshExpiringImageFileRefs,
   resolveOriginalCaptions,
   rewriteMediaPlaceholders,
@@ -199,6 +200,7 @@ describe('extractMediaAttachments', () => {
       bytes: new Uint8Array([9, 8, 7]),
       width: 2600,
       height: 2600,
+      byteLength: 3,
       mime: 'image/png',
     });
 
@@ -292,6 +294,49 @@ describe('extractMediaAttachments', () => {
     }
   });
 
+  it('rebuilds a compressed paste with its caption and original for a new-session resend', () => {
+    const dir = makeTempDir();
+    try {
+      const store = new ImageAttachmentStore();
+      const att = store.addImage(
+        new Uint8Array([1, 2, 3]),
+        'image/png',
+        2000,
+        1000,
+        {
+          bytes: new Uint8Array([9, 8, 7, 6]),
+          width: 2600,
+          height: 2600,
+          byteLength: 4,
+          mime: 'image/png',
+        },
+        'file-1',
+      );
+      // The session reset clears the store, so the snapshot is the only place
+      // the original survives — the resend must persist it into the NEW
+      // session's originals dir and author the caption itself.
+      const extraction = extractMediaAttachments(att.placeholder, store);
+
+      const resend = makeExtractionResendable(extraction, dir);
+
+      expect(resend.imageAttachmentIds).toEqual([]);
+      expect(resend.parts).toHaveLength(2);
+      const caption = resend.parts[0];
+      if (caption?.type !== 'text') throw new Error('expected caption text part');
+      expect(caption.text).toContain('Image compressed');
+      expect(caption.text).toContain('2600x2600');
+      const files = readdirSync(dir);
+      expect(files).toHaveLength(1);
+      expect(caption.text).toContain(join(dir, files[0]!));
+      expect(resend.parts[1]).toEqual({
+        type: 'image_url',
+        imageUrl: { url: 'data:image/png;base64,AQID' },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('keeps expanding an uploaded image as a bare reference when the cache dir is broken', () => {
     const { cleanup } = setupTempCache();
     try {
@@ -337,7 +382,14 @@ describe('extractMediaAttachments', () => {
 
 describe('resolveOriginalCaptions', () => {
   function storeWithOriginal(
-    original?: { bytes: Uint8Array; width: number; height: number; mime: string; path?: string },
+    original?: {
+      bytes: Uint8Array;
+      width: number;
+      height: number;
+      byteLength: number;
+      mime: string;
+      path?: string;
+    },
     fileId?: string,
   ) {
     const store = new ImageAttachmentStore();
@@ -360,6 +412,7 @@ describe('resolveOriginalCaptions', () => {
         bytes: originalBytes,
         width: 2600,
         height: 2600,
+        byteLength: originalBytes.length,
         mime: 'image/png',
       });
       const r = extractMediaAttachments(`look ${att.placeholder}`, store);
@@ -383,11 +436,44 @@ describe('resolveOriginalCaptions', () => {
     }
   });
 
+  it('releases the in-memory original bytes once persistence succeeds', () => {
+    const dir = makeTempDir();
+    try {
+      const originalBytes = new Uint8Array([9, 8, 7, 6]);
+      const { store, att } = storeWithOriginal({
+        bytes: originalBytes,
+        width: 2600,
+        height: 2600,
+        byteLength: originalBytes.length,
+        mime: 'image/png',
+      });
+      const r = extractMediaAttachments(att.placeholder, store);
+      resolveOriginalCaptions(r.parts, r.imageAttachmentIds, store, dir);
+
+      // The on-disk copy is the original from here on; the caption still
+      // renders the original size from the retained metadata.
+      expect(att.original?.bytes).toBeUndefined();
+      const again = resolveOriginalCaptions(
+        r.parts,
+        r.imageAttachmentIds,
+        store,
+        dir,
+      );
+      const caption = again[0];
+      if (caption?.type !== 'text') throw new Error('expected caption text part');
+      expect(caption.text).toContain('2600x2600');
+      expect(caption.text).toContain('4 B');
+      expect(caption.text).toContain(att.original!.path!);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('authors the caption before the bare kimi-file reference', () => {
     const dir = makeTempDir();
     try {
       const { store, att } = storeWithOriginal(
-        { bytes: new Uint8Array([9, 9]), width: 2600, height: 2600, mime: 'image/png' },
+        { bytes: new Uint8Array([9, 9]), width: 2600, height: 2600, byteLength: 2, mime: 'image/png' },
         'file-2',
       );
       const r = extractMediaAttachments(att.placeholder, store);
@@ -415,6 +501,7 @@ describe('resolveOriginalCaptions', () => {
         bytes: new Uint8Array([9]),
         width: 2600,
         height: 2600,
+        byteLength: 1,
         mime: 'image/png',
       });
       const r = extractMediaAttachments(att.placeholder, store);
@@ -442,6 +529,7 @@ describe('resolveOriginalCaptions', () => {
         bytes: new Uint8Array([7, 7, 7]),
         width: 2600,
         height: 2600,
+        byteLength: 3,
         mime: 'image/png',
         path: existing,
       });
@@ -468,6 +556,7 @@ describe('resolveOriginalCaptions', () => {
         bytes: new Uint8Array([5, 5]),
         width: 2600,
         height: 2600,
+        byteLength: 2,
         mime: 'image/png',
       });
       const r = extractMediaAttachments(att.placeholder, store);
@@ -494,6 +583,27 @@ describe('resolveOriginalCaptions', () => {
     const resolved = resolveOriginalCaptions(r.parts, r.imageAttachmentIds, store, undefined);
     expect(resolved).toHaveLength(1);
     expect(resolved[0]?.type).toBe('image_url');
+  });
+});
+
+describe('persistOriginalImageSync', () => {
+  it('evicts the oldest originals once the store exceeds the size cap', () => {
+    const dir = makeTempDir();
+    try {
+      const first = persistOriginalImageSync(new Uint8Array(6).fill(1), 'image/png', dir);
+      expect(first).not.toBeNull();
+      // Pin the first file far into the past so eviction order is deterministic.
+      const old = new Date(Date.now() - 60_000);
+      utimesSync(first!, old, old);
+
+      const second = persistOriginalImageSync(new Uint8Array(6).fill(2), 'image/png', dir, 10);
+
+      expect(second).not.toBeNull();
+      expect(existsSync(first!)).toBe(false);
+      expect(existsSync(second!)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

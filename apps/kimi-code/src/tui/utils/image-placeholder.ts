@@ -38,16 +38,17 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFileSync, mkdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { PromptPart } from '@moonshot-ai/kimi-code-sdk';
+import type { PromptPart, Session } from '@moonshot-ai/kimi-code-sdk';
 import {
   buildDaemonFileUrl,
   buildImageCompressionCaption,
   buildMediaPathTag,
+  sessionMediaOriginalsDir,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { getCacheDir } from '#/utils/paths';
@@ -91,6 +92,20 @@ export interface ExtractionResult {
 export interface ImageResendSnapshot {
   readonly bytes: Uint8Array;
   readonly mime: string;
+  readonly width: number;
+  readonly height: number;
+  /**
+   * Pre-compression original captured at extraction, so a new-session resend
+   * can still persist it and author the compression caption after the image
+   * store (and its attachments) was cleared. Absent for untouched pastes and
+   * for originals already persisted and released.
+   */
+  readonly original?: {
+    readonly bytes: Uint8Array;
+    readonly width: number;
+    readonly height: number;
+    readonly mime: string;
+  };
 }
 
 export function extractMediaAttachments(
@@ -126,7 +141,22 @@ export function extractMediaAttachments(
         parts.push(videoPartForCachePath(cachePath));
         videoAttachmentIds.push(id);
       } else {
-        imageSnapshots.push({ bytes: attachment.bytes, mime: attachment.mime });
+        const original = attachment.original;
+        imageSnapshots.push({
+          bytes: attachment.bytes,
+          mime: attachment.mime,
+          width: attachment.width,
+          height: attachment.height,
+          original:
+            original?.bytes === undefined
+              ? undefined
+              : {
+                  bytes: original.bytes,
+                  width: original.width,
+                  height: original.height,
+                  mime: original.mime,
+                },
+        });
         // No compression caption here: `resolveOriginalCaptions` authors it
         // at dispatch time, once the session (and its media-originals dir)
         // is known.
@@ -272,23 +302,61 @@ export function refreshExpiringImageFileRefs(
  * replaced with the bytes captured during the original extraction. Cache
  * paths are intentionally preserved: they are carried by the resend's new
  * staging lease and remain available to any path tag in the prompt.
+ *
+ * Snapshots of compressed pastes also carry the pre-compression original: the
+ * cleared store took the attachment with it, so dispatch-time caption
+ * resolution can no longer find either. `makeExtractionResendable` persists
+ * that original into `originalsDir` (the NEW session's media-originals dir;
+ * temp-dir fallback when undefined) and authors the compression caption
+ * itself, right before the rebuilt image part.
  */
-export function makeExtractionResendable(extraction: ExtractionResult): ExtractionResult {
+export function makeExtractionResendable(
+  extraction: ExtractionResult,
+  originalsDir?: string,
+): ExtractionResult {
   if (extraction.imageSnapshots.length === 0) return extraction;
 
   let imageIndex = 0;
-  const parts = extraction.parts.map((part) => {
-    if (part.type !== 'image_url') return part;
+  const parts: PromptPart[] = [];
+  for (const part of extraction.parts) {
+    if (part.type !== 'image_url') {
+      parts.push(part);
+      continue;
+    }
     const snapshot = extraction.imageSnapshots[imageIndex++];
-    if (snapshot === undefined || !part.imageUrl.url.startsWith('kimi-file://')) return part;
-    return {
+    const original = snapshot?.original;
+    if (snapshot !== undefined && original !== undefined) {
+      parts.push({
+        type: 'text',
+        text: buildImageCompressionCaption({
+          original: {
+            width: original.width,
+            height: original.height,
+            byteLength: original.bytes.length,
+            mimeType: original.mime,
+          },
+          final: {
+            width: snapshot.width,
+            height: snapshot.height,
+            byteLength: snapshot.bytes.length,
+            mimeType: snapshot.mime,
+          },
+          originalPath: persistOriginalImageSync(original.bytes, original.mime, originalsDir),
+        }),
+      });
+    }
+    if (snapshot === undefined || !part.imageUrl.url.startsWith('kimi-file://')) {
+      parts.push(part);
+      continue;
+    }
+    parts.push({
       ...part,
       imageUrl: {
         ...part.imageUrl,
         url: `data:${snapshot.mime};base64,${Buffer.from(snapshot.bytes).toString('base64')}`,
       },
-    };
-  });
+    });
+  }
 
   return {
     ...extraction,
@@ -477,6 +545,15 @@ function materializeImageToCache(att: ImageAttachment): string {
 const CAPTION_OPENING = '<system>Image compressed to fit model limits:';
 
 /**
+ * The session-owned originals store for compression captions, when the
+ * session's dir is known; undefined falls back to the shared temp dir.
+ */
+export function originalsDirForSession(session: Session | undefined): string | undefined {
+  const sessionDir = session?.summary?.sessionDir;
+  return sessionDir === undefined ? undefined : sessionMediaOriginalsDir(sessionDir);
+}
+
+/**
  * Author a compression caption before every referenced image whose paste-time
  * compression shrank the bytes, persisting not-yet-persisted originals into
  * `originalsDir` (the session's media-originals dir; the shared temp-dir
@@ -512,7 +589,7 @@ export function resolveOriginalCaptions(
       continue;
     }
     const original = attachment.original;
-    if (original.path === undefined) {
+    if (original.path === undefined && original.bytes !== undefined) {
       store.setOriginalPath(
         attachment.id,
         persistOriginalImageSync(original.bytes, original.mime, originalsDir),
@@ -522,7 +599,7 @@ export function resolveOriginalCaptions(
       original: {
         width: original.width,
         height: original.height,
-        byteLength: original.bytes.length,
+        byteLength: original.byteLength,
         mimeType: original.mime,
       },
       final: {
@@ -546,16 +623,16 @@ export function resolveOriginalCaptions(
 }
 
 /**
- * Synchronous twin of the engine's `persistOriginalImage` (same
- * content-addressed naming, minus the size-cap sweep): the dispatch paths
- * that resolve captions cannot await. The sweep is safe to skip — originals
- * land here only from user pastes, and the engine's own writes sweep the
- * shared directory by mtime anyway.
+ * Synchronous twin of the engine's `persistOriginalImage` — same
+ * content-addressed naming and the same size-capped eviction: the dispatch
+ * paths that resolve captions cannot await. Exported for tests; production
+ * callers go through `resolveOriginalCaptions` / `makeExtractionResendable`.
  */
-function persistOriginalImageSync(
+export function persistOriginalImageSync(
   bytes: Uint8Array,
   mime: string,
   dir: string | undefined,
+  maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES,
 ): string | null {
   if (bytes.length === 0) return null;
   try {
@@ -568,9 +645,38 @@ function persistOriginalImageSync(
     if (existing === undefined || existing.size !== bytes.length) {
       writeFileSync(target, bytes);
     }
-    return target;
+    sweepCacheSync(targetDir, maxTotalBytes);
+    // The just-written file may itself have been evicted by the sweep when a
+    // single original exceeds the cap; report persistence honestly.
+    return statSync(target, { throwIfNoEntry: false }) === undefined ? null : target;
   } catch {
     return null;
+  }
+}
+
+/** Per-store ceiling; mirrors the engine originals store. */
+const DEFAULT_MAX_TOTAL_BYTES = 1024 * 1024 * 1024; // 1 GiB
+
+/** Evict oldest files (by mtime) until the store fits `maxTotalBytes`. */
+function sweepCacheSync(dir: string, maxTotalBytes: number): void {
+  const entries: { path: string; size: number; mtimeMs: number }[] = [];
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name);
+    const info = statSync(path, { throwIfNoEntry: false });
+    if (info === undefined || !info.isFile()) continue;
+    entries.push({ path, size: info.size, mtimeMs: info.mtimeMs });
+  }
+  let total = entries.reduce((sum, entry) => sum + entry.size, 0);
+  if (total <= maxTotalBytes) return;
+  entries.sort((a, b) => a.mtimeMs - b.mtimeMs);
+  for (const entry of entries) {
+    if (total <= maxTotalBytes) break;
+    try {
+      unlinkSync(entry.path);
+      total -= entry.size;
+    } catch {
+      // Best effort, mirroring the async twin.
+    }
   }
 }
 

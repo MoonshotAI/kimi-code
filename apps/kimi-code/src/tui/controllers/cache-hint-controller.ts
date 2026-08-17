@@ -23,6 +23,7 @@ import { evaluateCacheHint } from '../utils/cache-hint';
 import { formatErrorMessage } from '../utils/event-payload';
 import {
   makeExtractionResendable,
+  originalsDirForSession,
   type ExtractionResult,
 } from '../utils/image-placeholder';
 
@@ -370,9 +371,12 @@ export class CacheHintController {
   }
 
   private async releaseToSendPath(stash: StashedSubmit): Promise<void> {
+    // A session reset cleared the image store: rebuild the extraction from
+    // its snapshots, persisting compressed pastes' originals into the NEW
+    // session's originals dir so the compression caption survives the move.
     const extraction =
       stash.extraction !== undefined && this.host.state.appState.sessionId !== stash.sessionId
-        ? makeExtractionResendable(stash.extraction)
+        ? makeExtractionResendable(stash.extraction, originalsDirForSession(this.host.session))
         : stash.extraction;
     if (stash.inlineSkillActivations !== undefined && stash.inlineSkillActivations.length > 0) {
       await this.host.sendInlineSkillUserInput(stash.text, stash.inlineSkillActivations, extraction);

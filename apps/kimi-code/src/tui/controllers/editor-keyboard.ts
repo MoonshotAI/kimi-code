@@ -619,6 +619,7 @@ export class EditorKeyboardController {
           bytes: originalBytes,
           width: compressed.originalWidth,
           height: compressed.originalHeight,
+          byteLength: originalBytes.length,
           mime: originalMime,
         }
       : undefined;

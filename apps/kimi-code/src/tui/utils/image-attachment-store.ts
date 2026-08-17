@@ -20,17 +20,21 @@
 
 export interface ImageAttachmentOriginal {
   /**
-   * Pre-compression bytes, kept in memory until submit-time caption
+   * Pre-compression bytes, kept in memory until dispatch-time caption
    * resolution (`resolveOriginalCaptions`) persists them — the session whose
    * media-originals dir they belong in may not exist yet at paste time.
+   * Released once persistence succeeds; the on-disk copy is the original
+   * from then on.
    */
-  readonly bytes: Uint8Array;
+  bytes?: Uint8Array;
   readonly width: number;
   readonly height: number;
+  /** Pre-compression size, retained for captions after `bytes` is released. */
+  readonly byteLength: number;
   readonly mime: string;
   /**
    * Where the original was persisted for readback (ReadMediaFile + region).
-   * Undefined until submit-time persistence runs; null when it failed.
+   * Undefined until dispatch-time persistence runs; null when it failed.
    */
   path?: string | null;
 }
@@ -177,13 +181,16 @@ export class ImageAttachmentStore {
 
   /**
    * Record where an attachment's pre-compression original was persisted
-   * (null when persistence failed). Submit-time caption resolution calls
-   * this after writing the bytes.
+   * (null when persistence failed). Dispatch-time caption resolution calls
+   * this after writing the bytes. A successful persist also releases the
+   * in-memory buffer — the on-disk copy is the original from then on, and
+   * the caption only needs the retained metadata.
    */
   setOriginalPath(id: number, path: string | null): void {
     const attachment = this.byId.get(id);
     if (attachment?.kind !== 'image' || attachment.original === undefined) return;
     attachment.original.path = path;
+    if (path !== null) attachment.original.bytes = undefined;
   }
 
   get(id: number): MediaAttachment | undefined {

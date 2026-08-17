@@ -226,6 +226,7 @@ describe('clipboard image paste compression', () => {
     expect(att.original?.bytes).toEqual(big);
     expect(att.original?.width).toBe(3600);
     expect(att.original?.height).toBe(1800);
+    expect(att.original?.byteLength).toBe(big.length);
     expect(att.original?.mime).toBe('image/png');
 
     // Nothing is persisted at paste time — dispatch-time caption resolution

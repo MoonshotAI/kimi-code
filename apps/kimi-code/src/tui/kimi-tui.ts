@@ -4,7 +4,7 @@ import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
-import { effectiveModelAlias, log, sessionMediaOriginalsDir } from '@moonshot-ai/kimi-code-sdk';
+import { effectiveModelAlias, log } from '@moonshot-ai/kimi-code-sdk';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -159,6 +159,7 @@ import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import {
   extractMediaAttachments,
+  originalsDirForSession,
   pendingImageIngestions,
   refreshExpiringImageFileRefs,
   resolveOriginalCaptions,
@@ -301,15 +302,6 @@ interface SendMessageOptions {
 
 /** How long the one-shot "moved to background" footer hint stays visible. */
 const DETACH_HINT_DISPLAY_MS = 4_000;
-
-/**
- * The session-owned originals store for compression captions, when the
- * session's dir is known; undefined falls back to the shared temp dir.
- */
-function sessionOriginalsDir(session: Session): string | undefined {
-  const sessionDir = session.summary?.sessionDir;
-  return sessionDir === undefined ? undefined : sessionMediaOriginalsDir(sessionDir);
-}
 
 export class KimiTUI {
   readonly harness: KimiHarness;
@@ -1501,7 +1493,7 @@ export class KimiTUI {
             extraction.parts,
             extraction.imageAttachmentIds,
             this.imageStore,
-            sessionOriginalsDir(session),
+            originalsDirForSession(session),
           )
         : text,
       activations.map((activation) => ({ name: activation.skillName, args: activation.args })),
@@ -1793,7 +1785,7 @@ export class KimiTUI {
             options.parts,
             options.imageAttachmentIds ?? [],
             this.imageStore,
-            sessionOriginalsDir(session),
+            originalsDirForSession(session),
           )
         : input;
     const goalActive = this.state.appState.goal?.status === 'active';
@@ -2002,7 +1994,7 @@ export class KimiTUI {
               item.parts,
               item.imageAttachmentIds ?? [],
               this.imageStore,
-              sessionOriginalsDir(session),
+              originalsDirForSession(session),
             ),
           },
     );
