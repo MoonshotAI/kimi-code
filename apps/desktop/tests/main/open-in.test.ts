@@ -238,7 +238,7 @@ describe('openInApp (win32)', () => {
       runDetached,
     });
     expect(result).toEqual({ ok: true });
-    expect(runDetached).toHaveBeenCalledWith(VSCODE_EXE, ['/work/dir']);
+    expect(runDetached).toHaveBeenCalledWith(VSCODE_EXE, ['/work/dir'], { consoleWindow: false });
   });
 
   it('launches Windows Terminal via its alias with -d <dir>', async () => {
@@ -250,23 +250,37 @@ describe('openInApp (win32)', () => {
       runDetached,
     });
     expect(result).toEqual({ ok: true });
-    expect(runDetached).toHaveBeenCalledWith(WT_ALIAS, ['-d', '/work/dir']);
+    expect(runDetached).toHaveBeenCalledWith(WT_ALIAS, ['-d', '/work/dir'], { consoleWindow: false });
   });
 
-  it('falls back to Windows PowerShell when the Windows Terminal alias is unavailable', async () => {
+  it('falls back to Windows PowerShell via `cmd /c start` when the Windows Terminal alias is unavailable', async () => {
     const runDetached = vi.fn().mockResolvedValue({ error: null });
-    const targetPath = "C:\\work; Write-Output 'unsafe'";
+    // Bait: a `%NAME%` segment (legal in a directory name, expanded by `cmd
+    // /c` if passed inline) plus shell metacharacters.
+    const targetPath = 'C:\\work\\%USERNAME%\\repo; & whoami';
     const result = await openInApp('windows-terminal', targetPath, {
       platform: 'win32',
-      env: WIN_ENV,
+      env: { ...WIN_ENV, SystemRoot: 'D:\\Win' },
       exists: () => false,
       runDetached,
     });
     expect(result).toEqual({ ok: true });
-    const args = runDetached.mock.calls[0]![1] as string[];
-    expect(args.slice(0, 2)).toEqual(['-NoExit', '-EncodedCommand']);
-    expect(Buffer.from(args[2]!, 'base64').toString('utf16le')).toBe(
-      "Set-Location -LiteralPath 'C:\\work; Write-Output ''unsafe'''",
+    // A console-subsystem exe spawned directly gets no window (DETACHED_PROCESS
+    // when detached, stdin EOF otherwise) — `cmd /c start` opens the real
+    // window. The directory rides in an env var so cmd's %-expansion cannot
+    // mangle it, and PowerShell is absolute so `start /D <workspace>` cannot
+    // resolve a same-named exe from the workspace.
+    expect(runDetached).toHaveBeenCalledWith(
+      'cmd.exe',
+      [
+        '/c',
+        'start',
+        '"PowerShell"',
+        '/D',
+        '"%KIMI_CODE_OPEN_IN_DIR%"',
+        join('D:\\Win', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+      ],
+      { consoleWindow: true, env: { KIMI_CODE_OPEN_IN_DIR: targetPath } },
     );
   });
 
@@ -279,14 +293,14 @@ describe('openInApp (win32)', () => {
       runDetached,
     });
     expect(result).toEqual({ ok: true });
-    expect(runDetached).toHaveBeenCalledWith(GIT_BASH_EXE, ['--cd=/work/dir']);
+    expect(runDetached).toHaveBeenCalledWith(GIT_BASH_EXE, ['--cd=/work/dir'], { consoleWindow: false });
   });
 
   it('launches Explorer through PATH resolution', async () => {
     const runDetached = vi.fn().mockResolvedValue({ error: null });
     const result = await openInApp('explorer', '/work/dir', { platform: 'win32', runDetached });
     expect(result).toEqual({ ok: true });
-    expect(runDetached).toHaveBeenCalledWith('explorer.exe', ['/work/dir']);
+    expect(runDetached).toHaveBeenCalledWith('explorer.exe', ['/work/dir'], { consoleWindow: false });
   });
 
   it('surfaces launcher errors as a result instead of throwing', async () => {

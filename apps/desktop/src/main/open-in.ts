@@ -8,7 +8,7 @@
 // Pure + dependency-injected (fs/spawn/platform/home/env) so tests need no Electron.
 
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -60,6 +60,22 @@ const APP_SPECS: readonly OpenInAppSpec[] = [
   { id: 'xcode', label: 'Xcode', bundleName: 'Xcode.app' },
 ];
 
+/**
+ * Default existence probe. `existsSync` follows reparse points, and stat'ing a
+ * Windows app-execution alias (`%LOCALAPPDATA%\Microsoft\WindowsApps\wt.exe`)
+ * fails EACCES — the alias would look "not installed" even though CreateProcess
+ * launches it fine. lstat reads the reparse point itself, so it is the fallback.
+ */
+function defaultExists(path: string): boolean {
+  if (existsSync(path)) return true;
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export interface OpenInDetectDeps {
   platform?: NodeJS.Platform;
   home?: string;
@@ -95,7 +111,7 @@ export function listAvailableOpenInApps(deps: OpenInDetectDeps = {}): OpenInAppI
   const platform = deps.platform ?? process.platform;
   if (platform === 'win32') {
     const env = deps.env ?? process.env;
-    const exists = deps.exists ?? existsSync;
+    const exists = deps.exists ?? defaultExists;
     return WINDOWS_APP_SPECS.filter((spec) => spec.resolve(env, exists) !== null).map((spec) => ({
       id: spec.id,
       label: spec.label,
@@ -130,7 +146,22 @@ interface WindowsAppSpec {
       PATH. null = not installed. */
   resolve(env: NodeJS.ProcessEnv, exists: (path: string) => boolean): string | null;
   args(dir: string, command: string): string[];
+  /** Alternative launcher for console-subsystem commands (the PowerShell
+      fallback). Spawning such an exe directly either gets it DETACHED_PROCESS
+      (no console at all — the click looks like a no-op) or kills it on stdin
+      EOF. Returning non-null routes the launch through `cmd /c start`, which
+      gives the app a real interactive console window. */
+  consoleLaunch?(
+    dir: string,
+    command: string,
+  ): { command: string; args: string[]; env?: NodeJS.ProcessEnv } | null;
 }
+
+/** Env var carrying the workspace path to the `cmd /c start` launcher. cmd
+    expands %-variables in its command line, so a workspace path containing a
+    literal `%NAME%` segment would be mangled if passed inline; expansion is
+    single-pass, so a value arriving through the environment survives intact. */
+const OPEN_IN_DIR_ENV = 'KIMI_CODE_OPEN_IN_DIR';
 
 function firstExisting(paths: string[], exists: (path: string) => boolean): string | null {
   for (const candidate of paths) {
@@ -170,13 +201,13 @@ function terminalCommand(env: NodeJS.ProcessEnv, exists: (path: string) => boole
       : [join(env['LOCALAPPDATA'], 'Microsoft', 'WindowsApps', 'wt.exe')]),
     ...pathExeCandidates(env, 'wt.exe'),
   ];
-  return firstExisting(candidates, exists) ?? 'powershell.exe';
-}
-
-function powershellSetLocationArgs(dir: string): string[] {
-  const literalPath = dir.replace(/'/g, "''");
-  const command = `Set-Location -LiteralPath '${literalPath}'`;
-  return ['-NoExit', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')];
+  const wt = firstExisting(candidates, exists);
+  if (wt !== null) return wt;
+  // Fallback: the inbox Windows PowerShell, by absolute path. The launch goes
+  // through `start /D <workspace>`, which makes the workspace the new process's
+  // current directory — an unqualified `powershell.exe` would resolve against a
+  // same-named file in the workspace before PATH.
+  return join(env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 }
 
 // Menu order: editors first, then the file manager, then terminals.
@@ -224,10 +255,20 @@ const WINDOWS_APP_SPECS: readonly WindowsAppSpec[] = [
     id: 'windows-terminal',
     label: 'Terminal',
     resolve: terminalCommand,
-    args: (dir, command) =>
+    args: (dir) => ['-d', dir],
+    // PowerShell fallback (no Windows Terminal): `cmd /c start` opens it in a
+    // real console window. cmd exits immediately — the window is PowerShell's.
+    // The working directory rides in an env var (see OPEN_IN_DIR_ENV) because
+    // cmd would expand a literal `%NAME%` in an inline path; /D applies it, so
+    // the path never goes through shell parsing.
+    consoleLaunch: (dir, command) =>
       command.toLowerCase().endsWith('wt.exe')
-        ? ['-d', dir]
-        : powershellSetLocationArgs(dir),
+        ? null
+        : {
+            command: 'cmd.exe',
+            args: ['/c', 'start', '"PowerShell"', '/D', `"%${OPEN_IN_DIR_ENV}%"`, command],
+            env: { [OPEN_IN_DIR_ENV]: dir },
+          },
   },
   {
     id: 'git-bash',
@@ -261,7 +302,11 @@ export interface OpenInRunDeps extends OpenInDetectDeps {
   /** Command runner, injected by tests. Defaults to spawning the real binary. */
   run?: (command: string, args: string[]) => Promise<{ code: number | null; stderr: string }>;
   /** Detached GUI launcher (Windows), injected by tests. */
-  runDetached?: (command: string, args: string[]) => Promise<{ error: string | null }>;
+  runDetached?: (
+    command: string,
+    args: string[],
+    options?: { consoleWindow?: boolean; env?: NodeJS.ProcessEnv },
+  ) => Promise<{ error: string | null }>;
 }
 
 function defaultRun(command: string, args: string[]): Promise<{ code: number | null; stderr: string }> {
@@ -280,12 +325,28 @@ export type OpenInResult = { ok: true } | { ok: false; error: string };
 
 /** Windows launch: detached spawn, resolved on the 'spawn' event — GUI apps
     outlive the caller, and explorer.exe exits non-zero even on a successful
-    open, so the exit code is never consulted. */
-function runDetached(command: string, args: string[]): Promise<{ error: string | null }> {
+    open, so the exit code is never consulted. The consoleWindow variant (the
+    `cmd /c start` console launcher) must NOT be detached: cmd needs a console
+    for `start` to give the target its own window. Args pass verbatim — cmd's
+    quote parsing is not MSVCRT argv parsing, and the launcher args carry their
+    own quotes already. */
+function runDetached(
+  command: string,
+  args: string[],
+  options: { consoleWindow?: boolean; env?: NodeJS.ProcessEnv } = {},
+): Promise<{ error: string | null }> {
   return new Promise((resolve) => {
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(command, args, { detached: true, stdio: 'ignore' });
+      child =
+        options.consoleWindow === true
+          ? spawn(command, args, {
+              stdio: 'ignore',
+              windowsHide: false,
+              windowsVerbatimArguments: true,
+              env: { ...process.env, ...options.env },
+            })
+          : spawn(command, args, { detached: true, stdio: 'ignore' });
     } catch (error) {
       resolve({ error: error instanceof Error ? error.message : String(error) });
       return;
@@ -305,10 +366,15 @@ async function openInAppWindows(
 ): Promise<OpenInResult> {
   const spec = WINDOWS_APP_SPECS.find((candidate) => candidate.id === appId);
   if (spec === undefined) return { ok: false, error: `unknown open-in app: ${appId}` };
-  const command = spec.resolve(deps.env ?? process.env, deps.exists ?? existsSync);
+  const command = spec.resolve(deps.env ?? process.env, deps.exists ?? defaultExists);
   if (command === null) return { ok: false, error: `${spec.label} is not installed` };
+  const consoleLaunch = spec.consoleLaunch?.(targetPath, command) ?? null;
+  const launch = consoleLaunch ?? { command, args: spec.args(targetPath, command) };
   const run = deps.runDetached ?? runDetached;
-  const { error } = await run(command, spec.args(targetPath, command));
+  const { error } = await run(launch.command, launch.args, {
+    consoleWindow: consoleLaunch !== null,
+    env: consoleLaunch?.env,
+  });
   return error === null ? { ok: true } : { ok: false, error };
 }
 
