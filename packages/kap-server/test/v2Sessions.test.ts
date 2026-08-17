@@ -738,6 +738,29 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     dispose();
   });
 
+  it('settles an in-flight resume before classifying (no cold-write race)', async () => {
+    const created = await createSession();
+    await closeSessionById(core(), created.id);
+
+    // Resume WITHOUT awaiting: while it is in flight the live registry hides
+    // the handle, so an unsettled batch would misclassify as cold and its
+    // direct write would race the materializing metadata service.
+    const resumePromise = resumeSessionById(core(), created.id);
+    const batchPromise = postBatch('/api/v2/sessions:archive', { ids: [created.id] });
+
+    const handle = await resumePromise;
+    expect(handle).toBeDefined();
+    const body = await batchPromise;
+    expect(body.data?.results).toEqual([{ id: created.id, ok: true }]);
+
+    // The settle made the item live-classified: the full archive chain ran
+    // (the session is closed, not merely patched on disk), and the archived
+    // flag survived the resume's own metadata writes.
+    expect(getLiveSessionById(core(), created.id)).toBeUndefined();
+    expect(await indexArchived(created.id)).toBe(true);
+    expect((await readStateJson(created.workspace_id, created.id))['archived']).toBe(true);
+  });
+
   it('reports per-item results in input order for a live/cold/missing mixed batch', async () => {
     const live = await createSession();
     const cold = await createSession();

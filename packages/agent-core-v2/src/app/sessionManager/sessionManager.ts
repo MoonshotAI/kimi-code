@@ -29,6 +29,7 @@ export interface ISessionManager {
   create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle>;
   resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;
   get(sessionId: string): ISessionScopeHandle | undefined;
+  whenResumeSettled(sessionId: string): Promise<void>;
   list(): readonly ISessionScopeHandle[];
   close(sessionId: string): Promise<void>;
   archive(sessionId: string): Promise<void>;

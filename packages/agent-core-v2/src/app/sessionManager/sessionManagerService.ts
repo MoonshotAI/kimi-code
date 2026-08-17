@@ -31,6 +31,7 @@ export class SessionManager implements ISessionManager {
   declare readonly _serviceBrand: undefined;
   private readonly sessions = new Map<string, ISessionScopeHandle>();
   private readonly owners = new Map<string, SessionLifecycleService>();
+  private readonly pendingResumes = new Map<string, Promise<ISessionScopeHandle | undefined>>();
   private readonly controllers = new Map<string, SessionControllerEntry>();
   private readonly controllerEntries = new Set<SessionControllerEntry>();
   private readonly willCreateEmitter = new Emitter<SessionWillCreateEvent>();
@@ -61,11 +62,27 @@ export class SessionManager implements ISessionManager {
   }
 
   async resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
-    return (await this.controllerForSession(sessionId))?.resume(sessionId, options);
+    const inflight = this.pendingResumes.get(sessionId);
+    if (inflight !== undefined) return inflight;
+    // Register synchronously at the App level: controllerForSession is async,
+    // so the controller's own resuming map only learns about this resume a
+    // few microtasks later — whenResumeSettled must see it from this call's
+    // very first tick.
+    const promise = (async () =>
+      (await this.controllerForSession(sessionId))?.resume(sessionId, options))().finally(() =>
+      this.pendingResumes.delete(sessionId),
+    );
+    this.pendingResumes.set(sessionId, promise);
+    return promise;
   }
 
   get(sessionId: string): ISessionScopeHandle | undefined {
     return this.sessions.get(sessionId);
+  }
+
+  async whenResumeSettled(sessionId: string): Promise<void> {
+    await this.pendingResumes.get(sessionId)?.catch(() => undefined);
+    await this.owners.get(sessionId)?.whenResumeSettled(sessionId);
   }
 
   list(): readonly ISessionScopeHandle[] {

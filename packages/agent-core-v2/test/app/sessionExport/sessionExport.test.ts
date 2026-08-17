@@ -890,6 +890,7 @@ function registerSessionExportServices(
     },
     resume: async () => options.lifecycleHandle,
     get: () => options.lifecycleHandle,
+    whenResumeSettled: async () => {},
     list: () => (options.lifecycleHandle === undefined ? [] : [options.lifecycleHandle]),
     close: async () => {},
     archive: async () => {},

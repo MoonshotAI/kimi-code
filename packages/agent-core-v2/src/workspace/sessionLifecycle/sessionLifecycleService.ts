@@ -429,6 +429,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return promise;
   }
 
+  async whenResumeSettled(sessionId: string): Promise<void> {
+    await this.resuming.get(sessionId)?.catch(() => undefined);
+  }
+
   private async doResume(
     sessionId: string,
     opts?: ResumeSessionOptions,
