@@ -322,6 +322,7 @@ export class AgentPromptService implements IAgentPromptService {
       role: 'user', content: selected.flatMap((item) => item.message.content), toolCalls: [], origin: USER_PROMPT_ORIGIN,
     };
     const { message: rerouted, captions } = this.extractCompressionCaptions(message);
+    await this.materializeDaemonRefs(rerouted);
     const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
       void this.dispatcher.dispatch(
         new TurnSteer({ input: materialized.content, origin: materialized.origin ?? USER_PROMPT_ORIGIN }),
@@ -355,6 +356,7 @@ export class AgentPromptService implements IAgentPromptService {
 
   async inject(message: ContextMessage): Promise<Turn | undefined> {
     const { message: rerouted, captions } = this.extractCompressionCaptions(message);
+    await this.materializeDaemonRefs(rerouted);
     const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
       void this.dispatcher.dispatch(
         new TurnSteer({ input: materialized.content, origin: materialized.origin ?? USER_PROMPT_ORIGIN }),
@@ -378,11 +380,7 @@ export class AgentPromptService implements IAgentPromptService {
     try {
       if (this.fullCompaction.compacting !== null && this.loop.status().state !== 'running') { this.pending.unshift(item); return; }
       const { message, captions } = this.extractCompressionCaptions(item.message);
-      if (message.content.some((part) => daemonFileRefFromPart(part) !== undefined)) {
-        const files = this.instantiation.invokeFunction((accessor) => accessor.get(IFileService));
-        const mediaStore = this.instantiation.invokeFunction((accessor) => accessor.get(ISessionMediaStore));
-        await materializePromptDaemonRefs(message.content, { files, mediaStore });
-      }
+      await this.materializeDaemonRefs(message);
       if (await this.blockedByHook(message, false)) {
         this.appendPrompt(message, captions); item.state = 'blocked'; item.launchedDeferred.resolve(undefined);
         item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'blocked' });
@@ -412,6 +410,13 @@ export class AgentPromptService implements IAgentPromptService {
     this.steered.delete(item.id);
     if (state === 'cancelled') this.publishAborted(item.id); else this.publishCompleted(item.id, state);
     void this.startNext();
+  }
+
+  private async materializeDaemonRefs(message: ContextMessage): Promise<void> {
+    if (!message.content.some((part) => daemonFileRefFromPart(part) !== undefined)) return;
+    const files = this.instantiation.invokeFunction((accessor) => accessor.get(IFileService));
+    const mediaStore = this.instantiation.invokeFunction((accessor) => accessor.get(ISessionMediaStore));
+    await materializePromptDaemonRefs(message.content, { files, mediaStore });
   }
 
   private async blockedByHook(promptMessage: ContextMessage, isSteer: boolean): Promise<boolean> {

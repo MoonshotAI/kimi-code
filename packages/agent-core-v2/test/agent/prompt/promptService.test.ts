@@ -8,6 +8,8 @@
 
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
+import { Readable } from 'node:stream';
+
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { Event } from '#/_base/event';
@@ -34,6 +36,8 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { IWireService } from '#/wire/wire';
+import { IFileService } from '#/app/file/fileService';
+import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 
 import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks, stubToolExecutor, stubWire } from '../loop/stubs';
@@ -62,6 +66,19 @@ function harness() {
     hooks: createHooks(['onWillCompact']),
     onDidFinishCompaction: Event.None,
   } as unknown as IAgentFullCompactionService;
+  const intake = {
+    get: vi.fn(async () => ({
+      meta: {
+        id: 'file_1',
+        size: 3,
+        name: 'pic.png',
+        media_type: 'image/png',
+        created_at: '2026-01-01T00:00:00.000Z',
+      },
+      stream: () => Readable.from([new Uint8Array([1, 2, 3])]),
+    })),
+    materialize: vi.fn(async (): Promise<string | undefined> => undefined),
+  };
   const ix = createServices(disposables, {
     strict: true, additionalServices: (reg) => {
       registerStateServices(reg);
@@ -84,9 +101,11 @@ function harness() {
       reg.definePartialInstance(IEventService, { publish: () => {} });
       reg.definePartialInstance(ISessionContext, { sessionId: 'test-session' });
       reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+      reg.definePartialInstance(IFileService, { get: intake.get });
+      reg.definePartialInstance(ISessionMediaStore, { materialize: intake.materialize });
     }
   });
-  return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction, eventBus: ix.get(IEventBus) };
+  return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction, eventBus: ix.get(IEventBus), intake };
 }
 
 describe('AgentPromptService', () => {
@@ -246,5 +265,27 @@ describe('AgentPromptService', () => {
     expect(
       parts.some((part) => part.type === 'text' && part.text.includes('image/avif')),
     ).toBe(true);
+  });
+
+  it('materializes daemon-ref media at steer intake', async () => {
+    const { prompt, intake } = harness();
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const queued = await prompt.enqueue({
+      id: 'prompt-steer-daemon',
+      message: {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url: 'kimi-file://file_1' } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+
+    await prompt.steer([queued.id]);
+
+    expect(intake.get).toHaveBeenCalledWith('file_1');
+    expect(intake.materialize).toHaveBeenCalledWith(
+      expect.objectContaining({ fileId: 'file_1', name: 'pic.png' }),
+    );
   });
 });
