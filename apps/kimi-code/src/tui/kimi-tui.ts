@@ -2311,7 +2311,12 @@ export class KimiTUI {
     // A session switch abandons the previous session's in-flight staging
     // leases and retires its history-owned cache copies. Do this at the
     // boundary so retired paths cannot accumulate until process shutdown.
-    this.staging.releaseAll();
+    // Only when actually replacing a live session, though: on lazy first
+    // creation the outstanding lease belongs to the new session's first
+    // prompt, whose dispatch continues right after this — releasing it here
+    // would delete the staged media (e.g. a pasted image's daemon upload)
+    // before the engine's intake can read it.
+    if (previous !== undefined) this.staging.releaseAll();
     this.session = session;
     this.harness.setTelemetryContext({ sessionId: session.id });
     this.registerSessionHandlers(session);
