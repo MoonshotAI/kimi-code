@@ -1,7 +1,7 @@
 /**
  * `tokenCounting` domain — `IAgentTokenCountingService` implementation.
  *
- * Folds the `TokenCountingModel` anchor ledger with strategy-gated estimates.
+ * Folds the `tokenCountingKey` anchor ledger with strategy-gated estimates.
  * `get(start?, end?)` resolves the range like `Array.prototype.slice`: the
  * latest anchor valid for the live context (anchors beyond it are stale — a
  * rewrite that did not cascade — and skipped) supplies the REAL prefix
@@ -12,9 +12,9 @@
  * reported reading (`statusSize`) — `measured` reports anchors alone,
  * `estimated` reports a pure estimate, the default floors the live size by
  * the last measured total.
- * `measured(input, output, usage)` writes the exchange anchor through
- * `wire.dispatch(tokenCountingMeasured(...))` after each measured LLM
- * exchange. The context is read from the wire `ContextModel` directly (not
+ * `measured(input, output, usage)` writes the exchange anchor by dispatching
+ * `TokenCountingMeasured` after each measured LLM exchange. The context is
+ * read from the `contextMemoryKey` state directly (not
  * via `IAgentContextMemoryService`) so `contextMemory` can depend on this
  * service without a constructor cycle. Bound at Agent scope.
  */
@@ -23,7 +23,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IConfigService } from '#/app/config/config';
-import { ContextModel } from '#/agent/contextMemory/contextOps';
+import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { Message } from '#/kosong/contract/message';
 import type { Tool } from '#/kosong/contract/tool';
@@ -34,7 +34,8 @@ import {
   estimateTokensForTools,
 } from '#/kosong/contract/tokens';
 import type { TokenUsage } from '#/kosong/contract/usage';
-import { IWireService } from '#/wire/wire';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { TOKEN_COUNTING_SECTION, type TokenCountingConfig } from './configSection';
 import {
@@ -43,7 +44,11 @@ import {
   type TokenCountingRequest,
   type TokenCountingStrategy,
 } from './tokenCounting';
-import { TokenCountingModel, tokenCountingMeasured, type TokenAnchor } from './tokenCountingOps';
+import {
+  TokenCountingMeasured,
+  tokenCountingKey,
+  type TokenAnchor,
+} from './tokenCountingOps';
 
 const ZERO_ANCHOR: TokenAnchor = { length: 0, tokens: 0, measured: true };
 
@@ -51,10 +56,12 @@ export class AgentTokenCountingService extends Disposable implements IAgentToken
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IWireService private readonly wire: IWireService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IConfigService private readonly config: IConfigService,
+    @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
     super();
+    this.agentState.contributeState(tokenCountingKey);
   }
 
   get strategy(): TokenCountingStrategy {
@@ -86,11 +93,11 @@ export class AgentTokenCountingService extends Disposable implements IAgentToken
     if (!matchesContext(input, context)) return;
     const length = context.length;
     const tokens = tokenUsageTotal(usage);
-    this.wire.dispatch(tokenCountingMeasured({ length, tokens }));
+    void this.dispatcher.dispatch(new TokenCountingMeasured({ length, tokens }));
   }
 
   latestMeasured(): number {
-    const anchors = this.wire.getModel(TokenCountingModel).anchors;
+    const anchors = this.agentState.get(tokenCountingKey).anchors;
     for (let i = anchors.length - 1; i >= 0; i--) {
       if (anchors[i]!.measured) return anchors[i]!.tokens;
     }
@@ -134,7 +141,7 @@ export class AgentTokenCountingService extends Disposable implements IAgentToken
   }
 
   private context(): readonly ContextMessage[] {
-    return this.wire.getModel(ContextModel) as readonly ContextMessage[];
+    return this.agentState.get(contextMemoryKey) as readonly ContextMessage[];
   }
 
   /** Latest anchor still valid for the live context: anchors beyond it are
@@ -142,7 +149,7 @@ export class AgentTokenCountingService extends Disposable implements IAgentToken
    *  than the queried range still certifies the range as measured — the
    *  caller clamps with `min(to, anchor.length)`. */
   private latestAnchor(contextLength: number): TokenAnchor {
-    const anchors = this.wire.getModel(TokenCountingModel).anchors;
+    const anchors = this.agentState.get(tokenCountingKey).anchors;
     for (let i = anchors.length - 1; i >= 0; i--) {
       const anchor = anchors[i]!;
       if (anchor.length <= contextLength) return anchor;

@@ -31,9 +31,17 @@ import { IAgentExternalHooksService } from '#/agent/externalHooks/externalHooks'
 import { AgentExternalHooksService } from '#/agent/externalHooks/externalHooksService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { PromptQueued } from '#/agent/prompt/promptService';
 import { IAgentTaskService } from '#/agent/task/task';
+import { TaskStarted } from '#/agent/task/taskOps';
+import {
+  PermissionApprovalRequested,
+  PermissionApprovalResolved,
+} from '#/agent/toolApproval/toolApprovalService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
 import { ExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunnerService';
@@ -53,8 +61,9 @@ import {
   type SessionCreateSource,
   type SessionWillCloseEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { createHooks } from '#/hooks';
+import { createHooks, OrderedHookSlot } from '#/hooks';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   type AgentTaskHooks,
   type AgentTaskStopHookContext,
@@ -370,12 +379,13 @@ describe('IExternalHooksRunnerService integration', () => {
       expect(loop.hasPendingRequests()).toBe(false);
       expect(stopInputs).toEqual([{ stopHookActive: false }]);
 
-      eventBus.publish({
-        type: 'turn.ended',
-        turnId: 0,
-        reason: 'completed',
-        durationMs: 0,
-      });
+      eventBus.publish(
+        new TurnEnded({
+          turnId: 0,
+          reason: 'completed',
+          durationMs: 0,
+        }),
+      );
 
       const nextTurn = makeAfterStep(signal);
       await loop.hooks.onDidFinishStep.run(nextTurn);
@@ -458,16 +468,14 @@ describe('IExternalHooksRunnerService integration', () => {
         toolInput: { command: 'pwd' },
         display: { kind: 'command' as const, command: 'pwd' },
       };
-      eventBus.publish({
-        type: 'permission.approval.requested',
-        ...requestContext,
-      });
-      eventBus.publish({
-        type: 'permission.approval.resolved',
-        ...requestContext,
-        decision: 'approved',
-        selectedLabel: 'Approve once',
-      });
+      eventBus.publish(new PermissionApprovalRequested(requestContext));
+      eventBus.publish(
+        new PermissionApprovalResolved({
+          ...requestContext,
+          decision: 'approved',
+          selectedLabel: 'Approve once',
+        }),
+      );
       await flushMicrotasks();
 
       expect(fired).toEqual([
@@ -650,6 +658,11 @@ describe('IExternalHooksRunnerService integration', () => {
           });
           reg.definePartialInstance(IAgentTaskService, {});
           reg.define(IHostProcessService, HostProcessService);
+          reg.defineInstance(IEventDispatcher, {
+            _serviceBrand: undefined,
+            hooks: { onDidRestore: new OrderedHookSlot() },
+            dispatch: async () => {},
+          } as unknown as IEventDispatcher);
         },
       });
       ix.set(IExternalHooksRunnerService, new SyncDescriptor(ExternalHooksRunnerService));
@@ -1187,28 +1200,31 @@ describe('IExternalHooksRunnerService integration', () => {
       const eventBus = ix.get(IEventBus);
       await flushMicrotasks();
 
-      eventBus.publish({
-        type: 'turn.started',
-        turnId: 3,
-        origin: { kind: 'system_trigger', name: 'goal' },
-      });
+      eventBus.publish(
+        new TurnStarted({
+          turnId: 3,
+          origin: { kind: 'system_trigger', name: 'goal' },
+        }),
+      );
       const queuedContent = [{ type: 'text' as const, text: 'later' }];
-      eventBus.publish({
-        type: 'prompt.queued',
-        promptId: 'p1',
-        content: queuedContent,
-        queueLength: 2,
-      });
-      eventBus.publish({
-        type: 'task.started',
-        info: {
-          taskId: 'task-1',
-          kind: 'process',
-          description: 'npm test',
-          status: 'running',
-          startedAt: 123,
-        } as unknown as AgentTaskInfo,
-      });
+      eventBus.publish(
+        new PromptQueued({
+          promptId: 'p1',
+          content: queuedContent,
+          queueLength: 2,
+        }),
+      );
+      eventBus.publish(
+        new TaskStarted({
+          info: {
+            taskId: 'task-1',
+            kind: 'process',
+            description: 'npm test',
+            status: 'running',
+            startedAt: 123,
+          } as unknown as AgentTaskInfo,
+        }),
+      );
       await flushMicrotasks();
 
       expect(fired).toEqual([

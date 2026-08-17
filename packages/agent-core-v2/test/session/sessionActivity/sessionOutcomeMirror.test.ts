@@ -11,8 +11,11 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
-import type { DomainEvent } from '#/app/event/eventBus';
 import { IEventBus } from '#/app/event/eventBus';
+import type { Event2, Event2Class } from '#/app/event/event2';
+import { AgentActivityUpdated } from '#/agent/activityView/activityView';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnEnded } from '#/agent/loop/turnOps';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
@@ -23,18 +26,20 @@ import { ISessionOutcomeMirror } from '#/session/sessionActivity/sessionOutcomeM
 import { SessionOutcomeMirror } from '#/session/sessionActivity/sessionOutcomeMirrorService';
 
 class FakeBus {
-  private readonly handlers = new Map<string, Array<(e: DomainEvent) => void>>();
+  private readonly handlers = new Map<string, Array<(e: Event2) => void>>();
 
-  publish(event: DomainEvent): void {
+  publish(event: Event2): void {
     for (const h of this.handlers.get(event.type) ?? []) h(event);
   }
 
-  subscribe(type: unknown, handler?: unknown) {
-    const list = this.handlers.get(type as string) ?? [];
-    const fn = handler as (e: DomainEvent) => void;
+  subscribe(typeOrClass: unknown, handler?: unknown) {
+    const type =
+      typeof typeOrClass === 'string' ? typeOrClass : (typeOrClass as Event2Class).type;
+    const list = this.handlers.get(type) ?? [];
+    const fn = handler as (e: Event2) => void;
     list.push(fn);
-    this.handlers.set(type as string, list);
-    return { dispose: () => this.handlers.set(type as string, list.filter((h) => h !== fn)) };
+    this.handlers.set(type, list);
+    return { dispose: () => this.handlers.set(type, list.filter((h) => h !== fn)) };
   }
 }
 
@@ -133,10 +138,18 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     host.dispose();
   });
 
-  const started = () =>
-    lifecycle.bus.publish({ type: 'turn.started', turnId: 1 } as unknown as DomainEvent);
-  const ended = (reason: string, interruptReason?: string) =>
-    lifecycle.bus.publish({ type: 'turn.ended', reason, interruptReason } as unknown as DomainEvent);
+  const started = (turnId = 1) =>
+    lifecycle.bus.publish(new TurnStarted({ turnId, origin: { kind: 'user' } }));
+  const ended = (reason: TurnEnded['reason'], interruptReason?: TurnEnded['interruptReason'], turnId = 1) =>
+    lifecycle.bus.publish(new TurnEnded({ turnId, reason, interruptReason }));
+  const activityBackfill = (turnId: number, reason: TurnEnded['reason']) =>
+    lifecycle.bus.publish(
+      new AgentActivityUpdated({
+        lifecycle: 'ready',
+        background: [],
+        lastTurn: { turnId, reason, at: 0 },
+      }),
+    );
 
   it('persists completed/failed/user-cancelled, never programmatic aborts', async () => {
     lifecycle.addMain();
@@ -189,9 +202,9 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     second.accessor.get(ISessionOutcomeMirror);
     secondLifecycle.addMain();
     await tick();
-    secondLifecycle.bus.publish({ type: 'turn.ended', turnId: 1, reason: 'failed' } as unknown as DomainEvent);
+    secondLifecycle.bus.publish(new TurnEnded({ turnId: 1, reason: 'failed' }));
     expect(writes).toEqual(['failed']);
-    secondLifecycle.bus.publish({ type: 'turn.ended', turnId: 2, reason: 'completed' } as unknown as DomainEvent);
+    secondLifecycle.bus.publish(new TurnEnded({ turnId: 2, reason: 'completed' }));
     expect(writes).toEqual(['failed', 'completed']);
   });
 
@@ -200,10 +213,7 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     await tick();
     started();
     ended('completed');
-    lifecycle.bus.publish({
-      type: 'agent.activity.updated',
-      lastTurn: { turnId: 1, reason: 'completed', at: 0 },
-    } as unknown as DomainEvent);
+    activityBackfill(1, 'completed');
     // Nothing was persisted before, so the turn.started clear is a deduped
     // no-op; the single write is the bumped live outcome.
     expect(writes).toEqual(['completed']);
@@ -215,10 +225,7 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     await tick();
     // A cold resume restores the outcome through the wire seed and publishes
     // it as agent.activity.updated — no turn.ended ever fires.
-    lifecycle.bus.publish({
-      type: 'agent.activity.updated',
-      lastTurn: { turnId: 3, reason: 'failed', at: 0 },
-    } as unknown as DomainEvent);
+    activityBackfill(3, 'failed');
     expect(writes).toEqual(['failed']);
     // The same outcome arriving live afterwards stays deduped.
     ended('failed');
@@ -228,10 +235,7 @@ describe('SessionOutcomeMirror (Session scope)', () => {
   it('backfills a restored cancellation without touching recency', async () => {
     lifecycle.addMain();
     await tick();
-    lifecycle.bus.publish({
-      type: 'agent.activity.updated',
-      lastTurn: { turnId: 4, reason: 'cancelled', at: 0 },
-    } as unknown as DomainEvent);
+    activityBackfill(4, 'cancelled');
     expect(writes).toEqual(['cancelled']);
     expect(touches).toEqual([false]);
   });
@@ -240,10 +244,7 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     lifecycle.addMain();
     await tick();
     ended('completed');
-    lifecycle.bus.publish({
-      type: 'agent.activity.updated',
-      lastTurn: { turnId: 9, reason: 'failed', at: 0 },
-    } as unknown as DomainEvent);
+    activityBackfill(9, 'failed');
     expect(writes).toEqual(['completed']);
   });
 

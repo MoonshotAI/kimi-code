@@ -20,7 +20,7 @@ import { dirname, normalize } from 'pathe';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
@@ -58,7 +58,7 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
   ) {
     super();
-    this.states.register(workspaceTrustTrustedKey);
+    this.states.contributeState(workspaceTrustTrustedKey);
     this.root = workspace.cwd;
     this.storeKey = encodeWorkDirKey(workspace.cwd);
     this.watchTrustRecords();

@@ -20,7 +20,7 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
 import { agentsMdWatchRoots, loadAgentsMdForRoots } from '#/agent/profile/context';
@@ -66,7 +66,7 @@ export class WorkspaceInstructionsService
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
   ) {
     super();
-    this.states.register(workspaceInstructionsCurrentKey);
+    this.states.contributeState(workspaceInstructionsCurrentKey);
     this.ready = this.reload();
     void this.watchCandidateFiles();
   }

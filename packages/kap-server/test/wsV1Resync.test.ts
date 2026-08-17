@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  type DomainEvent,
+  type Event2,
   IEventBus,
   IAgentLifecycleService,
   getLiveSessionById,
@@ -157,7 +157,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     return { ...payload, token: server!.authTokenService.getToken() };
   }
 
-  function emitAgentEvent(sessionId: string, event: DomainEvent): void {
+  function emitAgentEvent(sessionId: string, event: Event2<any>): void {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
@@ -193,7 +193,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     c.send({ type: 'client_hello', id: 'h1', payload: withToken({ client_id: 'cli', subscriptions: [sid] }) });
     await c.next((f) => f.type === 'ack' && f.id === 'h1');
 
-    emitAgentEvent(sid, { type: 'turn.started', turnId: 1 } as unknown as DomainEvent);
+    emitAgentEvent(sid, { type: 'turn.started', turnId: 1 } as unknown as Event2<any>);
 
     const ev = await c.next((f) => f.type === 'turn.started');
     expect(ev.seq).toBeGreaterThanOrEqual(1);
@@ -213,8 +213,8 @@ describe('server-v2 /api/v1/ws resync', () => {
     await c1.next((f) => f.type === 'server_hello');
     c1.send({ type: 'client_hello', id: 'h1', payload: withToken({ client_id: 'cli', subscriptions: [sid] }) });
     await c1.next((f) => f.type === 'ack' && f.id === 'h1');
-    emitAgentEvent(sid, { type: 'turn.started', turnId: 1 } as unknown as DomainEvent);
-    emitAgentEvent(sid, { type: 'turn.ended', turnId: 1 } as unknown as DomainEvent);
+    emitAgentEvent(sid, { type: 'turn.started', turnId: 1 } as unknown as Event2<any>);
+    emitAgentEvent(sid, { type: 'turn.ended', turnId: 1 } as unknown as Event2<any>);
     await c1.next((f) => f.type === 'turn.ended');
     c1.ws.close();
     await c1.closed;
@@ -283,10 +283,10 @@ describe('server-v2 /api/v1/ws resync', () => {
     agents
       .get('main')!
       .accessor.get(IEventBus)
-      .publish({ type: 'turn.ended', turnId: 1 } as unknown as DomainEvent);
+      .publish({ type: 'turn.ended', turnId: 1 } as unknown as Event2<any>);
     sub.accessor
       .get(IEventBus)
-      .publish({ type: 'turn.ended', turnId: 2 } as unknown as DomainEvent);
+      .publish({ type: 'turn.ended', turnId: 2 } as unknown as Event2<any>);
 
     const ev = await c.next((f) => f.type === 'turn.ended');
     expect(ev.payload).toMatchObject({ agentId: 'main' });

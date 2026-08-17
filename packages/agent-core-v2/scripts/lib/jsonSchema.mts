@@ -43,7 +43,7 @@ export function resolveRef(schema: unknown, root: JsonSchema): unknown {
     const defs = asJsonSchema(root.$defs);
     const name = s.$ref.slice('#/$defs/'.length);
     if (defs !== undefined && isRecord(defs) && name in defs) {
-      return (defs as Record<string, unknown>)[name];
+      return defs[name];
     }
   }
   return schema;

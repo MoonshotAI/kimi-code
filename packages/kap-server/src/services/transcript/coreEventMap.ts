@@ -7,11 +7,7 @@
  *     on `frame.upsert` (whole frame state) and `append` (deltas).
  *   - The turn prompt arrives on `turn.started` itself
  *     (`TurnStartedEvent.prompt`) — the context append carrying the same text
- *     is not a bus event and lands after the turn header. Upload media
- *     referenced by the prompt ride the same event (`promptAttachments`),
- *     projected as `attachment.upsert` entities plus `turn.attachmentIds` —
- *     one attachment per daemon-referenced upload — the daemon-ref part is
- *     self-contained, no `<media path>` tag is authored engine-side.
+ *     is not a bus event and lands after the turn header.
  *   - Flush: at step/turn completion boundaries every open text/thinking frame
  *     of that step is re-emitted as a full-text `frame.upsert` — this is how
  *     'block'-grade subscribers (who never see `append`) reconverge.
@@ -54,13 +50,13 @@
  *   - `swarm.*` / plan-mode transition events do not exist on the v2 bus;
  *     mode badges flow from the `planMode` / `swarmMode` slices of
  *     `agent.status.updated`. Plan content revisions DO arrive as a dedicated
- *     `plan.revision` event (the `plan.revision` op's `toEvent`), projected
+ *     `plan.revision` event (the durable+observable `PlanRevision` class), projected
  *     as a 'plan.revision' marker plus — while plan mode is active — a
  *     `meta.merge` refining the plan badge with `reviewPath` / `version`.
  *
- * Event payloads are typed by the core `DomainEvent` union (the
- * `DomainEventMap` augmentations in `packages/agent-core-v2/src`, e.g.
- * `agent/loop/loopService.ts`, `agent/toolExecutor/toolExecutorService.ts`,
+ * Event payloads are typed by the core `Event2` classes (declared in
+ * `packages/agent-core-v2/src`, e.g.
+ * `agent/loop/turnEvents.ts`, `agent/toolExecutor/toolExecutorEvents.ts`,
  * `agent/task/taskOps.ts`, `agent/shellCommand/shellCommandService.ts`,
  * `session/agentLifecycle/mirrorAgentRun.ts`, `features/swarm/session/sessionSwarmService.ts`,
  * `agent/goal/goalOps.ts`, `agent/usage/usageOps.ts`, `agent/skill/skillOps.ts`,
@@ -69,7 +65,61 @@
  * `agent/profile/profileService.ts`, `agent/contextMemory/contextMemoryService.ts`).
  */
 
-import type { DomainEvent } from '@moonshot-ai/agent-core-v2';
+import type { AgentActivityUpdated } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
+import type { ContextSpliced } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
+import type { HookResult } from '@moonshot-ai/agent-core-v2/agent/externalHooks/externalHooksService';
+import type {
+  CompactionBlocked,
+  CompactionCancelled,
+  CompactionCompleted,
+  CompactionStarted,
+} from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
+import type { GoalUpdated } from '@moonshot-ai/agent-core-v2/agent/goal/goalOps';
+import type {
+  AssistantDelta,
+  ThinkingDelta,
+  ToolCallDelta,
+  TurnStarted,
+  TurnStepCompleted,
+  TurnStepInterrupted,
+  TurnStepStarted,
+} from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import type { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
+import type { PluginCommandActivated } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
+import type { WarningIssued } from '@moonshot-ai/agent-core-v2/agent/profile/profileOps';
+import type {
+  PromptAborted,
+  PromptCompleted,
+  PromptSteered,
+} from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
+import type {
+  ShellCompleted,
+  ShellOutput,
+  ShellStarted,
+} from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommandService';
+import type { SkillActivated } from '@moonshot-ai/agent-core-v2/agent/skill/skillOps';
+import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
+import type {
+  TaskNotified,
+  TaskStarted,
+  TaskTerminatedNotice,
+} from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
+import type {
+  ToolCallStarted,
+  ToolProgress,
+  ToolResultEvent,
+} from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
+import type { AgentStatusUpdated } from '@moonshot-ai/agent-core-v2/agent/usage/usageEvents';
+import type { PlanRevision } from '@moonshot-ai/agent-core-v2/features/plan/planOps';
+import type { SubagentSuspended } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmService';
+import type { CronFired } from '@moonshot-ai/agent-core-v2/session/cron/cronOps';
+import type {
+  SubagentCompleted,
+  SubagentFailed,
+  SubagentSpawned,
+  SubagentStarted,
+} from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
 import type {
   AgentRef,
   AgentUsageMeta,
@@ -111,18 +161,58 @@ export interface ProjectorInteraction {
 
 /**
  * The plan domain's `plan.revision` event (agent-core-v2 `planOps.ts` — the
- * persisted op's `toEvent`): one per ExitPlanMode review submission, carrying
- * the reference to the offloaded plan file version. Derived from `DomainEvent`
- * so a shape drift on the engine side fails the compile here.
+ * durable+observable `PlanRevision` class): one per ExitPlanMode review
+ * submission, carrying the reference to the offloaded plan file version.
  */
-type PlanRevisionEvent = Extract<DomainEvent, { type: 'plan.revision' }>;
+type PlanRevisionEvent = { readonly type: 'plan.revision' } & PlanRevision;
 
-type TurnStartedBusEvent = Extract<DomainEvent, { type: 'turn.started' }>;
+type AgentActivityUpdatedEvent = { readonly type: 'agent.activity.updated' } & AgentActivityUpdated;
+type PromptCompletedEvent = { readonly type: 'prompt.completed' } & PromptCompleted;
+type PromptAbortedEvent = { readonly type: 'prompt.aborted' } & PromptAborted;
+type PromptSteeredEvent = { readonly type: 'prompt.steered' } & PromptSteered;
 
-type AgentActivityUpdatedEvent = Extract<DomainEvent, { type: 'agent.activity.updated' }>;
-type PromptCompletedEvent = Extract<DomainEvent, { type: 'prompt.completed' }>;
-type PromptAbortedEvent = Extract<DomainEvent, { type: 'prompt.aborted' }>;
-type PromptSteeredEvent = Extract<DomainEvent, { type: 'prompt.steered' }>;
+export type ProjectorBusEvent =
+  | PlanRevisionEvent
+  | ({ readonly type: 'turn.started' } & TurnStarted)
+  | ({ readonly type: 'turn.ended' } & TurnEnded)
+  | ({ readonly type: 'turn.step.started' } & TurnStepStarted)
+  | ({ readonly type: 'turn.step.completed' } & TurnStepCompleted)
+  | ({ readonly type: 'turn.step.interrupted' } & TurnStepInterrupted)
+  | ({ readonly type: 'turn.step.retrying' } & TurnStepRetrying)
+  | ({ readonly type: 'assistant.delta' } & AssistantDelta)
+  | ({ readonly type: 'thinking.delta' } & ThinkingDelta)
+  | ({ readonly type: 'tool.call.delta' } & ToolCallDelta)
+  | ({ readonly type: 'tool.progress' } & ToolProgress)
+  | ({ readonly type: 'tool.call.started' } & ToolCallStarted)
+  | ({ readonly type: 'tool.result' } & ToolResultEvent)
+  | ({ readonly type: 'task.started' } & TaskStarted)
+  | ({ readonly type: 'task.terminated' } & TaskTerminatedNotice)
+  | ({ readonly type: 'task.notified' } & TaskNotified)
+  | ({ readonly type: 'shell.started' } & ShellStarted)
+  | ({ readonly type: 'shell.output' } & ShellOutput)
+  | ({ readonly type: 'shell.completed' } & ShellCompleted)
+  | ({ readonly type: 'subagent.spawned' } & SubagentSpawned)
+  | ({ readonly type: 'subagent.started' } & SubagentStarted)
+  | ({ readonly type: 'subagent.completed' } & SubagentCompleted)
+  | ({ readonly type: 'subagent.failed' } & SubagentFailed)
+  | ({ readonly type: 'subagent.suspended' } & SubagentSuspended)
+  | ({ readonly type: 'goal.updated' } & GoalUpdated)
+  | ({ readonly type: 'agent.status.updated' } & AgentStatusUpdated)
+  | AgentActivityUpdatedEvent
+  | PromptCompletedEvent
+  | PromptAbortedEvent
+  | PromptSteeredEvent
+  | ({ readonly type: 'hook.result' } & HookResult)
+  | ({ readonly type: 'skill.activated' } & SkillActivated)
+  | ({ readonly type: 'plugin_command.activated' } & PluginCommandActivated)
+  | ({ readonly type: 'cron.fired' } & CronFired)
+  | ({ readonly type: 'compaction.started' } & CompactionStarted)
+  | ({ readonly type: 'compaction.blocked' } & CompactionBlocked)
+  | ({ readonly type: 'compaction.cancelled' } & CompactionCancelled)
+  | ({ readonly type: 'compaction.completed' } & CompactionCompleted)
+  | ({ readonly type: 'context.spliced' } & ContextSpliced)
+  | ({ readonly type: 'error' } & AgentErrorEvent)
+  | ({ readonly type: 'warning' } & WarningIssued);
 
 /**
  * The v1-wire `prompt.submitted` shape (kap-server `protocol/events-zod.ts`).
@@ -163,11 +253,6 @@ export type ProjectorToolFrameLookup = (toolCallId: string) => ToolFrameRecord |
  */
 export type ProjectorStepOrdinalLookup = (turnId: string) => number | undefined;
 
-/**
- * Read access to one turn's current header (the producer store). Used when
- * the projector attached mid-turn and never saw `turn.started` — see
- * `onTurnEnded`.
- */
 export type ProjectorTurnLookup = (turnId: string) => TurnHeader | undefined;
 
 /** Optional producer-store lookups that let the projector adopt seeded state. */
@@ -219,7 +304,7 @@ export class AgentTranscriptProjector {
     private readonly lookups?: ProjectorLookups,
   ) {}
 
-  map(event: DomainEvent | ProjectorPromptSubmittedEvent): TranscriptOperation[] {
+  map(event: ProjectorBusEvent | ProjectorPromptSubmittedEvent): TranscriptOperation[] {
     switch (event.type) {
       case 'plan.revision':
         return this.onPlanRevision(event);
@@ -312,24 +397,24 @@ export class AgentTranscriptProjector {
 
   // ---------------------------------------------------------------- turn / step
 
-  private onTurnStarted(event: TurnStartedBusEvent): TranscriptOperation[] {
+  private onTurnStarted(event: {
+    turnId: number;
+    origin: unknown;
+    prompt?: string;
+    promptAttachments?: readonly { kind: 'image' | 'video' | 'audio'; fileId: string }[];
+  }): TranscriptOperation[] {
     const n = event.turnId;
     const turnId = `t${n}`;
     const ops: TranscriptOperation[] = [];
-    let attachmentIds: string[] | undefined;
-    if (event.promptAttachments !== undefined && event.promptAttachments.length > 0) {
-      attachmentIds = [];
-      for (const input of event.promptAttachments) {
-        // Turn-scoped id namespace: cold-rebuild attachments use `att_<n>`,
-        // so a live id can never collide with a backfilled one.
-        const attachment: TranscriptAttachment = {
-          attachmentId: `${turnId}.att${attachmentIds.length + 1}`,
-          mediaType: `${input.kind}/*`,
-          source: { kind: 'session_media', fileId: input.fileId },
-        };
-        ops.push({ op: 'attachment.upsert', attachment });
-        attachmentIds.push(attachment.attachmentId);
-      }
+    const attachmentIds: string[] = [];
+    for (const input of event.promptAttachments ?? []) {
+      const attachment: TranscriptAttachment = {
+        attachmentId: `${turnId}.att${attachmentIds.length + 1}`,
+        mediaType: `${input.kind}/*`,
+        source: { kind: 'session_media', fileId: input.fileId },
+      };
+      ops.push({ op: 'attachment.upsert', attachment });
+      attachmentIds.push(attachment.attachmentId);
     }
     this.currentTurn = {
       kind: 'turn',
@@ -338,7 +423,7 @@ export class AgentTranscriptProjector {
       state: 'running',
       origin: mapTurnOrigin(event.origin),
       prompt: event.prompt,
-      attachmentIds,
+      attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       startedAt: nowIso(),
     };
     this.currentStep = undefined;
@@ -365,11 +450,6 @@ export class AgentTranscriptProjector {
       this.currentStep = step;
       ops.push({ op: 'step.upsert', turnId: step.turnId, step });
     }
-    // Mid-turn attach: when this projector never saw `turn.started`, inherit
-    // the header the history backfill already seeded into the store —
-    // otherwise this terminal upsert (a whole-header replace downstream)
-    // would wipe the backfilled origin / prompt / attachmentIds until the
-    // next heal, and for good if the session closes before it runs.
     const prev =
       this.currentTurn?.turnId === turnId ? this.currentTurn : this.lookups?.turn?.(turnId);
     const state = mapTurnEndState(event.reason);
@@ -1192,7 +1272,7 @@ export class AgentTranscriptProjector {
     // shallow-merges that key, so only the arrived fields may appear on the
     // payload — an explicit `undefined` entry would erase the previous
     // slice's value. (`contextUsage` / `permission` ride the wire schema but
-    // are not on the v2 `DomainEventMap` declaration yet — projected whenever
+    // are not declared on a v2 event class yet — projected whenever
     // they arrive.)
     const agent: {
       model?: string;
@@ -1344,9 +1424,6 @@ export class AgentTranscriptProjector {
    */
   private onPromptSteered(event: PromptSteeredEvent): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
-    // The event carries raw engine content parts (internal `kimi-file://<id>`
-    // daemon refs); the entity stores the Session-media wire projection, so
-    // the transient App upload and internal URL never reach consumers.
     const active = this.upsertPrompt(event.activePromptId, (prev) => ({
       promptId: event.activePromptId,
       status: prev?.status ?? 'running',
@@ -1446,8 +1523,8 @@ function epochMsToIso(value: number): string {
 }
 
 /** Event payload without the `type` discriminant (markers carry it verbatim). */
-function restOf(event: { readonly type: string }): Record<string, unknown> {
-  const { type: _type, ...rest } = event;
+function restOf(event: { readonly type: string; readonly time?: number }): Record<string, unknown> {
+  const { type: _type, time: _time, ...rest } = event;
   return rest;
 }
 

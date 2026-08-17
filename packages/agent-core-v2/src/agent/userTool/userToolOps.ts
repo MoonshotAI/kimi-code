@@ -1,39 +1,53 @@
 /**
- * `userTool` domain — wire Model (`UserToolModel`) and the
- * `tools.register_user_tool` (`registerUserTool`) / `tools.unregister_user_tool`
- * (`unregisterUserTool`) Ops for the set of user-defined tools registered by the
- * host.
+ * `userTool` domain — the `userToolKey` state and the durable
+ * `tools.register_user_tool` (`ToolsRegisterUserTool`) /
+ * `tools.unregister_user_tool` (`ToolsUnregisterUserTool`) events for the set
+ * of user-defined tools registered by the host.
  *
- * Declares the registered user tools as a `Map<string, UserToolRegistration>`
- * wire Model (initial empty), plus the two Ops whose `apply` functions are the
- * pure extraction of the former live `applyRegister` / `applyUnregister` Map
- * mutations and their `record.define(...resume...)` facets (their common
- * transition). Each returns the same reference when nothing changes (registering
- * an already-equal tool / unregistering an unknown name) so the wire's
- * reference-equality gate stays quiet. The side effects — `registry.register`
- * and `profile.addActiveTool` (and the matching dispose / `removeActiveTool`) —
- * are NOT part of `apply`: they run after `wire.dispatch` on the live path and
- * are re-derived from the rebuilt Model by `wire.hooks.onDidRestore` after
- * restore, so a resumed agent re-registers exactly the tools the persisted ops
- * describe.
+ * The state holds the registered user tools as a
+ * `Map<string, UserToolRegistration>` (initial empty). Each fold keeps the
+ * same reference when nothing changes (registering an already-equal tool /
+ * unregistering an unknown name) so the state's reference-equality stays
+ * quiet. The side effects — `registry.register` and `profile.addActiveTool`
+ * (and the matching dispose / `removeActiveTool`) — are NOT part of the folds:
+ * they run after dispatch on the live path and are re-derived from the rebuilt
+ * state by the dispatcher's `onDidRestore` hook after restore, so a resumed
+ * agent re-registers exactly the tools the persisted records describe.
+ * Scope-agnostic.
  */
 
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+
+import { original } from 'immer';
 import { z } from 'zod';
 
-import { defineModel } from '#/wire/model';
+import { Event2 } from '#/app/event/event2';
+import { defineState } from '#/state/state';
 
 import type { UserToolRegistration } from './userTool';
 
 export type UserToolModelState = Map<string, UserToolRegistration>;
 
-export const UserToolModel = defineModel<UserToolModelState>('userTool', () => new Map());
+const toolsRegisterUserToolSchema = z.custom<UserToolRegistration>();
 
-declare module '#/wire/types' {
-  interface PersistedOpMap {
-    'tools.register_user_tool': typeof registerUserTool;
-    'tools.unregister_user_tool': typeof unregisterUserTool;
-  }
+export class ToolsRegisterUserTool extends Event2<z.infer<typeof toolsRegisterUserToolSchema>> {
+  static override readonly type = 'tools.register_user_tool';
+  static override readonly durable = true;
+  static override readonly schema = toolsRegisterUserToolSchema;
 }
+export interface ToolsRegisterUserTool extends z.infer<typeof toolsRegisterUserToolSchema> {}
+
+const toolsUnregisterUserToolSchema = z.object({ name: z.string() });
+
+export class ToolsUnregisterUserTool extends Event2<
+  z.infer<typeof toolsUnregisterUserToolSchema>
+> {
+  static override readonly type = 'tools.unregister_user_tool';
+  static override readonly durable = true;
+  static override readonly schema = toolsUnregisterUserToolSchema;
+}
+export interface ToolsUnregisterUserTool
+  extends z.infer<typeof toolsUnregisterUserToolSchema> {}
 
 function equalRegistration(a: UserToolRegistration, b: UserToolRegistration): boolean {
   return (
@@ -44,23 +58,20 @@ function equalRegistration(a: UserToolRegistration, b: UserToolRegistration): bo
   );
 }
 
-export const registerUserTool = UserToolModel.defineOp('tools.register_user_tool', {
-  schema: z.custom<UserToolRegistration>(),
-  apply: (s, p) => {
-    const existing = s.get(p.name);
-    if (existing !== undefined && equalRegistration(existing, p)) return s;
-    const next = new Map(s);
-    next.set(p.name, p);
-    return next;
-  },
-});
-
-export const unregisterUserTool = UserToolModel.defineOp('tools.unregister_user_tool', {
-  schema: z.object({ name: z.string() }),
-  apply: (s, p) => {
-    if (!s.has(p.name)) return s;
-    const next = new Map(s);
-    next.delete(p.name);
-    return next;
-  },
-});
+export const userToolKey = defineState('userTool', (): UserToolModelState => new Map()).replayable({
+  schema: z.custom<UserToolModelState>(),
+})
+  .on(ToolsRegisterUserTool, (s, e) => {
+    const existing = s.get(e.name);
+    if (existing !== undefined && equalRegistration(original(existing), e)) return;
+    s.set(e.name, {
+      name: e.name,
+      description: e.description,
+      parameters: e.parameters,
+      disclosure: e.disclosure,
+    });
+  })
+  .on(ToolsUnregisterUserTool, (s, e) => {
+    if (!s.has(e.name)) return;
+    s.delete(e.name);
+  });

@@ -28,7 +28,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { Error2, ErrorCodes } from '#/errors';
 
 import {
-  DI_UNIT_CHANGED_EVENT,
+  DiUnitChanged,
   IDebugCascadeService,
   type DebugCascadeEntry,
   type DebugFailedUnit,
@@ -180,7 +180,7 @@ export class DebugCascadeService implements IDebugCascadeService {
           state: change.state,
           error: change.error,
         };
-        this.events.publish({ type: DI_UNIT_CHANGED_EVENT, payload });
+        this.events.publish(new DiUnitChanged({ payload }));
       }),
     );
   }

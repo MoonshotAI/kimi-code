@@ -10,7 +10,7 @@ import {
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { PermissionModeInjection } from '#/agent/permissionMode/injection/permissionModeInjection';
 import { AgentPermissionModeService } from '#/agent/permissionMode/permissionModeService';
-import { PermissionModeModel } from '#/agent/permissionMode/permissionModeOps';
+import { permissionModeKey } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -18,10 +18,15 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IWireService } from '#/wire/wire';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
-import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
+import {
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+  restoreTestEventDispatcher,
+  testWireScope,
+} from '../../wire/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'permission-mode-test';
@@ -49,6 +54,7 @@ const injectorStub: IAgentContextInjectorService = {
 let disposables: DisposableStore;
 let ix: TestInstantiationService;
 let log: IAppendLogStore;
+let dispatcher: IEventDispatcher;
 let svc: IAgentPermissionModeService;
 let reminderLive = false;
 
@@ -64,13 +70,14 @@ beforeEach(() => {
   ix.set(IAgentPermissionModeService, new SyncDescriptor(AgentPermissionModeService));
   log = ix.get(IAppendLogStore);
   registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log });
+  dispatcher = registerTestEventDispatcher(ix);
   svc = ix.get(IAgentPermissionModeService);
 });
 
 afterEach(() => disposables.dispose());
 
 async function readRecords(): Promise<WireRecord[]> {
-  await ix.get(IWireService).flush();
+  await dispatcher.flush();
   const out: WireRecord[] = [];
   for await (const record of log.read<WireRecord>(testWireScope(SCOPE, KEY), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
@@ -198,23 +205,26 @@ describe('AgentPermissionModeService (wire-backed)', () => {
     expect(await run()).toContain('Auto permission mode is no longer active');
   });
 
-  it('replay rebuilds mode from a persisted record on a fresh WireService (silent)', async () => {
+  it('replay rebuilds mode from a persisted record on a fresh dispatcher (silent)', async () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     const log2 = ix2.get(IAppendLogStore);
-    const fresh = registerTestAgentWire(ix2, testWireScope(SCOPE, 'permission-mode-replay'), {
+    registerTestAgentWire(ix2, testWireScope(SCOPE, 'permission-mode-replay'), {
       log: log2,
     });
+    const fresh = registerTestEventDispatcher(ix2);
+    const freshState = ix2.get(IAgentStateService);
+    freshState.contributeState(permissionModeKey);
 
-    await restoreTestAgentWire(
+    await restoreTestEventDispatcher(
       fresh,
       log2,
       testWireScope(SCOPE, 'permission-mode-replay'),
       [{ type: 'permission.set_mode', mode: 'auto' }],
     );
 
-    expect(fresh.getModel(PermissionModeModel)).toBe('auto');
+    expect(freshState.get(permissionModeKey)).toBe('auto');
 
     const written: WireRecord[] = [];
     for await (const record of log2.read<WireRecord>(testWireScope(SCOPE, 'permission-mode-replay'), AGENT_WIRE_RECORD_KEY)) {

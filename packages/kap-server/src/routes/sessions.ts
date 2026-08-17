@@ -92,6 +92,7 @@ import {
   ISessionLegacyService,
   ISessionTitleService,
   IEventService,
+  SessionCreated,
   IWorkspaceAliases,
   ISessionManager,
   IWorkspaceService,
@@ -105,6 +106,7 @@ import {
   type Scope,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
+import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { ErrorCode } from '../protocol/error-codes';
 import { pageResponseSchema } from '../protocol/pagination';
 import { toProtocolMessage } from '../services/messages/messageProjection';
@@ -338,10 +340,9 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           touched.root,
           { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
         );
-        core.accessor.get(IEventService).publish({
-          type: 'event.session.created',
-          payload: { agentId: 'main', sessionId: session.id, session },
-        });
+        core.accessor.get(IEventService).publish(
+          new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
+        );
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -628,15 +629,16 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         // subscribed to this session, and covering inactive sessions), so session
         // lists stay in sync — mirrors v1's `session.meta.updated` publish.
         if (typeof req.body.title === 'string' && req.body.title.trim().length > 0) {
-          core.accessor.get(IEventService).publish({
-            type: 'session.meta.updated',
-            payload: {
-              agentId: 'main',
-              sessionId: session_id,
-              title: session.title,
-              patch: { title: session.title, isCustomTitle: true },
-            },
-          });
+          core.accessor.get(IEventService).publish(
+            new SessionMetaUpdated({
+              payload: {
+                agentId: 'main',
+                sessionId: session_id,
+                title: session.title,
+                patch: { title: session.title, isCustomTitle: true },
+              },
+            }),
+          );
         }
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
@@ -776,10 +778,9 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
             ctx.cwd,
             resolveSessionFacts(core, meta.id),
           );
-          core.accessor.get(IEventService).publish({
-            type: 'event.session.created',
-            payload: { agentId: 'main', sessionId: session.id, session },
-          });
+          core.accessor.get(IEventService).publish(
+            new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
+          );
           requestLog(req)?.info(
             { session_id: parsed.id, action: 'fork', new_session_id: session.id },
             'session action completed',
@@ -1014,10 +1015,9 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           ctx.cwd,
           resolveSessionFacts(core, meta.id),
         );
-        core.accessor.get(IEventService).publish({
-          type: 'event.session.created',
-          payload: { agentId: 'main', sessionId: session.id, session },
-        });
+        core.accessor.get(IEventService).publish(
+          new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
+        );
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);

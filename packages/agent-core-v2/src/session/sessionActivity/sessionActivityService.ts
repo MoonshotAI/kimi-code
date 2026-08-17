@@ -20,9 +20,13 @@ import {
   type IAgentScopeHandle,
 } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentActivityView, type AgentActivityState } from '#/agent/activityView/activityView';
+import {
+  AgentActivityUpdated,
+  IAgentActivityView,
+  type AgentActivityState,
+} from '#/agent/activityView/activityView';
 import type { TurnEndReason } from '#/agent/loop/turnEvents';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionInteractionService, type Interaction } from '#/session/interaction/interaction';
@@ -69,8 +73,8 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
     @ISessionInteractionService private readonly interactions: ISessionInteractionService,
   ) {
     super();
-    this.states.register(sessionActivityFoldsKey);
-    this.states.register(sessionActivityCurrentKey);
+    this.states.contributeState(sessionActivityFoldsKey);
+    this.states.contributeState(sessionActivityCurrentKey);
     for (const handle of this.agents.list()) this.attachAgent(handle);
     this.current = this.aggregate();
     this._register(
@@ -119,7 +123,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
     if (bus === undefined) return;
     this.agentSubscriptions.set(
       handle.id,
-      bus.subscribe('agent.activity.updated', (event) => this.onActivity(handle.id, event)),
+      bus.subscribe(AgentActivityUpdated, (event) => this.onActivity(handle.id, event)),
     );
   }
 

@@ -7,31 +7,52 @@
  * drive the pending-approval list, while task and full-compaction events drive
  * the background-work slice. The view seeds once from `IAgentLoopService`,
  * `IAgentTaskService`, and `IAgentFullCompactionService`, and recovers the
- * last turn's outcome from the wire `TurnModel` through `IWireService`, so
- * a cold-resumed agent still reports how its previous turn ended (reads,
- * never writes). Otherwise the view holds only derived state, so it can be
- * discarded and rebuilt at any time. The mutable view state (`lifecycle`,
- * `turn`, `lastTurn`, `background`, `current`) is registered into
- * `agentState` (`IAgentStateService`) and read/written through it; the
- * event-bus subscription handles stay mechanism held by the `Disposable`
- * base, and `MutableTurn`'s in-place-mutated Maps stay instance fields of
- * that per-turn class. Bound at Agent scope.
+ * last turn's outcome from the durable `turnKey` state through `state`
+ * (`IEventDispatcher`), so a cold-resumed agent still reports how its
+ * previous turn ended (reads, never writes). Otherwise the view holds only
+ * derived state, so it can be discarded and rebuilt at any time. The mutable
+ * view state (`lifecycle`, `turn`, `lastTurn`, `background`, `current`) is
+ * registered into `agentState` (`IAgentStateService`) and read/written
+ * through it; the event-bus subscription handles stay mechanism held by the
+ * `Disposable` base, and `MutableTurn`'s in-place-mutated Maps stay instance
+ * fields of that per-turn class. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { TurnModel } from '#/agent/loop/turnOps';
+import {
+  AssistantDelta,
+  ThinkingDelta,
+  ToolCallDelta,
+  TurnStarted,
+  TurnStepStarted,
+  TurnStepCompleted,
+  TurnStepInterrupted,
+} from '#/agent/loop/turnEvents';
+import { TurnEnded, turnKey } from '#/agent/loop/turnOps';
+import { TurnStepRetrying } from '#/agent/stepRetry/stepRetryService';
+import { ToolCallStarted, ToolResultEvent } from '#/agent/toolExecutor/toolExecutorEvents';
+import {
+  PermissionApprovalRequested,
+  PermissionApprovalResolved,
+} from '#/agent/toolApproval/toolApprovalService';
+import { TaskStarted, TaskTerminatedNotice } from '#/agent/task/taskOps';
+import {
+  CompactionCancelled,
+  CompactionCompleted,
+  CompactionStarted,
+} from '#/agent/fullCompaction/compactionOps';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { TurnEndReason } from '#/agent/loop/turnEvents';
-import { IWireService } from '#/wire/wire';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import type {
   ActivityLastTurnState,
@@ -44,7 +65,7 @@ import type {
   ToolCallRef,
   TurnPhase,
 } from './activityView';
-import { IAgentActivityView } from './activityView';
+import { AgentActivityUpdated, IAgentActivityView } from './activityView';
 
 type EndingReason = NonNullable<ActivityTurnState['endingReason']>;
 const FULL_COMPACTION_BACKGROUND_ID = 'full-compaction';
@@ -80,35 +101,35 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentFullCompactionService private readonly fullCompaction: IAgentFullCompactionService,
     @IAgentStateService private readonly states: IAgentStateService,
-    @IWireService private readonly wire: IWireService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
   ) {
     super();
-    this.states.register(activityViewLifecycleKey);
-    this.states.register(activityViewTurnKey);
-    this.states.register(activityViewLastTurnKey);
-    this.states.register(activityViewBackgroundKey);
-    this.states.register(activityViewCurrentKey);
+    this.states.contributeState(activityViewLifecycleKey);
+    this.states.contributeState(activityViewTurnKey);
+    this.states.contributeState(activityViewLastTurnKey);
+    this.states.contributeState(activityViewBackgroundKey);
+    this.states.contributeState(activityViewCurrentKey);
     this.seedFromLoop();
     this.seedFromTasks();
     this.seedFromFullCompaction();
     this._register(
-      this.wire.hooks.onDidRestore.register('activityView', async (_ctx, next) => {
+      this.dispatcher.hooks.onDidRestore.register('activityView', async (_ctx, next) => {
         this.seedLastTurnFromWire();
         await next();
       }),
     );
 
-    this._register(this.eventBus.subscribe('turn.started', (e) => this.onTurnStarted(e.turnId, e.origin)));
-    this._register(this.eventBus.subscribe('turn.step.started', (e) => this.onStepStarted(e.step)));
-    this._register(this.eventBus.subscribe('assistant.delta', () => this.onDelta('assistant')));
-    this._register(this.eventBus.subscribe('thinking.delta', () => this.onDelta('thinking')));
-    this._register(this.eventBus.subscribe('tool.call.delta', () => this.onDelta('tool_call')));
+    this._register(this.eventBus.subscribe(TurnStarted, (e) => this.onTurnStarted(e.turnId, e.origin)));
+    this._register(this.eventBus.subscribe(TurnStepStarted, (e) => this.onStepStarted(e.step)));
+    this._register(this.eventBus.subscribe(AssistantDelta, () => this.onDelta('assistant')));
+    this._register(this.eventBus.subscribe(ThinkingDelta, () => this.onDelta('thinking')));
+    this._register(this.eventBus.subscribe(ToolCallDelta, () => this.onDelta('tool_call')));
     this._register(
-      this.eventBus.subscribe('tool.call.started', (e) => this.onToolCallStarted(e.toolCallId, e.name)),
+      this.eventBus.subscribe(ToolCallStarted, (e) => this.onToolCallStarted(e.toolCallId, e.name)),
     );
-    this._register(this.eventBus.subscribe('tool.result', (e) => this.onToolResult(e.toolCallId)));
+    this._register(this.eventBus.subscribe(ToolResultEvent, (e) => this.onToolResult(e.toolCallId)));
     this._register(
-      this.eventBus.subscribe('turn.step.retrying', (e) => {
+      this.eventBus.subscribe(TurnStepRetrying, (e) => {
         this.mutateTurn((t) => {
           t.phase = 'retrying';
           t.stream = undefined;
@@ -124,7 +145,7 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
       }),
     );
     this._register(
-      this.eventBus.subscribe('turn.step.completed', () => {
+      this.eventBus.subscribe(TurnStepCompleted, () => {
         this.mutateTurn((t) => {
           t.phase = 'running';
           t.stream = undefined;
@@ -133,23 +154,25 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
       }),
     );
     this._register(
-      this.eventBus.subscribe('turn.step.interrupted', (e) => this.onStepInterrupted(e.turnId, e.reason)),
+      this.eventBus.subscribe(TurnStepInterrupted, (e) => this.onStepInterrupted(e.turnId, e.reason)),
     );
     this._register(
-      this.eventBus.subscribe('turn.ended', (e) => this.onTurnEnded(e.turnId, e.reason)),
+      this.eventBus.subscribe(TurnEnded, (e) => this.onTurnEnded(e.turnId, e.reason)),
     );
     this._register(
-      this.eventBus.subscribe('permission.approval.requested', (e) =>
+      this.eventBus.subscribe(PermissionApprovalRequested, (e) =>
         this.onApprovalRequested(e.id ?? e.toolCallId, e.toolCallId),
+
       ),
     );
     this._register(
-      this.eventBus.subscribe('permission.approval.resolved', (e) =>
+      this.eventBus.subscribe(PermissionApprovalResolved, (e) =>
         this.onApprovalResolved(e.id ?? e.toolCallId),
+
       ),
     );
     this._register(
-      this.eventBus.subscribe('task.started', (e) => {
+      this.eventBus.subscribe(TaskStarted, (e) => {
         this.background.set(e.info.taskId, {
           kind: e.info.kind,
           id: e.info.taskId,
@@ -159,12 +182,12 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
       }),
     );
     this._register(
-      this.eventBus.subscribe('task.terminated', (e) => {
+      this.eventBus.subscribe(TaskTerminatedNotice, (e) => {
         if (this.background.delete(e.info.taskId)) this.publish();
       }),
     );
     this._register(
-      this.eventBus.subscribe('compaction.started', () => {
+      this.eventBus.subscribe(CompactionStarted, () => {
         this.background.set(FULL_COMPACTION_BACKGROUND_ID, {
           kind: 'compaction',
           id: FULL_COMPACTION_BACKGROUND_ID,
@@ -174,12 +197,12 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
       }),
     );
     this._register(
-      this.eventBus.subscribe('compaction.completed', () => {
+      this.eventBus.subscribe(CompactionCompleted, () => {
         this.onFullCompactionEnded();
       }),
     );
     this._register(
-      this.eventBus.subscribe('compaction.cancelled', () => {
+      this.eventBus.subscribe(CompactionCancelled, () => {
         this.onFullCompactionEnded();
       }),
     );
@@ -243,7 +266,7 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
 
   private seedLastTurnFromWire(): void {
     if (this.turn !== undefined || this.lastTurn !== undefined) return;
-    const lastEnded = this.wire.getModel(TurnModel).lastEnded;
+    const lastEnded = this.states.get(turnKey).lastEnded;
     if (lastEnded === undefined) return;
     this.lastTurn = {
       turnId: lastEnded.turnId,
@@ -364,7 +387,7 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
     };
     if (activityEqual(this.current, next)) return;
     this.current = next;
-    this.eventBus.publish({ type: 'agent.activity.updated', ...next });
+    void this.dispatcher.dispatch(new AgentActivityUpdated(next));
   }
 }
 

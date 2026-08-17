@@ -16,6 +16,7 @@ import { AgentPluginService } from '#/agent/plugin/agentPluginService';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IEventBus } from '#/app/event/eventBus';
+import { TurnStarted } from '#/agent/loop/turnEvents';
 import { IPluginService } from '#/app/plugin/plugin';
 import type {
   EnabledPluginSessionStart,
@@ -43,7 +44,7 @@ function pluginSkill(): SkillDefinition {
   };
 }
 
-function findPluginSessionStartMessages(ctx: TestAgentContext) {
+function findPluginSessionStartEventMessages(ctx: TestAgentContext) {
   return ctx.contextData().history.filter(
     (message) =>
       message.origin?.kind === 'injection' && message.origin.variant === 'plugin_session_start',
@@ -92,7 +93,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
 
     await runInjectionBoundary(ctx);
 
-    const injected = findPluginSessionStartMessages(ctx).at(-1);
+    const injected = findPluginSessionStartEventMessages(ctx).at(-1);
     expect(injected).toBeDefined();
     const text = injected === undefined ? '' : messageText(injected);
     expect(text).toContain('<plugin_session_start plugin="demo" skill="demo-skill">');
@@ -120,14 +121,12 @@ describe('AgentPluginService plugin session-start wiring', () => {
     ctx.get(IAgentPluginService);
 
     await runInjectionBoundary(ctx);
-    ctx.get(IEventBus).publish({
-      type: 'turn.started',
-      turnId: 2,
-      origin: USER_PROMPT_ORIGIN,
-    });
+    ctx.get(IEventBus).publish(
+      new TurnStarted({ turnId: 2, origin: USER_PROMPT_ORIGIN }),
+    );
     await runInjectionBoundary(ctx);
 
-    expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
+    expect(findPluginSessionStartEventMessages(ctx)).toHaveLength(1);
   });
 
   it('refreshes the frozen session-start guidance through the explicit service path', async () => {
@@ -148,7 +147,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
 
     const plugins = ctx.get(IAgentPluginService);
     await runInjectionBoundary(ctx);
-    expect(messageText(findPluginSessionStartMessages(ctx).at(-1)!)).toContain(
+    expect(messageText(findPluginSessionStartEventMessages(ctx).at(-1)!)).toContain(
       'Do the demo thing.',
     );
 
@@ -158,7 +157,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
     );
     await plugins.refreshSessionStart();
 
-    const messages = findPluginSessionStartMessages(ctx);
+    const messages = findPluginSessionStartEventMessages(ctx);
     expect(messages).toHaveLength(2);
     expect(messageText(messages.at(-1)!)).toContain(
       'Do the explicitly refreshed demo thing.',
@@ -186,7 +185,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
 
     await runInjectionBoundary(ctx);
 
-    expect(findPluginSessionStartMessages(ctx)).toHaveLength(0);
+    expect(findPluginSessionStartEventMessages(ctx)).toHaveLength(0);
   });
 
   it('re-appends a fresh reminder when the plugin skill source finishes refreshing', async () => {
@@ -222,13 +221,13 @@ describe('AgentPluginService plugin session-start wiring', () => {
 
     await runInjectionBoundary(ctx);
 
-    expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
+    expect(findPluginSessionStartEventMessages(ctx)).toHaveLength(1);
 
     sinkChange.fire('plugin');
-    expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
+    expect(findPluginSessionStartEventMessages(ctx)).toHaveLength(1);
     await runInjectionBoundary(ctx);
 
-    const messages = findPluginSessionStartMessages(ctx);
+    const messages = findPluginSessionStartEventMessages(ctx);
     expect(messages.length).toBeGreaterThanOrEqual(2);
     const latest = messageText(messages.at(-1)!);
     expect(latest).toContain('<plugin_session_start plugin="demo" skill="demo-skill">');
@@ -268,13 +267,13 @@ describe('AgentPluginService plugin session-start wiring', () => {
     ctx.get(IAgentPluginService);
 
     await runInjectionBoundary(ctx);
-    expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
+    expect(findPluginSessionStartEventMessages(ctx)).toHaveLength(1);
 
     sinkChange.fire('user');
     sinkChange.fire('plugin');
     await runInjectionBoundary(ctx);
 
-    expect(findPluginSessionStartMessages(ctx)).toHaveLength(2);
+    expect(findPluginSessionStartEventMessages(ctx)).toHaveLength(2);
     sinkChange.dispose();
   });
 
@@ -323,7 +322,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'third prompt' }] });
     await ctx.untilTurnEnd();
 
-    const latest = findPluginSessionStartMessages(ctx).at(-1);
+    const latest = findPluginSessionStartEventMessages(ctx).at(-1);
     expect(latest).toBeDefined();
     expect(messageText(latest!)).toContain('Do the updated demo thing.');
     expect(messageText(latest!)).toContain(
@@ -432,7 +431,7 @@ describe('AgentPluginService plugin-change reminder', () => {
     );
     ctx.get(IAgentPluginService);
     await runInjectionBoundary(ctx);
-    expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
+    expect(findPluginSessionStartEventMessages(ctx)).toHaveLength(1);
 
     // Production ordering: onDidMutate fires synchronously inside the
     // mutation's onDidReload; the catalog change arrives after the async
@@ -443,14 +442,14 @@ describe('AgentPluginService plugin-change reminder', () => {
     await runInjectionBoundary(ctx);
 
     expect(findPluginChangeMessages(ctx)).toHaveLength(1);
-    expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
+    expect(findPluginSessionStartEventMessages(ctx)).toHaveLength(1);
 
     // An explicit reload (no mutation) still refreshes the guidance: the
     // catalog change sets the refresh signal and the next injection boundary
     // re-renders with the supersedes suffix.
     sinkChange.fire('plugin');
     await runInjectionBoundary(ctx);
-    expect(findPluginSessionStartMessages(ctx).length).toBeGreaterThanOrEqual(2);
+    expect(findPluginSessionStartEventMessages(ctx).length).toBeGreaterThanOrEqual(2);
 
     sinkChange.dispose();
     mutateEmitter.dispose();
@@ -475,7 +474,7 @@ describe('AgentPluginService plugin-change reminder', () => {
     );
     ctx.get(IAgentPluginService);
     await runInjectionBoundary(ctx);
-    expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
+    expect(findPluginSessionStartEventMessages(ctx)).toHaveLength(1);
 
     fireMutation(mutateEmitter, 'demo');
     fireMutation(mutateEmitter, 'demo');
@@ -484,7 +483,7 @@ describe('AgentPluginService plugin-change reminder', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(findPluginChangeMessages(ctx)).toHaveLength(2);
-    expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
+    expect(findPluginSessionStartEventMessages(ctx)).toHaveLength(1);
 
     sinkChange.dispose();
     mutateEmitter.dispose();

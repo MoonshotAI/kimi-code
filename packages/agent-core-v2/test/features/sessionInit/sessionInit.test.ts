@@ -13,7 +13,7 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
-import { IWireService } from '#/wire/wire';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -85,7 +85,14 @@ describe('SessionInitService', () => {
           if (id === IAgentPermissionModeService) return permissionMode;
           if (id === IAgentSystemReminderService) return { appendSystemReminder: appendReminder };
           if (id === IAgentAgentsMdReminderService) return { seedInjected };
-          if (id === IWireService) return { flush };
+          if (id === IEventDispatcher) {
+            return {
+              flush,
+              dispatch: async (event: unknown) => {
+                eventBus.publish(event);
+              },
+            };
+          }
           if (id === IEventBus) return eventBus;
           if (id === ITelemetryService) return telemetry;
           return undefined;

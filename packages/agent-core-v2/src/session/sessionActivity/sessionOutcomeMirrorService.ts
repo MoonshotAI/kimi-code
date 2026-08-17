@@ -17,6 +17,9 @@ import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { IEventBus } from '#/app/event/eventBus';
+import { AgentActivityUpdated } from '#/agent/activityView/activityView';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnEnded } from '#/agent/loop/turnOps';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
@@ -69,35 +72,31 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
     const subscription = new DisposableStore();
     this.mainSubscription = subscription;
     subscription.add(
-      bus.subscribe('turn.ended', (event) => {
-        if (event.type !== 'turn.ended') return;
-        const reason = (event as { reason?: unknown }).reason;
-        const interruptReason = (event as { interruptReason?: unknown }).interruptReason;
-        if (reason === 'completed') {
+      bus.subscribe(TurnEnded, (event) => {
+        if (event.reason === 'completed') {
           this.write('completed');
           return;
         }
-        if (reason === 'failed' || reason === 'blocked') {
+        if (event.reason === 'failed' || event.reason === 'blocked') {
           this.write('failed');
           return;
         }
-        if (reason === 'cancelled' && interruptReason === 'user_cancelled') {
+        if (event.reason === 'cancelled' && event.interruptReason === 'user_cancelled') {
           this.write('cancelled');
         }
       }),
     );
     subscription.add(
-      bus.subscribe('turn.started', () => {
+      bus.subscribe(TurnStarted, () => {
         this.turnStartedHere = true;
         this.write(undefined);
       }),
     );
     subscription.add(
-      bus.subscribe('agent.activity.updated', (event) => {
+      bus.subscribe(AgentActivityUpdated, (event) => {
         if (this.turnStartedHere) return;
         if (this.lastPersisted !== undefined) return;
-        const lastTurn = (event as { lastTurn?: { reason?: unknown } }).lastTurn;
-        const reason = lastTurn?.reason;
+        const reason = event.lastTurn?.reason;
         if (reason === 'completed' || reason === 'cancelled') {
           this.write(reason, { touchUpdatedAt: false });
         } else if (reason === 'failed' || reason === 'blocked') {

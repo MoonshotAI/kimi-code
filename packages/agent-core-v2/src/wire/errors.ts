@@ -2,12 +2,11 @@
  * `wire` domain — error codes, the `WireError` base class, and the domain
  * registration.
  *
- * Aggregates the wire domain's coded errors: `DuplicateOpError` and
- * `CycleError` stay co-located with their throw sites but extend
- * `WireError`; `wire.unknown_record` is constructed here for replay-time
- * reporting of records whose Op type is absent from the wire runtime's
- * folded op registry (unknown or withdrawn vocabulary — see
- * `wireContribution.ts`).
+ * Aggregates the wire journal's coded errors: `wire.unknown_record` is
+ * constructed at journal-read and replay time for records that are malformed
+ * or whose event type is absent from the folded registry (unknown or
+ * withdrawn vocabulary); `wire.migration_missing` and
+ * `records.write_failed` cover the migration chain and append failures.
  */
 
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
@@ -15,25 +14,11 @@ import { Error2, type Error2Options } from '#/_base/errors/errors';
 
 export const WireErrors = {
   codes: {
-    WIRE_DUPLICATE_OP: 'wire.duplicate_op',
-    WIRE_CYCLE: 'wire.cycle',
     WIRE_UNKNOWN_RECORD: 'wire.unknown_record',
     WIRE_MIGRATION_MISSING: 'wire.migration_missing',
     RECORDS_WRITE_FAILED: 'records.write_failed',
   },
   info: {
-    'wire.duplicate_op': {
-      title: 'Duplicate wire op type',
-      retryable: false,
-      public: true,
-      action: 'Two ops registered the same type; rename one. This is a build-time bug.',
-    },
-    'wire.cycle': {
-      title: 'Wire dispatch cycle',
-      retryable: false,
-      public: true,
-      action: 'An onChange handler re-dispatches endlessly; break the op cycle.',
-    },
     'wire.unknown_record': {
       title: 'Unknown wire record',
       retryable: false,

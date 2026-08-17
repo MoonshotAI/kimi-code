@@ -2,25 +2,16 @@
  * `skill` domain — `IAgentSkillService` implementation.
  *
  * Resolves skills from the session catalog, renders the activation prompt,
- * records the activation as a `skill.activate` fact through `wire.dispatch`
- * (a stateless, identity-apply Op), derives the `skill.activated` event
- * through the Op's `toEvent`, and delivers user-slash activations through
- * `prompt.inject` — steered into the running turn when one is active,
- * launched as a fresh turn when idle, exactly the queue/steer equivalence of
- * plain user input (attachment parts from the caller ride the same user
- * message after the rendered prompt). It settles `{turn_id}` for the caller,
- * persists the derived title/lastPrompt through `sessionMetadata` for the
- * main agent only (publishing the live update through `event`), and reports
- * `skill_invoked` / `flow_invoked` through `telemetry`. `promptWithSkills`
- * bundles one or more skill activations into the prompt's own user message:
- * the rendered skill blocks precede the caller's parts in the content and
- * each activation's metadata rides the prompt origin's `skillActivations`,
- * so the bundle launches as a single turn and undoes as a single anchor;
- * every skill is validated before anything is recorded, so an invalid name
- * or an empty skill list rejects the whole submission. The fact is transient
- * (`persist: false`), so neither the event nor telemetry fires on resume —
- * bundled activations are rebuilt from the prompt origin instead. Bound at
- * Agent scope.
+ * records the activation as a transient `SkillActivate` fact through
+ * `dispatcher.dispatch` (the `skillKey` placeholder fold emits the
+ * observable `SkillActivated`), drives user-slash activations into a new turn via
+ * `prompt` (attachment parts from the caller ride the same user message after
+ * the rendered prompt), settles `{turn_id}` for the caller, persists the
+ * derived title/lastPrompt through `sessionMetadata` for the main agent only
+ * (publishing the live update through `event`), and reports `skill_invoked` /
+ * `flow_invoked` through `telemetry`. Replay drops the fold's emit, so neither
+ * the event nor telemetry fires on resume (matching the
+ * former `restoring` guard). Bound at Agent scope.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -43,14 +34,15 @@ import { isUserActivatableSkillType, type SkillDefinition } from '#/app/skillCat
 import { IAgentPromptService, type PromptLaunchResult } from '#/agent/prompt/prompt';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
-import { IWireService } from '#/wire/wire';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   IAgentSkillService,
   type PromptSkillActivation,
   type PromptWithSkillsInput,
   type SkillActivationInput,
 } from './skill';
-import { skillActivate } from './skillOps';
+import { SkillActivate, skillKey } from './skillOps';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { IEventService } from '#/app/event/event';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -65,14 +57,16 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @IAgentPromptService private readonly prompt: IAgentPromptService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
-    @IWireService private readonly wire: IWireService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @IEventService private readonly eventService: IEventService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IAgentStateService agentState: IAgentStateService,
   ) {
     super();
+    agentState.contributeState(skillKey);
   }
 
   async activate(input: SkillActivationInput): Promise<PromptLaunchResult> {
@@ -236,7 +230,7 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     origin: SkillActivationOrigin,
     input?: readonly ContentPart[],
   ): Promise<Turn | undefined> {
-    this.wire.dispatch(skillActivate({ origin }));
+    await this.dispatcher.dispatch(new SkillActivate({ origin }));
     this.publishActivation(origin);
 
     if (input === undefined) return undefined;

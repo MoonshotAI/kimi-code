@@ -24,8 +24,8 @@
  * `AgentLLMRequestFinish` on the `finish` event, logs the request lifecycle
  * (config deduplicated by content, request/response/failure lines, plus
  * per-request fields) through `log`, publishes advisory model-capability
- * warnings through `eventBus`, records durable request-trace Ops
- * through `wire`, reports each request's `x-trace-id` to its caller, and
+ * warnings through the `WarningIssued` event, records durable request-trace
+ * events through the event dispatcher, reports each request's `x-trace-id` to its caller, and
  * reports provider failures through `telemetry`. The mutable request state
  * (`lastConfigLogSignature`, `turnConfigs`, `mediaDegradedTurns`,
  * `mediaStrippedTurns`, `emittedThinkingEffortWarnings`) is registered into
@@ -36,7 +36,7 @@
 import { createHash } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import {
   IAgentContextProjectorService,
@@ -50,7 +50,6 @@ import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
-import { IEventBus } from '#/app/event/eventBus';
 import {
   APIRequestTooLargeError,
   APIStatusError,
@@ -80,8 +79,8 @@ import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import type { Protocol } from '#/kosong/protocol/protocol';
 import type { ApiErrorEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IWireService } from '#/wire/wire';
-import type { PayloadOf } from '#/wire/types';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import { WarningIssued } from '#/agent/profile/profileOps';
 
 import {
   IAgentLLMRequesterService,
@@ -99,9 +98,10 @@ import {
   type ToolCallIdResponseNormalizer,
 } from './toolCallIdNormalizer';
 import {
-  LlmRequestTraceModel,
-  llmRequest,
-  llmToolsSnapshot,
+  LlmRequest,
+  llmRequestTraceKey,
+  LlmToolsSnapshot,
+  type LlmRequestPayload,
   type LlmRequestToolSchema,
 } from './llmRequestOps';
 import { isAbortError } from '#/_base/utils/abort';
@@ -189,15 +189,15 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IWireService private readonly wire: IWireService,
-    @IEventBus private readonly eventBus: IEventBus,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
-    this.states.register(llmRequesterLastConfigLogSignatureKey);
-    this.states.register(llmRequesterTurnConfigsKey);
-    this.states.register(llmRequesterMediaDegradedTurnsKey);
-    this.states.register(llmRequesterMediaStrippedTurnsKey);
-    this.states.register(llmRequesterEmittedThinkingEffortWarningsKey);
+    this.states.contributeState(llmRequestTraceKey);
+    this.states.contributeState(llmRequesterLastConfigLogSignatureKey);
+    this.states.contributeState(llmRequesterTurnConfigsKey);
+    this.states.contributeState(llmRequesterMediaDegradedTurnsKey);
+    this.states.contributeState(llmRequesterMediaStrippedTurnsKey);
+    this.states.contributeState(llmRequesterEmittedThinkingEffortWarningsKey);
   }
 
   private get lastConfigLogSignature(): string | undefined {
@@ -579,7 +579,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     } catch {
     }
     try {
-      this.eventBus.publish({ type: 'warning', code, message });
+      void this.dispatcher.dispatch(new WarningIssued({ code, message }));
     } catch {
     }
   }
@@ -702,8 +702,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     const wireTools = providerVisibleTools(input.tools);
     const tools = toolSignature(wireTools);
     const toolsHash = fingerprint(JSON.stringify(tools));
-    if (!this.wire.getModel(LlmRequestTraceModel).seenToolsHashes.includes(toolsHash)) {
-      this.wire.dispatch(llmToolsSnapshot({ hash: toolsHash, tools }));
+    if (!this.states.get(llmRequestTraceKey).seenToolsHashes.includes(toolsHash)) {
+      void this.dispatcher.dispatch(new LlmToolsSnapshot({ hash: toolsHash, tools }));
     }
 
     const systemPromptHash = fingerprint(input.systemPrompt);
@@ -711,7 +711,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     const thinkingConfig = this.config.get<ThinkingConfig>(THINKING_SECTION);
     const modelConfig =
       input.modelAlias === undefined ? undefined : this.modelService.get(input.modelAlias);
-    const payload: PayloadOf<typeof llmRequest> = {
+    const payload: LlmRequestPayload = {
       kind: requestKindForRecord(fields),
       provider: input.protocol,
       model: input.modelName,
@@ -739,7 +739,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       projection: projectionField(fields),
       droppedCount: numberField(fields, 'droppedCount'),
     };
-    this.wire.dispatch(llmRequest(payload));
+    void this.dispatcher.dispatch(new LlmRequest(payload));
   }
 
   private logResponse(
@@ -817,7 +817,7 @@ function toolSignature(tools: readonly Tool[]): readonly LlmRequestToolSchema[] 
   return tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
 }
 
-function requestKindForRecord(fields: AgentLLMRequestLogFields): PayloadOf<typeof llmRequest>['kind'] {
+function requestKindForRecord(fields: AgentLLMRequestLogFields): LlmRequestPayload['kind'] {
   if (fields['kind'] === 'compaction') return 'compaction';
   if (fields['requestKind'] === 'full_compaction') return 'compaction';
   return 'loop';
