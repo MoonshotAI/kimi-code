@@ -143,6 +143,7 @@ import type {
 } from '@moonshot-ai/transcript';
 
 import { toLegacyPhase } from '../legacyStatus/legacyStatus';
+import { projectPromptContentParts } from '../messages/messageProjection';
 
 // ---------------------------------------------------------------------------
 // Interaction view (structural — the kernel's `Interaction` narrowed to the
@@ -1427,7 +1428,7 @@ export class AgentTranscriptProjector {
       promptId: event.activePromptId,
       status: prev?.status ?? 'running',
       userMessageId: prev?.userMessageId,
-      content: event.content,
+      content: projectPromptContentParts(event.content),
       createdAt: prev?.createdAt ?? event.steeredAt,
       finishedAt: prev?.finishedAt,
       steeredAt: event.steeredAt,
