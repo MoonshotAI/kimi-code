@@ -31,10 +31,9 @@ export function createCredentialValidator(
   rpcToken?: string,
 ): CredentialValidator {
   return async (candidate) => {
-    if (await authTokenService.isValid(candidate)) return true;
     if (rpcToken !== undefined && candidate.length > 0 && timingSafeMatch(candidate, rpcToken)) {
       return true;
     }
-    return false;
+    return authTokenService.isValid(candidate);
   };
 }

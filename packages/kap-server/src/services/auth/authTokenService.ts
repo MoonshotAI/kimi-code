@@ -7,13 +7,14 @@
  * fixed-token impl via `startServer({ serviceOverrides })`, and so `start.ts`
  * (M5.1) can wire the real async-built instance at boot.
  *
- * `isValid` is async because password verification (`bcrypt.compare`) is
- * async — the token path is synchronous, but the interface must await both.
+ * `isValid` is async because a password cache miss runs `bcrypt.compare`.
+ * Persistent-token and cached-password checks remain fast behind the same
+ * interface.
  */
 
 import { createDecorator } from '@moonshot-ai/agent-core-v2';
 
-import { verifyPassword } from './password';
+import { createPasswordVerifier } from './password';
 import type { TokenStore } from './tokenStore';
 
 export interface IAuthTokenService {
@@ -24,8 +25,8 @@ export interface IAuthTokenService {
 
   /**
    * True when `candidate` matches the persistent token OR verifies against the
-   * configured password hash. Constant-time on the token path; bcrypt on the
-   * password path.
+   * configured password hash. Constant-time on the token path; bcrypt on a
+   * password-cache miss.
    */
   isValid(candidate: string): Promise<boolean>;
 }
@@ -46,11 +47,13 @@ export function createAuthTokenService(deps: {
   readonly tokenStore: TokenStore;
   readonly passwordHash: string | undefined;
 }): IAuthTokenService {
+  const passwordVerifier = createPasswordVerifier(deps.passwordHash);
   return {
     _serviceBrand: undefined,
     getToken: () => deps.tokenStore.getToken(),
-    isValid: async (candidate) =>
-      deps.tokenStore.isValid(candidate) ||
-      (await verifyPassword(candidate, deps.passwordHash)),
+    isValid: async (candidate) => {
+      if (deps.tokenStore.isValid(candidate)) return true;
+      return passwordVerifier(candidate);
+    },
   };
 }
