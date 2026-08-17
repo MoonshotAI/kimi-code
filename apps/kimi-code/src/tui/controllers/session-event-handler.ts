@@ -539,6 +539,11 @@ export class SessionEventHandler {
 
   private handleThinkingDelta(event: ThinkingDeltaEvent): void {
     const { state, streamingUI } = this.host;
+    // Malformed/provider-quirk wire records can arrive without a delta payload
+    // (e.g. an Anthropic content_block_start whose thinking block omits
+    // `thinking` — JSON serialization then drops the key). Coerce instead of
+    // crashing.
+    const delta = typeof event.delta === 'string' ? event.delta : '';
     // Encrypted / redacted reasoning (e.g. Kimi over the Anthropic-compatible
     // protocol) streams thinking deltas whose visible text is empty — only an
     // opaque signature rides along. Models also occasionally stream whitespace-
@@ -547,8 +552,8 @@ export class SessionEventHandler {
     // moon spinner while no ThinkingComponent is ever created (it needs visible
     // text), leaving a blank, spinner-less gap until the first real text/tool
     // token arrives. Keep the moon up until actual thinking text shows up.
-    if (event.delta.trim().length === 0 && !streamingUI.hasThinkingDraft()) return;
-    streamingUI.appendThinkingDelta(event.delta);
+    if (delta.trim().length === 0 && !streamingUI.hasThinkingDraft()) return;
+    streamingUI.appendThinkingDelta(delta);
     this.host.patchLivePane({ mode: 'idle' });
     if (state.appState.streamingPhase !== 'thinking') {
       this.host.setAppState({ streamingPhase: 'thinking', streamingStartTime: Date.now() });
@@ -558,15 +563,19 @@ export class SessionEventHandler {
 
   private handleAssistantDelta(event: AssistantDeltaEvent): void {
     const { state, streamingUI } = this.host;
+    // Malformed/provider-quirk wire records can arrive without a delta payload
+    // (e.g. an Anthropic content_block_start whose text block omits `text` —
+    // JSON serialization then drops the key). Coerce instead of crashing.
+    const delta = typeof event.delta === 'string' ? event.delta : '';
     if (streamingUI.hasThinkingDraft()) {
       streamingUI.flushThinkingToTranscript('idle');
     }
 
-    if (event.delta.trim().length > 0) {
+    if (delta.trim().length > 0) {
       this.currentTurnHasAssistantText = true;
       this.pendingModelBlockedFallback = undefined;
     }
-    streamingUI.appendAssistantDelta(event.delta);
+    streamingUI.appendAssistantDelta(delta);
 
     this.host.patchLivePane({
       mode: 'idle',
@@ -585,7 +594,11 @@ export class SessionEventHandler {
       this.host.streamingUI.flushThinkingToTranscript('idle');
     }
     this.host.streamingUI.finalizeAssistantStream();
-    if (event.content.trim().length > 0) {
+    // Malformed/provider-quirk wire records can arrive without content (the
+    // provider may omit the hook result payload — JSON serialization then
+    // drops the key). Coerce instead of crashing.
+    const content = typeof event.content === 'string' ? event.content : '';
+    if (content.trim().length > 0) {
       this.currentTurnHasAssistantText = true;
       this.pendingModelBlockedFallback = undefined;
     }

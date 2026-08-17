@@ -60,6 +60,7 @@ import {
   APIStatusError,
   isRetryableGenerateError,
 } from '#/kosong/contract/errors';
+import { generate } from '#/kosong/contract/generate';
 import type { Message } from '#/kosong/contract/message';
 import type {
   ChatProvider,
@@ -1394,4 +1395,138 @@ describe('429 wire behavior over real HTTP (no hidden SDK retry)', () => {
       });
     },
   );
+});
+
+describe('malformed anthropic stream resilience', () => {
+  it('coerces text blocks/deltas that omit `text` into empty-string deltas', async () => {
+    const provider = registry.createChatProvider({
+      protocol: 'anthropic',
+      modelName: 'claude-opus-4-6',
+      apiKey: 'sk-probe',
+    });
+    const client = sdkClient(provider) as {
+      messages: { create: unknown };
+      beta: { messages: { create: unknown } };
+    };
+    async function* malformedStream(): AsyncIterable<unknown> {
+      yield {
+        type: 'message_start',
+        message: { id: 'msg_probe', usage: { input_tokens: 3, output_tokens: 1 } },
+      };
+      // A non-compliant relay may omit `text` on the block start and on deltas.
+      yield { type: 'content_block_start', index: 0, content_block: { type: 'text' } };
+      yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta' } };
+      yield { type: 'content_block_stop', index: 0 };
+      yield {
+        type: 'message_delta',
+        delta: { stop_reason: 'end_turn' },
+        usage: { output_tokens: 1 },
+      };
+    }
+    const create = vi.fn().mockImplementation(() => Promise.resolve(malformedStream()));
+    client.messages.create = create;
+    client.beta.messages.create = create;
+
+    const parts: { type: string; text?: unknown }[] = [];
+    for await (const part of await provider.generate('', [], PROBE_HISTORY)) {
+      parts.push(part as { type: string; text?: unknown });
+    }
+
+    const textParts = parts.filter((part) => part.type === 'text');
+    expect(textParts.length).toBeGreaterThan(0);
+    for (const part of textParts) expect(part.text).toBe('');
+  });
+
+  it('contract generate() drops empty text parts but keeps tool calls intact', async () => {
+    const provider = registry.createChatProvider({
+      protocol: 'anthropic',
+      modelName: 'claude-opus-4-6',
+      apiKey: 'sk-probe',
+    });
+    const client = sdkClient(provider) as {
+      messages: { create: unknown };
+      beta: { messages: { create: unknown } };
+    };
+    async function* malformedToolStream(): AsyncIterable<unknown> {
+      yield {
+        type: 'message_start',
+        message: { id: 'msg_probe_tool', usage: { input_tokens: 3, output_tokens: 1 } },
+      };
+      // A non-compliant relay may omit `text` on the block start and on deltas.
+      yield { type: 'content_block_start', index: 0, content_block: { type: 'text' } };
+      yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta' } };
+      yield { type: 'content_block_stop', index: 0 };
+      yield {
+        type: 'content_block_start',
+        index: 1,
+        content_block: { type: 'tool_use', id: 'toolu_probe', name: 'read', input: {} },
+      };
+      yield {
+        type: 'content_block_delta',
+        index: 1,
+        delta: { type: 'input_json_delta', partial_json: '{"path":"a.txt"}' },
+      };
+      yield { type: 'content_block_stop', index: 1 };
+      yield {
+        type: 'message_delta',
+        delta: { stop_reason: 'tool_use' },
+        usage: { output_tokens: 1 },
+      };
+      yield { type: 'message_stop' };
+    }
+    const create = vi.fn().mockImplementation(() => Promise.resolve(malformedToolStream()));
+    client.messages.create = create;
+    client.beta.messages.create = create;
+
+    const { message } = await generate(provider, '', [], PROBE_HISTORY);
+
+    // The empty text part (coerced from the missing `text` payload) must not
+    // reach the final message — convertMessage would re-send it verbatim and
+    // strict Anthropic endpoints reject empty text blocks (400), aborting the
+    // tool-use loop. The tool call must assemble normally.
+    expect(message.content.filter((p) => p.type === 'text')).toEqual([]);
+    expect(message.toolCalls).toHaveLength(1);
+    expect(message.toolCalls[0]!.id).toBe('toolu_probe');
+    expect(message.toolCalls[0]!.name).toBe('read');
+    expect(message.toolCalls[0]!.arguments).toBe('{"path":"a.txt"}');
+  });
+
+  it('contract generate() keeps an all-empty response intact for downstream settleStep removal', async () => {
+    const provider = registry.createChatProvider({
+      protocol: 'anthropic',
+      modelName: 'claude-opus-4-6',
+      apiKey: 'sk-probe',
+    });
+    const client = sdkClient(provider) as {
+      messages: { create: unknown };
+      beta: { messages: { create: unknown } };
+    };
+    async function* allEmptyStream(): AsyncIterable<unknown> {
+      yield {
+        type: 'message_start',
+        message: { id: 'msg_probe_empty', usage: { input_tokens: 3, output_tokens: 1 } },
+      };
+      // A non-compliant relay may omit `text` on the block start and on deltas.
+      yield { type: 'content_block_start', index: 0, content_block: { type: 'text' } };
+      yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta' } };
+      yield { type: 'content_block_stop', index: 0 };
+      yield {
+        type: 'message_delta',
+        delta: { stop_reason: 'end_turn' },
+        usage: { output_tokens: 1 },
+      };
+      yield { type: 'message_stop' };
+    }
+    const create = vi.fn().mockImplementation(() => Promise.resolve(allEmptyStream()));
+    client.messages.create = create;
+    client.beta.messages.create = create;
+
+    // An all-empty response (no tool calls) keeps its existing flow: it is
+    // returned (not thrown as APIEmptyResponseError) so the transcript's
+    // settleStep removes the vacuous step downstream. Only empty text parts
+    // riding alongside real content or tool calls are filtered.
+    const { message } = await generate(provider, '', [], PROBE_HISTORY);
+    expect(message.content).toEqual([{ type: 'text', text: '' }]);
+    expect(message.toolCalls).toEqual([]);
+  });
 });

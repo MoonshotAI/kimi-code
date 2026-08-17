@@ -13,6 +13,10 @@ function formatHookResultTitle(event: HookResultEvent): string {
 }
 
 function formatHookResultBody(event: HookResultEvent): string {
-  const content = event.content.trim();
-  return content.length === 0 ? '(empty)' : content;
+  // Malformed/provider-quirk wire records can arrive without content (the
+  // provider may omit the hook result payload — JSON serialization then drops
+  // the key). Coerce instead of crashing.
+  const content = typeof event.content === 'string' ? event.content : '';
+  const trimmed = content.trim();
+  return trimmed.length === 0 ? '(empty)' : trimmed;
 }

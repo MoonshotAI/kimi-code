@@ -212,6 +212,21 @@ export async function generate(
   if (pendingPart !== null) {
     flushPart(message, pendingPart, toolCallIndexMap);
   }
+  // Drop vacuous text parts (empty string) from the final message: they carry
+  // nothing and convertMessage re-sends them verbatim, which strict Anthropic
+  // endpoints reject (400, "text blocks must be non-empty") — aborting a
+  // tool-use loop. Filtering after mergeInPlace keeps compliant streams (an
+  // empty block start merged with later text deltas) intact. A response that
+  // is otherwise entirely empty is left alone so its existing downstream flow
+  // (the transcript's settleStep removes the empty step) stays unchanged
+  // instead of tripping the empty-response error below.
+  if (
+    message.toolCalls.length > 0 ||
+    message.content.some((part) => part.type !== 'text' || part.text !== '')
+  ) {
+    const kept = message.content.filter((part) => !(part.type === 'text' && part.text === ''));
+    message.content.splice(0, message.content.length, ...kept);
+  }
   if (message.content.length === 0 && message.toolCalls.length === 0) {
     throw new APIEmptyResponseError(
       'The API returned an empty response (no content, no tool calls).' +

@@ -1099,12 +1099,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           case 'text':
             onResponseEvent();
             accumulate(part);
-            this.eventBus.publish({ type: 'assistant.delta', turnId, delta: part.text });
+            this.eventBus.publish({ type: 'assistant.delta', turnId, delta: part.text ?? '' });
             return;
           case 'think':
             onResponseEvent();
             accumulate(part);
-            this.eventBus.publish({ type: 'thinking.delta', turnId, delta: part.think });
+            this.eventBus.publish({ type: 'thinking.delta', turnId, delta: part.think ?? '' });
             return;
           case 'image_url':
           case 'audio_url':
