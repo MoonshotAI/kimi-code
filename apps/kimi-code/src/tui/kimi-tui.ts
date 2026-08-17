@@ -4,7 +4,7 @@ import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
-import { effectiveModelAlias, log } from '@moonshot-ai/kimi-code-sdk';
+import { effectiveModelAlias, log, sessionMediaOriginalsDir } from '@moonshot-ai/kimi-code-sdk';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -161,6 +161,7 @@ import {
   extractMediaAttachments,
   pendingImageIngestions,
   refreshExpiringImageFileRefs,
+  resolveOriginalCaptions,
   rewriteMediaPlaceholders,
   videoAttachmentIdsInText,
 } from './utils/image-placeholder';
@@ -300,6 +301,15 @@ interface SendMessageOptions {
 
 /** How long the one-shot "moved to background" footer hint stays visible. */
 const DETACH_HINT_DISPLAY_MS = 4_000;
+
+/**
+ * The session-owned originals store for compression captions, when the
+ * session's dir is known; undefined falls back to the shared temp dir.
+ */
+function sessionOriginalsDir(session: Session): string | undefined {
+  const sessionDir = session.summary?.sessionDir;
+  return sessionDir === undefined ? undefined : sessionMediaOriginalsDir(sessionDir);
+}
 
 export class KimiTUI {
   readonly harness: KimiHarness;
@@ -1486,7 +1496,14 @@ export class KimiTUI {
   ): Promise<void> {
     const knownEntryIds = new Set(this.state.transcriptEntries.map((entry) => entry.id));
     await session.promptWithSkills(
-      extraction.hasMedia ? extraction.parts : text,
+      extraction.hasMedia
+        ? resolveOriginalCaptions(
+            extraction.parts,
+            extraction.imageAttachmentIds,
+            this.imageStore,
+            sessionOriginalsDir(session),
+          )
+        : text,
       activations.map((activation) => ({ name: activation.skillName, args: activation.args })),
     );
     // The engine bundles the activations into the prompt's own message, and
@@ -1767,7 +1784,18 @@ export class KimiTUI {
         : this.streamingUI.getTurnContext().turnId;
     this.beginSessionRequest();
 
-    const sdkInput = options?.parts ?? input;
+    // Compression captions for pasted images are authored here — not at
+    // extraction — because only now is the session (and its media-originals
+    // dir) known: extraction runs before a first session exists.
+    const sdkInput =
+      options?.parts !== undefined
+        ? resolveOriginalCaptions(
+            options.parts,
+            options.imageAttachmentIds ?? [],
+            this.imageStore,
+            sessionOriginalsDir(session),
+          )
+        : input;
     const goalActive = this.state.appState.goal?.status === 'active';
     // The lease normally arrives pre-created by sendNormalUserInput (carrying
     // its exact-binding submission id). Queued dispatches and steer batches
@@ -1963,7 +1991,22 @@ export class KimiTUI {
     const stagingLease = this.staging.create(imageAttachmentIds, stagingPaths, 'user');
     const currentTurnId = this.streamingUI.getTurnContext().turnId;
     if (currentTurnId !== undefined) this.staging.bindToTurn(stagingLease, currentTurnId);
-    this.staging.trackDispatch(stagingLease, session.steer(combineSteerInput(input)), (error) => {
+    // Same dispatch-time caption resolution as sendMessageInternal — the
+    // running turn's session owns the persisted originals.
+    const resolvedInput = input.map((item) =>
+      item.parts === undefined
+        ? item
+        : {
+            ...item,
+            parts: resolveOriginalCaptions(
+              item.parts,
+              item.imageAttachmentIds ?? [],
+              this.imageStore,
+              sessionOriginalsDir(session),
+            ),
+          },
+    );
+    this.staging.trackDispatch(stagingLease, session.steer(combineSteerInput(resolvedInput)), (error) => {
       this.showError(`Failed to steer: ${formatErrorMessage(error)}`);
     });
   }
