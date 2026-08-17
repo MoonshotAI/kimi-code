@@ -604,6 +604,7 @@ export * from '#/features/dateChange/dateChangeService';
 import '#/features/dateChange/dateChangeFeature';
 export * from '#/agent/contextProjector/contextProjector';
 export * from '#/agent/contextProjector/contextProjectorService';
+export * from '#/agent/contextProjector/mediaProjection';
 export * from '#/agent/tokenCounting/tokenCounting';
 export * from '#/agent/tokenCounting/tokenCountingOps';
 export * from '#/agent/tokenCounting/tokenCountingService';
