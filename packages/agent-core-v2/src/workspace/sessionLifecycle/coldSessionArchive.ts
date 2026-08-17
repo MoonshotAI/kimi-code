@@ -31,12 +31,15 @@ import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventService } from '#/app/event/event';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
-import { liveHandlerForSession } from '#/app/workspaceLifecycle/sessionLookup';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 
 import { sessionScopeOf, workspacePersistenceScope } from './internal/addressing';
+// Relative on purpose: the `#/app/workspaceLifecycle/*` specifier fails to
+// resolve from this directory on CI's tsgo/rolldown (Linux) while resolving
+// everywhere else; relative paths bypass the package-imports mapping.
+import { liveHandlerForSession } from '../../app/workspaceLifecycle/sessionLookup';
 
 export type ColdSessionArchiveOutcome = 'updated' | 'not_found';
 
