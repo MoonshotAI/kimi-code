@@ -3,17 +3,13 @@
  * provider-valid wire messages and reports every repair through an anomaly
  * sink.
  *
- * `project` runs as a two-stage pipeline. `pairBlocks` walks the history
- * once, normalizing each message's content (tool-result facts rendered for
- * the model, blank text dropped, wholly-vacuous messages dropped, partial
- * messages skipped) and grouping tool exchanges into blocks: an exchange
- * owns its calls' results, so a displaced result attaches to its call, an
- * orphan result is dropped, and a call left open is closed with a synthetic
- * interrupted result. `flattenBlocks` serializes the blocks back to wire
- * order — results follow their owning message in call order, consecutive
- * user prompts merge into one message. `projectStrict` composes three extra
- * passes strict providers need: duplicate tool calls dropped, consecutive
- * assistants merged, leading non-user messages dropped.
+ * The default projection pairs tool calls with their results (a displaced
+ * result returns to its call, an orphan is dropped, a call left open is
+ * closed with a synthetic interrupted result), renders stored tool-result
+ * facts for the model, drops blank text and wholly-vacuous messages, skips
+ * partial messages, and merges consecutive user prompts. The strict
+ * projection adds the repairs strict providers need: duplicate tool calls
+ * dropped, consecutive assistants merged, leading non-user messages dropped.
  *
  * A history slice without any assistant message is a sizing slice (used to
  * size tool results): tool messages project like any other message instead
