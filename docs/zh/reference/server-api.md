@@ -262,11 +262,12 @@ PTY 终端接口，仅 loopback 绑定时挂载。
 | `meta.archived` | `true` / `false`（默认）/ `all` |
 | `sort` | `meta.updated_at_desc`（默认）/ `meta.updated_at_asc` / `meta.created_at_desc` |
 | `include` | 逗号分隔的附加字段组；目前支持 `git`（分支与 PR 信息，按目录去重并缓存 60 秒） |
-| `page_size` | 1–100，默认 50 |
+| `fields` | 逗号分隔的字段投影；目前仅支持 `id,archived`，每项裁剪为 `{ id, archived }`（用于全选匹配场景）。不可与 `include=git` 同传（`40001`） |
+| `page_size` | 1–100，默认 50；使用 `id,archived` 投影时上限放宽至 10000 |
 | `page_token` | 上一页返回的翻页令牌 |
 | `page` | 无状态的 1 起始页码；与 `page_token` 互斥（同传返回 `40001`） |
 
-响应每项固定包含 `workspace`、`meta`、`activity` 三组，`include=git` 时附加 `git` 组。每页额外携带 `total`，即过滤后的集合大小。翻页令牌绑定首页查询条件，中途改条件返回 `40922`。`page` 模式是跳页用的无状态替代：每次请求都是独立快照，不签发令牌，`next_page_token` 恒为 `null`。
+响应每项固定包含 `workspace`、`meta`、`activity` 三组，`include=git` 时附加 `git` 组；`fields=id,archived` 时仅返回 `{ id, archived }`。每页额外携带 `total`，即过滤后的集合大小。翻页令牌绑定首页查询条件（含投影），中途改条件返回 `40922`。`page` 模式是跳页用的无状态替代：每次请求都是独立快照，不签发令牌，`next_page_token` 恒为 `null`。
 
 ### `POST /api/v2/sessions:archive` 与 `POST /api/v2/sessions:restore`
 

@@ -129,6 +129,28 @@ function includeDomains(include: string | undefined): string[] {
     .filter((value) => value.length > 0);
 }
 
+/** The one supported item projection: `fields=id,archived` (any order) — a
+ *  lightweight ids-only shape for select-all-matching flows; only that form
+ *  gets the relaxed page_size ceiling. */
+const KNOWN_FIELDS = new Set(['id', 'archived']);
+const IDS_PROJECTION_PAGE_SIZE_MAX = 10000;
+const FULL_PAGE_SIZE_MAX = 100;
+
+function parseFields(raw: string | undefined): string[] {
+  return [
+    ...new Set(
+      (raw ?? '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0),
+    ),
+  ];
+}
+
+function isIdsProjection(fields: readonly string[]): boolean {
+  return fields.length === 2 && fields.every((field) => KNOWN_FIELDS.has(field));
+}
+
 const v2SessionsListQuerySchema = z
   .object({
     'workspace.id': repeatedParam(z.string().min(1)),
@@ -138,7 +160,8 @@ const v2SessionsListQuerySchema = z
     'meta.archived': z.enum(['true', 'false', 'all']).optional(),
     sort: v2SortSchema.optional(),
     include: z.string().optional(),
-    page_size: z.coerce.number().int().min(1).max(100).optional(),
+    fields: z.string().optional(),
+    page_size: z.coerce.number().int().min(1).max(IDS_PROJECTION_PAGE_SIZE_MAX).optional(),
     page: z.coerce.number().int().min(1).optional(),
     page_token: z.string().min(1).optional(),
   })
@@ -164,6 +187,47 @@ const v2SessionsListQuerySchema = z
         });
       }
     }
+    const fields = parseFields(value.fields);
+    for (const field of fields) {
+      if (!KNOWN_FIELDS.has(field)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `unknown field '${field}'`,
+          path: ['fields'],
+          params: { code: ErrorCode.VALIDATION_FAILED },
+        });
+      }
+    }
+    const projection = fields.length > 0 && fields.every((field) => KNOWN_FIELDS.has(field));
+    if (projection && !isIdsProjection(fields)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: "unsupported fields projection; the only supported value is 'id,archived'",
+        path: ['fields'],
+        params: { code: ErrorCode.VALIDATION_FAILED },
+      });
+    }
+    if (projection && includeDomains(value.include).includes('git')) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'include=git is not available with the ids projection',
+        path: ['include'],
+        params: { code: ErrorCode.VALIDATION_FAILED },
+      });
+    }
+    // The 100-item ceiling guards the full summary shape; the ids projection
+    // is deliberately cheap, so it alone may page much larger.
+    const pageSizeMax = projection ? IDS_PROJECTION_PAGE_SIZE_MAX : FULL_PAGE_SIZE_MAX;
+    if (value.page_size !== undefined && value.page_size > pageSizeMax) {
+      ctx.addIssue({
+        code: 'custom',
+        message: projection
+          ? `page_size must be at most ${IDS_PROJECTION_PAGE_SIZE_MAX}`
+          : `page_size must be at most ${FULL_PAGE_SIZE_MAX} without the ids projection`,
+        path: ['page_size'],
+        params: { code: ErrorCode.VALIDATION_FAILED },
+      });
+    }
   });
 
 /** Fastify delivers a repeated param as an array and a single one as a scalar. */
@@ -181,6 +245,9 @@ interface NormalizedQuery {
   readonly sort: V2Sort;
   readonly includeGit: boolean;
   readonly pageSize: number;
+  /** True when the ids projection (`fields=id,archived`) trims each item to
+   *  the lightweight select-all shape. */
+  readonly projection: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -215,8 +282,14 @@ const v2SessionSchema = z.object({
   git: v2GitDomainSchema.optional(),
 });
 
+const v2SessionIdProjectionSchema = z.object({
+  id: z.string(),
+  archived: z.boolean(),
+});
+
 const v2SessionPageSchema = z.object({
-  items: z.array(v2SessionSchema),
+  /** Full summaries, or `{id, archived}` pairs under `fields=id,archived`. */
+  items: z.array(z.union([v2SessionSchema, v2SessionIdProjectionSchema])),
   /** Filtered/sorted set size — present in both pagination modes. */
   total: z.number().int(),
   has_more: z.boolean(),
@@ -262,6 +335,7 @@ type V2BatchItemResult = z.infer<typeof v2SessionsBatchResultSchema>['results'][
 
 type V2GitDomain = z.infer<typeof v2GitDomainSchema>;
 type V2SessionWire = z.infer<typeof v2SessionSchema>;
+type V2SessionIdProjection = z.infer<typeof v2SessionIdProjectionSchema>;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -331,6 +405,9 @@ function queryFingerprint(query: NormalizedQuery): string {
     query.sort,
     query.includeGit,
     query.pageSize,
+    // The projection changes the item shape — a token minted across that
+    // boundary would silently flip shapes mid-pagination.
+    query.projection,
   ];
   return createHash('sha256').update(JSON.stringify(canonical)).digest('base64url').slice(0, 16);
 }
@@ -489,7 +566,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
         [ErrorCode.PAGE_TOKEN_MISMATCH]: {},
       },
       description:
-        'List sessions with domain-grouped metadata (workspace / meta / activity; git via include=git). Paginate with the opaque page_token (binds the first page’s query conditions) or with the stateless 1-based page parameter; every page carries total.',
+        "List sessions with domain-grouped metadata (workspace / meta / activity; git via include=git). Paginate with the opaque page_token (binds the first page’s query conditions) or with the stateless 1-based page parameter; every page carries total. fields=id,archived trims each item to the lightweight ids projection (select-all-matching flows; page_size ceiling relaxed to 10000).",
       tags: ['v2-sessions'],
     },
     async (req, reply) => {
@@ -504,6 +581,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
         sort: raw.sort ?? 'meta.updated_at_desc',
         includeGit: includeDomains(raw.include).includes('git'),
         pageSize: raw.page_size ?? DEFAULT_PAGE_SIZE,
+        projection: parseFields(raw.fields).length > 0,
       };
 
       const fingerprint = queryFingerprint(query);
@@ -594,6 +672,28 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
         raw.page === undefined && hasMore && lastServed !== undefined
           ? encodePageToken(fingerprint, sortKeyOf(query.sort)(lastServed), lastServed.id)
           : null;
+
+      // Ids projection: trim each item to {id, archived} — no workspace-root
+      // back-fill, no git domain, no per-session live lookups beyond whatever
+      // the activity filter already resolved.
+      if (query.projection) {
+        const projected: V2SessionIdProjection[] = window.map((summary) => ({
+          id: summary.id,
+          archived: summary.archived,
+        }));
+        reply.send(
+          okEnvelope(
+            {
+              items: projected,
+              total: sorted.length,
+              has_more: hasMore,
+              next_page_token: nextPageToken,
+            },
+            req.id,
+          ),
+        );
+        return;
+      }
 
       // cwd: the session's own frozen value wins; the registry back-fills
       // sessions persisted before cwd was stored; unrecoverable → null.

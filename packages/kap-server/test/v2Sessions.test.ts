@@ -342,6 +342,71 @@ describe('server /api/v2/sessions', () => {
     }
   });
 
+  it('projects items to {id, archived} with fields=id,archived (relaxed page_size ceiling)', async () => {
+    const page = await getData('?fields=id,archived&page_size=10000');
+    expect(page.total).toBe(3);
+    expect(page.items).toEqual([
+      { id: 's1', archived: false },
+      { id: 's2', archived: false },
+      { id: 's3', archived: false },
+    ]);
+
+    // The projection composes with the filters + sort, and archived flags
+    // travel with the ids (meta.archived=all includes the archived row).
+    const all = await getData('?fields=id,archived&meta.archived=all&sort=meta.updated_at_asc');
+    expect(all.items).toEqual([
+      { id: 's4', archived: true },
+      { id: 's3', archived: false },
+      { id: 's2', archived: false },
+      { id: 's1', archived: false },
+    ]);
+
+    // The relaxed ceiling only exists with the projection.
+    const full = await getError('?page_size=101');
+    expect(full.code).toBe(40001);
+    const tooBig = await getError('?fields=id,archived&page_size=10001');
+    expect(tooBig.code).toBe(40001);
+  });
+
+  it('rejects malformed fields projections (40001)', async () => {
+    // Unknown field
+    expect((await getError('?fields=id,foo')).code).toBe(40001);
+    // Known field(s) but not the one supported pair
+    expect((await getError('?fields=id')).code).toBe(40001);
+    expect((await getError('?fields=archived')).code).toBe(40001);
+    // The git domain is not projectable
+    expect((await getError('?fields=id,archived&include=git')).code).toBe(40001);
+  });
+
+  it('paginates the ids projection with an opaque cursor', async () => {
+    const page1 = await getData('?fields=id,archived&page_size=2');
+    expect(page1.items).toEqual([
+      { id: 's1', archived: false },
+      { id: 's2', archived: false },
+    ]);
+    expect(page1.has_more).toBe(true);
+
+    const page2 = await getData(
+      `?fields=id,archived&page_size=2&page_token=${page1.next_page_token}`,
+    );
+    expect(page2.items).toEqual([{ id: 's3', archived: false }]);
+    expect(page2.has_more).toBe(false);
+  });
+
+  it('binds the projection into the page_token fingerprint', async () => {
+    const full = await getData('?page_size=2');
+    // A token minted on the full shape does not continue as a projection…
+    expect(
+      (await getError(`?fields=id,archived&page_size=2&page_token=${full.next_page_token}`)).code,
+    ).toBe(40922);
+
+    // … and the reverse direction flips too.
+    const projected = await getData('?fields=id,archived&page_size=2');
+    expect((await getError(`?page_size=2&page_token=${projected.next_page_token}`)).code).toBe(
+      40922,
+    );
+  });
+
   it('paginates with an opaque cursor across pages', async () => {
     const page1 = await getData('?page_size=2');
     expect(page1.items.map((item) => item.id)).toEqual(['s1', 's2']);

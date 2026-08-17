@@ -262,11 +262,12 @@ A next-generation session query for list views — filtering, sorting, and field
 | `meta.archived` | `true` / `false` (default) / `all` |
 | `sort` | `meta.updated_at_desc` (default) / `meta.updated_at_asc` / `meta.created_at_desc` |
 | `include` | Comma-separated extra field groups; currently only `git` (branch and PR info, deduplicated per directory and cached for 60 seconds) |
-| `page_size` | 1–100, default 50 |
+| `fields` | Comma-separated item projection; currently only `id,archived`, trimming each item to `{ id, archived }` (select-all-matching flows). Not combinable with `include=git` (`40001`) |
+| `page_size` | 1–100, default 50; up to 10000 with the `id,archived` projection |
 | `page_token` | Pagination token from the previous page |
 | `page` | Stateless 1-based page number; mutually exclusive with `page_token` (`40001` when combined) |
 
-Every response item carries the `workspace`, `meta`, and `activity` groups, plus `git` when `include=git`. Every page additionally carries `total`, the size of the filtered set. The page token binds the first page's query conditions; changing them mid-pagination returns `40922`. `page` mode is a stateless alternative for jumping to arbitrary pages: every request is an independent snapshot, no token is minted, and `next_page_token` is always `null`.
+Every response item carries the `workspace`, `meta`, and `activity` groups, plus `git` when `include=git` — or just `{ id, archived }` under `fields=id,archived`. Every page additionally carries `total`, the size of the filtered set. The page token binds the first page's query conditions (including the projection); changing them mid-pagination returns `40922`. `page` mode is a stateless alternative for jumping to arbitrary pages: every request is an independent snapshot, no token is minted, and `next_page_token` is always `null`.
 
 ### `POST /api/v2/sessions:archive` and `POST /api/v2/sessions:restore`
 
