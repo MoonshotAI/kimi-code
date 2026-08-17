@@ -169,5 +169,7 @@ describe('setSessionArchivedBatch', () => {
     expect(persisted['version']).toBe(2);
     expect(typeof persisted['updatedAt']).toBe('number');
     expect(persisted['customTitle']).toBeUndefined();
+    // The v1-reader compatibility field rides the write (custom title).
+    expect(persisted['isCustomTitle']).toBe(true);
   });
 });

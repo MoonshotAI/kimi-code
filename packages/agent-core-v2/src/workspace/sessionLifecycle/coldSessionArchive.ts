@@ -25,7 +25,7 @@ import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { normalizeSessionMeta } from '#/session/sessionMetadata/sessionMetadataService';
+import { normalizeSessionMeta, encodeSessionMeta } from '#/session/sessionMetadata/sessionMetadataService';
 
 import { sessionScopeOf, workspacePersistenceScope } from './internal/addressing';
 import { SessionArchived } from './sessionLifecycleEvents';
@@ -57,8 +57,11 @@ export async function setColdSessionArchived(
   // broadcast the legacy shape and poison the read model.
   const persisted = normalizeSessionMeta(raw, sessionId);
   const archivedAt = archived ? Date.now() : undefined;
+  // Persist through the metadata service's own encoder: it double-writes
+  // `isCustomTitle` for v1 readers — without it a custom title would look
+  // replaceable to v1 and get overwritten by the next prompt.
   const nextMeta: SessionMeta = { ...persisted, archived, archivedAt };
-  await docs.set(metaScope, 'state.json', nextMeta);
+  await docs.set(metaScope, 'state.json', encodeSessionMeta(nextMeta));
   // Mirror from the AUTHORITATIVE persisted meta — the index summary can lag
   // behind it (a failed/lagging mirror), and recording the stale copy would
   // regress fresher fields (title, last prompt, timestamps) in the list API.
