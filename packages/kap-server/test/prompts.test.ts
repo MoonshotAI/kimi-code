@@ -418,9 +418,11 @@ describe('server-v2 /api/v1 prompts', () => {
   });
 
   it('discards queued bundle staging on the prompt lifecycle events', async () => {
-    const handlers: Array<(event: { type: string; promptId?: string; promptIds?: string[] }) => void> = [];
+    const handlers: Array<(event: { type: string; promptId?: string; promptIds?: string[]; activePromptId?: string }) => void> = [];
     const events = {
-      subscribe(handler: (event: { type: string; promptId?: string; promptIds?: string[] }) => void) {
+      subscribe(
+        handler: (event: { type: string; promptId?: string; promptIds?: string[]; activePromptId?: string }) => void,
+      ) {
         handlers.push(handler);
         return { dispose: vi.fn() };
       },
@@ -442,10 +444,18 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const steered = vi.fn();
     deferDiscardUntilPromptSettles(events as never, 'msg_3', steered);
-    handlers[2]!({ type: 'prompt.steered', promptIds: ['msg_other'] });
+    handlers[2]!({ type: 'prompt.steered', promptIds: ['msg_3'], activePromptId: 'msg_parent' });
     expect(steered).not.toHaveBeenCalled();
-    handlers[2]!({ type: 'prompt.steered', promptIds: ['msg_parent', 'msg_3'] });
+    handlers[2]!({ type: 'prompt.completed', promptId: 'msg_other' });
+    expect(steered).not.toHaveBeenCalled();
+    handlers[2]!({ type: 'prompt.completed', promptId: 'msg_parent' });
     expect(steered).toHaveBeenCalledTimes(1);
+
+    const unrelatedSteer = vi.fn();
+    deferDiscardUntilPromptSettles(events as never, 'msg_4', unrelatedSteer);
+    handlers[3]!({ type: 'prompt.steered', promptIds: ['msg_other'], activePromptId: 'msg_parent' });
+    handlers[3]!({ type: 'prompt.completed', promptId: 'msg_parent' });
+    expect(unrelatedSteer).not.toHaveBeenCalled();
   });
 
   it('makes the first three REST prompts available to title generation', async () => {

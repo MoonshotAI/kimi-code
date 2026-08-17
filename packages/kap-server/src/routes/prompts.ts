@@ -349,11 +349,12 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             skills: req.body.skills,
           });
           enqueued = true;
-          // Queued bundles complete media intake only when their turn pops;
-          // the result shape carries no handle, so the plain path's deferred
-          // cleanup is mirrored through the prompt lifecycle events instead.
-          if (result.state !== 'queued') await preparedMedia?.discard();
-          else deferDiscardUntilPromptSettles(resolved.events, result.prompt_id, () => preparedMedia?.discard());
+          // Staging releases only when the bundle's turn lifecycle settles
+          // (or its steer parent's): the daemon upload is the resolver's
+          // fallback when intake degraded, so it must outlive the request.
+          deferDiscardUntilPromptSettles(resolved.events, result.prompt_id, () =>
+            preparedMedia?.discard(),
+          );
           reply.send(
             okEnvelope(
               {
@@ -511,33 +512,42 @@ export function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][num
 }
 
 /**
- * Deferred media-staging cleanup for a queued bundled submission: the
- * bundle's prompt intake only runs when its turn pops (or settles), so the
- * staging upload is discarded on the matching `prompt.completed` /
- * `prompt.aborted` lifecycle event rather than eagerly at submit time. A
- * bundle steered into the active turn is consumed at steer time and the
- * engine publishes completed/aborted only for the parent, so the
- * `prompt.steered` event (matching `promptIds`) counts as its
- * intake-completion signal too. Mirrors the plain path's
- * `launched`/`completion`-raced discard, which the `promptWithSkills`
- * result shape cannot express.
+ * Deferred media-staging cleanup for a bundled submission: the daemon
+ * upload is the request-time resolver's fallback whenever intake degraded
+ * (materialization is best-effort by design), so the staging blob must
+ * outlive the bundle's request. Cleanup therefore fires only when the
+ * bundle's turn lifecycle settles (`prompt.completed` / `prompt.aborted`
+ * with the bundle's id). A bundle steered into an active turn resolves its
+ * refs during the parent's request, and the engine publishes
+ * completed/aborted only for the parent — so `prompt.steered` (matching
+ * `promptIds`) re-targets the cleanup at the parent (`activePromptId`)
+ * instead of discarding at steer time.
  */
 export function deferDiscardUntilPromptSettles(
   events: IEventService,
   promptId: string,
   discard: () => void | Promise<void>,
 ): void {
+  const watched = new Set([promptId]);
   const subscription = events.subscribe((event) => {
-    const settles =
-      ((event.type === 'prompt.completed' || event.type === 'prompt.aborted') &&
-        (event as { readonly promptId?: unknown }).promptId === promptId) ||
-      (event.type === 'prompt.steered' &&
-        (
-          (event as { readonly promptIds?: unknown }).promptIds as
-            | readonly string[]
-            | undefined
-        )?.includes(promptId) === true);
-    if (settles) {
+    if (event.type === 'prompt.steered') {
+      const steered = event as {
+        readonly promptIds?: unknown;
+        readonly activePromptId?: unknown;
+      };
+      if (
+        Array.isArray(steered.promptIds) &&
+        steered.promptIds.includes(promptId) &&
+        typeof steered.activePromptId === 'string'
+      ) {
+        watched.add(steered.activePromptId);
+      }
+      return;
+    }
+    if (
+      (event.type === 'prompt.completed' || event.type === 'prompt.aborted') &&
+      watched.has((event as { readonly promptId?: unknown }).promptId as string)
+    ) {
       subscription.dispose();
       void discard();
     }
