@@ -1,19 +1,6 @@
-/**
- * `loop` domain — the `turn.*` / delta event payloads published through
- * `IEventBus` as a turn runs. These are the loop's share of the agent event
- * stream; consumers subscribe by `type`.
- * `turn.started` additionally carries the text extracted from the turn's
- * input parts (absent when the turn opened with no text part): consumers
- * that render the user's prompt must take it from there, because the context
- * append carrying the same text is not a bus event and lands later. The
- * prompt rides the event only for displayable user origins
- * ({@link isDisplayablePromptOrigin}) — a system-triggered turn (goal
- * continuation, subagent run, cron…) has internal steering text as its input,
- * which must never surface in transcripts.
- */
-
-import type { KimiErrorPayload } from '#/_base/errors/serialize';
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import type { PromptOrigin } from '#/agent/contextMemory/types';
+import { Event2 } from '#/app/event/event2';
 import type { FinishReason } from '#/kosong/contract/provider';
 import type { ContentPart, TextPart } from '#/kosong/contract/message';
 import type { TokenUsage } from '#/kosong/contract/usage';
@@ -28,16 +15,26 @@ export type TurnInterruptReason =
   | 'filtered'
   | 'blocked';
 
-export interface TurnStartedEvent {
-  readonly type: 'turn.started';
+export interface TurnStartedPayload {
   readonly turnId: number;
   readonly origin: PromptOrigin;
   readonly prompt?: string;
 }
 
-export function turnPromptText(input: readonly ContentPart[]): string | undefined {
+export class TurnStarted extends Event2<TurnStartedPayload> {
+  static override readonly type = 'turn.started';
+  static override readonly observable = true;
+}
+export interface TurnStarted extends TurnStartedPayload {}
+
+export function turnPromptText(
+  input: readonly ContentPart[],
+  origin?: PromptOrigin,
+): string | undefined {
+  const bundledBlocks = origin?.kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0;
   const text = input
     .filter((part): part is TextPart => part.type === 'text')
+    .slice(bundledBlocks)
     .map((part) => part.text)
     .join('');
   return text.length > 0 ? text : undefined;
@@ -51,24 +48,19 @@ export function isDisplayablePromptOrigin(origin: PromptOrigin): boolean {
   );
 }
 
-export interface TurnEndedEvent {
-  readonly type: 'turn.ended';
-  readonly turnId: number;
-  readonly reason: TurnEndReason;
-  readonly error?: KimiErrorPayload;
-  readonly durationMs?: number;
-  readonly interruptReason?: TurnInterruptReason;
-}
-
-export interface TurnStepStartedEvent {
-  readonly type: 'turn.step.started';
+export interface TurnStepStartedPayload {
   readonly turnId: number;
   readonly step: number;
   readonly stepId?: string;
 }
 
-export interface TurnStepCompletedEvent {
-  readonly type: 'turn.step.completed';
+export class TurnStepStarted extends Event2<TurnStepStartedPayload> {
+  static override readonly type = 'turn.step.started';
+  static override readonly observable = true;
+}
+export interface TurnStepStarted extends TurnStepStartedPayload {}
+
+export interface TurnStepCompletedPayload {
   readonly turnId: number;
   readonly step: number;
   readonly stepId?: string;
@@ -84,8 +76,13 @@ export interface TurnStepCompletedEvent {
   readonly rawFinishReason?: string;
 }
 
-export interface TurnStepInterruptedEvent {
-  readonly type: 'turn.step.interrupted';
+export class TurnStepCompleted extends Event2<TurnStepCompletedPayload> {
+  static override readonly type = 'turn.step.completed';
+  static override readonly observable = true;
+}
+export interface TurnStepCompleted extends TurnStepCompletedPayload {}
+
+export interface TurnStepInterruptedPayload {
   readonly turnId: number;
   readonly step: number;
   readonly stepId?: string;
@@ -93,35 +90,43 @@ export interface TurnStepInterruptedEvent {
   readonly message?: string;
 }
 
-export interface AssistantDeltaEvent {
-  readonly type: 'assistant.delta';
+export class TurnStepInterrupted extends Event2<TurnStepInterruptedPayload> {
+  static override readonly type = 'turn.step.interrupted';
+  static override readonly observable = true;
+}
+export interface TurnStepInterrupted extends TurnStepInterruptedPayload {}
+
+export interface AssistantDeltaPayload {
   readonly turnId: number;
   readonly delta: string;
 }
 
-export interface ThinkingDeltaEvent {
-  readonly type: 'thinking.delta';
+export class AssistantDelta extends Event2<AssistantDeltaPayload> {
+  static override readonly type = 'assistant.delta';
+  static override readonly observable = true;
+}
+export interface AssistantDelta extends AssistantDeltaPayload {}
+
+export interface ThinkingDeltaPayload {
   readonly turnId: number;
   readonly delta: string;
 }
 
-export interface ToolCallDeltaEvent {
-  readonly type: 'tool.call.delta';
+export class ThinkingDelta extends Event2<ThinkingDeltaPayload> {
+  static override readonly type = 'thinking.delta';
+  static override readonly observable = true;
+}
+export interface ThinkingDelta extends ThinkingDeltaPayload {}
+
+export interface ToolCallDeltaPayload {
   readonly turnId: number;
   readonly toolCallId: string;
   readonly name?: string;
   readonly argumentsPart?: string;
 }
 
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'turn.started': TurnStartedEvent;
-    'turn.ended': TurnEndedEvent;
-    'turn.step.started': TurnStepStartedEvent;
-    'turn.step.completed': TurnStepCompletedEvent;
-    'turn.step.interrupted': TurnStepInterruptedEvent;
-    'assistant.delta': AssistantDeltaEvent;
-    'thinking.delta': ThinkingDeltaEvent;
-    'tool.call.delta': ToolCallDeltaEvent;
-  }
+export class ToolCallDelta extends Event2<ToolCallDeltaPayload> {
+  static override readonly type = 'tool.call.delta';
+  static override readonly observable = true;
 }
+export interface ToolCallDelta extends ToolCallDeltaPayload {}

@@ -1,15 +1,3 @@
-/**
- * `workspaceFs` domain — wire-shaped filesystem operations.
- *
- * Defines the `IWorkspaceFsService` contract — content search, content
- * grep, and git status/diff — together with the zod DTO schemas the wire
- * transports validate against. It orchestrates the os
- * `IHostFileSystem` (file IO, resolved against the workspace root) plus the
- * handler-shared `ISessionProcessRunner` (for `rg`). Workspace-scoped — one
- * instance per handler, pinned to the handler root (chdir is gone, so the
- * root never changes).
- */
-
 import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

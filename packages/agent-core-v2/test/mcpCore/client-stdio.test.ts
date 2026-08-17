@@ -5,7 +5,10 @@ import { join } from 'pathe';
 import { describe, expect, it } from 'vitest';
 
 import { Error2 } from '#/errors';
-import { mergeStdioEnv, StdioMcpClient } from '#/mcpCore/client-stdio';
+import { mergeStdioEnv, StdioMcpClient, type StdioMcpClientOptions } from '#/mcpCore/client-stdio';
+import type { McpServerStdioConfig } from '#/mcpCore/config-schema';
+import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+import { FakeRuntime } from '#/runtime/fakeRuntime';
 
 import {
   crashAfterConnectFixture,
@@ -14,11 +17,39 @@ import {
   stdioFixture,
 } from './stubs';
 
+function createClient(
+  config: McpServerStdioConfig,
+  options: Partial<StdioMcpClientOptions> = {},
+): StdioMcpClient {
+  const runtime = Object.assign(
+    new FakeRuntime(
+      { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+      { capabilities: ['process'] },
+    ),
+    { process: new HostProcessService() },
+  );
+  return new StdioMcpClient(config, {
+    runtimeResolver: {
+      _serviceBrand: undefined,
+      inspect: () => runtime,
+      acquire: () => ({
+        runtime,
+        track: (resource) => resource,
+        dispose: () => {},
+      }),
+    },
+    workspaceId: 'workspace',
+    runtimeId: 'local',
+    defaultCwd: process.cwd(),
+    ...options,
+  });
+}
+
 describe('StdioMcpClient', () => {
   it('rejects unsupported executor at construction time', () => {
     expect(
       () =>
-        new StdioMcpClient({
+        createClient({
           transport: 'stdio',
           command: 'true',
           executor: 'kaos',
@@ -29,7 +60,7 @@ describe('StdioMcpClient', () => {
 
     let thrown: unknown;
     try {
-      const client = new StdioMcpClient({ transport: 'stdio', command: 'true', executor: 'kaos' });
+      const client = createClient({ transport: 'stdio', command: 'true', executor: 'kaos' });
       void client;
     } catch (error) {
       thrown = error;
@@ -39,7 +70,7 @@ describe('StdioMcpClient', () => {
 
   it('uses defaultCwd when config.cwd is omitted', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-default-cwd-'));
-    const client = new StdioMcpClient(
+    const client = createClient(
       {
         transport: 'stdio',
         command: process.execPath,
@@ -60,8 +91,9 @@ describe('StdioMcpClient', () => {
 
   it('prefers explicit config.cwd over defaultCwd', async () => {
     const defaultCwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-default-cwd-'));
-    const configuredCwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-configured-cwd-'));
-    const client = new StdioMcpClient(
+    const configuredCwd = join(defaultCwd, 'configured');
+    mkdirSync(configuredCwd);
+    const client = createClient(
       {
         transport: 'stdio',
         command: process.execPath,
@@ -86,7 +118,7 @@ describe('StdioMcpClient', () => {
     const defaultCwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-relative-cwd-'));
     const configuredCwd = join(defaultCwd, 'tools', 'mcp');
     mkdirSync(configuredCwd, { recursive: true });
-    const client = new StdioMcpClient(
+    const client = createClient(
       {
         transport: 'stdio',
         command: process.execPath,
@@ -106,8 +138,32 @@ describe('StdioMcpClient', () => {
     }
   }, 15000);
 
+  it('allows explicit config.cwd outside defaultCwd', async () => {
+    const defaultCwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-default-cwd-'));
+    const outsideCwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-outside-cwd-'));
+    const client = createClient(
+      {
+        transport: 'stdio',
+        command: process.execPath,
+        args: [cwdStdioFixture],
+        cwd: outsideCwd,
+      },
+      { defaultCwd },
+    );
+    try {
+      await client.connect();
+      const result = await client.callTool('get_cwd', {});
+      const text = (result.content[0] as { type: 'text'; text: string }).text;
+      expect(realpathSync(text)).toBe(realpathSync(outsideCwd));
+    } finally {
+      await client.close();
+      await rm(defaultCwd, { recursive: true, force: true });
+      await rm(outsideCwd, { recursive: true, force: true });
+    }
+  }, 15000);
+
   it('connects, lists tools, and round-trips a text result', async () => {
-    const client = new StdioMcpClient({
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [stdioFixture],
@@ -134,7 +190,7 @@ describe('StdioMcpClient', () => {
   }, 15000);
 
   it('propagates server-reported isError', async () => {
-    const client = new StdioMcpClient({
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [stdioFixture],
@@ -150,7 +206,7 @@ describe('StdioMcpClient', () => {
   }, 15000);
 
   it('forwards configured env to the spawned server', async () => {
-    const client = new StdioMcpClient({
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [stdioFixture],
@@ -170,7 +226,7 @@ describe('StdioMcpClient', () => {
     const shared = `KIMI_TEST_SHARED_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     process.env[parentOnly] = 'from-parent';
     process.env[shared] = 'from-parent';
-    const client = new StdioMcpClient({
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [stdioFixture],
@@ -191,7 +247,7 @@ describe('StdioMcpClient', () => {
 
   it('captures recent stderr into a snapshot the manager can attach to errors', async () => {
     const banner = `kimi-test-stderr-${Date.now()}`;
-    const client = new StdioMcpClient({
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [stderrThenExitFixture],
@@ -206,7 +262,7 @@ describe('StdioMcpClient', () => {
   }, 15000);
 
   it('keeps the stderr buffer bounded so noisy servers cannot exhaust memory', async () => {
-    const client = new StdioMcpClient({
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [stdioFixture],
@@ -222,7 +278,7 @@ describe('StdioMcpClient', () => {
 
   it('notifies an unexpected-close listener when the child exits after connect', async () => {
     const banner = `kimi-test-crash-${Date.now()}`;
-    const client = new StdioMcpClient({
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [crashAfterConnectFixture],
@@ -247,7 +303,7 @@ describe('StdioMcpClient', () => {
 
   it('buffers an early close and replays it on listener registration', async () => {
     const banner = `kimi-test-early-${Date.now()}`;
-    const client = new StdioMcpClient({
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [crashAfterConnectFixture],
@@ -290,7 +346,7 @@ describe('StdioMcpClient', () => {
   }, 15000);
 
   it('does not fire unexpected-close when the caller closes the client itself', async () => {
-    const client = new StdioMcpClient({
+    const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [stdioFixture],

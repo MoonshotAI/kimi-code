@@ -1,26 +1,3 @@
-/**
- * `web` domain — `IWebFetchService` implementation.
- *
- * Yields the `UrlFetcher` the `FetchURL` tool uses, resolving the backend in
- * precedence order: (1) an explicit `[services.moonshot_fetch]` config
- * section with a `baseUrl` — built with its `apiKey` and/or an `oauth` ref
- * resolved through `IOAuthService.resolveTokenProvider(...)`; (2) the managed
- * Kimi OAuth provider when it carries an `oauth` ref (the state after a
- * successful Kimi login), routing fetches through the Moonshot fetch service
- * (`${provider.baseUrl}/fetch`); and (3) the built-in `LocalFetchURLProvider`,
- * so `FetchURL` keeps working without any configuration. The first two fall
- * back to the local fetcher on failure. Reads config and the managed provider
- * lazily on each `getUrlFetcher()` call so it tracks edits and login state.
- * Bound at App scope.
- *
- * Default headers split by who chose the endpoint: a `[services]` entry names
- * its own, so that path sends `agentIdentity`'s frozen `requestHeaders` — the
- * host header set with the `User-Agent` product token rewritten to the
- * configured identity — while the managed OAuth path sends the host's own
- * headers (`IBootstrapService.args.requestHeaders`) verbatim, being the
- * endpoint the session authenticated against.
- */
-
 import {
   KIMI_CODE_PROVIDER_NAME,
   kimiCodeBaseUrl,

@@ -590,6 +590,18 @@ export const WIRE_RENDERERS: RendererMap = {
     headline: () => ({ main: <Dim>swarm mode exited</Dim> }),
   },
 
+  'tower_mode.enter': {
+    tone: 'subagent',
+    label: 'tower↻',
+    headline: () => ({ main: <Dim>tower mode entered</Dim> }),
+  },
+
+  'tower_mode.exit': {
+    tone: 'subagent',
+    label: 'tower✓',
+    headline: () => ({ main: <Dim>tower mode exited</Dim> }),
+  },
+
   'goal.create': {
     tone: 'lifecycle',
     label: 'goal+',

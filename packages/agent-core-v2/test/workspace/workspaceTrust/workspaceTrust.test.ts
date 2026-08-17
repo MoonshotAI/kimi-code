@@ -1,15 +1,3 @@
-/**
- * Scenario: workspace trust — explicit trust/untrust flips persisted outside
- * the workspace, idempotency and the change event, per-root independence,
- * marker survival across a restart, and the `workspaceTrust.trusted` state
- * registration.
- *
- * Exercises the real `WorkspaceTrustService` against the real node-fs
- * `JsonAtomicDocumentStore` over a temp home. Run:
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/workspace/workspaceTrust/workspaceTrust.test.ts`.
- */
-
 import { mkdtempSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

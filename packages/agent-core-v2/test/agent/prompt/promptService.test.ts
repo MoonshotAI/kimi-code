@@ -1,29 +1,30 @@
-/**
- * Scenario: per-agent prompt scheduling and launch-failure settlement.
- *
- * Exercises `IAgentPromptService` through DI with controlled context, loop,
- * wire, compaction, and tool-execution collaborators.
- * Run: `pnpm exec vitest run packages/agent-core-v2/test/agent/prompt/promptService.test.ts`.
- */
-
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { Event } from '#/_base/event';
+import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { AgentPromptService } from '#/agent/prompt/promptService';
+import { AgentPromptService, PromptQueued } from '#/agent/prompt/promptService';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IEventBus } from '#/app/event/eventBus';
+import { IEventService } from '#/app/event/event';
 import { EventBusService } from '#/app/event/eventBusService';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
 import { createHooks } from '#/hooks';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { IWireService } from '#/wire/wire';
 
 import { stubContextMemory } from '../contextMemory/stubs';
@@ -33,6 +34,13 @@ import { registerStateServices } from '../../state/stubs';
 function message(text: string): ContextMessage {
   return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
 }
+
+const noopBlob: IAgentBlobService = {
+  _serviceBrand: undefined,
+  offloadParts: async (parts) => parts,
+  loadParts: async (parts) => parts,
+  isBlobRef: () => false,
+};
 
 function harness() {
   const disposables = new DisposableStore();
@@ -52,11 +60,22 @@ function harness() {
       reg.defineInstance(IAgentContextMemoryService, context);
       reg.defineInstance(IAgentLoopService, loop);
       reg.defineInstance(IWireService, stubWire());
+      reg.defineInstance(IAgentBlobService, noopBlob);
+      reg.define(IEventDispatcher, EventDispatcherService);
       reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+      reg.definePartialInstance(IAgentToolPolicyService, { setSessionDisabledTools: async () => {} });
       reg.defineInstance(IAgentFullCompactionService, fullCompaction);
       reg.define(IEventBus, EventBusService);
       reg.define(IAgentSystemReminderService, AgentSystemReminderService);
       reg.define(IAgentPromptService, AgentPromptService);
+      reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
+      reg.definePartialInstance(ISessionMetadata, {
+        read: async () => ({ id: 'test-session', createdAt: 0, updatedAt: 0, archived: false }),
+        update: async () => {},
+      });
+      reg.definePartialInstance(IEventService, { publish: () => {} });
+      reg.definePartialInstance(ISessionContext, { sessionId: 'test-session' });
+      reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
     }
   });
   return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction, eventBus: ix.get(IEventBus) };
@@ -82,7 +101,7 @@ describe('AgentPromptService', () => {
   it('publishes prompt.queued only for prompts that cannot launch immediately', async () => {
     const { prompt, eventBus } = harness();
     const queued: Array<{ promptId: string; queueLength: number }> = [];
-    eventBus.subscribe('prompt.queued', (e) => {
+    eventBus.subscribe(PromptQueued, (e) => {
       queued.push({ promptId: e.promptId, queueLength: e.queueLength });
     });
 
@@ -132,6 +151,33 @@ describe('AgentPromptService', () => {
     prompt.hooks.onBeforeSubmitPrompt.register('block', async (ctx, next) => { ctx.block = true; await next(); });
     const handle = await prompt.enqueue({ message: message('blocked') });
     await expect(handle.completion).resolves.toMatchObject({ state: 'blocked' });
+  });
+
+  it('delivers a blocked prompt’s compression captions right after their host message', async () => {
+    const { prompt, context } = harness();
+    prompt.hooks.onBeforeSubmitPrompt.register('block', async (ctx, next) => { ctx.block = true; await next(); });
+    const handle = await prompt.enqueue({
+      id: 'prompt-caption',
+      message: message(
+        '<system>Image compressed to fit model limits: 800x600</system>look at this',
+      ),
+    });
+    await expect(handle.completion).resolves.toMatchObject({ state: 'blocked' });
+
+    const history = context.get();
+    expect(history).toHaveLength(2);
+    expect(history[0]?.origin).toEqual({
+      kind: 'injection',
+      variant: 'image_compression',
+      ownerPromptId: 'prompt-caption',
+    });
+    expect(history[1]?.origin).toEqual({ kind: 'user' });
+    expect(history[1]?.content).toEqual([{ type: 'text', text: 'look at this' }]);
+    const captionPart = history[0]?.content[0];
+    expect(captionPart?.type).toBe('text');
+    expect((captionPart as { text: string }).text).toContain(
+      'Image compressed to fit model limits: 800x600',
+    );
   });
 
   it('settles the prompt as failed when the loop throws on launch', async () => {

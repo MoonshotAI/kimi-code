@@ -111,6 +111,13 @@ export type {
   UsageWindow,
 } from './managed-usage';
 
+export { fetchChatTitle, kimiCodeToolsUrl } from './managed-tools';
+export type {
+  FetchChatTitleError,
+  FetchChatTitleOk,
+  FetchChatTitleResult,
+} from './managed-tools';
+
 export { fetchSubmitFeedback, kimiCodeFeedbackUrl } from './managed-feedback';
 export type {
   FetchSubmitFeedbackError,
@@ -190,3 +197,6 @@ export type {
   RefreshProviderScope,
   RefreshResult,
 } from './refreshProviderModels';
+
+export type { OAuthTokenTransactionOptions } from './oauth-token-transaction';
+export { OAuthTokenTransaction } from './oauth-token-transaction';

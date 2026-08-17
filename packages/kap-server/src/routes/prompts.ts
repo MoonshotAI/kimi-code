@@ -1,10 +1,3 @@
-/**
- * `/api/v1` prompt routes — v1-compatible prompt surface backed directly by
- * the Agent-scoped `prompt` scheduler. This edge applies protocol conversion,
- * request overrides, and metadata updates while preserving the paths and wire
- * shapes from `packages/server/src/routes/prompts.ts`.
- */
-
 import { join } from 'node:path';
 
 import {
@@ -17,13 +10,14 @@ import {
   IAuthSummaryService,
   IEventService,
   IFileService,
+  ISessionMediaStore,
   ISessionMetadata,
-  parseKimiFileUrl,
   promptMetadataTextFromContentParts,
   ProfileError,
-  type ContentPart,
   type PromptHandle,
   type PromptQueueSnapshot,
+  type PromptReservation,
+  reservePrompt,
   ISessionContext,
   resumeSessionById,
   ITelemetryService,
@@ -36,6 +30,7 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../protocol/error-codes';
+import { projectPromptContentParts } from '../services/messages/messageProjection';
 import {
   promptAbortResponseSchema,
   promptListResponseSchema,
@@ -43,15 +38,16 @@ import {
   promptSteerResultSchema,
   promptSubmissionSchema,
   promptSubmitResultSchema,
-  type PromptSubmission,
 } from '../protocol/rest-prompt';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import {
   assertPromptFileRefs,
+  assertPromptSessionMediaRefs,
   contentToCoreParts,
   resolvePromptMediaFiles,
+  type PromptMediaPreparation,
 } from '../lib/promptMedia';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
@@ -86,10 +82,6 @@ const authProviderDetailsSchema = z.object({ provider_id: z.string() });
 const authModelDetailsSchema = z.object({ model_id: z.string(), provider_id: z.string() }).partial();
 
 async function resolveSession(core: Scope, sessionId: string): Promise<ISessionScopeHandle> {
-  // `resume` (not `get`) so a persisted-but-cold session — created by a previous
-  // process, by v1, or closed in this one — is loaded from disk instead of
-  // being reported as `session.not_found`. Mirrors the snapshot route. Returns
-  // `undefined` only when the session is unknown or its workspace is gone.
   const session = await resumeSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2('session.not_found', `session ${sessionId} does not exist`);
@@ -102,10 +94,6 @@ async function resolvePrompt(core: Scope, sessionId: string, agentId?: string) {
 }
 
 async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: string) {
-  // A prompt may target a forked side-channel agent (e.g. `/btw`) via
-  // `body.agent_id`. Default to `main` when absent; only `main` is
-  // auto-created — any other id must already exist (forked beforehand), or it
-  // is reported as `agent.not_found`.
   const agent =
     agentId === undefined || agentId === MAIN_AGENT_ID
       ? await ensureMainAgent(session)
@@ -122,22 +110,6 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   };
 }
 
-/**
- * Bind the resolved agent to the profile named by a prompt submission's
- * `profile` field. First-bind semantics live in the engine: a same-name
- * repeat is short-circuited here as a no-op, while an unknown name or a
- * post-bind switch is rejected by `AgentProfileService.bind` with a coded
- * `ProfileError` — this edge only maps it onto 40001. Checking anything
- * beyond the no-op shortcut here would re-introduce a check-then-act window
- * the engine guard has already closed.
- *
- * `model` falls back to the configured default inside the engine. `thinking`
- * rides along in the bind so an unsupported effort rejects atomically —
- * before any state mutation — instead of wedging the session's identity with
- * a successful bind followed by a failed `setThinking`.
- *
- * Returns true when a bind happened (i.e. `thinking` was consumed by it).
- */
 async function applyProfileSelection(
   profile: IAgentProfileService,
   profileName: string,
@@ -160,7 +132,6 @@ async function applyProfileSelection(
   }
   return true;
 }
-
 
 export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
   const listRoute = defineRoute(
@@ -200,6 +171,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.AUTH_TOKEN_UNAUTHORIZED]: { detailsSchema: authProviderDetailsSchema },
         [ErrorCode.AUTH_MODEL_NOT_RESOLVED]: { detailsSchema: authModelDetailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.PROMPT_ID_CONFLICT]: {},
         [ErrorCode.PROMPT_ALREADY_COMPLETED]: { dataSchema: z.object({ aborted: z.literal(false) }) },
       },
       description: 'Submit a prompt to a session',
@@ -208,22 +180,22 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const { session_id } = req.params;
+      let preparedMedia: PromptMediaPreparation | undefined;
+      let reservation: PromptReservation | undefined;
+      let enqueued = false;
       try {
-        // Fail fast on stale file references before anything is resolved or
-        // mutated: a bad `file_id` must not create the agent, register `main`
-        // in session metadata, or touch the session's controls.
         await assertPromptFileRefs(req.body.content, core.accessor.get(IFileService));
-        const resolved = await resolvePrompt(core, session_id, req.body.agent_id);
+        const session = await resolveSession(core, session_id);
+        await assertPromptSessionMediaRefs(
+          req.body.content,
+          session.accessor.get(ISessionMediaStore),
+        );
+        const resolved = await resolvePromptFromSession(session, req.body.agent_id);
+        reservation = reservePrompt(resolved.prompt, req.body.prompt_id);
         await resolved.auth.ensureReady();
 
-        // Media resolution runs BEFORE any control mutation, so a failed
-        // submission leaves the session's controls untouched. Prompt videos
-        // are materialized to a local copy and carried into context as an
-        // internal `kimi-file://` reference; the engine resolves them to a
-        // provider form (upload / inline / `<video path>` tag) at request
-        // time, so the edge no longer uploads.
         const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
-        const resolvedContent = await resolvePromptMediaFiles(
+        preparedMedia = await resolvePromptMediaFiles(
           req.body.content,
           core.accessor.get(IFileService),
           core.accessor.get(IBootstrapService).cacheDir,
@@ -241,8 +213,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             },
           },
         );
+        const resolvedContent = preparedMedia.content;
 
-        // Media prepared successfully — only now do the overrides bind.
         let thinkingConsumed = false;
         if (req.body.profile !== undefined) {
           thinkingConsumed =
@@ -258,8 +230,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           resolved.profile.setThinking(req.body.thinking);
         if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
         if (req.body.disabled_tools !== undefined) {
-          // A session denylist before bind throws `profile.not_bound` — map it
-          // onto 40001 like the profile-selection errors above.
           try {
             await resolved.toolPolicy.setSessionDisabledTools(req.body.disabled_tools);
           } catch (error) {
@@ -270,21 +240,29 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           }
         }
         const parts = contentToCoreParts(resolvedContent);
-        const session = await resolveSession(core, session_id);
         await applyPromptMetadataUpdate({
           metadata: session.accessor.get(ISessionMetadata),
           eventService: core.accessor.get(IEventService),
           sessionId: session_id,
         }, promptMetadataTextFromContentParts(parts));
-        const handle = await resolved.prompt.enqueue({ message: {
+        const handle = await reservation.submit({
           role: 'user',
           content: parts,
           toolCalls: [],
           origin: { kind: 'user' },
-        } });
+        });
+        enqueued = true;
+        const staging = preparedMedia;
+        void Promise.race([handle.launched, handle.completion]).then(
+          () => staging?.discard(),
+          () => staging?.discard(),
+        );
         reply.send(okEnvelope(projectPromptHandle(handle), req.id));
       } catch (error) {
+        if (!enqueued) await preparedMedia?.discard();
         sendMappedError(reply, req, error);
+      } finally {
+        reservation?.dispose();
       }
     },
   );
@@ -383,38 +361,10 @@ function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][number]) {
     prompt_id: prompt.id,
     user_message_id: prompt.userMessageId,
     status,
-    content: corePartsToProtocol(prompt.message.content),
+    content: projectPromptContentParts(prompt.message.content),
     created_at: prompt.createdAt,
   };
 }
-
-function corePartsToProtocol(content: readonly ContentPart[]): PromptSubmission['content'] {
-  const parts: PromptSubmission['content'] = [];
-  for (const part of content) {
-    if (part.type === 'text') parts.push({ type: 'text', text: part.text });
-    else if (part.type === 'image_url') {
-      const match = /^data:([^;]+);base64,(.*)$/.exec(part.imageUrl.url);
-      parts.push(match === null
-        ? { type: 'image', source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id } }
-        : { type: 'image', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
-    } else if (part.type === 'video_url') {
-      // An internal `kimi-file://<id>?path=…` reference projects back to the
-      // daemon upload it came from — the materialization path never leaks to
-      // the client.
-      const kimiFile = parseKimiFileUrl(part.videoUrl.url);
-      if (kimiFile !== undefined) {
-        parts.push({ type: 'video', source: { kind: 'file', file_id: kimiFile.fileId } });
-        continue;
-      }
-      const match = /^data:([^;]+);base64,(.*)$/.exec(part.videoUrl.url);
-      parts.push(match === null
-        ? { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } }
-        : { type: 'video', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
-    }
-  }
-  return parts;
-}
-
 
 function sendMappedError(
   reply: { send(payload: unknown): unknown },
@@ -434,6 +384,9 @@ function sendMappedError(
         return;
       case 'prompt.not_found':
         reply.send(errEnvelope(ErrorCode.PROMPT_NOT_FOUND, err.message, requestId, err.stack));
+        return;
+      case 'prompt.id_conflict':
+        reply.send(errEnvelope(ErrorCode.PROMPT_ID_CONFLICT, err.message, requestId, err.stack));
         return;
       case 'session.busy':
         reply.send(errEnvelope(ErrorCode.SESSION_BUSY, err.message, requestId, err.stack));

@@ -1,25 +1,11 @@
-/**
- * `/api/v1/debug` channel registry — the set of Services exposed over the
- * wire: the ENTIRE scoped DI registry (no whitelist), plus any Service
- * resolvable by decorator name as a fallback, so runtime-contributed units
- * (Feature `contributeService`, which bypasses the static scoped registry)
- * stay callable.
- *
- * In VS Code's `registerChannel` model a Service is registered once, keyed by
- * its decorator id (the public channel name), and from then on all of its
- * methods are reachable by reflection — the registered Service *is* the
- * public contract, shared as source with the client. There is no per-method
- * allowlist and no aggregation across Services.
- */
-
 import {
   Disposable,
   getScopedServiceDescriptors,
+  IFeatureManager,
   LifecycleScope,
-  lookupServiceDecorator,
 } from '@moonshot-ai/agent-core-v2';
 
-import type { ScopedEntry, ServiceIdentifier } from '@moonshot-ai/agent-core-v2';
+import type { Scope, ScopedEntry, ServiceIdentifier } from '@moonshot-ai/agent-core-v2';
 
 export interface ChannelMethodDescriptor {
   readonly name: string;
@@ -43,35 +29,26 @@ export interface ChannelDescriptor {
    * Registration scope — the minimal scope at which the channel resolves.
    * Derived from the scoped DI registry.
    */
-  readonly scope: 'app' | 'workspace' | 'session' | 'agent';
+  readonly scope: 'app' | 'session' | 'agent';
   /** Domain tag recorded at `registerScopedService`. */
   readonly domain: string;
   /** Public prototype members, sorted — events are instance properties and never appear. */
   readonly methods: readonly ChannelMethodDescriptor[];
 }
 
-const SCOPE_NAME: Record<LifecycleScope, ChannelDescriptor['scope']> = {
+const SCOPE_NAME: Record<string, ChannelDescriptor['scope']> = {
   [LifecycleScope.App]: 'app',
-  [LifecycleScope.Workspace]: 'workspace',
   [LifecycleScope.Session]: 'session',
   [LifecycleScope.Agent]: 'agent',
 };
 
 let serviceNameIndex: Map<string, ServiceIdentifier<unknown>> | undefined;
 
-/**
- * Wire name → identifier index over the ENTIRE scoped DI registry. The
- * decorator registry de-dupes by name, so a wire name maps to exactly one
- * identifier; a Service registered at several scopes (e.g. `logService`
- * at App + Session) resolves at its minimal scope, reachable from every
- * route form.
- */
 function scopedServiceNameIndex(): Map<string, ServiceIdentifier<unknown>> {
   serviceNameIndex ??= (() => {
     const map = new Map<string, ServiceIdentifier<unknown>>();
     for (const scope of [
       LifecycleScope.App,
-      LifecycleScope.Workspace,
       LifecycleScope.Session,
       LifecycleScope.Agent,
     ]) {
@@ -86,15 +63,19 @@ function scopedServiceNameIndex(): Map<string, ServiceIdentifier<unknown>> {
 }
 
 /** Resolve a wire name to its `ServiceIdentifier` anywhere in the DI registry. */
-export function resolveAnyScopedServiceId(name: string): ServiceIdentifier<unknown> | undefined {
-  return scopedServiceNameIndex().get(name) ?? lookupServiceDecorator(name);
+export function resolveAnyScopedServiceId(
+  core: Scope,
+  name: string,
+): ServiceIdentifier<unknown> | undefined {
+  return (
+    scopedServiceNameIndex().get(name) ??
+    core.accessor
+      .get(IFeatureManager)
+      .contributedServices()
+      .find((entry) => entry.id.toString() === name)?.id
+  );
 }
 
-/**
- * Extract the declared parameter list from a function's source text
- * (`name(a, b = 1) {` → `a, b = 1`). Handles `async` method syntax and
- * nested parens/brackets in defaults; returns '' when unparseable.
- */
 function extractParams(fn: (...args: never[]) => unknown): string {
   const src = fn.toString();
   const start = src.indexOf('(');
@@ -111,14 +92,11 @@ function extractParams(fn: (...args: never[]) => unknown): string {
   return '';
 }
 
-/** Enumerate public methods/getters by walking the ctor prototype chain. */
 function describeMethods(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctor: new (...args: any[]) => unknown,
 ): readonly ChannelMethodDescriptor[] {
   const methods = new Map<string, ChannelMethodDescriptor>();
   let proto: object | null = ctor.prototype;
-  // Stop at framework plumbing: `Disposable` (`dispose`, `_register`) and `Object`.
   while (proto !== null && proto !== Object.prototype && proto !== Disposable.prototype) {
     for (const name of Object.getOwnPropertyNames(proto)) {
       if (name === 'constructor' || name.startsWith('_') || methods.has(name)) continue;
@@ -148,12 +126,7 @@ function describeMethods(
  */
 export function describeAllChannels(): readonly ChannelDescriptor[] {
   const byName = new Map<string, ScopedEntry>();
-  for (const scope of [
-    LifecycleScope.App,
-    LifecycleScope.Workspace,
-    LifecycleScope.Session,
-    LifecycleScope.Agent,
-  ]) {
+  for (const scope of [LifecycleScope.App, LifecycleScope.Session, LifecycleScope.Agent]) {
     for (const entry of getScopedServiceDescriptors(scope)) {
       const name = entry.id.toString();
       if (!byName.has(name)) byName.set(name, entry);
@@ -162,7 +135,7 @@ export function describeAllChannels(): readonly ChannelDescriptor[] {
   return [...byName.entries()]
     .map(([name, entry]) => ({
       name,
-      scope: SCOPE_NAME[entry.scope as LifecycleScope],
+      scope: SCOPE_NAME[entry.scope] ?? 'app',
       domain: entry.domain,
       methods: describeMethods(entry.descriptor.ctor),
     }))

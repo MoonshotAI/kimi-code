@@ -1,35 +1,3 @@
-/**
- * `search/worker` — the main-process host for the search worker thread.
- *
- * The host owns the worker lifecycle and speaks the request/response
- * protocol (`protocol.ts`); to the search service it presents the same
- * surface as the inline core (`SearchIndexCore`), so the service's
- * coordinator / live route / page assembly never care which host runs the
- * index.
- *
- * Lifecycle semantics (stage 4 work items 3, 6 and 7):
- *   - lazy spawn with single-flight + backoff: the first RPC spawns the
- *     worker; spawn failures and dirty exits back off exponentially
- *     (500ms → 10s cap) instead of hot-looping, and RPCs during the backoff
- *     window fail fast with a recognizable SearchWorkerError — nothing
- *     ever falls back to running the index on the main thread implicitly
- *     (the explicit rollback switch is the `search_worker` flag);
- *   - a dirty exit rejects every in-flight request (no dangling promises),
- *     records the failure for the service's degraded state, and reaps the
- *     search-index `db.lock` — but ONLY when the lock line still carries
- *     the dead worker's own token, so a live owner's lock is never deleted
- *     (the lock file's pid is unusable for this judgment because worker
- *     threads share the main process pid);
- *   - dispose() sends `close` (the worker drains in-flight requests and
- *     tracked background ops, closes the db and exits) with terminate() as
- *     the bounded backstop.
- *
- * Entry resolution: the configured packaged asset (SEA) → the sibling
- * `entry.ts` source (dev/tests, run under Node's native type stripping plus
- * the repo-local `.js` → `.ts` resolve hook) → the bundled
- * `search-worker.mjs` sibling (packaged npm layout).
- */
-
 import fsSync from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { readFile, rm } from 'node:fs/promises';
@@ -61,15 +29,10 @@ import {
 import { getSearchWorkerRuntimeState } from './runtime';
 
 export type SearchWorkerErrorCode =
-  /** No worker entry file could be resolved in this installation. */
   | 'runtime-unavailable'
-  /** Constructor/bootstrap/handshake failure (incl. protocol mismatch). */
   | 'spawn-failed'
-  /** The worker died after a successful handshake (crash / OOM / kill). */
   | 'crashed'
-  /** A restart is backing off; the RPC failed fast without spawning. */
   | 'backoff'
-  /** The host is disposed. */
   | 'disposed';
 
 /**
@@ -107,7 +70,6 @@ export interface SearchWorkerHostOptions {
 
 interface WorkerEntryResolution {
   readonly url: URL;
-  /** File-system path for packaged entries (stat-able, absolute). */
   readonly execArgv: string[];
 }
 
@@ -115,41 +77,19 @@ type PendingRequest = {
   readonly method: SearchWorkerCallType;
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: unknown) => void;
-  /** Absent for `close` — doDispose races it against closeTimeoutMs itself. */
   readonly watchdog?: ReturnType<typeof setTimeout>;
 };
 
 const DEFAULT_READY_TIMEOUT_MS = 15_000;
 const DEFAULT_CLOSE_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OLD_SPACE_MB = 1024;
-/** A worker session that survived this long resets the crash backoff. */
 const STABLE_SESSION_MS = 60_000;
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_CAP_MS = 10_000;
-/**
- * Watchdog budgets per request. Queries and lifecycle calls are expected to
- * be bounded (the query path carries its own work budgets); sync/reindex of
- * a large corpus legitimately takes minutes, so their leash is long — the
- * watchdog exists to catch a WEDGED worker, not to police slow work.
- */
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const DEFAULT_SYNC_TIMEOUT_MS = 30 * 60_000;
-/**
- * Grace window before treating a lock line carrying THIS process's pid but
- * an unknown token as an orphan: a live sibling worker's token event rides
- * the same-process port and lands within milliseconds, so a token still
- * unknown after the window belongs to a dead worker.
- */
 const ORPHAN_LOCK_GRACE_MS = 250;
 
-/**
- * Lock tokens held by LIVE search-index holders of this process (worker
- * threads share the process pid, so the pid in a lock line cannot
- * distinguish a live holder from a dead one). Fed by the workers'
- * `lockToken` events (and by the inline backend's core) and pruned on
- * worker exit / backend dispose; the orphan-lock detector reaps a same-pid
- * lock line only when its token is NOT in this set.
- */
 const liveLockTokens = new Set<string>();
 
 /** Register a held search-index lock token (inline backend's core). */
@@ -216,8 +156,6 @@ export class SearchWorkerHost {
     if (this.spawnPromise !== null) return { state: 'opening' };
     if (this.worker === null) {
       if (this.lastFailure !== null) {
-        // Crash/spawn failure with a lazy restart pending on the next RPC
-        // (possibly still inside the backoff window): the index is unserved.
         const wait = this.nextRetryAfter - Date.now();
         return {
           state: 'degraded',
@@ -227,15 +165,10 @@ export class SearchWorkerHost {
               : `search worker restart pending (last failure: ${this.lastFailure})`,
         };
       }
-      // Never spawned: the lazy spawn fires on the first RPC.
       return { state: 'stopped' };
     }
-    // The worker is up but no response has landed yet (its first open is
-    // still in flight): the core is opening.
     return this.lastCoreLifecycle ?? { state: 'opening' };
   }
-
-  // -- backend surface ------------------------------------------------------------
 
   async ensureOpen(): Promise<SearchWorkerOpenResult> {
     return this.call('open');
@@ -269,8 +202,6 @@ export class SearchWorkerHost {
     await this.waitForExit();
   }
 
-  // -- RPC --------------------------------------------------------------------------
-
   private async call<T extends SearchWorkerCallType>(
     type: T,
     params?: unknown,
@@ -290,13 +221,6 @@ export class SearchWorkerHost {
   ): Promise<unknown> {
     const id = this.nextId++;
     return new Promise<unknown>((resolve, reject) => {
-      // Watchdog budget: `open` shares the long leash with sync/reindex — a
-      // first open over a huge corpus replays the full WAL / runs full
-      // recovery with no wall-clock budget of its own, and killing it at
-      // the short leash would discard all progress into a backoff loop.
-      // `close` gets no watchdog: doDispose races it against closeTimeoutMs,
-      // and a shorter request leash would misjudge a legitimate drain as a
-      // wedged worker.
       let watchdog: ReturnType<typeof setTimeout> | undefined;
       if (type !== 'close') {
         const timeoutMs =
@@ -377,15 +301,9 @@ export class SearchWorkerHost {
     }
     const index = (result as { index?: CoreIndexView }).index;
     if (index !== undefined) {
-      // A search response arrived at all, so the worker is serving: the page
-      // view's building/ready maps directly; a degraded MESSAGE on a serving
-      // page keeps the lifecycle 'ready' (the message rides status()'s
-      // degraded field, same as the per-page surface).
       this.lastCoreLifecycle = { state: index.state === 'building' ? 'building' : 'ready' };
     }
   }
-
-  // -- worker lifecycle --------------------------------------------------------------
 
   private ensureWorker(): Promise<void> {
     if (this.worker !== null) return Promise.resolve();
@@ -416,9 +334,6 @@ export class SearchWorkerHost {
     const source = new URL('./entry.ts', import.meta.url);
     try {
       if (fsSync.statSync(source).isFile()) {
-        // Dev/tests: run the TypeScript entry under Node's native type
-        // stripping; the repo-local resolve hook maps minidb's internal
-        // `.js` specifiers onto the on-disk `.ts` sources.
         return {
           url: source,
           execArgv: [
@@ -430,7 +345,6 @@ export class SearchWorkerHost {
         };
       }
     } catch {
-      // not a source layout — try the bundled sibling
     }
     const bundled = new URL('./search-worker.mjs', import.meta.url);
     try {
@@ -438,7 +352,6 @@ export class SearchWorkerHost {
         return { url: bundled, execArgv: [] };
       }
     } catch {
-      // fall through to the explicit failure
     }
     throw new SearchWorkerError(
       'runtime-unavailable',
@@ -447,8 +360,6 @@ export class SearchWorkerHost {
   }
 
   private async doSpawn(): Promise<void> {
-    // A previous worker's lock reaping must land before the new worker's
-    // MiniDb open evaluates the lock.
     await this.reapPromise;
     const entry = this.resolveEntry();
     const textBuild = getTextBuildWorkerRuntimeState();
@@ -482,8 +393,6 @@ export class SearchWorkerHost {
     try {
       await this.awaitReady(worker);
     } catch (error) {
-      // Never attached as current: detach without exit handling — the
-      // worker's own (late) exit event is stale-guarded in onExit.
       this.detach();
       await worker.terminate().catch(() => {});
       const message = error instanceof Error ? error.message : String(error);
@@ -492,23 +401,12 @@ export class SearchWorkerHost {
     }
     this.readyAt = Date.now();
     this.worker = worker;
-    // The failure that armed the backoff is consumed: a fresh worker starts
-    // with a clean slate so a LATER dirty exit records its own cause (the
-    // backoff counters themselves are kept for the exponential math).
     this.lastFailure = null;
-    // The cached core lifecycle belonged to the PREVIOUS worker generation:
-    // the new core has not even opened its db yet, and its first open over a
-    // large corpus can take minutes — serving the dead worker's 'ready' from
-    // the snapshot in that window would misreport the index as servable.
     this.lastCoreLifecycle = null;
     if (this.exiting) {
-      // beginClose()/dispose() landed while the handshake was in flight; the
-      // control message posted then found no worker and was dropped — forward
-      // it now so the worker-side core gates any pass about to start.
       try {
         worker.postMessage({ v: SEARCH_WORKER_PROTOCOL_VERSION, type: 'beginClose' });
       } catch {
-        // A broken channel here is settled by the exit path.
       }
     }
     this.log.info('global search: worker started', { dir: this.dir });
@@ -527,8 +425,6 @@ export class SearchWorkerHost {
   }
 
   private onMessage(worker: Worker, event: SearchWorkerEvent): void {
-    // Ignore a stale worker's late messages (it was replaced after a
-    // handshake abort; only the current worker's traffic is meaningful).
     if (this.worker !== worker) return;
     if (event === null || typeof event !== 'object') return;
     if (event.type === 'log') {
@@ -536,14 +432,11 @@ export class SearchWorkerHost {
       return;
     }
     if (event.type === 'lockToken') {
-      // The worker just acquired the write lock (posted before the heavy
-      // open work runs). Register it live so a mid-open crash leaves a
-      // reapable lock and the orphan detector never touches it.
       this.lockToken = event.token;
       liveLockTokens.add(event.token);
       return;
     }
-    if (event.type === 'ready') return; // consumed by awaitReady's one-shot listener
+    if (event.type === 'ready') return;
     if (event.type === 'result') {
       this.settleRequest(event.id, null, event.result);
       return;
@@ -560,13 +453,10 @@ export class SearchWorkerHost {
 
   private onError(worker: Worker, error: Error): void {
     if (this.worker !== worker) return;
-    // The 'exit' event follows and performs the teardown; remember the cause.
     this.lastFailure = `worker error: ${error.message}`;
   }
 
   private onExit(worker: Worker, code: number): void {
-    // A stale worker's exit must not tear down its replacement: the
-    // handshake-abort path detaches a worker BEFORE its exit event lands.
     if (this.worker !== worker) return;
     const wasExiting = this.exiting;
     const sessionMs = Date.now() - this.readyAt;
@@ -575,8 +465,6 @@ export class SearchWorkerHost {
     this.lockToken = undefined;
     if (deadToken !== undefined) liveLockTokens.delete(deadToken);
     if (this.requests.size > 0) {
-      // During a clean close the pending requests race the worker's exit —
-      // they are disposed, not crashed (the close itself already settled).
       const error = wasExiting
         ? new SearchWorkerError('disposed', 'search worker is disposed')
         : new SearchWorkerError(
@@ -589,13 +477,7 @@ export class SearchWorkerHost {
       }
       this.requests.clear();
     }
-    if (wasExiting) return; // clean close / handshake abort — no backoff, no reaping needed
-    // Dirty exit. Reap the lock the dead worker published (guarded by its
-    // token) so the replacement worker can acquire it — the pid in the lock
-    // line is useless here because worker threads share the main process
-    // pid and it stays alive.
-    // A bare kill leaves no 'error'-event message: record the exit itself so
-    // the backoff rejection and the lifecycle report can name the failure.
+    if (wasExiting) return;
     this.lastFailure ??= `worker exited with code ${code}`;
     this.reapPromise = this.reapLockFile(deadToken).finally(() => {
       this.reapPromise = null;
@@ -635,7 +517,6 @@ export class SearchWorkerHost {
         this.log.warn('global search: reaped the lock left by the dead worker', { dir: this.dir });
       }
     } catch {
-      // Unreadable or already gone — the next open re-evaluates from disk.
     }
   }
 
@@ -690,8 +571,6 @@ export class SearchWorkerHost {
     });
   }
 
-  // -- dispose -------------------------------------------------------------------------
-
   /**
    * Synchronously stop accepting new work (the service's dispose() calls
    * this before any awaiting): every later RPC fails fast with 'disposed',
@@ -704,7 +583,6 @@ export class SearchWorkerHost {
     try {
       this.worker?.postMessage({ v: SEARCH_WORKER_PROTOCOL_VERSION, type: 'beginClose' });
     } catch {
-      // A broken channel means the worker is already gone — nothing to notify.
     }
   }
 
@@ -744,12 +622,9 @@ export class SearchWorkerHost {
       if (parsed.pid !== process.pid || typeof parsed.token !== 'string') return;
       token = parsed.token;
     } catch {
-      return; // gone or unreadable — nothing to reap
+      return;
     }
-    if (liveLockTokens.has(token)) return; // a live worker of this process owns it
-    // Compare-then-delete: re-read the line right before removing it — a new
-    // owner may have replaced it since the judgment above, and deleting a
-    // live owner's lock would admit a second writer.
+    if (liveLockTokens.has(token)) return;
     try {
       const again = JSON.parse(await readFile(lockPath, 'utf8')) as {
         pid?: unknown;
@@ -758,7 +633,7 @@ export class SearchWorkerHost {
       if (again.pid !== process.pid || again.token !== token) return;
       if (liveLockTokens.has(token)) return;
     } catch {
-      return; // vanished or replaced mid-check — nothing safe to reap
+      return;
     }
     this.log.warn('global search: reaping an orphaned same-pid lock and restarting the worker', {
       dir: this.dir,
@@ -766,9 +641,6 @@ export class SearchWorkerHost {
     await rm(lockPath, { force: true }).catch(() => {});
     const worker = this.worker;
     if (worker === null) return;
-    // The current worker opened read-only because of the orphan; terminate
-    // it — the dirty-exit path (backoff, then a lazy respawn on the next
-    // RPC) brings up a writer.
     await worker.terminate().catch(() => {});
   }
 
@@ -781,16 +653,12 @@ export class SearchWorkerHost {
   private disposePromise: Promise<void> | null = null;
 
   private async doDispose(): Promise<void> {
-    // A spawn in flight must settle (successfully or not) before the close
-    // decision; a spawn that wins the race still gets closed below.
     await this.spawnPromise?.catch(() => {});
     const worker = this.worker;
     if (worker === null) return;
     const closeTimeoutMs = this.options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS;
     let timeout: ReturnType<typeof setTimeout> | null = null;
     try {
-      // The close request bypasses ensureWorker (the host is already marked
-      // exiting) but still rides the request multiplexer.
       await Promise.race([
         this.sendRequest(worker, 'close'),
         new Promise<never>((_resolve, reject) => {
@@ -801,7 +669,6 @@ export class SearchWorkerHost {
         }),
       ]);
     } catch {
-      // Drain failures and timeouts both fall through to the terminate backstop.
     } finally {
       if (timeout !== null) clearTimeout(timeout);
     }

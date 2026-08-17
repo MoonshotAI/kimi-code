@@ -90,6 +90,9 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
     showUndoLimitStatus(host, 'Nothing to undo.');
     return false;
   }
+  // When the anchor is a bundled prompt, its skill activation cards sit
+  // before it (contiguous, marked at submission/replay time) and are removed
+  // together with it.
 
   try {
     await session.undoHistory(count);
@@ -108,15 +111,43 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
   const children = host.state.transcriptContainer.children;
   const lastUserComponentIndex = findUndoAnchorComponentIndex(children, count);
   if (lastUserComponentIndex !== undefined) {
-    // Structural removal only: the container's ref-checked render cache
-    // detects the child-list change; no tree-wide invalidate needed.
-    removeUndoContextComponents(children, lastUserComponentIndex);
+    // A hook result may interleave between the bundle's cards and its prompt
+    // and survives undo in the engine, so it is skipped (kept) while the
+    // cards around it are removed. Only the contiguous marked run belongs to
+    // this submission: a standalone `/skill` card is unmarked and never
+    // swept. Structural removal only: the container's ref-checked render
+    // cache detects the child-list change; no tree-wide invalidate needed.
+    const groupChildIndices = new Set<number>();
+    for (let i = lastUserComponentIndex - 1; i >= 0; i--) {
+      const entry = getTranscriptComponentEntry(children[i]!);
+      if (entry?.bundledWithPrompt === true) {
+        groupChildIndices.add(i);
+        continue;
+      }
+      if (entry?.hookResult === true) continue;
+      break;
+    }
+    removeUndoContextComponents(children, lastUserComponentIndex, groupChildIndices);
   }
 
-  const preservedEntries = entries.slice(lastUserIndex).filter(
-    (entry) => !isUndoContextEntry(entry),
+  const groupEntryIndices = new Set<number>();
+  for (let i = lastUserIndex - 1; i >= 0; i--) {
+    const prev = entries[i];
+    if (prev?.bundledWithPrompt === true) {
+      groupEntryIndices.add(i);
+      continue;
+    }
+    if (prev?.hookResult === true) continue;
+    break;
+  }
+  const preservedEntries = entries.filter(
+    (entry, index) =>
+      !(
+        (index >= lastUserIndex || groupEntryIndices.has(index)) &&
+        isUndoContextEntry(entry)
+      ),
   );
-  entries.splice(lastUserIndex, entries.length - lastUserIndex, ...preservedEntries);
+  entries.splice(0, entries.length, ...preservedEntries);
 
   if (entries.length === 0) {
     renderWelcome(host);
@@ -393,7 +424,9 @@ function undoLimitFromError(
 function isUndoAnchorEntry(entry: TranscriptEntry): boolean {
   return (
     entry.kind === 'user' ||
-    (entry.kind === 'skill_activation' && entry.skillTrigger === 'user-slash') ||
+    (entry.kind === 'skill_activation' &&
+      entry.skillTrigger === 'user-slash' &&
+      entry.bundledWithPrompt !== true) ||
     entry.kind === 'plugin_command'
   );
 }
@@ -449,19 +482,27 @@ function findUndoAnchorComponentIndex(
 function removeUndoContextComponents(
   children: Component[],
   startIndex: number,
+  additionalIndices: ReadonlySet<number>,
 ): void {
-  for (let i = children.length - 1; i >= startIndex; i--) {
+  for (let i = children.length - 1; i >= 0; i--) {
     const child = children[i];
-    if (child !== undefined && isUndoContextComponent(child)) {
+    if (
+      child !== undefined &&
+      (i >= startIndex || additionalIndices.has(i)) &&
+      isUndoContextComponent(child)
+    ) {
       children.splice(i, 1);
     }
   }
 }
 
 function isUndoAnchorComponent(child: Component): boolean {
+  const entry = getTranscriptComponentEntry(child);
   return (
     child instanceof UserMessageComponent ||
-    (child instanceof SkillActivationComponent && child.trigger === 'user-slash') ||
+    (child instanceof SkillActivationComponent &&
+      child.trigger === 'user-slash' &&
+      entry?.bundledWithPrompt !== true) ||
     child instanceof PluginCommandComponent
   );
 }

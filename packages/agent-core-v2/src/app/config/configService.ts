@@ -1,39 +1,3 @@
-/**
- * `config` domain — `IConfigRegistry` and `IConfigService` implementations.
- *
- * Owns the section registry and the layered global config state: resolves a
- * value by precedence across defaults, the user config file, and per-run memory
- * overrides (highest, never persisted), and persists writes only for the `User`
- * target — validating the merged patch and re-validating the stripped result,
- * so a strip can never smuggle an unvalidated raw value (e.g. an env-masked
- * invalid field) to disk. Maintains five layered views of a domain — `rawSnake` (snake_case
- * write base keyed by the on-disk section key, kept for lossless round-trip),
- * `raw` (camelCase, env-free), `validated` (validated `raw`, env-free — the
- * base every live env re-application starts from and never mutates, so a
- * degraded or removed env value falls back to the file instead of a stale
- * overlay), `effective`
- * (`validated` plus the env overlay, recomputed on load/set), and `memory`
- * (per-run overrides)
- * — plus a `delivered` snapshot per domain used as the diff base for
- * `onDidSectionChange`. Reads config paths and the environment overlay through
- * `bootstrap`, persists the TOML document through the `storage` TOML
- * atomic-document store (reloading when the document changes on disk), and logs
- * through `log`. Late section / overlay registration re-validates the
- * already-loaded raw value and re-runs overlays. Section-declared key
- * `deprecations` are detected from the on-disk document on every load and
- * reported as warning diagnostics (the deprecated value is NOT applied, and
- * the file is never rewritten); env-var renames declared via a binding's
- * `deprecatedEnv` still resolve as a fallback, likewise with a warning.
- * Diagnostics changes are published through `onDidChangeDiagnostics`.
- * `ConfigRegistry` is also the
- * fold of the `ConfigSectionContribution` collection token (D12): records
- * provided by live units register sections incrementally through the same
- * path as the module drain (identical = silent, conflict = logged), and a
- * withdrawn record unregisters its section — the domain falls back to
- * unknown-section semantics, its TOML user values preserved but no longer
- * validated/effective. Bound at App scope.
- */
-
 import { type CollectionView } from '#/_base/di/collection';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
@@ -89,7 +53,6 @@ const CONFIG_SCOPE = '';
 
 type GetEnv = (name: string) => string | undefined;
 
-/** Reports a deprecated env var actually supplying a value: (oldName, newName). */
 type OnDeprecatedEnv = (oldName: string, newName: string) => void;
 
 function isEnvBinding(value: unknown): value is EnvBinding {
@@ -322,7 +285,6 @@ export class ConfigRegistry extends Disposable implements IConfigRegistry {
   }
 }
 
-// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class ConfigService extends Disposable implements IConfigService {
   declare readonly _serviceBrand: undefined;
   private readonly _onDidChangeConfiguration = this._register(new Emitter<ConfigChangedEvent>());
@@ -566,17 +528,10 @@ export class ConfigService extends Disposable implements IConfigService {
       this.log.warn('config load failed', { error: describeUnknownError(error) });
     }
     const nextRawSnake = cloneRecord(fileData);
-    // Key-deprecation warnings derive from the on-disk document, so collect
-    // them before the unchanged-file early return — the list was just cleared
-    // above and a no-op reload must not drop them.
     for (const diagnostic of collectKeyDeprecations(nextRawSnake, this.registry.listSections())) {
       this.pushDiagnostic(diagnostic);
     }
     if (source !== 'load' && JSON.stringify(nextRawSnake) === JSON.stringify(this.rawSnake)) {
-      // The file is unchanged, so values and change events stay as they are —
-      // but env-derived diagnostics (deprecated env fallbacks, overlay
-      // failures) were cleared above and must be recollected over a scratch
-      // copy, or a no-op reload would silently drop them.
       const scratch = { ...this.validated };
       this.applySectionEnvBindings(scratch, true);
       this.applyEnvOverlay(scratch);

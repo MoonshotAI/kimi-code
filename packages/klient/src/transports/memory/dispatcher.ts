@@ -2,9 +2,10 @@
  * In-process dispatcher — resolves a wire triple `(service, method, args)`
  * against a live engine scope and mirrors kap-server's dispatcher semantics
  * (reflection call, non-function members are property reads, `main` agent
- * auto-materialized via `ensureMainAgent`). Scope routing walks
- * `IWorkspaceLifecycleService` / `IAgentLifecycleService` exactly like the
- * server's `resolveScope`. Every argument, result, and event payload passes
+ * auto-materialized via `ensureMainAgent`). Scope routing resolves workspace
+ * instances through `IWorkspaceInstanceManager` and live sessions through the
+ * App `SessionManager`, matching the server's `resolveScope`. Every argument,
+ * result, and event payload passes
  * through `wireClone` (a JSON round-trip), so consumers observe
  * byte-identical data no matter whether the call crossed a socket or stayed
  * in-process — and non-serializable leaks fail early.
@@ -14,12 +15,22 @@
  */
 
 import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
-import { IWorkspaceLifecycleService } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/workspaceLifecycle';
-import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/sessionLookup';
+import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2/workspace/workspaceInstance/workspaceInstanceManager';
+import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
+import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 import { IEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
+import type {
+  FileMeta,
+  GetResult,
+  SaveOptions,
+} from '@moonshot-ai/agent-core-v2/app/file/fileService';
+import { FileErrors } from '@moonshot-ai/agent-core-v2/app/file/fileService';
+import { Error2, ErrorCodes } from '@moonshot-ai/agent-core-v2/errors';
+
+import { Readable } from 'node:stream';
 
 import type { EventSourceRef, IDisposable, ScopeRef } from '../../core/channel.js';
 import { RPCError } from '../../core/errors.js';
@@ -51,6 +62,20 @@ export interface MemoryDispatcher {
 
 const REQUEST_INVALID = 40001;
 const NOT_FOUND = 40404;
+const PROMPT_ID_CONFLICT = 40927;
+
+/**
+ * Engine file errors cross the facade as public `RPCError`s, never as the
+ * engine's raw `Error2`. The dispatcher is shared by both transports, so
+ * memory and ipc then surface the identical `NOT_FOUND` code for a stale or
+ * expired upload id.
+ */
+function rethrowFileErrorAsRpc(error: unknown): never {
+  if (error instanceof Error2 && error.code === FileErrors.codes.FILE_NOT_FOUND) {
+    throw new RPCError(NOT_FOUND, error.message, error.details);
+  }
+  throw error;
+}
 
 type ScopeKind = 'core' | 'workspace' | 'session' | 'agent';
 
@@ -59,17 +84,24 @@ interface ResolvedScope {
   readonly like: ScopeLike;
 }
 
+/** Structural view of the engine's `IFileService` used by the wire adaptation. */
+type FileServiceWireTarget = {
+  save(source: Readable, filename: string, options?: SaveOptions): Promise<FileMeta>;
+  get(fileId: string): Promise<GetResult>;
+};
+
 export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
   /** Mirrors kap-server's `resolveScope`, incl. main-agent materialization. */
   async function resolveScope(scope: ScopeRef): Promise<ResolvedScope> {
     if (scope.workspaceId !== undefined) {
-      const handler = await root.accessor
-        .get(IWorkspaceLifecycleService)
-        .handlerFor({ workspaceId: scope.workspaceId });
-      return { kind: 'workspace', like: handler };
+      const workspace = await root.accessor
+        .get(IWorkspaceInstanceManager)
+        .getOrCreate({ workspaceId: scope.workspaceId });
+      void workspace.program;
+      return { kind: 'workspace', like: root };
     }
     if (scope.sessionId === undefined) return { kind: 'core', like: root };
-    const session = getLiveSessionById(root.accessor, scope.sessionId);
+    const session = root.accessor.get(ISessionManager).get(scope.sessionId) ?? getLiveSessionById(root.accessor, scope.sessionId);
     if (session === undefined) {
       throw new RPCError(NOT_FOUND, `session not found: ${scope.sessionId}`);
     }
@@ -153,6 +185,38 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     async call(scope, service, method, args) {
       const resolved = await resolveScope(scope);
       const instance = resolveService(resolved, service);
+      // `fileService` adapts bytes ⇄ streams: the JSON wire cannot carry
+      // `save`'s Readable source or `get`'s result stream, so both cross as
+      // base64 strings (the same kind of wire adaptation as
+      // `modelResolver.generate` in `stream`).
+      if (service === 'fileService' && method === 'save') {
+        const [data, filename, options] = args as [string, string, SaveOptions | undefined];
+        const files = instance as FileServiceWireTarget;
+        try {
+          const meta = await files.save(
+            Readable.from(Buffer.from(data, 'base64')),
+            filename,
+            options,
+          );
+          return wireClone(meta);
+        } catch (error) {
+          rethrowFileErrorAsRpc(error);
+        }
+      }
+      if (service === 'fileService' && method === 'get') {
+        const [fileId] = args as [string];
+        const files = instance as FileServiceWireTarget;
+        try {
+          const { meta, stream } = await files.get(fileId);
+          const chunks: Buffer[] = [];
+          for await (const chunk of stream()) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+          }
+          return { meta: wireClone(meta), data: Buffer.concat(chunks).toString('base64') };
+        } catch (error) {
+          rethrowFileErrorAsRpc(error);
+        }
+      }
       const member = instance[method];
       if (member === undefined) {
         throw new RPCError(REQUEST_INVALID, `method not found: ${service}.${method}`);
@@ -161,8 +225,15 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
         return wireClone(member);
       }
       const clonedArgs = args.map(wireClone);
-      const result = await (member as (...a: unknown[]) => unknown).apply(instance, clonedArgs);
-      return wireClone(result);
+      try {
+        const result = await (member as (...a: unknown[]) => unknown).apply(instance, clonedArgs);
+        return wireClone(result);
+      } catch (error) {
+        if (error instanceof Error2 && error.code === ErrorCodes.PROMPT_ID_CONFLICT) {
+          throw new RPCError(PROMPT_ID_CONFLICT, error.message, error.details);
+        }
+        throw error;
+      }
     },
 
     stream(scope, service, method, args): AsyncIterable<unknown> {

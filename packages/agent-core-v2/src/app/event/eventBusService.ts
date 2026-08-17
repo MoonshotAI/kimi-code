@@ -1,30 +1,19 @@
-/**
- * `event` domain — `IEventBus` implementation.
- *
- * Delivers published events through the `Emitter` primitive: one
- * full-stream emitter for `subscribe(handler)` and a lazily-created per-type
- * emitter for `subscribe(type, handler)`, so a type with no subscribers costs
- * nothing on `publish`. `publish` fires the full stream first, then the
- * per-type emitter (if any), preserving producer order within a single
- * synchronous dispatch. Bound at Agent scope and constructed when the scope is
- * created.
- */
-
 import { type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
 
-import { type DomainEvent, type DomainEventMap, IEventBus } from './eventBus';
+import type { Event2, Event2Class } from './event2';
+import { IEventBus } from './eventBus';
 
 export class EventBusService extends Service implements IEventBus {
   declare readonly _serviceBrand: undefined;
 
-  private readonly allEmitter = this._register(new Emitter<DomainEvent>('*'));
-  private readonly perType = new Map<keyof DomainEventMap, Emitter<DomainEvent>>();
+  private readonly allEmitter = this._register(new Emitter<Event2<any>>('*'));
+  private readonly perType = new Map<string, Emitter<Event2<any>>>();
 
-  publish(event: DomainEvent): void {
+  publish(event: Event2<any>): void {
     this.allEmitter.fire(event);
     this.perType.get(event.type)?.fire(event);
   }
@@ -32,30 +21,31 @@ export class EventBusService extends Service implements IEventBus {
   listenerCounts(): { all: number; perType: Record<string, number> } {
     const perType: Record<string, number> = {};
     for (const [type, emitter] of this.perType) {
-      perType[String(type)] = emitter.listenerCount;
+      perType[type] = emitter.listenerCount;
     }
     return { all: this.allEmitter.listenerCount, perType };
   }
 
-  subscribe(handler: (event: DomainEvent) => void): IDisposable;
-  subscribe<K extends keyof DomainEventMap>(
-    type: K,
-    handler: (event: DomainEvent<K>) => void,
+  subscribe(handler: (event: Event2<any>) => void): IDisposable;
+  subscribe<P, E extends Event2<P>>(
+    cls: Event2Class<P, E>,
+    handler: (event: E) => void,
   ): IDisposable;
-  subscribe<K extends keyof DomainEventMap>(
-    typeOrHandler: K | ((event: DomainEvent) => void),
-    handler?: (event: DomainEvent<K>) => void,
+  subscribe(type: string, handler: (event: Event2<any>) => void): IDisposable;
+  subscribe(
+    typeOrHandler: string | Event2Class<any, any> | ((event: Event2<any>) => void),
+    handler?: (event: Event2<any>) => void,
   ): IDisposable {
-    if (typeof typeOrHandler === 'function') {
-      return this.allEmitter.event(typeOrHandler);
+    if (typeof typeOrHandler === 'function' && !('type' in typeOrHandler)) {
+      return this.allEmitter.event(typeOrHandler as (event: Event2<any>) => void);
     }
-    const type = typeOrHandler;
+    const type = typeof typeOrHandler === 'string' ? typeOrHandler : typeOrHandler.type;
     let emitter = this.perType.get(type);
     if (emitter === undefined) {
-      emitter = this._register(new Emitter<DomainEvent>(String(type)));
+      emitter = this._register(new Emitter<Event2<any>>(type));
       this.perType.set(type, emitter);
     }
-    return emitter.event(handler as unknown as (event: DomainEvent) => void);
+    return emitter.event(handler!);
   }
 }
 

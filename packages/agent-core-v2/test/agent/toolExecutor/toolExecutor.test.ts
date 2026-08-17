@@ -1,5 +1,4 @@
 import type { ToolCall } from '#/kosong/contract/message';
-import type { DomainEvent } from '#/app/event/eventBus';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -20,6 +19,11 @@ import type {
   BeforeToolExecuteEvent,
   ToolExecutionOutcome,
 } from '#/agent/toolExecutor/toolHooks';
+import {
+  ToolCallStarted,
+  ToolProgress,
+  ToolResultEvent,
+} from '#/agent/toolExecutor/toolExecutorEvents';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
@@ -37,12 +41,14 @@ import { registerTestAgentWireServices } from '../../wire/stubs';
 type ToolExecutorEvent =
   | { readonly type: 'tool.result'; readonly toolCallId: string; readonly result: ToolResult };
 
+type ProtocolEvent = ToolCallStarted | ToolProgress | ToolResultEvent;
+
 let disposables: DisposableStore;
 let ix: TestInstantiationService;
 let executor: IAgentToolExecutorService;
 let registry: IAgentToolRegistryService;
 let events: ToolExecutorEvent[];
-let protocolEvents: DomainEvent[];
+let protocolEvents: ProtocolEvent[];
 let telemetryEvents: TelemetryRecord[];
 let truncateForModel: IAgentToolResultTruncationService['truncateForModel'];
 
@@ -65,13 +71,13 @@ beforeEach(() => {
         truncateForModel: (input) => truncateForModel(input),
       });
       reg.defineInstance(IEventBus, {
-        publish: (event: { type: string }) => {
+        publish: (event: ProtocolEvent) => {
           if (event.type.startsWith('tool.')) {
-            protocolEvents.push(event as unknown as DomainEvent);
+            protocolEvents.push(event);
           }
         },
         subscribe: (..._args: unknown[]) => ({ dispose: () => {} }),
-      } as IEventBus);
+      } as unknown as IEventBus);
       registerLogServices(reg);
     },
     strict: true,
@@ -226,8 +232,7 @@ describe('AgentToolExecutorService', () => {
       note: '<system>Image compressed.</system>',
     });
     const protocolResult = protocolEvents.find(
-      (event): event is Extract<DomainEvent, { type: 'tool.result' }> =>
-        event.type === 'tool.result',
+      (event): event is ToolResultEvent => event.type === 'tool.result',
     );
     expect(protocolResult).toMatchObject({
       type: 'tool.result',
@@ -306,6 +311,51 @@ describe('AgentToolExecutorService', () => {
     });
   });
 
+  it('recompiles the cached args validator when a tool advertises a different schema object', async () => {
+    const inner = new TestTool('dynamic');
+    let currentSchema: Record<string, unknown> = {
+      type: 'object',
+      properties: { value: { type: 'number' } },
+      required: ['value'],
+      additionalProperties: false,
+    };
+    const tool: ExecutableTool<Record<string, unknown>> = {
+      name: inner.name,
+      description: inner.description,
+      get parameters() {
+        return currentSchema;
+      },
+      resolveExecution: (args) => inner.resolveExecution(args),
+    };
+    registry.register(tool);
+
+    const rejected = await execute([
+      toolCall('call_strict', 'dynamic', { value: 1, model: 'fast' }),
+    ]);
+
+    expect(rejected).toEqual([
+      expect.objectContaining({
+        output: expect.stringContaining('Invalid args for tool "dynamic"'),
+        isError: true,
+      }),
+    ]);
+    expect(inner.calls).toEqual([]);
+
+    currentSchema = {
+      type: 'object',
+      properties: { value: { type: 'number' }, model: { type: 'string' } },
+      required: ['value'],
+      additionalProperties: false,
+    };
+    const accepted = await execute([
+      toolCall('call_open', 'dynamic', { value: 1, model: 'fast' }),
+    ]);
+
+    expect(accepted).toEqual([expect.objectContaining({ stopTurn: false })]);
+    expect(inner.calls).toHaveLength(1);
+    expect(inner.calls[0]?.args).toEqual({ value: 1, model: 'fast' });
+  });
+
   it('routes malformed JSON args through schema validation', async () => {
     const tool = new TestTool('strict', {
       parameters: {
@@ -382,8 +432,7 @@ describe('AgentToolExecutorService', () => {
       }),
     ]);
     const toolCallEvent = protocolEvents.find(
-      (event): event is Extract<DomainEvent, { type: 'tool.call.started' }> =>
-        event.type === 'tool.call.started',
+      (event): event is ToolCallStarted => event.type === 'tool.call.started',
     );
     expect(toolCallEvent?.args).toEqual({ x: 1 });
   });
@@ -582,8 +631,18 @@ describe('AgentToolExecutorService', () => {
     await execute([toolCall('call_progress', 'progress', {})]);
 
     expect(protocolEvents.filter((event) => event.type === 'tool.progress')).toEqual([
-      { type: 'tool.progress', turnId: 0, toolCallId: 'call_progress', update: updates[0] },
-      { type: 'tool.progress', turnId: 0, toolCallId: 'call_progress', update: updates[1] },
+      expect.objectContaining({
+        type: 'tool.progress',
+        turnId: 0,
+        toolCallId: 'call_progress',
+        update: updates[0],
+      }),
+      expect.objectContaining({
+        type: 'tool.progress',
+        turnId: 0,
+        toolCallId: 'call_progress',
+        update: updates[1],
+      }),
     ]);
   });
 
@@ -984,7 +1043,7 @@ function eventTypes(): ToolExecutorEvent['type'][] {
   return events.map((event) => event.type);
 }
 
-function protocolEventTypes(): DomainEvent['type'][] {
+function protocolEventTypes(): string[] {
   return protocolEvents.map((event) => event.type);
 }
 
@@ -992,13 +1051,13 @@ function pairedToolCallIds(): { readonly calls: string[]; readonly results: stri
   return {
     calls: protocolEvents
       .filter(
-        (event): event is Extract<DomainEvent, { type: 'tool.call.started' }> =>
+        (event): event is ToolCallStarted =>
           event.type === 'tool.call.started',
       )
       .map((event) => event.toolCallId),
     results: protocolEvents
       .filter(
-        (event): event is Extract<DomainEvent, { type: 'tool.result' }> =>
+        (event): event is ToolResultEvent =>
           event.type === 'tool.result',
       )
       .map((event) => event.toolCallId),

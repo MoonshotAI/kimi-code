@@ -1,15 +1,3 @@
-/**
- * `externalHooksRunner` domain — pure hook matching/dispatch logic.
- *
- * Owns deciding *which* hooks run for an event and executing them: building
- * the event→hooks index,
- * regex matching by matcher value, de-duplication per `(cwd, command)`, and
- * spawning each matched command via the shared `runHook` spawner (which runs
- * through the App-scope `IHostProcessService` passed in by the service). Holds
- * no config/plugin state and no per-scope facts — those come in per call. Pure
- * helper module, not a scoped Service.
- */
-
 import { runHook } from '#/agent/externalHooks/runner';
 import type {
   HookBlockDecision,

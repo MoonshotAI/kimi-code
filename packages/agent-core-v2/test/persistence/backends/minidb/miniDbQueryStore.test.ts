@@ -36,8 +36,6 @@ describe('MiniDbQueryStore', () => {
   afterEach(async () => {
     disposeHost?.();
     disposeHost = undefined;
-    // The host's synchronous dispose() fires the store's async close; await it
-    // so the rm below never races a late shard close (ENOTEMPTY flake).
     await drainQueryStoreDisposals();
     await fsp.rm(homeDir, { recursive: true, force: true });
   });
@@ -133,7 +131,6 @@ describe('MiniDbQueryStore', () => {
     await expect(
       store.ensureIndex(COLLECTION, { kind: 'text', name: 'body', fields: ['body'] }),
     ).rejects.toThrow(/structural read model/);
-    // The rejected definition must not lodge a partial registration.
     await expect(
       store.ensureIndex(COLLECTION, { kind: 'text', name: 'body', fields: ['body'] }),
     ).rejects.toThrow(/structural read model/);
@@ -290,8 +287,6 @@ describe('MiniDbQueryStore', () => {
     console.log(
       `[baseline] queryStore pageByColumn ${JSON.stringify({ rows: [1000, 10000], medianMs: [small, large] })}`,
     );
-    // 10x the rows must not cost 10x the time: the ordered-column walk is
-    // O(log N + limit), not a full scan.
     expect(large).toBeLessThan(small * 10 + 100);
   }, 60_000);
 

@@ -1,8 +1,3 @@
-/**
- * `session` domain error codes — shared across the session layer
- * (`sessionLifecycle` / `sessionLegacy`).
- */
-
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 
 export const SessionErrors = {

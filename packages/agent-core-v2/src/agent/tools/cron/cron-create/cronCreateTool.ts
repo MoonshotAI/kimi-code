@@ -1,35 +1,3 @@
-/**
- * `tools` domain — `ICronCreateTool` implementation.
- *
- * CronCreateTool — schedule a prompt to be re-injected into this session
- * at a future wall-clock time, either once (`recurring: false`) or on a
- * cron cadence (`recurring: true`, the default).
- *
- * Tasks live in `ISessionCronService` (Session scope) and are persisted
- * through the App-scoped `ICronTaskPersistence` under the project's cron
- * scope, so resuming the same session reloads them and the
- * scheduler picks up where it left off (fires that fell during downtime
- * are collapsed into a single delivery with `coalescedCount`). Tasks do
- * NOT carry over into a brand-new session.
- *
- * The tool itself is pure validation + bookkeeping; the firing /
- * coalesce / jitter / persistence is delegated to `ISessionCronService`.
- * This file only knows how to:
- *
- *   1. validate the request (killswitch, cron parse, 5-year window,
- *      session cap, byte-length cap);
- *   2. add it to the service (which writes through to the store);
- *   3. report back the post-jitter `nextFireAt` and a human-readable
- *      schedule for the model's benefit;
- *   4. emit `cron_scheduled` telemetry through the service (the tool
- *      does **not** reach into `ITelemetryService` directly).
- *
- * Collaborators: `ISessionCronService` for task storage,
- * scheduling state and telemetry emission, `IAgentScopeContext` for the
- * emitting agent id, and the App-scope cron helpers for
- * expression parsing and timestamp formatting. Bound at Agent scope.
- */
-
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -50,7 +18,6 @@ import {
   type CronCreateOutput,
 } from './cron-create';
 import CRON_CREATE_DESCRIPTION from './cron-create.md?raw';
-
 
 const ONE_SHOT_MAX_FUTURE_MS = 350 * 24 * 60 * 60 * 1000;
 

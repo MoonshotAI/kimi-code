@@ -29,15 +29,19 @@ type AgentEventRegistration = EventRegistration | StreamEventRegistration;
 
 export const turnStartedEventSchema = z.object({
   type: z.literal('turn.started'),
+  time: z.number().optional(),
   turnId: z.number(),
   /** Protocol `PromptOrigin` union — mirrored as `unknown`. */
   origin: z.unknown(),
   /** The turn's extracted prompt text (present when the turn opened with a text part). */
   prompt: z.string().optional(),
+  /** The prompt record id when the turn was opened by a prompt submission. */
+  promptId: z.string().optional(),
 });
 
 export const turnEndedEventSchema = z.object({
   type: z.literal('turn.ended'),
+  time: z.number().optional(),
   turnId: z.number(),
   reason: z.enum(['completed', 'cancelled', 'failed', 'blocked']),
   /** Protocol `KimiErrorPayload` — mirrored as `unknown`. */
@@ -51,18 +55,21 @@ export const turnEndedEventSchema = z.object({
 
 export const assistantDeltaEventSchema = z.object({
   type: z.literal('assistant.delta'),
+  time: z.number().optional(),
   turnId: z.number(),
   delta: z.string(),
 });
 
 export const thinkingDeltaEventSchema = z.object({
   type: z.literal('thinking.delta'),
+  time: z.number().optional(),
   turnId: z.number(),
   delta: z.string(),
 });
 
 export const toolCallStartedEventSchema = z.object({
   type: z.literal('tool.call.started'),
+  time: z.number().optional(),
   turnId: z.number(),
   toolCallId: z.string(),
   name: z.string(),
@@ -74,6 +81,7 @@ export const toolCallStartedEventSchema = z.object({
 
 export const toolCallDeltaEventSchema = z.object({
   type: z.literal('tool.call.delta'),
+  time: z.number().optional(),
   turnId: z.number(),
   toolCallId: z.string(),
   name: z.string().optional(),
@@ -82,6 +90,7 @@ export const toolCallDeltaEventSchema = z.object({
 
 export const toolProgressEventSchema = z.object({
   type: z.literal('tool.progress'),
+  time: z.number().optional(),
   turnId: z.number(),
   toolCallId: z.string(),
   /** Protocol `ToolUpdate` — mirrored field-for-field. */
@@ -96,6 +105,7 @@ export const toolProgressEventSchema = z.object({
 
 export const toolResultEventSchema = z.object({
   type: z.literal('tool.result'),
+  time: z.number().optional(),
   turnId: z.number(),
   toolCallId: z.string(),
   output: z.unknown(),
@@ -105,6 +115,7 @@ export const toolResultEventSchema = z.object({
 
 export const promptCompletedEventSchema = z.object({
   type: z.literal('prompt.completed'),
+  time: z.number().optional(),
   promptId: z.string(),
   /** ISO 8601 datetime string on the wire. */
   finishedAt: z.string(),
@@ -113,6 +124,7 @@ export const promptCompletedEventSchema = z.object({
 
 export const promptAbortedEventSchema = z.object({
   type: z.literal('prompt.aborted'),
+  time: z.number().optional(),
   promptId: z.string(),
   /** ISO 8601 datetime string on the wire. */
   abortedAt: z.string(),
@@ -120,17 +132,20 @@ export const promptAbortedEventSchema = z.object({
 
 export const compactionStartedEventSchema = z.object({
   type: z.literal('compaction.started'),
+  time: z.number().optional(),
   trigger: z.enum(['manual', 'auto']),
   instruction: z.string().optional(),
 });
 
 export const compactionBlockedEventSchema = z.object({
   type: z.literal('compaction.blocked'),
+  time: z.number().optional(),
   turnId: z.number().optional(),
 });
 
 export const compactionCancelledEventSchema = z.object({
   type: z.literal('compaction.cancelled'),
+  time: z.number().optional(),
 });
 
 /**
@@ -141,6 +156,7 @@ export const compactionCancelledEventSchema = z.object({
  */
 export const compactionCompletedEventSchema = z.object({
   type: z.literal('compaction.completed'),
+  time: z.number().optional(),
   result: z.object({
     summary: z.string(),
     compactedCount: z.number(),
@@ -154,6 +170,7 @@ export const compactionCompletedEventSchema = z.object({
 
 /** Engine `permission.approval.requested` — not in the protocol union; loose. */
 export const permissionApprovalRequestedEventSchema = z.looseObject({
+  time: z.number().optional(),
   turnId: z.number(),
   toolCallId: z.string(),
   toolName: z.string(),
@@ -162,23 +179,27 @@ export const permissionApprovalRequestedEventSchema = z.looseObject({
 
 /** Engine `permission.approval.resolved` — not in the protocol union; loose. */
 export const permissionApprovalResolvedEventSchema = z.looseObject({
+  time: z.number().optional(),
   turnId: z.number(),
   toolCallId: z.string(),
 });
 
 /** `error` payloads carry the full `KimiErrorPayload`; kept loose. */
 export const errorEventSchema = z.looseObject({
+  time: z.number().optional(),
   message: z.string(),
 });
 
 export const warningEventSchema = z.object({
   type: z.literal('warning'),
+  time: z.number().optional(),
   message: z.string(),
   code: z.string().optional(),
 });
 
 /** `agent.status.updated` carries a wide optional status bag; kept loose. */
 export const agentStatusUpdatedEventSchema = z.looseObject({
+  time: z.number().optional(),
   phase: z.string().optional(),
 });
 

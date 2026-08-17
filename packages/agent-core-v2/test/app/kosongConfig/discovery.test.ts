@@ -1,26 +1,3 @@
-/**
- * `app/kosongConfig` discovery tests — `IProviderDiscoveryService`:
- *
- *  - `refreshProviderModels` short-circuits `modelSource: 'static'`: a scoped
- *    refresh answers `unchanged` without any I/O, and an unscoped refresh
- *    hides the static entries from the orchestrator and merges them back
- *    verbatim — the static provider, its models, and a default model pointing
- *    at them all survive;
- *  - concurrent refreshes serialize (never overlap);
- *  - custom-registry fetches carry the host `User-Agent`;
- *  - provider/model patches land in config through ONE atomic
- *    `replaceSections` transition (the persistence bridge then syncs them
- *    into the registries), merging discovered aliases into user-owned
- *    provider records, while `defaultModel` / `thinking` ride the same
- *    transition — restoring a surviving default selection and CLEARing a
- *    default (plus its thinking) whose alias the upstream dropped, never a
- *    dangling `set`;
- *  - the two-phase orchestrator host contract (removeProvider, then
- *    setConfig) never exposes a halfway-removed catalog: the registries
- *    stay untouched until the single atomic write;
- *  - the `[modelCatalog]` config section self-registers and validates.
- */
-
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -441,6 +418,87 @@ describe('refreshProviderModels write behavior', () => {
       const modelRecords = models.list();
       expect(modelRecords['my-kimi/kimi-k3']).toBeDefined();
       expect(modelRecords['my-kimi/kimi-k2']).toBeUndefined();
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('clears the subagent model pool when a refresh drops its default alias', async () => {
+    const baseUrl = 'https://api.managed.example.test/coding/v1';
+    vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'kimi-k3', context_length: 1048576, supports_reasoning: true }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { host, config, discovery } = await createHost({
+      providers: {
+        'my-kimi': { type: 'kimi', baseUrl, apiKey: 'sk-distributed-key' },
+      },
+      models: {
+        'my-kimi/kimi-k2': { provider: 'my-kimi', model: 'kimi-k2', maxContextSize: 262144 },
+      },
+      secondaryModel: {
+        defaultModel: 'my-kimi/kimi-k2',
+        models: { 'my-kimi/kimi-k2': 'fast and cheap' },
+      },
+    });
+    try {
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+
+      expect(result.changed).toEqual([
+        { provider_id: 'my-kimi', provider_name: 'my-kimi', added: 1, removed: 1 },
+      ]);
+      expect(config.get('secondaryModel')).toBeUndefined();
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('filters pool entries a refresh dropped while keeping a surviving default', async () => {
+    const baseUrl = 'https://api.managed.example.test/coding/v1';
+    vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'kimi-k3', context_length: 1048576, supports_reasoning: true }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { host, config, discovery } = await createHost({
+      providers: {
+        ...staticProviders,
+        'my-kimi': { type: 'kimi', baseUrl, apiKey: 'sk-distributed-key' },
+      },
+      models: {
+        ...staticModels,
+        'my-kimi/kimi-k2': { provider: 'my-kimi', model: 'kimi-k2', maxContextSize: 262144 },
+      },
+      secondaryModel: {
+        defaultModel: 's1',
+        models: { s1: 'static fallback', 'my-kimi/kimi-k2': 'managed' },
+      },
+    });
+    try {
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+
+      expect(result.changed).toEqual([
+        { provider_id: 'my-kimi', provider_name: 'my-kimi', added: 1, removed: 1 },
+      ]);
+      expect(config.get('secondaryModel')).toEqual({
+        defaultModel: 's1',
+        models: { s1: 'static fallback' },
+      });
     } finally {
       host.dispose();
     }

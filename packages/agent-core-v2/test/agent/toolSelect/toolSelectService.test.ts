@@ -1,27 +1,21 @@
-/**
- * Scenario: progressive tool disclosure shapes the provider-visible tool view,
- * dynamic history, selection results, executor interception, and announcements.
- *
- * Responsibilities: assert the gate contract, profile-active filtering,
- * loadable/loaded MCP settlement, and the select_tools built-in behavior.
- * Wiring: real toolSelect, registry, announcement sidecar, system reminder,
- * and hook slots with fake loop/context memory/profile/flag/event services;
- * executor tests use the real executor with telemetry and truncation stubs.
- * Run: ../../node_modules/.bin/vitest run test/toolSelect/toolSelectService.test.ts
- */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { createServices, type ServiceRegistration, type TestInstantiationService } from '#/_base/di/test';
 import { OrderedHookSlot } from '#/hooks';
-import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
+import { IEventBus } from '#/app/event/eventBus';
+import type { Event2, Event2Class } from '#/app/event/event2';
 import { IFlagService } from '#/app/flag/flag';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { UndoCut } from '#/agent/contextMemory/contextOps';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
+import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
+import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
 import {
   IAgentLoopService,
   type AfterStepContext,
@@ -31,6 +25,7 @@ import {
   type StepEnqueueOptions,
   type Turn,
 } from '#/agent/loop/loop';
+import { TurnStarted } from '#/agent/loop/turnEvents';
 import type { StepRequest } from '#/agent/loop/stepRequest';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -46,18 +41,22 @@ import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/too
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
-import { DYNAMIC_TOOL_SCHEMA_VARIANT, LOADABLE_TOOLS_TRIGGER } from '#/agent/toolSelect/dynamicTools';
+import { DYNAMIC_TOOL_SCHEMA_VARIANT, LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
 import { TOOL_SELECT_FLAG_ID } from '#/agent/toolSelect/flag';
 import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import { AgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncementsService';
+import { IAgentToolSelectSchemasService } from '#/agent/toolSelect/toolSelectSchemas';
+import { AgentToolSelectSchemasService } from '#/agent/toolSelect/toolSelectSchemasService';
 import { AgentToolSelectService } from '#/agent/toolSelect/toolSelectService';
 import { SelectToolsTool } from '#/agent/tools/select-tools/selectToolsTool';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IWireService } from '#/wire/wire';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry } from '../../app/telemetry/stubs';
 import { registerStateServices } from '../../state/stubs';
-import { stubToolExecutor } from '../loop/stubs';
+import { stubToolExecutor, stubWire } from '../loop/stubs';
 import { registerToolResultTruncationServices } from '../toolResultTruncation/stubs';
 
 const MCP_ALPHA = 'mcp__srv__alpha';
@@ -170,39 +169,37 @@ class EchoTool implements ExecutableTool<Record<string, unknown>> {
 
 class RecordingEventBus implements IEventBus {
   readonly _serviceBrand = undefined;
-  private readonly typedHandlers = new Map<string, Array<(event: DomainEvent) => void>>();
-  private readonly allHandlers: Array<(event: DomainEvent) => void> = [];
-  readonly published: DomainEvent[] = [];
+  private readonly typedHandlers = new Map<string, Array<(event: Event2) => void>>();
+  private readonly allHandlers: Array<(event: Event2) => void> = [];
+  readonly published: Event2[] = [];
 
-  publish(event: DomainEvent): void {
+  publish(event: Event2): void {
     this.published.push(event);
     for (const handler of this.allHandlers) handler(event);
     for (const handler of this.typedHandlers.get(event.type) ?? []) handler(event);
   }
 
   subscribe(
-    typeOrHandler: string | ((event: DomainEvent) => void),
-    maybeHandler?: (event: DomainEvent) => void,
+    typeOrHandler: string | Event2Class | ((event: Event2) => void),
+    maybeHandler?: (event: Event2) => void,
   ) {
-    if (typeof typeOrHandler === 'function') {
-      this.allHandlers.push(typeOrHandler);
+    if (typeof typeOrHandler === 'function' && !('type' in typeOrHandler)) {
+      const handler = typeOrHandler as (event: Event2) => void;
+      this.allHandlers.push(handler);
       return toDisposable(() => {
-        const index = this.allHandlers.indexOf(typeOrHandler);
+        const index = this.allHandlers.indexOf(handler);
         if (index >= 0) this.allHandlers.splice(index, 1);
       });
     }
-    const list = this.typedHandlers.get(typeOrHandler) ?? [];
+    const type = typeof typeOrHandler === 'string' ? typeOrHandler : (typeOrHandler as Event2Class).type;
+    const list = this.typedHandlers.get(type) ?? [];
     const handler = maybeHandler!;
     list.push(handler);
-    this.typedHandlers.set(typeOrHandler, list);
+    this.typedHandlers.set(type, list);
     return toDisposable(() => {
       const index = list.indexOf(handler);
       if (index >= 0) list.splice(index, 1);
     });
-  }
-
-  emit(type: string, payload: Record<string, unknown> = {}): void {
-    this.publish({ type, ...payload } as DomainEvent);
   }
 }
 
@@ -213,6 +210,8 @@ class FakeLoopService implements IAgentLoopService {
     onWillBeginStep: new OrderedHookSlot<BeforeStepContext>(),
     onDidFinishStep: new OrderedHookSlot<AfterStepContext>(),
   };
+
+  cancelFromUser(): void {}
 
   enqueue(_request: StepRequest, _options?: StepEnqueueOptions): EnqueueReceipt {
     throw new Error('unused in this suite');
@@ -262,6 +261,10 @@ class FakeContextMemory implements IAgentContextMemoryService {
     throw new Error('unused in this suite');
   }
 
+  publishTrailingRemoval(): boolean {
+    return false;
+  }
+
   clear(): void {
     this.history.length = 0;
     this.appended.length = 0;
@@ -285,7 +288,7 @@ class FakeContextMemory implements IAgentContextMemoryService {
       role: 'user',
       content: [{ type: 'text', text: `<system-reminder>\n${content.trim()}\n</system-reminder>` }],
       toolCalls: [],
-      origin: { kind: 'system_trigger', name: LOADABLE_TOOLS_TRIGGER },
+      origin: { kind: 'system_trigger', name: LOADABLE_TOOLS_VARIANT },
     });
   }
 }
@@ -319,15 +322,26 @@ function registerSharedServices(
   reg.definePartialInstance(IFlagService, {
     enabled: (id: string) => (id === TOOL_SELECT_FLAG_ID ? flagEnabled : false),
   });
+  reg.defineInstance(IWireService, stubWire());
+  reg.defineInstance(IEventDispatcher, {
+    _serviceBrand: undefined,
+    hooks: { onDidRestore: new OrderedHookSlot() },
+    dispatch: async (event: Event2) => {
+      eventBus.publish(event);
+    },
+  } as unknown as IEventDispatcher);
+  reg.define(IAgentContextInjectorService, AgentContextInjectorService);
   reg.define(IAgentToolRegistryService, AgentToolRegistryService);
   reg.define(IAgentToolSelectService, AgentToolSelectService);
   reg.define(IAgentToolSelectAnnouncementsService, AgentToolSelectAnnouncementsService);
+  reg.define(IAgentToolSelectSchemasService, AgentToolSelectSchemasService);
   reg.define(IAgentSystemReminderService, AgentSystemReminderService);
   registerLogServices(reg);
 }
 
 function mountAnnouncements(ix: TestInstantiationService): void {
   ix.get(IAgentToolSelectAnnouncementsService);
+  ix.get(IAgentToolSelectSchemasService);
 }
 
 function createHarness(): Harness {
@@ -382,8 +396,10 @@ function createExecutorHarness(): ExecutorHarness {
   };
 }
 
-function registerMcp(h: Harness, tool: StubMcpTool): void {
-  disposables.add(h.registry.register(tool, { source: 'mcp' }));
+function registerMcp(h: Harness, tool: StubMcpTool): IDisposable {
+  const registration = h.registry.register(tool, { source: 'mcp' });
+  disposables.add(registration);
+  return registration;
 }
 
 function registerBuiltin(h: Harness, tool: EchoTool): void {
@@ -400,25 +416,62 @@ function registerUser(
   return registration;
 }
 
+function announcementText(message: ContextMessage): string {
+  return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}
+
+function isNewAnnouncement(message: ContextMessage): boolean {
+  return message.origin?.kind === 'injection' && message.origin.variant === LOADABLE_TOOLS_VARIANT;
+}
+
 async function announce(h: Harness, step = 1): Promise<string | undefined> {
   const before = h.contextMemory.appended.length;
   await h.loop.hooks.onWillBeginStep.run({
     turnId: 1,
     step,
+    firstStepOfTurn: step === 1,
     signal: new AbortController().signal,
   });
-  const announcement = h.contextMemory.appended
-    .slice(before)
-    .find(
-      (message) =>
-        message.origin?.kind === 'system_trigger' &&
-        message.origin.name === LOADABLE_TOOLS_TRIGGER,
-    );
+  const announcement = h.contextMemory.appended.slice(before).find(isNewAnnouncement);
   h.contextMemory.landAppended();
   if (announcement === undefined) return undefined;
-  return announcement.content
-    .map((part) => (part.type === 'text' ? part.text : ''))
-    .join('');
+  return announcementText(announcement);
+}
+
+async function announceAfterCompaction(h: Harness): Promise<string | undefined> {
+  h.eventBus.publish(
+    new ContextSpliced({
+      start: 0,
+      deleteCount: 1,
+      messages: [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Compacted summary.' }],
+          toolCalls: [],
+          origin: { kind: 'compaction_summary' },
+        },
+      ],
+    }),
+  );
+  return announce(h, 99);
+}
+
+async function declareSchemas(h: Harness, step = 1): Promise<ContextMessage | undefined> {
+  const before = h.contextMemory.appended.length;
+  await h.loop.hooks.onWillBeginStep.run({
+    turnId: 1,
+    step,
+    firstStepOfTurn: step === 1,
+    signal: new AbortController().signal,
+  });
+  const fresh = h.contextMemory.appended.splice(before);
+  const declared = fresh.find(
+    (message) =>
+      message.origin?.kind === 'injection' &&
+      message.origin.variant === DYNAMIC_TOOL_SCHEMA_VARIANT,
+  );
+  if (declared !== undefined) h.contextMemory.history.push(declared);
+  return declared;
 }
 
 async function execute(
@@ -678,7 +731,7 @@ describe('AgentToolSelectService.load', () => {
     flagEnabled = true;
   });
 
-  it('settles per name: toLoad, alreadyAvailable, unknown', () => {
+  it('settles per name: toLoad, alreadyAvailable, unknown', async () => {
     const h = createHarness();
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
     registerMcp(h, new StubMcpTool(MCP_BETA));
@@ -689,14 +742,14 @@ describe('AgentToolSelectService.load', () => {
     expect(result.alreadyAvailable).toEqual([MCP_ALPHA]);
     expect(result.unknown).toEqual([MCP_GONE]);
 
-    expect(h.contextMemory.appended).toHaveLength(1);
-    const appended = h.contextMemory.appended[0]!;
-    expect(appended.role).toBe('system');
-    expect(appended.tools?.map((tool) => tool.name)).toEqual([MCP_BETA]);
-    expect(appended.origin).toEqual({ kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT });
+    expect(h.contextMemory.appended).toHaveLength(0);
+    const declared = await declareSchemas(h);
+    expect(declared?.role).toBe('system');
+    expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_BETA]);
+    expect(declared?.origin).toEqual({ kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT });
   });
 
-  it('loads the schema of an opted-in user tool', () => {
+  it('loads the schema of an opted-in user tool', async () => {
     const h = createHarness();
     registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
 
@@ -705,24 +758,34 @@ describe('AgentToolSelectService.load', () => {
       alreadyAvailable: [],
       unknown: [],
     });
-    expect(h.contextMemory.appended[0]?.tools?.map((tool) => tool.name)).toEqual([
-      USER_DEFERRED,
-    ]);
+    const declared = await declareSchemas(h);
+    expect(declared?.tools?.map((tool) => tool.name)).toEqual([USER_DEFERRED]);
   });
 
-  it('sorts the injected schemas by name', () => {
+  it('sorts the declared schemas by name', async () => {
     const h = createHarness();
     registerMcp(h, new StubMcpTool(MCP_BETA));
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
 
     h.sut.load([MCP_BETA, MCP_ALPHA]);
-    expect(h.contextMemory.appended[0]!.tools?.map((tool) => tool.name)).toEqual([
-      MCP_ALPHA,
-      MCP_BETA,
-    ]);
+    const declared = await declareSchemas(h);
+    expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA, MCP_BETA]);
   });
 
-  it('reports names filtered out by the profile as unknown', () => {
+  it('declares a selected schema after its MCP tool reconnects before a later boundary', async () => {
+    const h = createHarness();
+    const registration = registerMcp(h, new StubMcpTool(MCP_ALPHA));
+
+    expect(h.sut.load([MCP_ALPHA]).toLoad).toEqual([MCP_ALPHA]);
+    registration.dispose();
+    expect(await declareSchemas(h)).toBeUndefined();
+
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+    const declared = await declareSchemas(h, 2);
+    expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
+  });
+
+  it('reports names filtered out by the profile as unknown', async () => {
     const h = createHarness();
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
     registerMcp(h, new StubMcpTool(MCP_BETA));
@@ -731,9 +794,11 @@ describe('AgentToolSelectService.load', () => {
     const result = h.sut.load([MCP_ALPHA, MCP_BETA]);
     expect(result.toLoad).toEqual([MCP_ALPHA]);
     expect(result.unknown).toEqual([MCP_BETA]);
+    const declared = await declareSchemas(h);
+    expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
   });
 
-  it('pending ledger leads the history inside the defer window', () => {
+  it('pending ledger leads the history inside the defer window', async () => {
     const h = createHarness();
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
 
@@ -743,7 +808,7 @@ describe('AgentToolSelectService.load', () => {
     expect(reselect.alreadyAvailable).toEqual([MCP_ALPHA]);
     expect(reselect.toLoad).toEqual([]);
 
-    h.contextMemory.landAppended();
+    await declareSchemas(h);
     const afterLanding = h.sut.load([MCP_ALPHA]);
     expect(afterLanding.alreadyAvailable).toEqual([MCP_ALPHA]);
   });
@@ -753,8 +818,11 @@ describe('AgentToolSelectService.load', () => {
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
 
     h.sut.load([MCP_ALPHA]);
-    h.contextMemory.appended.length = 0;
-    h.eventBus.emit('compaction.completed');
+    h.eventBus.publish(
+      new CompactionCompleted({
+        result: { summary: '', compactedCount: 0, tokensBefore: 0, tokensAfter: 0 },
+      }),
+    );
     expect(h.sut.load([MCP_ALPHA]).toLoad).toEqual([MCP_ALPHA]);
   });
 
@@ -763,25 +831,42 @@ describe('AgentToolSelectService.load', () => {
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
 
     h.sut.load([MCP_ALPHA]);
-    h.contextMemory.appended.length = 0;
-    h.eventBus.emit('context.spliced', { start: 0, deleteCount: 2, messages: [] });
+    h.eventBus.publish(new ContextSpliced({ start: 0, deleteCount: 2, messages: [] }));
     expect(h.sut.load([MCP_ALPHA]).toLoad).toEqual([MCP_ALPHA]);
   });
 
-  it('reconciles the pending ledger with history when a mid-history splice removes schema messages', () => {
+  it('keeps the pending ledger across a compaction replacement splice', async () => {
+    const h = createHarness();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+
+    h.sut.load([MCP_ALPHA]);
+    h.eventBus.publish(
+      new ContextSpliced({
+        start: 0,
+        deleteCount: 2,
+        messages: [userMessage('Compacted summary.')],
+      }),
+    );
+
+    expect(h.sut.load([MCP_ALPHA]).alreadyAvailable).toEqual([MCP_ALPHA]);
+    const declared = await declareSchemas(h);
+    expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
+  });
+
+  it('reconciles the pending ledger with history when a mid-history splice removes schema messages', async () => {
     const h = createHarness();
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
     registerMcp(h, new StubMcpTool(MCP_BETA));
 
     h.sut.load([MCP_ALPHA]);
-    h.contextMemory.landAppended();
+    await declareSchemas(h);
     h.sut.load([MCP_BETA]);
-    h.contextMemory.landAppended();
+    await declareSchemas(h, 2);
     expect(h.sut.load([MCP_ALPHA]).alreadyAvailable).toEqual([MCP_ALPHA]);
     expect(h.sut.load([MCP_BETA]).alreadyAvailable).toEqual([MCP_BETA]);
 
     h.contextMemory.history.splice(1, 1);
-    h.eventBus.emit('context.spliced', { start: 1, deleteCount: 2, messages: [] });
+    h.eventBus.publish(new ContextSpliced({ start: 1, deleteCount: 2, messages: [] }));
 
     expect(h.sut.load([MCP_ALPHA]).alreadyAvailable).toEqual([MCP_ALPHA]);
     expect(h.sut.load([MCP_BETA]).toLoad).toEqual([MCP_BETA]);
@@ -792,7 +877,9 @@ describe('AgentToolSelectService.load', () => {
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
 
     h.sut.load([MCP_ALPHA]);
-    h.eventBus.emit('context.spliced', { start: 3, deleteCount: 0, messages: [userMessage('x')] });
+    h.eventBus.publish(
+      new ContextSpliced({ start: 3, deleteCount: 0, messages: [userMessage('x')] }),
+    );
     expect(h.sut.load([MCP_ALPHA]).alreadyAvailable).toEqual([MCP_ALPHA]);
   });
 
@@ -984,7 +1071,7 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
     registerMcp(h, new StubMcpTool(MCP_GAMMA));
     expect(await announce(h, 2)).toBeUndefined();
 
-    h.eventBus.emit('turn.started');
+    h.eventBus.publish(new TurnStarted({ turnId: 99, origin: { kind: 'user' } }));
     const diff = await announce(h);
     expect(diff).toContain(`<tools_added>\n${MCP_GAMMA}\n</tools_added>`);
   });
@@ -999,7 +1086,7 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
 
     betaRegistration.dispose();
     registerMcp(h, new StubMcpTool(MCP_GAMMA));
-    h.eventBus.emit('turn.started');
+    h.eventBus.publish(new TurnStarted({ turnId: 99, origin: { kind: 'user' } }));
 
     const diff = await announce(h);
     expect(diff).toContain(`<tools_added>\n${MCP_GAMMA}\n</tools_added>`);
@@ -1015,9 +1102,7 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
     expect(await announce(h, 2)).toBeUndefined();
 
     h.contextMemory.clear();
-    h.eventBus.emit('compaction.completed');
-
-    const reannounced = await announce(h, 2);
+    const reannounced = await announceAfterCompaction(h);
     expect(reannounced).toContain(`<tools_added>\n${MCP_ALPHA}\n${MCP_BETA}\n</tools_added>`);
   });
 
