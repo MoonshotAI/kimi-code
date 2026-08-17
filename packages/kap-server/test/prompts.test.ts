@@ -20,7 +20,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
-import { projectPromptSnapshot } from '../src/routes/prompts';
+import { deferDiscardUntilPromptSettles, projectPromptSnapshot } from '../src/routes/prompts';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
@@ -400,6 +400,45 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const session = getLiveSessionById(server!.core.accessor, id);
     expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
+  });
+
+  it('rejects a bundled prompt_id combination before any override or agent materialization', async () => {
+    const id = await createSession(home as string);
+
+    const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'Review this change.' }],
+      permission_mode: 'yolo',
+      prompt_id: 'submission-1',
+      skills: [{ name: 'update-config' }],
+    });
+    expect(submitted.body.code).toBe(40001);
+
+    const session = getLiveSessionById(server!.core.accessor, id);
+    expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
+  });
+
+  it('discards queued bundle staging on the prompt lifecycle events', async () => {
+    const handlers: Array<(event: { type: string; promptId?: string }) => void> = [];
+    const events = {
+      subscribe(handler: (event: { type: string; promptId?: string }) => void) {
+        handlers.push(handler);
+        return { dispose: vi.fn() };
+      },
+    };
+    const discard = vi.fn();
+    deferDiscardUntilPromptSettles(events as never, 'msg_1', discard);
+
+    handlers[0]!({ type: 'prompt.completed', promptId: 'msg_other' });
+    expect(discard).not.toHaveBeenCalled();
+    handlers[0]!({ type: 'turn.started' });
+    expect(discard).not.toHaveBeenCalled();
+    handlers[0]!({ type: 'prompt.completed', promptId: 'msg_1' });
+    expect(discard).toHaveBeenCalledTimes(1);
+
+    const second = vi.fn();
+    deferDiscardUntilPromptSettles(events as never, 'msg_2', second);
+    handlers[1]!({ type: 'prompt.aborted', promptId: 'msg_2' });
+    expect(second).toHaveBeenCalledTimes(1);
   });
 
   it('makes the first three REST prompts available to title generation', async () => {

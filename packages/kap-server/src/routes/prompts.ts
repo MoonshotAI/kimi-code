@@ -123,6 +123,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   return {
     prompt: agent.accessor.get(IAgentPromptService),
     skill: agent.accessor.get(IAgentSkillService),
+    events: agent.accessor.get(IEventService),
     auth: agent.accessor.get(IAuthSummaryService),
     profile: agent.accessor.get(IAgentProfileService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
@@ -259,6 +260,15 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         // bundle cannot even mutate session metadata by registering `main`.
         const session = await resolveSession(core, session_id);
         if (req.body.skills !== undefined) {
+          // A bundled submission goes through the engine's own enqueue path,
+          // which assigns the prompt id — reject the combination here, before
+          // the agent is materialized or any override binds.
+          if (req.body.prompt_id !== undefined) {
+            throw new Error2(
+              ErrorCodes.REQUEST_INVALID,
+              'prompt_id cannot be combined with a bundled skill submission',
+            );
+          }
           await assertActivatableSkills(
             session.accessor.get(ISessionSkillCatalog),
             req.body.skills,
@@ -329,16 +339,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         }
         const parts = contentToCoreParts(resolvedContent);
         if (req.body.skills !== undefined) {
-          // Bundled submissions go through the engine's own enqueue path,
-          // which assigns the prompt id — a client-chosen prompt_id cannot be
-          // honored here, so the combination is rejected explicitly instead
-          // of being silently ignored.
-          if (req.body.prompt_id !== undefined) {
-            throw new Error2(
-              ErrorCodes.REQUEST_INVALID,
-              'prompt_id cannot be combined with a bundled skill submission',
-            );
-          }
           // Bundled skill submission: the engine validates every skill up
           // front, records one activation event per skill, and enqueues a
           // single user message (rendered skill blocks first, then the
@@ -349,10 +349,11 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             skills: req.body.skills,
           });
           enqueued = true;
-          // Queued bundles complete media intake only when their turn pops,
-          // which this edge cannot observe through the result shape; launched
-          // (or hook-blocked) bundles are safe to release now.
+          // Queued bundles complete media intake only when their turn pops;
+          // the result shape carries no handle, so the plain path's deferred
+          // cleanup is mirrored through the prompt lifecycle events instead.
           if (result.state !== 'queued') await preparedMedia?.discard();
+          else deferDiscardUntilPromptSettles(resolved.events, result.prompt_id, () => preparedMedia?.discard());
           reply.send(
             okEnvelope(
               {
@@ -507,6 +508,30 @@ export function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][num
     content: projectPromptContentParts(content),
     created_at: prompt.createdAt,
   };
+}
+
+/**
+ * Deferred media-staging cleanup for a queued bundled submission: the
+ * bundle's prompt intake only runs when its turn pops (or settles), so the
+ * staging upload is discarded on the matching `prompt.completed` /
+ * `prompt.aborted` lifecycle event rather than eagerly at submit time.
+ * Mirrors the plain path's `launched`/`completion`-raced discard, which the
+ * `promptWithSkills` result shape cannot express.
+ */
+export function deferDiscardUntilPromptSettles(
+  events: IEventService,
+  promptId: string,
+  discard: () => void | Promise<void>,
+): void {
+  const subscription = events.subscribe((event) => {
+    if (
+      (event.type === 'prompt.completed' || event.type === 'prompt.aborted') &&
+      (event as { readonly promptId?: unknown }).promptId === promptId
+    ) {
+      subscription.dispose();
+      void discard();
+    }
+  });
 }
 
 
