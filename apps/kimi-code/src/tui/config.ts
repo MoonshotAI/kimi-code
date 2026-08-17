@@ -258,7 +258,7 @@ theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | c
 render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math in assistant messages as raw source
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = ${String(config.cacheExpiryHint !== false)} # false disables the "cache expired" dialog on resume / idle submit
-thinking_live_display = "${config.thinkingLiveDisplay ?? 'preview'}" # "preview" scrolls the last lines while thinking streams; "stats" shows ~tokens and elapsed time
+thinking_live_display = "${config.thinkingLiveDisplay ?? 'preview'}" # "preview" scrolls the last lines while thinking streams; "stats" shows the elapsed time
 
 [editor]
 command = "${escapeTomlBasicString(config.editorCommand ?? '')}" # Empty uses $VISUAL / $EDITOR

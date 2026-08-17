@@ -91,16 +91,31 @@ describe('ThinkingComponent', () => {
     }
   });
 
-  it('shows approx tokens and elapsed time instead of content in live stats mode', () => {
+  it('shows only the elapsed time instead of content in live stats mode', () => {
     const component = new ThinkingComponent(longThinking, true, { mode: 'live', liveDisplay: 'stats' });
     const out = strip(component.render(80).join('\n'));
 
-    expect(out).toContain('⠋ thinking...');
-    // longThinking is 41 chars → ceil(41 / 4) = 11 approximate tokens.
-    expect(out).toContain('~11 tokens');
-    expect(out).toContain('0s');
+    expect(out).toContain('⠋ thinking... (0s)');
+    expect(out).not.toContain('tokens');
     expect(out).not.toContain('line6');
     expect(out).not.toContain('line7');
+  });
+
+  it('reveals the streaming tail on expand in live stats mode, like preview mode', () => {
+    const component = new ThinkingComponent(longThinking, true, { mode: 'live', liveDisplay: 'stats' });
+
+    component.setExpanded(true);
+    const expanded = strip(component.render(80).join('\n'));
+    expect(expanded).toContain('⠋ thinking...');
+    expect(expanded).not.toContain('(0s)');
+    expect(expanded).not.toContain('line5');
+    expect(expanded).toContain('line6');
+    expect(expanded).toContain('line7');
+
+    component.setExpanded(false);
+    const collapsed = strip(component.render(80).join('\n'));
+    expect(collapsed).toContain('thinking... (0s)');
+    expect(collapsed).not.toContain('line7');
   });
 
   it('ticks the elapsed time in live stats mode', () => {
@@ -176,7 +191,7 @@ describe('ThinkingComponent', () => {
     expect(out).not.toContain('line1');
   });
 
-  it('omits the elapsed time from the untimed live stats line', () => {
+  it('omits the stats from the untimed live line', () => {
     const component = new ThinkingComponent('working it out', true, {
       mode: 'live',
       liveDisplay: 'stats',
@@ -184,8 +199,9 @@ describe('ThinkingComponent', () => {
     });
 
     const out = strip(component.render(80).join('\n'));
-    // 'working it out' is 14 chars → ceil(14 / 4) = 4 approximate tokens.
-    expect(out).toContain('thinking... (~4 tokens)');
-    expect(out).not.toContain('0s');
+    expect(out).toContain('⠋ thinking...');
+    expect(out).not.toContain('(0s)');
+    expect(out).not.toContain('tokens');
+    expect(out).not.toContain('working it out');
   });
 });

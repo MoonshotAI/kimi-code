@@ -5,9 +5,9 @@
  * Supports expand/collapse via Ctrl+O (shared with tool output).
  *
  * The live display has two modes (tui.toml `thinking_live_display`):
- * 'preview' scrolls the last few streamed lines; 'stats' hides the text and
- * shows an approximate token count plus the elapsed thinking time instead,
- * leaving a one-line "Thought for …" summary once thinking finishes.
+ * 'preview' scrolls the last few streamed lines; 'stats' shows just the
+ * elapsed thinking time, leaving a one-line "Thought for …" summary once
+ * thinking finishes (ctrl+o reveals the streaming text in both modes).
  * Replayed thinking has no persisted duration, so untimed blocks fall back
  * to a plain "Thought for a while" summary instead of a fabricated 0s.
  */
@@ -24,7 +24,6 @@ import {
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
-import { formatTokenCount } from '#/utils/usage/usage-format';
 
 export type ThinkingRenderMode = 'live' | 'finalized';
 
@@ -133,16 +132,13 @@ export class ThinkingComponent implements Component {
         'textDim',
         `${BRAILLE_SPINNER_FRAMES[this.spinnerFrame] ?? BRAILLE_SPINNER_FRAMES[0]} `,
       );
-      if (this.liveDisplay === 'stats') {
-        // No tokenizer is available to the client, and reasoning-token usage
-        // only arrives at step end — so the live count is a chars/4 estimate.
-        const approxTokens = Math.ceil(this.text.length / 4);
-        const tokens = `~${formatTokenCount(approxTokens)} tokens`;
-        const stats = this.timed
-          ? `(${tokens} · ${formatThinkingDuration(Math.floor((Date.now() - this.startedAt) / 1000))})`
-          : `(${tokens})`;
-        rendered = ['', spinner + currentTheme.fg('textDim', `thinking... ${stats}`)];
+      if (this.liveDisplay === 'stats' && !this.expanded) {
+        const label = this.timed
+          ? `thinking... (${formatThinkingDuration(Math.floor((Date.now() - this.startedAt) / 1000))})`
+          : 'thinking...';
+        rendered = ['', spinner + currentTheme.fg('textDim', label)];
       } else {
+        // Preview tail — also the expanded view of a live stats block (ctrl+o).
         const visibleLines =
           contentLines.length > THINKING_PREVIEW_LINES
             ? contentLines.slice(contentLines.length - THINKING_PREVIEW_LINES)
