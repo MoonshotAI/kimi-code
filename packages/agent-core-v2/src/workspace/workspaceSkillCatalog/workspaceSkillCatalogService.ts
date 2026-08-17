@@ -1,24 +1,6 @@
-/**
- * `workspaceSkillCatalog` domain — `IWorkspaceSkillCatalog`
- * implementation.
- *
- * Merges builtin, user, explicit, extra, workspace-root, and plugin skill
- * sources by priority ONCE per handler, serializing refreshes for each
- * source; afterwards a source's `onDidChange` (fs watch / config section /
- * plugin reload) re-scans that source alone and re-fires the merged change
- * event — no full rescan ever leaves the build-time load. The merged view is
- * shared by every session of the handler through the
- * `ISessionSkillCatalogData` seed (`sessionData()`), a live read view over
- * this service. The plain-data state (`contributions`, `merged`) is
- * registered into `workspaceState` (`IWorkspaceStateService`) and
- * read/written through it. Bound at Workspace scope.
- */
-
-import { Service } from '#/_base/di/service';
+import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import type { ISkillSource, SkillContribution } from '#/app/skillCatalog/skillSource';
@@ -41,7 +23,7 @@ export const workspaceSkillCatalogMergedKey = defineState<InMemorySkillCatalog>(
   () => new InMemorySkillCatalog(),
 );
 
-export class WorkspaceSkillCatalogService extends Service implements IWorkspaceSkillCatalog {
+export class WorkspaceSkillCatalogService extends Disposable implements IWorkspaceSkillCatalog {
   declare readonly _serviceBrand: undefined;
 
   private readonly sources: readonly ISkillSource[];
@@ -60,8 +42,8 @@ export class WorkspaceSkillCatalogService extends Service implements IWorkspaceS
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
   ) {
     super();
-    this.states.register(workspaceSkillCatalogContributionsKey);
-    this.states.register(workspaceSkillCatalogMergedKey);
+    this.states.contributeState(workspaceSkillCatalogContributionsKey);
+    this.states.contributeState(workspaceSkillCatalogMergedKey);
     this.sources = [builtin, user, explicit, extra, workspace, plugin].toSorted(
       (a, b) => a.priority - b.priority,
     );
@@ -98,6 +80,10 @@ export class WorkspaceSkillCatalogService extends Service implements IWorkspaceS
   async reload(): Promise<void> {
     await this.loadAll();
     this.onDidChangeEmitter.fire('catalog');
+  }
+
+  async reloadSources(ids: readonly string[]): Promise<void> {
+    await Promise.all(ids.map((id) => this.reloadSource(id)));
   }
 
   async load(): Promise<void> {
@@ -161,10 +147,3 @@ export class WorkspaceSkillCatalogService extends Service implements IWorkspaceS
   }
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceSkillCatalog,
-  WorkspaceSkillCatalogService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceSkillCatalog',
-);

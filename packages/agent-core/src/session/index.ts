@@ -29,9 +29,12 @@ import { makeErrorPayload } from '../errors';
 import {
   McpConnectionManager,
   McpOAuthService,
+  canonicalMcpOAuthResource,
   resolveMcpStartupTimeoutMs,
   resolveMcpToolTimeoutMs,
+  type McpRegistryEntry,
   type McpServerEntry,
+  type McpOAuthEvent,
   type SessionMcpConfig,
 } from '../mcp';
 import type { EnabledPluginSessionStart, EnabledPluginSystemPrompt, PluginCommandDef } from '../plugin';
@@ -89,6 +92,20 @@ export interface SessionOptions {
   readonly skills?: SessionSkillConfig;
   readonly agents?: SessionAgentCatalogConfig;
   readonly mcpConfig?: SessionMcpConfig;
+  /**
+   * Process-wide MCP OAuth orchestrator shared with the owning core (single
+   * provider cache, single-flight refresh, credential events). Falls back to
+   * a session-private instance when absent (direct `Session` construction in
+   * tests).
+   */
+  readonly mcpOAuthService?: McpOAuthService;
+  /**
+   * Re-resolves a server's current effective config from the core's unified
+   * MCP registry; wired into the connection manager so name-only reconnects
+   * pick up config-file edits and plugin changes instead of the boot-time
+   * snapshot.
+   */
+  readonly mcpConfigResolver?: (name: string) => Promise<McpRegistryEntry | undefined>;
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
   readonly pluginCommands?: readonly PluginCommandDef[];
@@ -218,6 +235,7 @@ export class Session {
   readonly mcp: McpConnectionManager;
   readonly log: Logger;
   private readonly logHandle: SessionLogHandle | undefined;
+  private readonly unsubscribeMcpOAuthCredentials: (() => void) | undefined;
   readonly hookEngine: HookEngine;
   readonly experimentalFlags: ExperimentalFlagResolver;
   readonly imageLimits: ImageLimits;
@@ -288,7 +306,9 @@ export class Session {
       sessionId: options.id,
     });
     this.mcp = new McpConnectionManager({
-      oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
+      oauthService:
+        options.mcpOAuthService ?? new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
+      configResolver: options.mcpConfigResolver,
       log: this.log,
       stdioCwd: options.kaos.getcwd(),
       defaultStartupTimeoutMs: resolveMcpStartupTimeoutMs(options.config?.mcp?.startupTimeoutMs),
@@ -296,6 +316,15 @@ export class Session {
     });
     this.mcp.onStatusChange((entry) => {
       this.onMcpServerStatusChange(entry);
+    });
+    this.unsubscribeMcpOAuthCredentials = this.mcp.oauthService?.onEvent((event) => {
+      void this.handleMcpOAuthEvent(event).catch((error: unknown) => {
+        this.log.warn('mcp reconnect after OAuth credential event failed', {
+          server: event.serverName,
+          event: event.type,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     });
     this.agentCatalog =
       options.agents?.catalog ??
@@ -325,6 +354,53 @@ export class Session {
     void this.loadMcpServers().catch((error: unknown) => {
       this.emitInitialMcpLoadError(error);
     });
+  }
+
+  /**
+   * Credential events from the (typically shared) OAuth service: a completed
+   * login reconnects a `needs-auth` / `failed` entry, a reset or a failed
+   * proactive refresh flips a live connection back to `needs-auth` (the
+   * reconnect hits a 401) instead of leaving it doomed-but-connected. An
+   * entry still performing its initial connect defers the reconnect until it
+   * settles, so a credential written mid-initialization is not lost.
+   */
+  private async handleMcpOAuthEvent(event: McpOAuthEvent): Promise<void> {
+    // Client/verifier/discovery invalidations are flow-local; only token-level
+    // changes move connections.
+    if (event.type === 'tokens-invalidated' && event.scope !== 'tokens' && event.scope !== 'all') {
+      return;
+    }
+    const entry = this.mcp.get(event.serverName);
+    if (entry === undefined) return;
+    // The credential is keyed by name + canonical URL: if this session's
+    // entry points at a different URL now, the event is not about it.
+    const serverUrl = this.mcp.getRemoteServerUrl(event.serverName);
+    if (serverUrl === undefined || canonicalMcpOAuthResource(serverUrl) !== event.serverUrl) return;
+    if (event.type === 'tokens-invalidated') {
+      // Drop the cached provider so the reconnect starts from clean state.
+      this.mcp.oauthService?.forgetProvider(event.serverName, event.serverUrl);
+    }
+    if (entry.status === 'disabled') return;
+    if (entry.status === 'pending') {
+      await new Promise<void>((resolve, reject) => {
+        const unsubscribe = this.mcp.onStatusChange((next) => {
+          if (next.name !== event.serverName || next.status === 'pending') return;
+          unsubscribe();
+          if (next.status === 'disabled') {
+            resolve();
+            return;
+          }
+          void this.mcp.reconnectAfterCurrent(event.serverName).then(resolve, reject);
+        });
+      });
+      return;
+    }
+    if (event.type === 'tokens-saved' && entry.status !== 'needs-auth' && entry.status !== 'failed') {
+      return;
+    }
+    // A failed proactive refresh only matters to a live connection.
+    if (event.type === 'refresh-failed' && entry.status !== 'connected') return;
+    await this.mcp.reconnectAndJoin(event.serverName);
   }
 
 
@@ -481,6 +557,7 @@ export class Session {
   }
 
   async close(): Promise<void> {
+    this.unsubscribeMcpOAuthCredentials?.();
     try {
       await Promise.allSettled(
         Array.from(this.readyAgents(), async (agent) => agent.cron?.stop()),
@@ -499,6 +576,7 @@ export class Session {
   }
 
   async closeForReload(): Promise<void> {
+    this.unsubscribeMcpOAuthCredentials?.();
     try {
       await Promise.allSettled(
         Array.from(this.readyAgents(), async (agent) => agent.cron?.stop()),
@@ -810,7 +888,7 @@ export class Session {
    * `[secondary_model]` change: the spawn
    * binding (`subagent-host`), the startup-warning computation, and every live
    * agent's `kimiConfig` (tool descriptions, loop control) all read the
-   * session snapshot, so a mid-session `/secondary_model` switch takes effect
+   * session snapshot, so a mid-session `/secondary-model` switch takes effect
    * for the next subagent spawn without recreating the session. The core owns
    * config reload, environment overlays, and derived-model synthesis. Copying
    * that complete recipe and its model entries keeps spawn binding and provider
@@ -1099,7 +1177,7 @@ export class Session {
   private async loadMcpServers(): Promise<void> {
     const servers = this.options.mcpConfig?.servers;
     if (servers === undefined || Object.keys(servers).length === 0) return;
-    await this.mcp.connectAll(servers);
+    await this.mcp.connectAll(servers, this.options.mcpConfig?.sources);
     const entries = this.mcp.list().filter((entry) => entry.status !== 'disabled');
     const totalCount = entries.length;
     if (totalCount === 0) return;
@@ -1134,6 +1212,8 @@ export class Session {
   private onMcpServerStatusChange(entry: McpServerEntry): void {
     // Always surface server-level status changes to clients so the TUI/SDK
     // can keep its dashboard in sync, even before the main agent exists.
+    // Source / effective config ride the `listMcpServers` query path instead
+    // (the protocol event payload stays lean and schema-validated).
     void this.rpc.emitEvent({
       type: 'mcp.server.status',
       agentId: 'main',

@@ -1,7 +1,3 @@
-/**
- * `mcpCore` domain — Streamable HTTP transport MCP client.
- */
-
 import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerHttpConfig } from './config-schema';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';

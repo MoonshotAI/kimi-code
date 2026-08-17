@@ -8,7 +8,7 @@
  *   await client.core(ISessionIndex).listRecent({});
  *   await client.workspace('wd_1').service(ISessionLifecycleService).resume('s1');
  *   await client.session('s1').service(ISessionMetadata).read();
- *   await client.session('s1').agent('main').service(IAgentRPCService).cancel({});
+ *   await client.session('s1').agent('main').service(IAgentLoopService).cancelFromUser();
  *
  * The `agent-core-v2` service token is the whole key: its type parameter `T`
  * types the returned proxy, and its decorator id (`String(id)`) is the channel
@@ -40,7 +40,6 @@ export interface InspectClient {
   /** Bearer token in use, when any. */
   readonly token?: string;
   core<T extends object>(id: ServiceRef<T>): ServiceProxy<T>;
-  workspace(workspaceId: string): InspectAgentHandle;
   session(sessionId: string): InspectSessionHandle;
 }
 
@@ -69,9 +68,6 @@ export function createInspectClient(options: InspectClientOptions): InspectClien
     baseUrl: url,
     token: options.token,
     core: (id) => proxy('', id),
-    workspace: (workspaceId) => ({
-      service: (id) => proxy(`/workspace/${encodeURIComponent(workspaceId)}`, id),
-    }),
     session: (sessionId) => {
       const scopePath = `/session/${encodeURIComponent(sessionId)}`;
       return {

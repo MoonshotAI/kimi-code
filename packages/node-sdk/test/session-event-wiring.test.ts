@@ -3,8 +3,7 @@
  * bus. Covers the status-snapshot fold: v2 emits `agent.status.updated` in
  * slices and the model slice rides only the bind-time emission, so the
  * wiring merges a consistent usage + context + model snapshot into every
- * status event (mirrors kap-server's broadcaster bridge), including the
- * secondary-model derived id resolution.
+ * status event (mirrors kap-server's broadcaster bridge).
  * Run: pnpm exec vitest run test/session-event-wiring.test.ts
  */
 import { describe, expect, it } from 'vitest';
@@ -16,9 +15,7 @@ import {
   IAgentTokenCountingService,
   IAgentUsageService,
   IEventBus,
-  IModelCatalog,
   ISessionInteractionService,
-  SECONDARY_DERIVED_MODEL_ID,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
@@ -128,7 +125,7 @@ describe('SessionEventWiring status snapshot fold', () => {
       // later usage-only slice must still carry the model at this edge.
       sub.bus.emit({ type: 'agent.status.updated', usage: USAGE });
       // Non-status events pass through untouched.
-      sub.bus.emit({ type: 'assistant.delta', delta: 'Hi' });
+      sub.bus.emit({ type: 'assistant.delta', delta: 'Hi', time: 1_700_000_000_123 });
     } finally {
       wiring.dispose();
     }
@@ -143,42 +140,12 @@ describe('SessionEventWiring status snapshot fold', () => {
       maxContextTokens: 128_000,
       model: 'sub-model',
     });
-    expect(events[1]).toMatchObject({ type: 'assistant.delta', delta: 'Hi' });
+    expect(events[1]).toMatchObject({
+      type: 'assistant.delta',
+      delta: 'Hi',
+      time: 1_700_000_000_123,
+    });
     expect(events[1]).not.toHaveProperty('model');
-  });
-
-  it('resolves the secondary derived model id to a display string', () => {
-    const sub = new FakeAgentHandle('agent-1');
-    bindStatusServices(sub, SECONDARY_DERIVED_MODEL_ID);
-    const { sink, events } = collectingSink();
-    const wiring = new SessionEventWiring(makeSession([sub]), sink);
-    try {
-      sub.set(IModelCatalog, {
-        get: (id: string) => {
-          expect(id).toBe(SECONDARY_DERIVED_MODEL_ID);
-          return { id, name: 'kimi-k2-wire', displayName: 'Kimi K2' };
-        },
-      });
-      sub.bus.emit({ type: 'agent.status.updated', usage: USAGE });
-      // Without a displayName the pointed entry's wire name is shown.
-      sub.set(IModelCatalog, { get: (id: string) => ({ id, name: 'kimi-k2-wire' }) });
-      sub.bus.emit({ type: 'agent.status.updated', usage: USAGE });
-      // A resolution failure falls back to the raw alias.
-      sub.set(IModelCatalog, {
-        get: () => {
-          throw new Error('unknown model');
-        },
-      });
-      sub.bus.emit({ type: 'agent.status.updated', usage: USAGE });
-    } finally {
-      wiring.dispose();
-    }
-
-    expect(events.map((event) => (event as { model?: string }).model)).toEqual([
-      'Kimi K2',
-      'kimi-k2-wire',
-      SECONDARY_DERIVED_MODEL_ID,
-    ]);
   });
 
   it('passes status events through unchanged when the agent services are incomplete', () => {
@@ -195,5 +162,35 @@ describe('SessionEventWiring status snapshot fold', () => {
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ type: 'agent.status.updated', usage: USAGE });
     expect(events[0]).not.toHaveProperty('model');
+  });
+
+  it('strips the internal promptAttachments field from turn.started', () => {
+    const sub = new FakeAgentHandle('agent-1');
+    const { sink, events } = collectingSink();
+    const wiring = new SessionEventWiring(makeSession([sub]), sink);
+    try {
+      // `promptAttachments` is transcript-projection metadata: kap-server
+      // strips it from the WS wire event, so SDK consumers must not see it
+      // either.
+      sub.bus.emit({
+        type: 'turn.started',
+        turnId: 1,
+        origin: { kind: 'user' },
+        prompt: 'describe this',
+        promptAttachments: [{ kind: 'image', fileId: 'f_1' }],
+      });
+    } finally {
+      wiring.dispose();
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'turn.started',
+      turnId: 1,
+      sessionId: 's1',
+      agentId: 'agent-1',
+      prompt: 'describe this',
+    });
+    expect(events[0]).not.toHaveProperty('promptAttachments');
   });
 });

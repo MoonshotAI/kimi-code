@@ -19,11 +19,10 @@ import {
   IOAuthToolkit,
   ISessionCronService,
   ISessionIndex,
-  ISessionLifecycleService,
-  IWorkspaceLifecycleService,
+  ISessionManager,
   ITelemetryService,
   type BootstrapInput,
-  type DomainEvent,
+  type Event2,
 } from '@moonshot-ai/agent-core-v2';
 
 import { runV2Print } from '../../src/cli/v2/run-v2-print';
@@ -124,7 +123,7 @@ function opts(overrides: Record<string, unknown> = {}) {
 function makeFakeHarness() {
   // Native event listeners registered on the main agent's IEventBus; the turn
   // emits a streaming assistant delta before completing.
-  const eventListeners = new Set<(event: DomainEvent) => void>();
+  const eventListeners = new Set<(event: Event2<any>) => void>();
   const profileState: { profileName: string | undefined } = { profileName: undefined };
 
   const agentServices = new Map<unknown, unknown>([
@@ -142,7 +141,7 @@ function makeFakeHarness() {
     [
       IEventBus,
       {
-        subscribe: vi.fn((handler: (event: DomainEvent) => void) => {
+        subscribe: vi.fn((handler: (event: Event2<any>) => void) => {
           eventListeners.add(handler);
           return { dispose: () => eventListeners.delete(handler) };
         }),
@@ -154,7 +153,7 @@ function makeFakeHarness() {
         enqueue: vi.fn(async () => {
           // Emit a native assistant delta on the main agent bus, then complete.
           for (const listener of [...eventListeners]) {
-            listener({ type: 'assistant.delta', turnId: 1, delta: 'hello world' } as DomainEvent);
+            listener({ type: 'assistant.delta', turnId: 1, delta: 'hello world' } as unknown as Event2<any>);
           }
           return {
             launched: Promise.resolve({
@@ -178,17 +177,6 @@ function makeFakeHarness() {
   ]);
   const session = fakeScope('ses_v2', sessionServices);
 
-  const handlerServices = new Map<unknown, unknown>([
-    [
-      ISessionLifecycleService,
-      {
-        create: vi.fn(async () => session),
-        resume: vi.fn(async () => session),
-      },
-    ],
-  ]);
-  const workspace = fakeScope('wd_v2', handlerServices);
-
   const appServices = new Map<unknown, unknown>([
     [
       IConfigService,
@@ -203,10 +191,13 @@ function makeFakeHarness() {
       },
     ],
     [
-      IWorkspaceLifecycleService,
+      ISessionManager,
       {
-        handlerFor: vi.fn(async () => workspace),
-      },
+        create: vi.fn(async () => session),
+        resume: vi.fn(async () => session),
+        get: vi.fn(() => session),
+        list: vi.fn(() => [session]),
+      } as unknown as ISessionManager,
     ],
     [
       ISessionIndex,
@@ -255,7 +246,7 @@ function makeFakeHarness() {
     ],
   ]);
   const app = fakeScope('app', appServices);
-  return { app, agent, session, agentServices, appServices, handlerServices, profileState };
+  return { app, agent, session, agentServices, appServices, profileState };
 }
 
 describe('runV2Print', () => {
@@ -328,7 +319,7 @@ describe('runV2Print', () => {
   it('seeds explicit agent files from --agentFile and binds the --agent profile', async () => {
     const stdout = writer();
     const stderr = writer();
-    const { app, agent, appServices, agentServices, handlerServices } = makeFakeHarness();
+    const { app, agent, appServices, agentServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue(agent);
@@ -342,10 +333,8 @@ describe('runV2Print', () => {
     const input = mocks.bootstrap.mock.calls[0]?.[0] as BootstrapInput;
     expect(input.args?.agentFiles).toEqual(['/agents/reviewer.md']);
 
-    const lifecycle = handlerServices.get(ISessionLifecycleService) as {
-      create: ReturnType<typeof vi.fn>;
-    };
-    expect(lifecycle.create).toHaveBeenCalledWith({
+    const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+    expect(sessions.create).toHaveBeenCalledWith({
       workDir: process.cwd(),
       additionalDirs: undefined,
       mainAgentBinding: { profile: 'reviewer', model: 'k2' },
@@ -363,7 +352,7 @@ describe('runV2Print', () => {
     );
     const stdout = writer();
     const stderr = writer();
-    const { app, agent, appServices, agentServices, handlerServices } = makeFakeHarness();
+    const { app, agent, appServices, agentServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue(agent);
@@ -376,10 +365,8 @@ describe('runV2Print', () => {
     const input = mocks.bootstrap.mock.calls[0]?.[0] as BootstrapInput;
     expect(input.args?.agentFiles).toEqual([agentFile]);
 
-    const lifecycle = handlerServices.get(ISessionLifecycleService) as {
-      create: ReturnType<typeof vi.fn>;
-    };
-    expect(lifecycle.create).toHaveBeenCalledWith({
+    const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+    expect(sessions.create).toHaveBeenCalledWith({
       workDir: process.cwd(),
       additionalDirs: undefined,
       mainAgentBinding: { profile: 'file-reviewer', model: 'k2' },
@@ -391,11 +378,9 @@ describe('runV2Print', () => {
   it('does not materialize a main agent after fresh profile binding fails', async () => {
     const stdout = writer();
     const stderr = writer();
-    const { app, handlerServices } = makeFakeHarness();
-    const lifecycle = handlerServices.get(ISessionLifecycleService) as {
-      create: ReturnType<typeof vi.fn>;
-    };
-    lifecycle.create.mockRejectedValueOnce(new Error('Unknown agent profile'));
+    const { app, appServices } = makeFakeHarness();
+    const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+    sessions.create.mockRejectedValueOnce(new Error('Unknown agent profile'));
     mocks.bootstrap.mockReturnValue({ app });
 
     await expect(

@@ -17,6 +17,7 @@ import { pipeline } from 'node:stream/promises';
 
 import { KIMI_CODE_CDN_BASE } from '#/constant/app';
 import { getBinDir } from '#/utils/paths';
+import { resolveCommandPath } from '#/utils/process/resolve-command';
 
 const CANDIDATES = ['fd', 'fdfind'];
 const FD_BASE_URL = `${KIMI_CODE_CDN_BASE}/fd`;
@@ -56,9 +57,11 @@ export async function ensureFdPath(): Promise<string | null> {
 
 function detectSystemFdPath(): string | null {
   for (const name of CANDIDATES) {
+    const commandPath = resolveCommandPath(name);
+    if (commandPath === undefined) continue;
     try {
-      const result = spawnSync(name, ['--version'], { stdio: 'ignore' });
-      if (result.status === 0) return name;
+      const result = spawnSync(commandPath, ['--version'], { stdio: 'ignore' });
+      if (result.status === 0) return commandPath;
     } catch {
       // ENOENT, EACCES, etc. — try next candidate.
     }

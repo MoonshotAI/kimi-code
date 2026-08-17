@@ -1,11 +1,3 @@
-/**
- * `skillCatalog` domain — filesystem `ISkillDiscovery` backend.
- *
- * Discovers skill bundles by walking caller-supplied roots and parsing each
- * SKILL.md. Exposes discovery through the App-scoped service and a stateless
- * filesystem entry point.
- */
-
 import { promises as fs } from 'node:fs';
 import path from 'pathe';
 
@@ -50,6 +42,21 @@ export async function discoverFileSkills(
     subSkillParentName?: string,
   ): Promise<void> {
     if (depth > MAX_SKILL_SCAN_DEPTH) return;
+
+    if (root.scanMode === 'root-skill-only') {
+      const rootSkillMd = path.join(dirPath, 'SKILL.md');
+      if (await isFile(rootSkillMd)) {
+        await parseAndRegister({
+          byDiscoveryKey,
+          skipped,
+          warn,
+          skillMdPath: rootSkillMd,
+          skillDirName: path.basename(dirPath),
+          root,
+        });
+      }
+      return;
+    }
 
     let entries: readonly string[];
     try {

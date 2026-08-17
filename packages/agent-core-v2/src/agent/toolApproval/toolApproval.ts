@@ -1,12 +1,3 @@
-/**
- * `toolApproval` domain — `IAgentToolApprovalService` contract.
- *
- * Shared approval round-trip for tool executions: builds the approval request,
- * drives the session approval broker, emits the `permission.approval.*`
- * events, records session-scope approval rules through `permissionRules`, and
- * resolves ask continuations. Bound at Agent scope.
- */
-
 import { createDecorator } from '#/_base/di/instantiation';
 import type {
   ApprovalResponse,

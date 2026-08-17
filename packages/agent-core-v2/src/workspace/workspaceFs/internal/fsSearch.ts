@@ -1,11 +1,3 @@
-/**
- * `workspaceFs` domain — pure search/grep helpers.
- *
- * Fuzzy filename scoring, glob matching, grep-pattern compilation, and
- * ripgrep `--json` record parsing. No IO, no DI — plain functions so they can
- * be unit-tested directly. Ported from v1.
- */
-
 import type { FsGrepRequest } from '../fs';
 
 export function computeFuzzyScore(name: string, queryLower: string): number {

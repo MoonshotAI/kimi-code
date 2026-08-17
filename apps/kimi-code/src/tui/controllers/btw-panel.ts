@@ -11,6 +11,7 @@ import { BtwPanelComponent } from '../components/panes/btw-panel';
 import { formatErrorMessage } from '../utils/event-payload';
 import { formatHookResultPlain } from '../utils/hook-result-format';
 import { createMarkdownTheme } from '../theme/pi-tui-theme';
+import type { InlineSkillActivation } from '../types';
 import type { TUIState } from '../tui-state';
 
 const BTW_BUSY_NOTICE = 'Wait for /btw to finish before sending another question.';
@@ -34,20 +35,24 @@ export class BtwPanelController {
 
   constructor(private readonly host: BtwPanelHost) {}
 
-  open(agentId: string, initialPrompt: string): void {
+  open(
+    agentId: string,
+    initialPrompt: string,
+    inlineSkillActivations?: readonly InlineSkillActivation[],
+  ): void {
     let panel: BtwPanelComponent;
     panel = new BtwPanelComponent({
       markdownTheme: createMarkdownTheme(),
       canUseScrollKeys: () => this.host.state.editor.getText().length === 0,
       terminalRows: () => this.host.state.terminal.rows,
-      onPrompt: (prompt) => {
-        this.promptAgent(agentId, prompt, panel);
+      onPrompt: (prompt, inlineSkillActivations) => {
+        this.promptAgent(agentId, prompt, panel, inlineSkillActivations);
       },
     });
     this.active = { agentId, panel };
     this.panelsByAgentId.set(agentId, panel);
     this.mount(panel);
-    panel.submit(initialPrompt);
+    panel.submit(initialPrompt, inlineSkillActivations);
   }
 
   clear(): void {
@@ -79,14 +84,14 @@ export class BtwPanelController {
     return true;
   }
 
-  sendUserInput(text: string): boolean {
+  sendUserInput(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): boolean {
     const active = this.active;
     if (active === undefined) return false;
     if (active.panel.isRunning()) {
       this.showBusyNotice(active, text);
       return true;
     }
-    active.panel.submit(text);
+    active.panel.submit(text, inlineSkillActivations);
     this.host.state.ui.setFocus(this.host.state.editor);
     this.host.state.ui.requestRender();
     return true;
@@ -165,14 +170,30 @@ export class BtwPanelController {
     this.host.state.ui.requestRender();
   }
 
-  private promptAgent(agentId: string, prompt: string, panel: BtwPanelComponent): void {
+  private promptAgent(
+    agentId: string,
+    prompt: string,
+    panel: BtwPanelComponent,
+    inlineSkillActivations?: readonly InlineSkillActivation[],
+  ): void {
     const session = this.host.session;
     if (session === undefined) {
       panel.markFailed(NO_ACTIVE_SESSION_MESSAGE);
       this.host.state.ui.requestRender();
       return;
     }
-    void this.withInteractiveAgent(agentId, () => session.prompt(prompt)).catch((error: unknown) => {
+    const send =
+      inlineSkillActivations !== undefined && inlineSkillActivations.length > 0
+        ? () =>
+            session.promptWithSkills(
+              prompt,
+              inlineSkillActivations.map((activation) => ({
+                name: activation.skillName,
+                args: activation.args,
+              })),
+            )
+        : () => session.prompt(prompt);
+    void this.withInteractiveAgent(agentId, send).catch((error: unknown) => {
       panel.markFailed(`Failed to send /btw prompt: ${formatErrorMessage(error)}`);
       this.host.state.ui.requestRender();
     });

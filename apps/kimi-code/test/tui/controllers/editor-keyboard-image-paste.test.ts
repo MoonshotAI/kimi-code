@@ -5,14 +5,19 @@
  *   - an oversized pasted image is downsampled while building the attachment,
  *     so the stored bytes, the `[image #N (W×H)]` placeholder, and the eventual
  *     submitted image all agree on the compressed size
- *   - the pre-compression original is persisted and recorded on the
- *     attachment, so the submitted prompt can announce the compression and
- *     point the model at the full-fidelity bytes
+ *   - the pre-compression original is recorded on the attachment in memory —
+ *     never persisted at paste time, because the session whose
+ *     media-originals dir it belongs in may not exist yet; dispatch-time
+ *     caption resolution owns persistence (see image-placeholder tests)
  *   - a within-budget paste is stored byte-for-byte (fast path), with no
  *     original recorded
+ *   - on the v2 engine the final bytes are uploaded to the daemon file store
+ *     with a crash-recovery TTL, and the attachment carries the returned id
+ *     and expiry; an upload failure leaves the paste on the inline fallback
  */
 
-import { mkdtemp, readFile, rm, unlink } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -39,10 +44,23 @@ vi.mock('#/utils/clipboard/clipboard-image', async (importActual) => {
 interface PasteHarness {
   readonly store: ImageAttachmentStore;
   readonly track: ReturnType<typeof vi.fn>;
+  /** Invoke the paste handler, then wait for the background ingestion to settle. */
   pasteImage(): Promise<void>;
+  /** Invoke the paste handler only — background ingestion may still be pending. */
+  pasteImageRaw(): Promise<boolean>;
 }
 
-function createPasteHarness(options: { sessionDir?: string; imageLimits?: ImageLimits } = {}): PasteHarness {
+function createPasteHarness(
+  options: {
+    sessionDir?: string;
+    imageLimits?: ImageLimits;
+    engineV2?: boolean;
+    uploadFile?: (
+      data: Uint8Array,
+      opts: { name: string; mimeType?: string; expiresInSec?: number },
+    ) => Promise<{ id: string }>;
+  } = {},
+): PasteHarness {
   const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
     setHistoryFilter: vi.fn() as unknown as (...args: never[]) => unknown,
   };
@@ -61,28 +79,39 @@ function createPasteHarness(options: { sessionDir?: string; imageLimits?: ImageL
         ? undefined
         : { summary: { sessionDir: options.sessionDir } },
     btwPanelController: { closeOrCancel: vi.fn(() => false) },
+    engineV2: options.engineV2,
     track,
     showError: vi.fn(),
     openUndoSelector: vi.fn(),
     cancelRunningShellCommand: vi.fn(),
   } as unknown as EditorKeyboardHost;
-  if (options.imageLimits !== undefined) {
+  if (options.imageLimits !== undefined || options.uploadFile !== undefined) {
     (host as unknown as { harness: KimiHarness }).harness = {
       imageLimits: options.imageLimits,
+      uploadFile: options.uploadFile,
     } as unknown as KimiHarness;
   }
 
   const controller = new EditorKeyboardController(host, store);
   controller.install();
 
+  const pasteImageRaw = (): Promise<boolean> => {
+    const handler = editor['onPasteImage'];
+    if (handler === undefined) throw new Error('onPasteImage handler not installed');
+    return (handler as () => Promise<boolean>)();
+  };
+
   return {
     store,
     track,
     async pasteImage() {
-      const handler = editor['onPasteImage'];
-      if (handler === undefined) throw new Error('onPasteImage handler not installed');
-      await (handler as () => Promise<boolean>)();
+      await pasteImageRaw();
+      for (let id = 1; id <= store.size(); id++) {
+        const attachment = store.get(id);
+        if (attachment?.kind === 'image') await attachment.pending;
+      }
     },
+    pasteImageRaw,
   };
 }
 
@@ -96,6 +125,14 @@ async function solidJpeg(width: number, height: number): Promise<Uint8Array> {
   return new Uint8Array(
     await new Jimp({ width, height, color: 0x3366ccff }).getBuffer('image/jpeg', { quality: 90 }),
   );
+}
+
+/** Typed `uploadFile` stub so `mock.calls` keeps the (data, options) tuple. */
+function uploadFileMock(id: string) {
+  return vi.fn(async (
+    _data: Uint8Array,
+    _opts: { name: string; mimeType?: string; expiresInSec?: number },
+  ) => ({ id, expires_at: '2030-01-02T03:04:05.000Z' }));
 }
 
 /**
@@ -176,7 +213,7 @@ describe('clipboard image paste compression', () => {
     expect(Math.max(dims!.width, dims!.height)).toBe(800);
   });
 
-  it('records and persists the pre-compression original for an oversized paste', async () => {
+  it('records the pre-compression original in memory for an oversized paste', async () => {
     const big = await solidPng(3600, 1800);
     readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
 
@@ -186,19 +223,18 @@ describe('clipboard image paste compression', () => {
     const att = store.get(1);
     if (att?.kind !== 'image') throw new Error('expected image attachment');
     expect(att.original).toBeDefined();
+    expect(att.original?.bytes).toEqual(big);
     expect(att.original?.width).toBe(3600);
     expect(att.original?.height).toBe(1800);
     expect(att.original?.byteLength).toBe(big.length);
     expect(att.original?.mime).toBe('image/png');
 
-    // The original bytes are readable back from the persisted path.
-    expect(att.original?.path).not.toBeNull();
-    const persisted = await readFile(att.original!.path!);
-    expect(new Uint8Array(persisted)).toEqual(big);
-    await unlink(att.original!.path!).catch(() => undefined);
+    // Nothing is persisted at paste time — dispatch-time caption resolution
+    // owns that, once the session (and its media-originals dir) is known.
+    expect(att.original?.path).toBeUndefined();
   });
 
-  it('persists the original into the session media-originals dir when the session is known', async () => {
+  it('does not persist the original at paste time, even with a known session', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-paste-session-'));
     const big = await solidPng(3600, 1800);
     readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
@@ -208,10 +244,9 @@ describe('clipboard image paste compression', () => {
 
     const att = store.get(1);
     if (att?.kind !== 'image') throw new Error('expected image attachment');
-    expect(att.original?.path).not.toBeNull();
-    expect(att.original!.path!.startsWith(join(sessionDir, 'media-originals'))).toBe(true);
-    const persisted = await readFile(att.original!.path!);
-    expect(new Uint8Array(persisted)).toEqual(big);
+    expect(att.original?.bytes).toEqual(big);
+    expect(att.original?.path).toBeUndefined();
+    expect(existsSync(join(sessionDir, 'media-originals'))).toBe(false);
     await rm(sessionDir, { recursive: true, force: true });
   });
 
@@ -256,7 +291,6 @@ describe('clipboard image paste compression', () => {
       expect(att.original?.height).toBe(3600);
       // The compressed attachment itself keeps the portrait aspect.
       expect(att.width).toBeLessThan(att.height);
-      await unlink(att.original!.path!).catch(() => undefined);
     },
     15_000,
   );
@@ -295,5 +329,115 @@ describe('clipboard image paste compression', () => {
     const props = compressCalls[0]![1] as Record<string, unknown>;
     expect(props['source']).toBe('tui_paste');
     expect(props['outcome']).toBe('compressed');
+  });
+
+  it('uploads final bytes with a crash-recovery TTL while the staging lease owns normal cleanup', async () => {
+    const small = await solidPng(80, 80);
+    readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: small, mimeType: 'image/png' });
+    const uploadFile = uploadFileMock('file-1');
+
+    const { store, pasteImage } = createPasteHarness({ engineV2: true, uploadFile });
+    await pasteImage();
+
+    const att = store.get(1);
+    if (att?.kind !== 'image') throw new Error('expected image attachment');
+    expect(att.fileId).toBe('file-1');
+    expect(att.fileExpiresAt).toBe(Date.parse('2030-01-02T03:04:05.000Z'));
+    expect(uploadFile).toHaveBeenCalledTimes(1);
+    const [data, opts] = uploadFile.mock.calls[0]!;
+    expect(new Uint8Array(data)).toEqual(small);
+    expect(opts).toEqual({
+      name: 'pasted-image.png',
+      mimeType: 'image/png',
+      expiresInSec: 60 * 60,
+    });
+    // The bytes stay on the attachment for the inline fallback / cache copy.
+    expect(att.bytes).toBe(small);
+  });
+
+  it('uploads the compressed bytes when paste-time compression changed them (v2)', async () => {
+    const big = await solidPng(3600, 1800);
+    readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
+    const uploadFile = uploadFileMock('file-9');
+
+    const { store, pasteImage } = createPasteHarness({ engineV2: true, uploadFile });
+    await pasteImage();
+
+    const att = store.get(1);
+    if (att?.kind !== 'image') throw new Error('expected image attachment');
+    expect(att.fileId).toBe('file-9');
+    // The upload carries exactly what the attachment stores — the compressed
+    // bytes, not the clipboard original.
+    const [data] = uploadFile.mock.calls[0]!;
+    expect(data).toBe(att.bytes);
+    expect(att.bytes).not.toBe(big);
+  });
+
+  it('keeps the paste on the inline fallback when the daemon upload fails (v2)', async () => {
+    const small = await solidPng(80, 80);
+    readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: small, mimeType: 'image/png' });
+    const uploadFile = vi.fn(
+      async (
+        _data: Uint8Array,
+        _opts: { name: string; mimeType?: string; expiresInSec?: number },
+      ): Promise<{ id: string }> => {
+        throw new Error('daemon down');
+      },
+    );
+
+    const { store, pasteImage } = createPasteHarness({ engineV2: true, uploadFile });
+    await pasteImage(); // must not throw
+
+    const att = store.get(1);
+    if (att?.kind !== 'image') throw new Error('expected image attachment');
+    expect(att.fileId).toBeUndefined();
+    expect(att.bytes).toBe(small);
+  });
+
+  it('never uploads on the v1 engine', async () => {
+    const small = await solidPng(80, 80);
+    readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: small, mimeType: 'image/png' });
+    const uploadFile = uploadFileMock('file-1');
+
+    // engineV2 unset — the v1 host shape.
+    const { store, pasteImage } = createPasteHarness({ uploadFile });
+    await pasteImage();
+
+    expect(uploadFile).not.toHaveBeenCalled();
+    const att = store.get(1);
+    if (att?.kind !== 'image') throw new Error('expected image attachment');
+    expect(att.fileId).toBeUndefined();
+  });
+
+  it('settles the paste callback before the background daemon upload completes (v2)', async () => {
+    const small = await solidPng(80, 80);
+    readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: small, mimeType: 'image/png' });
+    let resolveUpload!: (meta: { id: string }) => void;
+    const uploadFile = vi.fn(
+      (
+        _data: Uint8Array,
+        _opts: { name: string; mimeType?: string; expiresInSec?: number },
+      ): Promise<{ id: string }> =>
+        new Promise<{ id: string }>((resolve) => {
+          resolveUpload = resolve;
+        }),
+    );
+
+    const { store, pasteImageRaw } = createPasteHarness({ engineV2: true, uploadFile });
+    // The handler returns once the placeholder is in the editor; the upload
+    // is still unresolved here — typing is never held behind it.
+    await pasteImageRaw();
+
+    const att = store.get(1);
+    if (att?.kind !== 'image') throw new Error('expected image attachment');
+    expect(att.placeholder).toBe('[image #1 (80×80)]');
+    expect(att.fileId).toBeUndefined();
+    expect(att.pending).toBeDefined();
+
+    resolveUpload({ id: 'file-late' });
+    await att.pending;
+
+    expect(att.fileId).toBe('file-late');
+    expect(att.pending).toBeUndefined();
   });
 });

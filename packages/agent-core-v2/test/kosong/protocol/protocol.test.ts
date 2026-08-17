@@ -1,15 +1,3 @@
-/**
- * `kosong/protocol` protocol identity — wire enum, adapter config, and the
- * registry decorator.
- *
- * Locks the decision-1 invariants: the protocol enum holds only the four
- * real wire formats (a vendor name is not a protocol and is rejected, and
- * `vertexai` is rejected too — Vertex AI is a `providerOptions` mode of the
- * `google-genai` base, not a wire format), while `providerType` on the
- * adapter config stays a free-form string so external packages can register
- * vendors without touching this layer.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import {

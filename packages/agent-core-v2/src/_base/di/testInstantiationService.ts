@@ -1,7 +1,3 @@
-/**
- * `di` domain — `TestInstantiationService` and scoped test-container helpers.
- */
-
 import * as sinon from 'sinon';
 
 import { SyncDescriptor, type SyncDescriptor0 } from './descriptors';
@@ -14,12 +10,10 @@ import { InstantiationService, Trace } from './instantiationService';
 import { DisposableStore, dispose, isDisposable, toDisposable, type IDisposable } from './lifecycle';
 import { ServiceCollection } from './serviceCollection';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyConstructor<T = unknown> = new (...args: any[]) => T;
 
 interface IServiceMock<T> {
   id: ServiceIdentifier<T>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   service?: any;
 }
 
@@ -79,7 +73,6 @@ export class TestInstantiationService extends InstantiationService implements ID
     ...args: GetLeadingNonServiceArgs<ConstructorParameters<Ctor>>
   ): R;
   public override createInstance(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ctorOrDescriptor: any,
     ...rest: unknown[]
   ): unknown {
@@ -116,10 +109,8 @@ export class TestInstantiationService extends InstantiationService implements ID
   ): V extends Function ? sinon.SinonSpy : sinon.SinonStub;
   public stub<T>(
     id: ServiceIdentifier<T>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     arg2: any,
     arg3?: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     arg4?: any,
   ): T | SyncDescriptor<T> | sinon.SinonStub | sinon.SinonSpy {
     if (arg2 instanceof SyncDescriptor && typeof arg3 !== 'string') {
@@ -156,31 +147,24 @@ export class TestInstantiationService extends InstantiationService implements ID
   public stubPromise<T>(
     id?: ServiceIdentifier<T>,
     fnProperty?: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     value?: any,
   ): T | sinon.SinonStub;
   public stubPromise<T, V>(
     id?: ServiceIdentifier<T>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ctor?: any,
     fnProperty?: string,
     value?: V,
   ): V extends Function ? sinon.SinonSpy : sinon.SinonStub;
   public stubPromise<T, V>(
     id?: ServiceIdentifier<T>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     obj?: any,
     fnProperty?: string,
     value?: V,
   ): V extends Function ? sinon.SinonSpy : sinon.SinonStub;
   public stubPromise(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     arg1?: any,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     arg2?: any,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     arg3?: any,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     arg4?: any,
   ): unknown {
     arg3 = typeof arg2 === 'string' ? Promise.resolve(arg3) : arg3;
@@ -195,9 +179,7 @@ export class TestInstantiationService extends InstantiationService implements ID
   }
 
   private _create<T>(serviceMock: IServiceMock<T>, options: SinonOptions, reset?: boolean): T;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _create<T>(ctor: any, options: SinonOptions): T | sinon.SinonMock;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _create(arg1: any, options: SinonOptions, reset: boolean = false): any {
     if (this._isServiceMock(arg1)) {
       const service = this._getOrCreateService(arg1, options, reset);
@@ -238,7 +220,6 @@ export class TestInstantiationService extends InstantiationService implements ID
     return service as T;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _createStub(arg: any): any {
     if (arg instanceof SyncDescriptor) {
       return sinon.createStubInstance(arg.ctor);
@@ -252,7 +233,6 @@ export class TestInstantiationService extends InstantiationService implements ID
     return Object.create(null);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _createReplacement(value: any): sinon.SinonStub | sinon.SinonSpy {
     if (typeof value === 'function') {
       return isSinonSpyLike(value) ? value : sinon.spy(value);
@@ -260,12 +240,10 @@ export class TestInstantiationService extends InstantiationService implements ID
     return value ? sinon.stub().returns(value) : sinon.stub();
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _hasSinonOption(service: any, key: keyof SinonOptions): boolean {
     return Boolean(service?.sinonOptions?.[key]);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _isServiceMock(arg: any): arg is IServiceMock<unknown> {
     return typeof arg === 'object' && arg !== null && 'id' in arg;
   }
@@ -292,7 +270,6 @@ interface SinonOptions {
 }
 
 export interface ServiceRegistration {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   define<T>(id: ServiceIdentifier<T>, ctor: new (...args: any[]) => T): void;
   defineInstance<T>(id: ServiceIdentifier<T>, instance: T): void;
   definePartialInstance<T>(id: ServiceIdentifier<T>, instance: Partial<T>): void;
@@ -311,7 +288,6 @@ export function createServices(
   options: CreateServicesOptions = {},
 ): TestInstantiationService {
   const serviceCollection = new ServiceCollection();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const instanceIds = new Set<ServiceIdentifier<any>>();
 
   const register = <T>(

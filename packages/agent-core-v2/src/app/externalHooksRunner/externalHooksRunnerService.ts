@@ -1,19 +1,3 @@
-/**
- * `externalHooksRunner` domain — `IExternalHooksRunnerService` impl.
- *
- * Owns the configured-hook lifecycle: builds the event→hooks index from
- * `IConfigService` (`[[hooks]]`) + `IPluginService.enabledHooks()`, reloads it
- * on `plugin.onDidReload`, and dispatches each trigger through the pure
- * `runMatchedHooks`. The App-scope `IHostProcessService` is injected here and
- * threaded down to `runHook`, so hook commands spawn through the shared host
- * process service (cross-platform kill, hidden console on Windows) rather than
- * `node:child_process` directly. Per-call caller facts (`cwd` defaulting to
- * bootstrap cwd, `sessionId`, `signal`, payload) flow in through the args, so
- * this service keeps no per-scope state; the one payload field it contributes
- * itself is `clientType` (the host platform from bootstrap client identity),
- * merged under the caller's `inputData`. Bound at App scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -32,7 +16,6 @@ import {
 import { blockDecision, indexHooks, runMatchedHooks } from './runner';
 import type { HookRunCallbacks } from './runner';
 
-// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class ExternalHooksRunnerService extends Disposable implements IExternalHooksRunnerService {
   declare readonly _serviceBrand: undefined;
 

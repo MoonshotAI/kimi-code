@@ -1,17 +1,3 @@
-/**
- * Persistent server bearer token.
- *
- * The token lives at `<KIMI_CODE_HOME>/server.token` (mode 0600) and is reused
- * across restarts, so a reboot does NOT rotate it. It is generated once on
- * first boot and only changes when the operator explicitly runs
- * `kimi web rotate-token` (which calls {@link rotateServerToken}).
- *
- * All writes go through {@link writePrivateFile} (atomic rename, 0700 dir,
- * 0600 file) and reads through {@link readPrivateFile} (refuses files looser
- * than 0600), so the on-disk token is never world/group-readable and a
- * rotation is never observed half-written.
- */
-
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 

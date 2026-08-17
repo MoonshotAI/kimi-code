@@ -1,43 +1,30 @@
-/**
- * `interruptionReminder` domain (L4) — persists and restores pending
- * user-interruption reminders.
- *
- * Projects the `loop` domain's `turn.cancel` fact into the set of turns whose
- * interruption reminder still has to reach the conversation, and owns the op
- * that records a reminder's delivery. Consumed by the Agent-scope
- * `interruptionReminderService`.
- */
-
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
-import { defineModel } from '#/wire/model';
+import { Event2 } from '#/app/event/event2';
+import { defineState } from '#/state/state';
 
-export const InterruptionReminderModel = defineModel<readonly number[]>(
-  'interruptionReminder',
-  () => [],
-  {
-    reducers: {
-      'turn.cancel': (state, { turnId, target, reason }) => {
-        if (target !== 'active' || reason !== 'user_cancelled' || turnId === undefined) {
-          return state;
-        }
-        if (state.includes(turnId)) return state;
-        return [...state, turnId].toSorted((a, b) => a - b);
-      },
-    },
-  },
-);
+export const INTERRUPTION_REMINDER_VARIANT = 'interruption';
 
-declare module '#/wire/types' {
-  interface PersistedOpMap {
-    'interruptionReminder.recorded': typeof interruptionReminderRecorded;
-  }
+export type InterruptionReminderState = null;
+
+const interruptionReminderRecordedSchema = z.object({
+  turnId: z.number().int().nonnegative(),
+});
+
+export class InterruptionReminderRecorded extends Event2<
+  z.infer<typeof interruptionReminderRecordedSchema>
+> {
+  static override readonly type = 'interruptionReminder.recorded';
+  static override readonly durable = true;
+  static override readonly schema = interruptionReminderRecordedSchema;
 }
+export interface InterruptionReminderRecorded
+  extends z.infer<typeof interruptionReminderRecordedSchema> {}
 
-export const interruptionReminderRecorded = InterruptionReminderModel.defineOp(
-  'interruptionReminder.recorded',
-  {
-    schema: z.object({ turnId: z.number().int().nonnegative() }),
-    apply: (state, { turnId }) => state.filter((pendingTurnId) => pendingTurnId !== turnId),
-  },
-);
+export const interruptionReminderKey = defineState(
+  'interruptionReminder',
+  (): InterruptionReminderState => null,
+)
+  .replayable({ schema: z.custom<InterruptionReminderState>() })
+  .on(InterruptionReminderRecorded, () => {});

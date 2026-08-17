@@ -1,17 +1,4 @@
-/**
- * `workspaceSkillCatalog` domain — explicit `ISkillSource` producer.
- *
- * Mirrors v1 SDK `skillDirs`: when the host invocation args provide
- * `skillDirs`, this source contributes those directories as the user source,
- * resolving relative paths against the workspace root. When no explicit dirs
- * are configured, it yields nothing so default user / project discovery
- * remains active. Bound at Workspace scope so every session of the handler
- * shares one scan.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { configuredRoots } from '#/app/skillCatalog/skillRoots';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
@@ -52,10 +39,3 @@ export class ExplicitFileSkillSource implements IExplicitFileSkillSource {
   }
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IExplicitFileSkillSource,
-  ExplicitFileSkillSource,
-  ScopeActivation.OnScopeCreated,
-  'workspaceSkillCatalog',
-);

@@ -1,19 +1,3 @@
-/**
- * `workspaceAgentProfileLoader` domain — `IWorkspaceAgentProfileLoader` implementation.
- *
- * Discovers the workspace's agent files (`.kimi-code/agents`, `.agents/agents`
- * under the project root, resolved through `workspaceContext` and `hostFs`)
- * and contributes them via the shared loader skeleton. `${base_prompt}` is
- * backed by the user loader's effective default profile. Watches the project
- * agent-root candidates through `hostFsWatch` (watched whether or not they
- * exist yet) and reloads debounced, so a project agent-file change
- * re-contributes this record only. Bound at Workspace scope: the scan is
- * per handler and the record dies with it.
- */
-
-import { LifecycleScope } from '#/app/scopes';
-
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
@@ -23,6 +7,7 @@ import {
   AGENT_PROFILE_SOURCE_PRIORITY,
   type AgentProfileContribution,
 } from '#/app/agentProfileCatalog/agentProfileContribution';
+import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { profilesFromDiscovery } from './internal/agentProfileFromFile';
 import { projectAgentRootCandidates, projectAgentRoots } from '#/workspace/workspaceAgentProfileLoader/internal/agentRoots';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
@@ -52,8 +37,9 @@ export class WorkspaceAgentProfileLoaderService
     @ILogService log: ILogService,
     @IUserAgentProfileLoader private readonly user: IUserAgentProfileLoader,
     @IHostFsWatchService private readonly fsWatch: IHostFsWatchService,
+    registry?: IAgentProfileRegistry,
   ) {
-    super(log);
+    super(log, registry);
     this.watchReady = this.watchProjectAgentRoots();
     this.start();
   }
@@ -95,10 +81,3 @@ export class WorkspaceAgentProfileLoaderService
   }
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceAgentProfileLoader,
-  WorkspaceAgentProfileLoaderService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceAgentProfileLoader',
-);

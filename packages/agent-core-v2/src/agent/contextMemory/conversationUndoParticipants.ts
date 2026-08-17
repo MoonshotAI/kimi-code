@@ -1,10 +1,3 @@
-/**
- * `contextMemory` domain — Agent-scoped post-undo reconciliation registry.
- *
- * Hosts state-repair participants for the undo coordinator. Bound at Agent
- * scope.
- */
-
 import { createDecorator } from '#/_base/di/instantiation';
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';

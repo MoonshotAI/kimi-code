@@ -1,24 +1,3 @@
-/**
- * Vendor-name gate probe — outside the kosong layer (`src/kosong/**`, which
- * owns the vendor registries), `src/**` must never branch on the vendor id
- * `'kimi'`. Vendor identity is answered structurally by the kosong
- * provider-definition / adapter registries (`drivesThinkingThroughTraits`,
- * `requiresStrictThinkingValidation`, `isOAuthCatalogVendor` and the
- * `modelSource: 'oauth-catalog'` declaration behind it); a string compare
- * silently re-hardcodes what those registries exist to answer. This probe is
- * zero-tolerance: any new gate fails the build.
- *
- * Full-line comments (`//`, `/* ...`, JSDoc `* ...`) are not code and may
- * quote the legacy v1 gate as parity documentation; they are skipped.
- * Brand/env names (`KIMI_CODE_*`, `KIMI_MODEL_*`) and `'kimi'` as data
- * (config values, telemetry fields, registration ids) do not match the
- * patterns — verified against the whole `src/` tree.
- *
- * The full-`src/`-scan test below does a synchronous, full-tree file read,
- * which can exceed the default timeout under slow bind-mounted filesystems
- * (e.g. Docker on Windows) — hence its extended timeout.
- */
-
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';

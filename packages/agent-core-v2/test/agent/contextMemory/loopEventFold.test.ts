@@ -1,22 +1,34 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
+import {
+  foldAppendMessage,
+  foldLoopEvent,
+  type LoopRecordedEvent,
+} from '#/agent/contextMemory/loopEventFold';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentContextMemoryService } from '#/index';
-
-import { createTestAgent, type TestAgentContext } from '../../harness';
 
 describe('loop-event fold parity', () => {
-  let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  function appendAll(
+    state: readonly ContextMessage[],
+    messages: readonly ContextMessage[],
+  ): readonly ContextMessage[] {
+    let next = state;
+    for (const message of messages) {
+      next = foldAppendMessage(next, message);
+    }
+    return next;
+  }
 
-  beforeEach(() => {
-    ctx = createTestAgent();
-    context = ctx.get(IAgentContextMemoryService);
-  });
-
-  afterEach(async () => {
-    await ctx.dispose();
-  });
+  function foldAll(
+    state: readonly ContextMessage[],
+    events: readonly LoopRecordedEvent[],
+  ): readonly ContextMessage[] {
+    let next = state;
+    for (const event of events) {
+      next = foldLoopEvent(next, event);
+    }
+    return next;
+  }
 
   function comparable(messages: readonly ContextMessage[]): unknown {
     return messages.map((m) => ({
@@ -30,80 +42,86 @@ describe('loop-event fold parity', () => {
   }
 
   it('folds a text + tool-call + tool-result step into the append_message shape', () => {
-    context.append(
-      {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'I will call.' }],
-        toolCalls: [{ type: 'function', id: 'c1', name: 'Lookup', arguments: '{"q":"moon"}' }],
-      },
-      {
-        role: 'tool',
-        content: [{ type: 'text', text: 'lookup result' }],
-        toolCalls: [],
-        toolCallId: 'c1',
-        isError: false,
-      },
+    const baseline = comparable(
+      appendAll([], [
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'I will call.' }],
+          toolCalls: [{ type: 'function', id: 'c1', name: 'Lookup', arguments: '{"q":"moon"}' }],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'lookup result' }],
+          toolCalls: [],
+          toolCallId: 'c1',
+          isError: false,
+        },
+      ]),
     );
-    const baseline = comparable(context.get());
-    context.clear();
 
-    context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
-    context.appendLoopEvent({
-      type: 'content.part',
-      stepUuid: 's1',
-      part: { type: 'text', text: 'I will call.' },
-    });
-    context.appendLoopEvent({
-      type: 'tool.call',
-      stepUuid: 's1',
-      toolCallId: 'c1',
-      name: 'Lookup',
-      args: { q: 'moon' },
-    });
-    context.appendLoopEvent({
-      type: 'tool.result',
-      toolCallId: 'c1',
-      result: { output: 'lookup result', isError: false },
-    });
-    context.appendLoopEvent({ type: 'step.end', uuid: 's1' });
-    const folded = comparable(context.get());
+    const folded = comparable(
+      foldAll([], [
+        { type: 'step.begin', uuid: 's1' },
+        {
+          type: 'content.part',
+          stepUuid: 's1',
+          part: { type: 'text', text: 'I will call.' },
+        },
+        {
+          type: 'tool.call',
+          stepUuid: 's1',
+          toolCallId: 'c1',
+          name: 'Lookup',
+          args: { q: 'moon' },
+        },
+        {
+          type: 'tool.result',
+          toolCallId: 'c1',
+          result: { output: 'lookup result', isError: false },
+        },
+        { type: 'step.end', uuid: 's1' },
+      ]),
+    );
 
     expect(folded).toEqual(baseline);
   });
 
   it('folds an errored tool result into the append_message shape', () => {
-    context.append(
-      {
-        role: 'assistant',
-        content: [],
-        toolCalls: [{ type: 'function', id: 'c2', name: 'Bash', arguments: '{}' }],
-      },
-      {
-        role: 'tool',
-        content: [{ type: 'text', text: 'boom' }],
-        toolCalls: [],
-        toolCallId: 'c2',
-        isError: true,
-      },
+    const baseline = comparable(
+      appendAll([], [
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'c2', name: 'Bash', arguments: '{}' }],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'boom' }],
+          toolCalls: [],
+          toolCallId: 'c2',
+          isError: true,
+        },
+      ]),
     );
-    const baseline = comparable(context.get());
-    context.clear();
 
-    context.appendLoopEvent({ type: 'step.begin', uuid: 's2' });
-    context.appendLoopEvent({
-      type: 'tool.call',
-      stepUuid: 's2',
-      toolCallId: 'c2',
-      name: 'Bash',
-      args: {},
-    });
-    context.appendLoopEvent({
-      type: 'tool.result',
-      toolCallId: 'c2',
-      result: { output: 'boom', isError: true },
-    });
-    context.appendLoopEvent({ type: 'step.end', uuid: 's2' });
-    const folded = comparable(context.get());
+    const folded = comparable(
+      foldAll([], [
+        { type: 'step.begin', uuid: 's2' },
+        {
+          type: 'tool.call',
+          stepUuid: 's2',
+          toolCallId: 'c2',
+          name: 'Bash',
+          args: {},
+        },
+        {
+          type: 'tool.result',
+          toolCallId: 'c2',
+          result: { output: 'boom', isError: true },
+        },
+        { type: 'step.end', uuid: 's2' },
+      ]),
+    );
 
     expect(folded).toEqual(baseline);
   });
@@ -120,16 +138,18 @@ describe('loop-event fold parity', () => {
   }
 
   it('drops an empty partial assistant left by a failed attempt when the retry begins', () => {
-    context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
-    context.appendLoopEvent({ type: 'step.begin', uuid: 's2' });
-    context.appendLoopEvent({
-      type: 'content.part',
-      stepUuid: 's2',
-      part: { type: 'text', text: 'recovered' },
-    });
-    context.appendLoopEvent({ type: 'step.end', uuid: 's2' });
+    const folded = foldAll([], [
+      { type: 'step.begin', uuid: 's1' },
+      { type: 'step.begin', uuid: 's2' },
+      {
+        type: 'content.part',
+        stepUuid: 's2',
+        part: { type: 'text', text: 'recovered' },
+      },
+      { type: 'step.end', uuid: 's2' },
+    ]);
 
-    expect(shapes(context.get())).toEqual([
+    expect(shapes(folded)).toEqual([
       {
         role: 'assistant',
         content: [{ type: 'text', text: 'recovered' }],
@@ -142,22 +162,24 @@ describe('loop-event fold parity', () => {
   });
 
   it('seals a failed attempt’s partial assistant and closes its tool exchange on the next step.begin', () => {
-    context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
-    context.appendLoopEvent({
-      type: 'content.part',
-      stepUuid: 's1',
-      part: { type: 'text', text: 'half' },
-    });
-    context.appendLoopEvent({
-      type: 'tool.call',
-      stepUuid: 's1',
-      toolCallId: 'c1',
-      name: 'Bash',
-      args: {},
-    });
-    context.appendLoopEvent({ type: 'step.begin', uuid: 's2' });
+    const folded = foldAll([], [
+      { type: 'step.begin', uuid: 's1' },
+      {
+        type: 'content.part',
+        stepUuid: 's1',
+        part: { type: 'text', text: 'half' },
+      },
+      {
+        type: 'tool.call',
+        stepUuid: 's1',
+        toolCallId: 'c1',
+        name: 'Bash',
+        args: {},
+      },
+      { type: 'step.begin', uuid: 's2' },
+    ]);
 
-    expect(shapes(context.get())).toEqual([
+    expect(shapes(folded)).toEqual([
       {
         role: 'assistant',
         content: [{ type: 'text', text: 'half' }],
@@ -186,40 +208,46 @@ describe('loop-event fold parity', () => {
   });
 
   it('drops an assistant that produced no output at step.end', () => {
-    context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
-    context.appendLoopEvent({ type: 'step.end', uuid: 's1' });
+    const folded = foldAll([], [
+      { type: 'step.begin', uuid: 's1' },
+      { type: 'step.end', uuid: 's1' },
+    ]);
 
-    expect(context.get()).toEqual([]);
+    expect(folded).toEqual([]);
   });
 
   it('drops an assistant whose only recorded part is an empty thinking block at step.end', () => {
-    context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
-    context.appendLoopEvent({
-      type: 'content.part',
-      stepUuid: 's1',
-      part: { type: 'think', think: '' },
-    });
-    context.appendLoopEvent({ type: 'step.end', uuid: 's1' });
+    const folded = foldAll([], [
+      { type: 'step.begin', uuid: 's1' },
+      {
+        type: 'content.part',
+        stepUuid: 's1',
+        part: { type: 'think', think: '' },
+      },
+      { type: 'step.end', uuid: 's1' },
+    ]);
 
-    expect(context.get()).toEqual([]);
+    expect(folded).toEqual([]);
   });
 
   it('drops a vacuous partial assistant left by a failed attempt when the retry begins', () => {
-    context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
-    context.appendLoopEvent({
-      type: 'content.part',
-      stepUuid: 's1',
-      part: { type: 'think', think: '   ' },
-    });
-    context.appendLoopEvent({ type: 'step.begin', uuid: 's2' });
-    context.appendLoopEvent({
-      type: 'content.part',
-      stepUuid: 's2',
-      part: { type: 'text', text: 'recovered' },
-    });
-    context.appendLoopEvent({ type: 'step.end', uuid: 's2' });
+    const folded = foldAll([], [
+      { type: 'step.begin', uuid: 's1' },
+      {
+        type: 'content.part',
+        stepUuid: 's1',
+        part: { type: 'think', think: '   ' },
+      },
+      { type: 'step.begin', uuid: 's2' },
+      {
+        type: 'content.part',
+        stepUuid: 's2',
+        part: { type: 'text', text: 'recovered' },
+      },
+      { type: 'step.end', uuid: 's2' },
+    ]);
 
-    expect(shapes(context.get())).toEqual([
+    expect(shapes(folded)).toEqual([
       {
         role: 'assistant',
         content: [{ type: 'text', text: 'recovered' }],
@@ -232,66 +260,74 @@ describe('loop-event fold parity', () => {
   });
 
   it('seals a step whose thinking block has real content', () => {
-    context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
-    context.appendLoopEvent({
-      type: 'content.part',
-      stepUuid: 's1',
-      part: { type: 'think', think: 'real reasoning' },
-    });
-    context.appendLoopEvent({ type: 'step.end', uuid: 's1' });
+    const folded = foldAll([], [
+      { type: 'step.begin', uuid: 's1' },
+      {
+        type: 'content.part',
+        stepUuid: 's1',
+        part: { type: 'think', think: 'real reasoning' },
+      },
+      { type: 'step.end', uuid: 's1' },
+    ]);
 
-    expect(context.get().at(-1)?.content).toEqual([{ type: 'think', think: 'real reasoning' }]);
+    expect(folded.at(-1)?.content).toEqual([{ type: 'think', think: 'real reasoning' }]);
   });
 
   it('seals a step whose empty thinking block carries a provider signature', () => {
-    context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
-    context.appendLoopEvent({
-      type: 'content.part',
-      stepUuid: 's1',
-      part: { type: 'think', think: '', encrypted: 'sig' },
-    });
-    context.appendLoopEvent({ type: 'step.end', uuid: 's1' });
+    const folded = foldAll([], [
+      { type: 'step.begin', uuid: 's1' },
+      {
+        type: 'content.part',
+        stepUuid: 's1',
+        part: { type: 'think', think: '', encrypted: 'sig' },
+      },
+      { type: 'step.end', uuid: 's1' },
+    ]);
 
-    expect(context.get().at(-1)?.content).toEqual([{ type: 'think', think: '', encrypted: 'sig' }]);
+    expect(folded.at(-1)?.content).toEqual([{ type: 'think', think: '', encrypted: 'sig' }]);
   });
 
   it('seals a step that pairs an empty thinking block with real text', () => {
-    context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
-    context.appendLoopEvent({
-      type: 'content.part',
-      stepUuid: 's1',
-      part: { type: 'think', think: '' },
-    });
-    context.appendLoopEvent({
-      type: 'content.part',
-      stepUuid: 's1',
-      part: { type: 'text', text: 'answer' },
-    });
-    context.appendLoopEvent({ type: 'step.end', uuid: 's1' });
+    const folded = foldAll([], [
+      { type: 'step.begin', uuid: 's1' },
+      {
+        type: 'content.part',
+        stepUuid: 's1',
+        part: { type: 'think', think: '' },
+      },
+      {
+        type: 'content.part',
+        stepUuid: 's1',
+        part: { type: 'text', text: 'answer' },
+      },
+      { type: 'step.end', uuid: 's1' },
+    ]);
 
-    expect(context.get().at(-1)?.content).toEqual([
+    expect(folded.at(-1)?.content).toEqual([
       { type: 'think', think: '' },
       { type: 'text', text: 'answer' },
     ]);
   });
 
   it('seals an assistant with tool calls even when its thinking block is empty', () => {
-    context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
-    context.appendLoopEvent({
-      type: 'content.part',
-      stepUuid: 's1',
-      part: { type: 'think', think: '' },
-    });
-    context.appendLoopEvent({
-      type: 'tool.call',
-      stepUuid: 's1',
-      toolCallId: 'c1',
-      name: 'Lookup',
-      args: {},
-    });
-    context.appendLoopEvent({ type: 'step.end', uuid: 's1' });
+    const folded = foldAll([], [
+      { type: 'step.begin', uuid: 's1' },
+      {
+        type: 'content.part',
+        stepUuid: 's1',
+        part: { type: 'think', think: '' },
+      },
+      {
+        type: 'tool.call',
+        stepUuid: 's1',
+        toolCallId: 'c1',
+        name: 'Lookup',
+        args: {},
+      },
+      { type: 'step.end', uuid: 's1' },
+    ]);
 
-    expect(shapes(context.get())).toEqual([
+    expect(shapes(folded)).toEqual([
       {
         role: 'assistant',
         content: [{ type: 'think', think: '' }],
@@ -312,43 +348,46 @@ describe('loop-event fold parity', () => {
   });
 
   it('folds a tool-result note as structured model-only metadata', () => {
-    context.append(
-      {
-        role: 'assistant',
-        content: [],
-        toolCalls: [{ type: 'function', id: 'c3', name: 'Screenshot', arguments: '{}' }],
-      },
-      {
-        role: 'tool',
-        content: [{ type: 'text', text: 'result text' }],
-        toolCalls: [],
-        toolCallId: 'c3',
-        isError: false,
-        note: '<system>Image compressed.</system>',
-      },
+    const baseline = comparable(
+      appendAll([], [
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'c3', name: 'Screenshot', arguments: '{}' }],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'result text' }],
+          toolCalls: [],
+          toolCallId: 'c3',
+          isError: false,
+          note: '<system>Image compressed.</system>',
+        },
+      ]),
     );
-    const baseline = comparable(context.get());
-    context.clear();
 
-    context.appendLoopEvent({ type: 'step.begin', uuid: 's3' });
-    context.appendLoopEvent({
-      type: 'tool.call',
-      stepUuid: 's3',
-      toolCallId: 'c3',
-      name: 'Screenshot',
-      args: {},
-    });
-    context.appendLoopEvent({
-      type: 'tool.result',
-      toolCallId: 'c3',
-      result: {
-        output: 'result text',
-        isError: false,
-        note: '<system>Image compressed.</system>',
-      },
-    });
-    context.appendLoopEvent({ type: 'step.end', uuid: 's3' });
-    const folded = comparable(context.get());
+    const folded = comparable(
+      foldAll([], [
+        { type: 'step.begin', uuid: 's3' },
+        {
+          type: 'tool.call',
+          stepUuid: 's3',
+          toolCallId: 'c3',
+          name: 'Screenshot',
+          args: {},
+        },
+        {
+          type: 'tool.result',
+          toolCallId: 'c3',
+          result: {
+            output: 'result text',
+            isError: false,
+            note: '<system>Image compressed.</system>',
+          },
+        },
+        { type: 'step.end', uuid: 's3' },
+      ]),
+    );
 
     expect(folded).toEqual(baseline);
   });

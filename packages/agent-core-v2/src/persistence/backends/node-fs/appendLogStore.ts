@@ -1,19 +1,3 @@
-/**
- * `storage` domain — node-fs backend for `IAppendLogStore`.
- *
- * Sits on top of `IFileSystemStorageService` and turns a byte stream into an ordered
- * sequence of typed JSON records. Owns the concerns the storage service
- * deliberately ignores: line framing (one JSON value per line, a.k.a. JSONL),
- * batching of appends into a single durable `append`, and crash-tolerant
- * decoding (a torn final line is dropped; corruption anywhere else throws).
- * Serializes whole-log rewrites with live appends, preserves queued or
- * in-flight records across the atomic replacement, keeps ambiguous append and
- * rewrite failures sticky, keeps the shared flush pending until the
- * post-rewrite drain is durable, waits every key before a global flush reports
- * an error, and preserves per-key storage ordering while acquired buffers
- * retire and hand off to replacement owners. Bound at App scope.
- */
-
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';

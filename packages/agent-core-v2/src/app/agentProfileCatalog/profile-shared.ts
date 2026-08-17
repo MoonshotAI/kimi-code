@@ -1,33 +1,3 @@
-/**
- * `agentProfileCatalog` domain — shared prompt helpers for builtin profiles.
- *
- * Keeps the base system-prompt template and the task-agent role prefix in the
- * agent-profile domain.
- *
- * All system-prompt rendering — the builtin template, `SYSTEM.md`, and agent
- * files — shares one `${var}` substitution pass over one variable table
- * ({@link systemPromptVars}); unknown placeholders stay verbatim. Conditional
- * sections (Windows notes, additional directories, skills, plugin
- * instructions) are composed here
- * as pre-rendered blocks because the renderer has no conditional syntax. Raw
- * context fields render as empty strings when missing and the composed
- * `*_section` / `windows_notes` blocks are empty unless their content exists,
- * so templates can place them on their own line without leaving stray
- * headings behind. Host-identity blocks (`product_name`, `reply_style_guide`)
- * work the same way: the context may carry overrides seeded by the embedding
- * host (e.g. a desktop app), and the table falls back to the CLI defaults
- * ({@link DEFAULT_PRODUCT_NAME}, {@link DEFAULT_REPLY_STYLE_GUIDE}) when it
- * does not. `renderPromptTemplateResult` renders a user-owned template (an
- * agent-file body or `SYSTEM.md`) against the table; `${base_prompt}` is
- * bound to the default profile's prompt when a `basePrompt` is given,
- * resolved lazily and only when the template actually references it. Also
- * shared: `skillActiveFor` (whether the Skill tool survives a profile's tool
- * list — drives skills injection) and the `subagents`-allowlist helpers
- * (`subagentAllowlistFor`, `subagentTypeNotAllowedMessage`). Structured
- * renderers also carry disclosure metadata so runtime reminders never need to
- * parse the rendered text.
- */
-
 import { renderPrompt } from '#/_base/utils/render-prompt';
 
 import {
