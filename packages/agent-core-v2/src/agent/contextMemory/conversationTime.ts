@@ -1,25 +1,6 @@
 /**
- * `contextMemory` domain — shared conversation clock and checkpointed
- * wire-Model factory.
- *
- * Owns the undo anchor vocabulary and the single undo-cut decision:
- * `computeUndoCutFrom` walks entries backwards counting `isUndoAnchor`
- * ticks — skipping injections, stopping at a compaction summary, extending
- * the cut over the anchor's prompt-owned injections — bounded by an optional
- * floor, and generic over the entry type so any read model whose entries
- * carry a `ContextMessage` can run the same walk. The returned `UndoCut`
- * separates `anchorIndex` (the counted anchor) from `cutIndex` (extended
- * over its prompt-owned injections). The wire-model Op
- * (`contextOps.contextUndo`) applies the cut to the append-only log (mapping
- * the visible-window cut back to a log position); the display
- * transcript (`contextTranscript`) applies the same decision as a
- * non-destructive splice — so a blocked undo (compaction boundary /
- * insufficient anchors / floor) reads identically on both sides.
- *
- * Also registers conversation-time Models for undo validation:
- * `CHECKPOINTED_MODELS` stays the undo domain's read path; the
- * `WireModelContribution` fold also drains it into the built-in layer so the
- * checkpointed list is part of the folded wire vocabulary. Scope-agnostic.
+ * Defines shared undo boundaries and checkpointed-model contributions for the
+ * bounded context model and display transcript.
  */
 
 import { defineModel, type ModelDef } from '#/wire/model';

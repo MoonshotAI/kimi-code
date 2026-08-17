@@ -1,30 +1,6 @@
 /**
- * `contextMemory` shared contract types — message origins, `AgentContextData`,
- * and the `ContextModel` fold state.
- *
- * `ContextState` is the `ContextModel` state: the folded messages plus the
- * fold cursor (`ContextFoldState` — the reduction position of the loop-event
- * fold across records: `pendingToolCallIds` holds toolCallIds with no result
- * yet, `deferredEntries` holds entries appended while a tool exchange is still
- * open, flushed once it closes to preserve assistant↔tool adjacency). The
- * cursor lives in the state (not beside it) so every wholesale replacement —
- * undo, clear, compaction — resets it structurally by returning `EMPTY_FOLD`.
- * Plain data: arrays instead of Sets keep the state freeze- and JSON-safe.
- * Generic over the entry type: the wire model folds `ContextMessage`s, while
- * the display transcript folds time-stamped entries through the same kernel.
- *
- * `messages` is an APPEND-ONLY log: `context.apply_compaction` settles any
- * open frame in place and then appends a summary marker message carrying a
- * `CompactionMeta` instead of replacing the history, so pre-compaction
- * messages stay in the state and no `partial` frame ever survives a marker.
- * The model-visible window is a read-time derivation
- * (`visibleWindow.deriveVisibleMessages`) over this log — only undo / clear /
- * the swarm-mode pop still cut it.
- *
- * `freezeContextState` deeply freezes a `ContextState` (the wire service only
- * shallow-freezes the top-level object, which covered the consumer view back
- * when the state WAS the messages array). `Object.freeze` returns the same
- * reference, so the wire's reference-equality gate is unaffected.
+ * Defines context messages, their origins, and the folded bounded-window state
+ * shared by the live model and transcript projection.
  */
 
 import type { ContentPart, Message } from '#/kosong/contract/message';
@@ -137,24 +113,12 @@ export type PromptOrigin =
   | HookResultOrigin
   | RetryOrigin;
 
-export interface CompactionMeta {
-  readonly compactedCount: number;
-  readonly tokensBefore: number;
-  readonly tokensAfter?: number;
-  readonly summaryOutputTokens?: number;
-  readonly keptUserMessageCount?: number;
-  readonly keptHeadUserMessageCount?: number;
-  readonly droppedCount?: number;
-  readonly legacyTail?: boolean;
-}
-
 export type ContextMessage = Message & {
   readonly id?: string;
   readonly providerMessageId?: string;
   readonly origin?: PromptOrigin | undefined;
   readonly isError?: boolean;
   readonly note?: string;
-  readonly compaction?: CompactionMeta;
 };
 
 export interface UserMessageRecord {

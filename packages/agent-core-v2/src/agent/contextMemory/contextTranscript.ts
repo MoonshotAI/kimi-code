@@ -1,24 +1,6 @@
 /**
- * `contextMemory` domain — rebuilds display history from the wire journal.
- *
- * Supplies transcript consumers with full pre-compaction history and folded
- * context length while preserving undo/clear semantics. Scope-agnostic.
- *
- * Loop events and plain appends are reduced by the shared fold kernel
- * (`loopEventFold.ts`) over time-stamped entries, so the display view can
- * never drift from the live/replay fold; undo applies the shared cut
- * decision from `conversationTime` (a blocked undo — compaction boundary,
- * insufficient anchors, clear floor — is a no-op here exactly as in the
- * model Op); and the post-compaction `foldedLength` comes from
- * `compactionHandoff`'s result-count mirror rather than a local
- * re-derivation of the compaction shape. What stays local is the display
- * bookkeeping the shared pieces do not own — per-entry record times,
- * `clearFloor`, and `foldedLength` — plus the transcript-specific
- * application of those decisions: undo splices the tail but keeps orphan
- * injections (prompt-owned ones leave with their prompt), clear keeps
- * entries and moves the floor, and compaction settles any frame a failed
- * attempt left open, then appends the summary marker while keeping the
- * folded prefix.
+ * Projects context wire records into the full display transcript while
+ * reporting the suffix currently folded into the bounded model context.
  */
 
 import type { WireRecord } from '#/wire/record';
@@ -110,11 +92,6 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
         return;
       }
       case 'context.apply_compaction': {
-        // Mirror the model fold, which settles any frame left open by a
-        // failed attempt before appending the marker (an overflow compaction
-        // lands mid-fold; see `contextOps`). Settling at the same record keeps
-        // the length bookkeeping aligned; `recoverFoldedLength` recomputes the
-        // absolute value right after either way.
         const settled = settleOpenStep(
           state,
           entryAdapter,
@@ -137,6 +114,11 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
         applyUndo(record['count'] as number);
         return;
       case 'context.clear':
+        state = settleOpenStep(
+          state,
+          entryAdapter,
+          (message): TranscriptEntry => ({ message, time: record.time }),
+        );
         clearFloor = state.messages.length;
         foldedLength = 0;
         state = { messages: state.messages, fold: EMPTY_FOLD };

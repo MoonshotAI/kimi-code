@@ -1,59 +1,6 @@
 /**
- * `contextMemory` loop-event fold — the single kernel that reduces
- * `context.append_loop_event` / `context.append_message` records into folded
- * conversation entries.
- *
- * The agent loop streams a turn as `context.append_loop_event` records
- * (`step.begin` / `content.part` / `tool.call` / `tool.result` / `step.end`)
- * and never writes a folded assistant message, keeping the on-disk shape
- * byte-compatible with v1. This fold turns them into assistant / tool
- * messages — at live dispatch time and again when `WireService.restore`
- * restores an Agent. Without it, restore would skip those records (no Op is
- * registered for the type) and the restored `ContextModel` — and every
- * consumer built on it — would show only the user prompts.
- *
- * Semantics mirror the v1 fold exactly:
- *   - `step.begin`  → open an assistant message (`partial: true`); first settle
- *                     the step left open by a failed attempt
- *   - `content.part`→ append to the open assistant's content
- *   - `tool.call`   → append to the open assistant's `toolCalls`, mark pending
- *   - `tool.result` → push a `tool` message (with the v1 output
- *                     wrapping), clear its pending id
- *   - `step.end`    → settle the assistant
- * "Settle" closes any tool exchange left open (interrupted result messages),
- * then drops the partial assistant when nothing sendable was recorded (no
- * tool calls; every content part vacuous — an output-free assistant only
- * trips provider message validation) and seals it (`partial: undefined`)
- * when it carries output. v1 never produced
- * `step.begin` without `step.end` (its retries stayed inside one request), so
- * the drop/seal rule is the v2 extension that makes loop-level retries — a
- * retried attempt is its own `step.begin` — replay to the same history the
- * live loop folded.
- * A `context.append_message` reduced while a tool exchange is still open is
- * deferred and flushed once the exchange closes, so strict-provider
- * assistant↔tool adjacency is preserved.
- * Events tagged with a step uuid that is not the open one (a late event of an
- * attempt whose `step.begin` was already settled) are dropped, and a
- * `step.end` only settles the step it names.
- *
- * The fold is stateful across records within one replay; the cursor
- * (`openStepUuid` / `pendingToolCallIds` / `deferredEntries`) is part of the
- * state's `fold` field, so live dispatch and replay share one pure
- * transition, and every wholesale state replacement (undo / clear /
- * compaction) resets the cursor structurally by returning `EMPTY_FOLD`.
- *
- * The kernel is generic over the entry type: it reduces one `ContextState<E>`
- * — the entries folded so far plus the fold cursor — into the next, and a
- * `FoldEntryAdapter<E>` is how the kernel reads and rewrites the message an
- * entry carries. The wire model folds bare `ContextMessage`s
- * (`foldAppendMessage` / `foldLoopEvent` / `settleModelOpenStep`
- * specializations below), while the display transcript (`contextTranscript.ts`)
- * folds time-stamped entries — one reduction semantics, two read models.
- * `settleOpenStep` stands alone for closing an open frame outside the event
- * stream: the model applies it (via `settleModelOpenStep`) when a compaction
- * lands mid-fold — the marker only ever lands on a settled frame, so the log
- * stays append-only across markers — and the transcript applies it at the
- * same record to mirror that.
+ * Folds persisted loop events into conversation messages for both the live
+ * bounded context model and the timestamped transcript projection.
  */
 
 import type { FinishReason } from '#/kosong/contract/provider';
@@ -131,18 +78,7 @@ const messageAdapter: FoldEntryAdapter<ContextMessage> = {
 };
 
 export function foldAppendMessage(state: ContextState, message: ContextMessage): ContextState {
-  return appendMessageTo(state, stripCompactionMarker(message));
-}
-
-/** `CompactionMeta` is fold-internal bookkeeping produced only by the
- *  `context.apply_compaction` Op; an `append_message` record carrying it (a
- *  fork copying the visible window, an external writer) must not mint a real
- *  marker — strip it so the log can only gain markers through the Op. */
-function stripCompactionMarker(message: ContextMessage): ContextMessage {
-  if (message.compaction === undefined) return message;
-  const { compaction: _meta, ...stripped } = message;
-  void _meta;
-  return stripped;
+  return appendMessageTo(state, message);
 }
 
 export function foldLoopEvent(state: ContextState, event: LoopRecordedEvent): ContextState {

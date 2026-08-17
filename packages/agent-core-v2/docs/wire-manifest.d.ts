@@ -141,16 +141,6 @@ interface ContextAppendMessagePayload {
     origin?: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry' | undefined;
     isError?: boolean;
     note?: string;
-    compaction?: {
-      compactedCount: number;
-      tokensBefore: number;
-      tokensAfter?: number;
-      summaryOutputTokens?: number;
-      keptUserMessageCount?: number;
-      keptHeadUserMessageCount?: number;
-      droppedCount?: number;
-      legacyTail?: boolean;
-    };
   };
 }
 

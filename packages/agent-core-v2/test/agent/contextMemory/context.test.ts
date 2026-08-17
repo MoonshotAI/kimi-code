@@ -8,8 +8,6 @@ import {
   COMPACT_USER_MESSAGE_HEAD_TOKENS,
   COMPACT_USER_MESSAGE_MAX_TOKENS,
   COMPACTION_ELISION_VARIANT,
-  createCompactionMarkerMessage,
-  deriveVisibleWindowAfterCompaction,
   selectCompactionUserMessages,
   type TokenEstimate,
 } from '#/agent/contextMemory/compactionHandoff';
@@ -848,66 +846,29 @@ describe('Agent context', () => {
     });
   });
 
-  describe('derived compaction windows match live and legacy layouts', () => {
-    it('deriveVisibleWindowAfterCompaction reproduces the eager shape layout', () => {
-      const history = [
-        userMessage('u1'),
-        {
-          role: 'assistant',
-          content: [{ type: 'text', text: 'a1' }],
-          toolCalls: [],
-        } as ContextMessage,
-        userMessage('u2'),
-      ];
-      const input = {
-        summary: 'summary',
-        contextSummary: 'PREFIX\nsummary',
-        compactedCount: 3,
-        tokensBefore: 100,
-        tokensAfter: 20,
-        keptUserMessageCount: 2,
-      };
-
-      const shape = buildContextCompactionShape(history, input);
-      const marker = createCompactionMarkerMessage(input);
-      const derived = deriveVisibleWindowAfterCompaction(history, marker);
-
-      expect(marker.compaction).toMatchObject({ compactedCount: 3, tokensBefore: 100 });
-      expect(derived).toEqual(shape.messages);
-      expect(derived.every((message) => message.compaction === undefined)).toBe(true);
-    });
-
-    it('deriveVisibleWindowAfterCompaction reproduces the legacy tail layout', () => {
+  describe('legacy compaction layout', () => {
+    it('keeps the verbatim summary followed by the uncompacted tail', () => {
       const history = [userMessage('old'), userMessage('tail')];
+      const legacySummary: ContextMessage = {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'legacy summary' }],
+        toolCalls: [],
+        origin: { kind: 'compaction_summary' },
+      };
       const input = {
         summary: 'legacy summary',
+        legacySummaryMessage: legacySummary,
         compactedCount: 1,
         tokensBefore: 100,
         tokensAfter: 20,
         legacyTail: true,
       };
 
-      const derived = deriveVisibleWindowAfterCompaction(history, createCompactionMarkerMessage(input));
-
-      // The legacy `[summary, …tail]` layout: replay-side only, derived from
-      // the marker — `buildContextCompactionShape` has no legacy branch (the
-      // live path never produces one).
-      expect(derived.map(textOf)).toEqual(['legacy summary', 'tail']);
-      expect(derived[0]?.origin?.kind).toBe('compaction_summary');
-      expect(derived.every((message) => message.compaction === undefined)).toBe(true);
-    });
-
-    it('deriveVisibleWindowAfterCompaction re-derives the elided head/tail selection', () => {
-      const history = Array.from({ length: 300 }, (_, i) =>
-        userMessage(`user ${i} ${'x'.repeat(400)}`),
-      );
-      const input = { summary: 'summary', compactedCount: 300, tokensBefore: 100 };
-
       const shape = buildContextCompactionShape(history, input);
-      const derived = deriveVisibleWindowAfterCompaction(history, createCompactionMarkerMessage(input));
 
-      expect(shape.messages.some(isCompactionElision)).toBe(true);
-      expect(derived).toEqual(shape.messages);
+      expect(shape.messages[0]).toBe(legacySummary);
+      expect(shape.messages[1]).toBe(history[1]);
+      expect(shape.messages.map(textOf)).toEqual(['legacy summary', 'tail']);
     });
   });
 });

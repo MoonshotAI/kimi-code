@@ -1,6 +1,13 @@
 /**
- * `llmRequester` domain — Verifies model request behavior across recovery,
- * telemetry, and output normalization scenarios.
+ * Scenario: LLM requests encounter deterministic provider rejections that
+ * require strict tool adjacency, degraded or stripped media, and accumulated
+ * recovery policies across retries.
+ *
+ * Responsibilities: assert retry eligibility and bounds, projection order,
+ * per-turn recovery state, request recording, normalization, and accounting.
+ * Wiring: real AgentLLMRequesterService with controlled model and stubbed
+ * context, projector, profile, tool, telemetry, state, wire, and log services.
+ * Run: pnpm test -- test/agent/llmRequester/llmRequesterService.test.ts
  */
 
 import { createControlledPromise } from '@antfu/utils';

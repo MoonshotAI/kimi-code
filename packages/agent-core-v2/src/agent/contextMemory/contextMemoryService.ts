@@ -1,16 +1,6 @@
 /**
- * `contextMemory` domain — `IAgentContextMemoryService` implementation.
- *
- * Owns per-agent conversation history through `wire`, maintains measurements
- * with `tokenCounting`, and broadcasts live mutations through `event`. The
- * wire state is an append-only folded log; `get()` serves the model-visible
- * window derived by `visibleWindow.deriveVisibleMessages`, while `getMessageLog()`
- * exposes the raw log for integrity checks. Every splice-shaped mutation
- * (`clear` / `applyCompaction` / `undo`, plus verified cross-model trailing
- * removal) publishes `context.spliced` from the live path only — replay
- * rebuilds silently — and truncates the measured-anchor ledger when a cut
- * crosses an anchor, letting `tokenCounting` restore the surviving prefix's
- * REAL size from the remaining anchors. Bound at Agent scope.
+ * Owns the Agent-scoped bounded context window, persists its mutations, keeps
+ * token anchors aligned, and publishes live splice events to consumers.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -47,7 +37,6 @@ import {
 } from './conversationTime';
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
-import { deriveVisibleMessages } from './visibleWindow';
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
@@ -60,7 +49,6 @@ declare module '#/app/event/eventBus' {
   }
 }
 
-// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class AgentContextMemoryService extends Disposable implements IAgentContextMemoryService {
   declare readonly _serviceBrand: undefined;
 
@@ -81,7 +69,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   }
 
   get(): readonly ContextMessage[] {
-    return deriveVisibleMessages(this.getMessageLog());
+    return this.getMessageLog();
   }
 
   getMessageLog(): readonly ContextMessage[] {
@@ -182,9 +170,6 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   private sizeOpsForCut(cutIndex: number): Op[] {
     const model = this.wire.getModel(TokenCountingModel);
     if (!model.anchors.some((anchor) => anchor.length > cutIndex)) return [];
-    // The display tokens are the post-cut size computed from the CURRENT
-    // ledger — anchors at or below the cut are identical before and after
-    // the truncation, so the pre-dispatch read is exact.
     return [
       tokenCountingTruncated({
         length: cutIndex,

@@ -1,13 +1,6 @@
 /**
- * `contextMemory` domain — exposes the context wire Model, Ops, and blob codec.
- *
- * The Ops append messages and loop events, clear history, apply compaction, and
- * undo conversation turns. The blob codec transforms persisted message parts.
- * The message log is append-only; its fold cursor travels with model state and
- * resets with every wholesale replacement.
- *
- * Collaborators: `loopEventFold` folds loop records, `conversationTime` owns undo
- * cuts, `compactionHandoff` builds markers, and `visibleWindow` derives visibility.
+ * Exposes the bounded context wire model, its persisted operations, and blob
+ * transforms for live dispatch and replay.
  */
 
 import { z } from 'zod';
@@ -18,7 +11,7 @@ import { defineModel, type PartsTransformer } from '#/wire/model';
 import type { WireRecord } from '#/wire/record';
 
 import {
-  createCompactionMarkerMessage,
+  buildContextCompactionShape,
   type ContextCompactionShapeInput,
 } from './compactionHandoff';
 import {
@@ -38,7 +31,6 @@ import {
   type ContextMessage,
   type ContextState,
 } from './types';
-import { deriveVisibleMessages, mapVisibleIndexToLog } from './visibleWindow';
 
 async function dehydrateMessages(
   messages: readonly ContextMessage[],
@@ -99,29 +91,6 @@ async function dehydrateRecord(
   return record;
 }
 
-async function rehydrateSurvivingMessages(
-  messages: readonly ContextMessage[],
-  transform: PartsTransformer,
-): Promise<{ changed: boolean; result: ContextMessage[] }> {
-  const visible = deriveVisibleMessages(messages);
-  if (visible === messages) return dehydrateMessages(messages, transform);
-  const survivors = new Set<ContextMessage>(visible);
-  let changed = false;
-  const result: ContextMessage[] = [];
-  for (const message of messages) {
-    if (survivors.has(message) || message.compaction !== undefined) {
-      const parts = await transform(message.content);
-      if (parts !== message.content) {
-        changed = true;
-        result.push({ ...message, content: [...parts] as ContentPart[] });
-        continue;
-      }
-    }
-    result.push(message);
-  }
-  return { changed, result };
-}
-
 export const ContextModel = defineModel<ContextState>(
   'contextMemory',
   () => freezeContextState({ messages: [], fold: EMPTY_FOLD }),
@@ -129,7 +98,7 @@ export const ContextModel = defineModel<ContextState>(
     blobs: {
       dehydrate: dehydrateRecord,
       rehydrate: async (state, transform) => {
-        const messages = await rehydrateSurvivingMessages(state.messages, transform);
+        const messages = await dehydrateMessages(state.messages, transform);
         const deferred = await dehydrateMessages(state.fold.deferredEntries, transform);
         if (!messages.changed && !deferred.changed) return state;
         return freezeContextState({
@@ -145,20 +114,11 @@ export const ContextModel = defineModel<ContextState>(
 );
 
 function popSwarmModeReminder(state: ContextState, _payload: unknown): ContextState {
-  const visible = deriveVisibleMessages(state.messages);
-  const last = visible.at(-1);
+  const last = state.messages.at(-1);
   if (last === undefined) return state;
   const origin = last.origin;
   if (origin?.kind !== 'injection' || origin.variant !== 'swarm_mode') return state;
-  if (visible === state.messages) {
-    return freezeContextState({ messages: state.messages.slice(0, -1), fold: EMPTY_FOLD });
-  }
-  const index = state.messages.lastIndexOf(last);
-  if (index === -1) return state;
-  return freezeContextState({
-    messages: [...state.messages.slice(0, index), ...state.messages.slice(index + 1)],
-    fold: EMPTY_FOLD,
-  });
+  return freezeContextState({ messages: state.messages.slice(0, -1), fold: EMPTY_FOLD });
 }
 
 declare module '#/wire/types' {
@@ -234,8 +194,11 @@ export const contextApplyCompaction = ContextModel.defineOp('context.apply_compa
   schema: contextApplyCompactionSchema,
   apply: (state, p) => {
     const settled = settleModelOpenStep(state);
-    const marker = createCompactionMarkerMessage(readContextCompactionShapeInput(p));
-    return freezeContextState({ messages: [...settled.messages, marker], fold: EMPTY_FOLD });
+    const result = buildContextCompactionShape(
+      settled.messages,
+      readContextCompactionShapeInput(p),
+    );
+    return freezeContextState({ messages: [...result.messages], fold: EMPTY_FOLD });
   },
 });
 
@@ -386,18 +349,10 @@ export const contextUndo = ContextModel.defineOp('context.undo', {
   }),
   apply: (state, p) => {
     if (!isValidUndoCount(p.count) || state.messages.length === 0) return state;
-    const visible = deriveVisibleMessages(state.messages);
-    const cut = computeUndoCut(visible, p.count);
+    const cut = computeUndoCut(state.messages, p.count);
     if (!isFullyUndoable(cut, p.count)) return state;
-    const logCutIndex = mapVisibleIndexToLog(state.messages, visible, cut.cutIndex);
-    if (logCutIndex === undefined) {
-      return freezeContextState({
-        messages: visible.slice(0, cut.cutIndex),
-        fold: EMPTY_FOLD,
-      });
-    }
     return freezeContextState({
-      messages: state.messages.slice(0, logCutIndex),
+      messages: state.messages.slice(0, cut.cutIndex),
       fold: EMPTY_FOLD,
     });
   },

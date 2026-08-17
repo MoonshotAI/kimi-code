@@ -1,6 +1,12 @@
 /**
- * `contextMemory` domain — Compares transcript reducer and model fold visibility
- * across key record streams.
+ * Scenario: context journal records are reduced into full display history and
+ * the current folded suffix across appends, loop retries, compaction, undo,
+ * and clear boundaries.
+ *
+ * Responsibilities: assert transcript content/times, folded-length semantics,
+ * prompt-owned undo behavior, and prefix-by-prefix parity with ContextModel.
+ * Wiring: pure transcript reducer plus the real context Ops and loop fold.
+ * Run: pnpm test -- test/agent/contextMemory/contextTranscript.test.ts
  */
 
 import { describe, expect, it } from 'vitest';
@@ -26,7 +32,6 @@ import {
   type ContextState,
   type PromptOrigin,
 } from '#/agent/contextMemory/types';
-import { deriveVisibleMessages } from '#/agent/contextMemory/visibleWindow';
 import type { WireRecord } from '#/wire/record';
 
 function userMessage(text: string, origin?: PromptOrigin): ContextMessage {
@@ -266,6 +271,19 @@ describe('reduceContextTranscript', () => {
     expect(result.foldedLength).toBe(1);
   });
 
+  it('settles an empty partial before clear so the next step cannot remove old history', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('old')),
+      loopEvent({ type: 'step.begin', uuid: 'aborted' }),
+      { type: 'context.clear' },
+      ...assistantStep('next', 'answer'),
+    ]);
+
+    expect(texts(result)).toEqual(['old', 'answer']);
+    expect(result.foldedLength).toBe(1);
+    expect(result.entries.at(-1)?.partial).toBeUndefined();
+  });
+
   it('undo does not cross a clear floor', () => {
     const result = reduceContextTranscript([
       appendMessage(userMessage('u1')),
@@ -501,7 +519,7 @@ describe('transcript replay matches ContextModel state', () => {
     }
     const result = reducer.result();
 
-    expect(result.foldedLength).toBe(deriveVisibleMessages(state.messages).length);
+    expect(result.foldedLength).toBe(state.messages.length);
     expect(result.entries.every((m) => m.partial !== true)).toBe(true);
   });
 });
