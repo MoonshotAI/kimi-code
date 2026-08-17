@@ -20,10 +20,8 @@ import {
   ISessionIndex,
   ISessionLifecycleService,
   IEventService,
-  IWorkspaceLifecycleService,
   closeSessionById,
   getLiveSessionById,
-  liveHandlerForSession,
   resumeSessionById,
   sessionDirOf,
   type GlobalEvent,
@@ -34,6 +32,10 @@ import {
   type FsPullRequest,
   IGitService,
 } from '@moonshot-ai/agent-core-v2/app/git/git';
+// Deep imports like the git domain above (the package-root barrel regressed
+// on CI's tsgo/rolldown for these symbols — see PR discussion).
+import { IWorkspaceLifecycleService } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/workspaceLifecycle';
+import { liveHandlerForSession } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/sessionLookup';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';

@@ -63,12 +63,14 @@ import {
   ISessionLifecycleService,
   IWorkspaceAliases,
   IWorkspaceService,
-  liveHandlerForSession,
   setColdSessionArchived,
   type Scope,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { IGitService, type FsPullRequest } from '@moonshot-ai/agent-core-v2/app/git/git';
+// Deep import like the git domain above (the package-root barrel regressed on
+// CI's tsgo/rolldown for this symbol — see PR discussion).
+import { liveHandlerForSession } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/sessionLookup';
 import { z } from 'zod';
 
 import { defineRoute } from '../../middleware/defineRoute';
