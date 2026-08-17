@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { createInlineMathMatcher, matchInlineMath, mathInlineRule } from './inlineMath';
+import { getMarkdown } from 'stream-markdown-parser';
+import {
+  configureMarkdownIt,
+  createInlineMathMatcher,
+  matchInlineMath,
+  mathInlineRule,
+} from './inlineMath';
 
 // Simulate the markdown-it inline tokenizer: code spans are consumed
 // atomically; the math rule is tried at every remaining `$` position.
@@ -1229,5 +1235,37 @@ describe('createInlineMathMatcher', () => {
   it('still protects closed comments before unclosed repeats', () => {
     expect(extractMath(`<!-- $x --> ${'<!--'.repeat(2000)} $y$`)).toEqual(['y']);
     expect(extractMath('公式 $x 未闭合，<!--$占位$--> 后接 $y$')).toEqual(['y']);
+  });
+});
+
+describe('configureMarkdownIt', () => {
+  // markstream-vue builds its markdown-it via stream-markdown-parser's
+  // getMarkdown(), whose factory hardcodes typographer: true. Its
+  // replacements/smartquotes rules rewrite literal text ((c)→©, --→–,
+  // straight→curly quotes), corrupting model output users copy.
+  it('renders literal text verbatim instead of typographer substitutions', () => {
+    const md = configureMarkdownIt(getMarkdown('configure-markdown-it-test'));
+    const html = md.render('(c) (C) (tm) (r) +- ... -- --- "quoted"');
+    expect(html).toContain('(c)');
+    expect(html).toContain('(C)');
+    expect(html).toContain('(tm)');
+    expect(html).toContain('(r)');
+    expect(html).toContain('+-');
+    expect(html).toContain('...');
+    expect(html).toContain('--');
+    expect(html).toContain('&quot;quoted&quot;');
+    expect(html).not.toContain('©');
+    expect(html).not.toContain('®');
+    expect(html).not.toContain('™');
+    expect(html).not.toContain('±');
+    expect(html).not.toContain('…');
+    expect(html).not.toContain('–');
+    expect(html).not.toContain('—');
+    expect(html).not.toContain('“');
+  });
+
+  it('keeps inline code spans untouched either way', () => {
+    const md = configureMarkdownIt(getMarkdown('configure-markdown-it-code-test'));
+    expect(md.render('`(c)` and (c)')).toContain('<code>(c)</code>');
   });
 });

@@ -15,7 +15,7 @@ import { useIsDark } from '@moonshot-ai/app-core';
 import type { ResolveImage } from '@moonshot-ai/app-core/contracts';
 import { collectFilePathAliases, findFilePathLinks } from './lib/filePathLinks';
 import { splitFrontmatter } from './lib/frontmatter';
-import { configureInlineMath } from './lib/inlineMath';
+import { configureMarkdownIt } from './lib/inlineMath';
 import { markdownRenderPlan } from './lib/markdownPerformance';
 import { copyCodeBlockFallback, copyTextToClipboard } from './lib/clipboard';
 import {
@@ -502,7 +502,7 @@ function copyDiff(code: string, idx: number) {
       <MarkdownRender
         v-if="seg.kind === 'md'"
         :content="seg.text"
-        :custom-markdown-it="configureInlineMath"
+        :custom-markdown-it="configureMarkdownIt"
         mode="chat"
         :code-renderer="renderPlan.codeRenderer"
         :is-dark="isDark"

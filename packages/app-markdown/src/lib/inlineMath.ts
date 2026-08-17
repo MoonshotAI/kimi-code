@@ -668,8 +668,15 @@ export function mathInlineRule(state: InlineMathRuleState, silent: boolean): boo
   return true;
 }
 
-/** Swap markstream's inline-math rule for ours; `$$` block math stays as-is. */
-export function configureInlineMath(md: MarkdownIt): MarkdownIt {
+/**
+ * Swap markstream's inline-math rule for ours; `$$` block math stays as-is.
+ * Also turn typographer off: stream-markdown-parser's factory enables
+ * markdown-it's typographer by default, whose replacements/smartquotes rules
+ * rewrite literal text — `(c)`→©, `(tm)`→™, `--`→–, `...`→…, straight→curly
+ * quotes — silently corrupting model output that users copy. Render verbatim.
+ */
+export function configureMarkdownIt(md: MarkdownIt): MarkdownIt {
+  md.set({ typographer: false });
   md.inline.ruler.disable('math');
   md.inline.ruler.before('escape', 'math', mathInlineRule);
   return md;
