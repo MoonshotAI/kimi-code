@@ -12,7 +12,7 @@ Kimi Code CLI 内置三种 subagent，开箱即用，分别面向不同任务形
 - **`explore`**：代码库探索专用，只做只读操作，不修改任何文件。适合在不改动文件的前提下快速搜索、阅读和总结仓库。
 - **`plan`**：实现规划与架构设计专用，连 Shell 命令都不提供，专注于"想清楚怎么做"而不是"动手做"。
 
-`coder` subagent 与 main agent 共享大部分工具集：可以在后台执行 Shell 命令、维护待办列表、进入 Plan 模式、调用 Agent Skills，也可以在任务自然拆解时继续派发自己的嵌套 subagent。如果它结束自己的轮次时仍有后台任务在运行，那么只有在这些后台任务全部落定后，这次运行才会回报完成——main agent 拿到结果时，背后的工作也已经真正完成。
+`coder` subagent 与 main agent 共享大部分工具集：可以在后台执行 Shell 命令、维护待办列表、进入 Plan 模式、调用 Agent Skills。内置 subagent 都不能继续派发新的 subagent。自定义 Agent 缺省时继承内置委派列表（`coder`、`explore`、`plan`），而这些内置类型自身同样不能再派发，因此委派链默认必然终止——不存在不受限的递归派发。自定义 Agent 可以通过显式声明 [`subagents`](#agent-文件格式) 列表来获得更深的委派链。如果 subagent 结束自己的轮次时仍有后台任务在运行，那么只有在这些后台任务全部落定后，这次运行才会回报完成——main agent 拿到结果时，背后的工作也已经真正完成。
 
 ## 调用方式
 
@@ -101,7 +101,7 @@ disallowedTools:
 | `override` | 否 | 是否允许覆盖同名内置 Agent，默认 `false`。`--agent-file` 属于显式启动意图，无需设置此字段 |
 | `tools` | 否 | 工具名允许列表，如 `Read`、`Bash`；MCP 工具用 glob 匹配，如 `mcp__github__*`。支持 YAML 列表或逗号分隔字符串（`tools: Read, Grep`）两种写法。缺省表示允许全部工具；单独的 `*` 同样表示允许全部工具；空列表（`tools: []`）表示禁用全部工具 |
 | `disallowedTools` | 否 | 禁止列表，写法与匹配规则相同，在 `tools` 之后应用 |
-| `subagents` | 否 | 允许委派的 subagent 名称列表，写法与 `tools` 相同（YAML 列表或逗号分隔字符串）。缺省表示可委派所有类型；单独的 `*` 同样表示全部 |
+| `subagents` | 否 | 允许委派的 subagent 名称列表，写法与 `tools` 相同（YAML 列表或逗号分隔字符串）。缺省表示继承默认 Agent 的委派列表（内置默认为 `coder`、`explore`、`plan`，它们自身都不能再派发，因此继承得到的链路必然终止）；单独的 `*` 表示可委派所有类型。main agent 的有效委派列表还会自动并入所有发现的自定义 Agent，因此自定义 Agent 默认即可被委派 |
 
 内置工具与用户工具按名称精确匹配（区分大小写）；以 `mcp__` 开头的条目按 glob 匹配 MCP 工具。有三种写法永远匹配不到任何工具，在 profile 生效时会给出警告：`mcp__` 模式之外使用通配符（`disallowedTools` 里单独的 `*` 什么也禁不掉）；不是完整 `mcp__<服务器>__<工具>` 形式的 `mcp__` 字面量（`mcp__github` 匹配不到任何工具 —— 匹配整个服务器要用 `mcp__github__*`）；以及任何已注册或内置工具都没有的名字（通常是笔误，如把 `Read` 写成 `read`）。
 
