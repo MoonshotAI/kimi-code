@@ -10,7 +10,9 @@
  * broadcaster that emits them.
  */
 
-import type { DomainEvent } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
+import type { z } from 'zod';
+
+import type { agentEventSchema } from '../../../protocol/events-zod';
 import type { MessageContent } from '../../../protocol/message';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
@@ -220,8 +222,10 @@ export interface BackgroundTaskTerminatedEvent {
   readonly info: TaskInfo;
 }
 
+type CoreStreamEvent = z.infer<typeof agentEventSchema>;
+
 export type AgentEvent =
-  | DomainEvent
+  | CoreStreamEvent
   | AgentStatusUpdatedEvent
   | AgentCreatedEvent
   | AgentDisposedEvent
@@ -241,7 +245,7 @@ export type AgentEvent =
   | BackgroundTaskStartedEvent
   | BackgroundTaskTerminatedEvent;
 
-export type Event = AgentEvent & { agentId: string; sessionId: string };
+export type Event = AgentEvent & { agentId: string; sessionId: string; readonly time?: number };
 
 export const VOLATILE_EVENT_TYPES = [
   'assistant.delta',

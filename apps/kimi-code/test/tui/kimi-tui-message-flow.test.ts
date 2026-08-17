@@ -3324,6 +3324,38 @@ command = "vim"
     expect(attachment.bytes).toEqual(new Uint8Array([0xaa, 0xbb]));
   });
 
+  it('keeps an image staging upload across lazy session creation (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-lazy');
+
+    driver.handleUserInput(attachment.placeholder);
+
+    // The lease is created at extraction, before the session exists: lazy
+    // creation runs setSession mid-dispatch, and the first prompt's lease
+    // must survive it — the engine's intake only reads the upload once the
+    // prompt lands.
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith(
+        [{ type: 'image_url', imageUrl: { url: 'kimi-file://file-lazy' } }],
+        { promptId: expect.any(String) },
+      );
+    });
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+    emitTurn(driver, 1, () => {
+      expect(harness.deleteFile).not.toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-lazy');
+    });
+  });
+
   it('still deletes the staging upload when a cache-hint dismissal precedes the resend', async () => {
     const { driver, session, harness } = await makeDriver();
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;

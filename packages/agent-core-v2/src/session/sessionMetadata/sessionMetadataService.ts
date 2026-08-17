@@ -53,7 +53,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -109,7 +109,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
         this.disposed = true;
       },
     });
-    this.states.register(sessionMetadataDataKey);
+    this.states.contributeState(sessionMetadataDataKey);
     this.scope = ctx.metaScope;
     this.onDidChangeMetadata = this._onDidChangeMetadata.event;
     this.ready = this.load();

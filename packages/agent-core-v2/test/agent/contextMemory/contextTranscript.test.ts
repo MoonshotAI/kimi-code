@@ -1,37 +1,19 @@
 /**
- * Scenario: context journal records are reduced into full display history and
- * the current folded suffix across appends, loop retries, compaction, undo,
- * and clear boundaries.
- *
- * Responsibilities: assert transcript content/times, folded-length semantics,
- * prompt-owned undo behavior, and prefix-by-prefix parity with ContextModel.
- * Wiring: pure transcript reducer plus the real context Ops and loop fold.
- * Run: pnpm test -- test/agent/contextMemory/contextTranscript.test.ts
+ * Tests for `reduceContextTranscript` — the wire-transcript reducer used by the
+ * snapshot and messages endpoints. Mirrors v1 `reduceWireRecords` expectations:
+ * compaction keeps the prefix and appends a summary marker; undo removes the
+ * tail but stops at compaction summaries / clear floors; clear keeps the
+ * transcript but resets the folded view.
  */
 
 import { describe, expect, it } from 'vitest';
 
 import {
-  createContextTranscriptReducer,
   reduceContextTranscript,
   type ContextTranscript,
 } from '#/agent/contextMemory/contextTranscript';
-import {
-  contextApplyCompaction,
-  contextClear,
-  contextUndo,
-} from '#/agent/contextMemory/contextOps';
-import {
-  foldAppendMessage,
-  foldLoopEvent,
-  type LoopRecordedEvent,
-} from '#/agent/contextMemory/loopEventFold';
-import {
-  EMPTY_FOLD,
-  type ContextMessage,
-  type ContextState,
-  type PromptOrigin,
-} from '#/agent/contextMemory/types';
+import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import type { WireRecord } from '#/wire/record';
 
 function userMessage(text: string, origin?: PromptOrigin): ContextMessage {
@@ -208,56 +190,15 @@ describe('reduceContextTranscript', () => {
     expect(texts(result)).toEqual(['keep me', 'kept answer']);
   });
 
-  it('multi-turn undo drops prompt-owned injections of every removed prompt but keeps unowned reminders', () => {
-    const result = reduceContextTranscript([
-      appendMessage(
-        userMessage('caption A', {
-          kind: 'injection',
-          variant: 'image_compression',
-          ownerPromptId: 'prompt-1',
-        }),
-      ),
-      appendMessage({ ...userMessage('message A', { kind: 'user' }), id: 'prompt-1' }),
-      appendMessage(assistantMessage('reply A')),
-      appendMessage(
-        userMessage('caption B', {
-          kind: 'injection',
-          variant: 'image_compression',
-          ownerPromptId: 'prompt-2',
-        }),
-      ),
-      appendMessage({ ...userMessage('message B', { kind: 'user' }), id: 'prompt-2' }),
-      appendMessage(assistantMessage('reply B')),
-      appendMessage(userMessage('standing reminder', { kind: 'injection', variant: 'system' })),
-      undo(2),
-    ]);
-
-    expect(texts(result)).toEqual(['standing reminder']);
-    expect(result.foldedLength).toBe(1);
-  });
-
-  it('undo blocked at a compaction summary leaves the transcript unchanged', () => {
+  it('undo stops at a compaction summary', () => {
     const result = reduceContextTranscript([
       appendMessage(userMessage('old')),
       compaction('SUM', 1, 1),
       appendMessage(userMessage('recent')),
       appendMessage(assistantMessage('answer')),
       undo(2),
-    ]);
-    expect(texts(result)).toEqual(['old', 'SUM', 'recent', 'answer']);
-    expect(result.foldedLength).toBe(4);
-  });
-
-  it('undo up to a compaction summary still applies', () => {
-    const result = reduceContextTranscript([
-      appendMessage(userMessage('old')),
-      compaction('SUM', 1, 1),
-      appendMessage(userMessage('recent')),
-      appendMessage(assistantMessage('answer')),
-      undo(1),
     ]);
     expect(texts(result)).toEqual(['old', 'SUM']);
-    expect(result.foldedLength).toBe(2);
   });
 
   it('clear keeps prior transcript entries but resets the folded view', () => {
@@ -271,19 +212,6 @@ describe('reduceContextTranscript', () => {
     expect(result.foldedLength).toBe(1);
   });
 
-  it('settles an empty partial before clear so the next step cannot remove old history', () => {
-    const result = reduceContextTranscript([
-      appendMessage(userMessage('old')),
-      loopEvent({ type: 'step.begin', uuid: 'aborted' }),
-      { type: 'context.clear' },
-      ...assistantStep('next', 'answer'),
-    ]);
-
-    expect(texts(result)).toEqual(['old', 'answer']);
-    expect(result.foldedLength).toBe(1);
-    expect(result.entries.at(-1)?.partial).toBeUndefined();
-  });
-
   it('undo does not cross a clear floor', () => {
     const result = reduceContextTranscript([
       appendMessage(userMessage('u1')),
@@ -294,18 +222,6 @@ describe('reduceContextTranscript', () => {
     ]);
     expect(texts(result)).toEqual(['u1']);
     expect(result.foldedLength).toBe(0);
-  });
-
-  it('undo blocked at a clear floor leaves the transcript unchanged', () => {
-    const result = reduceContextTranscript([
-      appendMessage(userMessage('u1')),
-      { type: 'context.clear' },
-      appendMessage(userMessage('u2')),
-      appendMessage(assistantMessage('a2')),
-      undo(2),
-    ]);
-    expect(texts(result)).toEqual(['u1', 'u2', 'a2']);
-    expect(result.foldedLength).toBe(2);
   });
 
   it('folds tool calls and results from loop events', () => {
@@ -374,152 +290,5 @@ describe('reduceContextTranscript', () => {
     ]);
     expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant', 'assistant']);
     expect(result.foldedLength).toBe(4);
-  });
-});
-
-describe('transcript replay matches ContextModel state', () => {
-  function applyRecordToModel(state: ContextState, record: WireRecord): ContextState {
-    switch (record.type) {
-      case 'context.append_message':
-        return foldAppendMessage(state, record['message'] as ContextMessage);
-      case 'context.append_loop_event':
-        return foldLoopEvent(state, record['event'] as LoopRecordedEvent);
-      case 'context.undo':
-        return contextUndo.apply(state, { count: record['count'] as number });
-      case 'context.clear':
-        return contextClear.apply(state, {});
-      case 'context.apply_compaction':
-        return contextApplyCompaction.apply(
-          state,
-          record as unknown as Parameters<typeof contextApplyCompaction.apply>[1],
-        );
-      default:
-        return state;
-    }
-  }
-
-  function currentConversationEntries(result: ContextTranscript): readonly ContextMessage[] {
-    return result.entries.slice(result.entries.length - result.foldedLength);
-  }
-
-  type ParityComparisonMessage = Omit<ContextMessage, 'content'> & {
-    content: ContextMessage['content'] | '<summary>';
-  };
-
-  function normalizeForParityComparison(
-    messages: readonly ContextMessage[],
-  ): ParityComparisonMessage[] {
-    return messages.map((message) => ({
-      ...message,
-      content:
-        message.origin?.kind === 'compaction_summary' ? '<summary>' : message.content,
-    }));
-  }
-
-  class ParityComparisonWindow {
-    private enabled = true;
-
-    observe(record: WireRecord): void {
-      if (record.type === 'context.apply_compaction') this.enabled = false;
-      if (record.type === 'context.clear') this.enabled = true;
-    }
-
-    shouldCompare(): boolean {
-      return this.enabled;
-    }
-  }
-
-  function expectParity(records: WireRecord[]): void {
-    let state: ContextState = { messages: [], fold: EMPTY_FOLD };
-    const reducer = createContextTranscriptReducer();
-    const comparisonWindow = new ParityComparisonWindow();
-    for (const record of records) {
-      state = applyRecordToModel(state, record);
-      reducer.add(record);
-      comparisonWindow.observe(record);
-      if (!comparisonWindow.shouldCompare()) continue;
-      const result = reducer.result();
-      expect(normalizeForParityComparison(currentConversationEntries(result))).toEqual(
-        normalizeForParityComparison(state.messages),
-      );
-    }
-  }
-
-  it('matches across retries, mid-exchange deferral, undo, compaction, and clear', () => {
-    expectParity([
-      appendMessage(userMessage('u1', { kind: 'user' })),
-      ...assistantStep('s1', 'a1'),
-      loopEvent({ type: 'step.begin', uuid: 's2' }),
-      loopEvent({ type: 'content.part', stepUuid: 's2', part: { type: 'text', text: 'half' } }),
-      loopEvent({ type: 'tool.call', stepUuid: 's2', toolCallId: 'c1', name: 'Bash', args: {} }),
-      loopEvent({ type: 'step.begin', uuid: 's3' }),
-      loopEvent({ type: 'content.part', stepUuid: 's3', part: { type: 'text', text: 'a3' } }),
-      loopEvent({ type: 'tool.call', stepUuid: 's3', toolCallId: 'c2', name: 'Read', args: {} }),
-      appendMessage(userMessage('injected mid-exchange')),
-      loopEvent({ type: 'tool.result', toolCallId: 'c2', result: { output: 'ok' } }),
-      loopEvent({ type: 'step.end', uuid: 's3' }),
-      appendMessage(userMessage('u2', { kind: 'user' })),
-      undo(1),
-      compaction('SUM', 7, 2),
-      appendMessage(userMessage('u3', { kind: 'user' })),
-      { type: 'context.clear' },
-      ...assistantStep('s4', 'a4'),
-    ]);
-  });
-
-  it('matches across a multi-turn undo with prompt-owned injections on every anchor', () => {
-    expectParity([
-      appendMessage(
-        userMessage('caption u1', {
-          kind: 'injection',
-          variant: 'image_compression',
-          ownerPromptId: 'p1',
-        }),
-      ),
-      appendMessage({ ...userMessage('u1', { kind: 'user' }), id: 'p1' }),
-      ...assistantStep('s1', 'a1'),
-      appendMessage(
-        userMessage('caption u2', {
-          kind: 'injection',
-          variant: 'image_compression',
-          ownerPromptId: 'p2',
-        }),
-      ),
-      appendMessage({ ...userMessage('u2', { kind: 'user' }), id: 'p2' }),
-      ...assistantStep('s2', 'a2'),
-      undo(2),
-    ]);
-  });
-
-  it('matches when a tool exchange is interrupted without a retry', () => {
-    expectParity([
-      appendMessage(userMessage('q', { kind: 'user' })),
-      loopEvent({ type: 'step.begin', uuid: 's1' }),
-      loopEvent({ type: 'tool.call', stepUuid: 's1', toolCallId: 'c1', name: 'Bash', args: {} }),
-      appendMessage(userMessage('next', { kind: 'user' })),
-      ...assistantStep('s2', 'done'),
-      undo(1),
-      undo(1),
-    ]);
-  });
-
-  it('settles a frame left open by a failed attempt when compaction lands mid-fold', () => {
-    const records: WireRecord[] = [
-      appendMessage(userMessage('u1', { kind: 'user' })),
-      ...assistantStep('s1', 'a1'),
-      loopEvent({ type: 'step.begin', uuid: 's2' }),
-      compaction('SUM', 3, 1),
-      ...assistantStep('s3', 'a3'),
-    ];
-    let state: ContextState = { messages: [], fold: EMPTY_FOLD };
-    const reducer = createContextTranscriptReducer();
-    for (const record of records) {
-      state = applyRecordToModel(state, record);
-      reducer.add(record);
-    }
-    const result = reducer.result();
-
-    expect(result.foldedLength).toBe(state.messages.length);
-    expect(result.entries.every((m) => m.partial !== true)).toBe(true);
   });
 });

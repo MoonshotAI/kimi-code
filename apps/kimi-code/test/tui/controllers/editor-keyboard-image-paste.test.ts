@@ -5,9 +5,10 @@
  *   - an oversized pasted image is downsampled while building the attachment,
  *     so the stored bytes, the `[image #N (W×H)]` placeholder, and the eventual
  *     submitted image all agree on the compressed size
- *   - the pre-compression original is persisted and recorded on the
- *     attachment, so the submitted prompt can announce the compression and
- *     point the model at the full-fidelity bytes
+ *   - the pre-compression original is recorded on the attachment in memory —
+ *     never persisted at paste time, because the session whose
+ *     media-originals dir it belongs in may not exist yet; dispatch-time
+ *     caption resolution owns persistence (see image-placeholder tests)
  *   - a within-budget paste is stored byte-for-byte (fast path), with no
  *     original recorded
  *   - on the v2 engine the final bytes are uploaded to the daemon file store
@@ -15,7 +16,8 @@
  *     and expiry; an upload failure leaves the paste on the inline fallback
  */
 
-import { mkdtemp, readFile, rm, unlink } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -211,7 +213,7 @@ describe('clipboard image paste compression', () => {
     expect(Math.max(dims!.width, dims!.height)).toBe(800);
   });
 
-  it('records and persists the pre-compression original for an oversized paste', async () => {
+  it('records the pre-compression original in memory for an oversized paste', async () => {
     const big = await solidPng(3600, 1800);
     readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
 
@@ -221,19 +223,18 @@ describe('clipboard image paste compression', () => {
     const att = store.get(1);
     if (att?.kind !== 'image') throw new Error('expected image attachment');
     expect(att.original).toBeDefined();
+    expect(att.original?.bytes).toEqual(big);
     expect(att.original?.width).toBe(3600);
     expect(att.original?.height).toBe(1800);
     expect(att.original?.byteLength).toBe(big.length);
     expect(att.original?.mime).toBe('image/png');
 
-    // The original bytes are readable back from the persisted path.
-    expect(att.original?.path).not.toBeNull();
-    const persisted = await readFile(att.original!.path!);
-    expect(new Uint8Array(persisted)).toEqual(big);
-    await unlink(att.original!.path!).catch(() => undefined);
+    // Nothing is persisted at paste time — dispatch-time caption resolution
+    // owns that, once the session (and its media-originals dir) is known.
+    expect(att.original?.path).toBeUndefined();
   });
 
-  it('persists the original into the session media-originals dir when the session is known', async () => {
+  it('does not persist the original at paste time, even with a known session', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-paste-session-'));
     const big = await solidPng(3600, 1800);
     readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
@@ -243,10 +244,9 @@ describe('clipboard image paste compression', () => {
 
     const att = store.get(1);
     if (att?.kind !== 'image') throw new Error('expected image attachment');
-    expect(att.original?.path).not.toBeNull();
-    expect(att.original!.path!.startsWith(join(sessionDir, 'media-originals'))).toBe(true);
-    const persisted = await readFile(att.original!.path!);
-    expect(new Uint8Array(persisted)).toEqual(big);
+    expect(att.original?.bytes).toEqual(big);
+    expect(att.original?.path).toBeUndefined();
+    expect(existsSync(join(sessionDir, 'media-originals'))).toBe(false);
     await rm(sessionDir, { recursive: true, force: true });
   });
 
@@ -291,7 +291,6 @@ describe('clipboard image paste compression', () => {
       expect(att.original?.height).toBe(3600);
       // The compressed attachment itself keeps the portrait aspect.
       expect(att.width).toBeLessThan(att.height);
-      await unlink(att.original!.path!).catch(() => undefined);
     },
     15_000,
   );
@@ -372,7 +371,6 @@ describe('clipboard image paste compression', () => {
     const [data] = uploadFile.mock.calls[0]!;
     expect(data).toBe(att.bytes);
     expect(att.bytes).not.toBe(big);
-    await unlink(att.original!.path!).catch(() => undefined);
   });
 
   it('keeps the paste on the inline fallback when the daemon upload fails (v2)', async () => {

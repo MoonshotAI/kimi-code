@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot-ai/agent-core-v2';
+import { ToolProgress } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { mapPromptLaunchError } from '../src/session';
@@ -508,18 +509,20 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     const agentHandle = session?.accessor.get(IAgentLifecycleService).get('main');
     const bus = agentHandle?.accessor.get(IEventBus);
     expect(bus).toBeDefined();
-    bus!.publish({
-      type: 'tool.progress',
-      turnId,
-      toolCallId: 'call_1',
-      update: { kind: 'stdout', text: 'raw-stdout-bytes' },
-    });
-    bus!.publish({
-      type: 'tool.progress',
-      turnId,
-      toolCallId: 'call_1',
-      update: { kind: 'status', text: 'Still working…' },
-    });
+    bus!.publish(
+      new ToolProgress({
+        turnId,
+        toolCallId: 'call_1',
+        update: { kind: 'stdout', text: 'raw-stdout-bytes' },
+      }),
+    );
+    bus!.publish(
+      new ToolProgress({
+        turnId,
+        toolCallId: 'call_1',
+        update: { kind: 'status', text: 'Still working…' },
+      }),
+    );
 
     const result = (await promptPromise) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');

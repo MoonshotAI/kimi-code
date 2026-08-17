@@ -1,12 +1,12 @@
 /**
  * `contextMemory` message id helpers.
  *
- * Local message ids (`msg_<ulid>`) identify prompt messages: assigned at
- * enqueue time and persisted with the `context.append_message` record, so
- * undo can pair prompt-owned injections with their prompt by `id` across a
- * resume. The server layer's `ContextMessage → wire Message` projection
- * prefers this id and falls back to a transcript-index-derived id for
- * messages that carry none (v1-written records).
+ * Local message ids (`msg_<ulid>`) are process-lifetime identifiers only —
+ * they are NOT persisted: the on-disk `context.append_message` record carries
+ * exactly v1's field set, and public message ids are derived from the
+ * transcript index (by the server layer's `ContextMessage → wire Message`
+ * projection), which stays stable across live reads and resume.
+ * `newMessageId` remains for callers that need an opaque per-process id.
  * Provider-assigned ids live on the separate `providerMessageId` field and
  * never collide with this namespace.
  */

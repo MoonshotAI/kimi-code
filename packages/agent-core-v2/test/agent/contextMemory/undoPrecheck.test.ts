@@ -1,16 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
+import { castDraft } from 'immer';
+
 import {
   computeUndoCut,
-  computeUndoCutFrom,
+  contextMemoryKey,
   isFullyUndoable,
-} from '#/agent/contextMemory/conversationTime';
-import { contextUndo } from '#/agent/contextMemory/contextOps';
-import {
-  EMPTY_FOLD,
-  type ContextMessage,
-  type ContextState,
-} from '#/agent/contextMemory/types';
+} from '#/agent/contextMemory/contextOps';
+import { ContextUndo } from '#/agent/contextMemory/contextEvents';
+import type { ContextMessage } from '#/agent/contextMemory/types';
+import { expandedStateFolds, type FoldContext } from '#/state/state';
 
 function text(value: string): { type: 'text'; text: string } {
   return { type: 'text', text: value };
@@ -52,7 +51,7 @@ const USER_ORIGIN: ContextMessage['origin'] = { kind: 'user' };
 describe('computeUndoCut', () => {
   it('finds the cut for the last real user prompt', () => {
     const cut = computeUndoCut([user(USER_ORIGIN), assistant()], 1);
-    expect(cut).toEqual({ cutIndex: 0, anchorIndex: 0, removedCount: 1, stoppedAtCompaction: false });
+    expect(cut).toEqual({ cutIndex: 0, removedCount: 1, stoppedAtCompaction: false });
     expect(isFullyUndoable(cut, 1)).toBe(true);
   });
 
@@ -70,7 +69,7 @@ describe('computeUndoCut', () => {
 
   it('finds nothing when the history has no real user prompt', () => {
     const cut = computeUndoCut([], 1);
-    expect(cut).toEqual({ cutIndex: -1, anchorIndex: -1, removedCount: 0, stoppedAtCompaction: false });
+    expect(cut).toEqual({ cutIndex: -1, removedCount: 0, stoppedAtCompaction: false });
     expect(isFullyUndoable(cut, 1)).toBe(false);
   });
 
@@ -89,7 +88,7 @@ describe('computeUndoCut', () => {
 
   it('stops at a compaction summary', () => {
     const cut = computeUndoCut([user(USER_ORIGIN), compaction(), assistant()], 1);
-    expect(cut).toEqual({ cutIndex: -1, anchorIndex: -1, removedCount: 0, stoppedAtCompaction: true });
+    expect(cut).toEqual({ cutIndex: -1, removedCount: 0, stoppedAtCompaction: true });
     expect(isFullyUndoable(cut, 1)).toBe(false);
   });
 
@@ -100,50 +99,45 @@ describe('computeUndoCut', () => {
     expect(cut.stoppedAtCompaction).toBe(true);
     expect(isFullyUndoable(cut, 2)).toBe(false);
   });
-
-  it('computeUndoCutFrom walks wrapped entries and stops at the given floor', () => {
-    const entries = [user(USER_ORIGIN), user(USER_ORIGIN), assistant()].map((message) => ({
-      message,
-    }));
-    const cut = computeUndoCutFrom(entries, 2, (entry) => entry.message, 1);
-    expect(cut).toEqual({
-      cutIndex: 1,
-      anchorIndex: 1,
-      removedCount: 1,
-      stoppedAtCompaction: false,
-    });
-    expect(isFullyUndoable(cut, 2)).toBe(false);
-  });
 });
 
 describe('contextUndo op', () => {
-  function stateOf(messages: readonly ContextMessage[]): ContextState {
-    return { messages, fold: EMPTY_FOLD };
+  const foldContext: FoldContext = {
+    silent: false,
+    checkpoint: () => {},
+    clearCheckpoints: () => {},
+    undoToCheckpoint: () => {},
+    emit: () => {},
+  };
+
+  function applyContextUndo(state: ContextMessage[], count: number): ContextMessage[] {
+    const fold = expandedStateFolds(contextMemoryKey).get(ContextUndo)!;
+    const result = fold(castDraft(state), new ContextUndo({ count }), foldContext);
+    return result === undefined ? state : result;
   }
 
   it('slices the history at the cut point, dropping post-cut injections too', () => {
-    const state = stateOf([
+    const state = [
       user(USER_ORIGIN),
       assistant(),
       user(USER_ORIGIN),
       injection(),
       assistant(),
-    ]);
-    const next = contextUndo.apply(state, { count: 1 });
-    expect(next.messages).toEqual([user(USER_ORIGIN), assistant()]);
-    expect(next.fold).toBe(EMPTY_FOLD);
+    ];
+    const next = applyContextUndo(state, 1);
+    expect(next).toEqual([user(USER_ORIGIN), assistant()]);
   });
 
   it('returns the same reference when not fully undoable', () => {
-    const state = stateOf([user(USER_ORIGIN), compaction(), assistant()]);
-    expect(contextUndo.apply(state, { count: 1 })).toBe(state);
+    const state = [user(USER_ORIGIN), compaction(), assistant()];
+    expect(applyContextUndo(state, 1)).toBe(state);
   });
 
   it.each([0, 0.5, Number.MAX_SAFE_INTEGER + 1])(
     'returns the same reference for invalid count %s',
     (count) => {
-      const state = stateOf([user(USER_ORIGIN), assistant()]);
-      expect(contextUndo.apply(state, { count })).toBe(state);
+      const state = [user(USER_ORIGIN), assistant()];
+      expect(applyContextUndo(state, count)).toBe(state);
     },
   );
 });

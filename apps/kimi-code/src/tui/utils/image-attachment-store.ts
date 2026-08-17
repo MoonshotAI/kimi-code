@@ -6,9 +6,10 @@
  * (640×480)]` / `[video #2 sample.mov]`). The placeholder is what the
  * user sees in the input field; on submit, `extractMediaAttachments`
  * walks the text and expands image placeholders to image content parts
- * (preceded by a compression caption when paste-time compression shrank
- * the bytes — see `ImageAttachment.original`) and video placeholders to
- * file-path tags for `ReadMediaFile`.
+ * (dispatch-time caption resolution then precedes them with a compression
+ * caption when paste-time compression shrank the bytes — see
+ * `ImageAttachment.original`) and video placeholders to file-path tags
+ * for `ReadMediaFile`.
  *
  * Scope is per-`KimiTUI` instance. Reloads (`/new`, `/clear`,
  * session switch) call `clear()` so ids restart from 1 and stale
@@ -19,14 +20,24 @@
 
 export interface ImageAttachmentOriginal {
   /**
-   * Where the pre-compression bytes were persisted for readback
-   * (ReadMediaFile + region); null when persistence failed.
+   * Pre-compression bytes, kept in memory until dispatch-time caption
+   * resolution (`resolveOriginalCaptions`) persists them — the session whose
+   * media-originals dir they belong in may not exist yet at paste time.
+   * Released once persistence succeeds; the on-disk copy is the original
+   * from then on.
    */
-  readonly path: string | null;
+  bytes?: Uint8Array;
   readonly width: number;
   readonly height: number;
+  /** Pre-compression size, retained for captions after `bytes` is released. */
   readonly byteLength: number;
   readonly mime: string;
+  /**
+   * Where the original was persisted for readback (ReadMediaFile + region).
+   * Undefined until dispatch-time persistence succeeds; failures are retried
+   * at the next dispatch.
+   */
+  path?: string;
 }
 
 export interface ImageAttachment {
@@ -38,8 +49,8 @@ export interface ImageAttachment {
   readonly height: number;
   /**
    * Pre-compression original, recorded when paste-time compression changed
-   * the bytes. Drives the compression caption emitted on submit so the model
-   * knows it received a downsampled copy. Absent for untouched pastes.
+   * the bytes. Drives the compression caption authored on dispatch so the
+   * model knows it received a downsampled copy. Absent for untouched pastes.
    */
   readonly original?: ImageAttachmentOriginal | undefined;
   /**
@@ -52,9 +63,9 @@ export interface ImageAttachment {
   /** Epoch milliseconds when the daemon staging upload expires. */
   fileExpiresAt?: number;
   /**
-   * Background ingestion (compression/original persistence/daemon upload)
-   * still in flight. The paste callback settles once the placeholder is in
-   * the editor — typing never waits on this — but submit holds it briefly
+   * Background ingestion (compression/daemon upload) still in flight. The
+   * paste callback settles once the placeholder is in the editor — typing
+   * never waits on this — but submit holds it briefly
    * (`pendingImageIngestions`) so a fast paste-then-Enter still gets the
    * compressed/ref form; a slow ingestion submits the inline form instead.
    * Cleared when ingestion completes.
@@ -139,8 +150,8 @@ export class ImageAttachmentStore {
 
   /**
    * Complete an image that was inserted into the editor before its ingestion
-   * work (compression/original persistence/upload) finished. Returns undefined
-   * when the attachment was cleared while that work was in flight.
+   * work (compression/upload) finished. Returns undefined when the attachment
+   * was cleared while that work was in flight.
    */
   completeImage(
     attachment: ImageAttachment,
@@ -167,6 +178,20 @@ export class ImageAttachmentStore {
     mutable.pending = undefined;
     mutable.placeholder = formatPlaceholder(attachment.id, input.width, input.height);
     return attachment;
+  }
+
+  /**
+   * Record where an attachment's pre-compression original was persisted and
+   * release the in-memory buffer — the on-disk copy is the original from
+   * then on, and the caption only needs the retained metadata. Dispatch-time
+   * caption resolution calls this after a successful write; failures leave
+   * the path unset so a later dispatch retries.
+   */
+  setOriginalPath(id: number, path: string): void {
+    const attachment = this.byId.get(id);
+    if (attachment?.kind !== 'image' || attachment.original === undefined) return;
+    attachment.original.path = path;
+    attachment.original.bytes = undefined;
   }
 
   get(id: number): MediaAttachment | undefined {

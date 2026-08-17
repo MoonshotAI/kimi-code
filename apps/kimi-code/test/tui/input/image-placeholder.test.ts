@@ -3,7 +3,7 @@
  * fallback from expiring daemon uploads to bytes retained by the TUI.
  */
 
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +18,9 @@ import {
   extractMediaAttachments,
   makeExtractionResendable,
   pendingImageIngestions,
+  persistOriginalImageSync,
   refreshExpiringImageFileRefs,
+  resolveOriginalCaptions,
   rewriteMediaPlaceholders,
 } from '#/tui/utils/image-placeholder';
 import { getCacheDir } from '#/utils/paths';
@@ -192,45 +194,24 @@ describe('extractMediaAttachments', () => {
     }
   });
 
-  it('inserts a compression caption before an image that was compressed at paste time', () => {
+  it('expands a compressed paste without a caption — captions are authored at dispatch', () => {
     const store = new ImageAttachmentStore();
     const att = store.addImage(new Uint8Array([1, 2, 3]), 'image/png', 2000, 2000, {
-      path: '/tmp/kimi-code-original-images/abc.png',
+      bytes: new Uint8Array([9, 8, 7]),
       width: 2600,
       height: 2600,
-      byteLength: 123456,
+      byteLength: 3,
       mime: 'image/png',
     });
 
     const r = extractMediaAttachments(`look ${att.placeholder}`, store);
 
-    expect(r.parts).toHaveLength(2);
-    const caption = r.parts[0];
-    if (caption?.type !== 'text') throw new Error('expected leading text part');
-    expect(caption.text).toContain('Image compressed');
-    expect(caption.text).toContain('2600x2600');
-    expect(caption.text).toContain('/tmp/kimi-code-original-images/abc.png');
-    expect(r.parts[1]).toEqual({
-      type: 'image_url',
-      imageUrl: { url: 'data:image/png;base64,AQID' },
-    });
-  });
-
-  it('notes an unpreserved original when persistence failed at paste time', () => {
-    const store = new ImageAttachmentStore();
-    const att = store.addImage(new Uint8Array([1]), 'image/png', 2000, 2000, {
-      path: null,
-      width: 2600,
-      height: 2600,
-      byteLength: 123456,
-      mime: 'image/png',
-    });
-
-    const r = extractMediaAttachments(att.placeholder, store);
-
-    const caption = r.parts[0];
-    if (caption?.type !== 'text') throw new Error('expected leading text part');
-    expect(caption.text).toMatch(/not preserved/i);
+    // Extraction stays persistence-free: no caption part, no original path.
+    expect(r.parts).toEqual([
+      { type: 'text', text: 'look ' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AQID' } },
+    ]);
+    expect(att.original?.path).toBeUndefined();
   });
 
   it('adds no caption for an uncompressed image attachment', () => {
@@ -313,35 +294,46 @@ describe('extractMediaAttachments', () => {
     }
   });
 
-  it('emits the compression caption before the bare kimi-file reference', () => {
-    const { cleanup } = setupTempCache();
+  it('rebuilds a compressed paste with its caption and original for a new-session resend', () => {
+    const dir = makeTempDir();
     try {
       const store = new ImageAttachmentStore();
       const att = store.addImage(
         new Uint8Array([1, 2, 3]),
         'image/png',
         2000,
-        2000,
+        1000,
         {
-          path: '/tmp/kimi-code-original-images/abc.png',
+          bytes: new Uint8Array([9, 8, 7, 6]),
           width: 2600,
           height: 2600,
-          byteLength: 123456,
+          byteLength: 4,
           mime: 'image/png',
         },
-        'file-2',
+        'file-1',
       );
-      const r = extractMediaAttachments(att.placeholder, store);
-      expect(r.parts).toHaveLength(2);
-      const caption = r.parts[0];
-      if (caption?.type !== 'text') throw new Error('expected leading text part');
+      // The session reset clears the store, so the snapshot is the only place
+      // the original survives — the resend must persist it into the NEW
+      // session's originals dir and author the caption itself.
+      const extraction = extractMediaAttachments(att.placeholder, store);
+
+      const resend = makeExtractionResendable(extraction, dir);
+
+      expect(resend.imageAttachmentIds).toEqual([]);
+      expect(resend.parts).toHaveLength(2);
+      const caption = resend.parts[0];
+      if (caption?.type !== 'text') throw new Error('expected caption text part');
       expect(caption.text).toContain('Image compressed');
-      expect(r.parts[1]).toEqual({
+      expect(caption.text).toContain('2600x2600');
+      const files = readdirSync(dir);
+      expect(files).toHaveLength(1);
+      expect(caption.text).toContain(join(dir, files[0]!));
+      expect(resend.parts[1]).toEqual({
         type: 'image_url',
-        imageUrl: { url: 'kimi-file://file-2' },
+        imageUrl: { url: 'data:image/png;base64,AQID' },
       });
     } finally {
-      cleanup();
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
@@ -384,6 +376,271 @@ describe('extractMediaAttachments', () => {
     } finally {
       cleanup();
       rmSync(srcDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('resolveOriginalCaptions', () => {
+  function storeWithOriginal(
+    original?: {
+      bytes: Uint8Array;
+      width: number;
+      height: number;
+      byteLength: number;
+      mime: string;
+      path?: string;
+    },
+    fileId?: string,
+  ) {
+    const store = new ImageAttachmentStore();
+    const att = store.addImage(
+      new Uint8Array([1, 2, 3]),
+      'image/png',
+      2000,
+      1000,
+      original,
+      fileId,
+    );
+    return { store, att };
+  }
+
+  it('persists the original into the given dir and inserts the caption before the image', () => {
+    const dir = makeTempDir();
+    try {
+      const originalBytes = new Uint8Array([9, 8, 7, 6]);
+      const { store, att } = storeWithOriginal({
+        bytes: originalBytes,
+        width: 2600,
+        height: 2600,
+        byteLength: originalBytes.length,
+        mime: 'image/png',
+      });
+      const r = extractMediaAttachments(`look ${att.placeholder}`, store);
+
+      const resolved = resolveOriginalCaptions(r.parts, r.imageAttachmentIds, store, dir);
+
+      expect(att.original?.path?.startsWith(dir)).toBe(true);
+      expect(readFileSync(att.original!.path!)).toEqual(Buffer.from(originalBytes));
+      expect(resolved).toHaveLength(3);
+      const caption = resolved[1];
+      if (caption?.type !== 'text') throw new Error('expected caption text part');
+      expect(caption.text).toContain('Image compressed');
+      expect(caption.text).toContain('2600x2600');
+      expect(caption.text).toContain(att.original!.path!);
+      expect(resolved[2]).toEqual({
+        type: 'image_url',
+        imageUrl: { url: 'data:image/png;base64,AQID' },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('releases the in-memory original bytes once persistence succeeds', () => {
+    const dir = makeTempDir();
+    try {
+      const originalBytes = new Uint8Array([9, 8, 7, 6]);
+      const { store, att } = storeWithOriginal({
+        bytes: originalBytes,
+        width: 2600,
+        height: 2600,
+        byteLength: originalBytes.length,
+        mime: 'image/png',
+      });
+      const r = extractMediaAttachments(att.placeholder, store);
+      resolveOriginalCaptions(r.parts, r.imageAttachmentIds, store, dir);
+
+      // The on-disk copy is the original from here on; the caption still
+      // renders the original size from the retained metadata.
+      expect(att.original?.bytes).toBeUndefined();
+      const again = resolveOriginalCaptions(
+        r.parts,
+        r.imageAttachmentIds,
+        store,
+        dir,
+      );
+      const caption = again[0];
+      if (caption?.type !== 'text') throw new Error('expected caption text part');
+      expect(caption.text).toContain('2600x2600');
+      expect(caption.text).toContain('4 B');
+      expect(caption.text).toContain(att.original!.path!);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('authors the caption before the bare kimi-file reference', () => {
+    const dir = makeTempDir();
+    try {
+      const { store, att } = storeWithOriginal(
+        { bytes: new Uint8Array([9, 9]), width: 2600, height: 2600, byteLength: 2, mime: 'image/png' },
+        'file-2',
+      );
+      const r = extractMediaAttachments(att.placeholder, store);
+
+      const resolved = resolveOriginalCaptions(r.parts, r.imageAttachmentIds, store, dir);
+
+      expect(resolved).toHaveLength(2);
+      const caption = resolved[0];
+      if (caption?.type !== 'text') throw new Error('expected caption text part');
+      expect(caption.text).toContain('Image compressed');
+      expect(caption.text).toContain(att.original!.path!);
+      expect(resolved[1]).toEqual({
+        type: 'image_url',
+        imageUrl: { url: 'kimi-file://file-2' },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refreshes an already-authored caption in place instead of duplicating it', () => {
+    const dir = makeTempDir();
+    try {
+      const { store, att } = storeWithOriginal({
+        bytes: new Uint8Array([9]),
+        width: 2600,
+        height: 2600,
+        byteLength: 1,
+        mime: 'image/png',
+      });
+      const r = extractMediaAttachments(att.placeholder, store);
+      const once = resolveOriginalCaptions(r.parts, r.imageAttachmentIds, store, dir);
+
+      const twice = resolveOriginalCaptions(once, r.imageAttachmentIds, store, dir);
+
+      expect(twice).toHaveLength(2);
+      expect(twice[0]?.type).toBe('text');
+      expect(twice[1]?.type).toBe('image_url');
+      // The content-addressed original was persisted exactly once.
+      expect(att.original?.path?.startsWith(dir)).toBe(true);
+      expect(readdirSync(dir)).toHaveLength(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reuses an already-persisted original path without rewriting the file', () => {
+    const dir = makeTempDir();
+    try {
+      const existing = join(dir, 'already.png');
+      writeFileSync(existing, 'orig');
+      const { store, att } = storeWithOriginal({
+        bytes: new Uint8Array([7, 7, 7]),
+        width: 2600,
+        height: 2600,
+        byteLength: 3,
+        mime: 'image/png',
+        path: existing,
+      });
+      const r = extractMediaAttachments(att.placeholder, store);
+
+      const resolved = resolveOriginalCaptions(r.parts, r.imageAttachmentIds, store, dir);
+
+      const caption = resolved[0];
+      if (caption?.type !== 'text') throw new Error('expected caption text part');
+      expect(caption.text).toContain(existing);
+      expect(readFileSync(existing, 'utf8')).toBe('orig');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('notes an unpreserved original when persistence fails, then retries at a later dispatch', () => {
+    const dir = makeTempDir();
+    try {
+      // A file where the target directory must be created breaks persistence.
+      const occupied = join(dir, 'occupied');
+      writeFileSync(occupied, 'x');
+      const { store, att } = storeWithOriginal({
+        bytes: new Uint8Array([5, 5]),
+        width: 2600,
+        height: 2600,
+        byteLength: 2,
+        mime: 'image/png',
+      });
+      const r = extractMediaAttachments(att.placeholder, store);
+
+      const failed = resolveOriginalCaptions(
+        r.parts,
+        r.imageAttachmentIds,
+        store,
+        join(occupied, 'sub'),
+      );
+
+      const caption = failed[0];
+      if (caption?.type !== 'text') throw new Error('expected caption text part');
+      expect(caption.text).toMatch(/not preserved/i);
+      // The failure is not terminal: the path stays unset and the bytes are
+      // retained, so a later dispatch retries the write.
+      expect(att.original?.path).toBeUndefined();
+      expect(att.original?.bytes).toBeDefined();
+
+      const retried = resolveOriginalCaptions(r.parts, r.imageAttachmentIds, store, dir);
+
+      expect(att.original?.path?.startsWith(dir)).toBe(true);
+      const retryCaption = retried[0];
+      if (retryCaption?.type !== 'text') throw new Error('expected caption text part');
+      expect(retryCaption.text).toContain(att.original!.path!);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips the caption when ingestion landed after extraction (stale inline part)', () => {
+    const dir = makeTempDir();
+    try {
+      const store = new ImageAttachmentStore();
+      const rawBytes = new Uint8Array([1, 2, 3, 4]);
+      // Extraction raced the background ingestion: the part encodes the raw
+      // paste bytes…
+      const att = store.addImage(rawBytes, 'image/png', 2600, 2600);
+      const r = extractMediaAttachments(att.placeholder, store);
+      // …then ingestion completed, recording the compressed form. Captioning
+      // now would describe an image the model did not receive.
+      store.completeImage(att, {
+        bytes: new Uint8Array([1, 2, 3]),
+        mime: 'image/png',
+        width: 2000,
+        height: 2000,
+        original: { bytes: rawBytes, width: 2600, height: 2600, byteLength: 4, mime: 'image/png' },
+      });
+
+      const resolved = resolveOriginalCaptions(r.parts, r.imageAttachmentIds, store, dir);
+
+      expect(resolved).toHaveLength(1);
+      expect(resolved[0]?.type).toBe('image_url');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves images without an original untouched', () => {
+    const { store, placeholder } = storeWith(new Uint8Array([0xaa]));
+    const r = extractMediaAttachments(placeholder, store);
+    const resolved = resolveOriginalCaptions(r.parts, r.imageAttachmentIds, store, undefined);
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]?.type).toBe('image_url');
+  });
+});
+
+describe('persistOriginalImageSync', () => {
+  it('evicts the oldest originals once the store exceeds the size cap', () => {
+    const dir = makeTempDir();
+    try {
+      const first = persistOriginalImageSync(new Uint8Array(6).fill(1), 'image/png', dir);
+      expect(first).not.toBeNull();
+      // Pin the first file far into the past so eviction order is deterministic.
+      const old = new Date(Date.now() - 60_000);
+      utimesSync(first!, old, old);
+
+      const second = persistOriginalImageSync(new Uint8Array(6).fill(2), 'image/png', dir, 10);
+
+      expect(second).not.toBeNull();
+      expect(existsSync(first!)).toBe(false);
+      expect(existsSync(second!)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

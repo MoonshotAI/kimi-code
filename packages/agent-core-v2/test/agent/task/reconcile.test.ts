@@ -119,13 +119,15 @@ describe('AgentTaskService — loadFromDisk + reconcile', () => {
         taskId: 'bash-orphan00',
         status: 'lost',
       });
-      expect(emittedEvents).toContainEqual({
-        type: 'task.terminated',
-        info: expect.objectContaining({
-          taskId: 'bash-orphan00',
-          status: 'lost',
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({
+          type: 'task.terminated',
+          info: expect.objectContaining({
+            taskId: 'bash-orphan00',
+            status: 'lost',
+          }),
         }),
-      });
+      );
     });
 
     it('runtime restore reconciles persisted tasks through the task resume hook', async () => {
@@ -148,13 +150,15 @@ describe('AgentTaskService — loadFromDisk + reconcile', () => {
         taskId: 'bash-restore0',
         status: 'lost',
       });
-      expect(emittedEvents).toContainEqual({
-        type: 'task.terminated',
-        info: expect.objectContaining({
-          taskId: 'bash-restore0',
-          status: 'lost',
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({
+          type: 'task.terminated',
+          info: expect.objectContaining({
+            taskId: 'bash-restore0',
+            status: 'lost',
+          }),
         }),
-      });
+      );
     });
 
     it('does not reclassify already-terminal tasks', async () => {

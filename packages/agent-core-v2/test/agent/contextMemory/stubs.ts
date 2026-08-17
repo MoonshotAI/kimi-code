@@ -3,9 +3,8 @@
  * collaborator (`IWireService`).
  *
  * Lives under `test/` (not `src/`) so test-support code stays out of the
- * production tree. Its visible-window and log views have matching content but
- * do not guarantee reference identity. Import from a relative path (`./stubs`
- * or `../contextMemory/stubs`).
+ * production tree. Import from a relative path (`./stubs` or
+ * `../contextMemory/stubs`).
  */
 
 import type { ServiceRegistration } from '#/_base/di/test';
@@ -15,7 +14,8 @@ import {
   type ContextCompactionInput,
   type ContextCompactionResult,
 } from '#/agent/contextMemory/contextMemory';
-import { computeUndoCut, type UndoCut } from '#/agent/contextMemory/conversationTime';
+import { computeUndoCut, type UndoCut } from '#/agent/contextMemory/contextOps';
+import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IEventBus } from '#/app/event/eventBus';
@@ -37,7 +37,7 @@ function publishSplice(
     tokens?: number;
   },
 ): void {
-  eventBus?.publish({ type: 'context.spliced', ...input });
+  eventBus?.publish(new ContextSpliced(input));
 }
 
 export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
@@ -48,7 +48,6 @@ export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
       return messages;
     },
     get: () => [...messages],
-    getMessageLog: () => [...messages],
     append: (...inserted) => {
       const start = messages.length;
       messages.push(...inserted);
@@ -99,9 +98,6 @@ class StubContextMemoryService implements IAgentContextMemoryService {
   }
   get(): readonly ContextMessage[] {
     return this.impl.get();
-  }
-  getMessageLog(): readonly ContextMessage[] {
-    return this.impl.getMessageLog();
   }
   append(...messages: readonly ContextMessage[]): void {
     this.impl.append(...messages);

@@ -122,13 +122,6 @@ export function buildContextCompactionShape(
   };
 }
 
-export function compactedWindowMessageCount(
-  keptUserMessageCount: number | undefined,
-  keptHeadUserMessageCount: number | undefined,
-): number | undefined {
-  if (keptUserMessageCount === undefined) return undefined;
-  return keptUserMessageCount + (keptHeadUserMessageCount === undefined ? 1 : 2);
-}
 
 export function buildCompactionSummaryText(summary: string): string {
   const suffix = summary.trim();

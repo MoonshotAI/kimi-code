@@ -35,7 +35,8 @@ import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
-import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
+import type { Event2 } from '#/app/event/event2';
+import { IEventBus } from '#/app/event/eventBus';
 import {
   APIConnectionError,
   APIEmptyResponseError,
@@ -61,11 +62,15 @@ import {
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ILogService } from '#/_base/log/log';
 import { Error2, ErrorCodes } from '#/errors';
-import { IWireService } from '#/wire/wire';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { WireRecord } from '#/wire/record';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
-import { recordingWireLog, registerTestAgentWire } from '../../wire/stubs';
+import {
+  recordingWireLog,
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+} from '../../wire/stubs';
 
 const capabilities: ModelCapability = {
   image_in: false,
@@ -200,7 +205,6 @@ function createService(
   const usage = { record: () => undefined, status: () => ({}) };
   const context = {
     get: () => options.contextMessages ?? history,
-    getMessageLog: () => options.contextMessages ?? history,
   };
   const tools = { list: () => [] };
   const config: Partial<IConfigService> = {
@@ -215,7 +219,7 @@ function createService(
     shapeHistory: (messages) => messages,
   };
   const testSnapshot = Object.freeze({}) as MediaStripSnapshot;
-  const events: DomainEvent[] = [];
+  const events: Event2[] = [];
   const eventBus: IEventBus = {
     _serviceBrand: undefined,
     publish: (event) => events.push(event),
@@ -257,12 +261,13 @@ function createService(
     log: recordingWireLog(records),
     eventBus,
   });
+  registerTestEventDispatcher(ix);
   ix.set(IAgentStateService, new AgentStateService());
   ix.set(IAgentLLMRequesterService, new SyncDescriptor(AgentLLMRequesterService));
 
   return {
     service: ix.get(IAgentLLMRequesterService),
-    wire: ix.get(IWireService),
+    dispatcher: ix.get(IEventDispatcher),
     records,
     events,
     telemetryRecords,
@@ -311,12 +316,12 @@ describe('AgentLLMRequesterService Anthropic effort diagnostics', () => {
     expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
     expect(calls.value).toBe(1);
     expect(events.filter((event) => event.type === 'warning')).toEqual([
-      {
+      expect.objectContaining({
         type: 'warning',
         code: 'anthropic-thinking-effort-not-listed',
         message:
           'Thinking effort "high" is not listed for model "wire-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
-      },
+      }),
     ]);
   });
 });
@@ -440,7 +445,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
 
   it('records repeated-413 recovery projections on the sticky later request', async () => {
     const calls = { value: 0 };
-    const { service, wire, records } = createService(
+    const { service, dispatcher, records } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
       {
         project: (messages: readonly ContextMessage[]) => messages,
@@ -449,7 +454,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
 
     await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
     await service.request({ source: { type: 'turn', turnId: 1, step: 2 } });
-    await wire.flush();
+    await dispatcher.flush();
 
     expect(
       records
@@ -565,7 +570,7 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
   it('accumulates media repairs on top of strict across repeated rejections', async () => {
     const calls = { value: 0 };
     const policies: (ProjectionPolicy | undefined)[] = [];
-    const { service, wire, records } = createService(
+    const { service, dispatcher, records } = createService(
       createRequester(calls, STRUCTURAL_400, [BODY_TOO_LARGE_413, BODY_TOO_LARGE_413]),
       createPolicyRecordingProjector({ policies }),
     );
@@ -579,7 +584,7 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
       { structure: 'strict', media: 'degraded' },
       { structure: 'strict', media: { strip: expect.anything() } },
     ]);
-    await wire.flush();
+    await dispatcher.flush();
     expect(
       records.filter((record) => record.type === 'llm.request').map((record) => record['projection']),
     ).toEqual([undefined, 'strict', 'strict-media-degraded', 'strict-media-stripped']);

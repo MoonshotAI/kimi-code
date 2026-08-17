@@ -11,7 +11,7 @@
  */
 
 import { Service } from '#/_base/di/service';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import {
   IAgentContextInjectorService,
   type ContextInjectionContext,
@@ -36,7 +36,7 @@ export class PermissionModeInjection extends Service {
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(permissionModeLastModeKey);
+    this.states.contributeState(permissionModeLastModeKey);
     this._register(
       injector.register(PERMISSION_MODE_INJECTION_VARIANT, (ctx) => this.reminder(ctx)),
     );

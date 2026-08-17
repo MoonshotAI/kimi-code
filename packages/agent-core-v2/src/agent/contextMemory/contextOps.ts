@@ -1,36 +1,67 @@
 /**
- * Exposes the bounded context wire model, its persisted operations, and blob
- * transforms for live dispatch and replay.
+ * `contextMemory` domain — the conversation-history state (`contextMemoryKey`)
+ * and its folds over the durable `context.*` events (`ContextAppendMessage` /
+ * `ContextAppendLoopEvent` / `ContextClear` / `ContextApplyCompaction` /
+ * `ContextUndo`), plus the undo-cut and compaction-record helpers.
+ *
+ * Declares the history as `ContextMessage[]` (initial `[]`); every fold runs
+ * on the immer draft and either mutates it or returns a replacement, so a
+ * no-op keeps the same reference (immer returns the base state untouched).
+ * The live write path emits the v1 vocabulary: non-loop appends (user
+ * prompts, injections, hook/task notices) go on the wire as
+ * `context.append_message` (persisted without local ids — the on-disk record
+ * matches v1's field set), while the agent loop streams each turn as
+ * `context.append_loop_event` records — the same on-disk shape the v1 loop
+ * writes — folded into assistant / tool messages both at live dispatch time
+ * and on replay, so v1- and v2-written sessions reduce identically.
+ * Swarm-mode announcements are owned by the `swarm` domain's
+ * context-injection provider; the trailing enter-reminder pop on
+ * `swarm_mode.exit` is registered by the swarm feature onto `contextMemoryKey`
+ * (see `popSwarmModeReminder`).
+ *
+ * `context.undo` counts conversation ticks with the single `isUndoAnchor`
+ * predicate — the same definition the checkpoint
+ * protocol pushes with, so anchor counting and checkpoint pushing can never
+ * drift apart.
+ *
+ * Blob handling is declared as a `StateBlobCodec` on `contextMemoryKey.replayable.blobs`:
+ * - `dehydrate(record, transform)`: at dispatch time, traverses message content
+ *   in `context.append_message` and `context.append_loop_event` records,
+ *   passing each `ContentPart[]` through `transform` to offload oversized data
+ *   URIs.
+ * - `rehydrate(state, transform)`: after replay, traverses the surviving final
+ *   state and loads `blobref:` URLs back to inline data — skipping I/O for
+ *   data that was compacted away during the session.
  */
 
 import { z } from 'zod';
 
 import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart } from '#/kosong/contract/message';
-import { defineModel, type PartsTransformer } from '#/wire/model';
+import { defineState } from '#/state/state';
+import type { PartsTransformer } from '#/wire/record';
 import type { WireRecord } from '#/wire/record';
 
 import {
   buildContextCompactionShape,
+  createCompactionSummaryMessage,
   type ContextCompactionShapeInput,
 } from './compactionHandoff';
 import {
-  computeUndoCut,
-  isFullyUndoable,
-  isValidUndoCount,
-} from './conversationTime';
+  ContextAppendLoopEvent,
+  ContextAppendMessage,
+  ContextApplyCompaction,
+  ContextClear,
+  type ContextApplyCompactionPayload,
+} from './contextEvents';
+import { isPromptOwnedInjection, isUndoAnchor } from './conversationTime';
 import {
   foldAppendMessage,
   foldLoopEvent,
-  settleModelOpenStep,
+  resetFold,
   type LoopRecordedEvent,
 } from './loopEventFold';
-import {
-  EMPTY_FOLD,
-  freezeContextState,
-  type ContextMessage,
-  type ContextState,
-} from './types';
+import type { ContextMessage } from './types';
 
 async function dehydrateMessages(
   messages: readonly ContextMessage[],
@@ -64,151 +95,74 @@ async function dehydrateRecord(
   if (record.type === 'context.append_loop_event') {
     const event = record['event'] as LoopRecordedEvent | undefined;
     if (event === undefined) return record;
-    switch (event.type) {
-      case 'content.part': {
-        const parts = await transform([event.part]);
-        if (parts[0] === event.part) return record;
-        return { ...record, event: { ...event, part: parts[0] } };
-      }
-      case 'tool.result': {
-        const output = event.result.output;
-        if (!Array.isArray(output)) return record;
-        const parts = await transform(output);
-        if (parts === output) return record;
-        return { ...record, event: { ...event, result: { ...event.result, output: [...parts] } } };
-      }
-      case 'step.begin':
-      case 'step.end':
-      case 'tool.call':
-        return record;
-      default: {
-        const exhaustive: never = event;
-        void exhaustive;
-        return record;
-      }
+    if (event.type === 'content.part') {
+      const parts = await transform([event.part]);
+      if (parts[0] === event.part) return record;
+      return { ...record, event: { ...event, part: parts[0] } };
     }
+    if (event.type === 'tool.result') {
+      const output = event.result.output;
+      if (!Array.isArray(output)) return record;
+      const parts = await transform(output);
+      if (parts === output) return record;
+      return { ...record, event: { ...event, result: { ...event.result, output: [...parts] } } };
+    }
+    return record;
   }
   return record;
 }
 
-export const ContextModel = defineModel<ContextState>(
-  'contextMemory',
-  () => freezeContextState({ messages: [], fold: EMPTY_FOLD }),
-  {
+export const contextMemoryKey = defineState('contextMemory', (): ContextMessage[] => [])
+  .replayable({
+    schema: z.custom<ContextMessage[]>(),
     blobs: {
       dehydrate: dehydrateRecord,
       rehydrate: async (state, transform) => {
-        const messages = await dehydrateMessages(state.messages, transform);
-        const deferred = await dehydrateMessages(state.fold.deferredEntries, transform);
-        if (!messages.changed && !deferred.changed) return state;
-        return freezeContextState({
-          messages: messages.result,
-          fold: deferred.changed ? { ...state.fold, deferredEntries: deferred.result } : state.fold,
-        });
+        const { changed, result } = await dehydrateMessages(state, transform);
+        return changed ? result : state;
       },
     },
-    reducers: {
-      'swarm_mode.exit': popSwarmModeReminder,
+  })
+  .undoable({
+    onUndo: (s, count) => {
+      if (s.length === 0) return;
+      const cut = computeUndoCut(s, count);
+      if (!isFullyUndoable(cut, count)) return;
+      return resetFold(s.slice(0, cut.cutIndex)) as ContextMessage[];
     },
-  },
-);
-
-function popSwarmModeReminder(state: ContextState, _payload: unknown): ContextState {
-  const last = state.messages.at(-1);
-  if (last === undefined) return state;
-  const origin = last.origin;
-  if (origin?.kind !== 'injection' || origin.variant !== 'swarm_mode') return state;
-  return freezeContextState({ messages: state.messages.slice(0, -1), fold: EMPTY_FOLD });
-}
-
-declare module '#/wire/types' {
-  interface PersistedOpMap {
-    'context.append_message': typeof contextAppendMessage;
-    'context.append_loop_event': typeof contextAppendLoopEvent;
-    'context.clear': typeof contextClear;
-    'context.apply_compaction': typeof contextApplyCompaction;
-    'context.undo': typeof contextUndo;
-  }
-}
-
-const contextMessageSchema = z.custom<ContextMessage>();
-const loopRecordedEventSchema = z.custom<LoopRecordedEvent>();
-
-export const contextAppendMessage = ContextModel.defineOp('context.append_message', {
-  schema: z.object({ message: contextMessageSchema }),
-  apply: (state, p) => freezeContextState(foldAppendMessage(state, p.message)),
-});
-
-export const contextAppendLoopEvent = ContextModel.defineOp('context.append_loop_event', {
-  schema: z.object({ event: loopRecordedEventSchema }),
-  apply: (state, p) => freezeContextState(foldLoopEvent(state, p.event)),
-});
-
-export const contextClear = ContextModel.defineOp('context.clear', {
-  schema: z.object({}),
-  apply: (state) => {
-    const { fold } = state;
-    const pristine =
-      fold.openStepUuid === undefined &&
-      fold.pendingToolCallIds.length === 0 &&
-      fold.deferredEntries.length === 0;
-    if (state.messages.length === 0 && pristine) return state;
-    return freezeContextState({ messages: [], fold: EMPTY_FOLD });
-  },
-});
-
-const contextCompactionBaseShape = {
-  tokensBefore: z.number().optional(),
-  tokensAfter: z.number().optional(),
-  summaryOutputTokens: z.number().optional(),
-  keptUserMessageCount: z.number().optional(),
-  keptHeadUserMessageCount: z.number().optional(),
-  droppedCount: z.number().optional(),
-  legacyTail: z.boolean().optional(),
-};
-
-const contextApplyCompactionSchema = z.union([
-  z.object({
-    ...contextCompactionBaseShape,
-    summary: z.string(),
-    compactedCount: z.number(),
-    contextSummary: z.string().optional(),
-  }),
-  z.object({
-    ...contextCompactionBaseShape,
-    contextSummary: z.string(),
-    compactedCount: z.number(),
-    summary: z.string().optional(),
-  }),
-  z.object({
-    ...contextCompactionBaseShape,
-    summary: contextMessageSchema,
-    count: z.number(),
-    compactedCount: z.number().optional(),
-  }),
-]);
-
-type ContextCompactionPayload = z.infer<typeof contextApplyCompactionSchema>;
-
-export const contextApplyCompaction = ContextModel.defineOp('context.apply_compaction', {
-  schema: contextApplyCompactionSchema,
-  apply: (state, p) => {
-    const settled = settleModelOpenStep(state);
+  })
+  .on(ContextAppendMessage, (s, e) => foldAppendMessage(s, e.message) as ContextMessage[])
+  .on(ContextAppendLoopEvent, (s, e) => foldLoopEvent(s, e.event) as ContextMessage[])
+  .on(ContextClear, (s) => (s.length === 0 ? undefined : (resetFold([]) as ContextMessage[])))
+  .on(ContextApplyCompaction, (s, e) => {
     const result = buildContextCompactionShape(
-      settled.messages,
-      readContextCompactionShapeInput(p),
+      s,
+      readContextCompactionShapeInput(e as unknown as ContextApplyCompactionPayload),
     );
-    return freezeContextState({ messages: [...result.messages], fold: EMPTY_FOLD });
-  },
-});
+    return resetFold([...result.messages]) as ContextMessage[];
+  });
+
+export function popSwarmModeReminder(state: ContextMessage[]): ContextMessage[] {
+  const last = state.at(-1);
+  if (last?.origin?.kind !== 'injection' || last.origin.variant !== 'swarm_mode') return state;
+  return resetFold(state.slice(0, -1)) as ContextMessage[];
+}
 
 interface UnknownRecord {
   readonly [key: string]: unknown;
 }
 
-type ContextCompactionRecord = ContextCompactionPayload | UnknownRecord;
+type ContextCompactionRecord = ContextApplyCompactionPayload | UnknownRecord;
 
-function readContextCompactionShapeInput(
+export function applyContextCompactionRecord(
+  state: readonly ContextMessage[],
+  record: ContextCompactionRecord,
+): ContextMessage[] {
+  const result = buildContextCompactionShape(state, readContextCompactionShapeInput(record));
+  return resetFold([...result.messages]) as ContextMessage[];
+}
+
+export function readContextCompactionShapeInput(
   record: ContextCompactionRecord,
 ): ContextCompactionShapeInput {
   const fields = record as UnknownRecord;
@@ -228,7 +182,7 @@ function readContextCompactionShapeInput(
   };
 }
 
-function readContextCompactedCount(record: ContextCompactionRecord): number {
+export function readContextCompactedCount(record: ContextCompactionRecord): number {
   const fields = record as UnknownRecord;
   const compactedCount = fields['compactedCount'];
   if (typeof compactedCount === 'number') return compactedCount;
@@ -242,6 +196,26 @@ function readContextCompactedCount(record: ContextCompactionRecord): number {
         recordKeys: Object.keys(record),
         compactedCountType: typeof compactedCount,
         countType: typeof legacyCount,
+      },
+    },
+  );
+}
+
+export function readContextCompactionSummary(record: ContextCompactionRecord): ContextMessage {
+  const fields = record as UnknownRecord;
+  const contextSummary = fields['contextSummary'];
+  if (typeof contextSummary === 'string') return createCompactionSummaryMessage(contextSummary);
+  const summary = fields['summary'];
+  if (typeof summary === 'string') return createCompactionSummaryMessage(summary);
+  if (isContextMessage(summary)) return summary;
+  throw new Error2(
+    ErrorCodes.STORAGE_DECODE_FAILED,
+    'Invalid context.apply_compaction record: missing summary',
+    {
+      details: {
+        recordKeys: Object.keys(record),
+        summaryType: typeof summary,
+        contextSummaryType: typeof contextSummary,
       },
     },
   );
@@ -302,6 +276,43 @@ function isContextMessage(value: unknown): value is ContextMessage {
   return typeof message.role === 'string' && Array.isArray(message.content);
 }
 
+export interface UndoCut {
+  readonly cutIndex: number;
+  readonly removedCount: number;
+  readonly stoppedAtCompaction: boolean;
+}
+
+export function computeUndoCut(state: readonly ContextMessage[], count: number): UndoCut {
+  let remaining = count;
+  let cutIndex = -1;
+  let removedCount = 0;
+  let stoppedAtCompaction = false;
+  for (let i = state.length - 1; i >= 0 && remaining > 0; i--) {
+    const message = state[i];
+    if (message === undefined || message.origin?.kind === 'injection') continue;
+    if (message.origin?.kind === 'compaction_summary') {
+      stoppedAtCompaction = true;
+      break;
+    }
+    if (isUndoAnchor(message)) {
+      remaining--;
+      removedCount++;
+      cutIndex = i;
+      while (
+        cutIndex > 0 &&
+        isPromptOwnedInjection(state[cutIndex - 1]!, message)
+      ) {
+        cutIndex--;
+      }
+    }
+  }
+  return { cutIndex, removedCount, stoppedAtCompaction };
+}
+
+export function isFullyUndoable(cut: UndoCut, count: number): boolean {
+  return cut.cutIndex >= 0 && cut.removedCount >= count;
+}
+
 export type UndoUnavailableReason =
   | 'empty'
   | 'compaction_boundary'
@@ -342,18 +353,3 @@ export function formatUndoUnavailableMessage(
       return 'Nothing to undo: conversation state checkpoints are incomplete';
   }
 }
-
-export const contextUndo = ContextModel.defineOp('context.undo', {
-  schema: z.object({
-    count: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  }),
-  apply: (state, p) => {
-    if (!isValidUndoCount(p.count) || state.messages.length === 0) return state;
-    const cut = computeUndoCut(state.messages, p.count);
-    if (!isFullyUndoable(cut, p.count)) return state;
-    return freezeContextState({
-      messages: state.messages.slice(0, cut.cutIndex),
-      fold: EMPTY_FOLD,
-    });
-  },
-});

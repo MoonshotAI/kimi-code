@@ -1,29 +1,22 @@
-/**
- * `prompt` domain — persists the accepted prompt identities used for
- * same-agent uniqueness checks.
- */
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace */
 
 import { z } from 'zod';
 
-import { defineModel } from '#/wire/model';
+import { Event2 } from '#/app/event/event2';
+import { defineState } from '#/state/state';
 
-export type PromptAdmissionModelState = Map<string, true>;
+const promptAcceptedSchema = z.object({ promptId: z.string().min(1) });
 
-export const PromptAdmissionModel = defineModel<PromptAdmissionModelState>(
-  'promptAdmission',
-  () => new Map(),
-);
-
-declare module '#/wire/types' {
-  interface PersistedOpMap {
-    'prompt.accepted': typeof promptAccepted;
-  }
+export class PromptAccepted extends Event2<z.infer<typeof promptAcceptedSchema>> {
+  static override readonly type = 'prompt.accepted';
+  static override readonly durable = true;
+  static override readonly schema = promptAcceptedSchema;
 }
+export interface PromptAccepted extends z.infer<typeof promptAcceptedSchema> {}
 
-export const promptAccepted = PromptAdmissionModel.defineOp('prompt.accepted', {
-  schema: z.object({ promptId: z.string().min(1) }),
-  apply: (state, { promptId }) => {
-    if (state.has(promptId)) return state;
-    return new Map([...state, [promptId, true] as const]);
-  },
-});
+export const promptAdmissionKey = defineState('promptAdmission', (): Map<string, true> => new Map())
+  .replayable({ schema: z.map(z.string(), z.literal(true)) })
+  .on(PromptAccepted, (state, event) => {
+    if (state.has(event.promptId)) return state;
+    state.set(event.promptId, true);
+  });

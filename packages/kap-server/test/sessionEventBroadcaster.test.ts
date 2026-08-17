@@ -36,6 +36,7 @@ import {
   SessionInteractionService,
   StateRegistry,
 } from '@moonshot-ai/agent-core-v2';
+import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { AgentEvent } from '../src/transport/ws/v1/events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -455,6 +456,29 @@ describe('SessionEventBroadcaster', () => {
   afterEach(async () => {
     await bc.close();
     await rm(dir, { recursive: true, force: true });
+  });
+
+  it('preserves a real Event2 time in payload and derives the envelope timestamp from it', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+    const event = new TurnStarted({ turnId: 1, origin: { kind: 'user' } }, 1_700_000_000_123);
+
+    main.bus.emit(event);
+    await bc.getCursor('s1');
+
+    const envelope = envelopes.find((candidate) => candidate.type === 'turn.started');
+    expect(envelope?.timestamp).toBe(new Date(event.time).toISOString());
+    expect(envelope?.payload).toMatchObject({
+      type: 'turn.started',
+      time: event.time,
+      turnId: 1,
+      origin: { kind: 'user' },
+      agentId: 'main',
+      sessionId: 's1',
+    });
   });
 
   it('stamps monotonic seq on durable events and fans out', async () => {

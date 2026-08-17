@@ -22,7 +22,7 @@ import {
   ISessionManager,
   ITelemetryService,
   type BootstrapInput,
-  type DomainEvent,
+  type Event2,
 } from '@moonshot-ai/agent-core-v2';
 
 import { runV2Print } from '../../src/cli/v2/run-v2-print';
@@ -123,7 +123,7 @@ function opts(overrides: Record<string, unknown> = {}) {
 function makeFakeHarness() {
   // Native event listeners registered on the main agent's IEventBus; the turn
   // emits a streaming assistant delta before completing.
-  const eventListeners = new Set<(event: DomainEvent) => void>();
+  const eventListeners = new Set<(event: Event2<any>) => void>();
   const profileState: { profileName: string | undefined } = { profileName: undefined };
 
   const agentServices = new Map<unknown, unknown>([
@@ -141,7 +141,7 @@ function makeFakeHarness() {
     [
       IEventBus,
       {
-        subscribe: vi.fn((handler: (event: DomainEvent) => void) => {
+        subscribe: vi.fn((handler: (event: Event2<any>) => void) => {
           eventListeners.add(handler);
           return { dispose: () => eventListeners.delete(handler) };
         }),
@@ -153,7 +153,7 @@ function makeFakeHarness() {
         enqueue: vi.fn(async () => {
           // Emit a native assistant delta on the main agent bus, then complete.
           for (const listener of [...eventListeners]) {
-            listener({ type: 'assistant.delta', turnId: 1, delta: 'hello world' } as DomainEvent);
+            listener({ type: 'assistant.delta', turnId: 1, delta: 'hello world' } as unknown as Event2<any>);
           }
           return {
             launched: Promise.resolve({

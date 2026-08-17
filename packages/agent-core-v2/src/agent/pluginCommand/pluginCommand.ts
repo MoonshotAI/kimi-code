@@ -8,7 +8,10 @@
  * agent scope. Bound at Agent scope.
  */
 
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import { Event2 } from '#/app/event/event2';
 
 export interface ActivatePluginCommandPayload {
   readonly pluginId: string;
@@ -16,8 +19,7 @@ export interface ActivatePluginCommandPayload {
   readonly args?: string | undefined;
 }
 
-export interface PluginCommandActivatedEvent {
-  readonly type: 'plugin_command.activated';
+export interface PluginCommandActivatedPayload {
   readonly activationId: string;
   readonly pluginId: string;
   readonly commandName: string;
@@ -25,11 +27,11 @@ export interface PluginCommandActivatedEvent {
   readonly trigger: 'user-slash';
 }
 
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'plugin_command.activated': PluginCommandActivatedEvent;
-  }
+export class PluginCommandActivated extends Event2<PluginCommandActivatedPayload> {
+  static override readonly type = 'plugin_command.activated';
+  static override readonly observable = true;
 }
+export interface PluginCommandActivated extends PluginCommandActivatedPayload {}
 
 export interface IAgentPluginCommandService {
   readonly _serviceBrand: undefined;

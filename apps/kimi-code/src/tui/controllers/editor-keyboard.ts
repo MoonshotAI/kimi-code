@@ -1,7 +1,5 @@
-import { unlink } from 'node:fs/promises';
-
 import type { FileMeta, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
-import { compressImageForModel, persistOriginalImage, sessionMediaOriginalsDir } from '@moonshot-ai/kimi-code-sdk';
+import { compressImageForModel } from '@moonshot-ai/kimi-code-sdk';
 
 import { ClipboardMediaError, readClipboardMedia } from '#/utils/clipboard/clipboard-image';
 import { parseImageMeta } from '#/utils/image/image-mime';
@@ -594,10 +592,11 @@ export class EditorKeyboardController {
     // the stored bytes, the inline thumbnail, the `[image #N (W×H)]` placeholder,
     // and the submitted image all agree, and the agent core only ever sees an
     // already-compressed image. Best effort: originals pass through on failure.
-    // When compression changed the bytes, the original is persisted (into the
-    // session's media-originals dir when known, else the temp-dir fallback)
-    // and recorded on the attachment, so submit-time expansion can announce
-    // the compression and point the model at the full-fidelity copy.
+    // When compression changed the bytes, the pre-compression original is kept
+    // on the attachment in memory: the session whose media-originals dir it
+    // belongs in may not exist yet at paste time, so dispatch-time caption
+    // resolution (`resolveOriginalCaptions`) persists it and announces the
+    // compression, pointing the model at the full-fidelity copy.
     // The edge cap comes from the host harness's [image] config (resolved per
     // paste so a config reload applies immediately); hosts without a harness
     // use the env/built-in default.
@@ -611,21 +610,13 @@ export class EditorKeyboardController {
         source: 'tui_paste',
       },
     });
-    const sessionDir = this.host.session?.summary?.sessionDir;
     // Dimensions come from the compression result, not parseImageMeta: the
     // compressor reports display space (EXIF orientation applied) — the space
     // the sent image, the caption, and ReadMediaFile region readback share —
     // while parseImageMeta reads the raw pre-rotation header.
-    // Persist the original BEFORE minting a daemon upload: when persistence
-    // fails the whole ingestion is abandoned, and an upload minted earlier
-    // would be orphaned (never attached, never deleted).
     const original = compressed.changed
       ? {
-          path: await persistOriginalImage(
-            originalBytes,
-            originalMime,
-            sessionDir === undefined ? {} : { dir: sessionMediaOriginalsDir(sessionDir) },
-          ),
+          bytes: originalBytes,
           width: compressed.originalWidth,
           height: compressed.originalHeight,
           byteLength: originalBytes.length,
@@ -649,9 +640,6 @@ export class EditorKeyboardController {
     });
     if (completed === undefined && uploaded !== undefined) {
       await this.host.harness?.deleteFile(uploaded.id).catch(() => undefined);
-    }
-    if (completed === undefined && original !== undefined && original.path !== null) {
-      await unlink(original.path).catch(() => undefined);
     }
     this.host.state.ui.requestRender();
   }

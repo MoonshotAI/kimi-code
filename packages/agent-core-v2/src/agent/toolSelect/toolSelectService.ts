@@ -19,12 +19,14 @@
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
 import type { Tool } from '#/kosong/contract/tool';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -65,7 +67,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(toolSelectPendingLoadedKey);
+    this.states.contributeState(toolSelectPendingLoadedKey);
     this._register(
       toolExecutor.registerUnavailableToolDescriber((name) => this.describeUnavailableTool(name)),
     );
@@ -73,12 +75,12 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       toolExecutor.registerMissingToolDescriber((name) => this.describeMissingTool(name)),
     );
     this._register(
-      eventBus.subscribe('compaction.completed', () => {
+      eventBus.subscribe(CompactionCompleted, () => {
         this.pendingLoaded.clear();
       }),
     );
     this._register(
-      eventBus.subscribe('context.spliced', (splice) => {
+      eventBus.subscribe(ContextSpliced, (splice) => {
         if (splice.deleteCount === 0 || splice.messages.length > 0) return;
         this.dropPendingLoadedNotLanded();
       }),

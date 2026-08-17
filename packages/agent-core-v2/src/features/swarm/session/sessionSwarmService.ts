@@ -19,6 +19,8 @@
  * Session scope by `SwarmFeature` (`features/swarm/swarmFeature`).
  */
 
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+
 import type { TokenUsage } from '#/kosong/contract/usage';
 import { IModelCatalog } from '#/kosong/model/catalog';
 import { Error2, ErrorCodes } from '#/errors';
@@ -28,7 +30,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import { IEventBus } from '#/app/event/eventBus';
+import { Event2 } from '#/app/event/event2';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -46,6 +48,7 @@ import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sess
 import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ILogService } from '#/_base/log/log';
 
 import {
@@ -63,17 +66,16 @@ import {
   type AgentRunAttemptHandle,
 } from './agentRunBatch';
 
-export interface SubagentSuspendedEvent {
-  readonly type: 'subagent.suspended';
+export interface SubagentSuspendedPayload {
   readonly subagentId: string;
   readonly reason: string;
 }
 
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'subagent.suspended': SubagentSuspendedEvent;
-  }
+export class SubagentSuspended extends Event2<SubagentSuspendedPayload> {
+  static override readonly type = 'subagent.suspended';
+  static override readonly observable = true;
 }
+export interface SubagentSuspended extends SubagentSuspendedPayload {}
 
 const RESUMED_PROFILE_FALLBACK = 'subagent';
 
@@ -118,11 +120,12 @@ export class SessionSwarmService implements ISessionSwarmService {
       retry: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, true),
       suspended: (event) => {
         const caller = this.lifecycle.get(callerAgentId);
-        caller?.accessor.get(IEventBus)?.publish({
-          type: 'subagent.suspended',
-          subagentId: event.agentId,
-          reason: event.reason,
-        });
+        void caller?.accessor.get(IEventDispatcher)?.dispatch(
+          new SubagentSuspended({
+            subagentId: event.agentId,
+            reason: event.reason,
+          }),
+        );
       },
     };
     const maxConcurrency = resolveSwarmMaxConcurrency();

@@ -71,8 +71,9 @@ they belong to a feature:
   `docs/config-manifest.toml`.
 - **Agent profiles** contributed via `registerAgentProfile` — same static-table
   reasoning.
-- **Wire vocabulary** (`defineOp` / `defineModel` / `defineCheckpointedModel`) — wire
-  records must remain replayable even if the feature unit is retracted.
+- **Wire vocabulary** (durable `Event2` classes /
+  `defineState(...).replayable(...)`) — wire records must remain replayable even if the
+  feature unit is retracted.
 
 The Feature unit carries the **runtime capabilities**: services, tools, commands, hook
 subscriptions. `PlanFeature` is the example: `configSection.ts` and `profile/plan.ts`

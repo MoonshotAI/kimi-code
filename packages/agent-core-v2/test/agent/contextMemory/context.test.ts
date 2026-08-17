@@ -7,7 +7,6 @@ import {
   buildContextCompactionShape,
   COMPACT_USER_MESSAGE_HEAD_TOKENS,
   COMPACT_USER_MESSAGE_MAX_TOKENS,
-  COMPACTION_ELISION_VARIANT,
   selectCompactionUserMessages,
   type TokenEstimate,
 } from '#/agent/contextMemory/compactionHandoff';
@@ -887,11 +886,4 @@ function textOf(message: Message): string {
     .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
     .map((part) => part.text)
     .join('');
-}
-
-function isCompactionElision(message: ContextMessage): boolean {
-  return (
-    message.origin?.kind === 'injection' &&
-    message.origin.variant === COMPACTION_ELISION_VARIANT
-  );
 }

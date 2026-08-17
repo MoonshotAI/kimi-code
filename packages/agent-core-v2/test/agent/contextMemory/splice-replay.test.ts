@@ -1,11 +1,12 @@
 /**
  * `AgentContextMemoryService` wire contract, exercised without the full agent
  * harness (mirror of `test/goal/goal-wire.test.ts`): a `TestInstantiationService`
- * + `InMemoryStorageService` + `AppendLogStore` + `WireService` + stub
- * `IAgentBlobService`. Covers the context Ops' NEW-reference + flat-record
- * shape, the live-only `context.spliced` event (silent on replay), and —
- * load-bearing — the blob dehydrate-on-dispatch ↔ rehydrate-on-replay
- * round-trip via `ContextModel.blobs`.
+ * + `InMemoryStorageService` + `AppendLogStore` + `WireService` + real
+ * `EventDispatcherService` + stub `IAgentBlobService`. Covers the context
+ * events' NEW-reference + flat-record shape, the live-only `context.spliced`
+ * event (silent on replay), and — load-bearing — the blob
+ * dehydrate-on-dispatch ↔ rehydrate-on-replay round-trip via
+ * `contextMemoryKey.blobs`.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -16,15 +17,16 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
-import { swarmExit } from '#/features/swarm/swarmOps';
 import {
-  ContextModel,
-  contextAppendMessage,
-  contextApplyCompaction,
-  contextClear,
-  contextUndo,
-} from '#/agent/contextMemory/contextOps';
-import { EMPTY_FOLD, type ContextMessage } from '#/agent/contextMemory/types';
+  ContextAppendMessage,
+  ContextApplyCompaction,
+  ContextClear,
+  ContextSpliced,
+  ContextUndo,
+} from '#/agent/contextMemory/contextEvents';
+import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
+import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { ContentPart } from '#/kosong/contract/message';
@@ -32,10 +34,18 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import type { DeepReadonly } from '#/state/state';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
-import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
+import {
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+  restoreTestEventDispatcher,
+  testWireScope,
+} from '../../wire/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'ctx-live';
@@ -128,12 +138,12 @@ function imageMessage(payload: string): ContextMessage {
   return { role: 'user', content: [part], toolCalls: [] };
 }
 
-function mediaUrl(message: ContextMessage): string {
+function mediaUrl(message: DeepReadonly<ContextMessage>): string {
   const part = message.content[0] as unknown as { source: { url: string } };
   return part.source.url;
 }
 
-function textOf(message: ContextMessage): string {
+function textOf(message: DeepReadonly<ContextMessage>): string {
   const part = message.content[0] as unknown as { text?: unknown };
   if (typeof part.text !== 'string') throw new Error('expected text content');
   return part.text;
@@ -144,10 +154,26 @@ let blob: StubBlobService;
 
 interface Host {
   wire: IWireService;
+  dispatcher: IEventDispatcher;
+  agentState: IAgentStateService;
   svc: IAgentContextMemoryService;
   log: IAppendLogStore;
   eventBus: IEventBus;
 }
+
+const noopTokenCounting: IAgentTokenCountingService = {
+  _serviceBrand: undefined,
+  strategy: 'measured+estimated',
+  get: () => ({ size: 0, measured: 0, estimated: 0 }),
+  measured: () => {},
+  latestMeasured: () => 0,
+  statusSize: () => 0,
+  requestSize: () => 0,
+  estimateText: () => 0,
+  estimateMessage: () => 0,
+  estimateMessages: () => 0,
+  estimateTools: () => 0,
+};
 
 function buildHost(key: string): Host {
   const ix = disposables.add(new TestInstantiationService());
@@ -155,14 +181,18 @@ function buildHost(key: string): Host {
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.stub(IAgentBlobService, blob);
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
+  ix.set(IAgentTokenCountingService, noopTokenCounting);
   ix.set(IAgentContextMemoryService, new SyncDescriptor(AgentContextMemoryService));
   const wire = registerTestAgentWire(ix, testWireScope(SCOPE, key), {
     log: ix.get(IAppendLogStore),
     blob,
     eventBus: ix.get(IEventBus),
   });
+  const dispatcher = registerTestEventDispatcher(ix);
   return {
     wire,
+    dispatcher,
+    agentState: ix.get(IAgentStateService),
     svc: ix.get(IAgentContextMemoryService),
     log: ix.get(IAppendLogStore),
     eventBus: ix.get(IEventBus),
@@ -177,39 +207,35 @@ async function readRecords(log: IAppendLogStore, key = KEY): Promise<WireRecord[
   return out;
 }
 
+beforeEach(() => {
+  disposables = new DisposableStore();
+  blob = new StubBlobService();
+});
+
+afterEach(() => disposables.dispose());
+
 describe('AgentContextMemoryService (wire-backed)', () => {
-  beforeEach(() => {
-    disposables = new DisposableStore();
-    blob = new StubBlobService();
-  });
-
-  afterEach(() => disposables.dispose());
-
-  describe('wire model and replay', () => {
-    it('splice/append/undo/apply_compaction/clear/append_loop_event each update getModel with a NEW reference and persist flat records', async () => {
+  it('splice/append/undo/apply_compaction/clear/append_loop_event each update getState with a NEW reference and persist flat records', async () => {
     const host = buildHost(KEY);
-    const model = () => host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    const model = () => host.agentState.get(contextMemoryKey);
 
-    host.wire.dispatch(
-      contextAppendMessage({ message: userMessage('a') }),
-      contextAppendMessage({ message: userMessage('b') }),
-    );
+    await host.dispatcher.dispatch(new ContextAppendMessage({ message: userMessage('a') }));
+    await host.dispatcher.dispatch(new ContextAppendMessage({ message: userMessage('b') }));
     expect(model()).toHaveLength(2);
 
     let prev = model();
-    host.wire.dispatch(contextAppendMessage({ message: userMessage('c') }));
+    await host.dispatcher.dispatch(new ContextAppendMessage({ message: userMessage('c') }));
     expect(model()).not.toBe(prev);
     expect(model()).toHaveLength(3);
 
     prev = model();
-    host.wire.dispatch(contextUndo({ count: 1 }));
+    await host.dispatcher.dispatch(new ContextUndo({ count: 1 }));
     expect(model()).not.toBe(prev);
     expect(model()).toHaveLength(2);
-    expect(host.wire.getModel(ContextModel).fold).toEqual(EMPTY_FOLD);
 
     prev = model();
-    host.wire.dispatch(
-      contextApplyCompaction({ summary: 'sum', compactedCount: 1, tokensBefore: 0, tokensAfter: 0 }),
+    await host.dispatcher.dispatch(
+      new ContextApplyCompaction({ summary: 'sum', compactedCount: 1, tokensBefore: 0, tokensAfter: 0 }),
     );
     expect(model()).not.toBe(prev);
     expect(model()).toHaveLength(2);
@@ -218,16 +244,13 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       content: [{ type: 'text', text: 'sum' }],
       origin: { kind: 'compaction_summary' },
     });
-    expect(host.wire.getModel(ContextModel).fold).toEqual(EMPTY_FOLD);
-    expect(host.svc.get().map(textOf)).toEqual(['sum', 'b']);
 
     prev = model();
-    host.wire.dispatch(contextClear({}));
+    await host.dispatcher.dispatch(new ContextClear({}));
     expect(model()).not.toBe(prev);
     expect(model()).toHaveLength(0);
-    expect(host.wire.getModel(ContextModel).fold).toEqual(EMPTY_FOLD);
 
-    await host.wire.flush();
+    await host.dispatcher.flush();
     const records = await readRecords(host.log);
     expect(records.every((record) => 'payload' in record === false)).toBe(true);
     expect(records.map((record) => record.type)).toEqual([
@@ -240,7 +263,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     ]);
   });
 
-  it('folds v1 context.append_loop_event records into the ContextModel on replay', async () => {
+  it('folds v1 context.append_loop_event records into the contextMemoryKey on replay', async () => {
     const records: WireRecord[] = [
       { type: 'context.append_message', message: userMessage('q') },
       { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's1', turnId: '0', step: 1 } },
@@ -281,14 +304,14 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     ];
 
     const replay = buildHost(REPLAY_KEY);
-    await restoreTestAgentWire(
-      replay.wire,
+    await restoreTestEventDispatcher(
+      replay.dispatcher,
       replay.log,
       testWireScope(SCOPE, REPLAY_KEY),
       records,
     );
 
-    const model = replay.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    const model = replay.agentState.get(contextMemoryKey);
     expect(model.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
     expect(model[1]!.content).toEqual([{ type: 'text', text: 'hello' }]);
     expect(model[1]!.partial).toBeUndefined();
@@ -314,24 +337,16 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     ];
 
     const replay = buildHost(REPLAY_KEY);
-    await restoreTestAgentWire(
-      replay.wire,
+    await restoreTestEventDispatcher(
+      replay.dispatcher,
       replay.log,
       testWireScope(SCOPE, REPLAY_KEY),
       records,
     );
 
-    const log = replay.wire.getModel(ContextModel).messages as readonly ContextMessage[];
-    expect(log.map(textOf)).toEqual(['model-facing summary', 'tail']);
-    expect(log[0]).toMatchObject({
-      role: 'user',
-      origin: { kind: 'compaction_summary' },
-    });
-
-    const visible = replay.svc.get();
-    expect(visible).toBe(log);
-    expect(visible.map(textOf)).toEqual(['model-facing summary', 'tail']);
-    expect(visible[0]).toMatchObject({
+    const model = replay.agentState.get(contextMemoryKey);
+    expect(model.map(textOf)).toEqual(['model-facing summary', 'tail']);
+    expect(model[0]).toMatchObject({
       role: 'user',
       origin: { kind: 'compaction_summary' },
     });
@@ -361,21 +376,17 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     ];
 
     const replay = buildHost(REPLAY_KEY);
-    await restoreTestAgentWire(
-      replay.wire,
+    await restoreTestEventDispatcher(
+      replay.dispatcher,
       replay.log,
       testWireScope(SCOPE, REPLAY_KEY),
       records,
     );
 
-    const log = replay.wire.getModel(ContextModel).messages as readonly ContextMessage[];
-    expect(log.map((message) => message.role)).toEqual(['user', 'user', 'user']);
-
-    const visible = replay.svc.get();
-    expect(visible).toBe(log);
-    expect(visible.map((message) => message.role)).toEqual(['user', 'user', 'user']);
-    expect(visible.map(textOf)).toEqual(['old user', 'recent user', 'model-facing summary']);
-    expect(visible[2]).toMatchObject({
+    const model = replay.agentState.get(contextMemoryKey);
+    expect(model.map((message) => message.role)).toEqual(['user', 'user', 'user']);
+    expect(model.map(textOf)).toEqual(['old user', 'recent user', 'model-facing summary']);
+    expect(model[2]).toMatchObject({
       origin: { kind: 'compaction_summary' },
     });
   });
@@ -395,14 +406,14 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     ];
 
     const replay = buildHost(REPLAY_KEY);
-    await restoreTestAgentWire(
-      replay.wire,
+    await restoreTestEventDispatcher(
+      replay.dispatcher,
       replay.log,
       testWireScope(SCOPE, REPLAY_KEY),
       records,
     );
 
-    const model = replay.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    const model = replay.agentState.get(contextMemoryKey);
     expect(model.map(textOf)).toEqual(['old user', 'recent user', 'OLD SUMMARY']);
     expect(model[2]).toMatchObject({
       role: 'user',
@@ -428,35 +439,28 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     ];
 
     const replay = buildHost(REPLAY_KEY);
-    await restoreTestAgentWire(
-      replay.wire,
+    await restoreTestEventDispatcher(
+      replay.dispatcher,
       replay.log,
       testWireScope(SCOPE, REPLAY_KEY),
       records,
     );
 
-    const log = replay.wire.getModel(ContextModel).messages as readonly ContextMessage[];
-    expect(log).toHaveLength(2);
-    expect(log[0]).toEqual(legacySummary);
-
-    const visible = replay.svc.get();
-    expect(visible).toBe(log);
-    expect(visible).toHaveLength(2);
-    expect(visible[0]).toEqual(legacySummary);
-    expect(textOf(visible[1]!)).toBe('tail');
-  });
+    const model = replay.agentState.get(contextMemoryKey);
+    expect(model).toHaveLength(2);
+    expect(model[0]).toEqual(legacySummary);
+    expect(textOf(model[1]!)).toBe('tail');
   });
 
-  describe('blob rehydration', () => {
   it('offloads an oversized content part on dispatch and rehydrates it byte-for-byte on replay', async () => {
     const host = buildHost(KEY);
     const big = 'A'.repeat(200);
     const dataUri = `data:image/png;base64,${big}`;
 
-    host.wire.dispatch(contextAppendMessage({ message: imageMessage(big) }));
-    await host.wire.flush();
+    await host.dispatcher.dispatch(new ContextAppendMessage({ message: imageMessage(big) }));
+    await host.dispatcher.flush();
 
-    const live = host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    const live = host.agentState.get(contextMemoryKey);
     expect(live).toHaveLength(1);
     expect(mediaUrl(live[0]!)).toBe(dataUri);
 
@@ -469,425 +473,45 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     expect(mediaUrl(persisted)).not.toContain(big);
 
     const replay = buildHost(REPLAY_KEY);
-    await restoreTestAgentWire(
-      replay.wire,
+    await restoreTestEventDispatcher(
+      replay.dispatcher,
       replay.log,
       testWireScope(SCOPE, REPLAY_KEY),
       records,
     );
     expect(blob.loadCalls).toBeGreaterThanOrEqual(1);
 
-    const rebuilt = replay.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    const rebuilt = replay.agentState.get(contextMemoryKey);
     expect(rebuilt).toEqual(live);
     expect(mediaUrl(rebuilt[0]!)).toBe(dataUri);
   });
 
-  it('rehydrates only messages surviving bounded compaction on replay', async () => {
-    const userMedia: ContextMessage = {
-      role: 'user',
-      content: [
-        { type: 'image', source: { url: `${BLOBREF}image/png;shaKept` } } as unknown as ContentPart,
-      ],
-      toolCalls: [],
-    };
-    const toolMedia: ContextMessage = {
-      role: 'tool',
-      content: [
-        { type: 'image', source: { url: `${BLOBREF}image/png;shaHidden` } } as unknown as ContentPart,
-      ],
-      toolCalls: [],
-      toolCallId: 'call_1',
-    };
-    blob.store.set('shaKept', 'KEPT');
-    blob.store.set('shaHidden', 'HIDDEN');
-    const records: WireRecord[] = [
-      { type: 'context.append_message', message: userMedia },
-      { type: 'context.append_message', message: toolMedia },
-      {
-        type: 'context.apply_compaction',
-        summary: 's',
-        contextSummary: 'S',
-        compactedCount: 2,
-        tokensBefore: 10,
-        tokensAfter: 5,
-        keptUserMessageCount: 1,
-      },
-    ];
-
-    const replay = buildHost(REPLAY_KEY);
-    await restoreTestAgentWire(
-      replay.wire,
-      replay.log,
-      testWireScope(SCOPE, REPLAY_KEY),
-      records,
-    );
-
-    const visible = replay.svc.get();
-    expect(visible.map((message) => message.role)).toEqual(['user', 'user']);
-    expect(mediaUrl(visible[0]!)).toBe('data:image/png;base64,KEPT');
-    const log = replay.wire.getModel(ContextModel).messages as readonly ContextMessage[];
-    expect(log).toBe(visible);
-    expect(log.some((message) => message.role === 'tool')).toBe(false);
-    expect(blob.loadCalls).toBe(1);
-  });
-
-  it('rehydrates media in the legacy compaction tail that stays visible', async () => {
-    const tailMedia: ContextMessage = {
-      role: 'assistant',
-      content: [
-        { type: 'image', source: { url: `${BLOBREF}image/png;shaTail` } } as unknown as ContentPart,
-      ],
-      toolCalls: [],
-    };
-    const hiddenMedia: ContextMessage = {
-      role: 'tool',
-      content: [
-        { type: 'image', source: { url: `${BLOBREF}image/png;shaGone` } } as unknown as ContentPart,
-      ],
-      toolCalls: [],
-      toolCallId: 'call_1',
-    };
-    blob.store.set('shaTail', 'TAIL');
-    blob.store.set('shaGone', 'GONE');
-    const records: WireRecord[] = [
-      { type: 'context.append_message', message: hiddenMedia },
-      { type: 'context.append_message', message: tailMedia },
-      {
-        type: 'context.apply_compaction',
-        summary: 's',
-        contextSummary: 'S',
-        compactedCount: 1,
-        tokensBefore: 10,
-        tokensAfter: 5,
-      },
-    ];
-
-    const replay = buildHost(REPLAY_KEY);
-    await restoreTestAgentWire(
-      replay.wire,
-      replay.log,
-      testWireScope(SCOPE, REPLAY_KEY),
-      records,
-    );
-
-    const visible = replay.svc.get();
-    expect(visible.map((message) => message.role)).toEqual(['user', 'assistant']);
-    expect(mediaUrl(visible[1]!)).toBe('data:image/png;base64,TAIL');
-    const log = replay.wire.getModel(ContextModel).messages as readonly ContextMessage[];
-    expect(log).toBe(visible);
-    expect(log.some((message) => message.role === 'tool')).toBe(false);
-    expect(blob.loadCalls).toBe(1);
-  });
-  });
-
-  describe('live splice events and replayed prompt ownership', () => {
   it('publishes context.spliced on live dispatch and is silent on replay', async () => {
     const host = buildHost(KEY);
     const live: { start: number; deleteCount: number }[] = [];
-    disposables.add(host.eventBus.subscribe('context.spliced', (event) => {
+    disposables.add(host.eventBus.subscribe(ContextSpliced, (event) => {
       live.push({ start: event.start, deleteCount: event.deleteCount });
     }));
 
     host.svc.append(userMessage('x'));
     host.svc.append(userMessage('y'));
     expect(live).toHaveLength(2);
-    await host.wire.flush();
+    await host.dispatcher.flush();
     const records = await readRecords(host.log);
 
     const replay = buildHost(REPLAY_KEY);
     const replayed: { start: number; deleteCount: number }[] = [];
-    disposables.add(replay.eventBus.subscribe('context.spliced', (event) => {
+    disposables.add(replay.eventBus.subscribe(ContextSpliced, (event) => {
       replayed.push({ start: event.start, deleteCount: event.deleteCount });
     }));
-    await restoreTestAgentWire(
-      replay.wire,
+    await restoreTestEventDispatcher(
+      replay.dispatcher,
       replay.log,
       testWireScope(SCOPE, REPLAY_KEY),
       records,
     );
     expect(replayed).toHaveLength(0);
-    expect(replay.wire.getModel(ContextModel).messages as readonly ContextMessage[]).toHaveLength(2);
+    expect(replay.agentState.get(contextMemoryKey)).toHaveLength(2);
   });
 
-  it('pairs prompt-owned injections with their prompt by persisted id, live and on replay', async () => {
-    const host = buildHost(KEY);
-    const model = () => host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
-
-    const reminder: ContextMessage = {
-      role: 'user',
-      content: [{ type: 'text', text: 'caption' }],
-      toolCalls: [],
-      origin: { kind: 'injection', variant: 'image_compression', ownerPromptId: 'prompt-1' },
-    };
-    const prompt: ContextMessage = {
-      role: 'user',
-      content: [{ type: 'text', text: 'undo me' }],
-      toolCalls: [],
-      id: 'prompt-1',
-      origin: { kind: 'user' },
-    };
-    const answer: ContextMessage = {
-      role: 'assistant',
-      content: [{ type: 'text', text: 'answer' }],
-      toolCalls: [],
-    };
-
-    host.svc.append(reminder, prompt, answer);
-    host.svc.undo(1);
-    expect(model()).toHaveLength(0);
-
-    await host.wire.flush();
-    const records = await readRecords(host.log);
-
-    const replay = buildHost(REPLAY_KEY);
-    await restoreTestAgentWire(
-      replay.wire,
-      replay.log,
-      testWireScope(SCOPE, REPLAY_KEY),
-      records,
-    );
-    expect(replay.wire.getModel(ContextModel).messages).toHaveLength(0);
-  });
-  });
-
-  describe('bounded compaction state', () => {
-  it('replaces prior compacted state when compaction runs repeatedly', () => {
-    const host = buildHost(KEY);
-
-    host.svc.append(userMessage('u1'));
-    host.wire.dispatch(
-      contextApplyCompaction({
-        summary: 's1',
-        contextSummary: 'S1',
-        compactedCount: 1,
-        tokensBefore: 10,
-        tokensAfter: 5,
-        keptUserMessageCount: 1,
-      }),
-    );
-    host.svc.append(userMessage('u2'));
-    host.wire.dispatch(
-      contextApplyCompaction({
-        summary: 's2',
-        contextSummary: 'S2',
-        compactedCount: 2,
-        tokensBefore: 20,
-        tokensAfter: 6,
-        keptUserMessageCount: 2,
-      }),
-    );
-
-    const log = host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
-    expect(log.map(textOf)).toEqual(['u1', 'u2', 'S2']);
-    const visible = host.svc.get();
-    expect(visible).toBe(log);
-    expect(visible.map(textOf)).toEqual(['u1', 'u2', 'S2']);
-  });
-
-  it('settles an open frame before applying legacy tail compaction', () => {
-    const host = buildHost(KEY);
-
-    host.svc.append(userMessage('u1'));
-    host.svc.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
-    host.svc.appendLoopEvent({
-      type: 'tool.call',
-      stepUuid: 's1',
-      toolCallId: 'c1',
-      name: 'Bash',
-      args: {},
-    });
-    host.wire.dispatch(
-      contextApplyCompaction({
-        summary: 's',
-        contextSummary: 'S',
-        compactedCount: 1,
-        tokensBefore: 10,
-        tokensAfter: 5,
-      }),
-    );
-
-    const state = host.wire.getModel(ContextModel);
-    const log = state.messages as readonly ContextMessage[];
-    expect(log.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
-    expect(log.every((message) => message.partial !== true)).toBe(true);
-    expect(textOf(log[0]!)).toBe('S');
-    expect(state.fold).toEqual(EMPTY_FOLD);
-
-    host.svc.appendLoopEvent({ type: 'step.begin', uuid: 's2' });
-    const after = host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
-    expect(after).toHaveLength(log.length + 1);
-    expect(log.every((message, index) => after[index] === message)).toBe(true);
-  });
-  });
-
-  describe('undo and splice behavior', () => {
-  it('cuts the bounded context at the requested undo anchor', () => {
-    const host = buildHost(KEY);
-
-    host.svc.append(userMessage('u1'));
-    host.wire.dispatch(
-      contextApplyCompaction({
-        summary: 's1',
-        contextSummary: 'S1',
-        compactedCount: 1,
-        tokensBefore: 10,
-        tokensAfter: 5,
-        keptUserMessageCount: 1,
-      }),
-    );
-    host.svc.append(userMessage('u2'), userMessage('u3'));
-
-    host.svc.undo(1);
-
-    const log = host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
-    expect(log.map(textOf)).toEqual(['u1', 'S1', 'u2']);
-    expect(host.svc.get().map(textOf)).toEqual(['u1', 'S1', 'u2']);
-  });
-
-  it('refuses to undo across a compaction boundary', () => {
-    const host = buildHost(KEY);
-
-    host.svc.append(userMessage('u1'));
-    host.wire.dispatch(
-      contextApplyCompaction({
-        summary: 's1',
-        contextSummary: 'S1',
-        compactedCount: 1,
-        tokensBefore: 10,
-        tokensAfter: 5,
-        keptUserMessageCount: 1,
-      }),
-    );
-    host.svc.append(userMessage('u2'));
-
-    const before = host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
-    host.svc.undo(2);
-
-    expect(host.wire.getModel(ContextModel).messages).toBe(before);
-    expect(host.svc.get().map(textOf)).toEqual(['u1', 'S1', 'u2']);
-  });
-
-  it('serves the bounded model array directly', () => {
-    const host = buildHost(KEY);
-
-    host.svc.append(userMessage('a'));
-
-    const log = host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
-    expect(host.svc.get()).toBe(log);
-  });
-  });
-
-  describe('swarm reminder handling', () => {
-  it('publishes a verified trailing pop after legacy compaction', async () => {
-    const host = buildHost(KEY);
-    const reminder: ContextMessage = {
-      role: 'user',
-      content: [{ type: 'text', text: 'swarm reminder' }],
-      toolCalls: [],
-      origin: { kind: 'injection', variant: 'swarm_mode' },
-    };
-    const splices: { start: number; deleteCount: number }[] = [];
-    disposables.add(
-      host.eventBus.subscribe('context.spliced', (event) => {
-        splices.push({ start: event.start, deleteCount: event.deleteCount });
-      }),
-    );
-
-    host.svc.append(reminder);
-    host.wire.dispatch(
-      contextApplyCompaction({ summary: 's', compactedCount: 0, tokensBefore: 0, tokensAfter: 0 }),
-    );
-    const before = host.svc.get();
-    expect(before.at(-1)).toBe(reminder);
-
-    host.wire.dispatch(swarmExit({}));
-    expect(host.svc.publishTrailingRemoval(before)).toBe(true);
-
-    const log = host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
-    expect(log.map(textOf)).toEqual(['s']);
-    expect(host.svc.get().map(textOf)).toEqual(['s']);
-    expect(splices.at(-1)).toEqual({ start: 1, deleteCount: 1 });
-
-    await host.wire.flush();
-    const records = await readRecords(host.log);
-    const replay = buildHost(REPLAY_KEY);
-    await restoreTestAgentWire(
-      replay.wire,
-      replay.log,
-      testWireScope(SCOPE, REPLAY_KEY),
-      records,
-    );
-    expect(replay.svc.get().map(textOf)).toEqual(['s']);
-  });
-
-  it('verifies a trailing pop after compaction by identity-stable window survivors', () => {
-    const host = buildHost(KEY);
-    const reminder: ContextMessage = {
-      role: 'user',
-      content: [{ type: 'text', text: 'swarm reminder' }],
-      toolCalls: [],
-      origin: { kind: 'injection', variant: 'swarm_mode' },
-    };
-    const splices: { start: number; deleteCount: number }[] = [];
-    disposables.add(
-      host.eventBus.subscribe('context.spliced', (e) => {
-        splices.push({ start: e.start, deleteCount: e.deleteCount });
-      }),
-    );
-
-    host.svc.append(userMessage('u1'), userMessage('u2'));
-    host.wire.dispatch(
-      contextApplyCompaction({
-        summary: 's',
-        contextSummary: 'S',
-        compactedCount: 2,
-        tokensBefore: 10,
-        tokensAfter: 4,
-        keptUserMessageCount: 2,
-      }),
-    );
-    host.svc.append(reminder);
-    const before = host.svc.get();
-    expect(before.at(-1)).toBe(reminder);
-
-    host.wire.dispatch(swarmExit({}));
-
-    expect(host.svc.publishTrailingRemoval(before)).toBe(true);
-    expect(splices.at(-1)).toEqual({ start: before.length - 1, deleteCount: 1 });
-  });
-  });
-
-  describe('live vs replay parity', () => {
-  it('rebuilds identical bounded context live and on replay', async () => {
-    const host = buildHost(KEY);
-
-    host.svc.append(userMessage('u1'), userMessage('u2'));
-    host.wire.dispatch(
-      contextApplyCompaction({
-        summary: 's1',
-        contextSummary: 'S1',
-        compactedCount: 2,
-        tokensBefore: 10,
-        tokensAfter: 4,
-        keptUserMessageCount: 2,
-      }),
-    );
-    host.svc.append(userMessage('u3'));
-    await host.wire.flush();
-    const records = await readRecords(host.log);
-
-    const replay = buildHost(REPLAY_KEY);
-    await restoreTestAgentWire(
-      replay.wire,
-      replay.log,
-      testWireScope(SCOPE, REPLAY_KEY),
-      records,
-    );
-
-    expect(replay.wire.getModel(ContextModel).messages).toEqual(
-      host.wire.getModel(ContextModel).messages,
-    );
-    expect(replay.svc.get()).toEqual(host.svc.get());
-  });
-  });
 });

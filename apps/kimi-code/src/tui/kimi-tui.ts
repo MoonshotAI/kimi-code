@@ -159,8 +159,10 @@ import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import {
   extractMediaAttachments,
+  originalsDirForSession,
   pendingImageIngestions,
   refreshExpiringImageFileRefs,
+  resolveOriginalCaptions,
   rewriteMediaPlaceholders,
   videoAttachmentIdsInText,
 } from './utils/image-placeholder';
@@ -1486,7 +1488,14 @@ export class KimiTUI {
   ): Promise<void> {
     const knownEntryIds = new Set(this.state.transcriptEntries.map((entry) => entry.id));
     await session.promptWithSkills(
-      extraction.hasMedia ? extraction.parts : text,
+      extraction.hasMedia
+        ? resolveOriginalCaptions(
+            extraction.parts,
+            extraction.imageAttachmentIds,
+            this.imageStore,
+            originalsDirForSession(session),
+          )
+        : text,
       activations.map((activation) => ({ name: activation.skillName, args: activation.args })),
     );
     // The engine bundles the activations into the prompt's own message, and
@@ -1767,7 +1776,18 @@ export class KimiTUI {
         : this.streamingUI.getTurnContext().turnId;
     this.beginSessionRequest();
 
-    const sdkInput = options?.parts ?? input;
+    // Compression captions for pasted images are authored here — not at
+    // extraction — because only now is the session (and its media-originals
+    // dir) known: extraction runs before a first session exists.
+    const sdkInput =
+      options?.parts !== undefined
+        ? resolveOriginalCaptions(
+            options.parts,
+            options.imageAttachmentIds ?? [],
+            this.imageStore,
+            originalsDirForSession(session),
+          )
+        : input;
     const goalActive = this.state.appState.goal?.status === 'active';
     // The lease normally arrives pre-created by sendNormalUserInput (carrying
     // its exact-binding submission id). Queued dispatches and steer batches
@@ -1963,7 +1983,22 @@ export class KimiTUI {
     const stagingLease = this.staging.create(imageAttachmentIds, stagingPaths, 'user');
     const currentTurnId = this.streamingUI.getTurnContext().turnId;
     if (currentTurnId !== undefined) this.staging.bindToTurn(stagingLease, currentTurnId);
-    this.staging.trackDispatch(stagingLease, session.steer(combineSteerInput(input)), (error) => {
+    // Same dispatch-time caption resolution as sendMessageInternal — the
+    // running turn's session owns the persisted originals.
+    const resolvedInput = input.map((item) =>
+      item.parts === undefined
+        ? item
+        : {
+            ...item,
+            parts: resolveOriginalCaptions(
+              item.parts,
+              item.imageAttachmentIds ?? [],
+              this.imageStore,
+              originalsDirForSession(session),
+            ),
+          },
+    );
+    this.staging.trackDispatch(stagingLease, session.steer(combineSteerInput(resolvedInput)), (error) => {
       this.showError(`Failed to steer: ${formatErrorMessage(error)}`);
     });
   }
@@ -2276,7 +2311,12 @@ export class KimiTUI {
     // A session switch abandons the previous session's in-flight staging
     // leases and retires its history-owned cache copies. Do this at the
     // boundary so retired paths cannot accumulate until process shutdown.
-    this.staging.releaseAll();
+    // Only when actually replacing a live session, though: on lazy first
+    // creation the outstanding lease belongs to the new session's first
+    // prompt, whose dispatch continues right after this — releasing it here
+    // would delete the staged media (e.g. a pasted image's daemon upload)
+    // before the engine's intake can read it.
+    if (previous !== undefined) this.staging.releaseAll();
     this.session = session;
     this.harness.setTelemetryContext({ sessionId: session.id });
     this.registerSessionHandlers(session);

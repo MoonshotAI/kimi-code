@@ -1,13 +1,51 @@
 /**
- * Folds persisted loop events into conversation messages for both the live
- * bounded context model and the timestamped transcript projection.
+ * `contextMemory` loop-event fold — reduction of `context.append_loop_event`
+ * records into folded `ContextMessage`s.
+ *
+ * The agent loop streams a turn as `context.append_loop_event` records
+ * (`step.begin` / `content.part` / `tool.call` / `tool.result` / `step.end`)
+ * and never writes a folded assistant message, keeping the on-disk shape
+ * byte-compatible with v1. This fold turns them into assistant / tool
+ * messages — at live dispatch time and again when `WireService.restore`
+ * restores an Agent. Without it, restore would skip those records (no Op is
+ * registered for the type) and the restored `contextMemoryKey` — and every
+ * consumer built on it — would show only the user prompts.
+ *
+ * Semantics mirror the v1 fold exactly:
+ *   - `step.begin`  → open an assistant message (`partial: true`); first settle
+ *                     the step left open by a failed attempt
+ *   - `content.part`→ append to the open assistant's content
+ *   - `tool.call`   → append to the open assistant's `toolCalls`, mark pending
+ *   - `tool.result` → push a `tool` message (with the v1 output
+ *                     wrapping), clear its pending id
+ *   - `step.end`    → settle the assistant
+ * "Settle" closes any tool exchange left open (interrupted result messages),
+ * then drops the partial assistant when nothing sendable was recorded (no
+ * tool calls; every content part vacuous — an output-free assistant only
+ * trips provider message validation) and seals it (`partial: undefined`)
+ * when it carries output. v1 never produced
+ * `step.begin` without `step.end` (its retries stayed inside one request), so
+ * the drop/seal rule is the v2 extension that makes loop-level retries — a
+ * retried attempt is its own `step.begin` — replay to the same history the
+ * live loop folded.
+ * A `context.append_message` reduced while a tool exchange is still open is
+ * deferred and flushed once the exchange closes, so strict-provider
+ * assistant↔tool adjacency is preserved.
+ *
+ * The fold is stateful across records within one replay. State is carried in a
+ * `WeakMap` keyed by each committed state array (immer drafts resolve to
+ * their `original`), so the public `getState(ContextModel)` view stays a
+ * plain `ContextMessage[]` and concurrent replays of different agent scopes
+ * never share fold state.
  */
+
+import { isDraft, original } from 'immer';
 
 import type { FinishReason } from '#/kosong/contract/provider';
 import { createToolMessage, type ContentPart, type ToolCall } from '#/kosong/contract/message';
 import type { TokenUsage } from '#/kosong/contract/usage';
 
-import type { ContextMessage, ContextState } from './types';
+import type { ContextMessage } from './types';
 import { isVacuousContentPart } from './vacuousContent';
 
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
@@ -67,75 +105,65 @@ export type LoopRecordedEvent =
       readonly parentUuid?: string;
     };
 
-export interface FoldEntryAdapter<E> {
-  readonly messageOf: (entry: E) => ContextMessage;
-  readonly withMessage: (entry: E, message: ContextMessage) => E;
+interface FoldCtx {
+  openStepUuid: string | undefined;
+  pending: Set<string>;
+  deferred: ContextMessage[];
 }
 
-const messageAdapter: FoldEntryAdapter<ContextMessage> = {
-  messageOf: (entry) => entry,
-  withMessage: (_entry, message) => message,
-};
+const foldCtxMap = new WeakMap<object, FoldCtx>();
 
-export function foldAppendMessage(state: ContextState, message: ContextMessage): ContextState {
-  return appendMessageTo(state, message);
-}
-
-export function foldLoopEvent(state: ContextState, event: LoopRecordedEvent): ContextState {
-  return applyLoopEventTo(state, event, messageAdapter, (message) => message);
-}
-
-export function settleModelOpenStep(state: ContextState): ContextState {
-  return settleOpenStep(state, messageAdapter, (message) => message);
-}
-
-export function appendMessageTo<E>(state: ContextState<E>, entry: E): ContextState<E> {
-  const { fold } = state;
-  if (fold.pendingToolCallIds.length > 0) {
-    return { ...state, fold: { ...fold, deferredEntries: [...fold.deferredEntries, entry] } };
+function ctxOf(state: readonly ContextMessage[]): FoldCtx {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const key = (isDraft(state) ? original(state as any) : state) as object;
+  let ctx = foldCtxMap.get(key);
+  if (ctx === undefined) {
+    ctx = { openStepUuid: undefined, pending: new Set(), deferred: [] };
+    foldCtxMap.set(key, ctx);
   }
-  return { ...state, messages: [...state.messages, entry] };
+  return ctx;
 }
 
-export function applyLoopEventTo<E>(
-  state: ContextState<E>,
+function bind(state: readonly ContextMessage[], ctx: FoldCtx): readonly ContextMessage[] {
+  foldCtxMap.set(state, ctx);
+  return state;
+}
+
+export function foldAppendMessage(
+  state: readonly ContextMessage[],
+  message: ContextMessage,
+): readonly ContextMessage[] {
+  const ctx = ctxOf(state);
+  if (ctx.pending.size > 0) {
+    ctx.deferred.push(message);
+    return state;
+  }
+  return bind([...state, message], ctx);
+}
+
+export function foldLoopEvent(
+  state: readonly ContextMessage[],
   event: LoopRecordedEvent,
-  adapter: FoldEntryAdapter<E>,
-  makeEntry: (message: ContextMessage) => E,
-): ContextState<E> {
-  const { fold } = state;
+): readonly ContextMessage[] {
+  const ctx = ctxOf(state);
   switch (event.type) {
     case 'step.begin': {
-      const stateAfterPreviousStep = settleOpenStep(state, adapter, makeEntry);
-      const assistant: ContextMessage = {
-        role: 'assistant',
-        content: [],
-        toolCalls: [],
-        partial: true,
-      };
-      return {
-        messages: [...stateAfterPreviousStep.messages, makeEntry(assistant)],
-        fold: { ...stateAfterPreviousStep.fold, openStepUuid: event.uuid },
-      };
+      const settled = settleOpenStep(state, ctx);
+      const assistant: ContextMessage = { role: 'assistant', content: [], toolCalls: [], partial: true };
+      ctx.openStepUuid = event.uuid;
+      return bind([...settled, assistant], ctx);
     }
     case 'step.end': {
-      if (fold.openStepUuid !== event.uuid) return flushDeferred(state);
-      const stateAfterStepEnd = settleOpenStep(
-        { ...state, fold: { ...fold, openStepUuid: undefined } },
-        adapter,
-        makeEntry,
-      );
-      return flushDeferred(stateAfterStepEnd);
+      ctx.openStepUuid = undefined;
+      const s = settleOpenStep(state, ctx);
+      return bind(flushDeferred(s, ctx), ctx);
     }
-    case 'content.part': {
-      if (fold.openStepUuid !== event.stepUuid) return state;
-      return updateOpenAssistant(state, adapter, (message) => ({
+    case 'content.part':
+      return bind(appendToOpenAssistant(state, (message) => ({
         ...message,
         content: [...message.content, event.part],
-      }));
-    }
+      })), ctx);
     case 'tool.call': {
-      if (fold.openStepUuid !== event.stepUuid) return state;
       const call: ToolCall = {
         type: 'function',
         id: event.toolCallId,
@@ -143,93 +171,82 @@ export function applyLoopEventTo<E>(
         arguments: event.args === undefined ? null : JSON.stringify(event.args),
         ...(event.extras !== undefined ? { extras: event.extras } : {}),
       };
-      const stateWithPendingToolCall: ContextState<E> = {
-        ...state,
-        fold: { ...fold, pendingToolCallIds: [...fold.pendingToolCallIds, event.toolCallId] },
-      };
-      return updateOpenAssistant(stateWithPendingToolCall, adapter, (message) => ({
+      ctx.pending.add(event.toolCallId);
+      return bind(appendToOpenAssistant(state, (message) => ({
         ...message,
         toolCalls: [...message.toolCalls, call],
-      }));
+      })), ctx);
     }
     case 'tool.result': {
-      if (!fold.pendingToolCallIds.includes(event.toolCallId)) return state;
+      if (!ctx.pending.has(event.toolCallId)) return state;
       const output = event.result.output;
       const toolMessage: ContextMessage = {
         ...createToolMessage(event.toolCallId, typeof output === 'string' ? output : [...output]),
         isError: event.result.isError,
         note: event.result.note,
       };
-      const stateWithToolResult: ContextState<E> = {
-        messages: [...state.messages, makeEntry(toolMessage)],
-        fold: { ...fold, pendingToolCallIds: fold.pendingToolCallIds.filter((id) => id !== event.toolCallId) },
-      };
-      return flushDeferred(stateWithToolResult);
+      ctx.pending.delete(event.toolCallId);
+      return bind(flushDeferred([...state, toolMessage], ctx), ctx);
     }
     default:
       return state;
   }
 }
 
-function updateOpenAssistant<E>(
-  state: ContextState<E>,
-  adapter: FoldEntryAdapter<E>,
+export function resetFold(state: readonly ContextMessage[]): readonly ContextMessage[] {
+  foldCtxMap.set(state, { openStepUuid: undefined, pending: new Set(), deferred: [] });
+  return state;
+}
+
+function appendToOpenAssistant(
+  state: readonly ContextMessage[],
   update: (message: ContextMessage) => ContextMessage,
-): ContextState<E> {
-  const index = findOpenAssistantIndex(state, adapter);
+): readonly ContextMessage[] {
+  const index = findOpenAssistantIndex(state);
   if (index === -1) return state;
-  const messages = state.messages.slice();
-  messages[index] = adapter.withMessage(messages[index]!, update(adapter.messageOf(messages[index]!)));
-  return { ...state, messages };
+  const next = state.slice();
+  next[index] = update(next[index]!);
+  return next;
 }
 
-export function settleOpenStep<E>(
-  state: ContextState<E>,
-  adapter: FoldEntryAdapter<E>,
-  makeEntry: (message: ContextMessage) => E,
-): ContextState<E> {
-  const closed = closePending(state, makeEntry);
-  const index = findOpenAssistantIndex(closed, adapter);
+function settleOpenStep(
+  state: readonly ContextMessage[],
+  ctx: FoldCtx,
+): readonly ContextMessage[] {
+  const closed = closePending(state, ctx);
+  const index = findOpenAssistantIndex(closed);
   if (index === -1) return closed;
-  const open = adapter.messageOf(closed.messages[index]!);
+  const open = closed[index]!;
   if (open.toolCalls.length === 0 && open.content.every(isVacuousContentPart)) {
-    return {
-      ...closed,
-      messages: [...closed.messages.slice(0, index), ...closed.messages.slice(index + 1)],
-    };
+    return [...closed.slice(0, index), ...closed.slice(index + 1)];
   }
-  const messages = closed.messages.slice();
-  messages[index] = adapter.withMessage(messages[index]!, { ...open, partial: undefined });
-  return { ...closed, messages };
+  const next = closed.slice();
+  next[index] = { ...open, partial: undefined };
+  return next;
 }
 
-function findOpenAssistantIndex<E>(state: ContextState<E>, adapter: FoldEntryAdapter<E>): number {
-  for (let i = state.messages.length - 1; i >= 0; i--) {
-    if (adapter.messageOf(state.messages[i]!).partial === true) return i;
+function findOpenAssistantIndex(state: readonly ContextMessage[]): number {
+  for (let i = state.length - 1; i >= 0; i--) {
+    if (state[i]!.partial === true) return i;
   }
   return -1;
 }
 
-function closePending<E>(
-  state: ContextState<E>,
-  makeEntry: (message: ContextMessage) => E,
-): ContextState<E> {
-  const { fold } = state;
-  if (fold.pendingToolCallIds.length === 0) return state;
-  const messages = state.messages.slice();
-  for (const toolCallId of fold.pendingToolCallIds) {
-    messages.push(makeEntry(interruptedToolMessage(toolCallId)));
+function closePending(state: readonly ContextMessage[], ctx: FoldCtx): readonly ContextMessage[] {
+  if (ctx.pending.size === 0) return state;
+  const next = state.slice();
+  for (const toolCallId of ctx.pending) {
+    next.push(interruptedToolMessage(toolCallId));
   }
-  return flushDeferred({ ...state, messages, fold: { ...fold, pendingToolCallIds: [] } });
+  ctx.pending.clear();
+  return flushDeferred(next, ctx);
 }
 
-function flushDeferred<E>(state: ContextState<E>): ContextState<E> {
-  const { fold } = state;
-  if (fold.pendingToolCallIds.length > 0 || fold.deferredEntries.length === 0) return state;
-  return {
-    messages: [...state.messages, ...fold.deferredEntries],
-    fold: { ...fold, deferredEntries: [] },
-  };
+function flushDeferred(state: readonly ContextMessage[], ctx: FoldCtx): readonly ContextMessage[] {
+  if (ctx.pending.size > 0 || ctx.deferred.length === 0) return state;
+  const next = [...state, ...ctx.deferred];
+  ctx.deferred.length = 0;
+  return next;
 }
 
 function interruptedToolMessage(toolCallId: string): ContextMessage {

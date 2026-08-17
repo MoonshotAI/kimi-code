@@ -31,27 +31,29 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { LifecycleScope } from '#/app/scopes';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { isWithinDirectory } from '#/tool/path-access';
 import type { ToolFileAccess } from '#/tool/toolContract';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { IWireService } from '#/wire/wire';
 import {
   TowerStore,
   WORKTREES_DIR,
   resolveTowerRepoRoot,
 } from './protocol/index';
 import { IAgentTowerService, TOWER_WORKER_PROFILE } from './tower';
-import { towerEnter, towerExit, TowerModel } from './towerOps';
+import { TowerModeEnter, TowerModeExit, towerKey } from './towerOps';
 
 export class AgentTowerService extends Disposable implements IAgentTowerService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IWireService private readonly wire: IWireService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IAgentStateService private readonly agentState: IAgentStateService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
@@ -59,6 +61,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @ISessionContext private readonly sessionCtx: ISessionContext,
   ) {
     super();
+    this.agentState.contributeState(towerKey);
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => {
         if (!this.isActive) return;
@@ -113,16 +116,16 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
 
   enter(): void {
     if (this.isActive) return;
-    this.wire.dispatch(towerEnter({}));
+    void this.dispatcher.dispatch(new TowerModeEnter({}));
   }
 
   exit(): void {
     if (!this.isActive) return;
-    this.wire.dispatch(towerExit({}));
+    void this.dispatcher.dispatch(new TowerModeExit({}));
   }
 
   get isActive(): boolean {
-    return this.wire.getModel(TowerModel);
+    return this.agentState.get(towerKey);
   }
 }
 

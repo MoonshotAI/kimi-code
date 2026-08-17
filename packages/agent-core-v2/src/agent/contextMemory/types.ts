@@ -1,8 +1,3 @@
-/**
- * Defines context messages, their origins, and the folded bounded-window state
- * shared by the live model and transcript projection.
- */
-
 import type { ContentPart, Message } from '#/kosong/contract/message';
 
 import type { AgentTaskStatus } from '#/agent/task/task';
@@ -134,29 +129,4 @@ export interface SystemReminderRecord {
 export interface AgentContextData {
   history: readonly ContextMessage[];
   tokenCount: number;
-}
-
-export interface ContextFoldState<E = ContextMessage> {
-  readonly openStepUuid?: string;
-  readonly pendingToolCallIds: readonly string[];
-  readonly deferredEntries: readonly E[];
-}
-
-export const EMPTY_FOLD: ContextFoldState<never> = Object.freeze({
-  pendingToolCallIds: Object.freeze([]),
-  deferredEntries: Object.freeze([]),
-});
-
-export interface ContextState<E = ContextMessage> {
-  readonly messages: readonly E[];
-  readonly fold: ContextFoldState<E>;
-}
-
-export function freezeContextState<E>(state: ContextState<E>): ContextState<E> {
-  const { fold } = state;
-  Object.freeze(fold.pendingToolCallIds);
-  Object.freeze(fold.deferredEntries);
-  Object.freeze(fold);
-  Object.freeze(state.messages);
-  return Object.freeze(state);
 }
