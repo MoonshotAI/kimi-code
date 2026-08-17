@@ -15,6 +15,7 @@ import {
   type SidebarViewMode,
 } from '@moonshot-ai/app-core/lib';
 import { SESSION_ROW_DRAG_MIME } from '@moonshot-ai/app-core/lib';
+import { isSessionSearchKeyEvent } from '@moonshot-ai/app-core/lib';
 import { moveInOrder, type DropPosition, type WorkspaceSortMode } from '@moonshot-ai/app-core/lib';
 import {
   canDropWorkspaceFolders,
@@ -143,12 +144,15 @@ function openSearch(): void {
 }
 
 function onSearchKeydown(e: KeyboardEvent): void {
-  if (!(e.metaKey || e.ctrlKey)) return;
-
-  if (e.key.toLowerCase() === 'k') {
+  // ⌘K on Apple / Ctrl+K elsewhere — the exact platform chord (see
+  // sessionSearchShortcut): a plain Ctrl+K on macOS is the system "delete to
+  // end of line" text edit and must reach the focused field untouched.
+  if (isSessionSearchKeyEvent(e)) {
     e.preventDefault();
     openSearch();
-  } else if (!e.metaKey && e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'o') {
+    return;
+  }
+  if (!e.metaKey && e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'o') {
     // See newChatKeys: ⌘N/Ctrl+N is reserved by the browser chrome, so new
     // chat listens for the Ctrl+Shift+O chord instead.
     e.preventDefault();
