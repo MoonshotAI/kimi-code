@@ -177,6 +177,9 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       return { prompt_id: handle.id, created_at: handle.createdAt, state: 'queued' };
     }
     const turn = await handle.launched;
+    if (turn === undefined && handle.state !== 'blocked') {
+      throw new Error2(ErrorCodes.INTERNAL, 'promptWithSkills failed to launch a turn');
+    }
     return {
       turn_id: turn?.id,
       prompt_id: handle.id,

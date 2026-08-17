@@ -19,6 +19,8 @@ import {
   IEventService,
   IFileService,
   ISessionMetadata,
+  ISessionSkillCatalog,
+  isUserActivatableSkillType,
   parseKimiFileUrl,
   promptMetadataTextFromContentParts,
   ProfileError,
@@ -44,6 +46,7 @@ import {
   promptSteerResultSchema,
   promptSubmissionSchema,
   promptSubmitResultSchema,
+  type PromptSkillActivation,
   type PromptSubmission,
 } from '../protocol/rest-prompt';
 import { z } from 'zod';
@@ -117,11 +120,39 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   return {
     prompt: agent.accessor.get(IAgentPromptService),
     skill: agent.accessor.get(IAgentSkillService),
+    skillCatalog: session.accessor.get(ISessionSkillCatalog),
     auth: agent.accessor.get(IAuthSummaryService),
     profile: agent.accessor.get(IAgentProfileService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
   };
+}
+
+/**
+ * Read-only pre-flight for bundled skill submissions: every named skill must
+ * exist in the session catalog and be user-activatable. Runs before any media
+ * materialization or control override, so a rejected bundle leaves the
+ * session untouched. The engine re-validates authoritatively inside
+ * `promptWithSkills`; this edge check only exists to protect side effects
+ * that precede it (media copies, persistent overrides).
+ */
+async function assertActivatableSkills(
+  catalog: ISessionSkillCatalog,
+  skills: readonly PromptSkillActivation[],
+): Promise<void> {
+  await catalog.ready;
+  for (const skill of skills) {
+    const definition = catalog.catalog.getSkill(skill.name);
+    if (definition === undefined) {
+      throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${skill.name}" was not found`);
+    }
+    if (!isUserActivatableSkillType(definition.metadata.type)) {
+      throw new Error2(
+        ErrorCodes.SKILL_TYPE_UNSUPPORTED,
+        `Skill "${definition.name}" cannot be activated by the user`,
+      );
+    }
+  }
 }
 
 /**
@@ -197,6 +228,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       success: { data: promptSubmitResultSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema: validationDetailsSchema },
+        [ErrorCode.SKILL_NOT_FOUND]: {},
+        [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
         [ErrorCode.AUTH_PROVISIONING_REQUIRED]: {},
         [ErrorCode.AUTH_TOKEN_MISSING]: { detailsSchema: authProviderDetailsSchema },
         [ErrorCode.AUTH_TOKEN_UNAUTHORIZED]: { detailsSchema: authProviderDetailsSchema },
@@ -216,6 +249,11 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         // in session metadata, or touch the session's controls.
         await assertPromptFileRefs(req.body.content, core.accessor.get(IFileService));
         const resolved = await resolvePrompt(core, session_id, req.body.agent_id);
+        if (req.body.skills !== undefined) {
+          // Bundled skills validate before any media materialization or
+          // control override: a rejected bundle leaves the session untouched.
+          await assertActivatableSkills(resolved.skillCatalog, req.body.skills);
+        }
         await resolved.auth.ensureReady();
 
         // Media resolution runs BEFORE any control mutation, so a failed
