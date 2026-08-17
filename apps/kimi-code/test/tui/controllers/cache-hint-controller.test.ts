@@ -57,6 +57,7 @@ function makeHost(
       if (overrides.createNewSessionFails !== true) state.appState.sessionId = 's2';
     }),
     sendNormalUserInput: vi.fn(async () => undefined),
+    sendInlineSkillUserInput: vi.fn(async () => undefined),
   };
   return { host, state };
 }
@@ -146,6 +147,26 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('hello', undefined);
     expect(host.mountEditorReplacement).not.toHaveBeenCalled();
     vi.restoreAllMocks();
+  });
+
+  it('releases a stashed inline-skill submit through the inline-skill path', async () => {
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    const activations = [{ skillName: 'review' }];
+    expect(controller.maybeInterceptOnSubmit('check /skill:review', undefined, activations)).toBe(
+      true,
+    );
+    await flush();
+    vi.restoreAllMocks();
+
+    expect(host.sendInlineSkillUserInput).toHaveBeenCalledWith(
+      'check /skill:review',
+      activations,
+      undefined,
+    );
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
   it('fetches on a cold-cache submit and shows the dialog when a rule matches', async () => {

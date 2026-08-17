@@ -11,8 +11,7 @@
 
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
-import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
-import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/sessionLifecycle';
+import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import {
   IWorkspaceService,
   type Workspace,
@@ -229,13 +228,7 @@ export function Sidebar({
     try {
       const model = await resolveDefaultModel(klient);
       if (model !== undefined) {
-        const summary = await klient.core(ISessionIndex).get(sessionId);
-        if (summary !== undefined) {
-          await klient
-            .workspace(summary.workspaceId)
-            .service(ISessionLifecycleService)
-            .resume(sessionId);
-        }
+        await klient.core(ISessionManager).resume(sessionId);
         await klient.session(sessionId).agent('main').service(IAgentProfileService).setModel(model);
       }
     } catch (error) {

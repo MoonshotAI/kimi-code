@@ -37,14 +37,28 @@ export class BridgeHandler {
     private readonly showLogs: ShowLogsFn,
     private readonly writeLog: (message: string) => void,
   ) {
-    this.runtime = new KimiRuntime({
-      version: VSCodeSettings.getExtensionConfig().version,
-      broadcast,
-      captureBaseline: (session, filePath, webviewIds) => {
-        this.captureFileBaseline(session, filePath, webviewIds);
-      },
-      log: (message, error) => this.logRuntimeError(message, error),
-    });
+    const useAgentCoreV1 = VSCodeSettings.useAgentCoreV1;
+    try {
+      this.runtime = new KimiRuntime({
+        version: VSCodeSettings.getExtensionConfig().version,
+        useAgentCoreV1,
+        broadcast,
+        captureBaseline: (session, filePath, webviewIds) => {
+          this.captureFileBaseline(session, filePath, webviewIds);
+        },
+        log: (message, error) => this.logRuntimeError(message, error),
+      });
+    } catch (error) {
+      // No silent fallback: report the failure with the rollback path, so the
+      // user can report it or switch engines and reload.
+      const rollbackHint = useAgentCoreV1
+        ? ""
+        : " You can roll back to the legacy engine: enable the 'kimi.useAgentCoreV1' setting and reload the window.";
+      throw new Error(
+        `Failed to start the Kimi engine: ${error instanceof Error ? error.message : String(error)}.${rollbackHint}`,
+        { cause: error },
+      );
+    }
     this.baselineManager = new BaselineManager(globalStoragePath, this.runtime.harness.homeDir);
     this.fileManager = new FileManager(this.baselineManager, broadcast);
   }

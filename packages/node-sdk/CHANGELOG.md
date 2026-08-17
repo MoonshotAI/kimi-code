@@ -1,5 +1,19 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.18.0
+
+### Minor Changes
+
+- [#2351](https://github.com/MoonshotAI/kimi-code/pull/2351) [`6be2697`](https://github.com/MoonshotAI/kimi-code/commit/6be26978b123bacf1c5ebce52bbeb6f7b7ff0629) Thanks [@7Sageer](https://github.com/7Sageer)! - Add `generateSessionTitle` (v2 engine) for managed AI session titles: optional `force` regeneration over generated/custom titles and selectable conversation excerpts (`user_prompts` / `first_turn` / `digest`). Gated by the experimental `auto_session_title` flag and a managed OAuth login.
+
+### Patch Changes
+
+- [#2916](https://github.com/MoonshotAI/kimi-code/pull/2916) [`7475c2e`](https://github.com/MoonshotAI/kimi-code/commit/7475c2e2e3dd86ac0b8a8d51d4f1d233ed7df797) Thanks [@Grapedge](https://github.com/Grapedge)! - Cascade turn cancellation to the session-level /init run in the v2-backed client.
+
+- [#2916](https://github.com/MoonshotAI/kimi-code/pull/2916) [`7475c2e`](https://github.com/MoonshotAI/kimi-code/commit/7475c2e2e3dd86ac0b8a8d51d4f1d233ed7df797) Thanks [@Grapedge](https://github.com/Grapedge)! - Implement session deletion in the v2-backed client.
+
+- [#2916](https://github.com/MoonshotAI/kimi-code/pull/2916) [`7475c2e`](https://github.com/MoonshotAI/kimi-code/commit/7475c2e2e3dd86ac0b8a8d51d4f1d233ed7df797) Thanks [@Grapedge](https://github.com/Grapedge)! - Support forking a session from a specific turn in the v2-backed client, and reject forking a live session while its turn is running.
+
 ## 0.17.0
 
 ### Minor Changes

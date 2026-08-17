@@ -22,6 +22,7 @@ import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
+import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
@@ -29,11 +30,11 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import {
-  ISessionLifecycleService,
-  type SessionWillCreateEvent,
-} from '#/workspace/sessionLifecycle/sessionLifecycle';
+import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { FakeRuntime } from '#/runtime/fakeRuntime';
+import type { SessionWillCreateEvent } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import {
   IWorkspaceMcpConfigService,
   type McpServersChange,
@@ -47,7 +48,7 @@ import { createMemoryMcpOAuthStore, stdioFixture } from '../../mcpCore/stubs';
 import { registerAgentIdentityStub } from '../../app/agentIdentity/stubs';
 
 function stdioServer(): McpServerConfig {
-  return { transport: 'stdio', command: process.execPath, args: [stdioFixture] };
+  return { transport: 'stdio', command: process.execPath, args: [stdioFixture], runtime_id: 'local' };
 }
 
 describe('WorkspaceMcpService', () => {
@@ -92,12 +93,17 @@ describe('WorkspaceMcpService', () => {
     const ix = createServices(disposables, {
       strict: true,
       additionalServices: (reg) => {
-        reg.definePartialInstance(IWorkspaceContext, { cwd });
+        reg.definePartialInstance(IWorkspaceContext, { cwd, workspaceId: 'test-workspace' });
         reg.defineInstance(IWorkspaceMcpConfigService, mcpConfigStub());
         reg.definePartialInstance(IMcpOAuthStore, createMemoryMcpOAuthStore());
         reg.defineInstance(ILogService, stubLog());
         reg.defineInstance(ITelemetryService, noopTelemetryService);
-        reg.definePartialInstance(ISessionLifecycleService, {
+        const runtime = Object.assign(
+          new FakeRuntime({ workspaceId: 'test-workspace', runtimeId: 'local', generation: 'test-generation' }, { capabilities: ['process'] }),
+          { process: new HostProcessService() },
+        );
+        reg.defineInstance(IRuntimeResolver, { _serviceBrand: undefined, inspect: () => runtime, acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }) });
+        reg.definePartialInstance(ISessionManager, {
           onWillCreateSession: assemblyEvents.event,
         });
         registerAgentIdentityStub(reg);
@@ -310,14 +316,18 @@ describe('WorkspaceMcpService', () => {
   }, 20000);
 
   describe('session overlay activation (onWillCreateSession)', () => {
-    function willCreateEvent(servers: Record<string, McpServerConfig>, sessionCwd: string) {
+    function willCreateEvent(
+      servers: Record<string, McpServerConfig>,
+      sessionCwd: string,
+      workspaceId = 'test-workspace',
+    ) {
       const seeds = new Map<unknown, unknown>([
         [ISessionEphemeralMcpServers, servers],
         [
           ISessionContext,
           makeSessionContext({
             sessionId: 's1',
-            workspaceId: 'ws',
+            workspaceId,
             sessionDir: join(cwd, 's1'),
             sessionScope: 'ws/s1',
             cwd: sessionCwd,
@@ -374,6 +384,24 @@ describe('WorkspaceMcpService', () => {
 
       const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
       const { event, contributed, disposers } = willCreateEvent({}, cwd);
+      assemblyEvents.fire(event);
+
+      expect(sessionOverlay).not.toHaveBeenCalled();
+      expect(contributed.size).toBe(0);
+      expect(disposers).toHaveLength(0);
+    });
+
+    it('ignores a will-create event of a session belonging to another workspace', async () => {
+      const service = createService();
+      manager = service.connectionManager();
+      await service.ready;
+
+      const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
+      const { event, contributed, disposers } = willCreateEvent(
+        { eph: stdioServer() },
+        cwd,
+        'other-workspace',
+      );
       assemblyEvents.fire(event);
 
       expect(sessionOverlay).not.toHaveBeenCalled();

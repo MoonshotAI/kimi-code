@@ -7,7 +7,7 @@
 
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, normalize } from 'pathe';
+import { join, normalize, basename, dirname } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -20,6 +20,8 @@ import type { ToolCall } from '#/kosong/contract/message';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
+import type { RuntimeLease } from '#/runtime/runtime';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
   ToolAccesses,
@@ -160,12 +162,44 @@ function createHarness(
         scope: (sub?: string): string =>
           sub ? `sessions/workspace-1/session-1/${sub}` : 'sessions/workspace-1/session-1',
       } satisfies ISessionContext);
-      reg.defineInstance(IHostFileSystem, options.hostFs ?? new HostFileSystem());
-      reg.defineInstance(IHostEnvironment, {
+      const hostFs = options.hostFs ?? new HostFileSystem();
+      const hostEnvironment = {
         _serviceBrand: undefined,
         homeDir,
         pathClass: options.pathClass ?? 'posix',
-      } as unknown as IHostEnvironment);
+      } as unknown as IHostEnvironment;
+      reg.defineInstance(IHostFileSystem, hostFs);
+      reg.defineInstance(IHostEnvironment, hostEnvironment);
+      reg.defineInstance(IAgentRuntimeService, {
+        _serviceBrand: undefined,
+        onDidChange: () => ({ dispose: () => {} }),
+        isAvailable: () => true,
+        inspect() { return this.acquire().runtime; },
+        acquire: (): RuntimeLease => ({
+          runtime: {
+            identity: { workspaceId: 'workspace-1', runtimeId: 'local', generation: 'test' },
+            capabilities: new Set(['fs', 'watch', 'process', 'terminal']),
+            environment: hostEnvironment,
+            path: {
+              separator: options.pathClass === 'win32' ? '\\' : '/',
+              delimiter: options.pathClass === 'win32' ? ';' : ':',
+              isAbsolute: (path: string) => path.startsWith('/') || /^[A-Za-z]:[\\\\]/.test(path),
+              join,
+              relative: (from: string, to: string) => normalize(to).replace(`${normalize(from)}/`, ''),
+              resolve: (...paths: readonly string[]) => normalize(join(...paths)),
+              basename: (path: string) => basename(path),
+              dirname: (path: string) => dirname(path),
+            },
+            workspace: { mapRoots: (roots) => roots },
+            fs: hostFs,
+            status: 'ready',
+            onDidChangeStatus: () => ({ dispose: () => {} }),
+            dispose: () => {},
+          },
+          track: (resource) => resource,
+          dispose: () => {},
+        }),
+      } satisfies IAgentRuntimeService);
       reg.defineInstance(IBashParserService, new BashParserService());
       reg.defineInstance(
         ITelemetryService,

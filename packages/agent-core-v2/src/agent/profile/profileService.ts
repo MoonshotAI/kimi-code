@@ -114,9 +114,9 @@ import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import type { LoopControl } from '#/agent/loop/configSection';
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { IHostClock } from '#/os/interface/hostClock';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -248,9 +248,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IConfigService private readonly config: IConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IProtocolAdapterRegistry private readonly protocolAdapters: IProtocolAdapterRegistry,
-    @IHostEnvironment private readonly env: IHostEnvironment,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @IHostClock private readonly clock: IHostClock,
-    @IHostFileSystem private readonly fs: IHostFileSystem,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
@@ -940,25 +939,39 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     options?: ApplyProfileOptions,
   ): Promise<SystemPromptContext> {
     const preloadedAgentsMd = await this.workspaceInstructionsSnapshot();
-    const base = await prepareSystemPromptContext(
-      { fs: this.fs, homeDir: this.env.homeDir },
-      this.sessionContext.cwd,
-      this.bootstrap.homeDir,
-      {
-        additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
-        preloadedAgentsMd,
-      },
-    );
+    const fsAvailable = this.runtime.isAvailable(['fs']);
+    const lease = this.runtime.acquire(fsAvailable ? ['fs'] : []);
+    const env = lease.runtime.environment;
+    const view = new RuntimeWorkspaceView(lease.runtime, {
+      workDir: this.sessionContext.cwd,
+      additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
+    });
+    let base: SystemPromptContext;
+    try {
+      base = !fsAvailable
+        ? {}
+        : await prepareSystemPromptContext(
+            { fs: lease.runtime.fs!, homeDir: env.homeDir },
+            view.workDir,
+            this.bootstrap.homeDir,
+            {
+              additionalDirs: view.additionalDirs,
+              preloadedAgentsMd,
+            },
+          );
+    } finally {
+      lease.dispose();
+    }
     const skills = await this.resolveSkillListing();
     const pluginSections = await this.resolvePluginSections();
     const now = this.clock.now();
     const timeZone = this.clock.timeZone();
     return {
       ...base,
-      cwd: this.sessionContext.cwd,
-      osKind: this.env.osKind,
-      shellName: this.env.shellName,
-      shellPath: this.env.shellPath,
+      cwd: view.workDir,
+      osKind: env.osKind,
+      shellName: env.shellName,
+      shellPath: env.shellPath,
       now: now.toISOString(),
       timeZone,
       skills,

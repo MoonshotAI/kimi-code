@@ -34,7 +34,7 @@ export interface IHostProcess {
   readonly stderr: Readable;
   wait(): Promise<number>;
   kill(signal?: NodeJS.Signals): Promise<void>;
-  dispose(): void;
+  dispose(): void | Promise<void>;
 }
 
 export interface IHostProcessService {

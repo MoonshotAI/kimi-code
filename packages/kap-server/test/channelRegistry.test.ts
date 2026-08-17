@@ -8,9 +8,14 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it } from 'vitest';
 
-import { resolveAnyScopedServiceId } from '../src/transport/channelRegistry';
+import { describeAllChannels, resolveAnyScopedServiceId } from '../src/transport/channelRegistry';
 
 describe('channelRegistry', () => {
+  it('describes only real DI scopes', () => {
+    const scopes = new Set(describeAllChannels().map((channel) => channel.scope));
+    expect(scopes).toEqual(new Set(['app', 'session', 'agent']));
+  });
+
   it('resolves contributed services from the current core only', async () => {
     const id = createDecorator<unknown>('test-contributed-service');
     class TestService extends Service {}

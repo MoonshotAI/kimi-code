@@ -595,6 +595,7 @@ export class SessionEventHandler {
       turnId: String(event.turnId),
       renderMode: 'markdown',
       content: formatHookResultMarkdown(event),
+      hookResult: true,
     });
     this.host.patchLivePane({
       mode: 'idle',

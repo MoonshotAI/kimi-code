@@ -27,6 +27,7 @@ import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
   AgentCommandInfo,
+  AgentRuntimeBinding,
   AppMcpServerInspection,
   BackgroundTaskInfo,
   ConfigDiagnostics,
@@ -59,6 +60,7 @@ import type {
   SessionStatus,
   SessionUsage,
   PromptInput,
+  PromptSkillActivation,
   RenameSessionInput,
   ResumeSessionInput,
   ResumedSessionSummary,
@@ -75,6 +77,10 @@ const MAIN_AGENT_ID = 'main';
 export interface SessionPromptRpcInput {
   readonly sessionId: string;
   readonly input: PromptInput;
+}
+
+export interface SessionPromptWithSkillsRpcInput extends SessionPromptRpcInput {
+  readonly skills: readonly PromptSkillActivation[];
 }
 
 export interface SessionIdRpcInput {
@@ -133,6 +139,10 @@ export interface ActivatePluginCommandRpcInput extends SessionIdRpcInput {
 export interface RunCommandRpcInput extends SessionIdRpcInput {
   readonly name: string;
   readonly args?: string | undefined;
+}
+
+export interface SwitchSessionRuntimeRpcInput extends SessionIdRpcInput {
+  readonly runtimeId: string;
 }
 
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
@@ -460,6 +470,19 @@ export abstract class SDKRpcClientBase {
       agentId,
       input: input.input,
     });
+  }
+
+  /**
+   * Grouped skill activation + prompt submission. Only the v2 engine
+   * (`SDKRpcClientV2`) implements it; the v1 route has no combined-submission
+   * RPC, so the base fails loudly instead of degrading into N+1 turns.
+   */
+  async promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void> {
+    void input;
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'promptWithSkills requires the agent-core-v2 engine.',
+    );
   }
 
   async runShellCommand(input: {
@@ -981,6 +1004,16 @@ export abstract class SDKRpcClientBase {
       ErrorCodes.NOT_IMPLEMENTED,
       'This SDK client does not support contributed commands.',
     );
+  }
+
+  async getRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding> {
+    void input;
+    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'This SDK client does not support runtimes.');
+  }
+
+  async switchRuntime(input: SwitchSessionRuntimeRpcInput): Promise<AgentRuntimeBinding> {
+    void input;
+    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'This SDK client does not support runtimes.');
   }
 
   onEvent(listener: (event: Event) => void): Unsubscribe {

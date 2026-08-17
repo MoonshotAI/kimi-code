@@ -301,12 +301,7 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       countActive: (workspaceIds) =>
         call('sessionIndex', 'count', [{ workspaceIds }]) as Promise<number>,
       create: async ({ workDir, additionalDirs, title, mcpServers }) => {
-        // The workspace handler owns session creation: materialize (or reuse)
-        // the handler for the root, then create under it.
-        const handler = (await scoped({}, 'workspaceLifecycleService', 'handlerFor', [
-          { root: workDir },
-        ])) as { id: string };
-        const handle = (await scoped({ workspaceId: handler.id }, 'sessionLifecycleService', 'create', [
+        const handle = (await scoped({}, 'sessionManager', 'create', [
           { workDir, additionalDirs, mcpServers },
         ])) as { id: string };
         const scope = { sessionId: handle.id };

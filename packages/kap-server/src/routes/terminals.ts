@@ -43,6 +43,10 @@ import {
 } from '../protocol/rest-terminal';
 import { parseActionSuffix } from './action-suffix';
 
+const createTerminalCompatRequestSchema = createTerminalRequestSchema.extend({
+  runtime_id: z.string().min(1).optional(),
+});
+
 interface TerminalsRouteHost {
   get(
     path: string,
@@ -127,7 +131,7 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
       method: 'POST',
       path: '/sessions/{session_id}/terminals',
       params: sessionIdParamSchema,
-      body: createTerminalRequestSchema,
+      body: createTerminalCompatRequestSchema,
       success: { data: getTerminalResponseSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
@@ -140,7 +144,9 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
     async (req, reply) => {
       try {
         const { session_id } = req.params;
-        const terminal = await (await resolveTerminal(core, session_id)).create(req.body);
+        const session = await resumeSessionById(core.accessor, session_id);
+        if (session === undefined) throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
+        const terminal = await session.accessor.get(ISessionTerminalService).create({ ...req.body, runtime_id: req.body.runtime_id ?? 'local' });
         requestLog(req)?.info({ session_id, terminal_id: terminal.id }, 'terminal created');
         reply.send(okEnvelope(terminal, req.id));
       } catch (err) {
@@ -240,6 +246,9 @@ function sendMappedError(
         return;
       case ErrorCodes.TERMINAL_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.TERMINAL_NOT_FOUND, err.message, requestId, err.stack));
+        return;
+      case ErrorCodes.FS_PATH_ESCAPES:
+        reply.send(errEnvelope(ErrorCode.FS_PATH_ESCAPES_SESSION, err.message, requestId, err.stack));
         return;
     }
   }

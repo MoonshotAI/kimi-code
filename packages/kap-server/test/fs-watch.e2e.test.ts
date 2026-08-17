@@ -19,6 +19,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2';
+import type { HostFsChange, IHostFsWatchService } from '@moonshot-ai/agent-core-v2/os/interface/hostFsWatch';
+import { FakeRuntime } from '@moonshot-ai/agent-core-v2/runtime/fakeRuntime';
+import type { RuntimeProviderRuntimeHandle } from '@moonshot-ai/agent-core-v2/runtime/runtimeUnitHost';
 import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
@@ -185,7 +189,7 @@ describe('WS fs watch (kap-server)', () => {
       JSON.stringify({
         type: 'watch_fs_add',
         id: 'w1',
-        payload: { session_id: sid, paths: ['src'] },
+        payload: { session_id: sid, runtime_id: 'local', paths: ['src'] },
       }),
     );
     const ack = await receiveType(conn, 'ack', 1000);
@@ -211,6 +215,42 @@ describe('WS fs watch (kap-server)', () => {
     conn.ws.close();
   });
 
+  it('watch_fs_add without runtime_id defaults to the local runtime', async () => {
+    const r = await boot();
+    const sid = await createSession(r);
+    const conn = await openConn(wsUrl(r));
+    await helloAndSubscribe(conn, 'A', sid);
+
+    conn.ws.send(
+      JSON.stringify({
+        type: 'watch_fs_add',
+        id: 'w1',
+        payload: { session_id: sid, paths: ['src'] },
+      }),
+    );
+    const ack = await receiveType(conn, 'ack', 1000);
+    expect(ack.code).toBe(0);
+    expect(ack.payload).toMatchObject({ watched_paths: ['src'] });
+
+    await sleep(WATCH_SETTLE_MS);
+    writeFileSync(join(workspace, 'src', 'compat.ts'), 'export const y = 2;\n');
+
+    const ev = await receiveType(conn, 'event.fs.changed', 2000);
+    expect(ev.session_id).toBe(sid);
+
+    conn.ws.send(
+      JSON.stringify({
+        type: 'watch_fs_remove',
+        id: 'w2',
+        payload: { session_id: sid, paths: ['src'] },
+      }),
+    );
+    const removeAck = await receiveType(conn, 'ack', 1000);
+    expect(removeAck.code).toBe(0);
+
+    conn.ws.close();
+  });
+
   it.skipIf(process.platform === 'win32')(
     'burst > 500 changes inside 200ms window → truncated:true',
     { timeout: 15000 },
@@ -231,7 +271,7 @@ describe('WS fs watch (kap-server)', () => {
         JSON.stringify({
           type: 'watch_fs_add',
           id: 'w2',
-          payload: { session_id: sid, paths: ['.'] },
+          payload: { session_id: sid, runtime_id: 'local', paths: ['.'] },
         }),
       );
       await receiveType(conn, 'ack', 1000);
@@ -272,11 +312,11 @@ describe('WS fs watch (kap-server)', () => {
     await helloAndSubscribe(b, 'B', sid);
 
     a.ws.send(
-      JSON.stringify({ type: 'watch_fs_add', id: 'wA', payload: { session_id: sid, paths: ['src'] } }),
+      JSON.stringify({ type: 'watch_fs_add', id: 'wA', payload: { session_id: sid, runtime_id: 'local', paths: ['src'] } }),
     );
     await receiveType(a, 'ack', 1000);
     b.ws.send(
-      JSON.stringify({ type: 'watch_fs_add', id: 'wB', payload: { session_id: sid, paths: ['docs'] } }),
+      JSON.stringify({ type: 'watch_fs_add', id: 'wB', payload: { session_id: sid, runtime_id: 'local', paths: ['docs'] } }),
     );
     await receiveType(b, 'ack', 1000);
 
@@ -315,7 +355,7 @@ describe('WS fs watch (kap-server)', () => {
       JSON.stringify({
         type: 'watch_fs_add',
         id: 'w100',
-        payload: { session_id: sid, paths: paths.slice(0, 100) },
+        payload: { session_id: sid, runtime_id: 'local', paths: paths.slice(0, 100) },
       }),
     );
     const ack100 = await receiveType(conn, 'ack', 2000);
@@ -326,7 +366,7 @@ describe('WS fs watch (kap-server)', () => {
       JSON.stringify({
         type: 'watch_fs_add',
         id: 'w101',
-        payload: { session_id: sid, paths: [paths[100]!] },
+        payload: { session_id: sid, runtime_id: 'local', paths: [paths[100]!] },
       }),
     );
     const ack101 = await receiveType(conn, 'ack', 2000);
@@ -342,11 +382,11 @@ describe('WS fs watch (kap-server)', () => {
     await helloAndSubscribe(conn, 'A', sid);
 
     conn.ws.send(
-      JSON.stringify({ type: 'watch_fs_add', id: 'w1', payload: { session_id: sid, paths: ['src'] } }),
+      JSON.stringify({ type: 'watch_fs_add', id: 'w1', payload: { session_id: sid, runtime_id: 'local', paths: ['src'] } }),
     );
     await receiveType(conn, 'ack', 1000);
     conn.ws.send(
-      JSON.stringify({ type: 'watch_fs_add', id: 'w2', payload: { session_id: sid, paths: ['src'] } }),
+      JSON.stringify({ type: 'watch_fs_add', id: 'w2', payload: { session_id: sid, runtime_id: 'local', paths: ['src'] } }),
     );
     const ack = await receiveType(conn, 'ack', 1000);
     expect((ack.payload as { current_count: number }).current_count).toBe(1);
@@ -364,7 +404,7 @@ describe('WS fs watch (kap-server)', () => {
       JSON.stringify({
         type: 'watch_fs_add',
         id: 'wadd',
-        payload: { session_id: sid, paths: ['src', 'docs'] },
+        payload: { session_id: sid, runtime_id: 'local', paths: ['src', 'docs'] },
       }),
     );
     await receiveType(conn, 'ack', 1000);
@@ -373,7 +413,7 @@ describe('WS fs watch (kap-server)', () => {
       JSON.stringify({
         type: 'watch_fs_remove',
         id: 'wrm',
-        payload: { session_id: sid, paths: ['src'] },
+        payload: { session_id: sid, runtime_id: 'local', paths: ['src'] },
       }),
     );
     const ack = await receiveType(conn, 'ack', 1000);
@@ -394,12 +434,116 @@ describe('WS fs watch (kap-server)', () => {
       JSON.stringify({
         type: 'watch_fs_add',
         id: 'wbad',
-        payload: { session_id: sid, paths: ['../escape'] },
+        payload: { session_id: sid, runtime_id: 'local', paths: ['../escape'] },
       }),
     );
     const ack = await receiveType(conn, 'ack', 1000);
     expect(ack.code).toBe(41304);
 
     conn.ws.close();
+  });
+
+  it('keeps delivering events after the runtime generation is replaced, without a client re-add', async () => {
+    const r = await boot();
+    const sid = await createSession(r);
+
+    interface FakeHandle {
+      disposed: number;
+      fire(change: HostFsChange): void;
+    }
+    const fakeWatch = (): { readonly service: IHostFsWatchService; readonly handles: FakeHandle[] } => {
+      const handles: FakeHandle[] = [];
+      const service = {
+        watch: () => {
+          const listeners = new Set<(change: HostFsChange) => void>();
+          const handle: FakeHandle & {
+            readonly ready: Promise<void>;
+            onDidChange(listener: (change: HostFsChange) => void): { dispose(): void };
+            dispose(): void;
+          } = {
+            ready: Promise.resolve(),
+            disposed: 0,
+            onDidChange: (listener) => {
+              listeners.add(listener);
+              return { dispose: () => { listeners.delete(listener); } };
+            },
+            dispose: () => { handle.disposed += 1; },
+            fire: (change) => { for (const listener of [...listeners]) listener(change); },
+          };
+          handles.push(handle);
+          return handle;
+        },
+      } as unknown as IHostFsWatchService;
+      return { service, handles };
+    };
+    const watchOne = fakeWatch();
+    const watchTwo = fakeWatch();
+    let workspaceId = '';
+    let handle: RuntimeProviderRuntimeHandle | undefined;
+    const makeRuntime = (generation: string, service: IHostFsWatchService): FakeRuntime =>
+      Object.assign(
+        new FakeRuntime(
+          { workspaceId, runtimeId: 'watch-test', generation },
+          { capabilities: ['watch'] },
+        ),
+        { watch: service },
+      );
+    const provider = await r.core.accessor.get(IWorkspaceInstanceManager).addProvider({
+      id: 'watch-test-provider',
+      imports: { root: [], imports: [], local: [] },
+      attach: async (context, host) => {
+        workspaceId = context.id;
+        handle = host.registerRuntime(makeRuntime('watch-generation-1', watchOne.service));
+        return { dispose: () => handle!.remove() };
+      },
+    });
+
+    const conn = await openConn(wsUrl(r));
+    try {
+      await helloAndSubscribe(conn, 'A', sid);
+      conn.ws.send(
+        JSON.stringify({
+          type: 'watch_fs_add',
+          id: 'w1',
+          payload: { session_id: sid, runtime_id: 'watch-test', paths: ['src'] },
+        }),
+      );
+      const ack = await receiveType(conn, 'ack', 1000);
+      expect(ack.code).toBe(0);
+      expect(ack.payload).toMatchObject({ watched_paths: ['src'] });
+      expect(watchOne.handles).toHaveLength(1);
+
+      watchOne.handles[0]!.fire({ path: join(workspace, 'src', 'one.ts'), action: 'created', kind: 'file' });
+      const evOne = await receiveType(conn, 'event.fs.changed', 2000);
+      expect((evOne.payload as { changes: Array<{ path: string }> }).changes.some((c) => c.path === 'src/one.ts')).toBe(true);
+
+      await handle!.update(() => makeRuntime('watch-generation-2', watchTwo.service));
+
+      const deadline = Date.now() + 2000;
+      while (watchTwo.handles.length === 0 && Date.now() < deadline) await sleep(25);
+      expect(watchTwo.handles).toHaveLength(1);
+      expect(watchOne.handles[0]!.disposed).toBe(1);
+      await sleep(WATCH_SETTLE_MS);
+
+      watchTwo.handles[0]!.fire({ path: join(workspace, 'src', 'two.ts'), action: 'created', kind: 'file' });
+      const evTwo = await receiveType(conn, 'event.fs.changed', 2000);
+      expect(evTwo.session_id).toBe(sid);
+      expect((evTwo.payload as { changes: Array<{ path: string }> }).changes.some((c) => c.path === 'src/two.ts')).toBe(true);
+      expect(evTwo.seq).toBe((evOne.seq ?? 0) + 1);
+
+      conn.ws.send(
+        JSON.stringify({
+          type: 'watch_fs_add',
+          id: 'w2',
+          payload: { session_id: sid, runtime_id: 'watch-test', paths: ['docs'] },
+        }),
+      );
+      const ackTwo = await receiveType(conn, 'ack', 1000);
+      expect(ackTwo.code).toBe(0);
+      expect(ackTwo.payload).toMatchObject({ watched_paths: ['docs', 'src'] });
+    } finally {
+      conn.ws.close();
+      await provider.dispose();
+    }
   });
 });

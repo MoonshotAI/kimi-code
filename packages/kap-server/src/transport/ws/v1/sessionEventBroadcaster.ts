@@ -904,6 +904,32 @@ export class SessionEventBroadcaster {
       );
       return;
     }
+    if (event.type === 'event.plugin.changed') {
+      // Plugin set mutations (install/enable/disable/remove from ANY client)
+      // fan out so every host re-reads instead of caching stale rows. Bare
+      // signal by design — the payload is the services' own REST surfaces.
+      void this.dispatchGlobal({
+        type: 'event.plugin.changed',
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(GLOBAL_SESSION_ID, 'event.plugin.changed', error),
+      );
+      return;
+    }
+    if (event.type === 'event.capability.changed') {
+      const payload = capabilityChangedPayload(event.payload);
+      if (payload === undefined) return;
+      void this.dispatchGlobal({
+        type: 'event.capability.changed',
+        ...payload,
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(GLOBAL_SESSION_ID, 'event.capability.changed', error),
+      );
+      return;
+    }
     if (event.type === 'event.config.warning') {
       const payload = configWarningPayload(event.payload);
       if (payload === undefined) return;
@@ -1380,6 +1406,8 @@ function isGlobalEvent(type: string): boolean {
     type.startsWith('event.session.') ||
     type.startsWith('event.workspace.') ||
     type.startsWith('event.config.') ||
+    type.startsWith('event.plugin.') ||
+    type.startsWith('event.capability.') ||
     type.startsWith('event.di.')
   );
 }
@@ -1691,6 +1719,35 @@ function sessionCreatedPayload(
  * entry rejects the whole batch — the publisher always sends the full current
  * warning set, so a partial frame would be a lie by omission.
  */
+interface CapabilityChangedPayload {
+  capability_id: string;
+  install: {
+    running: boolean;
+    step?: string;
+    percent?: number;
+    error?: string;
+    note?: string;
+  };
+}
+
+function capabilityChangedPayload(payload: unknown): CapabilityChangedPayload | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const id = (payload as { capability_id?: unknown }).capability_id;
+  if (typeof id !== 'string' || id.length === 0) return undefined;
+  const install = (payload as { install?: unknown }).install;
+  if (typeof install !== 'object' || install === null) return undefined;
+  const running = (install as { running?: unknown }).running;
+  if (typeof running !== 'boolean') return undefined;
+  const out: CapabilityChangedPayload['install'] = { running };
+  for (const key of ['step', 'error', 'note'] as const) {
+    const value = (install as Record<string, unknown>)[key];
+    if (typeof value === 'string') out[key] = value;
+  }
+  const percent = (install as { percent?: unknown }).percent;
+  if (typeof percent === 'number') out.percent = percent;
+  return { capability_id: id, install: out };
+}
+
 function configWarningPayload(payload: unknown): { warnings: ConfigWarningItem[] } | undefined {
   if (typeof payload !== 'object' || payload === null) return undefined;
   const warnings = (payload as { warnings?: unknown }).warnings;

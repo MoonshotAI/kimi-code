@@ -43,7 +43,9 @@ import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { wrapSubagentModelError } from '#/session/subagent/configSection';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionProcessRunner } from '#/session/process/processRunner';
+import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
+import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { ILogService } from '#/_base/log/log';
 
 import {
@@ -86,7 +88,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
-    @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
+    @IRuntimeResolver private readonly runtimeResolver: IRuntimeResolver,
     @ILogService private readonly log: ILogService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {}
@@ -150,6 +152,7 @@ export class SessionSwarmService implements ISessionSwarmService {
       });
     }
     const callerData = caller.accessor.get(IAgentProfileService).data();
+    const callerRuntime = caller.accessor.get(IAgentRuntimeBindingService).current;
     if (callerData.modelAlias === undefined) {
       throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, 'Caller agent has no model bound', {
         details: { agentId: callerAgentId },
@@ -169,6 +172,7 @@ export class SessionSwarmService implements ISessionSwarmService {
           thinking: binding.thinking,
         },
         labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
+        runtimeId: callerRuntime.runtimeId,
       });
     } catch (error) {
       throw wrapSubagentModelError(error, binding.model, callerData.modelAlias);
@@ -188,11 +192,18 @@ export class SessionSwarmService implements ISessionSwarmService {
       runInBackground: options.runInBackground,
       model: binding.model,
     });
-    const promptText = await applyProfilePromptPrefix(profile, options.prompt, {
-      cwd: this.sessionContext.cwd,
-      runner: this.processRunner,
-      log: this.log,
-    });
+    const lease = this.runtimeResolver.acquire(callerRuntime, ['process']);
+    let promptText: string;
+    try {
+      const view = new RuntimeWorkspaceView(lease.runtime, { workDir: this.sessionContext.cwd });
+      promptText = await applyProfilePromptPrefix(profile, options.prompt, {
+        cwd: view.workDir,
+        process: lease.runtime.process!,
+        log: this.log,
+      });
+    } finally {
+      lease.dispose();
+    }
     return this.observe(caller, child.id, options.profileName, {
       kind: 'prompt',
       prompt: promptText,

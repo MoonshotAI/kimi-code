@@ -7,9 +7,7 @@
  * Bound at Workspace scope.
  */
 
-import { LifecycleScope } from '#/app/scopes';
 
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { discoverAgentFiles } from '#/workspace/workspaceAgentProfileLoader/internal/agentFileDiscovery';
 import { AgentProfileLoaderBase } from '#/workspace/workspaceAgentProfileLoader/internal/agentProfileLoader';
@@ -17,6 +15,7 @@ import {
   AGENT_PROFILE_SOURCE_PRIORITY,
   type AgentProfileContribution,
 } from '#/app/agentProfileCatalog/agentProfileContribution';
+import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { profilesFromDiscovery } from './internal/agentProfileFromFile';
 import { configuredAgentRoots } from '#/workspace/workspaceAgentProfileLoader/internal/agentRoots';
 import {
@@ -47,8 +46,9 @@ export class ExtraAgentProfileLoaderService
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService log: ILogService,
     @IUserAgentProfileLoader private readonly user: IUserAgentProfileLoader,
+    registry?: IAgentProfileRegistry,
   ) {
-    super(log);
+    super(log, registry);
     this._register(
       this.configService.onDidSectionChange((event) => {
         if (event.domain === EXTRA_AGENT_DIRS_SECTION) {
@@ -88,10 +88,3 @@ export class ExtraAgentProfileLoaderService
   }
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IExtraAgentProfileLoader,
-  ExtraAgentProfileLoaderService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceAgentProfileLoader',
-);

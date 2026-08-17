@@ -26,9 +26,9 @@ export class FileEditService implements IFileEditService {
     this.editor = new EditService();
   }
 
-  async edit(input: FileEditInput): Promise<FileEditResult> {
+  async edit(input: FileEditInput, fs: IHostFileSystem = this.fs): Promise<FileEditResult> {
     try {
-      const raw = await this.fs.readText(input.path, { errors: 'strict' });
+      const raw = await fs.readText(input.path, { errors: 'strict' });
       const model = new TextModel(raw);
       const result = this.editor.apply(model, {
         path: input.displayPath,
@@ -39,7 +39,7 @@ export class FileEditService implements IFileEditService {
       if (!result.ok) {
         return { ok: false, error: result.error };
       }
-      await this.fs.writeText(input.path, result.rawContent);
+      await fs.writeText(input.path, result.rawContent);
       return { ok: true, count: result.count };
     } catch (error) {
       const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;

@@ -8,7 +8,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Event, IChannel } from './channel';
 import { probeDebugSurface } from './channels';
+import { createInspectClient } from './client';
 import { RPCError } from './errors';
+import {
+  fetchAgentRuntimeBinding,
+  fetchSessionWorkspaceAssociation,
+  fetchWorkspaceSnapshot,
+} from '../snapshots/api';
 import { makeProxy } from './proxy';
 import { ProxyChannel } from './proxyChannel';
 
@@ -113,6 +119,42 @@ describe('ProxyChannel.listen', () => {
       fetch: fakeFetch(ok(null)).fetchImpl,
     });
     expect(() => channel.listen('onDidChangeConfiguration')).toThrow(/events are not supported/);
+  });
+});
+
+describe('business snapshots', () => {
+  it('uses explicit workspace, session association, and agent binding routes', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', async (url: string | URL) => {
+      const value = String(url);
+      calls.push(value);
+      if (value.endsWith('/workspace/w%201/snapshot')) {
+        return { json: async () => ok({ metadata: { id: 'w 1' } }) };
+      }
+      if (value.endsWith('/session/s%201/association')) {
+        return { json: async () => ok({ sessionId: 's 1', workspaceId: 'w 1', cwd: '/work' }) };
+      }
+      return {
+        json: async () => ok({
+          binding: { workspaceId: 'w 1', runtimeId: 'remote' },
+          available: true,
+          runtime: { runtimeId: 'remote', generation: 'g2', status: 'ready', capabilities: ['process'] },
+        }),
+      };
+    });
+    const client = createInspectClient({ url: 'http://h:9', token: 'tok' });
+
+    await expect(fetchWorkspaceSnapshot(client, 'w 1')).resolves.toMatchObject({ metadata: { id: 'w 1' } });
+    await expect(fetchSessionWorkspaceAssociation(client, 's 1')).resolves.toMatchObject({ workspaceId: 'w 1' });
+    await expect(fetchAgentRuntimeBinding(client, 's 1', 'main')).resolves.toMatchObject({
+      binding: { runtimeId: 'remote' },
+      runtime: { generation: 'g2' },
+    });
+    expect(calls).toEqual([
+      'http://h:9/api/v1/debug/workspace/w%201/snapshot',
+      'http://h:9/api/v1/debug/session/s%201/association',
+      'http://h:9/api/v1/debug/session/s%201/agent/main/runtime-binding',
+    ]);
   });
 });
 

@@ -16,13 +16,12 @@ import { resolveGlobalLogPath } from '#/_base/log/logConfig';
 import { IWireService } from '#/wire/wire';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
-import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import {
   sessionDirOf,
   workspacePersistenceScope,
 } from '#/workspace/sessionLifecycle/internal/addressing';
-import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -54,7 +53,7 @@ export class SessionExportService implements ISessionExportService {
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionIndex private readonly index: ISessionIndex,
-    @IWorkspaceLifecycleService private readonly workspaceLifecycle: IWorkspaceLifecycleService,
+    @ISessionManager private readonly sessions: ISessionManager,
     @IWorkspaceService private readonly workspaces: IWorkspaceService,
     @ILogService private readonly log: ILogService,
   ) {}
@@ -148,11 +147,7 @@ export class SessionExportService implements ISessionExportService {
   }
 
   private liveSession(sessionId: string): ISessionScopeHandle | undefined {
-    for (const handler of this.workspaceLifecycle.handlers.list()) {
-      const handle = handler.accessor.get(ISessionLifecycleService).get(sessionId);
-      if (handle !== undefined) return handle;
-    }
-    return undefined;
+    return this.sessions.get(sessionId);
   }
 
   private async warnIfFails(

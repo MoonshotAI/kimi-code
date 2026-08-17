@@ -7,7 +7,9 @@
  * `digest` title sources: assistant segments keep only the final natural
  * language text of the turn (tool calls, thinking, and media parts never
  * contribute; the shared metadata sanitizer redacts secrets and long
- * base64-looking runs). The window may be post-compaction — acceptable for
+ * base64-looking runs; rendered skill blocks bundled into a prompt's
+ * content are excluded, so titles reflect the caller's own text). The
+ * window may be post-compaction — acceptable for
  * title generation: compaction keeps the head user messages, and a title
  * derived from the surviving tail is a fine degradation. Bound at Agent
  * scope.
@@ -50,7 +52,7 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
         if (seenMessageIds.has(message.id)) return;
         seenMessageIds.add(message.id);
       }
-      const text = promptMetadataTextFromContentParts(message.content);
+      const text = promptMetadataTextFromUserMessage(message);
       if (text !== undefined) result.push(text);
     };
 
@@ -62,7 +64,7 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
     const all = this.combinedMessages();
     const firstUserIndex = all.findIndex(isNaturalLanguagePrompt);
     if (firstUserIndex < 0) return {};
-    const user = promptMetadataTextFromContentParts(all[firstUserIndex]!.content);
+    const user = promptMetadataTextFromUserMessage(all[firstUserIndex]!);
     const span: ContextMessage[] = [];
     for (const message of all.slice(firstUserIndex + 1)) {
       if (isNaturalLanguagePrompt(message)) break;
@@ -82,10 +84,10 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
         break;
       }
     }
-    const firstUser = promptMetadataTextFromContentParts(all[firstUserIndex]!.content);
+    const firstUser = promptMetadataTextFromUserMessage(all[firstUserIndex]!);
     const lastUser =
       lastUserIndex > firstUserIndex
-        ? promptMetadataTextFromContentParts(all[lastUserIndex]!.content)
+        ? promptMetadataTextFromUserMessage(all[lastUserIndex]!)
         : undefined;
     const assistant =
       finalAssistantText(all.slice(lastUserIndex + 1)) ??
@@ -106,6 +108,13 @@ function isNaturalLanguagePrompt(message: ContextMessage): boolean {
   if (message.role !== 'user') return false;
   const origin = message.origin;
   return origin === undefined || origin.kind === 'user';
+}
+
+function promptMetadataTextFromUserMessage(message: ContextMessage): string | undefined {
+  const bundled = message.origin?.kind === 'user' ? (message.origin.skillActivations?.length ?? 0) : 0;
+  return promptMetadataTextFromContentParts(
+    bundled === 0 ? message.content : message.content.slice(bundled),
+  );
 }
 
 function finalAssistantText(messages: readonly ContextMessage[]): string | undefined {

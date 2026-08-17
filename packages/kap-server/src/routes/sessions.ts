@@ -93,11 +93,10 @@ import {
   ISessionTitleService,
   IEventService,
   IWorkspaceAliases,
-  ISessionLifecycleService,
-  IWorkspaceLifecycleService,
+  ISessionManager,
   IWorkspaceService,
   getLiveSessionById,
-  handlerForSession,
+  programForSession,
   resumeSessionById,
   isError2,
   Error2,
@@ -326,11 +325,8 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       // lifecycle entry point.
       try {
         const touched = await registry.createOrTouch(workDir);
-
-        const handler = await core.accessor.get(IWorkspaceLifecycleService).handlerFor({
-          root: workDir,
-        });
-        const handle = await handler.accessor.get(ISessionLifecycleService).create({
+        const handle = await core.accessor.get(ISessionManager).create({
+          workspaceId: touched.id,
           workDir,
         });
         if (typeof body.title === 'string') {
@@ -761,14 +757,14 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           // Fork lives on the source session's handler; the index routes us
           // there (`session.not_found` for an unknown source, same as the
           // lifecycle's own guard).
-          const forkHandler = await handlerForSession(core.accessor, parsed.id);
+          const forkHandler = await programForSession(core.accessor, parsed.id);
           if (forkHandler === undefined) {
             throw new Error2(
               ErrorCodes.SESSION_NOT_FOUND,
               `session ${parsed.id} does not exist`,
             );
           }
-          const handle = await forkHandler.accessor.get(ISessionLifecycleService).fork({
+          const handle = await core.accessor.get(ISessionManager).fork({
             sourceSessionId: parsed.id,
             title: body.title,
             metadata: body.metadata,
@@ -864,11 +860,11 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         }
 
         if (parsed.action === 'restore') {
-          const restoreHandler = await handlerForSession(core.accessor, parsed.id);
+          const restoreHandler = await programForSession(core.accessor, parsed.id);
           const restored =
             restoreHandler === undefined
               ? undefined
-              : await restoreHandler.accessor.get(ISessionLifecycleService).restore(parsed.id);
+              : await core.accessor.get(ISessionManager).restore(parsed.id);
           if (restored === undefined) {
             throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
           }
@@ -887,15 +883,15 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         // archive — `resume` (not `get`) so archiving a freshly-opened cold
         // session still works; `resume` returns undefined only when the session
         // is unknown or its workspace is gone, reported as `session.not_found`.
-        const archiveHandler = await handlerForSession(core.accessor, parsed.id);
+        const archiveHandler = await programForSession(core.accessor, parsed.id);
         const archived =
           archiveHandler === undefined
             ? undefined
-            : await archiveHandler.accessor.get(ISessionLifecycleService).resume(parsed.id);
+            : await core.accessor.get(ISessionManager).resume(parsed.id);
         if (archived === undefined || archiveHandler === undefined) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
         }
-        await archiveHandler.accessor.get(ISessionLifecycleService).archive(parsed.id);
+        await core.accessor.get(ISessionManager).archive(parsed.id);
         requestLog(req)?.info({ session_id: parsed.id, action: 'archive' }, 'session action completed');
         reply.send(okEnvelope({ archived: true }, req.id));
       } catch (error) {
@@ -1002,11 +998,11 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         // `fork`), so no explicit existence check is needed here. The child
         // markers (`parent_session_id` / `child_session_kind`) and the default
         // `Child: <parent>` title are applied by the handler's lifecycle.
-        const childHandler = await handlerForSession(core.accessor, session_id);
+        const childHandler = await programForSession(core.accessor, session_id);
         if (childHandler === undefined) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
         }
-        const handle = await childHandler.accessor.get(ISessionLifecycleService).createChild({
+        const handle = await core.accessor.get(ISessionManager).createChild({
           sourceSessionId: session_id,
           title: req.body.title,
           metadata: req.body.metadata,

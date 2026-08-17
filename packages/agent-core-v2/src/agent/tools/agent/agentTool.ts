@@ -86,7 +86,8 @@ import { IFlagService } from '#/app/flag/flag';
 import { IModelCatalog } from '#/kosong/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
-import { ISessionProcessRunner } from '#/session/process/processRunner';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { Runtime } from '#/runtime/runtime';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
@@ -146,7 +147,7 @@ export class SubagentTool implements ISubagentTool {
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
-    @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @ILogService private readonly log: ILogService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
@@ -261,6 +262,7 @@ export class SubagentTool implements ISubagentTool {
     args: SubagentToolInput,
     toolCallId: string,
     controller: AbortController,
+    runtime: Runtime,
   ): Promise<SubagentHandle> {
     const requester = this.lifecycle.get(this.callerAgentId);
     if (requester === undefined) {
@@ -331,6 +333,7 @@ export class SubagentTool implements ISubagentTool {
             thinking: binding.thinking,
           },
           labels: subagentLabels(this.callerAgentId),
+          runtimeId: runtime.identity.runtimeId,
         });
       } catch (error) {
         throw wrapSubagentModelError(error, binding.model, own.modelAlias);
@@ -344,7 +347,7 @@ export class SubagentTool implements ISubagentTool {
       displayModel = binding.model;
       promptText = await applyProfilePromptPrefix(profile, args.prompt, {
         cwd: this.workspace.workDir,
-        runner: this.processRunner,
+        process: runtime.process!,
         log: this.log,
       });
     }
@@ -430,6 +433,7 @@ export class SubagentTool implements ISubagentTool {
         return { output: BACKGROUND_AGENT_UNAVAILABLE, isError: true };
       }
       const timeoutMs = resolveSubagentTimeoutMs(this.config);
+      const runtimeLease = this.runtime.acquire(['process']);
 
       const controller = new AbortController();
       const abortBeforeRegister = (): void => {
@@ -441,7 +445,7 @@ export class SubagentTool implements ISubagentTool {
 
       let handle: SubagentHandle;
       try {
-        handle = await this.launch(args, toolCallId, controller);
+        handle = await this.launch(args, toolCallId, controller, runtimeLease.runtime);
       } catch (error) {
         signal.removeEventListener('abort', abortBeforeRegister);
         this.log.warn('subagent launch failed', {
@@ -453,6 +457,8 @@ export class SubagentTool implements ISubagentTool {
           error,
         });
         throw error;
+      } finally {
+        runtimeLease.dispose();
       }
 
       let taskId: string;
@@ -527,7 +533,11 @@ export class SubagentTool implements ISubagentTool {
   }
 }
 
-registerAgentToolService(ISubagentTool, SubagentTool, { name: 'Agent', domain: 'subagent' });
+registerAgentToolService(ISubagentTool, SubagentTool, {
+  name: 'Agent',
+  domain: 'subagent',
+  requiredRuntimeCapabilities: ['process'],
+});
 
 
 function buildProfileDescriptions(

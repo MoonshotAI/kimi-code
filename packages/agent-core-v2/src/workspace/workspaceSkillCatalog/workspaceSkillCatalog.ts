@@ -26,6 +26,7 @@ export interface IWorkspaceSkillCatalog {
   readonly onDidChange: Event<string>;
   load(): Promise<void>;
   reload(): Promise<void>;
+  reloadSources(ids: readonly string[]): Promise<void>;
   sessionData(): ISessionSkillCatalogData;
 }
 

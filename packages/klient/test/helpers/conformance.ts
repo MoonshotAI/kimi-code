@@ -109,6 +109,32 @@ export function defineKlientConformance(
       }
     });
 
+    it('session createChild tags child markers while fork stays untagged', async () => {
+      const parent = await target.klient.global.sessions.create({
+        workDir: process.cwd(),
+        title: 'conformance parent',
+      });
+      try {
+        const child = await target.klient.session(parent.id).createChild();
+        try {
+          expect(child.custom?.['parent_session_id']).toBe(parent.id);
+          expect(child.custom?.['child_session_kind']).toBe('child');
+          expect(child.title).toBe('Child: conformance parent');
+        } finally {
+          await target.klient.session(child.id).close();
+        }
+        const forked = await target.klient.session(parent.id).fork();
+        try {
+          expect(forked.custom?.['parent_session_id']).toBeUndefined();
+          expect(forked.custom?.['child_session_kind']).toBeUndefined();
+        } finally {
+          await target.klient.session(forked.id).close();
+        }
+      } finally {
+        await target.klient.session(parent.id).close();
+      }
+    });
+
     it('session skills.list returns the workspace skills as summaries', async () => {
       const workDir = await mkdtemp(join(tmpdir(), 'klient-conf-skills-'));
       try {
@@ -266,6 +292,23 @@ export function defineKlientConformance(
       expect(Array.isArray(await target.klient.global.plugins.list())).toBe(true);
       const status = await target.klient.global.auth.status();
       expect(typeof status.loggedIn).toBe('boolean');
+    });
+
+    it('agent runtime binding is available through every transport', async () => {
+      const created = await target.klient.global.sessions.create({
+        workDir: process.cwd(),
+        title: 'conformance runtime',
+      });
+      try {
+        const agent = target.klient.session(created.id).agent('main');
+        const binding = await agent.getRuntime();
+        expect(binding.runtimeId).toBe('local');
+        expect(binding.workspaceId.length).toBeGreaterThan(0);
+        await expect(agent.switchRuntime('missing-runtime')).rejects.toThrow(/missing-runtime/);
+        expect(await agent.getRuntime()).toEqual(binding);
+      } finally {
+        await target.klient.session(created.id).close();
+      }
     });
 
     it('agent commands list and run a contributed command', async () => {
