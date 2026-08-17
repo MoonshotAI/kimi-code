@@ -32,6 +32,7 @@ export class SessionManager implements ISessionManager {
   private readonly sessions = new Map<string, ISessionScopeHandle>();
   private readonly owners = new Map<string, SessionLifecycleService>();
   private readonly pendingResumes = new Map<string, Promise<ISessionScopeHandle | undefined>>();
+  private readonly lifecycleChains = new Map<string, Promise<void>>();
   private readonly controllers = new Map<string, SessionControllerEntry>();
   private readonly controllerEntries = new Set<SessionControllerEntry>();
   private readonly willCreateEmitter = new Emitter<SessionWillCreateEvent>();
@@ -68,10 +69,9 @@ export class SessionManager implements ISessionManager {
     // so the controller's own resuming map only learns about this resume a
     // few microtasks later — whenResumeSettled must see it from this call's
     // very first tick.
-    const promise = (async () =>
-      (await this.controllerForSession(sessionId))?.resume(sessionId, options))().finally(() =>
-      this.pendingResumes.delete(sessionId),
-    );
+    const promise = this.serializeLifecycle(sessionId, async () =>
+      (await this.controllerForSession(sessionId))?.resume(sessionId, options),
+    ).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
     return promise;
   }
@@ -85,12 +85,37 @@ export class SessionManager implements ISessionManager {
     await this.owners.get(sessionId)?.whenResumeSettled(sessionId);
   }
 
+  /**
+   * Per-session lifecycle chain: resume / restore / close / the batch
+   * archive-restore critical section all queue here, so a cold meta write can
+   * never interleave with a materializing resume (which would later flush its
+   * stale in-memory state over the write), and a close cannot complete
+   * between the batch's live check and its archive call.
+   */
+  private serializeLifecycle<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
+    const prev = this.lifecycleChains.get(sessionId) ?? Promise.resolve();
+    const run = prev.then(work, work);
+    const next = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.lifecycleChains.set(sessionId, next);
+    void next.finally(() => {
+      if (this.lifecycleChains.get(sessionId) === next) this.lifecycleChains.delete(sessionId);
+    });
+    return run;
+  }
+
+  withLifecycleSerialization<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
+    return this.serializeLifecycle(sessionId, work);
+  }
+
   list(): readonly ISessionScopeHandle[] {
     return [...this.sessions.values()];
   }
 
   async close(sessionId: string): Promise<void> {
-    await this.owners.get(sessionId)?.close(sessionId);
+    await this.serializeLifecycle(sessionId, async () => this.owners.get(sessionId)?.close(sessionId));
   }
 
   async archive(sessionId: string): Promise<void> {
@@ -98,7 +123,9 @@ export class SessionManager implements ISessionManager {
   }
 
   async restore(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
-    return (await this.controllerForSession(sessionId))?.restore(sessionId, options);
+    return this.serializeLifecycle(sessionId, async () =>
+      (await this.controllerForSession(sessionId))?.restore(sessionId, options),
+    );
   }
 
   async delete(sessionId: string): Promise<void> {

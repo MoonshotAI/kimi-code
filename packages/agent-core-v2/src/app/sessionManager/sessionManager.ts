@@ -30,6 +30,7 @@ export interface ISessionManager {
   resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;
   get(sessionId: string): ISessionScopeHandle | undefined;
   whenResumeSettled(sessionId: string): Promise<void>;
+  withLifecycleSerialization<T>(sessionId: string, work: () => Promise<T>): Promise<T>;
   list(): readonly ISessionScopeHandle[];
   close(sessionId: string): Promise<void>;
   archive(sessionId: string): Promise<void>;

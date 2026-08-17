@@ -2,15 +2,17 @@
  * `sessionLifecycle` domain — cold-session archive/restore without session
  * materialization, plus the live/cold batch orchestration built on top of it.
  *
- * `setSessionArchivedBatch` answers a batch of ids in input order: an
- * in-flight resume is settled through `sessionManager` before classifying
- * (the live registry hides the handle while one runs), live sessions go
- * through the full `sessionManager` lifecycle chain (never resumed), and
- * cold sessions are patched straight into the persisted metadata document
- * through `persistence` (existence reads from `sessionIndex`), mirrored
- * into the `sessionIndex` read model, and announced through `event` —
- * never materialized. Plain functions over a STABLE accessor; own no
- * scoped state.
+ * `setSessionArchivedBatch` answers a batch of ids in input order: each
+ * id's classify + mutate runs inside `sessionManager`'s per-session
+ * lifecycle serialization (resume / restore / close queue on the same
+ * chain), so no resume can materialize stale state over a cold write and no
+ * close can slip between the live check and the archive call. Live sessions
+ * go through the full `sessionManager` lifecycle chain (never resumed),
+ * and cold sessions are patched straight into the persisted metadata
+ * document through `persistence` (existence reads from `sessionIndex`),
+ * mirrored into the `sessionIndex` read model, and announced through
+ * `event` — never materialized. Plain functions over a STABLE accessor;
+ * own no scoped state.
  */
 
 import type { ServicesAccessor } from '#/_base/di/instantiation';
@@ -20,6 +22,7 @@ import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { getLiveSessionById } from '#/app/sessionManager/sessionLookup';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 
 import { sessionScopeOf, workspacePersistenceScope } from './internal/addressing';
@@ -42,12 +45,10 @@ export async function setColdSessionArchived(
     ),
     sessionId,
   );
-  let persisted: SessionMeta | undefined;
-  try {
-    persisted = await docs.get<SessionMeta>(metaScope, 'state.json');
-  } catch {
-    persisted = undefined;
-  }
+  // Missing document → not_found; storage/decode failures propagate to the
+  // caller's per-item error mapping (a corrupt state.json is an internal
+  // error, never "session does not exist").
+  const persisted = await docs.get<SessionMeta>(metaScope, 'state.json');
   if (persisted === undefined) return 'not_found';
   const archivedAt = archived ? Date.now() : undefined;
   await docs.set(metaScope, 'state.json', { ...persisted, archived, archivedAt });
@@ -71,16 +72,22 @@ export async function setSessionArchivedBatch(
   const applyOne = async (id: string): Promise<SessionArchiveBatchItemOutcome> => {
     try {
       const manager = accessor.get(ISessionManager);
-      await manager.whenResumeSettled(id);
-      if (getLiveSessionById(accessor, id) !== undefined) {
-        if (archived) await manager.archive(id);
-        else await manager.restore(id);
-        return { id, ok: true };
-      }
-      const outcome = await setColdSessionArchived(accessor, id, archived);
-      return outcome === 'updated'
-        ? { id, ok: true }
-        : { id, ok: false, reason: 'not_found', message: `session ${id} does not exist` };
+      return await manager.withLifecycleSerialization(id, async () => {
+        await manager.whenResumeSettled(id);
+        const live = getLiveSessionById(accessor, id);
+        if (live !== undefined) {
+          // Restore on a live session is a plain metadata flip — the handle
+          // is already materialized, and manager.restore would reenter the
+          // serialization this critical section holds.
+          if (archived) await manager.archive(id);
+          else await live.accessor.get(ISessionMetadata).setArchived(false);
+          return { id, ok: true };
+        }
+        const outcome = await setColdSessionArchived(accessor, id, archived);
+        return outcome === 'updated'
+          ? { id, ok: true }
+          : { id, ok: false, reason: 'not_found', message: `session ${id} does not exist` };
+      });
     } catch (error) {
       return {
         id,

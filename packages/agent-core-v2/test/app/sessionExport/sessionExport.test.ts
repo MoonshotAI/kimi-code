@@ -891,6 +891,8 @@ function registerSessionExportServices(
     resume: async () => options.lifecycleHandle,
     get: () => options.lifecycleHandle,
     whenResumeSettled: async () => {},
+    withLifecycleSerialization: async <T>(_sessionId: string, work: () => Promise<T>): Promise<T> =>
+      work(),
     list: () => (options.lifecycleHandle === undefined ? [] : [options.lifecycleHandle]),
     close: async () => {},
     archive: async () => {},
