@@ -2,7 +2,7 @@
  * Scenario: LLM requester uses bounded recovery projections after a
  * deterministic provider rejection — strict projection for tool-use
  * adjacency, degraded media followed by full stripping for body-size 413s,
- * and media stripping for image-format rejections.
+ * and media stripping for image-format and content-type rejections.
  *
  * Responsibilities: assert retry eligibility, projection order and bounds,
  * per-turn recovery stickiness, request recording, and usage accounting.
@@ -425,6 +425,34 @@ describe('AgentLLMRequesterService media-stripped resend', () => {
     await expect(service.request()).rejects.toMatchObject({ statusCode: 400 });
     expect(calls.value).toBe(1);
     expect(strippedCalls).toBe(0);
+  });
+
+  it('resends with media-stripped after a content-type-invalid 400 (non-text model)', async () => {
+    const CONTENT_TYPE_400 = new APIStatusError(
+      400,
+      "messages.content.type is invalid, allowed values: ['text']",
+    );
+    const calls = { value: 0 };
+    let projectCalls = 0;
+    let strippedCalls = 0;
+    const { service } = createService(createRequester(calls, CONTENT_TYPE_400), {
+      project: (messages: readonly ContextMessage[]) => {
+        projectCalls += 1;
+        return messages;
+      },
+      projectStrict: (messages: readonly ContextMessage[]) => messages,
+      projectMediaStripped: (messages: readonly ContextMessage[]) => {
+        strippedCalls += 1;
+        return messages;
+      },
+    });
+
+    const result = await service.request();
+
+    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
+    expect(calls.value).toBe(2);
+    expect(projectCalls).toBe(1);
+    expect(strippedCalls).toBe(1);
   });
 });
 

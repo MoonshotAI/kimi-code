@@ -54,6 +54,7 @@ import {
   isImageFormatError,
   isRecoverableRequestStructureError,
   isRetryableGenerateError,
+  isUnsupportedContentTypeError,
 } from '#/kosong/contract/errors';
 import { type Message } from '#/kosong/contract/message';
 import { type ThinkingEffort } from '#/kosong/contract/provider';
@@ -489,6 +490,20 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           signal?.throwIfAborted();
           this.log.warn(
             'provider rejected an image in the request; resending with rejected media stripped',
+            {
+              model: request.model.name,
+              ...request.logFields,
+            },
+          );
+          mediaStripSnapshot = this.projector.captureMediaStripSnapshot(shaped);
+          this.markMediaStrippedRecoveryTurn(mediaStripSnapshot, request.source);
+          projection = 'media-stripped';
+          continue;
+        }
+        if (projection !== 'media-stripped' && isUnsupportedContentTypeError(raw)) {
+          signal?.throwIfAborted();
+          this.log.warn(
+            'provider does not support non-text content types; resending with media stripped',
             {
               model: request.model.name,
               ...request.logFields,
