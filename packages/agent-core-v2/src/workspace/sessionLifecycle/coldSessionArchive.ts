@@ -21,9 +21,11 @@ import { IEventService } from '#/app/event/event';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { getLiveSessionById } from '#/app/sessionManager/sessionLookup';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
+import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
+import { normalizeSessionMeta } from '#/session/sessionMetadata/sessionMetadataService';
 
 import { sessionScopeOf, workspacePersistenceScope } from './internal/addressing';
 import { SessionArchived } from './sessionLifecycleEvents';
@@ -48,8 +50,12 @@ export async function setColdSessionArchived(
   // Missing document → not_found; storage/decode failures propagate to the
   // caller's per-item error mapping (a corrupt state.json is an internal
   // error, never "session does not exist").
-  const persisted = await docs.get<SessionMeta>(metaScope, 'state.json');
-  if (persisted === undefined) return 'not_found';
+  const raw = await docs.get<SessionMeta>(metaScope, 'state.json');
+  if (raw === undefined) return 'not_found';
+  // Normalize legacy (v1) representations first — ISO-string timestamps,
+  // customTitle, workDir — or the write-back and the mirror would persist /
+  // broadcast the legacy shape and poison the read model.
+  const persisted = normalizeSessionMeta(raw, sessionId);
   const archivedAt = archived ? Date.now() : undefined;
   const nextMeta: SessionMeta = { ...persisted, archived, archivedAt };
   await docs.set(metaScope, 'state.json', nextMeta);
@@ -57,18 +63,21 @@ export async function setColdSessionArchived(
   // behind it (a failed/lagging mirror), and recording the stale copy would
   // regress fresher fields (title, last prompt, timestamps) in the list API.
   // The summary only contributes what meta does not own (workspaceId…).
-  accessor.get(ISessionIndexMirror).record({
-    ...summary,
-    cwd: nextMeta.cwd ?? summary.cwd,
-    title: nextMeta.title,
-    lastPrompt: nextMeta.lastPrompt,
-    createdAt: nextMeta.createdAt,
-    updatedAt: nextMeta.updatedAt,
-    custom: nextMeta.custom,
-    lastTurnReason: nextMeta.lastTurnReason,
-    archived,
-    archivedAt,
-  });
+  accessor.get(ISessionIndexMirror).record(
+    buildSessionSummary({
+      id: sessionId,
+      workspaceId: summary.workspaceId,
+      cwd: nextMeta.cwd ?? summary.cwd,
+      title: nextMeta.title,
+      lastPrompt: nextMeta.lastPrompt,
+      createdAt: nextMeta.createdAt,
+      updatedAt: nextMeta.updatedAt,
+      archived,
+      archivedAt,
+      custom: nextMeta.custom,
+      lastTurnReason: nextMeta.lastTurnReason,
+    }),
+  );
   if (archived) {
     accessor.get(IEventService).publish(new SessionArchived({ payload: { sessionId } }));
   }

@@ -52,6 +52,7 @@ interface ColdPathOptions {
   readonly storeGet: () => Promise<SessionMeta | undefined>;
   readonly indexSummary?: SessionSummary;
   readonly onMirrorRecord?: (recorded: SessionSummary) => void;
+  readonly onStoreSet?: (value: unknown) => void;
 }
 
 function coldPathAccessor(options: ColdPathOptions): ServicesAccessor {
@@ -66,7 +67,15 @@ function coldPathAccessor(options: ColdPathOptions): ServicesAccessor {
     ],
     [ISessionIndex, { get: async () => options.indexSummary ?? summary }],
     [IBootstrapService, { scope: () => 'sessions' }],
-    [IAtomicDocumentStore, { get: options.storeGet, set: async () => {} }],
+    [
+      IAtomicDocumentStore,
+      {
+        get: options.storeGet,
+        set: async (_scope: string, _key: string, value: unknown) => {
+          options.onStoreSet?.(value);
+        },
+      },
+    ],
     [
       ISessionIndexMirror,
       { record: (recorded: SessionSummary) => options.onMirrorRecord?.(recorded) },
@@ -128,5 +137,37 @@ describe('setSessionArchivedBatch', () => {
       archived: true,
     });
     expect(typeof recorded[0]?.archivedAt).toBe('number');
+  });
+
+  it('normalizes legacy v1 metadata before persisting and mirroring', async () => {
+    const recorded: SessionSummary[] = [];
+    const written: unknown[] = [];
+    const legacy = {
+      // v1 shape: ISO-string timestamps, customTitle, workDir, no version.
+      workDir: '/workspace',
+      customTitle: 'legacy title',
+      createdAt: '2026-07-21T19:40:00.000Z',
+      updatedAt: '2026-07-22T02:00:00.000Z',
+      archived: false,
+    } as unknown as SessionMeta;
+    const outcomes = await setSessionArchivedBatch(
+      coldPathAccessor({
+        storeGet: async () => legacy,
+        onMirrorRecord: (r) => recorded.push(r),
+        onStoreSet: (v) => written.push(v),
+      }),
+      ['s1'],
+      true,
+    );
+    expect(outcomes).toEqual([{ id: 's1', ok: true }]);
+
+    const rec = recorded[0];
+    expect(rec?.title).toBe('legacy title');
+    expect(rec?.updatedAt).toBe(Date.parse('2026-07-22T02:00:00.000Z'));
+
+    const persisted = written[0] as Record<string, unknown>;
+    expect(persisted['version']).toBe(2);
+    expect(typeof persisted['updatedAt']).toBe('number');
+    expect(persisted['customTitle']).toBeUndefined();
   });
 });
