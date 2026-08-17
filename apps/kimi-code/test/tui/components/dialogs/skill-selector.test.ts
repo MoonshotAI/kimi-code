@@ -137,7 +137,7 @@ describe('SkillSelectorComponent', () => {
     expect(rendered).not.toContain('  cv\n');
   });
 
-  it('cycles through group items with Tab key', () => {
+  it('cycles through top-level group tabs with Tab key like /model chooser', () => {
     const onSelect = vi.fn();
     const onCancel = vi.fn();
     const selector = new SkillSelectorComponent({
@@ -146,18 +146,23 @@ describe('SkillSelectorComponent', () => {
       onCancel,
     });
 
-    // Root items: cv/ and Uncategorized/
+    // Initial state: "All" tab active
     let rendered = text(selector);
-    expect(rendered).toContain('❯ cv/');
+    expect(rendered).toContain('Select skill group');
 
-    // Press Tab to cycle to next group (Uncategorized/)
+    // Press Tab to cycle to next tab ("cv")
     selector.handleInput(TAB);
     rendered = text(selector);
-    expect(rendered).toContain('❯ Uncategorized/');
+    expect(rendered).toContain('Skills › cv');
 
-    // Press Tab again to wrap back to cv/
+    // Press Tab to cycle to next tab ("Uncategorized")
     selector.handleInput(TAB);
     rendered = text(selector);
-    expect(rendered).toContain('❯ cv/');
+    expect(rendered).toContain('Skills › Uncategorized');
+
+    // Press Tab again to wrap back to "All" tab
+    selector.handleInput(TAB);
+    rendered = text(selector);
+    expect(rendered).toContain('Select skill group');
   });
 });

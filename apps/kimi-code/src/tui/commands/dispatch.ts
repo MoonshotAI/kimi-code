@@ -646,7 +646,13 @@ async function handleSkillCommand(
   const activatableSkills = skills.filter(isUserActivatableSkill);
   const trimmedArgs = args.trim();
 
-  if (trimmedArgs.length > 0) {
+  if (
+    trimmedArgs.length > 0 &&
+    trimmedArgs !== 'skill' &&
+    trimmedArgs !== '/skill' &&
+    trimmedArgs !== 'skills' &&
+    trimmedArgs !== '/skills'
+  ) {
     const spaceIdx = trimmedArgs.search(/\s/);
     const firstWord = spaceIdx >= 0 ? trimmedArgs.slice(0, spaceIdx) : trimmedArgs;
     const remainingArgs = spaceIdx >= 0 ? trimmedArgs.slice(spaceIdx + 1).trim() : '';

@@ -92,19 +92,38 @@ describe('skill-group-tree', () => {
     expect(uncatNode?.skills.map((s) => s.name)).toEqual(['flat-skill']);
   });
 
-  it('derives groups from tags and underscore skill name namespace fallback', () => {
-    const taggedSkill = makeSkill('custom-tool', { tags: ['security', 'audit'] });
-    const winPrivEsc = makeSkill('windows_privilege_escalation', { path: '/SKILL.md' });
+  it('enforces precedence order and supports multi-level relative folder paths', () => {
+    const multiFolderSkill = makeSkill('cv_semaphore-ops', {
+      path: '/home/user/.kimi/skills/cv/ops/semaphore/cv_semaphore-ops/SKILL.md',
+    });
+    const overrideSkill = makeSkill('custom-tool', {
+      category: 'explicit-cat',
+      tags: ['ignored-tag1', 'ignored-tag2'],
+      path: '/home/user/.kimi/skills/folder-cat/custom-tool/SKILL.md',
+    });
 
-    const root = buildSkillGroupTree([taggedSkill, winPrivEsc]);
+    const root = buildSkillGroupTree([multiFolderSkill, overrideSkill], {
+      skillRoots: ['/home/user/.kimi/skills'],
+    });
 
-    const secNode = findGroupNode(root, 'security');
-    expect(secNode).toBeDefined();
-    expect(secNode?.skills.map((s) => s.name)).toEqual(['custom-tool']);
+    // Multi-level folder skill creates cv -> ops -> semaphore
+    const cvNode = findGroupNode(root, 'cv');
+    expect(cvNode).toBeDefined();
 
-    const winNode = findGroupNode(root, 'windows');
-    expect(winNode).toBeDefined();
-    expect(winNode?.skills.map((s) => s.name)).toEqual(['windows_privilege_escalation']);
+    const opsNode = findGroupNode(root, 'cv/ops');
+    expect(opsNode).toBeDefined();
+
+    const semNode = findGroupNode(root, 'cv/ops/semaphore');
+    expect(semNode).toBeDefined();
+    expect(semNode?.skills.map((s) => s.name)).toEqual(['cv_semaphore-ops']);
+
+    // category takes precedence over relative folder path and tags are ignored
+    const explicitCatNode = findGroupNode(root, 'explicit-cat');
+    expect(explicitCatNode).toBeDefined();
+    expect(explicitCatNode?.skills.map((s) => s.name)).toEqual(['custom-tool']);
+
+    expect(findGroupNode(root, 'ignored-tag1')).toBeUndefined();
+    expect(findGroupNode(root, 'folder-cat')).toBeUndefined();
   });
 
   it('preserves deterministic alphabetical ordering of groups and skills', () => {
