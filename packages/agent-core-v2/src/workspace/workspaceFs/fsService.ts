@@ -56,11 +56,10 @@ const FsWireErrorCode = {
 } as const;
 import ignore, { type Ignore } from 'ignore';
 
-import { decodeUtfText, detectTextEncoding, type UtfTextEncoding } from '#/_base/text/encoding';
+import { classifyTextSample, decodeUtfText } from '#/_base/text/encoding';
 import {
   buildEtag,
   countLines,
-  detectBinary,
   FS_BINARY_SAMPLE_BYTES,
   guessLanguageId,
   guessMime,
@@ -259,20 +258,14 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const sampleSize = Math.min(FS_BINARY_SAMPLE_BYTES, st.size);
     const sample =
       sampleSize === 0 ? new Uint8Array() : await this.hostFs.readBytes(abs, sampleSize);
-    let isBinary = detectBinary(sample);
-
-    // Trust encoding detection over the binary heuristic: a binary-looking
-    // sample can still be UTF-16 LE/BE text, and a BOM-marked UTF-16 file
-    // may not look binary at all (CJK-only content carries no zero bytes).
-    // Both are transcoded to UTF-8 so text clients can display them.
-    let transcodeEncoding: UtfTextEncoding | undefined;
-    if (req.encoding !== 'base64') {
-      const detection = detectTextEncoding(sample);
-      if (!detection.seemsBinary && detection.encoding !== 'utf-8') {
-        transcodeEncoding = detection.encoding;
-        isBinary = false;
-      }
-    }
+    const classification = classifyTextSample(sample);
+    const transcodeEncoding =
+      !classification.isBinary && classification.encoding !== 'utf-8' && req.encoding !== 'base64'
+        ? classification.encoding
+        : undefined;
+    const isBinary =
+      classification.isBinary ||
+      (classification.encoding !== 'utf-8' && transcodeEncoding === undefined);
 
     if (isBinary && req.encoding === 'utf-8') {
       throw new Error2(ErrorCodes.FS_IS_BINARY, `file is binary: ${req.path}`, {
@@ -448,7 +441,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const sampleSize = Math.min(FS_BINARY_SAMPLE_BYTES, st.size);
     const sample =
       sampleSize === 0 ? new Uint8Array() : await this.hostFs.readBytes(abs, sampleSize);
-    const isBinary = detectBinary(sample);
+    const classification = classifyTextSample(sample);
+    const isBinary = classification.isBinary || classification.encoding !== 'utf-8';
     return {
       absolute: abs,
       relative: rel,
