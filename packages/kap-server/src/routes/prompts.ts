@@ -16,6 +16,7 @@ import {
   IAgentPromptService,
   IAgentSkillService,
   IAuthSummaryService,
+  IEventBus,
   IEventService,
   IFileService,
   ISessionMediaStore,
@@ -37,6 +38,7 @@ import {
   ErrorCodes,
   sessionMediaOriginalsDir,
   type ISessionScopeHandle,
+  type PromptWithSkillsResult,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../protocol/error-codes';
@@ -123,7 +125,10 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   return {
     prompt: agent.accessor.get(IAgentPromptService),
     skill: agent.accessor.get(IAgentSkillService),
-    events: agent.accessor.get(IEventService),
+    // Agent-scoped bus: prompt lifecycle events of OTHER sessions/agents do
+    // not arrive here (the App-scoped IEventService would leak them, and
+    // client-chosen prompt ids can collide across sessions).
+    events: agent.accessor.get(IEventBus),
     auth: agent.accessor.get(IAuthSummaryService),
     profile: agent.accessor.get(IAgentProfileService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
@@ -350,10 +355,16 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           // single user message (rendered skill blocks first, then the
           // caller's parts). It owns the prompt-metadata update for the main
           // agent, so this edge skips its own to avoid a double write.
-          const result = await resolved.skill.promptWithSkills({
-            input: parts,
-            skills: req.body.skills,
-          });
+          let result: PromptWithSkillsResult;
+          try {
+            result = await resolved.skill.promptWithSkills({
+              input: parts,
+              skills: req.body.skills,
+            });
+          } catch (error) {
+            settlement.dispose();
+            throw error;
+          }
           enqueued = true;
           settlement.settle(result.prompt_id, () => preparedMedia?.discard());
           reply.send(
@@ -528,8 +539,9 @@ export function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][num
  * exceptionally fast launch can settle just as early — both land in the
  * buffered `settledIds` instead of racing past a late subscription.
  */
-export function watchPromptSettlements(events: IEventService): {
+export function watchPromptSettlements(events: IEventBus): {
   settle(promptId: string, discard: () => void | Promise<void>): void;
+  dispose(): void;
 } {
   const settledIds = new Set<string>();
   const parentOf = new Map<string, string>();
@@ -569,6 +581,12 @@ export function watchPromptSettlements(events: IEventService): {
         return;
       }
       armed = { id: promptId, discard };
+    },
+    // A submission that rejects after the tracker was installed never calls
+    // `settle`; the route's error path disposes the tracker here.
+    dispose(): void {
+      armed = undefined;
+      subscription.dispose();
     },
   };
 }

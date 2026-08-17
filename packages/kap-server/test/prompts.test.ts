@@ -460,6 +460,15 @@ describe('server-v2 /api/v1 prompts', () => {
     abortedTracker.settle('msg_4', aborted);
     handlers[3]!({ type: 'prompt.aborted', promptId: 'msg_4' });
     expect(aborted).toHaveBeenCalledTimes(1);
+
+    // A submission that rejects never calls settle: the route disposes the
+    // tracker, and later events must not fire the discard.
+    const rejected = vi.fn();
+    const rejectedTracker = watchPromptSettlements(events as never);
+    rejectedTracker.settle('msg_5', rejected);
+    rejectedTracker.dispose();
+    handlers[4]!({ type: 'prompt.completed', promptId: 'msg_5' });
+    expect(rejected).not.toHaveBeenCalled();
   });
 
   it('makes the first three REST prompts available to title generation', async () => {
