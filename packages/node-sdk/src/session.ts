@@ -137,11 +137,15 @@ export class Session {
     this.rpc.setQuestionHandler(this.id, handler);
   }
 
-  async prompt(input: string | PromptInput): Promise<void> {
+  async prompt(input: string | PromptInput, options?: { promptId?: string }): Promise<void> {
     this.ensureOpen();
+    if (options?.promptId !== undefined && options.promptId.length === 0) {
+      throw new TypeError('promptId must not be empty');
+    }
     await this.rpc.prompt({
       sessionId: this.id,
       input: normalizePromptInput(input),
+      promptId: options?.promptId,
     });
   }
 

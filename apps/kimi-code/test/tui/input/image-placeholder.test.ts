@@ -1,14 +1,24 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+/**
+ * Media placeholder expansion and rewrite contracts, including dispatch-time
+ * fallback from expiring daemon uploads to bytes retained by the TUI.
+ */
+
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, it, expect } from 'vitest';
 
+import { parseDaemonFileUrl } from '@moonshot-ai/kimi-code-sdk';
+
 import { KIMI_CODE_HOME_ENV } from '#/constant/app';
 import { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 import {
   extractMediaAttachments,
+  makeExtractionResendable,
+  pendingImageIngestions,
+  refreshExpiringImageFileRefs,
   rewriteMediaPlaceholders,
 } from '#/tui/utils/image-placeholder';
 import { getCacheDir } from '#/utils/paths';
@@ -229,6 +239,153 @@ describe('extractMediaAttachments', () => {
     expect(r.parts).toHaveLength(1);
     expect(r.parts[0]?.type).toBe('image_url');
   });
+
+  it('expands an uploaded (fileId) image into a bare kimi-file reference', () => {
+    const { cleanup } = setupTempCache();
+    try {
+      const store = new ImageAttachmentStore();
+      const att = store.addImage(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), 'image/png', 640, 480, undefined, 'file-1');
+      const r = extractMediaAttachments(`describe ${att.placeholder} please`, store);
+      expect(r.hasMedia).toBe(true);
+      expect(r.imageAttachmentIds).toEqual([1]);
+      // No tag text part and no `?path=`: the engine's prompt intake
+      // materializes the session copy and rewrites the reference with its
+      // path — the part is self-contained, no paired tag is authored.
+      expect(r.parts).toEqual([
+        { type: 'text', text: 'describe ' },
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file-1' } },
+        { type: 'text', text: ' please' },
+      ]);
+      expect(parseDaemonFileUrl('kimi-file://file-1')).toEqual({ fileId: 'file-1' });
+      // The edge stages no local copy for an uploaded image — the cache dir
+      // is never even created.
+      expect(r.stagingPaths).toEqual([]);
+      expect(existsSync(getCacheDir())).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('falls back to retained bytes when an uploaded image is too close to expiry', () => {
+    const store = new ImageAttachmentStore();
+    const att = store.addImage(
+      new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      'image/png',
+      640,
+      480,
+      undefined,
+      'file-1',
+      1_060_000,
+    );
+
+    const parts = refreshExpiringImageFileRefs(
+      [{ type: 'image_url', imageUrl: { url: 'kimi-file://file-1' } }],
+      [att.id],
+      store,
+      1_000_000,
+    );
+
+    expect(parts).toEqual([
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,iVBORw==' } },
+    ]);
+    expect(att.fileId).toBeUndefined();
+    expect(att.fileExpiresAt).toBeUndefined();
+  });
+
+  it('rebuilds an uploaded image as inline bytes for a new-session resend', () => {
+    const { cleanup } = setupTempCache();
+    try {
+      const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+      const store = new ImageAttachmentStore();
+      const att = store.addImage(bytes, 'image/png', 640, 480, undefined, 'file-1');
+      const extraction = extractMediaAttachments(att.placeholder, store);
+
+      const resend = makeExtractionResendable(extraction);
+
+      expect(resend.imageAttachmentIds).toEqual([]);
+      expect(resend.parts).toContainEqual({
+        type: 'image_url',
+        imageUrl: { url: 'data:image/png;base64,iVBORw==' },
+      });
+      expect(resend.stagingPaths).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('emits the compression caption before the bare kimi-file reference', () => {
+    const { cleanup } = setupTempCache();
+    try {
+      const store = new ImageAttachmentStore();
+      const att = store.addImage(
+        new Uint8Array([1, 2, 3]),
+        'image/png',
+        2000,
+        2000,
+        {
+          path: '/tmp/kimi-code-original-images/abc.png',
+          width: 2600,
+          height: 2600,
+          byteLength: 123456,
+          mime: 'image/png',
+        },
+        'file-2',
+      );
+      const r = extractMediaAttachments(att.placeholder, store);
+      expect(r.parts).toHaveLength(2);
+      const caption = r.parts[0];
+      if (caption?.type !== 'text') throw new Error('expected leading text part');
+      expect(caption.text).toContain('Image compressed');
+      expect(r.parts[1]).toEqual({
+        type: 'image_url',
+        imageUrl: { url: 'kimi-file://file-2' },
+      });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('keeps expanding an uploaded image as a bare reference when the cache dir is broken', () => {
+    const { cleanup } = setupTempCache();
+    try {
+      // A file at the cache dir path breaks local cache copies, but neither
+      // form stages one: an uploaded image expands to a bare reference and
+      // the inline (no fileId) form embeds its bytes.
+      writeFileSync(getCacheDir(), 'occupied');
+      const store = new ImageAttachmentStore();
+      const uploaded = store.addImage(new Uint8Array([1]), 'image/png', 10, 10, undefined, 'file-1');
+      const plain = store.addImage(new Uint8Array([2]), 'image/png', 20, 20);
+      const r = extractMediaAttachments(`${uploaded.placeholder} and ${plain.placeholder}`, store);
+      expect(r.imageAttachmentIds).toEqual([1, 2]);
+      expect(r.parts).toEqual([
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file-1' } },
+        { type: 'text', text: ' and ' },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,Ag==' } },
+      ]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('rolls back cache copies when a later attachment cannot be materialized', () => {
+    const { cleanup } = setupTempCache();
+    const srcDir = makeTempDir();
+    try {
+      const firstPath = join(srcDir, 'first.mp4');
+      writeFileSync(firstPath, 'video-bytes');
+      const store = new ImageAttachmentStore();
+      const first = store.addVideo('video/mp4', firstPath);
+      const missing = store.addVideo('video/mp4', join(srcDir, 'missing.mp4'));
+
+      expect(() =>
+        extractMediaAttachments(`${first.placeholder} ${missing.placeholder}`, store),
+      ).toThrow();
+      expect(readdirSync(getCacheDir())).toEqual([]);
+    } finally {
+      cleanup();
+      rmSync(srcDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('rewriteMediaPlaceholders', () => {
@@ -373,5 +530,71 @@ describe('rewriteMediaPlaceholders', () => {
       cleanup();
       rmSync(srcDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('pendingImageIngestions', () => {
+  it('returns undefined for text without image placeholders', () => {
+    const store = new ImageAttachmentStore();
+    expect(pendingImageIngestions('hello world', store, 5)).toBeUndefined();
+  });
+
+  it('returns undefined when no referenced image has a pending ingestion', () => {
+    const { store, placeholder } = storeWith(new Uint8Array([0xaa, 0xbb]));
+    expect(pendingImageIngestions(`describe ${placeholder}`, store, 5)).toBeUndefined();
+  });
+
+  it('waits for a pending ingestion so extraction can use the daemon-ref form', async () => {
+    const { store, placeholder } = storeWith(new Uint8Array([0xaa, 0xbb]));
+    const att = store.get(1);
+    if (att?.kind !== 'image') throw new Error('expected image attachment');
+    let finish!: () => void;
+    att.pending = new Promise<void>((resolve) => {
+      finish = () => {
+        // Complete like the background ingestion would: land the upload id,
+        // then resolve and clear the pending marker.
+        att.fileId = 'file-1';
+        att.fileExpiresAt = Date.now() + 60 * 60 * 1000;
+        att.pending = undefined;
+        resolve();
+      };
+    });
+
+    const waited = pendingImageIngestions(`describe ${placeholder}`, store, 1_000);
+    if (waited === undefined) throw new Error('expected a pending wait');
+    let settled = false;
+    void waited.then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+
+    finish();
+    await waited;
+    expect(settled).toBe(true);
+
+    const r = extractMediaAttachments(`describe ${placeholder}`, store);
+    const part = r.parts.find((p) => p.type === 'image_url');
+    expect(part?.type).toBe('image_url');
+    if (part?.type !== 'image_url') throw new Error('expected an image part');
+    expect(parseDaemonFileUrl(part.imageUrl.url)?.fileId).toBe('file-1');
+  });
+
+  it('bounds the wait by the timeout so a slow ingestion extracts to the inline form', async () => {
+    const { store, placeholder } = storeWith(new Uint8Array([0xaa, 0xbb]));
+    const att = store.get(1);
+    if (att?.kind !== 'image') throw new Error('expected image attachment');
+    att.pending = new Promise<void>(() => undefined); // never settles
+
+    const start = Date.now();
+    const waited = pendingImageIngestions(`describe ${placeholder}`, store, 20);
+    if (waited === undefined) throw new Error('expected a pending wait');
+    await waited;
+    expect(Date.now() - start).toBeLessThan(1_000);
+
+    const r = extractMediaAttachments(`describe ${placeholder}`, store);
+    const part = r.parts.find((p) => p.type === 'image_url');
+    if (part?.type !== 'image_url') throw new Error('expected an image part');
+    expect(part.imageUrl.url.startsWith('data:image/png;base64,')).toBe(true);
   });
 });

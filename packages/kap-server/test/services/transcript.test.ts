@@ -147,6 +147,50 @@ describe('AgentTranscriptProjector', () => {
     expect(turn.state).toBe('completed');
   });
 
+  it('projects turn.started promptAttachments into attachment entities and turn.attachmentIds', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const ops: TranscriptOperation[] = [];
+    const feed = (event: DomainEvent): void => {
+      const mapped = projector.map(event);
+      ops.push(...mapped);
+      tx.apply(mapped);
+    };
+
+    feed(
+      ev({
+        type: 'turn.started',
+        turnId: 0,
+        origin: { kind: 'user' },
+        prompt: 'what is this?',
+        promptAttachments: [{ kind: 'image', fileId: 'file_1' }],
+      }),
+    );
+    feed(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+
+    // Op-level: one attachment entity per referenced upload.
+    expect(ops.filter((op) => op.op === 'attachment.upsert')).toEqual([
+      {
+        op: 'attachment.upsert',
+        attachment: {
+          attachmentId: 't0.att1',
+          mediaType: 'image/*',
+          source: { kind: 'session_media', fileId: 'file_1' },
+        },
+      },
+    ]);
+
+    // Converged store: the id list survives the turn.ended header rebuild.
+    const turn = turnOps('t0', tx.getItems());
+    expect(turn.prompt).toBe('what is this?');
+    expect(turn.attachmentIds).toEqual(['t0.att1']);
+    expect(tx.getAttachment('t0.att1')).toEqual({
+      attachmentId: 't0.att1',
+      mediaType: 'image/*',
+      source: { kind: 'session_media', fileId: 'file_1' },
+    });
+  });
+
   it('places late-attach deltas into the engine-reported active step', () => {
     const tx = new AgentTranscript('main');
     // The projector missed turn.started AND turn.step.started for step 2 —
@@ -394,6 +438,46 @@ describe('AgentTranscriptProjector', () => {
         return item.refId;
       }),
     ).toEqual(['t0', 'm1', 't1', 'r1', 't2']);
+  });
+
+  it('snapshotToOps flattens attachment entities so backfilled attachmentIds never dangle', () => {
+    const snapshot: AgentTranscriptSnapshot = {
+      interactions: [],
+      attachments: [
+        {
+          attachmentId: 'att_1',
+          mediaType: 'image/*',
+          name: 'shot.png',
+          source: { kind: 'file', fileId: 'file_1' },
+        },
+      ],
+      todos: [],
+      prompts: [],
+      items: [
+        {
+          kind: 'turn',
+          turnId: 't0',
+          ordinal: 0,
+          state: 'completed',
+          origin: { kind: 'user' },
+          prompt: 'what is this?',
+          attachmentIds: ['att_1'],
+          steps: [],
+        },
+      ],
+      tasks: [],
+      meta: {},
+    };
+
+    const ops = snapshotToOps(snapshot);
+    expect(ops.filter((op) => op.op === 'attachment.upsert')).toEqual([
+      { op: 'attachment.upsert', attachment: snapshot.attachments[0] },
+    ]);
+
+    const tx = new AgentTranscript('main');
+    tx.apply(ops);
+    expect(tx.getAttachment('att_1')).toEqual(snapshot.attachments[0]);
+    expect(turnOps('t0', tx.getItems()).attachmentIds).toEqual(['att_1']);
   });
 
   it('flushes open frames on turn.ended even without step completion', () => {
@@ -1492,6 +1576,34 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
+  it('projects prompt.steered media content to the wire shape (no daemon ref or path leak)', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    feed(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p2'],
+        content: [
+          { type: 'text', text: 'look at this' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_img1?path=%2Fabs%2Fsession%2Fmedia%2Ff_img1.png' },
+          },
+        ],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+      }),
+    );
+
+    const prompt = tx.getPrompt('p1');
+    expect(prompt?.content).toEqual([
+      { type: 'text', text: 'look at this' },
+      { type: 'image', source: { kind: 'session_media', file_id: 'f_img1' } },
+    ]);
+  });
+
   it('readColdSnapshot answers empty for path-hostile agent ids without touching disk', async () => {
     const service = new TranscriptService({
       homeDir: '/nonexistent-home',
@@ -1885,23 +1997,50 @@ describe('bindSessionTranscript', () => {
     binding.dispose();
   });
 
-  async function seedWireHome(): Promise<string> {
+  /** The upload carried by an attachment seed: its cold fold yields the `att_1` entity. */
+  const SHOT_PNG_UPLOAD = {
+    type: 'file',
+    file_id: 'file_1',
+    media_type: 'image/png',
+    name: 'shot.png',
+  };
+
+  /**
+   * Wire seed: a lone `hi` user message — or, with `attachment`, an
+   * upload-carrying user message (its cold fold yields the `att_1` entity)
+   * trailed by an assistant reply.
+   */
+  async function seedWireHome(attachment?: Record<string, unknown>): Promise<string> {
     const home = await mkdtemp(join(tmpdir(), 'transcript-overlay-'));
     const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
     await mkdir(wireDir, { recursive: true });
-    await writeFile(
-      join(wireDir, 'wire.jsonl'),
-      `${JSON.stringify({
+    const records: Record<string, unknown>[] = [
+      {
         type: 'context.append_message',
         message: {
           role: 'user',
-          content: [{ type: 'text', text: 'hi' }],
+          content:
+            attachment === undefined
+              ? [{ type: 'text', text: 'hi' }]
+              : [{ type: 'text', text: 'what is this?' }, attachment],
           toolCalls: [],
           origin: { kind: 'user' },
         },
         time: new Date().toISOString(),
-      })}\n`,
-    );
+      },
+    ];
+    if (attachment !== undefined) {
+      records.push({
+        type: 'context.append_message',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'a screenshot' }],
+          toolCalls: [],
+        },
+        time: new Date().toISOString(),
+      });
+    }
+    await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
     return home;
   }
 
@@ -2046,6 +2185,96 @@ describe('bindSessionTranscript', () => {
     expect(frames).toContainEqual(expect.objectContaining({ frameId: 't0.1.call_3', output: 'y' }));
   });
 
+  it('heal keeps the live attachment ids over the snapshot cold ids', () => {
+    const makeTurn = (attachmentIds: string[] | undefined): TranscriptTurn => ({
+      kind: 'turn',
+      turnId: 't0',
+      ordinal: 0,
+      state: 'completed',
+      origin: { kind: 'user' },
+      attachmentIds,
+      steps: [],
+    });
+    // Live turn opened by the projector with its own `{turnId}.att<N>` ids:
+    // the merged header must keep them, not churn to the cold `att_<n>` form.
+    const header = healTurnOps(makeTurn(['att_1']), makeTurn(['t0.att1'])).find(
+      (op) => op.op === 'turn.upsert',
+    );
+    expect(header).toMatchObject({ turn: { attachmentIds: ['t0.att1'] } });
+    // A mid-turn-attached projector never saw turn.started: the live header
+    // has no ids and the heal falls back to the persisted cold ones.
+    const fallback = healTurnOps(makeTurn(['att_1']), makeTurn(undefined)).find(
+      (op) => op.op === 'turn.upsert',
+    );
+    expect(fallback).toMatchObject({ turn: { attachmentIds: ['att_1'] } });
+  });
+
+  it('terminal turn.upsert inherits the backfilled header when the projector missed turn.started', () => {
+    const agents = new FakeAgents();
+    const store = new TranscriptStore('s1');
+    const ops: TranscriptOperation[] = [];
+    const binding = bindSessionTranscript(
+      store,
+      fakeSession(new SessionInteractionService(new TestSessionStateService()), agents),
+      undefined,
+      (event) => ops.push(...event.ops),
+    );
+    const main = agents.add('main');
+
+    // The history backfill landed first: the store already holds the running
+    // turn with its cold attachment ids…
+    store.ensureAgent('main').apply([
+      {
+        op: 'attachment.upsert',
+        attachment: {
+          attachmentId: 'att_1',
+          mediaType: 'image/*',
+          name: 'shot.png',
+          source: { kind: 'file', fileId: 'f_1' },
+        },
+      },
+      {
+        op: 'turn.upsert',
+        turn: {
+          kind: 'turn',
+          turnId: 't0',
+          ordinal: 0,
+          state: 'running',
+          origin: { kind: 'user' },
+          prompt: 'hi',
+          attachmentIds: ['att_1'],
+          startedAt: '2026-08-04T00:00:00.000Z',
+        },
+      },
+    ]);
+
+    // …but the projector attached mid-turn: the only live event it ever sees
+    // for this turn is the terminal one. The terminal batch itself must carry
+    // the inherited header — waiting for the debounced heal is too late (the
+    // whole-header replace has already wiped the ids, and the session may
+    // close before the heal runs).
+    main.bus.emit(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+
+    const terminal = ops.filter((op) => op.op === 'turn.upsert');
+    expect(terminal).toHaveLength(1);
+    expect(terminal[0]).toMatchObject({
+      turn: {
+        turnId: 't0',
+        state: 'completed',
+        origin: { kind: 'user' },
+        prompt: 'hi',
+        attachmentIds: ['att_1'],
+        startedAt: '2026-08-04T00:00:00.000Z',
+      },
+    });
+    expect(store.getAgent('main')?.getTurn('t0')).toMatchObject({
+      state: 'completed',
+      prompt: 'hi',
+      attachmentIds: ['att_1'],
+    });
+    binding.dispose();
+  });
+
   it('seeds pending interactions per agent, not before that agent is backfilled', () => {
     const interactions = new SessionInteractionService(new TestSessionStateService());
     interactions.enqueue({ id: 'q-main', kind: 'question', payload: { toolCallId: 'call_main' }, origin: { agentId: 'main', turnId: 0 } });
@@ -2142,6 +2371,14 @@ describe('bindSessionTranscript', () => {
     ];
     await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
     return home;
+  }
+
+  async function waitFor(condition: () => boolean, timeoutMs = 2000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (!condition()) {
+      if (Date.now() > deadline) throw new Error('waitFor timed out');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
   }
 
   it('subscribes the bus for an agent whose projector was seeded before its handle existed', () => {
@@ -2255,6 +2492,106 @@ describe('bindSessionTranscript', () => {
         state: 'running',
         prompt: 'live hi',
       });
+      service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('backfill + overlay keep the live attachment ids and drop the cold counterpart entity', async () => {
+    const home = await seedWireHome(SHOT_PNG_UPLOAD);
+    try {
+      const agents = new FakeAgents();
+      agents.add('main', { loopStatus: { state: 'running', activeTurnId: 0 } });
+      const service = new TranscriptService({
+        homeDir: home,
+        core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
+      });
+      const store = service.forSessionLive('s1');
+      // The live turn.started (with its own `t0.att1` attachment) lands while
+      // the backfill is still reading the persisted `att_1` form from disk.
+      agents.get('main')!.bus.emit(
+        ev({
+          type: 'turn.started',
+          turnId: 0,
+          origin: { kind: 'user' },
+          prompt: 'live prompt',
+          promptAttachments: [{ kind: 'image', fileId: 'file_1' }],
+        }),
+      );
+      await service.whenReady('s1');
+
+      const agent = store?.getAgent('main');
+      // Neither the live-first merge nor the running-overlay may churn or
+      // clear the live ids.
+      expect(agent?.getTurn('t0')).toMatchObject({
+        state: 'running',
+        prompt: 'live prompt',
+        attachmentIds: ['t0.att1'],
+      });
+      // The snapshot's cold counterpart must not land as an orphan entity.
+      expect(agent?.getAttachment('t0.att1')).toBeDefined();
+      expect(agent?.getAttachment('att_1')).toBeUndefined();
+      service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('post-turn heal keeps the live attachment ids and never upserts the cold counterparts', async () => {
+    const home = await seedWireHome(SHOT_PNG_UPLOAD);
+    try {
+      const agents = new FakeAgents();
+      agents.add('main', { loopStatus: { state: 'idle' } });
+      const service = new TranscriptService({
+        homeDir: home,
+        core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
+      });
+      const store = service.forSessionLive('s1');
+      const batches: TranscriptOperation[][] = [];
+      service.onSessionOps('s1', (event) => {
+        if (event.agentId === 'main') batches.push([...event.ops]);
+      });
+      const bus = agents.get('main')!.bus;
+      bus.emit(
+        ev({
+          type: 'turn.started',
+          turnId: 0,
+          origin: { kind: 'user' },
+          prompt: 'live prompt',
+          promptAttachments: [{ kind: 'image', fileId: 'file_1' }],
+        }),
+      );
+      await service.whenReady('s1');
+
+      bus.emit(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+      // The debounced heal re-reads the persisted snapshot and merges it back;
+      // its batch is the one carrying the (live-missed) wholesale step.
+      await waitFor(() =>
+        batches.some((batch) => batch.some((op) => op.op === 'step.upsert' && op.turnId === 't0')),
+      );
+      const healBatch = batches.find((batch) =>
+        batch.some((op) => op.op === 'step.upsert' && op.turnId === 't0'),
+      )!;
+      // No id churn on the wire: the healed header keeps the live ids, and no
+      // batch ever upserts the cold `att_1` entity.
+      expect(healBatch.find((op) => op.op === 'turn.upsert')).toMatchObject({
+        turn: { attachmentIds: ['t0.att1'] },
+      });
+      const attachmentUpserts = batches.flatMap((batch) =>
+        batch.filter((op) => op.op === 'attachment.upsert'),
+      );
+      expect(attachmentUpserts).toEqual([
+        { op: 'attachment.upsert', attachment: expect.objectContaining({ attachmentId: 't0.att1' }) },
+      ]);
+
+      const agent = store?.getAgent('main');
+      expect(agent?.getTurn('t0')).toMatchObject({
+        state: 'completed',
+        attachmentIds: ['t0.att1'],
+      });
+      expect(agent?.getAttachment('t0.att1')).toBeDefined();
+      expect(agent?.getAttachment('att_1')).toBeUndefined();
       service.dropSession('s1');
     } finally {
       await rm(home, { recursive: true, force: true });

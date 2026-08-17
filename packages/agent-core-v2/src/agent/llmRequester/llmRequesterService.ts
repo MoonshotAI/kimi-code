@@ -9,9 +9,10 @@
  * resolved from `IModelCatalog`: one primary `requester.request(input, signal,
  * params)` attempt plus projection rebuilds for request structure or media
  * compatibility. Before each request the projected messages pass through `media`'s
- * video resolver, which rewrites every `kimi-file://` prompt-video reference
- * to a provider-acceptable part (uploaded `ms://`, inline base64, or a
- * `<video path>` tag) so the internal reference never reaches the wire. When a
+ * media resolver, which rewrites every `kimi-file://` prompt-media reference
+ * to a provider-acceptable part (an uploaded `ms://` video, an inline base64
+ * `data:` part, or a degradation tag/drop) so the internal reference never
+ * reaches the wire. When a
  * model is configured, `prepareTurnConfig` snapshots the
  * model, effective thinking effort, and system prompt at the turn boundary
  * so loop telemetry and every request in that turn share one configuration.
@@ -46,7 +47,7 @@ import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { IAgentVideoResolverService } from '#/agent/media/videoResolver';
+import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
@@ -180,7 +181,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @IAgentTokenCountingService private readonly tokenCounting: IAgentTokenCountingService,
     @IAgentToolRegistryService private readonly tools: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
-    @IAgentVideoResolverService private readonly videoResolver: IAgentVideoResolverService,
+    @IAgentMediaResolverService private readonly mediaResolver: IAgentMediaResolverService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentUsageService private readonly usage: IAgentUsageService,
     @IConfigService private readonly config: IConfigService,
@@ -366,7 +367,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       const projected = requestInput(projection);
       const input = {
         ...projected,
-        messages: await this.videoResolver.resolve(
+        messages: await this.mediaResolver.resolve(
           projected.messages,
           request.requester,
           signal,

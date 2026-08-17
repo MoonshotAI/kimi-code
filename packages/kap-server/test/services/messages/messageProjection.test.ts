@@ -40,6 +40,75 @@ describe('toProtocolMessage', () => {
     ]);
   });
 
+  it('projects a daemon-ref image part to a session_media source', () => {
+    // The persisted upload shape is a single self-contained daemon-ref part:
+    // the reference projects to the Session-owned copy; a legacy `?path=`
+    // query is ignored, never leaked.
+    const msg: ContextMessage = {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'what is this?' },
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file_9?path=%2Fcache%2Fpic.png' } },
+      ],
+      toolCalls: [],
+    };
+
+    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'text', text: 'what is this?' },
+      { type: 'image', source: { kind: 'session_media', file_id: 'file_9' } },
+    ]);
+  });
+
+  it('keeps a legacy tag+ref pair as text plus the ref projection', () => {
+    // Legacy sessions persist an upload as the pair `<image path>` tag text
+    // part + daemon-ref media part. Tolerated, not folded: the tag passes
+    // through as text and the self-contained ref projects on its own.
+    const msg: ContextMessage = {
+      role: 'user',
+      content: [
+        { type: 'text', text: '<image path="/cache/pic.png"></image>' },
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file_9?path=%2Fcache%2Fpic.png' } },
+      ],
+      toolCalls: [],
+    };
+
+    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'text', text: '<image path="/cache/pic.png"></image>' },
+      { type: 'image', source: { kind: 'session_media', file_id: 'file_9' } },
+    ]);
+  });
+
+  it('keeps a bare <media path> tag as text in user messages', () => {
+    // A standalone tag without a daemon ref is user-visible text (or the
+    // legacy degrade form): it passes through as a text part.
+    const msg: ContextMessage = {
+      role: 'user',
+      content: [
+        { type: 'text', text: '<video path="/cache/clip.mp4">' },
+        { type: 'text', text: 'watch this' },
+      ],
+      toolCalls: [],
+    };
+
+    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'text', text: '<video path="/cache/clip.mp4">' },
+      { type: 'text', text: 'watch this' },
+    ]);
+  });
+
+  it('passes assistant tag-shaped text through verbatim', () => {
+    // The fold applies to user uploads only — model output is never eaten.
+    const msg: ContextMessage = {
+      role: 'assistant',
+      content: [{ type: 'text', text: '<image path="/cache/out.png"></image>' }],
+      toolCalls: [],
+    };
+
+    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'text', text: '<image path="/cache/out.png"></image>' },
+    ]);
+  });
+
   it('projects a kimi-file video reference to a structured file source without leaking the path', () => {
     const msg: ContextMessage = {
       role: 'user',
@@ -50,7 +119,7 @@ describe('toProtocolMessage', () => {
     };
 
     expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
-      { type: 'video', source: { kind: 'file', file_id: 'file_9' } },
+      { type: 'video', source: { kind: 'session_media', file_id: 'file_9' } },
     ]);
   });
 

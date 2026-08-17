@@ -59,8 +59,9 @@ describe('Agent loop', () => {
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] tools.set_active_tools      { "names": [], "time": "<time>" }
+      [wire] prompt.accepted             { "promptId": "<msg-1>", "time": "<time>" }
       [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "time": "<time>" }
-      [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Hello" }
+      [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Hello", "promptId": "<msg-1>" }
       [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [emit] context.spliced             { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
@@ -115,8 +116,9 @@ describe('Agent loop', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
+      [wire] prompt.accepted             { "promptId": "<msg-1>", "time": "<time>" }
       [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "time": "<time>" }
-      [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Hello" }
+      [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Hello", "promptId": "<msg-1>" }
       [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [emit] context.spliced             { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
@@ -336,8 +338,9 @@ describe('Agent loop', () => {
     ctx.mockNextResponse({ type: 'text', text: 'The lookup result is lookup-result.' });
     expect(await ctx.untilApproval(true)).toMatchInlineSnapshot(`
       [wire] tools.set_active_tools          { "names": [ "Lookup" ], "time": "<time>" }
+      [wire] prompt.accepted                 { "promptId": "<msg-1>", "time": "<time>" }
       [wire] turn.prompt                     { "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "time": "<time>" }
-      [emit] turn.started                    { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Look up moon" }
+      [emit] turn.started                    { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Look up moon", "promptId": "<msg-1>" }
       [emit] agent.activity.updated          { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [emit] context.spliced                 { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
       [wire] context.append_message          { "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
@@ -711,8 +714,10 @@ describe('Agent loop', () => {
 
   it('omits the turn.started prompt for system-triggered turns', async () => {
     const prompts: Array<string | undefined> = [];
+    const promptIds: Array<string | undefined> = [];
     const subscription = ctx.get(IEventBus).subscribe('turn.started', (event) => {
       prompts.push(event.prompt);
+      promptIds.push(event.promptId);
     });
     ctx.mockNextResponse({ type: 'text', text: 'continued' });
     ctx.mockNextResponse({ type: 'text', text: 'hi there' });
@@ -736,6 +741,60 @@ describe('Agent loop', () => {
     subscription.dispose();
 
     expect(prompts).toEqual([undefined, 'hi']);
+    expect(promptIds).toEqual([undefined, undefined]);
+  });
+
+  it('echoes the prompt record id in turn.started for prompt-opened turns', async () => {
+    profile.update({ activeToolNames: [] });
+    const started: Array<{ promptId?: string }> = [];
+    const subscription = ctx.get(IEventBus).subscribe('turn.started', (event) => {
+      started.push({ promptId: event.promptId });
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'hi there' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }], promptId: 'sub-1' });
+    await ctx.untilTurnEnd();
+    subscription.dispose();
+
+    expect(ctx.contextData().history[0]?.id).toBe('sub-1');
+    expect(started).toEqual([{ promptId: 'sub-1' }]);
+  });
+
+  it('projects daemon-ref upload parts into turn.started prompt and promptAttachments', async () => {
+    const started: Array<{ prompt?: string; promptAttachments?: unknown }> = [];
+    const subscription = ctx.get(IEventBus).subscribe('turn.started', (event) => {
+      started.push({ prompt: event.prompt, promptAttachments: event.promptAttachments });
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'a screenshot' });
+
+    const turn = (
+      await loop.enqueue(
+        new MessageStepRequest(
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'what is this?' },
+              {
+                type: 'image_url',
+                imageUrl: { url: 'kimi-file://f_123' },
+              },
+            ],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          { admission: 'newTurn' },
+        ),
+      ).assigned
+    ).turn;
+    await turn.result;
+    subscription.dispose();
+
+    expect(started).toEqual([
+      {
+        prompt: 'what is this?',
+        promptAttachments: [{ kind: 'image', fileId: 'f_123' }],
+      },
+    ]);
   });
 });
 

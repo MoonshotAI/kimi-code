@@ -13,13 +13,14 @@
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 
-import type { FileMeta } from './fileService';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import {
   IFileService,
   fileNotFoundError,
+  isFileId,
+  type FileMeta,
   type FileReadRange,
   type GetResult,
   type SaveOptions,
@@ -28,7 +29,6 @@ import {
 const BLOB_SCOPE = 'files';
 const INDEX_SCOPE = 'file';
 const INDEX_KEY = 'index.json';
-const FILE_ID_REGEX = /^f_[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -36,10 +36,6 @@ const textDecoder = new TextDecoder();
 interface IndexFile {
   readonly version: 1;
   readonly files: FileMeta[];
-}
-
-function isFileId(value: string): boolean {
-  return FILE_ID_REGEX.test(value);
 }
 
 function isFileMeta(value: unknown): value is FileMeta {
@@ -63,11 +59,13 @@ export class FileServiceImpl implements IFileService {
 
   private indexCache: Map<string, FileMeta> | undefined;
   private indexLoadPromise: Promise<void> | undefined;
+  private indexWritePromise: Promise<void> = Promise.resolve();
 
   constructor(@IBlobStore private readonly blobs: IBlobStore) {}
 
   async save(source: Readable, filename: string, options: SaveOptions = {}): Promise<FileMeta> {
     await this.ensureIndex();
+    await this.pruneExpired();
 
     const id = `f_${randomUUID()}`;
     let size = 0;
@@ -92,9 +90,10 @@ export class FileServiceImpl implements IFileService {
       media_type: options.mimeType ?? 'application/octet-stream',
       size,
       created_at: new Date(now).toISOString(),
-      ...(options.expiresInSec !== undefined
-        ? { expires_at: new Date(now + options.expiresInSec * 1000).toISOString() }
-        : {}),
+      expires_at:
+        options.expiresInSec === undefined
+          ? undefined
+          : new Date(now + options.expiresInSec * 1000).toISOString(),
     };
 
     this.indexCache!.set(id, meta);
@@ -107,6 +106,7 @@ export class FileServiceImpl implements IFileService {
       throw fileNotFoundError(fileId);
     }
     await this.ensureIndex();
+    await this.pruneExpired();
     const meta = this.indexCache!.get(fileId);
     if (meta === undefined) {
       throw fileNotFoundError(fileId);
@@ -165,16 +165,36 @@ export class FileServiceImpl implements IFileService {
         }
       }
       this.indexCache = map;
+      await this.pruneExpired();
     } catch {
       this.indexCache = new Map();
     }
   }
 
-  private async writeIndex(): Promise<void> {
+  private async pruneExpired(): Promise<void> {
     const cache = this.indexCache;
     if (cache === undefined) return;
-    const payload: IndexFile = { version: 1, files: Array.from(cache.values()) };
-    await this.blobs.put(INDEX_SCOPE, INDEX_KEY, textEncoder.encode(JSON.stringify(payload)));
+    const now = Date.now();
+    const expired = [...cache.values()].filter(
+      (meta) => meta.expires_at !== undefined && Date.parse(meta.expires_at) <= now,
+    );
+    if (expired.length === 0) return;
+    for (const meta of expired) {
+      cache.delete(meta.id);
+      await this.blobs.delete(BLOB_SCOPE, meta.id).catch(() => undefined);
+    }
+    await this.writeIndex().catch(() => undefined);
+  }
+
+  private async writeIndex(): Promise<void> {
+    const write = this.indexWritePromise.catch(() => undefined).then(async () => {
+      const cache = this.indexCache;
+      if (cache === undefined) return;
+      const payload: IndexFile = { version: 1, files: Array.from(cache.values()) };
+      await this.blobs.put(INDEX_SCOPE, INDEX_KEY, textEncoder.encode(JSON.stringify(payload)));
+    });
+    this.indexWritePromise = write;
+    await write;
   }
 }
 

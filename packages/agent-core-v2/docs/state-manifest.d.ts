@@ -92,7 +92,7 @@
 //     mcp.discoveryWritesReady                        src/agent/mcp/mcpService.ts
 //     mcp.mcpToolsByServer                            src/agent/mcp/mcpService.ts
 //     media.registeredKey                             src/agent/media/mediaToolsRegistrar.ts
-//     media.resolved                                  src/agent/media/videoResolverService.ts
+//     media.resolved                                  src/agent/media/mediaResolverService.ts
 //     permissionMode.lastMode                         src/agent/permissionMode/injection/permissionModeInjection.ts
 //     plan.wasActive                                  src/features/plan/injection/planModeInjection.ts
 //     profile.activeToolNamesOverlay                  src/agent/profile/profileService.ts
@@ -1096,9 +1096,7 @@ export interface AgentStateSnapshot {
   // src/agent/mcp/mcpService.ts
   'mcp.discoveryWritesReady': boolean;
   'mcp.mcpToolsByServer': Map<string, string[]>;
-  // src/agent/media/mediaToolsRegistrar.ts
-  'media.registeredKey': string | undefined;
-  // src/agent/media/videoResolverService.ts
+  // src/agent/media/mediaResolverService.ts
   'media.resolved': Map<string, /* ContentPart — packages/agent-core-v2/src/kosong/contract/message.ts */ /* TextPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
     type: 'text';
     text: string;
@@ -1125,6 +1123,8 @@ export interface AgentStateSnapshot {
       id?: string;
     };
   }>;
+  // src/agent/media/mediaToolsRegistrar.ts
+  'media.registeredKey': string | undefined;
   // src/agent/permissionMode/injection/permissionModeInjection.ts
   'permissionMode.lastMode': 'manual' | 'yolo' | 'auto' | undefined;
   // src/agent/plugin/agentPluginService.ts

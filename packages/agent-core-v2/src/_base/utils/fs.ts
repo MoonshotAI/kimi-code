@@ -81,14 +81,18 @@ export async function atomicWrite(
   content: string | Uint8Array,
   _syncOverride?: (fd: number) => Promise<void>,
   mode?: number,
+  signal?: AbortSignal,
 ): Promise<void> {
+  signal?.throwIfAborted();
   const hex = randomBytes(4).toString('hex');
   const tmpPath = `${filePath}.tmp.${process.pid}.${hex}`;
   let renamed = false;
   try {
     const fh = await open(tmpPath, 'w', mode);
     try {
+      signal?.throwIfAborted();
       await fh.writeFile(content);
+      signal?.throwIfAborted();
       await (_syncOverride ?? syncFd)(fh.fd);
     } finally {
       await fh.close();
@@ -101,6 +105,7 @@ export async function atomicWrite(
         if (code !== 'ENOENT') throw error;
       }
     }
+    signal?.throwIfAborted();
     await rename(tmpPath, filePath);
     renamed = true;
   } finally {
@@ -117,18 +122,30 @@ export async function atomicWriteStream(
   filePath: string,
   source: AsyncIterable<Uint8Array>,
   mode?: number,
+  signal?: AbortSignal,
 ): Promise<void> {
+  signal?.throwIfAborted();
   const hex = randomBytes(4).toString('hex');
   const tmpPath = `${filePath}.tmp.${process.pid}.${hex}`;
   let renamed = false;
+  const destroyable = source as AsyncIterable<Uint8Array> & {
+    destroy?(error?: Error): void;
+  };
+  const onAbort = (): void => {
+    const reason = signal?.reason instanceof Error ? signal.reason : undefined;
+    destroyable.destroy?.(reason);
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
   try {
     const fh = await open(tmpPath, 'w', mode);
     try {
       for await (const chunk of source) {
+        signal?.throwIfAborted();
         if (chunk.byteLength > 0) {
           await fh.writeFile(chunk);
         }
       }
+      signal?.throwIfAborted();
       await fh.sync();
     } finally {
       await fh.close();
@@ -141,9 +158,11 @@ export async function atomicWriteStream(
         if (code !== 'ENOENT') throw error;
       }
     }
+    signal?.throwIfAborted();
     await rename(tmpPath, filePath);
     renamed = true;
   } finally {
+    signal?.removeEventListener('abort', onAbort);
     if (!renamed) {
       try {
         await unlink(tmpPath);

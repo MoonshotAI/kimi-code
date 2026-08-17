@@ -714,8 +714,9 @@ describe('Plan service', () => {
         [wire] permission.set_mode         { "mode": "yolo", "time": "<time>" }
         [wire] plan_mode.enter             { "id": "test-plan", "time": "<time>" }
         [emit] agent.status.updated        { "planMode": true }
+        [wire] prompt.accepted             { "promptId": "<msg-1>", "time": "<time>" }
         [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Inspect without mutating files" } ], "origin": { "kind": "user" }, "time": "<time>" }
-        [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Inspect without mutating files" }
+        [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Inspect without mutating files", "promptId": "<msg-1>" }
         [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
         [emit] context.spliced             { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Inspect without mutating files" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
         [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Inspect without mutating files" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
@@ -793,8 +794,9 @@ describe('Plan service', () => {
         [wire] permission.set_mode         { "mode": "yolo", "time": "<time>" }
         [wire] plan_mode.enter             { "id": "test-plan", "time": "<time>" }
         [emit] agent.status.updated        { "planMode": true }
+        [wire] prompt.accepted             { "promptId": "<msg-1>", "time": "<time>" }
         [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Remove forbidden.txt" } ], "origin": { "kind": "user" }, "time": "<time>" }
-        [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Remove forbidden.txt" }
+        [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Remove forbidden.txt", "promptId": "<msg-1>" }
         [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
         [emit] context.spliced             { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Remove forbidden.txt" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
         [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Remove forbidden.txt" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }

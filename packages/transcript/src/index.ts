@@ -21,3 +21,4 @@ export * from './history/groupTurns';
 export * from './history/foldFacts';
 export * from './contract/schema';
 export * from './contract/events';
+export * from './contract/mediaRef';

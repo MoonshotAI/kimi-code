@@ -631,8 +631,25 @@ export * from '#/mcpCore/config-schema';
 export * from '#/agent/media/mediaTools';
 export * from '#/agent/media/mediaToolsRegistrar';
 export * from '#/agent/media/registerMediaTools';
+// mediaRef keeps a named export list: the module's remaining helpers (suffix
+// tables, tag escaping, session fs layout) are domain-internal, and external
+// consumers only need the reference/tag grammar below.
+export {
+  buildDaemonFileUrl,
+  buildMediaPathTag,
+  daemonFileRefFromPart,
+  mediaExtensionForMime,
+  matchSingleMediaPathTag,
+  parseDaemonFileUrl,
+} from '#/agent/media/mediaRef';
+export type { DaemonFileRef, MediaKind } from '#/agent/media/mediaRef';
+export * from '#/agent/media/sessionMediaStore';
+import '#/agent/media/sessionMediaStoreService';
 export * from '#/agent/media/kimiFileUrl';
 export * from '#/agent/media/videoUpload';
+export * from '#/agent/media/mediaResolver';
+export * from '#/agent/media/mediaResolverService';
+// Deprecated aliases kept so existing consumers compile unchanged.
 export * from '#/agent/media/videoResolver';
 export * from '#/agent/media/videoResolverService';
 import '#/agent/media/configSection';
@@ -653,6 +670,7 @@ export * from '#/agent/profile/profile';
 export * from '#/agent/profile/profileService';
 export * from '#/agent/profile/context';
 export * from '#/agent/prompt/prompt';
+export * from '#/agent/prompt/promptOps';
 export * from '#/agent/prompt/promptService';
 export * from '#/agent/prompt/promptMetadataText';
 export * from '#/agent/replayBuilder/types';

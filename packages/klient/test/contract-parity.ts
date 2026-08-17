@@ -83,6 +83,10 @@ import type {
 } from '@moonshot-ai/agent-core-v2/app/capability/types';
 import type { ExperimentalFeatureState } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import type {
+  FileMeta,
+  SaveOptions,
+} from '@moonshot-ai/agent-core-v2/app/file/fileService';
+import type {
   FsBrowseResponse,
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
@@ -260,6 +264,10 @@ import {
 } from '../src/contract/global/providerDiscovery.js';
 import { experimentalFeatureStateSchema } from '../src/contract/global/flags.js';
 import {
+  fileMetaSchema,
+  fileSaveOptionsSchema,
+} from '../src/contract/global/files.js';
+import {
   fsBrowseResponseSchema,
   fsHomeResponseSchema,
 } from '../src/contract/global/hostFs.js';
@@ -372,6 +380,11 @@ const _experimentalFeatureState: AssertWire<
 // hostFs.ts
 const _fsBrowseResponse: AssertWire<typeof fsBrowseResponseSchema, FsBrowseResponse> = true;
 const _fsHomeResponse: AssertWire<typeof fsHomeResponseSchema, FsHomeResponse> = true;
+
+// files.ts (`fileGetResultSchema` has no engine counterpart — the wire
+// adaptation replaces `GetResult.stream` with base64 `data`).
+const _fileMeta: AssertWire<typeof fileMetaSchema, FileMeta> = true;
+const _fileSaveOptions: AssertWire<typeof fileSaveOptionsSchema, SaveOptions> = true;
 
 // catalog.ts / providerDiscovery.ts — protocol wire shapes derived through the
 // catalog and discovery service interfaces.

@@ -18,6 +18,7 @@ import type {
   CreateSessionOptions,
   ExportSessionInput,
   ExportSessionResult,
+  FileMeta,
   ForkSessionInput,
   GenerateSessionTitleInput,
   GetConfigOptions,
@@ -45,6 +46,7 @@ import type {
   TelemetryContextPatch,
   TelemetryProperties,
   TestMcpServerOptions,
+  UploadFileOptions,
   WorkspaceTrustInfo,
 } from '#/types';
 
@@ -419,6 +421,20 @@ export class KimiHarness {
 
   async getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]> {
     return this.rpc.getExperimentalFeatures();
+  }
+
+  /**
+   * Upload media bytes to the engine's file store; pair the returned meta
+   * with `buildDaemonFileUrl` to reference the file from a prompt.
+   * agent-core-v2 only — the v1 engine throws `not_implemented`.
+   */
+  async uploadFile(data: Uint8Array, options: UploadFileOptions): Promise<FileMeta> {
+    return this.rpc.uploadFile(data, options);
+  }
+
+  /** Delete a daemon upload owned by a client-side staging operation. */
+  async deleteFile(fileId: string): Promise<void> {
+    return this.rpc.deleteFile(fileId);
   }
 
   async ensureConfigFile(): Promise<void> {

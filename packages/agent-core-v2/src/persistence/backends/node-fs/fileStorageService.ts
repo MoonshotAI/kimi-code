@@ -22,7 +22,7 @@
  */
 
 import { createReadStream, mkdirSync } from 'node:fs';
-import { mkdir, open, readFile, readdir, unlink } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir, stat, unlink } from 'node:fs/promises';
 import { FSWatcher } from 'chokidar';
 import { dirname, join, normalize } from 'pathe';
 
@@ -57,7 +57,7 @@ export class FileStorageService implements IFileSystemStorageService {
   ) {}
 
   async read(scope: string, key: string): Promise<Uint8Array | undefined> {
-    const filePath = this.path(scope, key);
+    const filePath = this.pathFor(scope, key);
     try {
       return await readFile(filePath);
     } catch (error) {
@@ -71,7 +71,7 @@ export class FileStorageService implements IFileSystemStorageService {
     key: string,
     range?: StorageReadRange,
   ): AsyncIterable<Uint8Array> {
-    const filePath = this.path(scope, key);
+    const filePath = this.pathFor(scope, key);
     const stream = createReadStream(
       filePath,
       range === undefined ? undefined : { start: range.start, end: range.end },
@@ -90,14 +90,15 @@ export class FileStorageService implements IFileSystemStorageService {
     scope: string,
     key: string,
     data: Uint8Array,
-    _options: StorageWriteOptions = {},
+    options: StorageWriteOptions = {},
   ): Promise<void> {
-    const filePath = this.path(scope, key);
+    const filePath = this.pathFor(scope, key);
     try {
       await mkdir(dirname(filePath), { recursive: true, mode: this.dirMode });
-      await atomicWrite(filePath, data, undefined, this.fileMode);
+      await atomicWrite(filePath, data, undefined, this.fileMode, options.signal);
       await this.syncDirOnce(dirname(filePath));
     } catch (error) {
+      options.signal?.throwIfAborted();
       throw toStorageIoError(error, { path: filePath, op: 'write' });
     }
   }
@@ -106,14 +107,15 @@ export class FileStorageService implements IFileSystemStorageService {
     scope: string,
     key: string,
     source: AsyncIterable<Uint8Array>,
-    _options: StorageWriteOptions = {},
+    options: StorageWriteOptions = {},
   ): Promise<void> {
-    const filePath = this.path(scope, key);
+    const filePath = this.pathFor(scope, key);
     try {
       await mkdir(dirname(filePath), { recursive: true, mode: this.dirMode });
-      await atomicWriteStream(filePath, source, this.fileMode);
+      await atomicWriteStream(filePath, source, this.fileMode, options.signal);
       await this.syncDirOnce(dirname(filePath));
     } catch (error) {
+      options.signal?.throwIfAborted();
       throw toStorageIoError(error, { path: filePath, op: 'write' });
     }
   }
@@ -124,7 +126,7 @@ export class FileStorageService implements IFileSystemStorageService {
     data: Uint8Array,
     options: StorageAppendOptions = {},
   ): Promise<void> {
-    const filePath = this.path(scope, key);
+    const filePath = this.pathFor(scope, key);
     const dir = dirname(filePath);
     try {
       await mkdir(dir, { recursive: true, mode: this.dirMode });
@@ -158,7 +160,7 @@ export class FileStorageService implements IFileSystemStorageService {
   }
 
   async delete(scope: string, key: string): Promise<void> {
-    const filePath = this.path(scope, key);
+    const filePath = this.pathFor(scope, key);
     try {
       await unlink(filePath);
     } catch (error) {
@@ -167,8 +169,18 @@ export class FileStorageService implements IFileSystemStorageService {
     }
   }
 
+  async size(scope: string, key: string): Promise<number | undefined> {
+    const filePath = this.pathFor(scope, key);
+    try {
+      return (await stat(filePath)).size;
+    } catch (error) {
+      if (isEnoent(error)) return undefined;
+      throw toStorageIoError(error, { path: filePath, op: 'stat' });
+    }
+  }
+
   watch(scope: string, key: string): Event<void> {
-    const target = this.path(scope, key);
+    const target = this.pathFor(scope, key);
     const dir = dirname(target);
     const normalizedTarget = normalize(target);
     const emitter = new Emitter<void>();
@@ -236,7 +248,7 @@ export class FileStorageService implements IFileSystemStorageService {
 
   async close(): Promise<void> {}
 
-  private path(scope: string, key: string): string {
+  pathFor(scope: string, key: string): string {
     return join(this.baseDir, scope, key);
   }
 
