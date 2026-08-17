@@ -42,4 +42,5 @@ export default {
   transcriptLoadError: 'Failed to load this sub agent’s conversation.',
   copyCommand: 'Copy command',
   copyOutput: 'Copy output',
+  copyAll: 'Copy all',
 } as const;

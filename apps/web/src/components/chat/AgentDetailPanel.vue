@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, provide, ref, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Badge, Icon, IconButton, PanelHeader, Tooltip } from '@moonshot-ai/app-ui';
+import { Badge, Icon, IconButton, Menu, MenuItem, PanelHeader, openDialogCount } from '@moonshot-ai/app-ui';
 
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { useFollowScroll } from '@moonshot-ai/app-client/composables';
@@ -31,9 +31,9 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 // Bash details carry their verbatim command on member.prompt and the terminal
-// output on outputLines — both stay one click away, as the old inline detail
-// had it.
-const copied = ref<'command' | 'output' | null>(null);
+// output on outputLines — both live behind the header's copy menu, as the old
+// inline detail had it.
+const copied = ref<'command' | 'output' | 'all' | null>(null);
 // The clipboard's "output": the detail body's real output blocks — answer
 // text, tool lines, result — but NOT the prompt or its `$ <command>`
 // placeholder preview: a bash task's command has its own copy button next
@@ -44,15 +44,20 @@ const copyableOutput = computed(() => {
   const placeholder = command ? `$ ${command}` : null;
   return fallbackOutput.value.filter((block) => block !== command && block !== placeholder).join('\n');
 });
-// A second successful copy (the other button, or a fast re-click) retires the
-// previous hide timer — otherwise the older timeout still fires and clears
-// the newer check early.
+// A second successful copy (another menu item, or a fast re-click) retires
+// the previous hide timer — otherwise the older timeout still fires and
+// clears the newer check early.
 let copyTimer: ReturnType<typeof setTimeout> | null = null;
 // Bumped on task switch, so a late clipboard resolve from the previous task
 // never lands its copied check on the new one.
 let copySerial = 0;
-function copyMember(what: 'command' | 'output'): void {
-  const text = what === 'command' ? props.member.prompt : copyableOutput.value;
+function copyMember(what: 'command' | 'output' | 'all'): void {
+  const text =
+    what === 'command'
+      ? props.member.prompt
+      : what === 'output'
+        ? copyableOutput.value
+        : [props.member.prompt?.trim(), copyableOutput.value].filter(Boolean).join('\n\n');
   if (!text) return;
   const serial = copySerial;
   void copyTextToClipboard(text).then((ok) => {
@@ -66,11 +71,153 @@ function copyMember(what: 'command' | 'output'): void {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Copy dropdown: one header button opens a labelled menu (command / output /
+// all) instead of two identical icons only a tooltip could tell apart — and
+// one less button competing for the header's limited width. Teleported to
+// <body> and positioned from the trigger: the preview panel clips and
+// captures descendants (overflow + backdrop-filter), so an in-panel menu
+// would be squeezed by the container (same constraint as dock/FilterControl).
+// ---------------------------------------------------------------------------
+// Touch devices (no hover) get the §03 lg 44px trigger and ≥44px menu rows;
+// desktop keeps the compact sm / md sizes (same rule as dock/FilterControl).
+const hoverless = typeof window !== 'undefined' && window.matchMedia?.('(hover: none)').matches;
+const menuRowSize = hoverless ? 'lg' : 'md';
+const copyTriggerSize = hoverless ? 'lg' : 'sm';
+
+const copyMenuOpen = ref(false);
+const copyTriggerRef = ref<ComponentPublicInstance | null>(null);
+const copyMenuBoxRef = ref<HTMLElement | null>(null);
+const copyMenuStyle = ref<Record<string, string>>({ left: '0px', top: '0px' });
+
+function copyTriggerEl(): HTMLElement | null {
+  return (copyTriggerRef.value?.$el as HTMLElement | undefined) ?? null;
+}
+
+async function toggleCopyMenu(): Promise<void> {
+  if (copyMenuOpen.value) {
+    closeCopyMenu();
+    return;
+  }
+  copyMenuOpen.value = true;
+  await nextTick();
+  positionCopyMenu();
+  focusCopyMenuItem();
+  window.addEventListener('mousedown', onCopyWindowPointerDown, true);
+  window.addEventListener('keydown', onCopyWindowKeydown, true);
+  window.addEventListener('resize', positionCopyMenu);
+  window.addEventListener('scroll', positionCopyMenu, true);
+}
+
+function closeCopyMenu(options?: { refocus?: boolean }): void {
+  copyMenuOpen.value = false;
+  window.removeEventListener('mousedown', onCopyWindowPointerDown, true);
+  window.removeEventListener('keydown', onCopyWindowKeydown, true);
+  window.removeEventListener('resize', positionCopyMenu);
+  window.removeEventListener('scroll', positionCopyMenu, true);
+  // Keyboard closes and selections hand focus back to the trigger; outside
+  // pointer presses deliberately don't (the user's click target owns focus).
+  if (options?.refocus) copyTriggerEl()?.focus();
+}
+
+// Keyboard open: move focus into the menu — the first ENABLED item (the
+// output item stays disabled until output exists).
+function focusCopyMenuItem(): void {
+  const box = copyMenuBoxRef.value;
+  if (!box) return;
+  box.querySelector<HTMLElement>('.ui-menu-item:not(:disabled)')?.focus();
+}
+
+// Tabbing away closes the menu — the focus is moving on deliberately, so it
+// is never yanked back to the trigger.
+function onCopyFocusLeave(event: FocusEvent): void {
+  const next = event.relatedTarget as Node | null;
+  if (next && (copyMenuBoxRef.value?.contains(next) || copyTriggerEl()?.contains(next))) return;
+  closeCopyMenu();
+}
+
+// Arrow keys on the trigger open the menu straight into the items.
+function onCopyTriggerArrow(): void {
+  if (!copyMenuOpen.value) void toggleCopyMenu();
+}
+
+function onCopyMenuKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+  event.preventDefault();
+  const items = Array.from(
+    copyMenuBoxRef.value?.querySelectorAll<HTMLElement>('.ui-menu-item:not(:disabled)') ?? [],
+  );
+  if (items.length === 0) return;
+  const index = items.indexOf(document.activeElement as HTMLElement);
+  const next =
+    event.key === 'ArrowDown'
+      ? (index + 1) % items.length
+      : (index - 1 + items.length) % items.length;
+  items[next]?.focus();
+}
+
+function positionCopyMenu(): void {
+  const trigger = copyTriggerEl();
+  if (!trigger) return;
+  const rect = trigger.getBoundingClientRect();
+  const rootStyle = getComputedStyle(document.documentElement);
+  const edge = Number.parseFloat(rootStyle.getPropertyValue('--space-2')) || 0;
+  const gap = Number.parseFloat(rootStyle.getPropertyValue('--space-1')) || 0;
+  const menuWidth = copyMenuBoxRef.value?.offsetWidth ?? 0;
+  // Right-align under the trigger: the header button sits near the panel's
+  // right edge, so anchoring on its left could push the menu off-screen.
+  const left = Math.max(edge, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - edge));
+  const menuHeight = copyMenuBoxRef.value?.offsetHeight ?? 0;
+  // Prefer opening downward; flip up when the viewport bottom is too close.
+  if (rect.bottom + gap + menuHeight <= window.innerHeight - edge) {
+    copyMenuStyle.value = { left: `${left}px`, top: `${rect.bottom + gap}px` };
+  } else {
+    copyMenuStyle.value = { left: `${left}px`, bottom: `${window.innerHeight - rect.top + gap}px` };
+  }
+}
+
+function onCopyWindowPointerDown(event: MouseEvent): void {
+  const target = event.target as Node | null;
+  if (!target) return;
+  if (copyMenuBoxRef.value?.contains(target)) {
+    // Presses inside the menu are consumed HERE (window capture runs before
+    // the dock's document-capture outside-press) so picking an item never
+    // dismisses the dock work panel underneath.
+    event.stopImmediatePropagation();
+    return;
+  }
+  if (copyTriggerEl()?.contains(target)) return; // the trigger's click toggles
+  closeCopyMenu();
+}
+
+function onCopyWindowKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Escape') return;
+  // Consume the key: the App's document-capture handler would otherwise also
+  // fire and close the whole detail panel behind the menu (it checks
+  // defaultPrevented; stopImmediatePropagation covers same-element capture
+  // listeners registered later). One Escape closes one layer.
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  closeCopyMenu({ refocus: true });
+}
+
+function copyMemberAndClose(what: 'command' | 'output' | 'all'): void {
+  copyMember(what);
+  closeCopyMenu({ refocus: true });
+}
+
+// A modal layer (settings, login, …) outranks the menu: close before its
+// Escape reaches our window listener.
+watch(openDialogCount, (count) => {
+  if (count > 0 && copyMenuOpen.value) closeCopyMenu();
+});
+
 const identity = computed(() => props.member.id);
 const { scroller, following, onScroll, pinScroll } = useFollowScroll(identity);
 
 // A task switch retires the previous task's copied check and its hide timer.
 watch(identity, () => {
+  closeCopyMenu();
   copySerial++;
   if (copyTimer !== null) clearTimeout(copyTimer);
   copyTimer = null;
@@ -109,7 +256,10 @@ watch(identity, () => {
     readyTimer = setTimeout(done, 32);
   }
 }, { immediate: true });
-onBeforeUnmount(cancelReadySchedule);
+onBeforeUnmount(() => {
+  cancelReadySchedule();
+  if (copyMenuOpen.value) closeCopyMenu();
+});
 const fallbackOutput = computed(() => {
   const seen = new Set<string>();
   const output: string[] = [];
@@ -172,16 +322,49 @@ const subtitle = computed(() => {
       @close="emit('close')"
     >
       <Badge variant="neutral" size="sm">{{ phaseLabel(member.phase) }}</Badge>
-      <Tooltip v-if="member.prompt" :text="t('tasks.copyCommand')">
-        <IconButton size="sm" :label="t('tasks.copyCommand')" @click="copyMember('command')">
-          <Icon :name="copied === 'command' ? 'check' : 'copy'" size="sm" />
+      <template v-if="member.prompt || copyableOutput">
+        <IconButton
+          ref="copyTriggerRef"
+          :size="copyTriggerSize"
+          :class="{ 'copy-menu-open': copyMenuOpen }"
+          :label="t('tasks.copy')"
+          :tooltip="t('tasks.copy')"
+          aria-haspopup="menu"
+          :aria-expanded="copyMenuOpen"
+          @click="toggleCopyMenu"
+          @keydown.down.prevent="onCopyTriggerArrow"
+          @keydown.up.prevent="onCopyTriggerArrow"
+          @focusout="onCopyFocusLeave"
+        >
+          <Icon :name="copied ? 'check' : 'copy'" size="sm" />
         </IconButton>
-      </Tooltip>
-      <Tooltip v-if="copyableOutput" :text="t('tasks.copyOutput')">
-        <IconButton size="sm" :label="t('tasks.copyOutput')" @click="copyMember('output')">
-          <Icon :name="copied === 'output' ? 'check' : 'copy'" size="sm" />
-        </IconButton>
-      </Tooltip>
+        <Teleport to="body">
+          <div
+            v-if="copyMenuOpen"
+            ref="copyMenuBoxRef"
+            class="copy-menu"
+            :style="copyMenuStyle"
+            @keydown="onCopyMenuKeydown"
+            @focusout="onCopyFocusLeave"
+          >
+            <Menu>
+              <MenuItem v-if="member.prompt" :size="menuRowSize" @click="copyMemberAndClose('command')">
+                <Icon name="terminal" size="sm" />
+                <span>{{ t('tasks.copyCommand') }}</span>
+              </MenuItem>
+              <MenuItem :disabled="!copyableOutput" :size="menuRowSize" @click="copyMemberAndClose('output')">
+                <Icon name="file-text" size="sm" />
+                <span>{{ t('tasks.copyOutput') }}</span>
+              </MenuItem>
+              <MenuItem separator />
+              <MenuItem :size="menuRowSize" @click="copyMemberAndClose('all')">
+                <Icon name="copy" size="sm" />
+                <span>{{ t('tasks.copyAll') }}</span>
+              </MenuItem>
+            </Menu>
+          </div>
+        </Teleport>
+      </template>
     </PanelHeader>
     <div ref="scroller" class="agent-transcript" @scroll.passive="onScroll">
       <template v-if="contentReady">
@@ -236,6 +419,13 @@ const subtitle = computed(() => {
 .agent-error {
   color: var(--color-danger);
   font: var(--text-sm)/var(--leading-normal) var(--font-ui);
+}
+
+/* position: fixed + left/top from the trigger rect; teleported to body so the
+   preview panel's overflow and backdrop-filter never clip or squeeze it. */
+.copy-menu {
+  position: fixed;
+  z-index: var(--z-dropdown);
 }
 
 .agent-fallback {

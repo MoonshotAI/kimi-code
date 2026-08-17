@@ -29,7 +29,9 @@ const { t } = useKimiI18n();
 
 <template>
   <div class="ui-panel-header" :class="{ wrap }">
-    <span class="ui-panel-header__title">{{ title }}</span>
+    <Tooltip :text="title">
+      <span class="ui-panel-header__title">{{ title }}</span>
+    </Tooltip>
     <Tooltip :text="subtitle">
       <span v-if="subtitle" class="ui-panel-header__sub">{{ subtitle }}</span>
     </Tooltip>
@@ -61,7 +63,15 @@ const { t } = useKimiI18n();
   background: var(--color-surface-deep);
 }
 .ui-panel-header__title {
-  flex: none;
+  /* Long auto-generated titles (e.g. a background Bash task's
+     "Bash: <command…>") must shrink + ellipsize instead of pushing the
+     trailing badge, controls and close button out of the preview column.
+     Same recipe as __sub below. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   /* Panel titles sit at the base UI step (design-system §03) — the right-side
      panel is primary chrome, not a caption. */
   font: var(--weight-semibold) var(--ui-b2) var(--font-ui);

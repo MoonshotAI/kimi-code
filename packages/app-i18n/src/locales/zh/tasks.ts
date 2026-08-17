@@ -42,4 +42,5 @@ export default {
   transcriptLoadError: '无法加载这个子 Agent 的对话。',
   copyCommand: '复制命令',
   copyOutput: '复制输出',
+  copyAll: '复制全部',
 } as const;
