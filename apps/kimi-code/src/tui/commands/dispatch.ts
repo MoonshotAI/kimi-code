@@ -629,10 +629,27 @@ async function handleSkillCommand(
   host: SlashCommandHost,
   args: string,
 ): Promise<void> {
+  const busyReason = slashCommandBusyReason({
+    isStreaming: host.state.appState.streamingPhase !== 'idle',
+    isCompacting: host.state.appState.isCompacting,
+  });
+  if (busyReason !== undefined) {
+    host.showError(slashBusyMessage('skill', busyReason));
+    return;
+  }
+
   let session = host.session;
   if (session === undefined) {
     session = await ensureSessionForCommand(host);
     if (session === undefined) return;
+    const busyCheck = slashCommandBusyReason({
+      isStreaming: host.state.appState.streamingPhase !== 'idle',
+      isCompacting: host.state.appState.isCompacting,
+    });
+    if (busyCheck !== undefined) {
+      host.showError(slashBusyMessage('skill', busyCheck));
+      return;
+    }
   }
 
   let skills: readonly SkillSummary[] = [];
@@ -674,6 +691,14 @@ async function handleSkillCommand(
 
   const selectedSkill = await runSkillSelector(host, activatableSkills);
   if (selectedSkill !== undefined) {
+    const busyCheck = slashCommandBusyReason({
+      isStreaming: host.state.appState.streamingPhase !== 'idle',
+      isCompacting: host.state.appState.isCompacting,
+    });
+    if (busyCheck !== undefined) {
+      host.showError(slashBusyMessage('skill', busyCheck));
+      return;
+    }
     host.sendSkillActivation(session, selectedSkill.name, '');
   }
 }
