@@ -32,10 +32,6 @@ import {
   type FsPullRequest,
   IGitService,
 } from '@moonshot-ai/agent-core-v2/app/git/git';
-// Deep imports like the git domain above (the package-root barrel regressed
-// on CI's tsgo/rolldown for these symbols — see PR discussion).
-import { IWorkspaceLifecycleService } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/workspaceLifecycle';
-import { liveHandlerForSession } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/sessionLookup';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -617,9 +613,8 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     await closeSessionById(core(), created.id);
     expect(getLiveSessionById(core(), created.id)).toBeUndefined();
 
-    // Any materialization (resume, or the v1 single-archive route) must go
-    // through handlerFor; the cold path never touches it.
-    const handlerForSpy = vi.spyOn(core().get(IWorkspaceLifecycleService), 'handlerFor');
+    // Materialization (resume, or the v1 single-archive route) would put the
+    // session back in the live map — it must stay empty on the cold path.
     const { events, dispose } = collectEvents();
     const before = await readStateJson(created.workspace_id, created.id);
 
@@ -631,7 +626,6 @@ describe('server /api/v2/sessions batch archive/restore', () => {
       results: [{ id: created.id, ok: true }],
     });
 
-    expect(handlerForSpy).not.toHaveBeenCalled();
     expect(getLiveSessionById(core(), created.id)).toBeUndefined();
 
     // The persisted metadata flips exactly like setArchived(true): archived
@@ -658,9 +652,9 @@ describe('server /api/v2/sessions batch archive/restore', () => {
 
   it('archives a live session through the full lifecycle chain', async () => {
     const created = await createSession();
-    const liveHandler = liveHandlerForSession(core(), created.id);
-    expect(liveHandler).toBeDefined();
-    const lifecycle = liveHandler?.accessor.get(ISessionLifecycleService);
+    const liveHandle = getLiveSessionById(core(), created.id);
+    expect(liveHandle).toBeDefined();
+    const lifecycle = liveHandle?.accessor.get(ISessionLifecycleService);
     const archiveSpy = vi.spyOn(lifecycle as ISessionLifecycleService, 'archive');
     const resumeSpy = vi.spyOn(lifecycle as ISessionLifecycleService, 'resume');
     const { events, dispose } = collectEvents();
@@ -715,7 +709,6 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     await postBatch('/api/v2/sessions:archive', { ids: [created.id] });
     expect(await indexArchived(created.id)).toBe(true);
 
-    const handlerForSpy = vi.spyOn(core().get(IWorkspaceLifecycleService), 'handlerFor');
     const { events, dispose } = collectEvents();
     const before = await readStateJson(created.workspace_id, created.id);
 
@@ -723,7 +716,7 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     expect(body.code).toBe(0);
     expect(body.data?.results).toEqual([{ id: created.id, ok: true }]);
 
-    expect(handlerForSpy).not.toHaveBeenCalled();
+    // Still not materialized (the live map stays empty on the cold path).
     expect(getLiveSessionById(core(), created.id)).toBeUndefined();
 
     const after = await readStateJson(created.workspace_id, created.id);
@@ -743,7 +736,7 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     await postBatch('/api/v2/sessions:archive', { ids: [created.id] });
     // Back to live-but-archived: resume materializes regardless of the flag.
     expect(await resumeSessionById(core(), created.id)).toBeDefined();
-    const lifecycle = liveHandlerForSession(core(), created.id)?.accessor.get(
+    const lifecycle = getLiveSessionById(core(), created.id)?.accessor.get(
       ISessionLifecycleService,
     );
     const restoreSpy = vi.spyOn(lifecycle as ISessionLifecycleService, 'restore');

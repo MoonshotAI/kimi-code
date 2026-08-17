@@ -62,15 +62,14 @@ import {
   ISessionIndexMirror,
   ISessionLifecycleService,
   IWorkspaceAliases,
+  IWorkspaceLifecycleService,
   IWorkspaceService,
   setColdSessionArchived,
+  type IWorkspaceScopeHandle,
   type Scope,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { IGitService, type FsPullRequest } from '@moonshot-ai/agent-core-v2/app/git/git';
-// Deep import like the git domain above (the package-root barrel regressed on
-// CI's tsgo/rolldown for this symbol — see PR discussion).
-import { liveHandlerForSession } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/sessionLookup';
 import { z } from 'zod';
 
 import { defineRoute } from '../../middleware/defineRoute';
@@ -445,6 +444,23 @@ class GitDomainResolver {
 // ---------------------------------------------------------------------------
 
 /**
+ * Find the live workspace handler owning this session WITHOUT materializing
+ * it (mirrors agent-core-v2's `liveHandlerForSession`, kept local because the
+ * package-root barrel regressed on CI's tsgo/rolldown for that symbol).
+ */
+function liveHandlerForSession(
+  accessor: Scope['accessor'],
+  sessionId: string,
+): IWorkspaceScopeHandle | undefined {
+  for (const handler of accessor.get(IWorkspaceLifecycleService).handlers.list()) {
+    if (handler.accessor.get(ISessionLifecycleService).get(sessionId) !== undefined) {
+      return handler;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Run one `:archive` / `:restore` batch: live sessions through the full
  * `ISessionLifecycleService` chain, cold sessions through the direct cold
  * patch (no materialization); per-item failures fold into the result list
@@ -456,8 +472,7 @@ async function runBatchArchive(
   rawIds: readonly string[],
   requestId: string,
   reply: { send(payload: unknown): unknown },
-): Promise<void> {
-  const archived = action === 'archive';
+): Promise<void> {  const archived = action === 'archive';
   const ids = [...new Set(rawIds)];
   const results: (V2BatchItemResult | undefined)[] = ids.map(() => undefined);
 
