@@ -262,6 +262,37 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
     });
   });
 
+  it('derives context_usage from token counts when the SDK omits contextUsage', () => {
+    const result = adaptSdkEvent(createEventAdapterState(), {
+      type: 'agent.status.updated',
+      sessionId: 'session-1',
+      agentId: 'main',
+      contextTokens: 25_600,
+      maxContextTokens: 256_000,
+    });
+
+    expect(result.event).toEqual({
+      type: 'StatusUpdate',
+      payload: { context_usage: 0.1 },
+      _sessionId: 'session-1',
+    });
+  });
+
+  it('prefers live token counts over an explicit contextUsage of 0', () => {
+    const result = adaptSdkEvent(createEventAdapterState(), {
+      type: 'agent.status.updated',
+      sessionId: 'session-1',
+      agentId: 'main',
+      contextUsage: 0,
+      contextTokens: 25_600,
+      maxContextTokens: 256_000,
+    });
+
+    expect(result.event).toMatchObject({
+      payload: { context_usage: 0.1 },
+    });
+  });
+
   it('emits snake-case status fields when agent status changes', () => {
     const result = adaptSdkEvent(createEventAdapterState(), {
       type: 'agent.status.updated',
