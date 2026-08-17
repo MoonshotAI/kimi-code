@@ -24,7 +24,6 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
 import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
-import UpdateIndicator from './UpdateIndicator.vue';
 import UserMenu from './UserMenu.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
 import PinnedSessionList from './PinnedSessionList.vue';
@@ -987,10 +986,6 @@ onBeforeUnmount(() => {
           >
             <Icon name="panel-collapse" />
           </IconButton>
-          <!-- Auto-update pill (desktop only): rightmost in the header; renders
-               nothing unless the main process reports an update state, so the
-               web build stays untouched. -->
-          <UpdateIndicator />
         </div>
       </div>
 

@@ -3,8 +3,9 @@
      header on other desktop surfaces. Both may be window-drag strips, so the
      wrapper opts out of app-region drag. Clicking opens the canonical §03 Dialog (Anatomy A,
      padded · lg · auto — see §09 in DesignSystemView.vue) with the version,
-     release date, the state-dependent actions (download / background /
-     restart / retry) and an auto-download checkbox on its own foot row below
+     release date, the state-dependent actions (download / background +
+     disabled live-percent button / restart / retry) and an auto-download
+     checkbox on its own foot row below
      the buttons — it is a pure preference for FUTURE checks
      (never starts the waiting download, never closes the dialog), plus
      "本次跳过" to mute a version persistently. When the
@@ -57,10 +58,11 @@ const pillText = computed(() => {
 
 const dialogTitle = computed(() => {
   switch (status.value.state) {
+    // Downloading keeps the "new version" title — the live percent lives on
+    // the disabled foot button instead (no title churn, no progress bar).
     case 'available':
-      return t('sidebar.updateAvailable', { version: status.value.version ?? '' });
     case 'downloading':
-      return t('sidebar.updateDownloading', { percent: status.value.percent ?? 0 });
+      return t('sidebar.updateAvailable', { version: status.value.version ?? '' });
     case 'downloaded':
       return t('sidebar.updateReady', { version: status.value.version ?? '' });
     case 'error':
@@ -159,16 +161,16 @@ function onRestartNow(): void {
     </button>
 
     <Dialog :open="open" :title="dialogTitle" size="lg" @update:open="open = $event">
-      <p v-if="(status.state === 'available' || status.state === 'downloaded') && metaText" class="upd-meta">
+      <!-- The quiet meta line (release date · current version) stays up while
+           downloading too — the title no longer flips, so the facts under it
+           shouldn't collapse mid-flow either; only the error state hides it. -->
+      <p v-if="status.state !== 'error' && metaText" class="upd-meta">
         {{ metaText }}
       </p>
       <section v-if="changelogText" class="upd-notes">
         <h4 class="upd-notes-title">{{ t('sidebar.updateWhatsNew') }}</h4>
         <Markdown :text="changelogText" />
       </section>
-      <div v-if="status.state === 'downloading'" class="upd-progress">
-        <div class="upd-progress-fill" :style="{ width: `${percent}%` }" />
-      </div>
       <p v-if="status.state === 'error' && status.message" class="upd-message">{{ status.message }}</p>
 
       <template #foot>
@@ -179,9 +181,11 @@ function onRestartNow(): void {
               <Button @click="onDownload">{{ t('sidebar.updateDownloadNow') }}</Button>
             </template>
             <template v-else-if="status.state === 'downloading'">
-              <!-- The download continues on its own; this just dismisses the dialog
-                   (the pill keeps showing live percent). -->
+              <!-- The download continues on its own: "background" just dismisses
+                   the dialog (the pill keeps showing live percent); the disabled
+                   button carries the live percent in place of a progress bar. -->
               <Button variant="secondary" @click="open = false">{{ t('sidebar.updateBackground') }}</Button>
+              <Button disabled>{{ t('sidebar.updateDownloadingButton', { percent }) }}</Button>
             </template>
             <template v-else-if="status.state === 'downloaded'">
               <Button variant="ghost" @click="open = false">{{ t('sidebar.updateRestartLater') }}</Button>
@@ -322,9 +326,9 @@ function onRestartNow(): void {
 .upd-notes :deep(h3:first-child) {
   margin-top: 0;
 }
-/* When the meta line is hidden (downloading / error states) the notes block
-   is the body's first child — the dialog's own padding already separates it
-   from the title. */
+/* When the meta line is hidden (error state, or no facts to show) the notes
+   block is the body's first child — the dialog's own padding already
+   separates it from the title. */
 .upd-notes:first-child {
   margin-top: 0;
   padding-top: 0;
@@ -350,19 +354,5 @@ function onRestartNow(): void {
 }
 .upd-auto {
   align-self: flex-end;
-}
-
-.upd-progress {
-  margin-top: var(--space-3);
-  height: var(--space-1);
-  border-radius: var(--radius-xs);
-  background: var(--color-line);
-  overflow: hidden;
-}
-.upd-progress-fill {
-  height: 100%;
-  border-radius: var(--radius-xs);
-  background: var(--color-accent);
-  transition: width var(--duration-base) var(--ease-out);
 }
 </style>

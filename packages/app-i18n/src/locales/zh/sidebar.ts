@@ -83,7 +83,7 @@ export default {
   searchEmpty: '暂无会话',
   update: '更新',
   updateAvailable: '发现新版本 v{version}',
-  updateDownloading: '下载中… {percent}%',
+  updateDownloadingButton: '下载中（{percent}%）',
   updateReady: 'v{version} 已就绪',
   updateDone: '重启并更新',
   updateFailed: '下载失败',

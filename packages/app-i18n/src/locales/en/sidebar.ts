@@ -84,7 +84,7 @@ export default {
   searchEmpty: 'No sessions yet',
   update: 'Upgrade',
   updateAvailable: 'v{version} available',
-  updateDownloading: 'Downloading… {percent}%',
+  updateDownloadingButton: 'Downloading… ({percent}%)',
   updateReady: 'v{version} ready',
   updateDone: 'Restart',
   updateFailed: 'Download failed',
