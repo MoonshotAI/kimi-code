@@ -63,6 +63,7 @@ export interface EditorKeyboardHost {
   clearQueuedMessages(): void;
   setExternalEditorRunning(running: boolean): void;
   updateActivityPane(): void;
+  restoreSubmittedInputOnEscape(): void;
 }
 
 export class EditorKeyboardController {
@@ -224,6 +225,7 @@ export class EditorKeyboardController {
         return;
       }
       if (host.state.appState.streamingPhase !== 'idle') {
+        host.restoreSubmittedInputOnEscape();
         this.cancelCurrentStream();
         this.clearPendingUndoEsc();
         return;
