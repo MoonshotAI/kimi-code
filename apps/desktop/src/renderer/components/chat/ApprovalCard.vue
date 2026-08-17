@@ -1,11 +1,12 @@
 <!-- apps/web/src/components/chat/ApprovalCard.vue -->
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, onUpdated, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, onUpdated, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ApprovalBlock, FilePreviewRequest } from '../../types';
 import type { ApprovalDecision } from '../../api/types';
+import { useAppearance } from '@moonshot-ai/app-core';
 import { Markdown } from '@moonshot-ai/app-markdown';
-import { Badge, Button, Icon, IconButton, Spinner, openDialogCount, useImeComposition } from '@moonshot-ai/app-ui';
+import { Badge, Button, Icon, IconButton, Spinner, Textarea, openDialogCount, useImeComposition } from '@moonshot-ai/app-ui';
 import HighlightedCode from '../HighlightedCode.vue';
 import {
   approvalDecisionName,
@@ -48,19 +49,28 @@ const planReview = computed<PlanReviewView | null>(() => {
 // while the user reads. The decision buttons + body return on expand.
 const minimized = ref(false);
 
-// Plan scroll seam: the plan body scrolls in a capped area; once scrolled, a
-// soft shadow fades in at the scroll area's top edge (the sidebar's
-// scroll-linked seam language), so clipped content reads as passing under the
-// card chrome instead of ending flush against it.
+// Scroll seams: the plan body scrolls in a capped area; once scrolled, a soft
+// shadow fades in at the scroll area's top edge (the sidebar's scroll-linked
+// seam language), so clipped content reads as passing under the card chrome
+// instead of ending flush against it. When fixed chrome squeezes the card
+// (iOS keyboard + grown feedback box), the WRAP becomes the scroller instead
+// (see .body-plan-wrap); when even the fixed chrome alone exceeds the height
+// cap, the CARD itself is the scroller of last resort (see .appr) and gets
+// its own seam. Scroll events don't bubble, hence a listener on each element.
+// cardRef doubles as the feedback box's width observer (see below).
+const cardRef = ref<HTMLElement | null>(null);
+const planWrapEl = ref<HTMLElement | null>(null);
 const planBodyEl = ref<HTMLElement | null>(null);
 const planScrolled = ref(false);
+const cardScrolled = ref(false);
 
-function updatePlanScrollState(): void {
-  planScrolled.value = (planBodyEl.value?.scrollTop ?? 0) > 0;
+function updateScrollSeams(): void {
+  planScrolled.value = (planWrapEl.value?.scrollTop ?? 0) > 0 || (planBodyEl.value?.scrollTop ?? 0) > 0;
+  cardScrolled.value = (cardRef.value?.scrollTop ?? 0) > 0;
 }
 
-function onPlanScroll(e: Event): void {
-  planScrolled.value = (e.target as HTMLElement).scrollTop > 0;
+function onPlanScroll(): void {
+  updateScrollSeams();
 }
 
 // Lift the content body's height cap so long plans / Write previews / Edit
@@ -122,14 +132,76 @@ const peek = computed<string>(() => {
 
 const feedbackOpen = ref(false);
 const feedbackText = ref('');
-const feedbackRef = ref<HTMLTextAreaElement | null>(null);
+const feedbackRef = ref<InstanceType<typeof Textarea> | null>(null);
+
+// Auto-grow: the textarea starts at three rows and grows with its content up
+// to 40% of the visible viewport height, then scrolls internally. The growth
+// always goes UPWARD — the card lives at the bottom of the bottom-anchored
+// chat dock (.chat-dock, inset: auto 0 0), so a taller card raises its top
+// edge while its bottom edge (and the feedback footer) stays put; once the
+// card hits its height cap the plan scroll area above yields the extra
+// height instead.
+const FEEDBACK_MAX_VIEWPORT_RATIO = 0.4;
+
+function fitFeedback(): void {
+  const ta = feedbackRef.value?.el;
+  if (!ta) return;
+  ta.style.height = 'auto';
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+  const max = viewportHeight * FEEDBACK_MAX_VIEWPORT_RATIO;
+  ta.style.height = `${Math.min(ta.scrollHeight, max)}px`;
+  ta.style.overflowY = ta.scrollHeight > max ? 'auto' : 'hidden';
+}
+
+watch(feedbackText, () => void nextTick(fitFeedback));
+
+// Re-expanding from the minimized bar remounts the textarea (v-if) at its
+// three-row default while the typed text survives, so re-fit once it is back.
+watch(minimized, (m) => {
+  if (!m) void nextTick(fitFeedback);
+});
+
+// Font-scale changes (SettingsDialog / MobileSettingsSheet) rewrite
+// --text-base and the line heights, which changes the textarea's
+// scrollHeight with no width or viewport signal for the observers below —
+// re-fit once the new metrics have applied.
+const { fontScale } = useAppearance();
+watch(fontScale, () => void nextTick(fitFeedback));
+
+// Re-fit when the visible viewport changes (window resize, iOS keyboard
+// opening/closing) — a height fitted against a taller viewport must not
+// outlive it. Column drags (App.vue's sidebar / preview ResizeHandle) change
+// the card's width without any window/viewport resize event, so also observe
+// the card root: rewrapped lines change scrollHeight and the fitted height
+// would otherwise go stale (clipped when narrower, slack when wider). The
+// width guard keeps the observer from reacting to fitFeedback's own height
+// writes.
+let feedbackWidthObserver: ResizeObserver | null = null;
+let lastCardWidth = 0;
+onMounted(() => {
+  window.addEventListener('resize', fitFeedback);
+  window.visualViewport?.addEventListener('resize', fitFeedback);
+  feedbackWidthObserver = new ResizeObserver((entries) => {
+    const w = entries[0]?.contentRect.width ?? 0;
+    if (w !== lastCardWidth) {
+      lastCardWidth = w;
+      fitFeedback();
+    }
+  });
+  if (cardRef.value) feedbackWidthObserver.observe(cardRef.value);
+});
+onUnmounted(() => {
+  window.removeEventListener('resize', fitFeedback);
+  window.visualViewport?.removeEventListener('resize', fitFeedback);
+  feedbackWidthObserver?.disconnect();
+});
 
 function openFeedback(): void {
   if (props.busy) return;
   feedbackOpen.value = true;
   feedbackText.value = '';
   // Focus textarea next tick
-  setTimeout(() => feedbackRef.value?.focus(), 0);
+  setTimeout(() => feedbackRef.value?.el?.focus(), 0);
 }
 
 function submitFeedback(): void {
@@ -266,12 +338,13 @@ function handleKeydown(e: KeyboardEvent): void {
 onMounted(() => document.addEventListener('keydown', handleKeydown));
 onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 // The plan scroll area unmounts with minimize / kind switches — recompute the
-// seam after every render so it can't linger on a detached or reset element.
-onUpdated(updatePlanScrollState);
+// seams after every render so they can't linger on a detached or reset
+// element.
+onUpdated(updateScrollSeams);
 </script>
 
 <template>
-  <div class="appr" :class="{ minimized }">
+  <div ref="cardRef" class="appr" :class="{ minimized, scrolled: cardScrolled }" @scroll="updateScrollSeams">
     <!-- Header: quiet neutral row — per-kind icon + title, optional subagent
          badge, minimize pinned right. No status band; the card itself is the
          "needs a decision" signal. -->
@@ -377,9 +450,12 @@ onUpdated(updatePlanScrollState);
 
         <!-- plan_review: plan markdown in a capped scroll area, then the
              offered approaches as numbered option rows PINNED below the
-             scroll area (always visible — the approve action must never be
-             buried at the end of a long plan) -->
-        <div v-else-if="block.kind === 'plan_review'" class="body-plan-wrap" :class="{ scrolled: planScrolled }">
+             scroll area (the approve action must never be buried at the end
+             of a long plan; if fixed chrome squeezes the card past its cap
+             the whole wrap — body + options — scrolls as one instead, and
+             below even that budget the card itself scrolls, so the options
+             are never clipped out of reach) -->
+        <div v-else-if="block.kind === 'plan_review'" ref="planWrapEl" class="body-plan-wrap" :class="{ scrolled: planScrolled }" @scroll="onPlanScroll">
           <div ref="planBodyEl" class="body-plan" :class="{ expanded }" @scroll="onPlanScroll">
             <Markdown :text="block.plan" :open-file="props.openFile" />
           </div>
@@ -407,14 +483,16 @@ onUpdated(updatePlanScrollState);
           <span class="gen-text">{{ block.summary }}</span>
         </div>
 
-        <!-- Inline feedback textarea -->
+        <!-- Inline feedback textarea (shared §03 Textarea primitive; the
+             keydown / composition listeners fall through to its native
+             element) -->
         <div v-if="feedbackOpen" class="feedback-wrap">
-          <textarea
+          <Textarea
             ref="feedbackRef"
             v-model="feedbackText"
-            class="feedback-ta"
             :placeholder="t('approval.feedbackPlaceholder')"
-            rows="2"
+            :rows="3"
+            :resize="false"
             @keydown="onFeedbackKeydown"
             @compositionstart="handleCompositionStart"
             @compositionend="handleCompositionEnd"
@@ -459,19 +537,52 @@ onUpdated(updatePlanScrollState);
    composer. The card is a flex column capped just below the chat header, so
    a tall plan + options can never overflow past the pane: only the plan
    scroll area shrinks; header / options / footer keep their natural
-   height. */
+   height. The cap follows the VISUAL viewport (--app-height mirrors
+   visualViewport.height, see App.vue's setAppHeight) — 100dvh does not
+   shrink when the iOS keyboard opens, so a dvh-based cap would let the card
+   run under the keyboard and get clipped by .app-shell's overflow: hidden.
+   overflow-y: auto is the scroller of last resort: when the squeezed cap
+   falls below the FIXED chrome alone (header + mobile's stacked ≥46px
+   footer buttons, e.g. an iOS landscape keyboard leaving a ~200px visual
+   viewport), the body has already shrunk to zero and the whole card scrolls
+   instead of clipping the submit / cancel footer away; the card seam below
+   marks that scroll. overflow-x stays hidden so nothing ever pokes out
+   sideways, and the border-radius still clips scrolled content. */
 .appr {
   display: flex;
   flex-direction: column;
-  max-height: calc(100dvh - 72px);
+  max-height: calc(var(--app-height, 100dvh) - 72px);
   margin: var(--space-2) 0;
   background: var(--color-surface-raised);
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
-  overflow: hidden;
+  overflow: hidden auto;
   animation: kimi-card-in var(--duration-base) var(--ease-out);
 }
+/* Card-level scroll seam — the same scroll-linked language as the plan
+   wrap's seam below, for the last-resort case above: once the whole card
+   scrolls, a soft shadow fades in at the card's top edge so the header
+   reads as passing under the card chrome. Sticky (not absolute) so it pins
+   to the visible top edge of the card's own scrollport; the negative margin
+   takes it out of the layout flow. */
+.appr::before {
+  content: '';
+  position: sticky;
+  top: 0;
+  flex: none;
+  height: var(--p-scroll-seam-h);
+  margin-bottom: calc(-1 * var(--p-scroll-seam-h));
+  z-index: var(--z-raised);
+  pointer-events: none;
+  opacity: 0;
+  background:
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 2.5%, transparent), transparent 35%),
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.75%, transparent), transparent 65%),
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.25%, transparent), transparent);
+  transition: opacity var(--duration-slow) var(--ease-out);
+}
+.appr.scrolled::before { opacity: 1; }
 .appr > .ah,
 .appr > .af { flex: none; }
 /* Minimized bar: subtle hover fill as the click affordance. */
@@ -528,7 +639,23 @@ onUpdated(updatePlanScrollState);
   min-height: 0;
   padding: var(--space-3) var(--space-4) 0;
 }
-.ab > * { flex: none; }
+/* Shrink by default — a blacklist, not a per-kind whitelist: every direct
+   child of the body column may shrink below its content height and scroll
+   internally (min-height: 0 unlocks the shrink; each scrollable body keeps
+   its own overflow-y: auto and HighlightedCode owns its own scroll), so the
+   auto-growing feedback box can push the card to its height cap without
+   clipping the feedback box or the footer away. Only what must keep its
+   natural height opts out: the one-line plan-path link. The plan wrap still
+   grows to fill the column. The feedback box itself yields last — once the
+   fixed chrome (header, options, mobile's stacked footer) plus the box
+   exceeds the cap, as when the iOS keyboard shrinks the visual viewport,
+   the plan wrap scrolls as a whole (body AND options, see .body-plan-wrap
+   below) and the feedback box scrolls internally; below even that budget —
+   fixed chrome alone over the cap — the whole card scrolls (see .appr
+   above). The approve options and the submit/cancel footer stay reachable
+   at every budget. */
+.ab > * { flex: 0 1 auto; min-height: 0; }
+.ab > .plan-path { flex: none; }
 .ab > .body-plan-wrap { flex: 1; }
 
 /* Body first line — plan file path, rendered as a link that opens the file
@@ -562,7 +689,6 @@ onUpdated(updatePlanScrollState);
 .body-code {
   display: flex;
   flex-direction: column;
-  min-height: 0;
 }
 .body-code.expanded { flex: 1; }
 .body-code.expanded :deep(.hl-code) {
@@ -579,6 +705,10 @@ onUpdated(updatePlanScrollState);
 }
 
 /* Shell */
+.body-shell {
+  /* May shrink when the feedback box grows — scroll instead of clipping. */
+  overflow-y: auto;
+}
 .shell-cmd {
   font: var(--text-sm) var(--font-mono);
   background: var(--color-surface-sunken);
@@ -615,6 +745,8 @@ onUpdated(updatePlanScrollState);
   flex-wrap: wrap;
   font: var(--text-base)/var(--leading-normal) var(--font-ui);
   color: var(--color-text);
+  /* May shrink when the feedback box grows — scroll instead of clipping. */
+  overflow-y: auto;
 }
 .chip-label {
   background: var(--color-inline-code-bg);
@@ -632,6 +764,10 @@ onUpdated(updatePlanScrollState);
 .chip-detail { font: var(--text-xs) var(--font-ui); color: var(--color-text-muted); }
 
 /* Todo */
+.body-todo {
+  /* May shrink when the feedback box grows — scroll instead of clipping. */
+  overflow-y: auto;
+}
 .todo-item {
   display: flex;
   align-items: flex-start;
@@ -649,28 +785,39 @@ onUpdated(updatePlanScrollState);
   font: var(--text-base)/var(--leading-normal) var(--font-ui);
   color: var(--color-text);
   word-break: break-word;
+  /* May shrink when the feedback box grows — scroll instead of clipping. */
+  overflow-y: auto;
 }
 
 /* Plan review — the scroll area caps at half the viewport height and is the
    only flexible region of the card: it shrinks first when the card hits its
-   height cap, and expands to fill the whole card in expanded mode. */
+   height cap, and expands to fill the whole card in expanded mode. The wrap
+   itself takes over scrolling when squeezed: the option rows are flex:none
+   and can never shrink, so once fixed chrome (options, auto-grown feedback
+   box) exceeds what the capped card leaves — as when the iOS keyboard
+   shrinks the visual viewport — the whole plan region (body AND options)
+   scrolls as one and an approve option stays reachable. Below even that
+   budget the wrap has shrunk to zero and the CARD scrolls as the last
+   resort (see .appr), so nothing is ever clipped out of reach. */
 .body-plan-wrap {
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  position: relative;
+  overflow-y: auto;
 }
 /* Scroll seam — once the plan scrolls, a soft shadow fades in at the scroll
    area's top edge (same scroll-linked language as the sidebar list), so
-   clipped content reads as passing under the card chrome. */
+   clipped content reads as passing under the card chrome. Sticky, not
+   absolute: the wrap itself can scroll (see above), and the seam must stay
+   pinned to the visible top edge instead of scrolling away with the
+   content; the negative margin takes it out of the layout flow. */
 .body-plan-wrap::before {
   content: '';
-  position: absolute;
+  position: sticky;
   top: 0;
-  left: 0;
-  right: 0;
-  height: 18px;
-  z-index: 1;
+  flex: none;
+  height: var(--p-scroll-seam-h);
+  margin-bottom: calc(-1 * var(--p-scroll-seam-h));
+  z-index: var(--z-raised);
   pointer-events: none;
   opacity: 0;
   background:
@@ -748,25 +895,18 @@ onUpdated(updatePlanScrollState);
 }
 .popt-spin { flex: none; color: var(--color-text-muted); }
 
-/* Feedback */
+/* Feedback — the shared Textarea primitive auto-grows from three rows up to
+   40% of the visual viewport height (fitFeedback sets an explicit px height
+   on the native element and flips overflow-y to auto at the cap), growing
+   upward inside the bottom-anchored dock: the card's bottom edge and the
+   submit/cancel footer never move. min-height: 0 lets the wrap shrink past
+   its content and scroll (see the `.ab >` flex rule above) instead of
+   pushing the footer past the card's height cap; and when the cap has
+   fallen below the fixed chrome alone, the whole card scrolls (see .appr)
+   so the footer stays reachable. */
 .feedback-wrap {
   margin-top: var(--space-3);
-}
-.feedback-ta {
-  width: 100%;
-  box-sizing: border-box;
-  font: var(--text-sm) var(--font-ui);
-  padding: var(--space-2) var(--space-2);
-  border: 0.5px solid var(--color-line);
-  border-radius: var(--radius-md);
-  resize: none;
-  outline: none;
-  color: var(--color-text);
-  background: var(--color-surface);
-}
-.feedback-ta:focus-visible {
-  border-color: var(--color-accent);
-  box-shadow: var(--p-focus-ring);
+  overflow-y: auto;
 }
 .feedback-hint { font: var(--text-xs) var(--font-ui); color: var(--color-text-muted); margin-top: var(--space-1); }
 

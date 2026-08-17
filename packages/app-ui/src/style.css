@@ -512,6 +512,13 @@ html[data-color-scheme="dark"] {
   /* -- current-match outline ring width (design-system §03 find bar) --------- */
   --p-findring-w: 2px;
 
+  /* -- scroll-linked seam height (sidebar lists, approval card scrollers) ----
+     The soft top-edge shadow that fades in once a scroller moves — one
+     height shared by every seam so the language reads identically
+     everywhere; the negative margin that lifts it out of the layout flow
+     derives from it. */
+  --p-scroll-seam-h: 18px;
+
   /* -- IconButton box sizes (design-system §03) ----------------------------- */
   --icon-button-sm: 26px;
   /* -- minimum touch hit area (WCAG 2.5.5 / Apple HIG 44×44) ----------------

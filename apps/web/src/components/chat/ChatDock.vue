@@ -983,13 +983,14 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
 }
 
 /* Approval showing: the dock takes over the card's height budget
-   (calc(100dvh - 72px), see ApprovalCard) as a flex column, so an expanded
-   card yields the work pills' height instead of pushing them past the pane's
-   top edge. */
+   (calc(var(--app-height, 100dvh) - 72px), see ApprovalCard — --app-height
+   mirrors the visual viewport, so the iOS keyboard shrinks the budget where
+   dvh does not) as a flex column, so an expanded card yields the work
+   pills' height instead of pushing them past the pane's top edge. */
 .chat-dock.has-approval {
   display: flex;
   flex-direction: column;
-  max-height: calc(100dvh - 72px);
+  max-height: calc(var(--app-height, 100dvh) - 72px);
 }
 .chat-dock.has-approval > .dock-workbar {
   flex: none;

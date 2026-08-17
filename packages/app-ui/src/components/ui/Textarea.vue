@@ -1,6 +1,8 @@
 <!-- apps/kimi-web/src/components/ui/Textarea.vue -->
 <!-- Design-system §03 Textarea: same surface/focus as Input, multi-line. -->
 <script setup lang="ts">
+import { ref } from 'vue';
+
 withDefaults(defineProps<{
   modelValue?: string;
   rows?: number;
@@ -8,8 +10,12 @@ withDefaults(defineProps<{
   disabled?: boolean;
   readonly?: boolean;
   error?: boolean;
+  /** Set false for JS-sized textareas (auto-grow): the manual resize grip
+   *  would fight the scripted height and allow widening past the layout. */
+  resize?: boolean;
 }>(), {
   rows: 3,
+  resize: true,
 });
 
 const emit = defineEmits<{
@@ -21,12 +27,18 @@ const emit = defineEmits<{
 function onInput(event: Event) {
   emit('update:modelValue', (event.target as HTMLTextAreaElement).value);
 }
+
+// Parents that size or focus the field programmatically (auto-grow) get the
+// native element instead of a re-wrapped API surface.
+const textareaRef = ref<HTMLTextAreaElement | null>(null);
+defineExpose({ el: textareaRef });
 </script>
 
 <template>
   <textarea
+    ref="textareaRef"
     class="ui-textarea"
-    :class="{ 'has-error': error }"
+    :class="{ 'has-error': error, 'no-resize': !resize }"
     :value="modelValue"
     :rows="rows"
     :placeholder="placeholder"
@@ -56,6 +68,7 @@ function onInput(event: Event) {
     box-shadow var(--duration-base) var(--ease-out);
 }
 .ui-textarea::placeholder { color: var(--color-text-faint); }
+.ui-textarea.no-resize { resize: none; }
 .ui-textarea:hover:not(:disabled):not(:focus) { border-color: var(--color-line-strong); }
 .ui-textarea:focus { outline: none; border-color: var(--color-accent); box-shadow: var(--p-focus-ring); }
 .ui-textarea:disabled { opacity: 0.5; cursor: not-allowed; }
