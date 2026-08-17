@@ -152,6 +152,43 @@ describe('SessionManager', () => {
     manager.dispose();
   });
 
+  it('serializes delete with the per-session lifecycle chain', async () => {
+    const order: string[] = [];
+    const fake = controller();
+    (fake.service as unknown as { delete: () => Promise<void> }).delete = async () => {
+      order.push('delete');
+    };
+    const workspace = {
+      id: 'workspace-1',
+      program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
+    } as unknown as WorkspaceInstance;
+    const workspaces = {
+      getOrCreate: async () => workspace,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const index = {
+      get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
+    } as unknown as ISessionIndex;
+    const manager = new SessionManager(workspaces, index);
+
+    let releaseSection!: () => void;
+    const sectionGate = new Promise<void>((resolve) => {
+      releaseSection = resolve;
+    });
+    const section = manager.withLifecycleSerialization('session-1', async () => {
+      order.push('section:start');
+      await sectionGate;
+      order.push('section:end');
+    });
+    const deletePromise = manager.delete('session-1');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(order).toEqual(['section:start']);
+    releaseSection();
+    await Promise.all([section, deletePromise]);
+    expect(order).toEqual(['section:start', 'section:end', 'delete']);
+    manager.dispose();
+  });
+
   it('owns one global live-session registry across workspace controllers', async () => {
     const fake = controller();
     const workspace = {

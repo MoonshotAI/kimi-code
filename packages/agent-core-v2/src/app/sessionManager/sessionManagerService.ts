@@ -86,11 +86,13 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Per-session lifecycle chain: resume / restore / close / the batch
-   * archive-restore critical section all queue here, so a cold meta write can
-   * never interleave with a materializing resume (which would later flush its
-   * stale in-memory state over the write), and a close cannot complete
-   * between the batch's live check and its archive call.
+   * Per-session lifecycle chain: resume / restore / close / delete / the
+   * batch archive-restore critical section all queue here, so a cold meta
+   * write can never interleave with a materializing resume (which would
+   * later flush its stale in-memory state over the write), a close cannot
+   * complete between the batch's live check and its archive call, and a
+   * delete cannot remove the directory out from under a cold write (which
+   * would resurrect a metadata-only ghost).
    */
   private serializeLifecycle<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
     const prev = this.lifecycleChains.get(sessionId) ?? Promise.resolve();
@@ -129,11 +131,13 @@ export class SessionManager implements ISessionManager {
   }
 
   async delete(sessionId: string): Promise<void> {
-    const controller = await this.controllerForSession(sessionId);
-    if (controller === undefined) {
-      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
-    }
-    await controller.delete(sessionId);
+    await this.serializeLifecycle(sessionId, async () => {
+      const controller = await this.controllerForSession(sessionId);
+      if (controller === undefined) {
+        throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
+      }
+      await controller.delete(sessionId);
+    });
   }
 
   async fork(options: ForkSessionOptions): Promise<ISessionScopeHandle> {
