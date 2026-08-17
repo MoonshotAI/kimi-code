@@ -62,10 +62,9 @@ import {
   ISessionIndexMirror,
   ISessionLifecycleService,
   IWorkspaceAliases,
-  IWorkspaceLifecycleService,
   IWorkspaceService,
+  getLiveSessionById,
   setColdSessionArchived,
-  type IWorkspaceScopeHandle,
   type Scope,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
@@ -444,23 +443,6 @@ class GitDomainResolver {
 // ---------------------------------------------------------------------------
 
 /**
- * Find the live workspace handler owning this session WITHOUT materializing
- * it (mirrors agent-core-v2's `liveHandlerForSession`, kept local because the
- * package-root barrel regressed on CI's tsgo/rolldown for that symbol).
- */
-function liveHandlerForSession(
-  accessor: Scope['accessor'],
-  sessionId: string,
-): IWorkspaceScopeHandle | undefined {
-  for (const handler of accessor.get(IWorkspaceLifecycleService).handlers.list()) {
-    if (handler.accessor.get(ISessionLifecycleService).get(sessionId) !== undefined) {
-      return handler;
-    }
-  }
-  return undefined;
-}
-
-/**
  * Run one `:archive` / `:restore` batch: live sessions through the full
  * `ISessionLifecycleService` chain, cold sessions through the direct cold
  * patch (no materialization); per-item failures fold into the result list
@@ -472,7 +454,8 @@ async function runBatchArchive(
   rawIds: readonly string[],
   requestId: string,
   reply: { send(payload: unknown): unknown },
-): Promise<void> {  const archived = action === 'archive';
+): Promise<void> {
+  const archived = action === 'archive';
   const ids = [...new Set(rawIds)];
   const results: (V2BatchItemResult | undefined)[] = ids.map(() => undefined);
 
@@ -480,9 +463,11 @@ async function runBatchArchive(
   // the rest of the batch still runs.
   const applyOne = async (id: string): Promise<V2BatchItemResult> => {
     try {
-      const liveHandler = liveHandlerForSession(core.accessor, id);
-      if (liveHandler !== undefined) {
-        const lifecycle = liveHandler.accessor.get(ISessionLifecycleService);
+      // The hot path needs the session's LIVE scope without materializing a
+      // cold one — getLiveSessionById answers exactly that (never resumes).
+      const liveHandle = getLiveSessionById(core.accessor, id);
+      if (liveHandle !== undefined) {
+        const lifecycle = liveHandle.accessor.get(ISessionLifecycleService);
         if (archived) await lifecycle.archive(id);
         else await lifecycle.restore(id);
         return { id, ok: true };
