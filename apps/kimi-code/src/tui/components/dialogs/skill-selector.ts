@@ -11,6 +11,7 @@ import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
+import { renderTabStrip } from '#/tui/utils/tab-strip';
 import {
   buildSkillGroupTree,
   findGroupNode,
@@ -33,12 +34,16 @@ export type SkillSelectorItem =
       readonly node: SkillGroupNode;
       readonly label: string;
       readonly description: string;
+      readonly groupPath?: string;
+      readonly isDescendant?: boolean;
     }
   | {
       readonly kind: 'skill';
       readonly skill: SkillSummary;
       readonly label: string;
       readonly description: string;
+      readonly groupPath?: string;
+      readonly isDescendant?: boolean;
     };
 
 function countSkillsInTree(node: SkillGroupNode): number {
@@ -47,6 +52,19 @@ function countSkillsInTree(node: SkillGroupNode): number {
     count += countSkillsInTree(child);
   }
   return count;
+}
+
+function collectDescendantSkills(
+  node: SkillGroupNode,
+): Array<{ skill: SkillSummary; groupPath: string }> {
+  const result: Array<{ skill: SkillSummary; groupPath: string }> = [];
+  for (const child of node.childGroups) {
+    for (const skill of child.skills) {
+      result.push({ skill, groupPath: child.path });
+    }
+    result.push(...collectDescendantSkills(child));
+  }
+  return result;
 }
 
 export class SkillSelectorComponent extends Container implements Focusable {
@@ -63,6 +81,41 @@ export class SkillSelectorComponent extends Container implements Focusable {
     this.rebuildList();
   }
 
+  private get tabLabels(): readonly string[] {
+    return ['All', ...this.rootTree.childGroups.map((g) => g.label)];
+  }
+
+  private get activeTabIdx(): number {
+    if (this.currentGroupPath === '') return 0;
+    const topSegment = this.currentGroupPath.split('/')[0];
+    const idx = this.rootTree.childGroups.findIndex(
+      (g) => g.label === topSegment || g.path === topSegment,
+    );
+    return idx >= 0 ? idx + 1 : 0;
+  }
+
+  private switchTab(newIdx: number): void {
+    if (newIdx === 0) {
+      this.currentGroupPath = '';
+    } else {
+      const group = this.rootTree.childGroups[newIdx - 1];
+      if (group !== undefined) {
+        this.currentGroupPath = group.path;
+      }
+    }
+    this.rebuildList();
+  }
+
+  private cycleTab(isShift: boolean): void {
+    const labels = this.tabLabels;
+    if (labels.length <= 1) return;
+    const current = this.activeTabIdx;
+    const nextIdx = isShift
+      ? (current - 1 + labels.length) % labels.length
+      : (current + 1) % labels.length;
+    this.switchTab(nextIdx);
+  }
+
   private rebuildList(): void {
     const currentNode = findGroupNode(this.rootTree, this.currentGroupPath) ?? this.rootTree;
     const items: SkillSelectorItem[] = [];
@@ -74,61 +127,50 @@ export class SkillSelectorComponent extends Container implements Focusable {
         node: childGroup,
         label: childGroup.label,
         description: `${String(skillCount)} skill${skillCount === 1 ? '' : 's'}`,
+        groupPath: childGroup.path,
       });
     }
 
+    const directSkillNames = new Set<string>();
     for (const skill of currentNode.skills) {
+      directSkillNames.add(skill.name);
       items.push({
         kind: 'skill',
         skill,
         label: skill.name,
         description: skill.description || 'No description provided.',
+        groupPath: currentNode.path,
       });
+    }
+
+    const descendantSkills = collectDescendantSkills(currentNode);
+    for (const { skill, groupPath } of descendantSkills) {
+      if (!directSkillNames.has(skill.name)) {
+        directSkillNames.add(skill.name);
+        items.push({
+          kind: 'skill',
+          skill,
+          label: skill.name,
+          description: skill.description || 'No description provided.',
+          groupPath,
+          isDescendant: true,
+        });
+      }
     }
 
     this.list = new SearchableList({
       items,
-      toSearchText: (item) => `${item.label} ${item.description}`,
+      toSearchText: (item) => `${item.label} ${item.description} ${item.groupPath ?? ''}`,
+      filterItem: (item, query) => query.length > 0 || item.isDescendant !== true,
       pageSize: this.opts.pageSize,
       searchable: this.opts.searchable ?? true,
     });
   }
 
-  private cycleGroupSelection(isShift: boolean): void {
-    const view = this.list.view();
-    const items = view.items;
-    if (items.length === 0) return;
-
-    const groupIndices: number[] = [];
-    for (let i = 0; i < items.length; i++) {
-      if (items[i]?.kind === 'group') {
-        groupIndices.push(i);
-      }
-    }
-
-    if (groupIndices.length === 0) return;
-
-    const currentIndex = view.selectedIndex;
-    let targetIndex: number;
-
-    const k = groupIndices.indexOf(currentIndex);
-    if (k >= 0) {
-      if (isShift) {
-        targetIndex = groupIndices[(k - 1 + groupIndices.length) % groupIndices.length] ?? 0;
-      } else {
-        targetIndex = groupIndices[(k + 1) % groupIndices.length] ?? 0;
-      }
-    } else {
-      targetIndex = isShift ? (groupIndices[groupIndices.length - 1] ?? 0) : (groupIndices[0] ?? 0);
-    }
-
-    this.list.setSelectedIndex(targetIndex);
-  }
-
   handleInput(data: string): void {
     if (matchesKey(data, Key.tab) || matchesKey(data, Key.shift('tab'))) {
       const isShift = matchesKey(data, Key.shift('tab'));
-      this.cycleGroupSelection(isShift);
+      this.cycleTab(isShift);
       return;
     }
 
@@ -178,7 +220,7 @@ export class SkillSelectorComponent extends Container implements Focusable {
         ? currentTheme.fg('textMuted', '  (type to search)')
         : '';
 
-    const hintParts = ['↑↓ navigate', 'Tab jump groups'];
+    const hintParts = ['↑↓ navigate', 'Tab switch group'];
     if (view.page.pageCount > 1) hintParts.push('←→ page');
     hintParts.push('Enter select', 'Esc back/cancel');
 
@@ -188,6 +230,17 @@ export class SkillSelectorComponent extends Container implements Focusable {
       currentTheme.fg('textMuted', ' ' + hintParts.join(' · ')),
       '',
     ];
+
+    const labels = this.tabLabels;
+    if (labels.length > 1) {
+      const stripLine = renderTabStrip({
+        labels,
+        activeIndex: this.activeTabIdx,
+        width,
+        colors: currentTheme.palette,
+      });
+      lines.push(stripLine, '');
+    }
 
     if (searchable && view.query.length > 0) {
       lines.push(currentTheme.fg('primary', ' Search: ') + currentTheme.fg('text', view.query));
@@ -213,6 +266,9 @@ export class SkillSelectorComponent extends Container implements Focusable {
           line += isSelected
             ? currentTheme.boldFg('primary', item.label)
             : currentTheme.fg('text', item.label);
+          if (item.isDescendant && item.groupPath) {
+            line += '  ' + currentTheme.fg('textMuted', `(${item.groupPath})`);
+          }
         }
         lines.push(line);
       }
@@ -224,7 +280,9 @@ export class SkillSelectorComponent extends Container implements Focusable {
     const selected = this.list.selected();
     if (selected !== undefined) {
       const selectedType = selected.kind === 'group' ? 'Group' : 'Skill';
-      lines.push(currentTheme.fg('textMuted', ` ${selectedType}: ${selected.label}`));
+      const pathSuffix =
+        selected.kind === 'skill' && selected.groupPath ? ` (${selected.groupPath})` : '';
+      lines.push(currentTheme.fg('textMuted', ` ${selectedType}: ${selected.label}${pathSuffix}`));
       lines.push(currentTheme.fg('text', `   ${selected.description}`));
       lines.push('');
     }
@@ -241,3 +299,4 @@ export class SkillSelectorComponent extends Container implements Focusable {
     return lines.map((line) => truncateToWidth(line, width));
   }
 }
+

@@ -130,20 +130,22 @@ function resolveGroupPathsForSkill(
   skill: SkillSummary,
   skillRoots: readonly string[] = [],
 ): readonly string[] {
-  const resultGroups: string[] = [];
-
-  // Rule 1: Explicit frontmatter `groups`
+  // Precedence Rule 1: Explicit frontmatter `groups`
   if (Array.isArray(skill.groups) && skill.groups.length > 0) {
+    const groups: string[] = [];
     for (const rawGroup of skill.groups) {
       if (typeof rawGroup !== 'string') continue;
       const cleanPath = cleanGroupPath(rawGroup);
-      if (cleanPath !== undefined && !resultGroups.includes(cleanPath)) {
-        resultGroups.push(cleanPath);
+      if (cleanPath !== undefined && !groups.includes(cleanPath)) {
+        groups.push(cleanPath);
       }
+    }
+    if (groups.length > 0) {
+      return groups;
     }
   }
 
-  // Rule 2: Explicit `category` or `categories`
+  // Precedence Rule 2: Explicit `category` or `categories`
   const categoryCandidates: string[] = [];
   if (typeof skill.category === 'string' && skill.category.trim() !== '') {
     categoryCandidates.push(skill.category.trim());
@@ -155,61 +157,35 @@ function resolveGroupPathsForSkill(
       }
     }
   }
-  for (const cat of categoryCandidates) {
-    const clean = cleanGroupPath(cat);
-    if (clean !== undefined && !resultGroups.includes(clean)) {
-      resultGroups.push(clean);
-    }
-  }
-
-  // Rule 3: `tags` frontmatter field
-  if (Array.isArray(skill.tags) && skill.tags.length > 0) {
-    for (const tag of skill.tags) {
-      if (typeof tag !== 'string') continue;
-      const clean = cleanGroupPath(tag);
-      if (clean !== undefined && !resultGroups.includes(clean)) {
-        resultGroups.push(clean);
+  if (categoryCandidates.length > 0) {
+    const categories: string[] = [];
+    for (const cat of categoryCandidates) {
+      const clean = cleanGroupPath(cat);
+      if (clean !== undefined && !categories.includes(clean)) {
+        categories.push(clean);
       }
     }
+    if (categories.length > 0) {
+      return categories;
+    }
   }
 
-  // Rule 4: Relative parent folder derivation
+  // Precedence Rule 3: Relative parent folder derivation
   const folderFallback = deriveFolderGroup(skill.path, skillRoots, skill.name);
   if (folderFallback !== undefined) {
     const clean = cleanGroupPath(folderFallback);
-    if (clean !== undefined && !resultGroups.includes(clean)) {
-      resultGroups.push(clean);
+    if (clean !== undefined) {
+      return [clean];
     }
   }
 
-  // Rule 5: Hyphenated or underscore skill name namespace prefix fallback
-  if (resultGroups.length === 0 && skill.name) {
-    const namespaceGroup = deriveNamespaceGroup(skill.name);
-    if (namespaceGroup !== undefined) {
-      resultGroups.push(namespaceGroup);
-    }
-  }
-
-  // Rule 6: Final fallback to Uncategorized
-  if (resultGroups.length === 0) {
-    return ['Uncategorized'];
-  }
-
-  return resultGroups;
-}
-
-function deriveNamespaceGroup(skillName: string): string | undefined {
-  if (!skillName) return undefined;
-  const parts = skillName.split('_').map((p) => p.trim()).filter((p) => p !== '');
-  if (parts.length >= 2 && parts[0] !== undefined && parts[0].length > 0) {
-    return parts[0];
-  }
-  return undefined;
+  // Precedence Rule 4: Final fallback to Uncategorized
+  return ['Uncategorized'];
 }
 
 function deriveFolderGroup(
   skillPath: string,
-  skillRoots: readonly string[],
+  skillRoots: readonly string[] = [],
   skillName?: string,
 ): string | undefined {
   if (!skillPath) return undefined;
@@ -219,30 +195,42 @@ function deriveFolderGroup(
     const normalizedRoot = path.resolve(root);
     if (normalizedPath.startsWith(normalizedRoot)) {
       const rel = path.relative(normalizedRoot, normalizedPath);
-      const segments = rel.split(path.sep).filter((s) => s !== '' && s !== 'SKILL.md');
+      const segments = rel
+        .split(path.sep)
+        .filter((s) => s !== '' && s !== 'SKILL.md' && !s.endsWith('.md'));
       if (segments.length >= 2) {
-        // e.g. ["security", "owasp-audit"] -> "security"
-        return segments[0];
+        const last = segments[segments.length - 1];
+        if (last === skillName || (skillName && last?.toLowerCase() === skillName.toLowerCase())) {
+          segments.pop();
+        }
+      }
+      if (segments.length > 0) {
+        return segments.join('/');
       }
     }
   }
 
-  // General fallback for paths containing /skills/ folder
-  const parts = normalizedPath.split(path.sep);
-  const skillsIdx = parts.lastIndexOf('skills');
-  if (skillsIdx >= 0 && skillsIdx + 2 < parts.length) {
-    const parentDir = parts[skillsIdx + 1];
-    const itemDir = parts[skillsIdx + 2];
-    if (
-      parentDir !== undefined &&
-      parentDir !== '' &&
-      !parentDir.endsWith('.md') &&
-      parentDir !== skillName &&
-      itemDir !== undefined
-    ) {
-      return parentDir;
+  const parts = normalizedPath.split(path.sep).filter((p) => p !== '');
+  let markerIdx = -1;
+  const knownMarkers = ['skills', 'skillshub'];
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const part = parts[i];
+    if (part && knownMarkers.includes(part)) {
+      markerIdx = i;
+      break;
+    }
+  }
+
+  if (markerIdx >= 0 && markerIdx + 1 < parts.length) {
+    const sub = parts.slice(markerIdx + 1).filter((s) => s !== 'SKILL.md' && !s.endsWith('.md'));
+    if (sub.length >= 2) {
+      const parentFolders = sub.slice(0, -1);
+      if (parentFolders.length > 0) {
+        return parentFolders.join('/');
+      }
     }
   }
 
   return undefined;
 }
+
