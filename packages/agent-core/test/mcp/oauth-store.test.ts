@@ -5,7 +5,7 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
-import { McpOAuthClientProvider, McpOAuthCoordinator, McpOAuthService } from '../../src/mcp/oauth';
+import { McpOAuthClientProvider, McpOAuthService } from '../../src/mcp/oauth';
 import { JsonFileStore, sanitizeStoreKey } from '../../src/mcp/oauth/store';
 
 describe('sanitizeStoreKey', () => {
@@ -158,28 +158,6 @@ describe('MCP OAuth credential identity', () => {
   });
 });
 
-describe('McpOAuthCoordinator', () => {
-  it('broadcasts credential changes without owning OAuth flows', () => {
-    const coordinator = new McpOAuthCoordinator();
-    const events: unknown[] = [];
-    coordinator.onCredentialsChanged((event) => events.push(event));
-
-    coordinator.notifyCredentialsChanged('notion', 'https://mcp.example.test/mcp#fragment');
-    coordinator.notifyCredentialsInvalidated('notion', 'https://mcp.example.test/mcp');
-    expect(events).toEqual([
-      {
-        serverName: 'notion',
-        serverUrl: 'https://mcp.example.test/mcp',
-        kind: 'updated',
-      },
-      {
-        serverName: 'notion',
-        serverUrl: 'https://mcp.example.test/mcp',
-        kind: 'invalidated',
-      },
-    ]);
-  });
-});
 
 function token(accessToken: string): OAuthTokens {
   return {

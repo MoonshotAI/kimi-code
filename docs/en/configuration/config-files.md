@@ -40,7 +40,7 @@ model = "k3"
 max_context_size = 1048576
 capabilities = [ "thinking", "always_thinking", "image_in", "video_in", "tool_use" ]
 display_name = "K3"
-support_efforts = [ "max" ]
+support_efforts = [ "low", "high", "max" ]
 default_effort = "max"
 
 [models."kimi-code/kimi-for-coding"]
@@ -220,7 +220,7 @@ A configured pool — an explicit `[secondary_model.models]` table or a lone `de
 default_model = "kimi-code/kimi-for-coding-highspeed"
 [secondary_model.models]
 "kimi-code/k3" = "Pick this for hard problems. Strong at complex reasoning, algorithm design, deep debugging, math, and systematic challenges."
-"kimi-code/kimi-for-coding-highspeed" = "Fast and cheap. Good for daily refactoring, code explanation, small edits, summaries, and simple batch tasks."
+"kimi-code/kimi-for-coding-highspeed" = "Fast but priced higher. Good for latency-sensitive tasks: daily refactoring, code explanation, small edits, and summaries."
 "kimi-code/kimi-for-coding" = "A balanced coding workhorse. Good for most feature development and code-change tasks."
 ```
 
@@ -236,23 +236,26 @@ force = true
 
 With `force` set, the `model` parameter is not advertised (just like when nothing is configured) and every spawn binds `default_model`; an explicit `model` argument, `"primary"` included, is rejected with an error. `force` requires `default_model` and cannot be combined with a `[secondary_model.models]` table — the table exists to offer a choice, and force removes it.
 
-Because natural resolution lands on the bound model's default effort, different pool entries can carry different thinking levels: register a second `[models]` entry as a "variant" of the same underlying model, override only its `default_effort` via [`[models."<alias>".overrides]`](#model-overrides), and list both aliases in the pool — the main agent picks the thinking level together with the alias:
+Because natural resolution lands on the bound model's default effort, different pool entries can carry different thinking levels: register a second `[models]` entry as a "variant" of the same underlying model, override only its `default_effort` via [`[models."<alias>".overrides]`](#model-overrides), and list both aliases in the pool — the main agent picks the thinking level together with the alias. Two prerequisites: the underlying model must declare `support_efforts` (under `managed:kimi-code` only the k3 family currently declares effort levels), and the variant is a standalone entry that does not inherit fields from the entry it points at — copy `capabilities`, `support_efforts`, and the other metadata over in full, otherwise `default_effort` has no effect (it must be a member of `support_efforts`):
 
 ```toml
-# "kimi-code/kimi-for-coding-highspeed" is provisioned by /login; this
-# registers a higher-effort variant of the same model
-[models.kimi-for-coding-highspeed-deep]
+# "kimi-code/k3" is provisioned by /login (default: high); this registers
+# a max-effort variant of the same model
+[models.k3-max]
 provider = "managed:kimi-code"
-model = "kimi-for-coding-highspeed"
+model = "k3"
+max_context_size = 1048576
+capabilities = [ "thinking", "always_thinking", "image_in", "video_in", "tool_use" ]
+support_efforts = [ "low", "high", "max" ]
 
-[models.kimi-for-coding-highspeed-deep.overrides]
-default_effort = "high"
+[models.k3-max.overrides]
+default_effort = "max"
 
 [secondary_model]
-default_model = "kimi-code/kimi-for-coding-highspeed"
+default_model = "kimi-code/k3"
 [secondary_model.models]
-"kimi-code/kimi-for-coding-highspeed" = "Fast and cheap. Good for daily refactoring, code explanation, small edits, summaries, and simple batch tasks."
-kimi-for-coding-highspeed-deep = "The same model at a high thinking level. Good for harder subtasks."
+"kimi-code/k3" = "Default high effort. Good for most implementation, analysis, and multi-turn interaction tasks."
+k3-max = "The same model at max thinking effort. Good for the hardest subtasks."
 ```
 
 Note that `default_effort` stays a model-level default: once a global `[thinking].effort` is set, it wins for the main agent and subagents alike, and the variant's default only applies when no global effort is set. Value and fallback rules follow the [`[models]` entry's `default_effort`](#models).

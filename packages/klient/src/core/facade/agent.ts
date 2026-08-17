@@ -45,7 +45,11 @@ export type AgentTaskInfo = Awaited<ReturnType<IAgentTaskService['list']>>[numbe
 export type McpServerEntry = ReturnType<IAgentMcpService['list']>[number];
 
 export interface AgentFacade {
-  prompt(input: { input: readonly ContentPart[] }): Promise<PromptLaunchResult>;
+  prompt(input: {
+    input: readonly ContentPart[];
+    disabledTools?: readonly string[];
+    promptId?: string;
+  }): Promise<PromptLaunchResult>;
   /**
    * Submit one prompt with one or more skill activations bundled into the
    * same user message: the skills are validated up front (an unknown name or

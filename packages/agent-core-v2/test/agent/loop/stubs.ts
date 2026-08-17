@@ -3,16 +3,16 @@
  */
 import { toDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
-import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, Step, Turn } from '#/agent/loop/loop';
+import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, Step, Turn, TurnResult } from '#/agent/loop/loop';
 import type { StepRequest } from '#/agent/loop/stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from '#/agent/loop/stepRequestQueue';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { BeforeToolExecuteEvent, ToolDidExecuteContext, WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
-import { OrderedHookSlot } from '#/hooks';
+import { OrderedHookSlot, createHooks } from '#/hooks';
 import type { ContentPart } from '#/kosong/contract/message';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
-import { createHooks } from '#/hooks';
 import type { Op } from '#/wire/op';
+import type { ModelDef } from '#/wire/model';
 import type { IWireService } from '#/wire/wire';
 
 export interface StubLoopOptions { readonly hasActiveTurn?: boolean; readonly currentId?: string | number; readonly pendingTurnResult?: boolean }
@@ -21,6 +21,7 @@ export type StubLoop = IAgentLoopService & {
   readonly launches: readonly number[];
   readonly cancels: readonly { readonly turnId?: number; readonly reason?: unknown }[];
   startTurn(): Turn;
+  finishActive(result?: TurnResult): void;
   drainNextBatch(context: { append(...messages: ContextMessage[]): void }): StepRequestBatch | undefined;
 };
 const turnControllers = new WeakMap<Turn, AbortController>();
@@ -44,19 +45,27 @@ function registry(): { handlers: LoopErrorHandler[]; register: IAgentLoopService
   };
   return { handlers, register };
 }
-function materialize(request: StepRequest, context: { append(...messages: ContextMessage[]): void }): void { if (request.state !== 'pending') return; request.onWillMaterialize(); const messages = request.resolveContextMessages(); if (messages.length) context.append(...messages); request.markMaterialized(); }
+function materialize(request: StepRequest, context: { append(...messages: ContextMessage[]): void }): void { if (request.state !== 'pending') return; request.onWillMaterialize(); const messages = request.resolveContextMessages(); if (messages.length > 0) context.append(...messages); request.markMaterialized(); }
 export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
   const hooks = createHooks(['onWillBeginStep', 'onDidFinishStep']) as IAgentLoopService['hooks'];
   const queue = new StepRequestQueue(); const errorHandlers = registry(); const launches: number[] = []; const cancels: { turnId?: number; reason?: unknown }[] = [];
   let active: Turn | undefined; let nextId = typeof options.currentId === 'number' ? options.currentId : 0;
+  let finishTurn: ((result: TurnResult) => void) | undefined;
   const startTurn = () => {
     const turn = makeTurn(nextId++);
-    const result = options.pendingTurnResult === true ? new Promise<never>(() => {}) : turn.result;
+    const result = options.pendingTurnResult === true
+      ? new Promise<TurnResult>((resolve) => { finishTurn = resolve; })
+      : turn.result;
     const configured = { ...turn, result };
     launches.push(configured.id); active = configured; return configured;
   };
   const stub: StubLoop = {
     _serviceBrand: undefined, hooks, queue, launches, cancels, startTurn,
+    finishActive(result?: TurnResult) {
+      finishTurn?.(result ?? { type: 'completed', steps: 0, truncated: false });
+      finishTurn = undefined;
+      active = undefined;
+    },
     enqueue(request, enqueueOptions) {
       let turn = active;
       if (request.admission === 'newTurn' || (request.admission === 'activeOrNewTurn' && turn === undefined)) turn = startTurn();
@@ -92,5 +101,37 @@ export async function runWillBeginStepHooks(
   });
 }
 export type StubWire = IWireService & { readonly ops: readonly Op[]; readonly steered: readonly { readonly input: readonly ContentPart[]; readonly origin?: PromptOrigin }[] };
-export function stubWire(): StubWire { const ops: Op[] = []; const steered: { input: readonly ContentPart[]; origin?: PromptOrigin }[] = []; return { _serviceBrand: undefined, hooks: createHooks(['onDidRestore']), ops, steered, dispatch: (...incoming: Op[]) => { for (const op of incoming) { ops.push(op); if (op.type === 'turn.steer') steered.push(op.payload as never); } }, replay: async () => {}, signal: () => {}, flush: async () => {}, getModel: () => ({}), subscribe: () => toDisposable(() => {}), onEmission: () => toDisposable(() => {}) } as unknown as StubWire; }
+export function stubWire(): StubWire {
+  const ops: Op[] = [];
+  const steered: { input: readonly ContentPart[]; origin?: PromptOrigin }[] = [];
+  const models = new Map<object, unknown>();
+  const getModel = <S>(model: ModelDef<S>): S => {
+    let state = models.get(model);
+    if (state === undefined) {
+      state = model.initial();
+      models.set(model, state);
+    }
+    return state as S;
+  };
+  return {
+    _serviceBrand: undefined,
+    hooks: createHooks(['onDidRestore']),
+    ops,
+    steered,
+    dispatch: (...incoming: Op[]) => {
+      for (const op of incoming) {
+        ops.push(op);
+        const state = getModel(op.descriptor.model);
+        models.set(op.descriptor.model, op.descriptor.apply(state, op.payload));
+        if (op.type === 'turn.steer') steered.push(op.payload as never);
+      }
+    },
+    replay: async () => {},
+    signal: () => {},
+    flush: async () => {},
+    getModel,
+    subscribe: () => toDisposable(() => {}),
+    onEmission: () => toDisposable(() => {}),
+  } as unknown as StubWire;
+}
 export function stubToolExecutor(): IAgentToolExecutorService { return { _serviceBrand: undefined, execute: async function* () {}, onBeforeExecuteTool: Event.None as Event<BeforeToolExecuteEvent>, onWillExecuteTool: Event.None as Event<WillExecuteToolEvent>, hooks: { onDidExecuteTool: new OrderedHookSlot<ToolDidExecuteContext>() }, recordDupType: () => {}, registerToolCallGuard: () => ({ dispose() {} }), registerUnavailableToolDescriber: () => ({ dispose() {} }), registerMissingToolDescriber: () => ({ dispose() {} }) }; }

@@ -145,6 +145,30 @@ describe('McpConnectionManager', () => {
     }
   }, 20000);
 
+  it('connect with the identical config is a no-op for a live entry', async () => {
+    // Config reconcilers and explicit SDK callers can both upsert the same
+    // server; the second writer must not tear down the first's handshake.
+    const cm = createManager();
+    const statuses: string[] = [];
+    cm.onStatusChange((entry) => statuses.push(`${entry.name}:${entry.status}`));
+    try {
+      await cm.connect('alpha', stdioConfig());
+      expect(cm.get('alpha')?.status).toBe('connected');
+      statuses.length = 0;
+
+      await cm.connect('alpha', stdioConfig());
+      expect(cm.get('alpha')?.status).toBe('connected');
+      expect(statuses).toEqual([]);
+
+      // A changed config still reconnects.
+      await cm.connect('alpha', { ...stdioConfig(), startupTimeoutMs: 5_000 });
+      expect(cm.get('alpha')?.status).toBe('connected');
+      expect(statuses).toEqual(['alpha:pending', 'alpha:connected']);
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
   it('marks HTTP servers failed when configured bearer token env var is missing', async () => {
     const cm = createManager({ envLookup: () => undefined });
     try {

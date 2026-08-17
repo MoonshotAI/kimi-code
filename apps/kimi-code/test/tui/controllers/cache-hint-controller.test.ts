@@ -5,6 +5,7 @@ import {
   type CacheHintHost,
 } from '#/tui/controllers/cache-hint-controller';
 import type { CacheHintConfig } from '#/utils/cache-hint-config';
+import type { ExtractionResult } from '#/tui/utils/image-placeholder';
 
 const peekMock = vi.fn<() => CacheHintConfig | undefined>(() => undefined);
 const getMock = vi.fn(async (): Promise<CacheHintConfig | undefined> => undefined);
@@ -52,6 +53,7 @@ function makeHost(
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),
     restoreInputText: vi.fn(),
+    recallStashedMedia: vi.fn(),
     showError: vi.fn(),
     createNewSession: vi.fn(async () => {
       if (overrides.createNewSessionFails !== true) state.appState.sessionId = 's2';
@@ -79,6 +81,24 @@ function resumeSession(replayTimes: number[], tokenCount: number, updatedAt = 0)
 
 async function flush(times = 20): Promise<void> {
   for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+}
+
+function uploadedExtraction(fileId: string, byte: number): ExtractionResult {
+  const path = `/tmp/${fileId}.png`;
+  return {
+    parts: [
+      { type: 'text', text: `<image path="${path}"></image>` },
+      {
+        type: 'image_url',
+        imageUrl: { url: `kimi-file://${fileId}?path=${encodeURIComponent(path)}` },
+      },
+    ],
+    hasMedia: true,
+    imageAttachmentIds: [1],
+    videoAttachmentIds: [],
+    imageSnapshots: [{ bytes: new Uint8Array([byte]), mime: 'image/png', width: 640, height: 480 }],
+    stagingPaths: [path],
+  };
 }
 
 beforeEach(() => {
@@ -226,6 +246,34 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     // Nothing was sent; both inputs are back in the editor, newline-joined.
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
     expect(host.restoreInputText).toHaveBeenLastCalledWith('hello\nworld');
+  });
+
+  it('releases stashed media with recall semantics when the dialog is dismissed', async () => {
+    getMock.mockResolvedValue(CONFIG);
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    const extraction = uploadedExtraction('file-1', 1);
+
+    expect(controller.maybeInterceptOnSubmit('describe [image #1 (1×1)]', extraction)).toBe(true);
+    await vi.waitFor(() => {
+      expect(host.mountEditorReplacement).toHaveBeenCalled();
+    });
+    vi.restoreAllMocks();
+
+    const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      handleInput: (data: string) => void;
+    };
+    dialog.handleInput('\u001B'); // dismiss
+    await flush();
+
+    // Nothing was sent; the draft is back in the editor and the stash's
+    // retains/staged copies go through recall — without this the retain count
+    // never returns to zero and the upload can never be lease-deleted.
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+    expect(host.restoreInputText).toHaveBeenCalledWith('describe [image #1 (1×1)]');
+    expect(host.recallStashedMedia).toHaveBeenCalledWith('describe [image #1 (1×1)]', extraction);
   });
 
   it('hands the stashed input back when the session switched during the fetch', async () => {
@@ -380,6 +428,68 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     await flush();
     expect(host.createNewSession).toHaveBeenCalled();
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('hello', undefined);
+  });
+
+  it('resends an uploaded image inline after starting a new session', async () => {
+    peekMock.mockReturnValue(CONFIG);
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    const extraction = uploadedExtraction('file-1', 1);
+
+    controller.maybeInterceptOnSubmit('describe [image #1 (1×1)]', extraction);
+    vi.restoreAllMocks();
+
+    const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      handleInput: (data: string) => void;
+    };
+    dialog.handleInput('\u001B[B');
+    dialog.handleInput('\r');
+    await flush();
+
+    const resend = vi.mocked(host.sendNormalUserInput).mock.calls[0]?.[1];
+    expect(resend?.imageAttachmentIds).toEqual([]);
+    expect(resend?.parts).toContainEqual({
+      type: 'image_url',
+      imageUrl: { url: 'data:image/png;base64,AQ==' },
+    });
+  });
+
+  it('resends every chained uploaded image inline after starting a new session', async () => {
+    getMock.mockResolvedValue(CONFIG);
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+
+    expect(controller.maybeInterceptOnSubmit('first', uploadedExtraction('file-1', 1))).toBe(true);
+    expect(controller.maybeInterceptOnSubmit('second', uploadedExtraction('file-2', 2))).toBe(true);
+    await vi.waitFor(() => {
+      expect(host.mountEditorReplacement).toHaveBeenCalled();
+    });
+    vi.restoreAllMocks();
+
+    const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      handleInput: (data: string) => void;
+    };
+    dialog.handleInput('\u001B[B');
+    dialog.handleInput('\r');
+    await flush();
+
+    const sendCalls = (
+      host.sendNormalUserInput as unknown as {
+        mock: { calls: Array<[string, ExtractionResult | undefined]> };
+      }
+    ).mock.calls;
+    const imageUrls = sendCalls.map(([, extraction]) => {
+      const imagePart = extraction?.parts.find((part) => part.type === 'image_url');
+      return imagePart?.type === 'image_url' ? imagePart.imageUrl.url : undefined;
+    });
+    expect(imageUrls).toEqual([
+      'data:image/png;base64,AQ==',
+      'data:image/png;base64,Ag==',
+    ]);
   });
 
   it('keeps the input when new-session creation fails', async () => {

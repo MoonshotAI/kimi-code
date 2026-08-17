@@ -23,6 +23,7 @@ import {
 import { z } from 'zod';
 
 import { requestLog } from '../lib/requestLog';
+import { buildContentDisposition } from '../lib/contentDisposition';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { errEnvelope, okEnvelope } from '../protocol/envelope';
@@ -261,14 +262,6 @@ function readFieldNumber(field: unknown): number | undefined {
 
 function readRangeHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
-}
-
-function buildContentDisposition(name: string, mediaType?: string): string {
-  const disposition = /^(image|video|audio)\//.test(mediaType ?? '') ? 'inline' : 'attachment';
-  if (/^[\w. ()+[\]-]+$/.test(name)) {
-    return `${disposition}; filename="${name}"`;
-  }
-  return disposition;
 }
 
 interface ByteRange {

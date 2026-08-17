@@ -206,6 +206,18 @@ export class McpConnectionManager implements McpConnectionView {
   async connect(name: string, config: McpServerConfig): Promise<void> {
     const previous = this.entries.get(name);
     if (previous !== undefined) {
+      // A connect carrying the config the entry already runs (or is already
+      // starting) is a no-op. Both the config-domain reconciler and explicit
+      // SDK callers can issue it; without this guard the second writer tears
+      // down the first writer's live handshake mid-flight. Disabled entries
+      // hold no client, so they fall through and re-emit as before; failed
+      // entries are excluded so an explicit connect still retries.
+      if (
+        (previous.status === 'pending' || previous.status === 'connected') &&
+        mcpServerConfigsEqual(previous.config, config)
+      ) {
+        return;
+      }
       await this.closeClient(previous);
     }
     const disabled = config.enabled === false;
@@ -574,6 +586,28 @@ function stderrTail(client: RuntimeMcpClient | undefined): string | undefined {
   const snapshot = client.stderrSnapshot();
   if (snapshot.length === 0) return undefined;
   return snapshot.trimEnd();
+}
+
+/**
+ * Structural equality for effective configs, backing the idempotent-connect
+ * guard (config reconcilers and explicit callers may issue the same upsert).
+ */
+function mcpServerConfigsEqual(a: McpServerConfig, b: McpServerConfig): boolean {
+  return stableConfigJson(a) === stableConfigJson(b);
+}
+
+function stableConfigJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableConfigJson).join(',')}]`;
+  }
+  if (typeof value === 'object' && value !== null) {
+    const entries = Object.entries(value)
+      .filter(([, entryValue]) => entryValue !== undefined)
+      .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableConfigJson(entryValue)}`)
+      .toSorted();
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
 }
 
 async function withTimeout<T>(

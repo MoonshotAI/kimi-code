@@ -137,7 +137,7 @@ function persistedEntry(server: GlobalMcpServerConfig): McpServerConfig {
   return entry;
 }
 
-function normalizeServerName(name: string): string {
+export function normalizeServerName(name: string): string {
   const normalized = name.trim();
   if (normalized.length > 0) return normalized;
   throw new KimiError(ErrorCodes.REQUEST_INVALID, 'MCP server name cannot be empty');

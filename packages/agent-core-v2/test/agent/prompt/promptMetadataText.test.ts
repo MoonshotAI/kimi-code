@@ -7,6 +7,8 @@
  *   - an inline image-compression caption (harness metadata placed next to
  *     the image by prompt ingestion) never leaks into titles/lastPrompt,
  *     whether it is a standalone text part or merged into the user's text
+ *   - a standalone `<media path>` tag (machine markup) never leaks a
+ *     materialization path into titles/lastPrompt
  *   - prompt metadata updates retain the latest sanitized prompt and derive
  *     the easy title
  */
@@ -57,6 +59,28 @@ describe('promptMetadataTextFromContentParts', () => {
     expect(text).toBe('能展示但是没有快捷键提示 [image]');
     expect(text).not.toContain('<system>');
     expect(text).not.toContain('Image compressed');
+  });
+
+  it('keeps an upload <image path> tag out of the metadata text', () => {
+    // A standalone media path tag is machine markup: the materialization path
+    // must never leak into titles / lastPrompt, whether or not a daemon-ref
+    // part rides next to it.
+    const text = promptMetadataTextFromContentParts([
+      { type: 'text', text: 'what is this?' },
+      { type: 'text', text: '<image path="/Users/alice/cache/f_123.png"></image>' },
+      { type: 'image_url', imageUrl: { url: 'kimi-file://f_123?path=%2FUsers%2Falice%2Fcache%2Ff_123.png' } },
+    ]);
+    expect(text).toBe('what is this? [image]');
+    expect(text).not.toContain('/Users/alice');
+  });
+
+  it('keeps a bare <image path> tag out of the metadata text', () => {
+    const text = promptMetadataTextFromContentParts([
+      { type: 'text', text: '<image path="/cache/f_123.png">' },
+      { type: 'text', text: 'describe it' },
+    ]);
+    expect(text).toBe('describe it');
+    expect(text).not.toContain('/cache');
   });
 });
 

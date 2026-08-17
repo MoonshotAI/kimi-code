@@ -9,15 +9,25 @@
  * prompt rides the event only for displayable user origins
  * ({@link isDisplayablePromptOrigin}) — a system-triggered turn (goal
  * continuation, subagent run, cron…) has internal steering text as its input,
- * which must never surface in transcripts. When the turn's prompt bundles
+ * which must never surface in transcripts. An upload's daemon-ref media part
+ * is self-contained (`daemonFileRefFromPart`): its kind comes from the part
+ * type and its file id from the reference, so the projection needs no
+ * tag+ref pairing — the referenced media rides as
+ * {@link TurnStartedEvent.promptAttachments}. When the turn's prompt bundles
  * skill activations, their rendered blocks (prepended to the content, one
  * text part per skill) are excluded from the extracted text.
+ * `turn.started` also echoes the prompt record id as
+ * {@link TurnStartedEvent.promptId} when the turn was opened by a prompt
+ * submission, so submitters can bind their own bookkeeping (e.g. staged
+ * uploads) to the exact turn that consumed them; turns opened any other way
+ * (retry, goal continuation, …) leave it absent.
  */
 
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { FinishReason } from '#/kosong/contract/provider';
 import type { ContentPart, TextPart } from '#/kosong/contract/message';
+import { daemonFileRefFromPart } from '#/agent/media/mediaRef';
 import type { TokenUsage } from '#/kosong/contract/usage';
 
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
@@ -30,24 +40,56 @@ export type TurnInterruptReason =
   | 'filtered'
   | 'blocked';
 
+/**
+ * One daemon-referenced upload carried by the turn-opening input.
+ */
+export interface TurnPromptAttachment {
+  readonly kind: 'image' | 'video';
+  readonly fileId: string;
+}
+
 export interface TurnStartedEvent {
   readonly type: 'turn.started';
   readonly turnId: number;
   readonly origin: PromptOrigin;
   readonly prompt?: string;
+  readonly promptAttachments?: readonly TurnPromptAttachment[];
+  readonly promptId?: string;
 }
 
-export function turnPromptText(
+/**
+ * The displayable projection of the turn-opening input: the prompt text,
+ * plus one entry per daemon-referenced upload.
+ */
+export interface TurnPromptProjection {
+  readonly text?: string;
+  readonly attachments?: readonly TurnPromptAttachment[];
+}
+
+export function projectTurnPrompt(
   input: readonly ContentPart[],
   origin?: PromptOrigin,
-): string | undefined {
+): TurnPromptProjection {
   const bundledBlocks = origin?.kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0;
   const text = input
     .filter((part): part is TextPart => part.type === 'text')
     .slice(bundledBlocks)
     .map((part) => part.text)
     .join('');
-  return text.length > 0 ? text : undefined;
+  const media = input.flatMap((part) => {
+    const daemonPart = daemonFileRefFromPart(part);
+    return daemonPart === undefined ? [] : [daemonPart];
+  });
+  return {
+    text: text.length > 0 ? text : undefined,
+    attachments:
+      media.length === 0
+        ? undefined
+        : media.map((entry) => ({
+            kind: entry.kind,
+            fileId: entry.ref.fileId,
+          })),
+  };
 }
 
 export function isDisplayablePromptOrigin(origin: PromptOrigin): boolean {

@@ -12,15 +12,22 @@
  * array through, the same shape the live `tool.result` event stream carries,
  * so REST consumers can still render the media after reload/resume.
  *
- * A user `video_url` part projects to a structured `video` content part so
- * REST consumers can render it: an internal `kimi-file://<id>?path=…`
- * reference becomes `{ kind: 'file', file_id }` (the materialization path is
- * stripped, never leaked to clients); any other url becomes `{ kind: 'url' }`
- * carrying the provider id. An `audio_url` part still flattens to a text
- * marker.
+ * A user `image_url` / `video_url` part projects to a structured `image` /
+ * `video` content part so REST consumers can render it: an internal
+ * `kimi-file://<id>` reference becomes
+ * `{ kind: 'session_media', file_id }` (the internal URL never reaches
+ * clients); any other url becomes `{ kind: 'url' }` carrying
+ * the provider id. An `audio_url` part still flattens to a text marker.
+ *
+ * A daemon-ref media part is self-contained (`daemonFileRefFromPart`): the
+ * part type carries the kind and the reference the file id, so the
+ * projection walks the raw parts directly — there is no tag+ref pairing to
+ * fold. A standalone `<media path>` tag text part is user text or the legacy
+ * degrade form and passes through verbatim. Assistant output passes through
+ * verbatim.
  */
 
-import { parseKimiFileUrl, type ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { daemonFileRefFromPart, parseDaemonFileUrl, type ContentPart, type ContextMessage } from '@moonshot-ai/agent-core-v2';
 
 import type { Message, MessageContent, MessageRole, ToolUseContent } from '../../protocol/message';
 
@@ -43,17 +50,20 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
         ? { type: 'thinking', thinking: part.think, signature: sig }
         : { type: 'thinking', thinking: part.think };
     }
-    case 'image_url':
-      return {
-        type: 'image',
-        source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id },
-      };
+    case 'image_url': {
+      // Same daemon-reference rule as `video_url`: an internal reference
+      // projects to the Session-owned copy created during prompt intake.
+      const ref = parseDaemonFileUrl(part.imageUrl.url);
+      return ref !== undefined
+        ? { type: 'image', source: { kind: 'session_media', file_id: ref.fileId } }
+        : { type: 'image', source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id } };
+    }
     case 'audio_url':
       return { type: 'text', text: `[audio:${part.audioUrl.url}]` };
     case 'video_url': {
-      const ref = parseKimiFileUrl(part.videoUrl.url);
+      const ref = parseDaemonFileUrl(part.videoUrl.url);
       return ref !== undefined
-        ? { type: 'video', source: { kind: 'file', file_id: ref.fileId } }
+        ? { type: 'video', source: { kind: 'session_media', file_id: ref.fileId } }
         : { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } };
     }
   }
@@ -86,6 +96,9 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
     return [part];
   }
 
+  // User and assistant content both map part-by-part: daemon-ref media parts
+  // are self-contained and project to `session_media` sources inside
+  // `mapContentPart`; standalone `<media path>` tags stay text.
   const base = msg.content.map((p) => mapContentPart(p));
 
   if (msg.role === 'assistant' && msg.toolCalls.length > 0) {
@@ -109,6 +122,41 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
   }
 
   return base;
+}
+
+/**
+ * Prompt content (engine kosong parts) → the v1 wire `messageContentSchema`
+ * shape. Shared by every prompt-queue surface — the REST prompt list, the
+ * `prompt.steered` session event, and the transcript prompt entity — so a
+ * self-contained daemon-ref media part projects back to
+ * `{ kind: 'session_media', file_id }`: neither the transient App upload nor
+ * the internal `kimi-file://` URL becomes the stored read-model contract.
+ */
+export function projectPromptContentParts(content: readonly ContentPart[]): MessageContent[] {
+  const parts: MessageContent[] = [];
+  for (const part of content) {
+    const daemonRef = daemonFileRefFromPart(part);
+    if (daemonRef !== undefined) {
+      parts.push({
+        type: daemonRef.kind,
+        source: { kind: 'session_media', file_id: daemonRef.ref.fileId },
+      });
+      continue;
+    }
+    if (part.type === 'text') parts.push({ type: 'text', text: part.text });
+    else if (part.type === 'image_url') {
+      const match = /^data:([^;]+);base64,(.*)$/.exec(part.imageUrl.url);
+      parts.push(match === null
+        ? { type: 'image', source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id } }
+        : { type: 'image', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
+    } else if (part.type === 'video_url') {
+      const match = /^data:([^;]+);base64,(.*)$/.exec(part.videoUrl.url);
+      parts.push(match === null
+        ? { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } }
+        : { type: 'video', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
+    }
+  }
+  return parts;
 }
 
 export function toProtocolMessage(

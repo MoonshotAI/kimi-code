@@ -114,10 +114,12 @@ describe('events / display re-exports', () => {
       sessionId: 'sess_1',
       turnId: 1,
       origin: { kind: 'user' },
+      promptId: 'prompt_1',
     });
 
     expect(parsed.agentId).toBe('agent_1');
     expect(parsed.sessionId).toBe('sess_1');
+    expect((parsed as { promptId?: string }).promptId).toBe('prompt_1');
   });
 
   it('validates prompt.submitted events', () => {

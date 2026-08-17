@@ -21,7 +21,7 @@
 // owning model offloads inline media to blob storage), cross-reducers
 // (foreign models that also reduce this record on dispatch and replay).
 
-// Index (52 record types)
+// Index (53 record types)
 //   config.update                      profile                     persisted  src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory               persisted  src/agent/contextMemory/contextOps.ts
 //   context.append_message             contextMemory               persisted  src/agent/contextMemory/contextOps.ts
@@ -53,6 +53,7 @@
 //   plan.revision                      plan                        persisted  src/features/plan/planOps.ts
 //   plugin.session_start               pluginSessionStartSnapshot  persisted  src/agent/plugin/agentPluginOps.ts
 //   profile.bind                       profile                     persisted  src/agent/profile/profileOps.ts
+//   prompt.accepted                    promptAdmission             persisted  src/agent/prompt/promptOps.ts
 //   runtime.set_binding                runtimeBinding              persisted  src/agent/runtimeBinding/runtimeBindingOps.ts
 //   skill.activate                     skill                       transient  src/agent/skill/skillOps.ts
 //   swarm_mode.enter                   swarm                       persisted  src/features/swarm/swarmOps.ts
@@ -485,6 +486,15 @@ interface ProfileBindPayload {
 }
 
 /**
+ * model: promptAdmission · persisted
+ * owner: src/agent/prompt/promptOps.ts
+ */
+interface PromptAcceptedPayload {
+  _name: 'prompt.accepted';
+  promptId: string;
+}
+
+/**
  * model: runtimeBinding · persisted
  * owner: src/agent/runtimeBinding/runtimeBindingOps.ts
  */
@@ -787,6 +797,7 @@ interface WirePayloadMap {
   "plan.revision": PlanRevisionPayload;
   "plugin.session_start": PluginSessionStartPayload;
   "profile.bind": ProfileBindPayload;
+  "prompt.accepted": PromptAcceptedPayload;
   "runtime.set_binding": RuntimeSetBindingPayload;
   "skill.activate": SkillActivatePayload;
   "swarm_mode.enter": SwarmModeEnterPayload;

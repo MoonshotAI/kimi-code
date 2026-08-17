@@ -310,6 +310,7 @@ export type KimiErrorCode =
   | 'request.invalid'
   | 'request.work_dir_required'
   | 'request.prompt_input_empty'
+  | 'prompt.id_conflict'
   | 'prompt.not_found'
   | 'prompt.already_completed'
   | 'session.busy'
@@ -671,6 +672,8 @@ export interface TurnStartedEvent {
   readonly turnId: number;
   readonly origin: PromptOrigin;
   readonly prompt?: string;
+  /** The prompt record id when the turn was opened by a prompt submission. */
+  readonly promptId?: string;
 }
 
 export interface TurnEndedEvent {
@@ -1314,6 +1317,7 @@ export const kimiErrorCodeSchema = z.enum([
   'request.invalid',
   'request.work_dir_required',
   'request.prompt_input_empty',
+  'prompt.id_conflict',
   'prompt.not_found',
   'prompt.already_completed',
   'session.busy',
@@ -1630,6 +1634,7 @@ export const turnStartedEventSchema = z.object({
   turnId: z.number(),
   origin: promptOriginSchema,
   prompt: z.string().optional(),
+  promptId: z.string().optional(),
 }) satisfies z.ZodType<TurnStartedEvent>;
 
 export const turnEndedEventSchema = z.object({

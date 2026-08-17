@@ -7,7 +7,11 @@
  *     on `frame.upsert` (whole frame state) and `append` (deltas).
  *   - The turn prompt arrives on `turn.started` itself
  *     (`TurnStartedEvent.prompt`) — the context append carrying the same text
- *     is not a bus event and lands after the turn header.
+ *     is not a bus event and lands after the turn header. Upload media
+ *     referenced by the prompt ride the same event (`promptAttachments`),
+ *     projected as `attachment.upsert` entities plus `turn.attachmentIds` —
+ *     one attachment per daemon-referenced upload — the daemon-ref part is
+ *     self-contained, no `<media path>` tag is authored engine-side.
  *   - Flush: at step/turn completion boundaries every open text/thinking frame
  *     of that step is re-emitted as a full-text `frame.upsert` — this is how
  *     'block'-grade subscribers (who never see `append`) reconverge.
@@ -74,6 +78,7 @@ import type {
   TextFrame,
   ToolCallFrame,
   ToolFrameProgress,
+  TranscriptAttachment,
   TranscriptFrame,
   TranscriptInteraction,
   TranscriptMarker,
@@ -88,6 +93,7 @@ import type {
 } from '@moonshot-ai/transcript';
 
 import { toLegacyPhase } from '../legacyStatus/legacyStatus';
+import { projectPromptContentParts } from '../messages/messageProjection';
 
 // ---------------------------------------------------------------------------
 // Interaction view (structural — the kernel's `Interaction` narrowed to the
@@ -110,6 +116,8 @@ export interface ProjectorInteraction {
  * so a shape drift on the engine side fails the compile here.
  */
 type PlanRevisionEvent = Extract<DomainEvent, { type: 'plan.revision' }>;
+
+type TurnStartedBusEvent = Extract<DomainEvent, { type: 'turn.started' }>;
 
 type AgentActivityUpdatedEvent = Extract<DomainEvent, { type: 'agent.activity.updated' }>;
 type PromptCompletedEvent = Extract<DomainEvent, { type: 'prompt.completed' }>;
@@ -155,11 +163,19 @@ export type ProjectorToolFrameLookup = (toolCallId: string) => ToolFrameRecord |
  */
 export type ProjectorStepOrdinalLookup = (turnId: string) => number | undefined;
 
+/**
+ * Read access to one turn's current header (the producer store). Used when
+ * the projector attached mid-turn and never saw `turn.started` — see
+ * `onTurnEnded`.
+ */
+export type ProjectorTurnLookup = (turnId: string) => TurnHeader | undefined;
+
 /** Optional producer-store lookups that let the projector adopt seeded state. */
 export interface ProjectorLookups {
   readonly stepFrames?: ProjectorFrameLookup;
   readonly toolFrame?: ProjectorToolFrameLookup;
   readonly stepOrdinal?: ProjectorStepOrdinalLookup;
+  readonly turn?: ProjectorTurnLookup;
 }
 
 interface OpenTextFrame {
@@ -296,13 +312,25 @@ export class AgentTranscriptProjector {
 
   // ---------------------------------------------------------------- turn / step
 
-  private onTurnStarted(event: {
-    turnId: number;
-    origin: unknown;
-    prompt?: string;
-  }): TranscriptOperation[] {
+  private onTurnStarted(event: TurnStartedBusEvent): TranscriptOperation[] {
     const n = event.turnId;
     const turnId = `t${n}`;
+    const ops: TranscriptOperation[] = [];
+    let attachmentIds: string[] | undefined;
+    if (event.promptAttachments !== undefined && event.promptAttachments.length > 0) {
+      attachmentIds = [];
+      for (const input of event.promptAttachments) {
+        // Turn-scoped id namespace: cold-rebuild attachments use `att_<n>`,
+        // so a live id can never collide with a backfilled one.
+        const attachment: TranscriptAttachment = {
+          attachmentId: `${turnId}.att${attachmentIds.length + 1}`,
+          mediaType: `${input.kind}/*`,
+          source: { kind: 'session_media', fileId: input.fileId },
+        };
+        ops.push({ op: 'attachment.upsert', attachment });
+        attachmentIds.push(attachment.attachmentId);
+      }
+    }
     this.currentTurn = {
       kind: 'turn',
       turnId,
@@ -310,12 +338,14 @@ export class AgentTranscriptProjector {
       state: 'running',
       origin: mapTurnOrigin(event.origin),
       prompt: event.prompt,
+      attachmentIds,
       startedAt: nowIso(),
     };
     this.currentStep = undefined;
     this.openText = undefined;
     this.openThinking = undefined;
-    return [{ op: 'turn.upsert', turn: this.currentTurn }];
+    ops.push({ op: 'turn.upsert', turn: this.currentTurn });
+    return ops;
   }
 
   private onTurnEnded(event: {
@@ -335,7 +365,13 @@ export class AgentTranscriptProjector {
       this.currentStep = step;
       ops.push({ op: 'step.upsert', turnId: step.turnId, step });
     }
-    const prev = this.currentTurn?.turnId === turnId ? this.currentTurn : undefined;
+    // Mid-turn attach: when this projector never saw `turn.started`, inherit
+    // the header the history backfill already seeded into the store —
+    // otherwise this terminal upsert (a whole-header replace downstream)
+    // would wipe the backfilled origin / prompt / attachmentIds until the
+    // next heal, and for good if the session closes before it runs.
+    const prev =
+      this.currentTurn?.turnId === turnId ? this.currentTurn : this.lookups?.turn?.(turnId);
     const state = mapTurnEndState(event.reason);
     this.currentTurn = {
       kind: 'turn',
@@ -344,6 +380,7 @@ export class AgentTranscriptProjector {
       state,
       origin: prev?.origin ?? { kind: 'other' },
       prompt: prev?.prompt,
+      attachmentIds: prev?.attachmentIds,
       startedAt: prev?.startedAt,
       endedAt: nowIso(),
       durationMs: event.durationMs,
@@ -1307,11 +1344,14 @@ export class AgentTranscriptProjector {
    */
   private onPromptSteered(event: PromptSteeredEvent): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
+    // The event carries raw engine content parts (internal `kimi-file://<id>`
+    // daemon refs); the entity stores the Session-media wire projection, so
+    // the transient App upload and internal URL never reach consumers.
     const active = this.upsertPrompt(event.activePromptId, (prev) => ({
       promptId: event.activePromptId,
       status: prev?.status ?? 'running',
       userMessageId: prev?.userMessageId,
-      content: event.content,
+      content: projectPromptContentParts(event.content),
       createdAt: prev?.createdAt ?? event.steeredAt,
       finishedAt: prev?.finishedAt,
       steeredAt: event.steeredAt,

@@ -278,8 +278,14 @@ export class TranscriptService {
       // while the records were being read (a tool frame's display/approvalId,
       // a longer text frame) must not be replaced by the staler persisted
       // version.
+      const superseded = supersededColdAttachmentIds(snapshot, transcript);
       const ops = snapshotToOps(snapshot, (turn) =>
         healTurnOps(turn, transcript.getTurn(turn.turnId)),
+      ).filter(
+        // The merge keeps a live-opened turn's own attachment ids, so the
+        // snapshot's cold `att_<n>` counterparts would land unreferenced —
+        // drop them instead of orphaning duplicate entities.
+        (op) => op.op !== 'attachment.upsert' || !superseded.has(op.attachment.attachmentId),
       );
       const overlay = this.liveTurnOverlay(sessionId, agentId, transcript, snapshot);
       if (overlay !== undefined) ops.push(overlay);
@@ -472,6 +478,10 @@ export class TranscriptService {
         state: 'running',
         origin: existing?.origin ?? snapshotTurn?.origin ?? { kind: 'other' },
         prompt: existing?.prompt ?? snapshotTurn?.prompt,
+        // `turn.upsert` replaces the whole header, so the live attachment ids
+        // must ride along — omitting them would clear the references and
+        // orphan the live `{turnId}.att<N>` entities.
+        attachmentIds: existing?.attachmentIds ?? snapshotTurn?.attachmentIds,
         startedAt: existing?.startedAt ?? snapshotTurn?.startedAt,
       },
     };
@@ -506,12 +516,27 @@ export class TranscriptService {
     if (snapshot === undefined || this.live.get(sessionId)?.store !== entry.store) return;
     const transcript = entry.store.getAgent(agentId);
     if (transcript === undefined) return;
-    const ops: TranscriptOperation[] = [];
+    const turnOps: TranscriptOperation[] = [];
     for (const item of snapshot.items) {
       if (item.kind !== 'turn' || !ordinals.has(item.ordinal)) continue;
-      ops.push(...healTurnOps(item, transcript.getTurn(item.turnId)));
+      turnOps.push(...healTurnOps(item, transcript.getTurn(item.turnId)));
     }
-    if (ops.length === 0) return;
+    if (turnOps.length === 0) return;
+    // Attachment entities are global (not turn-scoped): upsert the snapshot's
+    // set alongside the healed turns so their `attachmentIds` never dangle.
+    // Cold counterparts of turns the live projector already opened with its
+    // own attachment ids are skipped — the heal keeps the live ids, so those
+    // `att_<n>` entities would be orphaned duplicates.
+    const superseded = supersededColdAttachmentIds(snapshot, transcript);
+    const ops: TranscriptOperation[] = [
+      ...snapshot.attachments
+        .filter((attachment) => !superseded.has(attachment.attachmentId))
+        .map((attachment) => ({
+          op: 'attachment.upsert' as const,
+          attachment,
+        })),
+      ...turnOps,
+    ];
     transcript.apply(ops);
     // Fan the heal out like any mapped-op batch so attached subscribers
     // converge; all ops are state-style upserts.
@@ -605,7 +630,8 @@ export class TranscriptService {
  * Flatten a snapshot into idempotent upsert ops (turn/step/frame upserts,
  * standalone items, tasks, meta). Deliberately never a `reset`: upserts merge
  * by id and keep ordinal order, so the backfill cannot clobber live ops that
- * landed while the records were being read.
+ * landed while the records were being read. Global attachment entities flatten
+ * too — without them a backfilled turn's `attachmentIds` would dangle.
  *
  * Standalone items (markers / taskrefs) carry a `beforeTurn` placement anchor:
  * the reducer's standalone path is append-only, so without an anchor a
@@ -649,6 +675,9 @@ export function snapshotToOps(
   // precede the engine's next live turn (`lastTurnOrdinal + 1`, matched
   // robustly by the reducer's `>=` placement when ordinals drift).
   flushPending(lastTurnOrdinal === undefined ? undefined : lastTurnOrdinal + 1);
+  for (const attachment of snapshot.attachments) {
+    ops.push({ op: 'attachment.upsert', attachment });
+  }
   for (const task of snapshot.tasks) {
     ops.push({ op: 'task.upsert', task });
   }
@@ -680,12 +709,38 @@ const TERMINAL_TURN_STATES: ReadonlySet<TranscriptTurn['state']> = new Set([
 ]);
 
 /**
+ * Cold attachment ids superseded by live ones. A turn the live projector
+ * already opened carries its own `{turnId}.att<N>` attachment ids, and the
+ * live-first merges (heal / overlay) keep them; the snapshot's cold `att_<n>`
+ * counterparts of THAT turn must not be upserted alongside — nothing would
+ * reference them (orphan duplicate entities). Cold ids are unique per
+ * snapshot (`att_${attachments.length + 1}` counts across the whole rebuild),
+ * so each id belongs to exactly one turn.
+ */
+function supersededColdAttachmentIds(
+  snapshot: AgentTranscriptSnapshot,
+  transcript: AgentTranscript,
+): ReadonlySet<string> {
+  const superseded = new Set<string>();
+  for (const item of snapshot.items) {
+    if (item.kind !== 'turn' || item.attachmentIds === undefined) continue;
+    const live = transcript.getTurn(item.turnId);
+    if (live?.attachmentIds === undefined || live.attachmentIds.length === 0) continue;
+    for (const id of item.attachmentIds) superseded.add(id);
+  }
+  return superseded;
+}
+
+/**
  * Merge one persisted (snapshot) turn back into the live store after the turn
  * ended — the post-turn heal for mid-turn attaches:
  *   - turn the live store never saw: taken wholesale;
  *   - header: the snapshot is authoritative for origin/prompt (it reads the
  *     persisted user message, which a mid-turn-attached projector missed);
- *     the live header wins on state and timestamps;
+ *     the live header wins on state, timestamps, and attachment ids (its
+ *     `{turnId}.att<N>` entities are already projected — swapping in the
+ *     snapshot's cold `att_<n>` ids would churn the references and orphan
+ *     the live entities);
  *   - steps the live turn never saw: taken wholesale from the snapshot;
  *   - existing steps: text/thinking frames are re-emitted only when the
  *     persisted text is longer and the kind matches (a fresh live frame may
@@ -721,6 +776,7 @@ export function healTurnOps(
       ...header,
       state: liveTurn.state,
       prompt: liveTurn.prompt ?? header.prompt,
+      attachmentIds: liveTurn.attachmentIds ?? header.attachmentIds,
       startedAt: liveTurn.startedAt ?? header.startedAt,
       endedAt: liveTurn.endedAt ?? header.endedAt,
     },
