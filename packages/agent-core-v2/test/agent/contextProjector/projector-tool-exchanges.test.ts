@@ -709,6 +709,28 @@ describe('projector tool-exchange normalization', () => {
       };
     }
 
+    it('applies strict repairs alongside media stripping', () => {
+      const projected = projector.projectMediaStripped([
+        user('go'),
+        imageMessage('data:image/png;base64,AAAA'),
+        assistant('', ['c1']),
+        toolResult('c1', 'one'),
+        assistant('', ['c1']),
+        toolResult('c1', 'two'),
+      ]);
+
+      const toolCallIds = projected.flatMap((message) => message.toolCalls.map((call) => call.id));
+      expect(toolCallIds).toEqual(['c1']);
+      const parts = projected.flatMap((message) => message.content);
+      expect(parts.some((part) => part.type === 'image_url')).toBe(false);
+      expect(
+        parts.some(
+          (part) =>
+            part.type === 'text' && part.text.includes('omitted for provider compatibility'),
+        ),
+      ).toBe(true);
+    });
+
     it('replaces every media part with a text marker, keeping the surrounding text', () => {
       const projected = projector.projectMediaStripped([
         user('look at these'),

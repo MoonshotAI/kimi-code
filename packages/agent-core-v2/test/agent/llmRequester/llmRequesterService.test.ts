@@ -461,6 +461,55 @@ describe('AgentLLMRequesterService media-stripped resend', () => {
     expect(projectCalls).toBe(1);
     expect(strippedCalls).toBe(1);
   });
+
+  it('keeps strict repairs in the media-stripped resend after a structural then content-type rejection', async () => {
+    const STRUCTURAL_400 = new APIStatusError(400, 'messages: `tool_use` ids must be unique');
+    const CONTENT_TYPE_400 = new APIStatusError(
+      400,
+      "messages.content.type is invalid, allowed values: ['text']",
+    );
+    const historyWithDuplicateCallsAndMedia: Message[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'look' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+        ],
+        toolCalls: [],
+      },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [{ type: 'function', id: 'c1', name: 'Lookup', arguments: '{}' }],
+      },
+      { role: 'tool', content: [{ type: 'text', text: 'one' }], toolCalls: [], toolCallId: 'c1' },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [{ type: 'function', id: 'c1', name: 'Lookup', arguments: '{}' }],
+      },
+      { role: 'tool', content: [{ type: 'text', text: 'two' }], toolCalls: [], toolCallId: 'c1' },
+    ];
+    const calls = { value: 0 };
+    const capturedInputs: ModelRequestInput[] = [];
+    const { service } = createService(
+      createRequester(calls, STRUCTURAL_400, [CONTENT_TYPE_400], capturedInputs),
+      undefined,
+      { contextMessages: historyWithDuplicateCallsAndMedia },
+    );
+
+    const result = await service.request();
+
+    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
+    expect(calls.value).toBe(3);
+    const finalMessages = capturedInputs[2]!.messages;
+    expect(
+      finalMessages.flatMap((message) => message.content).some((part) => part.type === 'image_url'),
+    ).toBe(false);
+    expect(finalMessages.flatMap((message) => message.toolCalls.map((call) => call.id))).toEqual([
+      'c1',
+    ]);
+  });
 });
 
 describe('AgentLLMRequesterService media-degraded resend', () => {

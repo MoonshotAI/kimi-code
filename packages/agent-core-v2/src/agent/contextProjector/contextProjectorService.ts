@@ -19,10 +19,12 @@
  * projections for the two deterministic provider rejections: media-degraded
  * (all but the most recent media replaced by text markers) resends after an
  * HTTP 413 body-size rejection; media-stripped captures every media identity
- * present when degraded media is still too large or an image format is
- * rejected, then replaces only that snapshot on later steps so a newly
- * generated recovery image remains visible. Both are read-side only — the
- * history keeps its media.
+ * present when degraded media is still too large or an image format /
+ * content-type is rejected, then replaces only that snapshot on later steps
+ * so a newly generated recovery image remains visible. Media-stripped
+ * rebuilds on the strict projection, so structural repairs ride along when a
+ * conversation needs both. Both are read-side only — the history keeps its
+ * media.
  */
 
 import { createHash } from 'node:crypto';
@@ -89,7 +91,7 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
     messages: readonly ContextMessage[],
     snapshot?: MediaStripSnapshot,
   ): readonly Message[] {
-    const projected = this.projectWithTrace(messages, project);
+    const projected = this.projectWithTrace(messages, projectStrict);
     return stripMediaPartsBySnapshot(
       projected,
       snapshot ?? captureMediaStripSnapshot(projected),
