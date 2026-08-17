@@ -213,6 +213,56 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
     expect(showLogs).not.toHaveBeenCalled();
   });
 
+  it("rejects task listing when the no-params method receives a payload", async () => {
+    const result = await bridge.handle(
+      { id: "rpc-tasks", method: Methods.ListBackgroundTasks, params: {} },
+      "view-1",
+    );
+
+    expect(result).toEqual({
+      id: "rpc-tasks",
+      error: "Invalid bridge params for method: listBackgroundTasks",
+    });
+  });
+
+  it.each([
+    ["missing params", undefined],
+    ["missing task id", {}],
+    ["blank task id", { taskId: " " }],
+    ["non-string task id", { taskId: 42 }],
+  ])("rejects stopping a background task with %s", async (_, params) => {
+    const result = await bridge.handle(
+      { id: "rpc-stop-task", method: Methods.StopBackgroundTask, params },
+      "view-1",
+    );
+
+    expect(result).toEqual({
+      id: "rpc-stop-task",
+      error: "Invalid bridge params for method: stopBackgroundTask",
+    });
+  });
+
+  it.each([
+    ["zero", 0],
+    ["a negative integer", -1],
+    ["a fraction", 1.5],
+    ["a string", "4000"],
+  ])("rejects background task output when tail is %s", async (_, tail) => {
+    const result = await bridge.handle(
+      {
+        id: "rpc-task-output",
+        method: Methods.GetBackgroundTaskOutput,
+        params: { taskId: "bash-1", tail },
+      },
+      "view-1",
+    );
+
+    expect(result).toEqual({
+      id: "rpc-task-output",
+      error: "Invalid bridge params for method: getBackgroundTaskOutput",
+    });
+  });
+
   it("does not execute an object-payload handler when a required field has the wrong type", async () => {
     const result = await bridge.handle(
       { id: "rpc-1", method: Methods.AddInputHistory, params: { text: 42 } },

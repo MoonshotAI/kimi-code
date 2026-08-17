@@ -7,6 +7,7 @@ import { ToolCallCard } from "./ToolRenderers";
 import { CopyButton } from "./CopyButton";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { CompactionCard } from "./CompactionCard";
+import { BackgroundTaskStatusLine } from "./BackgroundTaskStatusLine";
 import { MediaThumbnail } from "./MediaThumbnail";
 import { MediaPreviewModal } from "./MediaPreviewModal";
 import { InlineError } from "./InlineError";
@@ -58,6 +59,8 @@ function StepItemRenderer({ item }: { item: UIStepItem }) {
       return <CompactionCard />;
     case "steer":
       return <SteerBubble content={item.content} />;
+    case "background_task":
+      return <BackgroundTaskStatusLine info={item.info} />;
     default:
       return null;
   }
@@ -285,7 +288,7 @@ function AssistantMessage({ message, turnIndex, isStreaming }: { message: ChatMe
                     const hasIndicator = stepHasIndicator[globalIndex];
                     const hasNextIndicator = stepHasIndicator.slice(globalIndex + 1).some(Boolean);
                     const showConnector = hasIndicator && hasNextIndicator && !isLastInGroup && !isLastOverall;
-                    return <StepContent key={step.n} step={step} showConnector={showConnector} />;
+                    return <StepContent key={`${step.n}-${i}`} step={step} showConnector={showConnector} />;
                   });
 
                   if (group.planMode) {

@@ -1,5 +1,6 @@
 import {
   isKimiError,
+  type BackgroundTaskInfo as SdkBackgroundTaskInfo,
   type ContentPart as SdkContentPart,
   type Event,
   type PromptInput,
@@ -7,7 +8,11 @@ import {
   type SessionSummary,
 } from "@moonshot-ai/kimi-code-sdk";
 
-import type { ContentPart as LegacyContentPart, ApprovalResponse } from "../../shared/legacy-sdk";
+import type {
+  BackgroundTaskInfo,
+  ContentPart as LegacyContentPart,
+  ApprovalResponse,
+} from "../../shared/legacy-sdk";
 import { Events } from "../../shared/bridge";
 import { getUserMessage } from "../../shared/errors";
 import type { ErrorPhase, UIStreamEvent } from "../../shared/types";
@@ -89,6 +94,9 @@ export class SessionRuntime {
   private suppressedError: SuppressedError | undefined;
   private legacyApproval: LegacyApprovalFlags;
   private closed = false;
+  private readonly backgroundTasks = new Map<string, BackgroundTaskInfo>();
+  /** Dedupe keys for transcript status cards: `started:<taskId>` and `<taskId>:<status>`. */
+  private readonly backgroundTranscripted = new Set<string>();
 
   constructor(options: SessionRuntimeOptions) {
     this.session = options.session;
@@ -169,6 +177,20 @@ export class SessionRuntime {
 
   unsubscribeView(webviewId: string): void {
     this.webviewIds.delete(webviewId);
+  }
+
+  /**
+   * Push the session's current background tasks to a view. Called whenever a
+   * view opens or re-enters a session so the tasks badge matches engine truth
+   * even after a webview reload.
+   */
+  async announceBackgroundTasks(webviewId: string): Promise<void> {
+    this.ensureOpen();
+    const tasks = await this.session.listBackgroundTasks({ activeOnly: false });
+    if (this.closed || !this.webviewIds.has(webviewId)) return;
+    this.backgroundTasks.clear();
+    for (const task of tasks) this.backgroundTasks.set(task.taskId, task);
+    this.broadcast(Events.BackgroundTasksChanged, [...this.backgroundTasks.values()], webviewId);
   }
 
   async prompt(input: string | LegacyContentPart[]): Promise<PromptResult> {
@@ -455,6 +477,10 @@ export class SessionRuntime {
       this.captureFileBaseline(event);
     }
 
+    if (event.type === "background.task.started" || event.type === "background.task.terminated") {
+      this.handleBackgroundTaskEvent(event.info);
+    }
+
     if (event.type === "turn.step.retrying") {
       this.log(
         `Provider retry ${event.nextAttempt}/${event.maxAttempts} in ${event.delayMs}ms`,
@@ -582,6 +608,30 @@ export class SessionRuntime {
     for (const webviewId of this.webviewIds) {
       this.broadcast(Events.StreamEvent, event, webviewId);
     }
+  }
+
+  /**
+   * Track background tasks for the tasks badge and mirror lifecycle transitions
+   * into the transcript as status cards, matching the CLI's `/tasks` behavior.
+   */
+  private handleBackgroundTaskEvent(info: SdkBackgroundTaskInfo): void {
+    const wireInfo: BackgroundTaskInfo = info;
+    this.backgroundTasks.set(wireInfo.taskId, wireInfo);
+    const tasks = [...this.backgroundTasks.values()];
+    for (const webviewId of this.webviewIds) {
+      this.broadcast(Events.BackgroundTasksChanged, tasks, webviewId);
+    }
+
+    const key = wireInfo.status === "running"
+      ? `started:${wireInfo.taskId}`
+      : `${wireInfo.taskId}:${wireInfo.status}`;
+    if (this.backgroundTranscripted.has(key)) return;
+    this.backgroundTranscripted.add(key);
+    this.emitStreamEvent({
+      type: "BackgroundTaskStatus",
+      payload: { info: wireInfo },
+      _sessionId: this.id,
+    });
   }
 
   private settlePrompt(result: PromptResult): void {

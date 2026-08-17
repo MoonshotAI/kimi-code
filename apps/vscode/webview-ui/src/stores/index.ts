@@ -18,3 +18,5 @@ export type { MediaRequirements, ModelProviderGroup } from "./settings.store";
 
 export { useApprovalStore } from "./approval.store";
 export type { ApprovalRequest } from "./approval.store";
+
+export { useTasksStore, visibleBackgroundTasks, runningTaskCount } from "./tasks.store";

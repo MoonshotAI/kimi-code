@@ -1,6 +1,7 @@
 import { Methods, Events } from "shared/bridge";
 import type {
   ApprovalResponse,
+  BackgroundTaskInfo,
   ContentPart,
   MCPServerConfig,
   SessionInfo,
@@ -293,6 +294,18 @@ class Bridge {
 
   reloadWebview() {
     return this.call<{ ok: boolean }>(Methods.ReloadWebview);
+  }
+
+  listBackgroundTasks() {
+    return this.call<BackgroundTaskInfo[]>(Methods.ListBackgroundTasks);
+  }
+
+  getBackgroundTaskOutput(taskId: string, tail?: number) {
+    return this.call<{ output: string }>(Methods.GetBackgroundTaskOutput, { taskId, tail });
+  }
+
+  stopBackgroundTask(taskId: string) {
+    return this.call<{ ok: boolean }>(Methods.StopBackgroundTask, { taskId });
   }
 }
 

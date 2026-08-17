@@ -3,11 +3,12 @@ import { produce } from "immer";
 import { bridge } from "@/services";
 import { Content } from "@/lib/content";
 import { useApprovalStore } from "./approval.store";
+import { useTasksStore } from "./tasks.store";
 import { toast } from "@/components/ui/sonner";
 
 import { useSettingsStore } from "./settings.store";
 import { processEvent } from "./event-handlers";
-import type { StatusUpdate, ContentPart, QuestionRequest, ToolResult } from "shared/legacy-sdk";
+import type { StatusUpdate, ContentPart, QuestionRequest, ToolResult, BackgroundTaskInfo } from "shared/legacy-sdk";
 import type { UIStreamEvent } from "shared/types";
 
 const HANDSHAKE_TIMEOUT_MS = 30_000;
@@ -35,6 +36,7 @@ export type UIStepItem =
   | { type: "text"; content: string; finished?: boolean }
   | { type: "compaction" }
   | { type: "steer"; content: string | ContentPart[] }
+  | { type: "background_task"; info: BackgroundTaskInfo }
   | {
       type: "tool_use";
       id: string;
@@ -305,6 +307,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       planMode: false,
     });
     useApprovalStore.getState().clearRequests();
+    useTasksStore.getState().setTasks([]);
 
     for (const event of events) {
       get().processEvent(event);
@@ -359,6 +362,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       planMode: false,
     });
     useApprovalStore.getState().clearRequests();
+    useTasksStore.getState().setTasks([]);
   },
 
   abort: () => {

@@ -3,7 +3,7 @@ import { useApprovalStore } from "./approval.store";
 import { useSettingsStore } from "./settings.store";
 import { isPreflightError, isUserInterrupt } from "shared/errors";
 import type { ChatMessage, UIStep, UIStepItem, ChatState, TokenUsage } from "./chat.store";
-import type { ContentPart, ToolCall, ToolResult, TurnBegin, SubagentEvent, ApprovalRequestPayload, DiffBlock, RunResult, QuestionRequest } from "shared/legacy-sdk";
+import type { ContentPart, ToolCall, ToolResult, TurnBegin, SubagentEvent, ApprovalRequestPayload, BackgroundTaskInfo, DiffBlock, RunResult, QuestionRequest } from "shared/legacy-sdk";
 import type { UIStreamEvent, StreamError } from "shared/types";
 
 type EventHandler = (draft: ChatState, payload: any) => void;
@@ -564,6 +564,28 @@ const eventHandlers: Record<string, EventHandler> = {
 
     finishAllTextItems(last.steps);
     currentStep.items.push({ type: "steer", content: payload.user_input });
+  },
+
+  BackgroundTaskStatus: (draft, payload: { info: BackgroundTaskInfo }) => {
+    // Task lifecycle events have no StepBegin/StepEnd framing, so append a
+    // fresh step to the last assistant message (or a synthetic one when the
+    // transcript is still empty) instead of guessing at engine step ownership.
+    let last = getLastAssistant(draft);
+    if (!last) {
+      last = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: "",
+        timestamp: Date.now(),
+        steps: [],
+      };
+      draft.messages.push(last);
+    }
+    if (!last.steps) {
+      last.steps = [];
+    }
+    const nextStepNumber = (last.steps.at(-1)?.n ?? 0) + 1;
+    last.steps.push({ n: nextStepNumber, items: [{ type: "background_task", info: payload.info }] });
   },
 };
 
