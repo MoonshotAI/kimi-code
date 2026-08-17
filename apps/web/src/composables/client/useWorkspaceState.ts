@@ -2291,18 +2291,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // Optimistic transcript echo while prompt.submitted round-trips.
     const content: import('../../api/types').AppMessageContent[] = [];
     if (merged) content.push({ type: 'text', text: merged });
-    for (const att of mergedAttachments) {
-      if (att.kind === 'video') content.push({ type: 'video', source: { kind: 'file', fileId: att.fileId } });
-      else if (att.kind === 'file') {
-        content.push({
-          type: 'file',
-          fileId: att.fileId,
-          name: att.name ?? '',
-          mediaType: att.mediaType || 'application/octet-stream',
-          size: att.size ?? 0,
-        });
-      } else content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
-    }
+    content.push(...attachmentsToContent(mergedAttachments));
     const tempId = nextOptimisticMsgId();
     const optimisticMsg: AppMessage = {
       id: tempId,

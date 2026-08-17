@@ -2451,6 +2451,35 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     expect(apiMock.submitPrompt).toHaveBeenCalledTimes(3);
   });
 
+  it('keeps session-media attachments in their namespace when steering a running turn', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [
+        {
+          text: 'queued media',
+          attachments: [{ fileId: 'f_img', kind: 'image', sessionId: 'sess_1' }],
+        },
+      ],
+    };
+    const ws = useWorkspaceState(state, promptDeps());
+
+    await ws.steerPrompt('live media', [
+      { fileId: 'f_vid', kind: 'video', sessionId: 'sess_1' },
+    ]);
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({
+        content: [
+          { type: 'text', text: 'queued media\n\nlive media' },
+          { type: 'image', source: { kind: 'sessionMedia', fileId: 'f_img' } },
+          { type: 'video', source: { kind: 'sessionMedia', fileId: 'f_vid' } },
+        ],
+      }),
+    );
+  });
+
   it('restores the merged queue entries when a steer submit is definitively rejected', async () => {
     const state = createState();
     state.inFlightBySession = { sess_1: true };
