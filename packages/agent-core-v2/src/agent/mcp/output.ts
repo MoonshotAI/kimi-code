@@ -20,7 +20,12 @@
  *     host/protocol plumbing rather than model-facing data, while unprefixed
  *     and vendor-prefixed keys pass through because their semantics belong
  *     to the server. Non-serialisable payloads drop the whole block rather
- *     than failing the call.
+ *     than failing the call. Servers that follow the spec's fallback
+ *     guidance already serialize the structured payload into a text block;
+ *     duplicates are detected semantically (parse + deep-equal, so spacing
+ *     and key order do not matter) and the `structuredContent` section is
+ *     skipped rather than forwarded twice — comparison errors count as
+ *     non-duplicates, so the payload always reaches the model.
  *  4. Apply the 100K text/think character budget to the tool's own text.
  *     This runs BEFORE captions exist, so a chatty tool (page text + a
  *     screenshot) can never evict or slice the compression caption — that
@@ -161,7 +166,14 @@ export async function mcpResultToExecutableOutput(
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
   const structuredExtras: Record<string, unknown> = {};
-  if (result.structuredContent !== undefined) {
+  if (
+    result.structuredContent !== undefined &&
+    !converted.some(
+      (part) =>
+        part.type === 'text' &&
+        textMatchesStructuredContent(part.text, result.structuredContent),
+    )
+  ) {
     structuredExtras['structuredContent'] = result.structuredContent;
   }
   if (result._meta !== undefined) {
@@ -349,4 +361,34 @@ function collapseSingleText(parts: readonly ContentPart[]): string | ContentPart
     return parts[0].text;
   }
   return [...parts];
+}
+
+function textMatchesStructuredContent(text: string, structured: unknown): boolean {
+  try {
+    return deepJsonEqual(JSON.parse(text), structured);
+  } catch {
+    return false;
+  }
+}
+
+function deepJsonEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((item, i) => deepJsonEqual(item, b[i]))
+    );
+  }
+  const aRecord = a as Record<string, unknown>;
+  const bRecord = b as Record<string, unknown>;
+  const aKeys = Object.keys(aRecord);
+  return (
+    aKeys.length === Object.keys(bRecord).length &&
+    aKeys.every(
+      (key) => Object.hasOwn(bRecord, key) && deepJsonEqual(aRecord[key], bRecord[key]),
+    )
+  );
 }

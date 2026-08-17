@@ -63,7 +63,9 @@ export function toMcpToolDefinition(tool: SdkListedTool): MCPToolDefinition {
  * Normalise the SDK's `callTool` return into kosong's {@link MCPToolResult}.
  * The SDK can return either the modern `{ content, isError }` shape or a
  * legacy `{ toolResult }` shape; we collapse the legacy shape to a single
- * text content block.
+ * text content block. `structuredContent` and `_meta` ride along untouched —
+ * dropping them would leave the model with only the human-oriented `content`
+ * summary.
  */
 export function toMcpToolResult(result: unknown): MCPToolResult {
   if (typeof result === 'object' && result !== null && 'content' in result) {

@@ -8,6 +8,12 @@
  *  2. Wrap media-only outputs in `<mcp_tool_result name="…">` tags so the
  *     model can attribute binary output when several tools return media.
  *     Mirrors the in-tree `ReadMediaFile` convention.
+ *  2b. Append `structuredContent` and server `_meta` as a trailing
+ *     `<mcp-structured-result>` JSON text part, so the machine-readable
+ *     payload reaches the model — `content` blocks are only the
+ *     human-oriented summary and can omit the actual data. Duplicates
+ *     already serialized into a text block by the server are detected
+ *     semantically (parse + deep-equal) and skipped.
  *  3. Apply the 100K text/think character budget to the tool's own text.
  *     This runs BEFORE captions exist, so a chatty tool (page text + a
  *     screenshot) can never evict or slice the compression caption — that
@@ -194,9 +200,20 @@ export async function mcpResultToExecutableOutput(
   // payloads stay bounded. Literal closing tags inside the serialized
   // payload are stripped so server data cannot fake an early end of the
   // block. Protocol-reserved _meta keys are dropped first: those carry
-  // host/protocol plumbing, not model-facing data.
+  // host/protocol plumbing, not model-facing data. Servers that follow the
+  // spec's fallback guidance already serialize the structured payload into
+  // a text block; duplicates are detected semantically (parse + deep-equal,
+  // so spacing and key order do not matter) and skipped rather than
+  // forwarded twice.
   const structuredExtras: Record<string, unknown> = {};
-  if (result.structuredContent !== undefined) {
+  if (
+    result.structuredContent !== undefined &&
+    !converted.some(
+      (part) =>
+        part.type === 'text' &&
+        textMatchesStructuredContent(part.text, result.structuredContent),
+    )
+  ) {
     structuredExtras['structuredContent'] = result.structuredContent;
   }
   if (result._meta !== undefined) {
@@ -437,4 +454,42 @@ function collapseSingleText(parts: readonly ContentPart[]): string | ContentPart
     return parts[0].text;
   }
   return [...parts];
+}
+
+/**
+ * Whether `text` is a JSON serialization of `structured`, regardless of
+ * whitespace or key order. Non-JSON text and comparison failures (e.g.
+ * stack depth on pathological nesting) never match.
+ */
+function textMatchesStructuredContent(text: string, structured: unknown): boolean {
+  try {
+    return deepJsonEqual(JSON.parse(text), structured);
+  } catch {
+    return false;
+  }
+}
+
+function deepJsonEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((item, i) => deepJsonEqual(item, b[i]))
+    );
+  }
+  const aRecord = a as Record<string, unknown>;
+  const bRecord = b as Record<string, unknown>;
+  const aKeys = Object.keys(aRecord);
+  return (
+    aKeys.length === Object.keys(bRecord).length &&
+    // `Object.hasOwn` matters: `bRecord[key]` would otherwise resolve
+    // inherited properties (e.g. "__proto__") and a same-length key count
+    // could false-positive two unrelated objects as duplicates.
+    aKeys.every(
+      (key) => Object.hasOwn(bRecord, key) && deepJsonEqual(aRecord[key], bRecord[key]),
+    )
+  );
 }
