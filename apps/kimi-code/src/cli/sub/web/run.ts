@@ -36,6 +36,11 @@ import {
 } from './access-urls';
 import { type NetworkAddress } from './networks';
 import {
+  startRemoteControl,
+  type RemoteControlHandle,
+  type RemoteControlOptions,
+} from './remote-control';
+import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
   DEFAULT_LAN_HOST,
   DEFAULT_SERVER_HOST,
@@ -62,11 +67,13 @@ interface RoutedServer {
 
 export interface WebCliOptions extends ServerCliOptions {
   open?: boolean;
+  remoteControl?: boolean;
 }
 
 export interface StartForegroundHooks {
   /** Fires once the server is listening, before the foreground runner blocks. */
-  onReady?: (origin: string) => void;
+  onReady?: (origin: string) => void | Promise<void>;
+  onShutdown?: (reason: string) => void | Promise<void>;
 }
 
 export interface WebCommandDeps {
@@ -75,6 +82,7 @@ export interface WebCommandDeps {
     options: ParsedServerOptions,
     hooks?: StartForegroundHooks,
   ) => Promise<never>;
+  startRemoteControl?: (options: RemoteControlOptions) => Promise<RemoteControlHandle>;
   openUrl(url: string): void;
   /**
    * Best-effort read of the server's persistent bearer token. When it returns
@@ -153,6 +161,7 @@ export function buildWebCommand(cmd: Command): Command {
       '--web-title <title>',
       'Set a custom browser tab title for this web UI instance (default: "<workspace dir> | Kimi Code").',
     )
+    .option('--rc, --remote-control', 'Expose the web UI through Kimi Remote Control.', false)
     .option('--no-open', 'Do not open the web UI in the default browser.', true)
     .action(async (opts: WebCliOptions) => {
       try {
@@ -169,9 +178,13 @@ export async function handleWebCommand(
   deps: WebCommandDeps = DEFAULT_WEB_COMMAND_DEPS,
 ): Promise<void> {
   const parsed = parseServerOptions(opts);
+  if (opts.remoteControl === true && parsed.dangerousBypassAuth) {
+    throw new Error('--remote-control cannot be combined with --dangerous-bypass-auth.');
+  }
   const run = deps.startServerForeground ?? startServerForeground;
+  let remoteControl: RemoteControlHandle | undefined;
   await run(parsed, {
-    onReady: (origin) => {
+    onReady: async (origin) => {
       // Resolve the persistent token only once the server is up: a fresh
       // server writes `server.token` on first boot, so reading it beforehand
       // would miss first-time starts and the browser would hit the auth gate.
@@ -180,6 +193,25 @@ export async function handleWebCommand(
       // token line when unavailable. When auth is bypassed, the token is
       // meaningless and is intentionally NOT shown or carried in the URL.
       const token = parsed.dangerousBypassAuth ? undefined : deps.resolveToken?.();
+      if (opts.remoteControl === true) {
+        if (token === undefined) throw new Error('Unable to read the local server token.');
+        remoteControl = await (deps.startRemoteControl ?? startRemoteControl)({
+          homeDir: getDataDir(),
+          localOrigin: origin,
+          localServerToken: token,
+          stderr: deps.stderr,
+        });
+        deps.stdout.write(
+          parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
+            ? formatReadyBanner(origin, parsed.host, {
+                networkAddresses: deps.networkAddresses,
+              })
+            : formatReadyLine(origin, undefined),
+        );
+        deps.stdout.write(`Kimi Remote Control: ${remoteControl.url}\n`);
+        if (opts.open === true) deps.openUrl(remoteControl.url);
+        return;
+      }
       deps.stdout.write(
         parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
           ? formatReadyBanner(origin, parsed.host, {
@@ -192,6 +224,9 @@ export async function handleWebCommand(
       if (opts.open === true) {
         deps.openUrl(token !== undefined ? buildWebUrl(origin, token) : origin);
       }
+    },
+    onShutdown: async () => {
+      await remoteControl?.close();
     },
   });
 }
@@ -230,7 +265,7 @@ export async function startServerForeground(
   options: ParsedServerOptions,
   hooks: StartForegroundHooks = {},
 ): Promise<never> {
-  return runServerInProcess(options, hooks.onReady);
+  return runServerInProcess(options, hooks);
 }
 
 /**
@@ -239,7 +274,7 @@ export async function startServerForeground(
  */
 async function runServerInProcess(
   options: ParsedServerOptions,
-  onReady?: (origin: string) => void,
+  hooks: StartForegroundHooks,
 ): Promise<never> {
   const version = getVersion();
   // Registers the telemetry provider for `track` / `shutdownTelemetry`; the
@@ -253,6 +288,14 @@ async function runServerInProcess(
     if (stopping) return;
     stopping = true;
     running?.logger.info({ reason }, 'server shutting down');
+    try {
+      await hooks.onShutdown?.(reason);
+    } catch (error) {
+      running?.logger.error(
+        { err: error instanceof Error ? error : new Error(String(error)) },
+        'foreground shutdown hook error',
+      );
+    }
     try {
       await running?.close();
       await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
@@ -324,7 +367,17 @@ async function runServerInProcess(
 
   running.logger.info({ address: running.address }, 'server ready');
 
-  onReady?.(running.address);
+  try {
+    await hooks.onReady?.(running.address);
+  } catch (error) {
+    try {
+      await hooks.onShutdown?.('startup_failed');
+    } finally {
+      await running.close();
+      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+    }
+    throw error;
+  }
 
   return new Promise<never>(() => {
     // Keeps the event loop alive; the process ends via shutdown()/process.exit.

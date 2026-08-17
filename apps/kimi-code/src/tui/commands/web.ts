@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 
 import { splitTokenFragment } from '#/cli/sub/web/access-urls';
+import { buildRemoteControlUrl, startRemoteControl } from '#/cli/sub/web/remote-control';
 import { formatReadyBanner, startServerForeground } from '#/cli/sub/web/run';
 import { parseServerOptions, tryResolveServerToken } from '#/cli/sub/web/shared';
 import { openUrl } from '#/utils/open-url';
@@ -27,6 +28,43 @@ export async function handleWebCommand(host: SlashCommandHost): Promise<void> {
   }
 
   startNewServerAfterExit(host, session.id);
+  await host.stop();
+}
+
+export async function handleRemoteControlCommand(host: SlashCommandHost): Promise<void> {
+  const session = host.session;
+  if (session === undefined) {
+    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    return;
+  }
+
+  host.setExitForegroundTask(async () => {
+    const options = parseServerOptions({});
+    let remoteControl: Awaited<ReturnType<typeof startRemoteControl>> | undefined;
+    try {
+      await startServerForeground(options, {
+        onReady: async (origin) => {
+          const token = tryResolveServerToken(getDataDir());
+          if (token === undefined) throw new Error('Unable to read the local server token.');
+          remoteControl = await startRemoteControl({
+            homeDir: getDataDir(),
+            localOrigin: origin,
+            localServerToken: token,
+          });
+          const url = buildRemoteControlUrl(remoteControl.deviceId, session.id);
+          process.stdout.write(formatReadyBanner(origin, options.host));
+          process.stdout.write(`\n  ${sessionLine(url)}\n`);
+          openUrl(url);
+        },
+        onShutdown: async () => {
+          await remoteControl?.close();
+        },
+      });
+    } catch (error) {
+      process.stderr.write(`Failed to start Remote Control: ${formatErrorMessage(error)}\n`);
+      process.exit(1);
+    }
+  });
   await host.stop();
 }
 

@@ -50,7 +50,7 @@ function makeRunner(origin = 'http://127.0.0.1:58627'): {
   const calls: { options: ParsedServerOptions | undefined } = { options: undefined };
   const runner: ForegroundRunner = async (options, hooks) => {
     calls.options = options;
-    hooks?.onReady?.(origin);
+    await hooks?.onReady?.(origin);
     return undefined as never;
   };
   return { runner, calls };
@@ -104,6 +104,8 @@ describe('kimi web', () => {
     expect(longs).toContain('--log-level');
     expect(longs).toContain('--debug-endpoints');
     expect(longs).toContain('--web-title');
+    const remoteControl = web!.options.find((option) => option.long === '--remote-control');
+    expect(remoteControl?.short).toBe('--rc');
     // web opens the browser by default → the option is the negative --no-open.
     expect(longs).toContain('--no-open');
     // The background/daemon era flags are gone: the server always runs in the
@@ -391,6 +393,51 @@ describe('`kimi web` opens the browser', () => {
     );
 
     expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it('maps --remote-control and --rc to the same option', () => {
+    for (const flag of ['--remote-control', '--rc']) {
+      const program = makeProgram();
+      const web = program.commands.find((command) => command.name() === 'web')!;
+      web.parseOptions([flag]);
+      expect(web.opts()).toMatchObject({ remoteControl: true });
+    }
+  });
+
+  it('opens only the public Remote Control URL without the local server token', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const { runner } = makeRunner();
+    const { stdout, stderr, readStdout } = makeIo();
+    const openUrl = vi.fn();
+    const startRemoteControl = vi.fn(async () => ({
+      deviceId: 'device-1',
+      url: 'https://api.kimi.com/coding-relay/code/rc/devices/device-1/?rc=1&from=kimi_code_cli',
+      close: vi.fn(async () => {}),
+    }));
+
+    await handleWebCommand(
+      { remoteControl: true, open: true },
+      {
+        startServerForeground: runner,
+        startRemoteControl,
+        resolveToken: () => 'local-server-token',
+        openUrl,
+        stdout,
+        stderr,
+      },
+    );
+
+    expect(startRemoteControl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        localOrigin: 'http://127.0.0.1:58627',
+        localServerToken: 'local-server-token',
+      }),
+    );
+    expect(openUrl).toHaveBeenCalledWith(
+      'https://api.kimi.com/coding-relay/code/rc/devices/device-1/?rc=1&from=kimi_code_cli',
+    );
+    expect(readStdout()).not.toContain('local-server-token');
+    expect(readStdout()).not.toContain('#token=');
   });
 });
 
