@@ -174,20 +174,14 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       },
     });
     if (handle.state === 'pending') {
-      return {
-        prompt_id: handle.id,
-        user_message_id: handle.userMessageId,
-        created_at: handle.createdAt,
-        state: handle.state,
-      };
+      return { prompt_id: handle.id, created_at: handle.createdAt, state: 'queued' };
     }
     const turn = await handle.launched;
     return {
       turn_id: turn?.id,
       prompt_id: handle.id,
-      user_message_id: handle.userMessageId,
       created_at: handle.createdAt,
-      state: handle.state,
+      state: handle.state === 'blocked' ? 'blocked' : 'running',
     };
   }
 

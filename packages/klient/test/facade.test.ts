@@ -192,7 +192,6 @@ describe('agent skill routing', () => {
     channel.result = {
       turn_id: 7,
       prompt_id: 'p1',
-      user_message_id: 'm1',
       created_at: '2026-01-01T00:00:00.000Z',
       state: 'running',
     };
@@ -204,7 +203,6 @@ describe('agent skill routing', () => {
     ).resolves.toEqual({
       turn_id: 7,
       prompt_id: 'p1',
-      user_message_id: 'm1',
       created_at: '2026-01-01T00:00:00.000Z',
       state: 'running',
     });

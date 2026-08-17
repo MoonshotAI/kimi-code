@@ -91,7 +91,6 @@ describe('promptWithSkills', () => {
     });
     expect(launched.turn_id).toBe(0);
     expect(launched.prompt_id).toBeTruthy();
-    expect(launched.user_message_id).toBeTruthy();
     expect(launched.state).toBe('running');
     await ctx.untilTurnEnd();
 

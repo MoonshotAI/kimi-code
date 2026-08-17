@@ -11,13 +11,13 @@
  * activation metadata rides the prompt's origin, so the bundle is a single
  * turn and a single undo unit), and records model-tool activations without a
  * turn (`recordModelToolActivation`). `promptWithSkills` resolves with the
- * queue identity of the submitted bundle (`prompt_id` / `user_message_id` /
- * `created_at` / `state`, plus `turn_id` once launched). Bound at Agent scope.
+ * queue identity of the submitted bundle (`prompt_id` / `created_at`, the
+ * launch `state`, and `turn_id` once launched). Bound at Agent scope.
  */
 
 import { createDecorator } from "#/_base/di/instantiation";
 import type { SkillActivationOrigin } from '#/agent/contextMemory/types';
-import type { PromptLaunchResult, PromptState } from '#/agent/prompt/prompt';
+import type { PromptLaunchResult } from '#/agent/prompt/prompt';
 import type { ContentPart } from '#/kosong/contract/message';
 
 export interface SkillActivationInput {
@@ -39,9 +39,8 @@ export interface PromptWithSkillsInput {
 export interface PromptWithSkillsResult {
   readonly turn_id?: number;
   readonly prompt_id: string;
-  readonly user_message_id: string;
   readonly created_at: string;
-  readonly state: PromptState;
+  readonly state: 'running' | 'queued' | 'blocked';
 }
 
 export interface IAgentSkillService {

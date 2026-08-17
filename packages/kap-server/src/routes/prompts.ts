@@ -286,13 +286,10 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             okEnvelope(
               {
                 prompt_id: result.prompt_id,
-                user_message_id: result.user_message_id,
-                status:
-                  result.state === 'running' || result.state === 'steered'
-                    ? 'running'
-                    : result.state === 'blocked'
-                      ? 'blocked'
-                      : 'queued',
+                // prompt_id IS the user_message_id — one identity for prompt
+                // and message, same as the plain-prompt path.
+                user_message_id: result.prompt_id,
+                status: result.state,
                 content: corePartsToProtocol(parts),
                 created_at: result.created_at,
               },

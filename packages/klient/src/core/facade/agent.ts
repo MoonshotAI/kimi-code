@@ -53,9 +53,8 @@ export interface AgentFacade {
    * an empty list rejects the whole submission), rendered ahead of the
    * caller's parts in the same turn, and the bundle undoes as a single
    * anchor. Resolves with the submitted bundle's queue identity (`prompt_id`
-   * / `user_message_id` / `created_at` / `state`), plus `turn_id` once
-   * launched — `state` is `pending` when the submission queued behind a
-   * running turn.
+   * / `created_at` / `state`), plus `turn_id` once launched — `state` is
+   * `queued` when the submission queued behind a running turn.
    */
   promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult>;
   steer(input: { input: readonly ContentPart[] }): Promise<PromptLaunchResult>;

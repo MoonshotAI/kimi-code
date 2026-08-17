@@ -52,24 +52,12 @@ export const promptWithSkillsPayloadSchema = promptPayloadSchema.extend({
   skills: z.array(promptSkillActivationSchema).min(1),
 });
 
-/** Same shape as `PromptState` in the engine. */
-export const promptStateSchema = z.enum([
-  'pending',
-  'running',
-  'steered',
-  'completed',
-  'failed',
-  'cancelled',
-  'blocked',
-]);
-
 /** Same shape as `PromptWithSkillsResult` in the engine. */
 export const promptWithSkillsResultSchema = z.object({
   turn_id: z.number().optional(),
   prompt_id: z.string(),
-  user_message_id: z.string(),
   created_at: z.string(),
-  state: promptStateSchema,
+  state: z.enum(['running', 'queued', 'blocked']),
 });
 
 /** Same shape as `SteerPayload` in the engine. */
