@@ -21,6 +21,7 @@ import {
   getLiveSessionById,
   programForSession,
   resumeSessionById,
+  setSessionArchived,
   isError2,
   Error2,
   type ContextMessage,
@@ -62,7 +63,7 @@ import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
-import { parseActionSuffix } from './action-suffix';
+import { type ActionTable, dispatchAction } from './action-dispatch';
 import { applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
 
@@ -605,144 +606,16 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     },
     async (req, reply) => {
       try {
-        const { tail } = req.params;
-        const parsed = parseActionSuffix({
-          tail,
-          allowedActions: ['fork', 'compact', 'undo', 'abort', 'btw', 'archive', 'restore'] as const,
+        await dispatchAction({
+          tail: req.params.tail,
+          actions: sessionActions,
           resourceLabel: 'session',
+          extra: { core, req, reply },
+          body: req.body,
+          onUnsupported: (message) => {
+            reply.send(buildValidationEnvelope([{ path: 'session_id', message }], req.id));
+          },
         });
-        if (parsed.kind !== 'action') {
-          const message = parsed.kind === 'invalid' ? parsed.reason : `unsupported action: ${tail}`;
-          reply.send(buildValidationEnvelope([{ path: 'session_id', message }], req.id));
-          return;
-        }
-
-        const legacy = core.accessor.get(ISessionLegacyService);
-
-        if (parsed.action === 'fork') {
-          const body = forkSessionRequestSchema.parse(req.body);
-          const forkHandler = await programForSession(core.accessor, parsed.id);
-          if (forkHandler === undefined) {
-            throw new Error2(
-              ErrorCodes.SESSION_NOT_FOUND,
-              `session ${parsed.id} does not exist`,
-            );
-          }
-          const handle = await core.accessor.get(ISessionManager).fork({
-            sourceSessionId: parsed.id,
-            title: body.title,
-            metadata: body.metadata,
-          });
-          const meta = await handle.accessor.get(ISessionMetadata).read();
-          const ctx = handle.accessor.get(ISessionContext);
-          const session = toWireSession(
-            { ...meta, workspaceId: ctx.workspaceId },
-            ctx.cwd,
-            resolveSessionFacts(core, meta.id),
-          );
-          core.accessor.get(IEventService).publish(
-            new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
-          );
-          requestLog(req)?.info(
-            { session_id: parsed.id, action: 'fork', new_session_id: session.id },
-            'session action completed',
-          );
-          reply.send(okEnvelope(session, req.id));
-          return;
-        }
-
-        if (parsed.action === 'compact') {
-          const body = compactSessionRequestSchema.parse(req.body);
-          const agent = await resolveMainAgent(core, parsed.id);
-          agent.accessor
-            .get(IAgentFullCompactionService)
-            .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
-          requestLog(req)?.info({ session_id: parsed.id, action: 'compact' }, 'session action completed');
-          reply.send(okEnvelope({}, req.id));
-          return;
-        }
-
-        if (parsed.action === 'undo') {
-          const body = undoSessionRequestSchema.parse(req.body);
-          const agent = await resolveMainAgent(core, parsed.id);
-          await agent.accessor.get(IAgentConversationUndoService).undo(body.count);
-          const history = agent.accessor.get(IAgentContextMemoryService).get();
-          requestLog(req)?.info({ session_id: parsed.id, action: 'undo' }, 'session action completed');
-          const [summary, status] = await Promise.all([
-            core.accessor.get(ISessionIndex).get(parsed.id),
-            legacy.status(parsed.id),
-          ]);
-          reply.send(
-            okEnvelope(
-              {
-                messages: pageUndoMessages(
-                  parsed.id,
-                  summary?.createdAt ?? 0,
-                  history,
-                  body.page_size,
-                ),
-                status,
-              },
-              req.id,
-            ),
-          );
-          return;
-        }
-
-        if (parsed.action === 'abort') {
-          const agent = await resolveMainAgent(core, parsed.id);
-          agent.accessor.get(IAgentLoopService).cancelFromUser();
-          requestLog(req)?.info({ session_id: parsed.id, action: 'abort' }, 'session action completed');
-          reply.send(okEnvelope({ aborted: true }, req.id));
-          return;
-        }
-
-        if (parsed.action === 'btw') {
-          const session = await resumeSessionById(core.accessor, parsed.id);
-          if (session === undefined) {
-            throw new Error2(
-              ErrorCodes.SESSION_NOT_FOUND,
-              `session ${parsed.id} does not exist`,
-            );
-          }
-          await core.accessor.get(IAuthSummaryService).ensureReady();
-          const agentId = await session.accessor.get(ISessionBtwService).start();
-          reply.send(okEnvelope({ agent_id: agentId }, req.id));
-          return;
-        }
-
-        if (parsed.action === 'restore') {
-          const restoreHandler = await programForSession(core.accessor, parsed.id);
-          const restored =
-            restoreHandler === undefined
-              ? undefined
-              : await core.accessor.get(ISessionManager).restore(parsed.id);
-          if (restored === undefined) {
-            throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
-          }
-          const meta = await restored.accessor.get(ISessionMetadata).read();
-          const ctx = restored.accessor.get(ISessionContext);
-          const session = toWireSession(
-            { ...meta, workspaceId: ctx.workspaceId },
-            ctx.cwd,
-            resolveSessionFacts(core, meta.id),
-          );
-          requestLog(req)?.info({ session_id: parsed.id, action: 'restore' }, 'session action completed');
-          reply.send(okEnvelope(session, req.id));
-          return;
-        }
-
-        const archiveHandler = await programForSession(core.accessor, parsed.id);
-        const archived =
-          archiveHandler === undefined
-            ? undefined
-            : await core.accessor.get(ISessionManager).resume(parsed.id);
-        if (archived === undefined || archiveHandler === undefined) {
-          throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
-        }
-        await core.accessor.get(ISessionManager).archive(parsed.id);
-        requestLog(req)?.info({ session_id: parsed.id, action: 'archive' }, 'session action completed');
-        reply.send(okEnvelope({ archived: true }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
       }
@@ -966,6 +839,142 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     sessionWarningsRoute.options,
     sessionWarningsRoute.handler as Parameters<SessionRouteHost['get']>[2],
   );
+}
+
+type SessionAction = 'fork' | 'compact' | 'undo' | 'abort' | 'btw' | 'restore' | 'archive';
+
+interface SessionActionExtra {
+  readonly core: Scope;
+  readonly req: { readonly id: string };
+  readonly reply: { readonly send: (payload: unknown) => unknown };
+}
+
+type SessionActionCtx<TBody = unknown> = SessionActionExtra & {
+  readonly id: string;
+  readonly body: TBody;
+};
+
+const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
+  fork: { body: forkSessionRequestSchema, handle: forkSessionAction },
+  compact: { body: compactSessionRequestSchema, handle: compactSessionAction },
+  undo: { body: undoSessionRequestSchema, handle: undoSessionAction },
+  abort: { handle: abortSessionAction },
+  btw: { handle: btwSessionAction },
+  restore: { handle: restoreSessionAction },
+  archive: { handle: archiveSessionAction },
+};
+
+async function forkSessionAction(
+  ctx: SessionActionCtx<z.infer<typeof forkSessionRequestSchema>>,
+): Promise<void> {
+  const { core, req, reply, id, body } = ctx;
+  const forkHandler = await programForSession(core.accessor, id);
+  if (forkHandler === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+  }
+  const handle = await core.accessor.get(ISessionManager).fork({
+    sourceSessionId: id,
+    title: body.title,
+    metadata: body.metadata,
+  });
+  const meta = await handle.accessor.get(ISessionMetadata).read();
+  const sessionCtx = handle.accessor.get(ISessionContext);
+  const session = toWireSession(
+    { ...meta, workspaceId: sessionCtx.workspaceId },
+    sessionCtx.cwd,
+    resolveSessionFacts(core, meta.id),
+  );
+  core.accessor
+    .get(IEventService)
+    .publish(new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }));
+  requestLog(req)?.info(
+    { session_id: id, action: 'fork', new_session_id: session.id },
+    'session action completed',
+  );
+  reply.send(okEnvelope(session, req.id));
+}
+
+async function compactSessionAction(
+  ctx: SessionActionCtx<z.infer<typeof compactSessionRequestSchema>>,
+): Promise<void> {
+  const { core, req, reply, id, body } = ctx;
+  const agent = await resolveMainAgent(core, id);
+  agent.accessor
+    .get(IAgentFullCompactionService)
+    .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
+  requestLog(req)?.info({ session_id: id, action: 'compact' }, 'session action completed');
+  reply.send(okEnvelope({}, req.id));
+}
+
+async function undoSessionAction(
+  ctx: SessionActionCtx<z.infer<typeof undoSessionRequestSchema>>,
+): Promise<void> {
+  const { core, req, reply, id, body } = ctx;
+  const agent = await resolveMainAgent(core, id);
+  await agent.accessor.get(IAgentConversationUndoService).undo(body.count);
+  const history = agent.accessor.get(IAgentContextMemoryService).get();
+  requestLog(req)?.info({ session_id: id, action: 'undo' }, 'session action completed');
+  const legacy = core.accessor.get(ISessionLegacyService);
+  const [summary, status] = await Promise.all([
+    core.accessor.get(ISessionIndex).get(id),
+    legacy.status(id),
+  ]);
+  reply.send(
+    okEnvelope(
+      {
+        messages: pageUndoMessages(id, summary?.createdAt ?? 0, history, body.page_size),
+        status,
+      },
+      req.id,
+    ),
+  );
+}
+
+async function abortSessionAction(ctx: SessionActionCtx): Promise<void> {
+  const { core, req, reply, id } = ctx;
+  const agent = await resolveMainAgent(core, id);
+  agent.accessor.get(IAgentLoopService).cancelFromUser();
+  requestLog(req)?.info({ session_id: id, action: 'abort' }, 'session action completed');
+  reply.send(okEnvelope({ aborted: true }, req.id));
+}
+
+async function btwSessionAction(ctx: SessionActionCtx): Promise<void> {
+  const { core, req, reply, id } = ctx;
+  const session = await resumeSessionById(core.accessor, id);
+  if (session === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+  }
+  await core.accessor.get(IAuthSummaryService).ensureReady();
+  const agentId = await session.accessor.get(ISessionBtwService).start();
+  reply.send(okEnvelope({ agent_id: agentId }, req.id));
+}
+
+async function restoreSessionAction(ctx: SessionActionCtx): Promise<void> {
+  const { core, req, reply, id } = ctx;
+  const restored = await core.accessor.get(ISessionManager).restore(id);
+  if (restored === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+  }
+  const meta = await restored.accessor.get(ISessionMetadata).read();
+  const sessionCtx = restored.accessor.get(ISessionContext);
+  const session = toWireSession(
+    { ...meta, workspaceId: sessionCtx.workspaceId },
+    sessionCtx.cwd,
+    resolveSessionFacts(core, meta.id),
+  );
+  requestLog(req)?.info({ session_id: id, action: 'restore' }, 'session action completed');
+  reply.send(okEnvelope(session, req.id));
+}
+
+async function archiveSessionAction(ctx: SessionActionCtx): Promise<void> {
+  const { core, req, reply, id } = ctx;
+  const summary = await core.accessor.get(ISessionManager).status(id);
+  if (summary === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+  }
+  await setSessionArchived(core.accessor, id, true);
+  requestLog(req)?.info({ session_id: id, action: 'archive' }, 'session action completed');
+  reply.send(okEnvelope({ archived: true }, req.id));
 }
 
 export interface SessionWireFields {

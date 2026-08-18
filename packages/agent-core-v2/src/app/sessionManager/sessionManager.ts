@@ -1,6 +1,7 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import type { Event, IWaitUntil } from '#/_base/event';
+import type { SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import type {
   CreateChildSessionOptions,
   CreateSessionOptions,
@@ -34,6 +35,7 @@ export interface ISessionManager {
   create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle>;
   resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;
   get(sessionId: string): ISessionScopeHandle | undefined;
+  status(sessionId: string): Promise<SessionSummary | undefined>;
   whenResumeSettled(sessionId: string): Promise<void>;
   withLifecycleSerialization<T>(
     sessionId: string,

@@ -4,7 +4,7 @@ import { Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { Error2, ErrorCodes } from '#/errors';
-import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
+import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import {
   type CreateChildSessionOptions,
   type ForkSessionOptions,
@@ -86,6 +86,10 @@ export class SessionManager implements ISessionManager {
 
   get(sessionId: string): ISessionScopeHandle | undefined {
     return this.sessions.get(sessionId);
+  }
+
+  status(sessionId: string): Promise<SessionSummary | undefined> {
+    return this.index.get(sessionId);
   }
 
   async whenResumeSettled(sessionId: string): Promise<void> {

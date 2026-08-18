@@ -46,6 +46,7 @@ import {
   replaceProviderResponseSchema,
   type ProviderCollectionActionBody,
 } from '../protocol/rest-modelCatalog';
+import { type ActionTable, runAction } from './action-dispatch';
 import { parseActionSuffix } from './action-suffix';
 
 interface ModelCatalogRouteHost {
@@ -501,25 +502,15 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     async (req, reply) => {
       const raw = req.params.action;
       const action = raw.startsWith(':') ? raw.slice(1) : raw;
-      if (action === 'refresh_oauth') {
-        const result = await (await loadOAuth(core)).refreshOAuthProviderModels();
-        reply.send(okEnvelope(result, req.id));
-        return;
+      const handled = await runAction({
+        action,
+        id: '',
+        actions: providerCollectionActions,
+        extra: { core, req, reply },
+      });
+      if (!handled) {
+        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, `unsupported action: ${raw}`, req.id));
       }
-      if (action === 'refresh') {
-        const result = await (await loadDiscovery(core)).refreshProviderModels({ scope: 'all' });
-        reply.send(okEnvelope(result, req.id));
-        return;
-      }
-      if (action === 'import_catalog') {
-        await enqueueProviderWrite(() => handleImportCatalog(req, reply, core));
-        return;
-      }
-      if (action === 'import_registry') {
-        await enqueueProviderWrite(() => handleImportRegistry(req, reply, core));
-        return;
-      }
-      reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, `unsupported action: ${raw}`, req.id));
     },
   );
   app.post(
@@ -846,5 +837,47 @@ async function handleImportRegistry(
     if (sendModelsDevImportError(reply, req.id, err)) return;
     throw err;
   }
+}
+
+type ProviderCollectionActionExtra = {
+  readonly core: Scope;
+  readonly req: {
+    readonly id: string;
+    readonly body: ProviderCollectionActionBody | undefined;
+  };
+  readonly reply: { readonly send: (payload: unknown) => unknown };
+};
+
+type ProviderCollectionActionCtx = ProviderCollectionActionExtra & {
+  readonly id: string;
+  readonly body: unknown;
+};
+
+const providerCollectionActions: ActionTable<
+  'refresh_oauth' | 'refresh' | 'import_catalog' | 'import_registry',
+  ProviderCollectionActionExtra
+> = {
+  refresh_oauth: { handle: refreshOAuthProvidersAction },
+  refresh: { handle: refreshProvidersAction },
+  import_catalog: { handle: importCatalogProviderAction },
+  import_registry: { handle: importRegistryProviderAction },
+};
+
+async function refreshOAuthProvidersAction(ctx: ProviderCollectionActionCtx): Promise<void> {
+  const result = await (await loadOAuth(ctx.core)).refreshOAuthProviderModels();
+  ctx.reply.send(okEnvelope(result, ctx.req.id));
+}
+
+async function refreshProvidersAction(ctx: ProviderCollectionActionCtx): Promise<void> {
+  const result = await (await loadDiscovery(ctx.core)).refreshProviderModels({ scope: 'all' });
+  ctx.reply.send(okEnvelope(result, ctx.req.id));
+}
+
+async function importCatalogProviderAction(ctx: ProviderCollectionActionCtx): Promise<void> {
+  await enqueueProviderWrite(() => handleImportCatalog(ctx.req, ctx.reply, ctx.core));
+}
+
+async function importRegistryProviderAction(ctx: ProviderCollectionActionCtx): Promise<void> {
+  await enqueueProviderWrite(() => handleImportRegistry(ctx.req, ctx.reply, ctx.core));
 }
 
