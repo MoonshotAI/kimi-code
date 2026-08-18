@@ -5,9 +5,10 @@
  * routes create / resume / restore / close / archive / delete / fork /
  * createChild to the owning controller; per-session work (resume / restore /
  * close / delete / fork / createChild and the batch archive critical
- * section) queues on one serialization chain per session. Cold
- * id→workspace lookups go through `sessionIndex`; workspace
- * materialization through `workspaces`. App scope.
+ * section) queues on one serialization chain per session, and a failed
+ * resume is recorded so the next settle observes it until a fresh attempt
+ * supersedes it. Cold id→workspace lookups go through `sessionIndex`;
+ * workspace materialization through `workspaces`. App scope.
  */
 
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -82,15 +83,11 @@ export class SessionManager implements ISessionManager {
   async resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
     const inflight = this.pendingResumes.get(sessionId);
     if (inflight !== undefined) return inflight;
-    // A fresh attempt supersedes any earlier failure record.
     this.resumeFailures.delete(sessionId);
     const promise = this.serializeLifecycle(sessionId, async () =>
       (await this.controllerForSession(sessionId))?.resume(sessionId, options),
     ).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
-    // Keep the rejection observable past the registry cleanup: a resume that
-    // fails mid-materialization leaves no trace in the live registry, and a
-    // later settle must still see it instead of treating the session as cold.
     void promise.catch((error: unknown) => {
       this.resumeFailures.set(sessionId, error);
     });

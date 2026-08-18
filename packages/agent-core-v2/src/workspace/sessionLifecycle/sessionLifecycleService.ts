@@ -16,7 +16,10 @@
  * never persisted. Pending metadata writes and the index mirror are
  * drained before any teardown, so a listing right after close/archive/delete
  * never reads a stale outcome. Session start and
- * resume failures are reported through telemetry. Each Session scope
+ * resume failures are reported through telemetry; a failed resume also
+ * rolls the unannounced handle back out of the registry and is recorded,
+ * so the next settle observes the failure until a fresh attempt
+ * supersedes it. Each Session scope
  * receives a telemetry view bound to its session id, while failures before
  * a scope is available use an ephemeral context view. Closing a session
  * never touches the handler itself.
@@ -417,7 +420,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (inflight !== undefined) return inflight;
     const live = this.sessions.get(sessionId);
     if (live !== undefined) return Promise.resolve(live);
-    // A fresh attempt supersedes any earlier failure record.
     this.resumeFailures.delete(sessionId);
     const promise = this.doResume(sessionId, opts)
       .catch((error: unknown) => {
@@ -426,8 +428,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           .track2('session_load_failed', {
             reason: isError2(error) ? error.code : error instanceof Error ? error.name : 'unknown',
           });
-        // Keep the rejection observable past the registry cleanup — a later
-        // settle must see the failure rather than treat the session as cold.
         this.resumeFailures.set(sessionId, error);
         throw error;
       })
@@ -459,11 +459,17 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       additionalDirs: opts?.additionalDirs,
       mcpServers: opts?.mcpServers,
     });
-    const agents = handle.accessor.get(IAgentLifecycleService);
-    if (agents.get(MAIN_AGENT_ID) === undefined) {
-      await agents.create({ agentId: MAIN_AGENT_ID });
+    try {
+      const agents = handle.accessor.get(IAgentLifecycleService);
+      if (agents.get(MAIN_AGENT_ID) === undefined) {
+        await agents.create({ agentId: MAIN_AGENT_ID });
+      }
+      await this.announceCreated({ sessionId, handle, source: 'resume' });
+    } catch (error) {
+      this.sessions.delete(sessionId);
+      handle.dispose();
+      throw error;
     }
-    await this.announceCreated({ sessionId, handle, source: 'resume' });
     return handle;
   }
 
