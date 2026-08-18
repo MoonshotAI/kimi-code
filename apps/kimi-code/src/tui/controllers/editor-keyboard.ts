@@ -40,6 +40,12 @@ export interface EditorKeyboardHost {
   harness?: KimiHarness | undefined;
 
   handleUserInput(text: string): void;
+  /**
+   * Append one submitted input to the persistent input history (↑ recall).
+   * `handleUserInput` writes history itself; paths that dispatch editor text
+   * directly (Ctrl-S steering the draft) must call this explicitly.
+   */
+  persistInputHistory(text: string): void;
   readonly btwPanelController: BtwPanelController;
   readonly skillCommandMap: Map<string, string>;
   steerMessage(session: Session, input: readonly SteerInputItem[]): void;
@@ -401,7 +407,13 @@ export class EditorKeyboardController {
         host.state.queuedMessages = queued.filter(
           (m, index) => m.mode === 'bash' || (firstBundle !== -1 && index >= firstBundle),
         );
-        if (!editorIsBash && !editorHasInlineSkills && firstBundle === -1) editor.setText('');
+        if (!editorIsBash && !editorHasInlineSkills && firstBundle === -1) {
+          // A steered editor draft bypasses handleUserInput (and its input-
+          // history write) — persist it here, or ↑ recall loses Ctrl-S-sent
+          // input. Queued items were already persisted at submit time.
+          if (text.length > 0) host.persistInputHistory(text);
+          editor.setText('');
+        }
         for (const run of runs) {
           if (run.kind === 'text') {
             host.steerMessage(session, run.items);
