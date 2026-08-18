@@ -979,7 +979,7 @@ describe('AgentLifecycleService', () => {
     };
     const history: ContextMessage[] = [
       { role: 'user', content: [{ type: 'text', text: 'analyze this repo' }], toolCalls: [] },
-      { role: 'assistant', content: [], toolCalls: [agentCall] },
+      { role: 'assistant', content: [], toolCalls: [agentCall], partial: true },
     ];
     source.accessor.get(IAgentContextMemoryService).append(...history);
 
@@ -988,7 +988,7 @@ describe('AgentLifecycleService', () => {
     const seeded = child.accessor.get(IAgentContextMemoryService).get();
     expect(seeded).toHaveLength(3);
     expect(seeded[0]).toMatchObject({ role: 'user' });
-    expect(seeded[1]).toMatchObject({ role: 'assistant' });
+    expect(seeded[1]).toMatchObject({ role: 'assistant', partial: undefined });
     expect(seeded[2]).toMatchObject({
       role: 'tool',
       toolCallId: 'call_agent',

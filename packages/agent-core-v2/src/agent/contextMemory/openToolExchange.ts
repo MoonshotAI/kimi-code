@@ -35,8 +35,12 @@ export function closeTrailingOpenToolExchange(
     (toolCall) => !answeredToolCallIds.has(toolCall.id),
   );
   if (openCalls.length === 0) return [...history];
+  const settledAssistant =
+    assistant.partial === true ? { ...assistant, partial: undefined } : assistant;
   return [
-    ...history,
+    ...history.slice(0, lastNonToolIndex),
+    settledAssistant,
+    ...history.slice(lastNonToolIndex + 1),
     ...openCalls.map((toolCall) =>
       createToolMessage(toolCall.id, INHERITED_IN_FLIGHT_TOOL_OUTPUT),
     ),

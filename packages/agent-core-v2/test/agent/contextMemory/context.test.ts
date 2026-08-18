@@ -937,6 +937,23 @@ describe('closeTrailingOpenToolExchange', () => {
     });
   });
 
+  it('seals a partial assistant when closing an unanswered trailing call', () => {
+    const assistant: ContextMessage = {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'delegating the follow-up' }],
+      toolCalls: [agentCall],
+      partial: true,
+    };
+    const seed = closeTrailingOpenToolExchange([user, assistant]);
+
+    expect(seed[1]).toMatchObject({ role: 'assistant', partial: undefined });
+    expect(seed[2]).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call_agent',
+      content: [{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }],
+    });
+  });
+
   it('fills only the unanswered calls of a partially answered parallel batch', () => {
     const assistant: ContextMessage = {
       role: 'assistant',
