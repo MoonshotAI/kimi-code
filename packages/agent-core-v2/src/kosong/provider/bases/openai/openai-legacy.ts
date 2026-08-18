@@ -34,6 +34,7 @@ import {
   extractUsage,
   hasModelPrefix,
   isFunctionToolCall,
+  isOfficialOpenAIBaseUrl,
   isOpenAIReasoningModel,
   normalizeOpenAIFinishReason,
   OPENAI_REASONING_CAPABILITY,
@@ -651,7 +652,11 @@ export class OpenAILegacyChatProvider implements ChatProvider {
 
     if (options?.cacheKey !== undefined) {
       const hooked = this._hooks?.cacheKey?.(options.cacheKey);
-      kwargs = { ...kwargs, ...(hooked ?? { prompt_cache_key: options.cacheKey }) };
+      if (hooked !== undefined) {
+        kwargs = { ...kwargs, ...hooked };
+      } else if (isOfficialOpenAIBaseUrl(this._baseUrl)) {
+        kwargs = { ...kwargs, prompt_cache_key: options.cacheKey };
+      }
     }
 
     if (options?.sampling?.temperature !== undefined) {
