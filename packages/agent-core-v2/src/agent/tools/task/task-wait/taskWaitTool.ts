@@ -59,6 +59,7 @@ export class WaitForTool implements IWaitForTool {
   constructor(
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IFlagService private readonly flags: IFlagService,
   ) {}
 
   resolveExecution(args: WaitForInput): ToolExecution {
@@ -77,6 +78,12 @@ export class WaitForTool implements IWaitForTool {
     args: WaitForInput,
     ctx: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
+    if (!this.flags.enabled(WAIT_FOR_FLAG_ID)) {
+      return {
+        isError: true,
+        output: 'WaitFor is disabled: the wait_for experimental flag is off.',
+      };
+    }
     const startedAt = Date.now();
     const timeoutMs = args.timeout * 1000;
     const runningAtStart = this.tasks.list(true);
