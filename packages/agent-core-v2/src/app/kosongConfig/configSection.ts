@@ -307,10 +307,7 @@ export const secondaryModelEnvBindings = envBindings(SecondaryModelConfigSchema,
   defaultEffort: { env: SECONDARY_MODEL_EFFORT_ENV, parse: parseNonEmptyEnv },
 });
 
-registerConfigSection(SECONDARY_MODEL_SECTION, SecondaryModelConfigSchema, {
-  env: secondaryModelEnvBindings,
-  stripEnv: stripEnvBoundFields(secondaryModelEnvBindings),
-});
+// NOTE: secondaryModel registration moved to session/subagent/configSection.ts (upstream)
 
 
 export const VISUAL_MODEL_SECTION = 'visualModel';
