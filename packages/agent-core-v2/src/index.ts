@@ -610,6 +610,7 @@ export * from '#/agent/plugin/agentPlugin';
 export * from '#/agent/plugin/agentPluginOps';
 export * from '#/agent/plugin/agentPluginService';
 import '#/agent/externalHooks/configSection';
+import '#/agent/externalHooks/flag';
 export * from '#/agent/externalHooks/externalHooks';
 export * from '#/agent/externalHooks/externalHooksService';
 export * from '#/agent/fullCompaction/strategy';

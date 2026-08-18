@@ -5,6 +5,7 @@ export const HOOK_EVENT_TYPES = [
   'PostToolUse',
   'PostToolUseFailure',
   'PermissionRequest',
+  'PermissionDecisionRequest',
   'PermissionResult',
   'UserPromptSubmit',
   'UserPromptQueued',
@@ -43,6 +44,9 @@ export interface HookResult {
   readonly exitCode?: number;
   readonly timedOut?: boolean;
   readonly structuredOutput?: boolean;
+  readonly permissionDecision?: 'allow' | 'deny';
+  readonly permissionRequestId?: string;
+  readonly permissionDecisionReason?: string;
 }
 
 export interface HookBlockDecision {

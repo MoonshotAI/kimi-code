@@ -41,6 +41,15 @@ export const FLAG_DEFINITIONS = [
     default: false,
     surface: 'core',
   },
+  {
+    id: 'permission-decision-hook',
+    title: 'Permission decision hook',
+    description:
+      'Let a blocking PermissionDecisionRequest hook allow or deny an ordinary tool approval before falling back to the native approval surface.',
+    env: 'KIMI_CODE_EXPERIMENTAL_PERMISSION_DECISION_HOOK',
+    default: false,
+    surface: 'core',
+  },
 ] as const satisfies readonly FlagDefinitionInput[];
 
 /** Literal union of registered flag ids. */

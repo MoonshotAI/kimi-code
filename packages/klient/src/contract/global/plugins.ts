@@ -42,6 +42,7 @@ const hookDefSchema = z.object({
     'PostToolUse',
     'PostToolUseFailure',
     'PermissionRequest',
+    'PermissionDecisionRequest',
     'PermissionResult',
     'UserPromptSubmit',
     'UserPromptQueued',

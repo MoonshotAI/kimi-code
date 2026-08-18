@@ -17,7 +17,7 @@ Hooks（钩子）是一种自动触发机制：你预先告诉 Kimi Code CLI"每
 - **退出码**（exit code，程序结束时向操作系统报告的状态数字）：`0` 表示放行，`2` 表示阻断，其他数字默认放行
 - **标准输出**（stdout，就是你用 `console.log` 或 `print` 打印出来的内容）：可以附带说明文字
 
-即使脚本报错、超时，CLI 也**不会因此中断你的工作**——这种"出错就放行"的设计叫 fail-open（失败开放），避免 hook 异常变成绊脚石。
+对于现有的可阻断事件，即使脚本报错、超时，CLI 也不会因此中断工作。实验性的 `PermissionDecisionRequest` 更严格：结果缺失或不可信时，会退回 Kimi Code CLI 原生审批，而不是直接放行工具。
 
 ::: warning 注意
 正因为 fail-open，Hooks 适合做提醒和轻量拦截，但**不应作为唯一的安全防线**。对真正高风险的操作，仍需依赖权限审批和人工确认。
@@ -93,7 +93,57 @@ Hook 命令的工作目录是当前会话的项目目录。非 Windows 平台上
 ```
 
 ::: info 哪些事件支持阻断？
-只有**可阻断事件**（`PreToolUse`、`Stop`、`UserPromptSubmit`）的返回值会影响主流程。其余事件属于**观察型事件**——触发后即发即忘，不管脚本返回什么，主流程都不会改变。
+现有的可阻断事件是 `PreToolUse`、`Stop` 和 `UserPromptSubmit`。实验性的 `PermissionDecisionRequest` 可以按下文的严格协议回答普通工具审批。其余事件属于**观察型事件**——触发后即发即忘，不管脚本返回什么，主流程都不会改变。
+:::
+
+## 实验功能：回答工具审批
+
+`PermissionRequest` 仍然只是观察事件。要让 hook 回答普通工具审批，需要启用实验性的 `PermissionDecisionRequest`：
+
+```toml
+# ~/.kimi-code/config.toml
+[experimental]
+permission-decision-hook = true
+
+[[hooks]]
+event = "PermissionDecisionRequest"
+matcher = "Bash"
+command = "node ~/.kimi-code/hooks/approve-bash.mjs"
+timeout = 5
+```
+
+也可以设置环境变量 `KIMI_CODE_EXPERIMENTAL_PERMISSION_DECISION_HOOK=true` 来启用。实验功能总开关 `KIMI_CODE_EXPERIMENTAL_FLAG=true` 也会同时启用本功能。
+
+Hook 除了收到普通事件字段，还会收到 `permission_request_id`、`agent_id`、`turn_id`、`tool_call_id`、`tool_name`、`action`、`tool_input` 和 `display`。脚本必须把本次请求的 ID 原样写回结构化响应：
+
+```js
+// approve-bash.mjs
+let input = '';
+process.stdin.on('data', (chunk) => { input += chunk; });
+process.stdin.on('end', () => {
+  const payload = JSON.parse(input);
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      permissionRequestId: payload.permission_request_id,
+      permissionDecision: 'allow',
+    },
+  }));
+});
+```
+
+要拒绝请求，请返回相同的 `permissionRequestId`、`permissionDecision: "deny"`，并可附带 `permissionDecisionReason`。退出码 `2` 也会拒绝当前请求，并把 stderr 作为原因。
+
+判定规则有意设计得比较保守：
+
+- 任意一条有效的拒绝结果都会生效。
+- 只有所有匹配的 hook 都针对当前请求 ID 返回结构化放行时，工具才会被放行。
+- 没有匹配 hook、请求 ID 不一致、输出格式错误、其他退出码、崩溃或超时，都视为没有 hook 决定，并打开原生审批流程。
+- 取消信号仍然会取消审批，不会被转换成原生回退。
+
+这个事件只处理普通工具审批。带自定义后续流程的审批（包括 Plan 模式审阅）始终走原生流程。main agent 和 subagent 使用相同规则。在 `kimi web` / kap-server 模式下，hook 在服务器所在机器上运行；第一次阻塞请求会等待配置和插件提供的 hooks 加载完成。
+
+::: danger 警告
+实验功能总开关 `KIMI_CODE_EXPERIMENTAL_FLAG=true` 也会启用本功能。启用后，匹配的本地配置 hook，以及已启用插件提供的 hook，都可能无需点击就批准工具。请审查它们的代码、命令、matcher 和更新来源；不要启用不可信插件提供的审批 hook。
 :::
 
 ## 事件一览
@@ -108,6 +158,7 @@ Hook 命令的工作目录是当前会话的项目目录。非 Windows 平台上
 | `PostToolUse` | 工具名 | — | 工具成功执行后触发（观察用） |
 | `PostToolUseFailure` | 工具名 | — | 工具失败或被阻断后触发（观察用） |
 | `PermissionRequest` | 工具名 | — | 即将等待用户审批前触发（观察用） |
+| `PermissionDecisionRequest` | 工具名 | 实验功能 | 启用 `permission-decision-hook` 后可回答普通工具审批；否则使用原生审批流程 |
 | `PermissionResult` | 工具名 | — | 审批结束后触发（观察用） |
 | `SessionStart` | `startup` 或 `resume` | — | 新会话启动或历史会话恢复后触发；payload 含 `source`、`model` 和 `profile` |
 | `SessionEnd` | `exit` 或 `archive` | — | 会话关闭后触发；`archive` 表示会话被归档而非退出 |

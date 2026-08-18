@@ -1,5 +1,11 @@
+import { randomUUID } from 'node:crypto';
+
 import type { Agent } from '..';
 import type { PrepareToolExecutionResult } from '../../loop';
+import {
+  reducePermissionDecisionResults,
+  type PermissionHookDecision,
+} from '../../session/hooks/permission-decision';
 import { createPermissionDecisionPolicies } from './policies';
 import type {
   ApprovalResponse,
@@ -24,6 +30,8 @@ interface PolicyEvaluation {
   readonly policyName: string;
   readonly result: PermissionPolicyResult;
 }
+
+type PermissionDecisionSource = 'native' | 'external_hook' | 'implicit_no_broker';
 
 export class PermissionManager {
   readonly policies: PermissionPolicy[];
@@ -132,8 +140,11 @@ export class PermissionManager {
 
     let response: ApprovalResponse;
     let requestedApproval = false;
+    let decisionSource: PermissionDecisionSource = 'native';
+    let permissionRequestId: string | undefined;
     if (this.agent.rpc?.requestApproval) {
       requestedApproval = true;
+      permissionRequestId = `approval_${randomUUID()}`;
       void this.agent.hooks?.fireAndForgetTrigger?.('PermissionRequest', {
         matcherValue: name,
         inputData: {
@@ -143,48 +154,72 @@ export class PermissionManager {
           action,
           toolInput: context.args,
           display,
+          permissionRequestId,
         },
       });
-      try {
-        response = await this.agent.rpc.requestApproval(
-          {
-            turnId: Number(context.turnId),
-            toolCallId: id,
-            toolName: name,
-            action,
-            display,
-          },
-          { signal },
-        );
-      } catch (error) {
-        this.agent.telemetry.track('permission_approval_result', {
-          policy_name: policyName ?? null,
-          tool_name: name,
-          permission_mode: this.mode,
-          result: 'error',
-          approval_surface: display.kind,
-          duration_ms: Date.now() - startedAt,
-          session_cache_written: false,
-          has_feedback: false,
-          trace_id: context.traceId,
-        });
-        void this.agent.hooks?.fireAndForgetTrigger?.('PermissionResult', {
-          matcherValue: name,
-          inputData: {
-            turnId: Number(context.turnId),
-            toolCallId: id,
-            toolName: name,
-            action,
-            decision: 'error',
-            error: error instanceof Error ? error.message : String(error),
-          },
-        });
-        const resolved = result.resolveError?.(error);
-        return resolved === undefined
-          ? Promise.reject(error)
-          : this.permissionPolicyResolutionToPrepare(resolved, context, policyName);
+
+      const hookDecision =
+        result.resolveApproval === undefined &&
+        this.agent.experimentalFlags.enabled('permission-decision-hook')
+          ? await this.requestHookDecision(context, {
+              permissionRequestId,
+              action,
+              display,
+            })
+          : undefined;
+
+      if (hookDecision !== undefined) {
+        decisionSource = 'external_hook';
+        response =
+          hookDecision.decision === 'allow'
+            ? { decision: 'approved' }
+            : { decision: 'rejected', feedback: hookDecision.reason };
+      } else {
+        try {
+          response = await this.agent.rpc.requestApproval(
+            {
+              turnId: Number(context.turnId),
+              toolCallId: id,
+              toolName: name,
+              action,
+              display,
+            },
+            { signal },
+          );
+        } catch (error) {
+          this.agent.telemetry.track('permission_approval_result', {
+            policy_name: policyName ?? null,
+            tool_name: name,
+            permission_mode: this.mode,
+            result: 'error',
+            approval_surface: display.kind,
+            duration_ms: Date.now() - startedAt,
+            session_cache_written: false,
+            has_feedback: false,
+            trace_id: context.traceId,
+            decision_source: decisionSource,
+          });
+          void this.agent.hooks?.fireAndForgetTrigger?.('PermissionResult', {
+            matcherValue: name,
+            inputData: {
+              turnId: Number(context.turnId),
+              toolCallId: id,
+              toolName: name,
+              action,
+              decision: 'error',
+              error: error instanceof Error ? error.message : String(error),
+              permissionRequestId,
+              decisionSource,
+            },
+          });
+          const resolved = result.resolveError?.(error);
+          return resolved === undefined
+            ? Promise.reject(error)
+            : this.permissionPolicyResolutionToPrepare(resolved, context, policyName);
+        }
       }
     } else {
+      decisionSource = 'implicit_no_broker';
       response = {
         decision: 'approved',
       };
@@ -207,6 +242,8 @@ export class PermissionManager {
           scope: response.scope,
           feedback: response.feedback,
           selectedLabel: response.selectedLabel,
+          permissionRequestId,
+          decisionSource,
         },
       });
     }
@@ -232,6 +269,7 @@ export class PermissionManager {
       session_cache_written: sessionApprovalRule !== undefined,
       has_feedback: response.feedback !== undefined && response.feedback.length > 0,
       trace_id: context.traceId,
+      decision_source: decisionSource,
     });
 
     const resolved = result.resolveApproval?.(response);
@@ -245,8 +283,43 @@ export class PermissionManager {
 
     return {
       block: true,
-      reason: this.formatApprovalRejectionMessage(name, response),
+      reason: this.formatApprovalRejectionMessage(name, response, decisionSource),
     };
+  }
+
+  private async requestHookDecision(
+    context: PermissionPolicyContext,
+    request: {
+      readonly permissionRequestId: string;
+      readonly action: string;
+      readonly display: unknown;
+    },
+  ): Promise<PermissionHookDecision | undefined> {
+    const hooks = this.agent.hooks;
+    if (hooks === undefined) return undefined;
+
+    try {
+      context.signal.throwIfAborted();
+      const results = await hooks.trigger('PermissionDecisionRequest', {
+        matcherValue: context.toolCall.name,
+        signal: context.signal,
+        inputData: {
+          agentId: this.agent.agentId,
+          turnId: Number(context.turnId),
+          toolCallId: context.toolCall.id,
+          toolName: context.toolCall.name,
+          action: request.action,
+          toolInput: context.args,
+          display: request.display,
+          permissionRequestId: request.permissionRequestId,
+        },
+      });
+      context.signal.throwIfAborted();
+      return reducePermissionDecisionResults(results, request.permissionRequestId);
+    } catch {
+      context.signal.throwIfAborted();
+      return undefined;
+    }
   }
 
   private async evaluatePolicies(
@@ -292,6 +365,7 @@ export class PermissionManager {
   protected formatApprovalRejectionMessage(
     toolName: string,
     result: { decision: 'approved' | 'rejected' | 'cancelled'; feedback?: string },
+    source: PermissionDecisionSource = 'native',
   ): string {
     const suffix =
       result.feedback !== undefined && result.feedback.length > 0
@@ -300,7 +374,9 @@ export class PermissionManager {
     const prefix =
       result.decision === 'cancelled'
         ? `Tool "${toolName}" was not run because the approval request was cancelled.`
-        : `Tool "${toolName}" was not run because the user rejected the approval request.`;
+        : source === 'external_hook'
+          ? `Tool "${toolName}" was not run because an external approval hook rejected the approval request.`
+          : `Tool "${toolName}" was not run because the user rejected the approval request.`;
     if (this.agent.type === 'sub') {
       return `${prefix}${suffix} Try a different approach — don't retry the same call, don't attempt to bypass the restriction.`;
     }

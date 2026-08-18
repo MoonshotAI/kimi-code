@@ -25,7 +25,9 @@ import { createPermissionDecisionPolicies } from '../../src/agent/permission/pol
 import { SwarmModeAgentSwarmApprovePermissionPolicy } from '../../src/agent/permission/policies/swarm-mode-agent-swarm-approve';
 import { YoloModeApprovePermissionPolicy } from '../../src/agent/permission/policies/yolo-mode-approve';
 import { ToolAccesses } from '../../src/loop';
+import type { HookEngineTriggerArgs, HookResult } from '../../src/session/hooks';
 import type { ToolInputDisplay } from '../../src/tools/display';
+import { UserCancellationError } from '../../src/utils/abort';
 import {
   literalRulePattern,
   matchesPathRuleSubject,
@@ -1960,6 +1962,35 @@ describe('ExitPlanMode permission policy', () => {
     });
   });
 
+  it('keeps plan review on the native broker when the decision hook is enabled', async () => {
+    const trigger = vi.fn(async (): Promise<HookResult[]> => [
+      decisionHookResult('allow', 'approval_should_not_run'),
+    ]);
+    const { manager, requestApproval } = makePlanPermissionManager({
+      mode: 'manual',
+      plan: '# Review me',
+      approval: { decision: 'approved' },
+      permissionDecisionHookEnabled: true,
+      hooks: {
+        trigger,
+        triggerBlock: vi.fn(async () => undefined),
+        fireAndForgetTrigger: vi.fn(async () => []),
+      } as unknown as Agent['hooks'],
+    });
+
+    await manager.beforeToolCall(
+      hookContext({
+        id: 'call_exit_native_review',
+        toolName: 'ExitPlanMode',
+        args: {},
+        execution: planReviewExecution({ plan: '# Review me', path: '/tmp/plan.md' }),
+      }),
+    );
+
+    expect(trigger).not.toHaveBeenCalled();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+  });
+
   it('reuses session approval for ExitPlanMode without re-prompting plan review', async () => {
     const { manager, requestApproval, exit } = makePlanPermissionManager({
       mode: 'manual',
@@ -2556,6 +2587,7 @@ describe('Approval telemetry', () => {
             action: 'run command',
             toolInput: { command: 'printf first', timeout: 60 },
             display: expect.objectContaining({ kind: 'command' }),
+            permissionRequestId: expect.stringMatching(/^approval_/),
           },
         });
         expect(fireAndForgetTrigger).not.toHaveBeenCalledWith(
@@ -2587,6 +2619,8 @@ describe('Approval telemetry', () => {
         selectedLabel: 'Approve once',
         scope: undefined,
         feedback: undefined,
+        permissionRequestId: expect.stringMatching(/^approval_/),
+        decisionSource: 'native',
       },
     });
   });
@@ -2594,7 +2628,7 @@ describe('Approval telemetry', () => {
   it('does not fire approval observer hooks without an approval request', async () => {
     const triggerBlock = vi.fn(async () => undefined);
     const fireAndForgetTrigger = vi.fn(async () => []);
-    const { manager, requestApproval } = makePermissionManager(
+    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
       async () => ({
         decision: 'approved',
       }),
@@ -2615,6 +2649,10 @@ describe('Approval telemetry', () => {
     expect(fireAndForgetTrigger).not.toHaveBeenCalledWith(
       'PermissionResult',
       expect.anything(),
+    );
+    expect(telemetryTrack).toHaveBeenCalledWith(
+      'permission_approval_result',
+      expect.objectContaining({ decision_source: 'implicit_no_broker' }),
     );
   });
 
@@ -2648,6 +2686,222 @@ describe('Approval telemetry', () => {
         has_feedback: true,
         session_cache_written: false,
       }),
+    );
+  });
+});
+
+describe('PermissionDecisionRequest', () => {
+  it('propagates a pre-existing cancellation without starting the hook or native broker', async () => {
+    const controller = new AbortController();
+    const cancellation = new UserCancellationError();
+    controller.abort(cancellation);
+    const trigger = vi.fn(async (): Promise<HookResult[]> => []);
+    const { manager, requestApproval, record } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      {
+        permissionDecisionHookEnabled: true,
+        hooks: {
+          trigger,
+          triggerBlock: vi.fn(async () => undefined),
+          fireAndForgetTrigger: vi.fn(async () => []),
+        } as unknown as Agent['hooks'],
+      },
+    );
+
+    await expect(
+      manager.beforeToolCall(
+        hookContext({ id: 'call_hook_pre_aborted', signal: controller.signal }),
+      ),
+    ).rejects.toBe(cancellation);
+
+    expect(trigger).not.toHaveBeenCalled();
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it('propagates cancellation while a decision hook is pending without falling back', async () => {
+    const controller = new AbortController();
+    const cancellation = new UserCancellationError();
+    const trigger = vi.fn(
+      async (_event: string, args: HookEngineTriggerArgs): Promise<HookResult[]> =>
+        new Promise((resolve) => {
+          args.signal?.addEventListener(
+            'abort',
+            () => {
+              resolve([]);
+            },
+            { once: true },
+          );
+        }),
+    );
+    const { manager, requestApproval, record } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      {
+        permissionDecisionHookEnabled: true,
+        hooks: {
+          trigger,
+          triggerBlock: vi.fn(async () => undefined),
+          fireAndForgetTrigger: vi.fn(async () => []),
+        } as unknown as Agent['hooks'],
+      },
+    );
+
+    const promise = manager.beforeToolCall(
+      hookContext({ id: 'call_hook_abort_pending', signal: controller.signal }),
+    );
+    const expectation = expect(promise).rejects.toBe(cancellation);
+    await vi.waitFor(() => {
+      expect(trigger).toHaveBeenCalledTimes(1);
+    });
+    controller.abort(cancellation);
+    await expectation;
+
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it('keeps the native approval broker when the experimental flag is off', async () => {
+    const trigger = vi.fn(async (): Promise<HookResult[]> => [
+      decisionHookResult('allow', 'approval_unexpected'),
+    ]);
+    const { manager, requestApproval } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      {
+        hooks: {
+          trigger,
+          triggerBlock: vi.fn(async () => undefined),
+          fireAndForgetTrigger: vi.fn(async () => []),
+        } as unknown as Agent['hooks'],
+      },
+    );
+
+    await expect(manager.beforeToolCall(hookContext({ id: 'call_flag_off' }))).resolves
+      .toBeUndefined();
+    expect(trigger).not.toHaveBeenCalled();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses a valid hook allow without opening the native approval broker', async () => {
+    const fireAndForgetTrigger = vi.fn(async () => []);
+    const trigger = vi.fn(
+      async (_event: string, args: HookEngineTriggerArgs): Promise<HookResult[]> => [
+        decisionHookResult('allow', String(args.inputData?.['permissionRequestId'])),
+      ],
+    );
+    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      {
+        permissionDecisionHookEnabled: true,
+        hooks: {
+          trigger,
+          triggerBlock: vi.fn(async () => undefined),
+          fireAndForgetTrigger,
+        } as unknown as Agent['hooks'],
+      },
+    );
+
+    await expect(manager.beforeToolCall(hookContext({ id: 'call_hook_allow' }))).resolves
+      .toBeUndefined();
+
+    expect(trigger).toHaveBeenCalledWith(
+      'PermissionDecisionRequest',
+      expect.objectContaining({
+        matcherValue: 'Bash',
+        signal: expect.any(AbortSignal),
+        inputData: expect.objectContaining({
+          toolCallId: 'call_hook_allow',
+          permissionRequestId: expect.stringMatching(/^approval_/),
+        }),
+      }),
+    );
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(telemetryTrack).toHaveBeenCalledWith(
+      'permission_approval_result',
+      expect.objectContaining({ result: 'approved', decision_source: 'external_hook' }),
+    );
+  });
+
+  it('uses a valid hook deny and reports its real source', async () => {
+    const trigger = vi.fn(
+      async (_event: string, args: HookEngineTriggerArgs): Promise<HookResult[]> => [
+        decisionHookResult('deny', String(args.inputData?.['permissionRequestId']), 'too broad'),
+      ],
+    );
+    const { manager, requestApproval } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      {
+        permissionDecisionHookEnabled: true,
+        hooks: {
+          trigger,
+          triggerBlock: vi.fn(async () => undefined),
+          fireAndForgetTrigger: vi.fn(async () => []),
+        } as unknown as Agent['hooks'],
+      },
+    );
+
+    await expect(manager.beforeToolCall(hookContext({ id: 'call_hook_deny' }))).resolves
+      .toMatchObject({
+        block: true,
+        reason: expect.stringContaining('external approval hook rejected'),
+      });
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('applies the same hook decision path to subagent tool approvals', async () => {
+    const trigger = vi.fn(
+      async (_event: string, args: HookEngineTriggerArgs): Promise<HookResult[]> => [
+        decisionHookResult('allow', String(args.inputData?.['permissionRequestId'])),
+      ],
+    );
+    const { manager, requestApproval } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      {
+        agentType: 'sub',
+        permissionDecisionHookEnabled: true,
+        hooks: {
+          trigger,
+          triggerBlock: vi.fn(async () => undefined),
+          fireAndForgetTrigger: vi.fn(async () => []),
+        } as unknown as Agent['hooks'],
+      },
+    );
+
+    await expect(manager.beforeToolCall(hookContext({ id: 'call_sub_hook_allow' }))).resolves
+      .toBeUndefined();
+    expect(trigger).toHaveBeenCalledWith(
+      'PermissionDecisionRequest',
+      expect.objectContaining({
+        inputData: expect.objectContaining({
+          agentId: 'agent-test',
+          toolCallId: 'call_sub_hook_allow',
+        }),
+      }),
+    );
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('falls back to native approval for a mismatched request id', async () => {
+    const trigger = vi.fn(async (): Promise<HookResult[]> => [
+      decisionHookResult('allow', 'approval_other'),
+    ]);
+    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      {
+        permissionDecisionHookEnabled: true,
+        hooks: {
+          trigger,
+          triggerBlock: vi.fn(async () => undefined),
+          fireAndForgetTrigger: vi.fn(async () => []),
+        } as unknown as Agent['hooks'],
+      },
+    );
+
+    await expect(manager.beforeToolCall(hookContext({ id: 'call_hook_fallback' }))).resolves
+      .toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+    expect(telemetryTrack).toHaveBeenCalledWith(
+      'permission_approval_result',
+      expect.objectContaining({ result: 'approved', decision_source: 'native' }),
     );
   });
 });
@@ -3894,6 +4148,7 @@ function makePermissionManager(
     readonly hooks?: Agent['hooks'];
     readonly approvalRpc?: boolean;
     readonly swarmModeActive?: boolean;
+    readonly permissionDecisionHookEnabled?: boolean;
   } = {},
 ): {
   manager: PermissionManager;
@@ -3907,6 +4162,7 @@ function makePermissionManager(
   const telemetryTrack = vi.fn();
   const agent = {
     type: options.agentType ?? 'main',
+    agentId: options.agentType === 'sub' ? 'agent-test' : 'main',
     config: { cwd: options.cwd ?? '/workspace' },
     kaos: options.kaos ?? createFakeKaos(),
     getAdditionalDirs: () => options.additionalDirs ?? [],
@@ -3915,6 +4171,10 @@ function makePermissionManager(
     replayBuilder: { push: vi.fn() },
     rpc: options.approvalRpc === false ? undefined : { requestApproval },
     hooks: options.hooks,
+    experimentalFlags: {
+      enabled: (id: string) =>
+        id === 'permission-decision-hook' && options.permissionDecisionHookEnabled === true,
+    },
     telemetry: { track: telemetryTrack },
     planMode: {
       get isActive() {
@@ -3943,6 +4203,8 @@ function makePlanPermissionManager(input: {
   readonly path?: string | undefined;
   readonly approval?: ApprovalResponse | undefined;
   readonly approvalError?: Error | undefined;
+  readonly hooks?: Agent['hooks'];
+  readonly permissionDecisionHookEnabled?: boolean;
 }): {
   manager: PermissionManager;
   record: ReturnType<typeof vi.fn>;
@@ -3966,6 +4228,11 @@ function makePlanPermissionManager(input: {
     records: { logRecord: record },
     replayBuilder: { push: vi.fn() },
     rpc: { requestApproval },
+    hooks: input.hooks,
+    experimentalFlags: {
+      enabled: (id: string) =>
+        id === 'permission-decision-hook' && input.permissionDecisionHookEnabled === true,
+    },
     log: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
     telemetry: { track: telemetryTrack },
     turn: { traceIdForTurn: () => undefined },
@@ -3997,6 +4264,22 @@ function makePlanPermissionManager(input: {
   return { manager, record, requestApproval, exit, telemetryTrack };
 }
 
+function decisionHookResult(
+  decision: 'allow' | 'deny',
+  permissionRequestId: string,
+  reason?: string,
+): HookResult {
+  return {
+    action: decision === 'deny' ? 'block' : 'allow',
+    exitCode: 0,
+    structuredOutput: true,
+    permissionDecision: decision,
+    permissionRequestId,
+    permissionDecisionReason: reason,
+    reason,
+  };
+}
+
 function hookContext(input: {
   readonly id: string;
   readonly toolName?: string | undefined;
@@ -4004,6 +4287,7 @@ function hookContext(input: {
   readonly execution?: PermissionPolicyContext['execution'] | undefined;
   readonly toolCalls?: readonly ToolCall[] | undefined;
   readonly traceId?: string | undefined;
+  readonly signal?: AbortSignal | undefined;
 }): PermissionPolicyContext {
   const toolName = input.toolName ?? 'Bash';
   const args = input.args ?? { command: 'printf first', timeout: 60 };
@@ -4017,7 +4301,7 @@ function hookContext(input: {
     turnId: '0',
     stepNumber: 1,
     traceId: input.traceId,
-    signal: new AbortController().signal,
+    signal: input.signal ?? new AbortController().signal,
     llm: {} as PermissionPolicyContext['llm'],
     toolCall,
     toolCalls: input.toolCalls ?? [toolCall],

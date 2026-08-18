@@ -16,6 +16,7 @@ import { AgentPlanService } from '#/features/plan/planService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { OrderedHookSlot } from '#/hooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
   BeforeExecuteDecision,
@@ -144,6 +145,9 @@ describe('AgentPlanService plan-guard listener', () => {
 
     const toolApproval: IAgentToolApprovalService = {
       _serviceBrand: undefined,
+      hooks: {
+        onWillRequestApproval: new OrderedHookSlot(),
+      },
       resolvePermissionResolution: async () => {
         throw new Error('resolvePermissionResolution is not used by the plan-guard listener');
       },

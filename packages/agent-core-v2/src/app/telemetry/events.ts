@@ -159,6 +159,7 @@ export interface PermissionApprovalResultEvent {
   session_cache_written: boolean;
   has_feedback: boolean;
   trace_id?: string;
+  decision_source: 'native' | 'external_hook' | 'implicit_no_broker';
 }
 
 export interface PlanSubmittedEvent {
@@ -586,6 +587,8 @@ export const telemetryEventDefinitions = {
       has_feedback: 'Whether the user attached feedback',
       trace_id:
         'Trace id of the LLM request that produced the gated tool call; absent for non-Kimi protocols',
+      decision_source:
+        'Whether the native approval broker, an external hook, or the no-broker fallback decided the request',
     },
   }),
   plan_submitted: defineAgentTelemetryEvent<PlanSubmittedEvent>({

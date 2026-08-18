@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildHookSpawnOptions } from '../../src/session/hooks/runner';
+import { reducePermissionDecisionResults } from '../../src/session/hooks/permission-decision';
 
 const RUNNER_MODULE = '../../src/session/hooks/runner' as string;
 
@@ -10,8 +11,12 @@ interface HookResult {
   reason?: string;
   stdout?: string;
   stderr?: string;
+  exitCode?: number;
   timedOut?: boolean;
   structuredOutput?: boolean;
+  permissionDecision?: 'allow' | 'deny';
+  permissionRequestId?: string;
+  permissionDecisionReason?: string;
 }
 
 type RunHook = (
@@ -92,6 +97,21 @@ describe('runHook process runner', () => {
     expect(result.reason).toBe('use rg');
   });
 
+  it('parses a permission decision and its exact request id', async () => {
+    const runHook = await importRunHook();
+    const cmd =
+      "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{permissionRequestId:'approval_1',permissionDecision:'allow'}}))\"";
+    const result = await runHook(cmd, {}, { timeout: 5 });
+
+    expect(result).toMatchObject({
+      action: 'allow',
+      exitCode: 0,
+      structuredOutput: true,
+      permissionDecision: 'allow',
+      permissionRequestId: 'approval_1',
+    });
+  });
+
   it('writes the input payload to the hook process stdin as JSON', async () => {
     const runHook = await importRunHook();
     const cmd =
@@ -100,6 +120,72 @@ describe('runHook process runner', () => {
     expect(result.stdout?.trim()).toBe('WriteFile');
   });
 });
+
+describe('reducePermissionDecisionResults', () => {
+  it('allows only when every matched hook returns allow for the current request', () => {
+    expect(
+      reducePermissionDecisionResults(
+        [
+          decisionResult('allow', 'approval_1'),
+          decisionResult('allow', 'approval_1'),
+        ],
+        'approval_1',
+      ),
+    ).toEqual({ decision: 'allow' });
+
+    expect(
+      reducePermissionDecisionResults(
+        [decisionResult('allow', 'approval_1'), decisionResult('allow', 'approval_other')],
+        'approval_1',
+      ),
+    ).toBeUndefined();
+  });
+
+  it('lets a valid deny win and treats exit code 2 as an explicit deny', () => {
+    expect(
+      reducePermissionDecisionResults(
+        [decisionResult('allow', 'approval_1'), decisionResult('deny', 'approval_1', 'no')],
+        'approval_1',
+      ),
+    ).toEqual({ decision: 'deny', reason: 'no' });
+
+    expect(
+      reducePermissionDecisionResults(
+        [{ action: 'block', exitCode: 2, stderr: 'blocked', reason: 'blocked' }],
+        'approval_1',
+      ),
+    ).toEqual({ decision: 'deny', reason: 'blocked' });
+  });
+
+  it('falls back when output is empty, malformed, timed out, or bound to another request', () => {
+    const invalidResults: HookResult[] = [
+      { action: 'allow', exitCode: 0 },
+      { action: 'allow', exitCode: 1 },
+      { action: 'allow', exitCode: 0, timedOut: true },
+      decisionResult('allow', 'approval_other'),
+    ];
+
+    for (const result of invalidResults) {
+      expect(reducePermissionDecisionResults([result], 'approval_1')).toBeUndefined();
+    }
+  });
+});
+
+function decisionResult(
+  decision: 'allow' | 'deny',
+  permissionRequestId: string,
+  reason?: string,
+): HookResult {
+  return {
+    action: decision === 'deny' ? 'block' : 'allow',
+    exitCode: 0,
+    structuredOutput: true,
+    permissionDecision: decision,
+    permissionRequestId,
+    permissionDecisionReason: reason,
+    reason,
+  };
+}
 
 // Regression coverage for the "every hook flashes an empty console window on
 // Windows" bug. With `shell:true` and no `windowsHide`, Node allocates a

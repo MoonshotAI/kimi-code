@@ -1267,6 +1267,7 @@ export class Session {
     agent = new Agent({
       ...config,
       type,
+      agentId: id,
       kaos: this.toolKaos.withCwd(cwd),
       toolServices: this.options.toolServices,
       config: this.kimiConfig,

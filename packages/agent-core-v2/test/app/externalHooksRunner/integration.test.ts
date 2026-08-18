@@ -43,6 +43,10 @@ import {
   PermissionApprovalResolved,
 } from '#/agent/toolApproval/toolApprovalService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import {
+  IAgentToolApprovalService,
+  type ToolApprovalRequestHookContext,
+} from '#/agent/toolApproval/toolApproval';
 import { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
 import { ExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunnerService';
 import { makeHookRunner } from '../../agent/externalHooks/runner-stub';
@@ -51,6 +55,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { IFlagService } from '#/app/flag/flag';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IHostProcessService } from '#/os/interface/hostProcess';
@@ -340,6 +345,12 @@ describe('IExternalHooksRunnerService integration', () => {
             hooks: createHooks(['onBeforeSubmitPrompt']),
           });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+          reg.definePartialInstance(IAgentToolApprovalService, {
+            hooks: {
+              onWillRequestApproval: new OrderedHookSlot<ToolApprovalRequestHookContext>(),
+            },
+          });
+          reg.definePartialInstance(IFlagService, { enabled: () => false });
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
@@ -409,13 +420,36 @@ describe('IExternalHooksRunnerService integration', () => {
     const disposables = new DisposableStore();
     let ix: TestInstantiationService | undefined;
     try {
+      let permissionDecisionEnabled = false;
+      const approvalHooks = new OrderedHookSlot<ToolApprovalRequestHookContext>();
       const fired: Array<{
         event: string;
         matcherValue?: unknown;
         inputData?: unknown;
       }> = [];
+      const triggered: Array<{
+        event: string;
+        matcherValue?: unknown;
+        inputData?: unknown;
+      }> = [];
       const hookEngine = {
-        trigger: async () => [],
+        trigger: async (
+          event: string,
+          args: { matcherValue?: unknown; inputData?: unknown },
+        ) => {
+          triggered.push({ event, matcherValue: args.matcherValue, inputData: args.inputData });
+          if (event !== 'PermissionDecisionRequest') return [];
+          const input = args.inputData as { permissionRequestId: string };
+          return [
+            {
+              action: 'allow' as const,
+              exitCode: 0,
+              structuredOutput: true,
+              permissionDecision: 'allow' as const,
+              permissionRequestId: input.permissionRequestId,
+            },
+          ];
+        },
         triggerBlock: async () => undefined,
         fireAndForgetTrigger: async (
           event: string,
@@ -446,6 +480,12 @@ describe('IExternalHooksRunnerService integration', () => {
             hooks: createHooks(['onBeforeSubmitPrompt']),
           });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+          reg.definePartialInstance(IAgentToolApprovalService, {
+            hooks: { onWillRequestApproval: approvalHooks },
+          });
+          reg.definePartialInstance(IFlagService, {
+            enabled: () => permissionDecisionEnabled,
+          });
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
@@ -459,6 +499,8 @@ describe('IExternalHooksRunnerService integration', () => {
       const eventBus = ix.get(IEventBus);
 
       const requestContext = {
+        id: 'approval_1',
+        permissionRequestId: 'approval_1',
         sessionId: 'session-1',
         agentId: 'main',
         turnId: 7,
@@ -474,6 +516,7 @@ describe('IExternalHooksRunnerService integration', () => {
           ...requestContext,
           decision: 'approved',
           selectedLabel: 'Approve once',
+          decisionSource: 'native',
         }),
       );
       await flushMicrotasks();
@@ -491,9 +534,44 @@ describe('IExternalHooksRunnerService integration', () => {
             ...requestContext,
             decision: 'approved',
             selectedLabel: 'Approve once',
+            decisionSource: 'native',
           },
         },
       ]);
+
+      const flagOffContext: ToolApprovalRequestHookContext = {
+        request: requestContext,
+        signal: new AbortController().signal,
+        decisionSource: 'native',
+      };
+      const flagOffNativeApproval = vi.fn(async (current: ToolApprovalRequestHookContext) => {
+        current.response = { decision: 'approved' };
+      });
+      await approvalHooks.run(flagOffContext, flagOffNativeApproval);
+      expect(flagOffNativeApproval).toHaveBeenCalledTimes(1);
+      expect(triggered).toEqual([]);
+
+      permissionDecisionEnabled = true;
+      const nativeApproval = vi.fn(async () => {});
+      const hookContext: ToolApprovalRequestHookContext = {
+        request: requestContext,
+        signal: new AbortController().signal,
+        decisionSource: 'native',
+      };
+      await approvalHooks.run(hookContext, nativeApproval);
+
+      expect(nativeApproval).not.toHaveBeenCalled();
+      expect(hookContext.response).toEqual({ decision: 'approved' });
+      expect(hookContext.decisionSource).toBe('external_hook');
+      expect(triggered).toContainEqual({
+        event: 'PermissionDecisionRequest',
+        matcherValue: 'Bash',
+        inputData: expect.objectContaining({
+          permissionRequestId: 'approval_1',
+          toolName: 'Bash',
+          toolInput: { command: 'pwd' },
+        }),
+      });
     } finally {
       ix?.dispose();
       disposables.dispose();
@@ -610,12 +688,13 @@ describe('IExternalHooksRunnerService integration', () => {
     }
   });
 
-  it('waits for dynamic hooks to load before running the first blocking hook', async () => {
+  it('waits for dynamic hooks to load before the first permission decision', async () => {
     const disposables = new DisposableStore();
     let ix: TestInstantiationService | undefined;
     try {
       const loop = stubLoopWithHooks();
       const context = stubContextMemory();
+      const approvalHooks = new OrderedHookSlot<ToolApprovalRequestHookContext>();
       let resolveReady!: () => void;
       const ready = new Promise<void>((resolve) => {
         resolveReady = resolve;
@@ -634,8 +713,10 @@ describe('IExternalHooksRunnerService integration', () => {
               (domain === HOOKS_SECTION
                 ? [
                   {
-                    event: 'Stop' as const,
-                    command: nodeCommand('process.stderr.write("loaded stop hook"); process.exit(2);'),
+                    event: 'PermissionDecisionRequest' as const,
+                    command: stdinScript(
+                      'process.stdout.write(JSON.stringify({ hookSpecificOutput: { permissionRequestId: parsed.permission_request_id, permissionDecision: "allow" } }));',
+                    ),
                     timeout: 5,
                   },
                 ]
@@ -652,6 +733,10 @@ describe('IExternalHooksRunnerService integration', () => {
             hooks: createHooks(['onBeforeSubmitPrompt']),
           });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+          reg.definePartialInstance(IAgentToolApprovalService, {
+            hooks: { onWillRequestApproval: approvalHooks },
+          });
+          reg.definePartialInstance(IFlagService, { enabled: () => true });
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
@@ -669,9 +754,25 @@ describe('IExternalHooksRunnerService integration', () => {
       ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
       ix.get(IAgentExternalHooksService);
 
-      const afterStep = makeAfterStep(new AbortController().signal);
+      const nativeApproval = vi.fn(async () => {});
+      const hookContext: ToolApprovalRequestHookContext = {
+        request: {
+          id: 'approval_ready',
+          permissionRequestId: 'approval_ready',
+          sessionId: 'session-1',
+          agentId: 'main',
+          turnId: 1,
+          toolCallId: 'call-ready',
+          toolName: 'Bash',
+          action: 'Run command',
+          toolInput: { command: 'pwd' },
+          display: { kind: 'command', command: 'pwd' },
+        },
+        signal: new AbortController().signal,
+        decisionSource: 'native',
+      };
       let completed = false;
-      const pending = loop.hooks.onDidFinishStep.run(afterStep).then(() => {
+      const pending = approvalHooks.run(hookContext, nativeApproval).then(() => {
         completed = true;
       });
       await flushMicrotasks();
@@ -680,14 +781,9 @@ describe('IExternalHooksRunnerService integration', () => {
       resolveReady();
       await pending;
 
-      expect(loop.hasPendingRequests()).toBe(true);
-      expect(context.messages.at(-1)).toEqual(
-        expect.objectContaining({
-          role: 'user',
-          content: [{ type: 'text', text: 'loaded stop hook' }],
-          origin: { kind: 'system_trigger', name: 'stop_hook' },
-        }),
-      );
+      expect(nativeApproval).not.toHaveBeenCalled();
+      expect(hookContext.response).toEqual({ decision: 'approved' });
+      expect(hookContext.decisionSource).toBe('external_hook');
     } finally {
       ix?.dispose();
       disposables.dispose();
@@ -1187,6 +1283,12 @@ describe('IExternalHooksRunnerService integration', () => {
             hooks: createHooks(['onBeforeSubmitPrompt']),
           });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+          reg.definePartialInstance(IAgentToolApprovalService, {
+            hooks: {
+              onWillRequestApproval: new OrderedHookSlot<ToolApprovalRequestHookContext>(),
+            },
+          });
+          reg.definePartialInstance(IFlagService, { enabled: () => false });
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),

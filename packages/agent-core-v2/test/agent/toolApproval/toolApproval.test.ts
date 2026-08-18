@@ -15,7 +15,10 @@ import {
   type PermissionApprovalResultRecord,
 } from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import {
+  IAgentToolApprovalService,
+  type ToolApprovalRequestHookContext,
+} from '#/agent/toolApproval/toolApproval';
 import {
   AgentToolApprovalService,
   PermissionApprovalRequested,
@@ -81,6 +84,20 @@ function ask(
   overrides: Partial<Extract<PermissionPolicyResult, { kind: 'ask' }>> = {},
 ): Extract<PermissionPolicyResult, { kind: 'ask' }> {
   return { kind: 'ask', ...overrides };
+}
+
+function deferred<T>(): {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+  readonly reject: (error: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 describe('AgentToolApprovalService', () => {
@@ -279,6 +296,7 @@ describe('AgentToolApprovalService', () => {
           tool_name: 'Bash',
           result: 'approved',
           session_cache_written: false,
+          decision_source: 'implicit_no_broker',
         }),
       });
     });
@@ -300,6 +318,7 @@ describe('AgentToolApprovalService', () => {
         expect.objectContaining({
           type: 'permission.approval.requested',
           id: expect.stringMatching(/^approval_/),
+          permissionRequestId: expect.stringMatching(/^approval_/),
           sessionId: 'test-session',
           agentId: 'main',
           turnId: 1,
@@ -318,6 +337,7 @@ describe('AgentToolApprovalService', () => {
         expect.objectContaining({
           type: 'permission.approval.resolved',
           id: expect.stringMatching(/^approval_/),
+          permissionRequestId: expect.stringMatching(/^approval_/),
           sessionId: 'test-session',
           agentId: 'main',
           turnId: 1,
@@ -332,6 +352,7 @@ describe('AgentToolApprovalService', () => {
           },
           decision: 'approved',
           selectedLabel: 'Approve once',
+          decisionSource: 'native',
         }),
       );
     });
@@ -374,6 +395,384 @@ describe('AgentToolApprovalService', () => {
       expect(brokerId).toMatch(/^approval_/);
       expect(events.requested.mock.calls[0]![0]).toMatchObject({ id: brokerId });
       expect(events.resolved.mock.calls[0]![0]).toMatchObject({ id: brokerId });
+    });
+
+    it('lets an approval participant decide without opening the native broker', async () => {
+      const events = subscribeApprovalEvents();
+      const request = useBroker(async () => ({ decision: 'approved' }));
+      const svc = make();
+      disposables.add(
+        svc.hooks.onWillRequestApproval.register('test-external', async (ctx) => {
+          ctx.response = { decision: 'approved' };
+          ctx.decisionSource = 'external_hook';
+        }),
+      );
+
+      await expect(
+        svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask'),
+      ).resolves.toBeUndefined();
+
+      expect(request).not.toHaveBeenCalled();
+      expect(events.resolved).toHaveBeenCalledWith(
+        expect.objectContaining({
+          decision: 'approved',
+          decisionSource: 'external_hook',
+        }),
+      );
+      expect(records).toContainEqual({
+        event: 'permission_approval_result',
+        properties: expect.objectContaining({ decision_source: 'external_hook' }),
+      });
+    });
+
+    it('propagates a pre-existing cancellation without starting participant work or the native broker', async () => {
+      const controller = new AbortController();
+      const cancellation = new UserCancellationError();
+      controller.abort(cancellation);
+      const request = useBroker(async () => ({ decision: 'approved' }));
+      const participantWork = vi.fn();
+      const svc = make();
+      disposables.add(
+        svc.hooks.onWillRequestApproval.register('test-external', async (ctx, next) => {
+          ctx.signal.throwIfAborted();
+          participantWork();
+          await next();
+        }),
+      );
+
+      await expect(
+        svc.requestToolApproval(
+          makeContext('Bash', {}, { signal: controller.signal }),
+          ask(),
+          'fallback-ask',
+        ),
+      ).rejects.toBe(cancellation);
+
+      expect(participantWork).not.toHaveBeenCalled();
+      expect(request).not.toHaveBeenCalled();
+      expect(records).toEqual([]);
+      expect(recorded).toEqual([]);
+    });
+
+    it('propagates cancellation while an approval participant is pending without falling back', async () => {
+      const controller = new AbortController();
+      const cancellation = new UserCancellationError();
+      const request = useBroker(async () => ({ decision: 'approved' }));
+      const participant = vi.fn(
+        async (ctx: ToolApprovalRequestHookContext) =>
+          new Promise<void>((resolve) => {
+            ctx.signal.addEventListener(
+              'abort',
+              () => {
+                resolve();
+              },
+              { once: true },
+            );
+          }),
+      );
+      const svc = make();
+      disposables.add(
+        svc.hooks.onWillRequestApproval.register('test-external', participant),
+      );
+
+      const promise = svc.requestToolApproval(
+        makeContext('Bash', {}, { signal: controller.signal }),
+        ask(),
+        'fallback-ask',
+      );
+      const expectation = expect(promise).rejects.toBe(cancellation);
+      await vi.waitFor(() => {
+        expect(participant).toHaveBeenCalledTimes(1);
+      });
+      controller.abort(cancellation);
+      await expectation;
+
+      expect(request).not.toHaveBeenCalled();
+      expect(records).toEqual([]);
+      expect(recorded).toEqual([]);
+    });
+
+    it('uses the same approval participant path for subagent tool requests', async () => {
+      useSubagentScope();
+      const request = useBroker(async () => ({ decision: 'approved' }));
+      const svc = make();
+      disposables.add(
+        svc.hooks.onWillRequestApproval.register('test-external', async (ctx) => {
+          ctx.response = { decision: 'rejected', feedback: 'worker policy' };
+          ctx.decisionSource = 'external_hook';
+        }),
+      );
+
+      await expect(
+        svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask'),
+      ).resolves.toEqual({
+        veto: {
+          isError: true,
+          output: expect.stringMatching(/external approval hook.*worker policy.*different approach/),
+        },
+      });
+      expect(request).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the native broker when a participant returns no decision', async () => {
+      const request = useBroker(async () => ({ decision: 'approved' }));
+      const svc = make();
+      disposables.add(
+        svc.hooks.onWillRequestApproval.register('empty-participant', async () => {}),
+      );
+
+      await expect(
+        svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask'),
+      ).resolves.toBeUndefined();
+
+      expect(request).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to the native broker exactly once when a participant throws', async () => {
+      const request = useBroker(async () => ({ decision: 'approved' }));
+      const svc = make();
+      disposables.add(
+        svc.hooks.onWillRequestApproval.register('throwing-participant', async () => {
+          throw new Error('participant failed');
+        }),
+      );
+
+      await expect(
+        svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask'),
+      ).resolves.toBeUndefined();
+
+      expect(request).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not retry the native broker when it throws inside the participant chain', async () => {
+      const brokerError = new Error('approval transport closed');
+      const request = useBroker(async () => {
+        throw brokerError;
+      });
+      const svc = make();
+      disposables.add(
+        svc.hooks.onWillRequestApproval.register('passthrough-participant', async (_ctx, next) => {
+          await next();
+        }),
+      );
+
+      await expect(
+        svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask'),
+      ).rejects.toBe(brokerError);
+
+      expect(request).toHaveBeenCalledTimes(1);
+    });
+
+    it('opens the native broker once when a participant calls next sequentially', async () => {
+      const events = subscribeApprovalEvents();
+      const request = useBroker(async () => ({ decision: 'approved' }));
+      const svc = make();
+      disposables.add(
+        svc.hooks.onWillRequestApproval.register('repeating-participant', async (_ctx, next) => {
+          await next();
+          await next();
+        }),
+      );
+
+      await expect(
+        svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask'),
+      ).resolves.toBeUndefined();
+
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(events.resolved).toHaveBeenCalledTimes(1);
+      expect(recorded).toHaveLength(1);
+    });
+
+    it('opens the native broker once when a participant calls next concurrently', async () => {
+      const events = subscribeApprovalEvents();
+      const request = useBroker(async () => ({ decision: 'approved' }));
+      const svc = make();
+      disposables.add(
+        svc.hooks.onWillRequestApproval.register('concurrent-participant', async (_ctx, next) => {
+          await Promise.all([next(), next()]);
+        }),
+      );
+
+      await expect(
+        svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask'),
+      ).resolves.toBeUndefined();
+
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(events.resolved).toHaveBeenCalledTimes(1);
+      expect(recorded).toHaveLength(1);
+    });
+
+    it('reuses a deferred native broker when a participant returns without awaiting next', async () => {
+      const events = subscribeApprovalEvents();
+      const broker = deferred<ApprovalResponse>();
+      const request = useBroker(() => broker.promise);
+      const svc = make();
+      disposables.add(
+        svc.hooks.onWillRequestApproval.register('detached-participant', (_ctx, next) => {
+          void next();
+        }),
+      );
+
+      const approval = svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask');
+      await vi.waitFor(() => {
+        expect(request).toHaveBeenCalledTimes(1);
+      });
+      expect(events.resolved).not.toHaveBeenCalled();
+      broker.resolve({ decision: 'approved' });
+
+      await expect(approval).resolves.toBeUndefined();
+
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(events.resolved).toHaveBeenCalledTimes(1);
+      expect(recorded).toHaveLength(1);
+    });
+
+    it('reports a detached native broker rejection once without an unhandled branch', async () => {
+      const brokerError = new Error('approval transport closed');
+      const broker = deferred<ApprovalResponse>();
+      const request = useBroker(() => broker.promise);
+      const svc = make();
+      disposables.add(
+        svc.hooks.onWillRequestApproval.register('detached-participant', (_ctx, next) => {
+          void next();
+        }),
+      );
+
+      const approval = svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask');
+      const expectation = expect(approval).rejects.toBe(brokerError);
+      await vi.waitFor(() => {
+        expect(request).toHaveBeenCalledTimes(1);
+      });
+      broker.reject(brokerError);
+      await expectation;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(recorded).toHaveLength(0);
+    });
+
+    it('preserves the broker error when a participant throws after awaiting next', async () => {
+      const brokerError = new Error('approval transport closed');
+      const participantError = new Error('participant failed after next');
+      const broker = deferred<ApprovalResponse>();
+      const request = useBroker(() => broker.promise);
+      const svc = make();
+      disposables.add(
+        svc.hooks.onWillRequestApproval.register('throwing-participant', async (_ctx, next) => {
+          await next();
+          throw participantError;
+        }),
+      );
+
+      const approval = svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask');
+      const expectation = expect(approval).rejects.toBe(brokerError);
+      await vi.waitFor(() => {
+        expect(request).toHaveBeenCalledTimes(1);
+      });
+      broker.reject(brokerError);
+      await expectation;
+
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(recorded).toHaveLength(0);
+    });
+
+    it('uses the broker result when a participant throws after starting detached next', async () => {
+      const broker = deferred<ApprovalResponse>();
+      const request = useBroker(() => broker.promise);
+      const svc = make();
+      disposables.add(
+        svc.hooks.onWillRequestApproval.register('throwing-participant', (_ctx, next) => {
+          void next();
+          throw new Error('participant failed after detached next');
+        }),
+      );
+
+      const approval = svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask');
+      await vi.waitFor(() => {
+        expect(request).toHaveBeenCalledTimes(1);
+      });
+      broker.resolve({ decision: 'approved' });
+
+      await expect(approval).resolves.toBeUndefined();
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(recorded).toHaveLength(1);
+    });
+
+    it('keeps the root approval alive when a detached fork signal is cancelled', async () => {
+      const rootController = new AbortController();
+      const forkController = new AbortController();
+      const broker = deferred<ApprovalResponse>();
+      const request = useBroker(() => broker.promise);
+      const svc = make();
+      disposables.add(
+        svc.hooks.onWillRequestApproval.register('forking-participant', (ctx, next) => {
+          void next({ ...ctx, signal: forkController.signal });
+        }),
+      );
+
+      const approval = svc.requestToolApproval(
+        makeContext('Bash', {}, { signal: rootController.signal }),
+        ask(),
+        'fallback-ask',
+      );
+      await vi.waitFor(() => {
+        expect(request).toHaveBeenCalledTimes(1);
+      });
+      forkController.abort(new UserCancellationError());
+      broker.resolve({ decision: 'approved' });
+
+      await expect(approval).resolves.toBeUndefined();
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(recorded).toHaveLength(1);
+    });
+
+    it('cancels the root approval while a detached fork keeps waiting on the broker', async () => {
+      const rootController = new AbortController();
+      const forkController = new AbortController();
+      const cancellation = new UserCancellationError();
+      const broker = deferred<ApprovalResponse>();
+      const request = useBroker(() => broker.promise);
+      const svc = make();
+      disposables.add(
+        svc.hooks.onWillRequestApproval.register('forking-participant', (ctx, next) => {
+          void next({ ...ctx, signal: forkController.signal });
+        }),
+      );
+
+      const approval = svc.requestToolApproval(
+        makeContext('Bash', {}, { signal: rootController.signal }),
+        ask(),
+        'fallback-ask',
+      );
+      const expectation = expect(approval).rejects.toBe(cancellation);
+      await vi.waitFor(() => {
+        expect(request).toHaveBeenCalledTimes(1);
+      });
+      rootController.abort(cancellation);
+      await expectation;
+      broker.resolve({ decision: 'approved' });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(recorded).toHaveLength(0);
+    });
+
+    it('does not invoke approval participants for custom continuations', async () => {
+      const request = useBroker(async () => ({ decision: 'approved' }));
+      const participant = vi.fn();
+      const svc = make();
+      disposables.add(
+        svc.hooks.onWillRequestApproval.register('external', participant),
+      );
+
+      await svc.requestToolApproval(
+        makeContext('ExitPlanMode'),
+        ask({ resolveApproval: () => ({ kind: 'result', result: { output: 'done' } }) }),
+        'exit-plan-mode-review-ask',
+      );
+
+      expect(participant).not.toHaveBeenCalled();
+      expect(request).toHaveBeenCalledTimes(1);
     });
 
     it('records a session-scope approval rule when approved for session', async () => {
@@ -651,6 +1050,19 @@ describe('AgentToolApprovalService', () => {
       const svc = make();
       expect(svc.formatApprovalRejectionMessage('Bash', { decision: 'cancelled' })).toBe(
         'Tool "Bash" was not run because the approval request was cancelled.',
+      );
+    });
+
+    it('attributes external hook rejections accurately', () => {
+      const svc = make();
+      expect(
+        svc.formatApprovalRejectionMessage(
+          'Bash',
+          { decision: 'rejected', feedback: 'too broad' },
+          'external_hook',
+        ),
+      ).toBe(
+        'Tool "Bash" was not run because an external approval hook rejected the approval request. Reason: too broad',
       );
     });
   });
