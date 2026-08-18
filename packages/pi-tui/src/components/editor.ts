@@ -1029,7 +1029,12 @@ export class Editor implements Component, Focusable {
 				if (this.historyIndex === -1) {
 					// A crossing soon after a previous ↑ may still prove to be a
 					// held key's first autorepeat — arm the snap-back above.
-					this.pendingHeldUpCrossingAt = gap < UP_ARROW_INITIAL_DELAY_MAX_MS ? now : 0;
+					// Legacy input only: with the Kitty protocol the crossing
+					// event's press/repeat type is exact, so a press crossing
+					// is deliberate and holding that key afterwards must be
+					// free to keep browsing.
+					this.pendingHeldUpCrossingAt =
+						!isKittyProtocolActive() && gap < UP_ARROW_INITIAL_DELAY_MAX_MS ? now : 0;
 				} else {
 					// Browsing past the first entry is deliberate navigation.
 					this.pendingHeldUpCrossingAt = 0;

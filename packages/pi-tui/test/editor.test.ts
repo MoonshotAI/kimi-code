@@ -302,6 +302,28 @@ describe("Editor component", () => {
 			}
 		});
 
+		it("lets a held key keep browsing after a deliberate Kitty press crossing", () => {
+			setKittyProtocolActive(true);
+			try {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				editor.addToHistory("older");
+				editor.addToHistory("newer");
+				editor.setText("draft");
+
+				editor.handleInput("\x1b[A"); // press - jumps to line start
+				editor.handleInput("\x1b[A"); // deliberate press - enters history
+				assert.strictEqual(editor.getText(), "newer");
+
+				// Holding that same key sends explicit repeat events: they must
+				// keep browsing, not snap back — the press crossing was exact,
+				// so no legacy snap-back is ever armed under Kitty.
+				editor.handleInput("\x1b[1;1:2A");
+				assert.strictEqual(editor.getText(), "older");
+			} finally {
+				setKittyProtocolActive(false);
+			}
+		});
+
 		it("navigates forward through history with Down arrow", () => {
 			mock.timers.enable({ apis: ["Date"] });
 			mock.timers.setTime(1000);
