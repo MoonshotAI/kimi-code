@@ -36,6 +36,7 @@ export class FlowFeature extends Feature {
       name: FLOW_START_TOOL_NAME,
       domain: 'flow',
       when: supervisorOnly,
+      requiredRuntimeCapabilities: ['fs'],
     });
     this.contributeTool(IFlowAdvanceTool, FlowAdvanceTool, {
       name: FLOW_ADVANCE_TOOL_NAME,

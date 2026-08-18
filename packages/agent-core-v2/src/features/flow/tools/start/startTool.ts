@@ -1,6 +1,5 @@
-import { join } from 'node:path';
-
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { ToolAccesses, type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
@@ -24,16 +23,25 @@ export class FlowStartTool implements IFlowStartTool {
   ) {}
 
   resolveExecution(args: FlowStartInput): ToolExecution {
-    const path = join(this.workspaceCtx.workDir, FLOWS_PROJECT_DIR, `${args.flow}.md`);
+    const inspected = inspectAgentRuntime(this.runtime);
+    const view = new RuntimeWorkspaceView(inspected, {
+      workDir: this.workspaceCtx.workDir,
+      additionalDirs: [...this.workspaceCtx.additionalDirs],
+    });
+    const path = view.resolve(`${FLOWS_PROJECT_DIR}/${args.flow}.md`);
     return {
       accesses: ToolAccesses.readFile(path),
       description: `Starting flow ${args.flow}`,
       approvalRule: this.name,
-      execute: () => this.execution(args, path),
+      execute: () => this.execution(args, path, inspected.identity.generation),
     };
   }
 
-  private async execution(args: FlowStartInput, path: string): Promise<ExecutableToolResult> {
+  private async execution(
+    args: FlowStartInput,
+    path: string,
+    generation: string,
+  ): Promise<ExecutableToolResult> {
     if (this.flow.run().active) {
       return {
         isError: true,
@@ -45,6 +53,9 @@ export class FlowStartTool implements IFlowStartTool {
     let text: string;
     const lease = this.runtime.acquire(['fs']);
     try {
+      if (lease.runtime.identity.generation !== generation) {
+        return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+      }
       text = await lease.runtime.fs!.readText(path);
     } catch {
       return {
@@ -65,7 +76,12 @@ export class FlowStartTool implements IFlowStartTool {
       throw error;
     }
 
-    this.flow.start(definition, args.task);
+    if (!this.flow.start(definition, args.task)) {
+      return {
+        isError: true,
+        output: 'Flow runs are disabled (the flow experimental flag is off), so the run was not started.',
+      };
+    }
     return { isError: false, output: renderBlueprint(definition, args.task) };
   }
 }

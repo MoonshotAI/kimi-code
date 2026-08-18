@@ -52,8 +52,9 @@ export class FlowInjection extends Disposable implements IFlowInjection {
     const total = run.stages?.length ?? 0;
     const notes =
       stage.notes === undefined ? '' : `\nStage notes: ${escapeUntrustedText(stage.notes)}`;
+    const task = run.task === undefined ? '' : `\nTask: ${escapeUntrustedText(run.task)}`;
     const content = [
-      `Flow run \`${run.flowId}\` is at stage \`${stage.id}\` (${stageIndex + 1}/${total}, gate: ${stage.gate}).`,
+      `Flow run \`${run.flowId}\` is at stage \`${stage.id}\` (${stageIndex + 1}/${total}, gate: ${stage.gate}).${task}`,
       `Objective: ${escapeUntrustedText(stage.objective)}`,
       `Completion: ${escapeUntrustedText(stage.completion)}${notes}`,
       'You are the supervisor of this run: dispatch the stage work to a worker subagent instead of doing it yourself; when the worker reports, verify every completion criterion against objective evidence (artifacts, diffs, execution output — not the worker summary), then submit your verdict with FlowAdvance.',

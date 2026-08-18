@@ -12,6 +12,7 @@ export const FlowStartInputSchema = z.object({
     ),
   task: z
     .string()
+    .trim()
     .min(1)
     .describe(
       "The concrete task for this run, in the user's own words plus any context they gave. This becomes the run's stated intent.",

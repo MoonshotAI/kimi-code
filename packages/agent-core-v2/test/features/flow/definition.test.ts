@@ -49,6 +49,14 @@ describe('parseFlowDefinition', () => {
     ).toThrow(FlowDefinitionParseError);
   });
 
+  it('rejects unknown keys so a misspelled gate cannot silently weaken the workflow', () => {
+    expect(() =>
+      parseFlowDefinition(
+        '---\nid: typo\nstages:\n  - id: a\n    objective: x\n    completion: y\n    gates: human\n---\n',
+      ),
+    ).toThrow(FlowDefinitionParseError);
+  });
+
   it('rejects duplicate stage ids', () => {
     expect(() =>
       parseFlowDefinition(

@@ -26,11 +26,12 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
   ) {}
 
   resolveExecution(args: FlowAdvanceInput): ToolExecution {
+    const display = this.gateDisplay(args);
     return {
       description: `Submitting ${args.verdict} verdict for stage ${args.stage}`,
-      display: this.gateDisplay(args),
+      display,
       approvalRule: this.name,
-      execute: () => this.execution(args),
+      execute: () => this.execution(args, display !== undefined),
     };
   }
 
@@ -43,7 +44,10 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
     return { kind: 'plan_review', plan: renderGateReview(run, stage, args) };
   }
 
-  private async execution(args: FlowAdvanceInput): Promise<ExecutableToolResult> {
+  private async execution(
+    args: FlowAdvanceInput,
+    reviewed: boolean,
+  ): Promise<ExecutableToolResult> {
     const run = this.flow.run();
     if (!run.active) {
       return { isError: true, output: 'No active flow run. Use FlowStart first.' };
@@ -70,9 +74,23 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
       };
     }
 
-    const autoApproved = stage.gate !== 'ai' && this.modeService.mode === 'auto';
-    const decidedBy: FlowVerdictDecider =
-      stage.gate === 'ai' ? 'ai' : autoApproved ? 'auto' : 'human';
+    const unmet = args.criteria.filter((criterion) => !criterion.met);
+    if (unmet.length > 0) {
+      return {
+        isError: true,
+        output: `A pass verdict requires every criterion to be met; unmet: ${unmet.map((criterion) => criterion.criterion).join('; ')}. Finish the work first, or submit verdict: "reject" to record the failed acceptance.`,
+      };
+    }
+
+    const autoMode = this.modeService.mode === 'auto';
+    const needsReview = stage.gate !== 'ai' && !autoMode;
+    if (needsReview && !reviewed) {
+      return {
+        isError: true,
+        output: `Stage \`${args.stage}\` requires the user gate review, but the run state changed between preparing and executing this call (batched tool calls), so the review was skipped. Submit FlowAdvance again as a standalone call.`,
+      };
+    }
+    const decidedBy: FlowVerdictDecider = stage.gate === 'ai' ? 'ai' : autoMode ? 'auto' : 'human';
     const outcome = this.flow.advance({
       stage: args.stage,
       result: 'pass',
@@ -84,9 +102,10 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
       return { isError: true, output: 'The verdict could not be recorded. Check the run status and retry.' };
     }
 
-    const autoNote = autoApproved
-      ? '\nNote: this gate was auto-approved without user review (permission mode is auto) — the user has NOT explicitly approved it.'
-      : '';
+    const autoNote =
+      decidedBy === 'auto'
+        ? '\nNote: this gate was auto-approved without user review (permission mode is auto) — the user has NOT explicitly approved it.'
+        : '';
     if (outcome.runFinished) {
       return {
         isError: false,

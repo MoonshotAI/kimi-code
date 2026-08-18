@@ -65,8 +65,8 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     return run.stages?.[run.currentStageIndex ?? 0];
   }
 
-  start(definition: FlowDefinition, task: string): void {
-    if (!this.flags.enabled(FLOW_FLAG_ID)) return;
+  start(definition: FlowDefinition, task: string): boolean {
+    if (!this.flags.enabled(FLOW_FLAG_ID)) return false;
     void this.dispatcher.dispatch(
       new FlowRunStarted({
         flowId: definition.id,
@@ -74,6 +74,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         stages: definition.stages.map((stage) => ({ ...stage })),
       }),
     );
+    return this.run().active;
   }
 
   advance(outcome: FlowAdvanceOutcome): FlowAdvanceResult {

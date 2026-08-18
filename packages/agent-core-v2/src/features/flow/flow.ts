@@ -85,7 +85,7 @@ export interface IAgentFlowService {
   run(): DeepReadonly<FlowRunState>;
   gates(): DeepReadonly<FlowGatesState>;
   currentStage(): DeepReadonly<FlowStageDefinition> | undefined;
-  start(definition: FlowDefinition, task: string): void;
+  start(definition: FlowDefinition, task: string): boolean;
   advance(outcome: FlowAdvanceOutcome): FlowAdvanceResult;
   abort(note?: string): void;
 }

@@ -17,18 +17,22 @@ export class FlowDefinitionParseError extends Error2 {
 
 const FLOW_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-const FlowStageFrontmatterSchema = z.object({
-  id: z.string().regex(FLOW_ID_PATTERN, 'stage id must be kebab-case'),
-  objective: z.string().min(1),
-  completion: z.string().min(1),
-  gate: FlowGateKindSchema.default('ai'),
-});
+const FlowStageFrontmatterSchema = z
+  .object({
+    id: z.string().regex(FLOW_ID_PATTERN, 'stage id must be kebab-case'),
+    objective: z.string().min(1),
+    completion: z.string().min(1),
+    gate: FlowGateKindSchema.default('ai'),
+  })
+  .strict();
 
-const FlowFrontmatterSchema = z.object({
-  id: z.string().regex(FLOW_ID_PATTERN, 'flow id must be kebab-case'),
-  when: z.string().optional(),
-  stages: z.array(FlowStageFrontmatterSchema).min(1),
-});
+const FlowFrontmatterSchema = z
+  .object({
+    id: z.string().regex(FLOW_ID_PATTERN, 'flow id must be kebab-case'),
+    when: z.string().optional(),
+    stages: z.array(FlowStageFrontmatterSchema).min(1),
+  })
+  .strict();
 
 export function parseFlowDefinition(text: string): FlowDefinition {
   let parsed: { data: unknown; body: string };
