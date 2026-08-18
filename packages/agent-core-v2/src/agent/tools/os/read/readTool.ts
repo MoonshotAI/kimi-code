@@ -1,6 +1,7 @@
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
@@ -218,6 +219,7 @@ export class ReadTool implements IReadTool {
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
   ) {}
 
   get description(): string {
@@ -230,7 +232,10 @@ export class ReadTool implements IReadTool {
   }
 
   private mediaReadable(): boolean {
-    return this.toolRegistry.resolve('ReadMediaFile') !== undefined;
+    return (
+      this.toolRegistry.resolve('ReadMediaFile') !== undefined &&
+      this.toolPolicy.isToolActive('ReadMediaFile')
+    );
   }
 
   private workspaceConfig(view: RuntimeWorkspaceView): WorkspaceConfig {

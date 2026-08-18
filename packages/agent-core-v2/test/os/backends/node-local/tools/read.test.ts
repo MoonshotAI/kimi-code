@@ -16,6 +16,7 @@ import {
 import { ReadTool } from '#/agent/tools/os/read/readTool';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { RuntimeRegistry } from '#/runtime/runtimeRegistry';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -73,6 +74,13 @@ function stubToolRegistry(registered: readonly string[] = ['ReadMediaFile']): IA
   } as unknown as IAgentToolRegistryService;
 }
 
+function stubToolPolicy(isActive: () => boolean = () => true): IAgentToolPolicyService {
+  return {
+    _serviceBrand: undefined,
+    isToolActive: () => isActive(),
+  } as unknown as IAgentToolPolicyService;
+}
+
 function createReadTool(
   fs: IHostFileSystem,
   env: IHostEnvironment,
@@ -81,6 +89,7 @@ function createReadTool(
     catalog: { getSkillRoots: () => [] },
   } as unknown as ISessionSkillCatalog,
   toolRegistry: IAgentToolRegistryService = stubToolRegistry(),
+  toolPolicy: IAgentToolPolicyService = stubToolPolicy(),
 ): ReadTool {
   const runtime = Object.assign(
     new FakeRuntime(
@@ -96,7 +105,7 @@ function createReadTool(
     inspect: () => runtime,
     acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
   };
-  return new ReadTool(resolver, workspace, skillCatalog, toolRegistry);
+  return new ReadTool(resolver, workspace, skillCatalog, toolRegistry, toolPolicy);
 }
 
 function createSpiedFs(content: string) {
@@ -562,6 +571,28 @@ describe('ReadTool', () => {
     expect(readText).not.toHaveBeenCalled();
   });
 
+  it('rejects image files without pointing to ReadMediaFile when the media tool is disabled by policy', async () => {
+    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const { fs, readText } = createSpiedMapFs({
+      '/tmp/sample.png': { bytes: pngHeader },
+    });
+    const tool = createReadTool(
+      fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
+      stubToolRegistry(),
+      stubToolPolicy(() => false),
+    );
+
+    const result = await execute(tool, { path: '/tmp/sample.png' });
+    const output = toolContentString(result);
+
+    expect(result.isError).toBe(true);
+    expect(output).not.toContain('ReadMediaFile');
+    expect(readText).not.toHaveBeenCalled();
+  });
+
   it('rejects NUL-containing binary files without mentioning ReadMediaFile when unregistered', async () => {
     const header = Buffer.concat([Buffer.from('plain prefix'), Buffer.from([0x00, 0x01])]);
     const { fs, readText } = createSpiedMapFs({
@@ -969,6 +1000,7 @@ describe('ReadTool', () => {
       stubWorkspaceContext('/workspace'),
       { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
       stubToolRegistry(),
+      stubToolPolicy(),
     );
     const execution = tool.resolveExecution({ path: '/workspace/a.txt' });
     expect('execute' in execution).toBe(true);
@@ -1046,6 +1078,36 @@ describe('ReadTool description and schema parity', () => {
 
     expect(tool.description).not.toContain('ReadMediaFile');
     expect(tool.description).toContain('use Bash or an MCP tool for binary formats.');
+  });
+
+  it('drops ReadMediaFile from the description when the media tool is disabled by policy', () => {
+    const tool = createReadTool(
+      createSpiedFs('').fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
+      stubToolRegistry(),
+      stubToolPolicy(() => false),
+    );
+
+    expect(tool.description).not.toContain('ReadMediaFile');
+    expect(tool.description).toContain('use Bash or an MCP tool for binary formats.');
+  });
+
+  it('reflects media tool policy changes in the description', () => {
+    let active = true;
+    const tool = createReadTool(
+      createSpiedFs('').fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
+      stubToolRegistry(),
+      stubToolPolicy(() => active),
+    );
+
+    expect(tool.description).toContain('ReadMediaFile');
+    active = false;
+    expect(tool.description).not.toContain('ReadMediaFile');
   });
 
   it('reflects media tool registration changes in the description', () => {
