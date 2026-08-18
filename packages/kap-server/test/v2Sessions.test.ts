@@ -280,13 +280,11 @@ describe('server /api/v2/sessions', () => {
     expect(page1.items.map((item) => item.id)).toEqual(['s2']);
     expect(page1.has_more).toBe(true);
 
-    // Same conditions + token paginates on …
     const page2 = await getData(
       `?page_size=1&meta.updated_before=4500&page_token=${page1.next_page_token}`,
     );
     expect(page2.items.map((item) => item.id)).toEqual(['s3']);
 
-    // … but dropping the condition mid-pagination is a fingerprint flip.
     const drifted = await getError(`?page_size=1&page_token=${page1.next_page_token}`);
     expect(drifted.code).toBe(40922);
   });
@@ -329,8 +327,6 @@ describe('server /api/v2/sessions', () => {
       { id: 's3', archived: false },
     ]);
 
-    // The projection composes with the filters + sort, and archived flags
-    // travel with the ids (meta.archived=all includes the archived row).
     const all = await getData('?fields=id,archived&meta.archived=all&sort=meta.updated_at_asc');
     expect(all.items).toEqual([
       { id: 's4', archived: true },
@@ -339,7 +335,6 @@ describe('server /api/v2/sessions', () => {
       { id: 's1', archived: false },
     ]);
 
-    // The relaxed ceiling only exists with the projection.
     const full = await getError('?page_size=101');
     expect(full.code).toBe(40001);
     const tooBig = await getError('?fields=id,archived&page_size=10001');
@@ -347,12 +342,9 @@ describe('server /api/v2/sessions', () => {
   });
 
   it('rejects malformed fields projections (40001)', async () => {
-    // Unknown field
     expect((await getError('?fields=id,foo')).code).toBe(40001);
-    // Known field(s) but not the one supported pair
     expect((await getError('?fields=id')).code).toBe(40001);
     expect((await getError('?fields=archived')).code).toBe(40001);
-    // The git domain is not projectable
     expect((await getError('?fields=id,archived&include=git')).code).toBe(40001);
   });
 
@@ -373,12 +365,10 @@ describe('server /api/v2/sessions', () => {
 
   it('binds the projection into the page_token fingerprint', async () => {
     const full = await getData('?page_size=2');
-    // A token minted on the full shape does not continue as a projection…
     expect(
       (await getError(`?fields=id,archived&page_size=2&page_token=${full.next_page_token}`)).code,
     ).toBe(40922);
 
-    // … and the reverse direction flips too.
     const projected = await getData('?fields=id,archived&page_size=2');
     expect((await getError(`?page_size=2&page_token=${projected.next_page_token}`)).code).toBe(
       40922,
@@ -437,7 +427,6 @@ describe('server /api/v2/sessions', () => {
     const filtered = await getData(`?workspace.id=${WS_A}`);
     expect(filtered.total).toBe(2);
 
-    // Cursor mode reports the same total on follow-up pages.
     const page1 = await getData('?page_size=2');
     expect(page1.total).toBe(3);
     const page2 = await getData(`?page_size=2&page_token=${page1.next_page_token}`);
@@ -456,7 +445,6 @@ describe('server /api/v2/sessions', () => {
     expect(page2.total).toBe(3);
     expect(page2.has_more).toBe(false);
 
-    // A page beyond the end is an empty, terminal snapshot — total stays.
     const beyond = await getData('?page=7&page_size=2');
     expect(beyond.items).toEqual([]);
     expect(beyond.total).toBe(3);
@@ -591,7 +579,6 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     return (server as RunningServer).core.accessor;
   }
 
-  /** Subscribe a bus-event collector; caller disposes the returned sub. */
   function collectEvents(): { events: Event2[]; dispose(): void } {
     const events: Event2[] = [];
     const sub = core().get(IEventService).subscribe((event) => events.push(event));
@@ -648,8 +635,6 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     await closeSessionById(core(), created.id);
     expect(getLiveSessionById(core(), created.id)).toBeUndefined();
 
-    // Materialization (resume, or the v1 single-archive route) would put the
-    // session back in the live map — it must stay empty on the cold path.
     const { events, dispose } = collectEvents();
     const before = await readStateJson(created.workspace_id, created.id);
 
@@ -663,8 +648,6 @@ describe('server /api/v2/sessions batch archive/restore', () => {
 
     expect(getLiveSessionById(core(), created.id)).toBeUndefined();
 
-    // The persisted metadata flips exactly like setArchived(true): archived
-    // (+ archivedAt), updatedAt and every other field preserved.
     const after = await readStateJson(created.workspace_id, created.id);
     expect(after['archived']).toBe(true);
     expect(typeof after['archivedAt']).toBe('number');
@@ -672,14 +655,10 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     expect(after['createdAt']).toBe(before['createdAt']);
     expect(after['agents']).toEqual(before['agents']);
 
-    // The route drained the mirror once: the read model already answers
-    // archived, and the v2 list serves the session under meta.archived=true.
     expect(await indexArchived(created.id)).toBe(true);
     expect(await listedIds('?meta.archived=true')).toEqual([created.id]);
     expect(await listedIds()).toEqual([]);
 
-    // Same bus event the live lifecycle publishes (Event2 instances also
-    // carry `time` — compare the meaningful shape).
     expect(
       events
         .filter((event) => event.type === 'event.session.archived')
@@ -700,9 +679,6 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     expect(body.code).toBe(0);
     expect(body.data?.results).toEqual([{ id: created.id, ok: true }]);
 
-    // The full chain ran: archive() closed and disposed the session (the
-    // cold path would have left the live handle untouched) and published
-    // the event itself.
     expect(getLiveSessionById(core(), created.id)).toBeUndefined();
     expect(
       events.some(
@@ -720,9 +696,6 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     const created = await createSession();
     await closeSessionById(core(), created.id);
 
-    // Resume WITHOUT awaiting: while it is in flight the live registry hides
-    // the handle, so an unsettled batch would misclassify as cold and its
-    // direct write would race the materializing metadata service.
     const resumePromise = resumeSessionById(core(), created.id);
     const batchPromise = postBatch('/api/v2/sessions:archive', { ids: [created.id] });
 
@@ -731,9 +704,6 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     const body = await batchPromise;
     expect(body.data?.results).toEqual([{ id: created.id, ok: true }]);
 
-    // The settle made the item live-classified: the full archive chain ran
-    // (the session is closed, not merely patched on disk), and the archived
-    // flag survived the resume's own metadata writes.
     expect(getLiveSessionById(core(), created.id)).toBeUndefined();
     expect(await indexArchived(created.id)).toBe(true);
     expect((await readStateJson(created.workspace_id, created.id))['archived']).toBe(true);
@@ -776,7 +746,6 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     expect(body.code).toBe(0);
     expect(body.data?.results).toEqual([{ id: created.id, ok: true }]);
 
-    // Still not materialized (the live map stays empty on the cold path).
     expect(getLiveSessionById(core(), created.id)).toBeUndefined();
 
     const after = await readStateJson(created.workspace_id, created.id);
@@ -786,7 +755,6 @@ describe('server /api/v2/sessions batch archive/restore', () => {
 
     expect(await indexArchived(created.id)).toBe(false);
     expect(await listedIds()).toEqual([created.id]);
-    // The live restore publishes nothing either — no event at all.
     expect(events.filter((event) => event.type === 'event.session.archived')).toEqual([]);
     dispose();
   });
@@ -794,7 +762,6 @@ describe('server /api/v2/sessions batch archive/restore', () => {
   it('restores a live session through the lifecycle chain and keeps it live', async () => {
     const created = await createSession();
     await postBatch('/api/v2/sessions:archive', { ids: [created.id] });
-    // Back to live-but-archived: resume materializes regardless of the flag.
     expect(await resumeSessionById(core(), created.id)).toBeDefined();
 
     const body = await postBatch('/api/v2/sessions:restore', { ids: [created.id] });
@@ -817,7 +784,6 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     });
     expect(tooMany.code).toBe(40001);
 
-    // Duplicates collapse before the cap; a repeated id runs once.
     const deduped = await postBatch('/api/v2/sessions:archive', {
       ids: Array.from({ length: 5001 }, () => 'sess_dup'),
     });

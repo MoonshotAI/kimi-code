@@ -740,9 +740,6 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         if (archived === undefined || archiveHandler === undefined) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
         }
-        // archive() enters the session's lifecycle chain itself — serialized
-        // against the batch endpoints' critical sections and every other
-        // transition with no caller-side wrapping.
         await core.accessor.get(ISessionManager).archive(parsed.id);
         requestLog(req)?.info({ session_id: parsed.id, action: 'archive' }, 'session action completed');
         reply.send(okEnvelope({ archived: true }, req.id));

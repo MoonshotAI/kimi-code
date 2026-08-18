@@ -67,9 +67,6 @@ function includeDomains(include: string | undefined): string[] {
     .filter((value) => value.length > 0);
 }
 
-/** The one supported item projection: `fields=id,archived` (any order) — a
- *  lightweight ids-only shape for select-all-matching flows; only that form
- *  gets the relaxed page_size ceiling. */
 const KNOWN_FIELDS = new Set(['id', 'archived']);
 const IDS_PROJECTION_PAGE_SIZE_MAX = 10000;
 const FULL_PAGE_SIZE_MAX = 100;
@@ -150,8 +147,6 @@ const v2SessionsListQuerySchema = z
         params: { code: ErrorCode.VALIDATION_FAILED },
       });
     }
-    // The 100-item ceiling guards the full summary shape; the ids projection
-    // is deliberately cheap, so it alone may page much larger.
     const pageSizeMax = projection ? IDS_PROJECTION_PAGE_SIZE_MAX : FULL_PAGE_SIZE_MAX;
     if (value.page_size !== undefined && value.page_size > pageSizeMax) {
       ctx.addIssue({
@@ -179,8 +174,6 @@ interface NormalizedQuery {
   readonly sort: V2Sort;
   readonly includeGit: boolean;
   readonly pageSize: number;
-  /** True when the ids projection (`fields=id,archived`) trims each item to
-   *  the lightweight select-all shape. */
   readonly projection: boolean;
 }
 
@@ -216,9 +209,7 @@ const v2SessionIdProjectionSchema = z.object({
 });
 
 const v2SessionPageSchema = z.object({
-  /** Full summaries, or `{id, archived}` pairs under `fields=id,archived`. */
   items: z.array(z.union([v2SessionSchema, v2SessionIdProjectionSchema])),
-  /** Filtered/sorted set size — present in both pagination modes. */
   total: z.number().int(),
   has_more: z.boolean(),
   next_page_token: z.string().nullable(),
@@ -226,11 +217,7 @@ const v2SessionPageSchema = z.object({
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-// ---------------------------------------------------------------------------
-// Batch archive / restore contract
-// ---------------------------------------------------------------------------
 
-/** Cap on unique ids per batch, keeping one request's edge work bounded. */
 const BATCH_IDS_MAX = 5000;
 
 const v2SessionsBatchBodySchema = z
@@ -314,8 +301,6 @@ function queryFingerprint(query: NormalizedQuery): string {
     query.sort,
     query.includeGit,
     query.pageSize,
-    // The projection changes the item shape — a token minted across that
-    // boundary would silently flip shapes mid-pagination.
     query.projection,
   ];
   return createHash('sha256').update(JSON.stringify(canonical)).digest('base64url').slice(0, 16);
@@ -527,8 +512,6 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
 
       let start = 0;
       if (raw.page !== undefined) {
-        // Stateless page-number mode: slice the fresh snapshot directly;
-        // no token is minted below and none was accepted above.
         start = (raw.page - 1) * query.pageSize;
       } else if (cursor !== undefined) {
         const [cursorKey, cursorId] = cursor;
@@ -625,8 +608,6 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
     const batchRoute = defineRoute(
       {
         method: 'POST',
-        // `/sessions::${action}` in find-my-way serves the wire path
-        // `/sessions:archive` / `/sessions:restore` (single colon).
         path: `/sessions::${action}`,
         body: v2SessionsBatchBodySchema,
         success: { data: v2SessionsBatchResultSchema },
