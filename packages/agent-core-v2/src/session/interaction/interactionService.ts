@@ -76,10 +76,12 @@ export class SessionInteractionService extends Service implements ISessionIntera
     this.states.set(interactionNextIdKey, value);
   }
 
-  cancelPendingForTurn(turnId: number): void {
+  cancelPendingForTurn(turnId: number, agentId: string = MAIN_AGENT_ID): void {
     let changed = false;
     for (const [id, entry] of this.pending) {
-      if (entry.interaction.origin?.turnId !== turnId) continue;
+      const origin = entry.interaction.origin;
+      if (origin?.turnId !== turnId) continue;
+      if ((origin.agentId ?? MAIN_AGENT_ID) !== agentId) continue;
       this.pending.delete(id);
       this.rememberResolved(id);
       const response = { cancelled: true, reason: 'turn_ended' };

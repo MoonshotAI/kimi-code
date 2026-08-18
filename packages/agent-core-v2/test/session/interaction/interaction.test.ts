@@ -215,6 +215,31 @@ describe('SessionInteractionService', () => {
     expect(svc.listPending()).toHaveLength(1);
   });
 
+  it('cancelPendingForTurn only cancels interactions from the ending agent, not same-numbered turns of other agents', () => {
+    const svc = ix.get(ISessionInteractionService);
+
+    svc.enqueue({ id: 'm1', kind: 'approval', payload: {}, origin: { agentId: 'main', turnId: 3 } });
+    svc.enqueue({ id: 's1', kind: 'approval', payload: {}, origin: { agentId: 'agent-1', turnId: 3 } });
+
+    svc.cancelPendingForTurn(3, 'agent-1');
+    expect(svc.listPending().map((i) => i.id)).toEqual(['m1']);
+
+    svc.cancelPendingForTurn(3, 'main');
+    expect(svc.listPending()).toHaveLength(0);
+  });
+
+  it('cancelPendingForTurn treats an interaction without origin agentId as belonging to main', () => {
+    const svc = ix.get(ISessionInteractionService);
+
+    svc.enqueue({ id: 'a1', kind: 'approval', payload: {}, origin: { turnId: 5 } });
+
+    svc.cancelPendingForTurn(5, 'agent-1');
+    expect(svc.listPending()).toHaveLength(1);
+
+    svc.cancelPendingForTurn(5);
+    expect(svc.listPending()).toHaveLength(0);
+  });
+
   it('request journals an interaction.request op to the origin agent wire', () => {
     const sub = makeFakeAgent('agent-1');
     agents.set('agent-1', sub);

@@ -100,7 +100,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (this.interactionBusDisposables.has(handle.id)) return;
     const d = handle.accessor
       .get(IEventBus)
-      .subscribe(TurnEnded, (e) => this.interaction.cancelPendingForTurn(e.turnId));
+      .subscribe(TurnEnded, (e) => this.interaction.cancelPendingForTurn(e.turnId, handle.id));
     this.interactionBusDisposables.set(handle.id, d);
   }
 
