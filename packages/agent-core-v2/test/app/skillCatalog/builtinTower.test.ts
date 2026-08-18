@@ -1,20 +1,16 @@
-/**
- * Scenario: the builtin `tower` skill definition.
- *
- * Pins the code-defined skill constant: identity and inline metadata,
- * model-invocation hiding (the user starts tower explicitly), the protocol
- * content that routes every comms action through the Tower tools, and the
- * catalog behavior once registered (listed but not invocable, `$ARGUMENTS`
- * expanded as the user objective). Run with
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/skillCatalog/builtinTower.test.ts`.
- */
-
 import { describe, expect, it } from 'vitest';
 
+import { TestInstantiationService } from '#/_base/di/test';
+import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { visibleBuiltinSkills } from '#/app/skillCatalog/builtin/builtin';
+import { BuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
+import { TOWER_FLAG_ID } from '#/features/tower/tower';
 import { TOWER_SKILL } from '#/features/tower/skill/skill';
+
+import { stubFlag } from '../flag/stubs';
+import { StubConfigService } from '../../kosong/stubs';
 
 describe('builtin skill: tower', () => {
   it('has the expected identity and inline metadata', () => {
@@ -30,10 +26,23 @@ describe('builtin skill: tower', () => {
 
   it('ships enabled for every product (not gated by the product-skills switch)', () => {
     expect(TOWER_SKILL.productSpecific).not.toBe(true);
-    // Registered through the feature-authored registry (import = register),
-    // folded into the visible builtin set.
     expect(visibleBuiltinSkills(true)).toContain(TOWER_SKILL);
     expect(visibleBuiltinSkills(false)).toContain(TOWER_SKILL);
+  });
+
+  it('declares the tower experimental flag as its gate', () => {
+    expect(TOWER_SKILL.experimentalFlag).toBe(TOWER_FLAG_ID);
+  });
+
+  it('is filtered out of the builtin source while the tower flag is off', async () => {
+    for (const flagOn of [false, true]) {
+      const ix = new TestInstantiationService();
+      ix.set(IConfigService, new StubConfigService({}));
+      ix.set(IFlagService, stubFlag((id) => flagOn && id === TOWER_FLAG_ID));
+      const source = ix.createInstance(BuiltinSkillSource);
+      const names = (await source.load()).skills.map((skill) => skill.name);
+      expect(names.includes('tower')).toBe(flagOn);
+    }
   });
 
   it('defines the three roles and routes every protocol action through Tower tools', () => {

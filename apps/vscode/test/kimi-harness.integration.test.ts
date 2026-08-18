@@ -73,6 +73,7 @@ interface RuntimeRig {
 }
 
 interface McpHandlerRig {
+  readonly homeDir: string;
   readonly harness: KimiHarness;
   readonly broadcasts: BroadcastRecord[];
   readonly logs: LogRecord[];
@@ -158,7 +159,7 @@ async function createMcpHandlerRig(): Promise<McpHandlerRig> {
   const harness = await createPlainHarness(homeDir);
   const broadcasts: BroadcastRecord[] = [];
   const logs: LogRecord[] = [];
-  return { harness, broadcasts, logs };
+  return { homeDir, harness, broadcasts, logs };
 }
 
 async function updateMcpServer(
@@ -170,6 +171,26 @@ async function updateMcpServer(
 
 async function getMcpServers(rig: McpHandlerRig): Promise<MCPServerConfig[]> {
   return mcpHandlers[Methods.GetMCPServers]!(undefined, mcpHandlerContext(rig)) as Promise<MCPServerConfig[]>;
+}
+
+/**
+ * `harness.listMcpServers()` without the management-plane tags (`source` /
+ * `origin` / `mutable`) — these tests assert the stored config payload only.
+ */
+async function listStoredMcpServers(rig: McpHandlerRig): Promise<unknown[]> {
+  return (await rig.harness.listMcpServers()).map(
+    ({ source: _source, origin: _origin, mutable: _mutable, ...entry }) => entry,
+  );
+}
+
+/**
+ * The Webview payload minus the management-plane tags — most handler tests
+ * assert the config payload only; the tags have their own passthrough test.
+ */
+function stripMcpTags(servers: MCPServerConfig[]): unknown[] {
+  return servers.map(
+    ({ source: _source, origin: _origin, mutable: _mutable, ...entry }) => entry,
+  );
 }
 
 function mcpHandlerContext(rig: McpHandlerRig): HandlerContext {
@@ -435,7 +456,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
 
     const servers = await getMcpServers(rig);
 
-    expect(servers).toEqual([
+    expect(stripMcpTags(servers)).toEqual([
       {
         name: "remote",
         transport: "http",
@@ -458,6 +479,65 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       },
     ]);
     expect(JSON.stringify(servers)).not.toMatch(/header-secret|cookie-secret|api-key-secret|env-secret/);
+  });
+
+  it("passes the management-plane tags through to the Webview payload", async () => {
+    const rig = await createMcpHandlerRig();
+    await rig.harness.addMcpServer({
+      name: "remote",
+      transport: "http",
+      url: "https://example.test/mcp",
+    });
+
+    const servers = await getMcpServers(rig);
+
+    expect(servers).toEqual([
+      {
+        name: "remote",
+        transport: "http",
+        url: "https://example.test/mcp",
+        source: "global",
+        origin: join(rig.homeDir, "mcp.json"),
+        mutable: true,
+      },
+    ]);
+  });
+
+  it("keeps project-layer servers in the list refreshed after every mutation", async () => {
+    const rig = await createMcpHandlerRig();
+    const project = await mkdtemp(join(tmpdir(), "kimi-vscode-mcp-project-"));
+    cleanups.push(() => rm(project, { recursive: true, force: true }));
+    await mkdir(join(project, ".git"), { recursive: true });
+    await writeFile(
+      join(project, ".mcp.json"),
+      JSON.stringify({
+        mcpServers: { "project-api": { transport: "http", url: "https://example.test/project" } },
+      }),
+    );
+    const ctx = { ...mcpHandlerContext(rig), workDir: project } as HandlerContext;
+    const call = <T>(handler: string, params: unknown) =>
+      mcpHandlers[handler]!(params, ctx) as Promise<T>;
+
+    // The initial workspace-aware list shows the project entry as read-only,
+    // and every mutation's refreshed list keeps showing it (the mutation RPCs
+    // return a cwd-less list, so the handler must re-list with the workspace).
+    const assertList = (servers: MCPServerConfig[]): void => {
+      const projectEntry = servers.find((server) => server.name === "project-api");
+      expect(projectEntry).toMatchObject({ mutable: false, url: "https://example.test/project" });
+    };
+    assertList(await call(Methods.GetMCPServers, undefined));
+
+    const added = await call<MCPServerConfig[]>(Methods.AddMCPServer, {
+      name: "user-api",
+      transport: "http",
+      url: "https://example.test/user",
+    });
+    assertList(added);
+    assertList(rig.broadcasts.at(-1)!.data as MCPServerConfig[]);
+
+    const removed = await call<MCPServerConfig[]>(Methods.RemoveMCPServer, { name: "user-api" });
+    assertList(removed);
+    assertList(rig.broadcasts.at(-1)!.data as MCPServerConfig[]);
   });
 
   it("logs a failed MCP test without returning credential values to the Webview", async () => {
@@ -511,7 +591,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       },
     });
 
-    expect(servers).toEqual([
+    expect(stripMcpTags(servers)).toEqual([
       {
         name: "remote",
         transport: "http",
@@ -525,7 +605,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     expect(rig.broadcasts).toEqual([
       { event: Events.MCPServersChanged, data: servers, webviewId: undefined },
     ]);
-    await expect(rig.harness.listMcpServers()).resolves.toEqual([
+    await expect(listStoredMcpServers(rig)).resolves.toEqual([
       {
         name: "remote",
         transport: "http",
@@ -563,7 +643,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       },
     });
 
-    expect(servers).toEqual([
+    expect(stripMcpTags(servers)).toEqual([
       {
         name: "local",
         transport: "stdio",
@@ -574,7 +654,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
         },
       },
     ]);
-    await expect(rig.harness.listMcpServers()).resolves.toEqual([
+    await expect(listStoredMcpServers(rig)).resolves.toEqual([
       {
         name: "local",
         transport: "stdio",
@@ -607,7 +687,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     });
 
     expect(servers[0]?.headers).toEqual({ Authorization: MCP_SECRET_MASK });
-    await expect(rig.harness.listMcpServers()).resolves.toEqual([
+    await expect(listStoredMcpServers(rig)).resolves.toEqual([
       {
         name: "remote",
         transport: "http",
@@ -637,7 +717,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     });
 
     expect(servers[0]?.env).toEqual({ SERVICE_TOKEN: MCP_SECRET_MASK });
-    await expect(rig.harness.listMcpServers()).resolves.toEqual([
+    await expect(listStoredMcpServers(rig)).resolves.toEqual([
       {
         name: "local",
         transport: "stdio",
@@ -664,7 +744,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       auth: "oauth",
     });
 
-    await expect(rig.harness.listMcpServers()).resolves.toEqual([
+    await expect(listStoredMcpServers(rig)).resolves.toEqual([
       {
         name: "remote",
         transport: "http",
@@ -696,7 +776,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       },
     });
 
-    expect(servers).toEqual([
+    expect(stripMcpTags(servers)).toEqual([
       {
         name: "local",
         transport: "stdio",
@@ -726,7 +806,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       },
     });
 
-    expect(servers).toEqual([
+    expect(stripMcpTags(servers)).toEqual([
       {
         name: "local",
         transport: "stdio",
@@ -758,7 +838,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       },
     });
 
-    expect(servers).toEqual([
+    expect(stripMcpTags(servers)).toEqual([
       {
         name: "remote",
         transport: "http",
@@ -791,7 +871,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       },
     });
 
-    expect(servers).toEqual([
+    expect(stripMcpTags(servers)).toEqual([
       {
         name: "remote",
         transport: "http",
@@ -824,7 +904,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       },
     });
 
-    expect(servers).toEqual([
+    expect(stripMcpTags(servers)).toEqual([
       {
         name: "remote",
         transport: "http",
@@ -855,7 +935,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       },
     });
 
-    expect(servers).toEqual([
+    expect(stripMcpTags(servers)).toEqual([
       {
         name: "new-name",
         transport: "stdio",
@@ -864,7 +944,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
         enabled: false,
       },
     ]);
-    await expect(rig.harness.listMcpServers()).resolves.toEqual([
+    await expect(listStoredMcpServers(rig)).resolves.toEqual([
       {
         name: "new-name",
         transport: "stdio",
@@ -892,7 +972,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       },
     });
 
-    expect(servers).toEqual([
+    expect(stripMcpTags(servers)).toEqual([
       {
         name: "windows",
         transport: "stdio",
@@ -919,7 +999,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       },
     });
 
-    expect(servers).toEqual([
+    expect(stripMcpTags(servers)).toEqual([
       {
         name: "windows",
         transport: "stdio",

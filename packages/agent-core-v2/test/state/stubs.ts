@@ -1,8 +1,3 @@
-/**
- * Test doubles for the `state` domain: registers real `StateRegistry`
- * instances for the per-scope state service tokens.
- */
-
 import type { ServiceRegistration } from '#/_base/di/test';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentStateService } from '#/agent/state/agentState';

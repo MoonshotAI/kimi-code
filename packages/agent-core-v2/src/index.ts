@@ -1,8 +1,3 @@
-/**
- * agent-core-v2 public surface — re-exports every domain barrel (grouped by
- * layer) so importing the package loads all scoped-registry registrations.
- */
-
 export * from '#/_base/di/descriptors';
 export * from '#/_base/di/errors';
 export * from '#/_base/di/graph';
@@ -61,7 +56,6 @@ export * from '#/_base/log/fileLog';
 export * from '#/_base/log/logService';
 export * from '#/wire/wire';
 export * from '#/wire/wireService';
-export * from '#/wire/wireContribution';
 export * from '#/wire/record';
 export * from '#/wire/migration/migration';
 export * from '#/session/sessionLog/sessionLogService';
@@ -107,8 +101,15 @@ export { TaskService } from '#/app/task/taskService';
 import '#/app/event/eventBusService';
 import '#/app/event/eventService';
 import '#/app/event/fiberEventResolver';
-export { IEventBus, type DomainEvent } from '#/app/event/eventBus';
-export { IEventService, type DomainEvent as GlobalEvent } from '#/app/event/event';
+export { IEventBus } from '#/app/event/eventBus';
+export { IEventService } from '#/app/event/event';
+export * from '#/app/event/errors';
+export * from '#/app/event/event2';
+export * from '#/state/errors';
+export * from '#/state/state';
+export * from '#/state/stateContribution';
+export * from '#/state/eventDispatcher';
+import '#/state/eventDispatcherService';
 export * from '#/_base/state/stateRegistry';
 export * from '#/_base/contribution/registry';
 export * from '#/app/state/appState';
@@ -152,6 +153,7 @@ import '#/session/sessionTitle/flag';
 export * from '#/session/sessionToolPolicy/sessionToolPolicy';
 export * from '#/session/sessionToolPolicy/sessionToolPolicyService';
 export * from '#/app/config/config';
+export * from '#/app/config/configEvents';
 export * from '#/app/config/configService';
 export * from '#/app/config/configSectionContributions';
 import '#/app/kosongConfig/configSection';
@@ -230,8 +232,10 @@ export * from '#/app/plugin/archive';
 export * from '#/app/plugin/manager';
 export * from '#/app/plugin/marketplace';
 export * from '#/app/plugin/plugin';
+export * from '#/app/plugin/pluginEvents';
 export * from '#/app/plugin/pluginService';
 export * from '#/app/capability/capability';
+export * from '#/app/capability/capabilityEvents';
 export * from '#/app/capability/capabilityService';
 export * from '#/app/capability/errors';
 export * from '#/app/capability/types';
@@ -445,6 +449,7 @@ import '#/agent/tools/agent/agentTool';
 export * from '#/app/sessionManager/sessionLookup';
 export * from '#/workspace/workspaceContext/workspaceContext';
 export * from '#/workspace/sessionLifecycle/sessionLifecycle';
+export * from '#/workspace/sessionLifecycle/sessionLifecycleEvents';
 export * from '#/workspace/sessionLifecycle/sessionLifecycleService';
 export * from '#/workspace/sessionLifecycle/internal/addressing';
 export * from '#/session/externalHooks/externalHooks';
@@ -594,6 +599,7 @@ export * from '#/features/dateChange/dateChangeService';
 import '#/features/dateChange/dateChangeFeature';
 export * from '#/agent/contextProjector/contextProjector';
 export * from '#/agent/contextProjector/contextProjectorService';
+export * from '#/agent/contextProjector/mediaProjection';
 export * from '#/agent/tokenCounting/tokenCounting';
 export * from '#/agent/tokenCounting/tokenCountingOps';
 export * from '#/agent/tokenCounting/tokenCountingService';
@@ -631,8 +637,21 @@ export * from '#/mcpCore/config-schema';
 export * from '#/agent/media/mediaTools';
 export * from '#/agent/media/mediaToolsRegistrar';
 export * from '#/agent/media/registerMediaTools';
+export {
+  buildDaemonFileUrl,
+  buildMediaPathTag,
+  daemonFileRefFromPart,
+  mediaExtensionForMime,
+  matchSingleMediaPathTag,
+  parseDaemonFileUrl,
+} from '#/agent/media/mediaRef';
+export type { DaemonFileRef, MediaKind } from '#/agent/media/mediaRef';
+export * from '#/agent/media/sessionMediaStore';
+import '#/agent/media/sessionMediaStoreService';
 export * from '#/agent/media/kimiFileUrl';
 export * from '#/agent/media/videoUpload';
+export * from '#/agent/media/mediaResolver';
+export * from '#/agent/media/mediaResolverService';
 export * from '#/agent/media/videoResolver';
 export * from '#/agent/media/videoResolverService';
 import '#/agent/media/configSection';
@@ -653,12 +672,10 @@ export * from '#/agent/profile/profile';
 export * from '#/agent/profile/profileService';
 export * from '#/agent/profile/context';
 export * from '#/agent/prompt/prompt';
+export * from '#/agent/prompt/promptOps';
 export * from '#/agent/prompt/promptService';
 export * from '#/agent/prompt/promptMetadataText';
 export * from '#/agent/replayBuilder/types';
-// `replayBuilder/types` inlines its own `SessionSummary`; keep the barrel's
-// `SessionSummary` pinned to the session-index one (explicit re-export wins
-// over the ambiguous `export *` pair).
 export { type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 export * from '#/agent/undo/undo';
 export * from '#/agent/undo/undoService';

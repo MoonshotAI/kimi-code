@@ -1,17 +1,3 @@
-/**
- * `sessionActivity` domain — `ISessionActivityView` implementation.
- *
- * Folds every agent's activity projection — borrowed through the agent
- * handles from `agentLifecycle` (`IAgentActivityView.state()` seeded once at
- * attach, `agent.activity.updated` over each agent's `event` bus afterwards)
- * — together with the pending-interaction set from `interaction` into the
- * session-level aggregate, and fires `onDidChange` with the domain cause
- * only when the aggregate tuple actually changes. The plain-data state
- * (`folds`, `current`) is registered into `sessionState`
- * (`ISessionStateService`) and read/written through it. Bound at Session
- * scope.
- */
-
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import {
@@ -20,9 +6,13 @@ import {
   type IAgentScopeHandle,
 } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentActivityView, type AgentActivityState } from '#/agent/activityView/activityView';
+import {
+  AgentActivityUpdated,
+  IAgentActivityView,
+  type AgentActivityState,
+} from '#/agent/activityView/activityView';
 import type { TurnEndReason } from '#/agent/loop/turnEvents';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionInteractionService, type Interaction } from '#/session/interaction/interaction';
@@ -54,7 +44,6 @@ export const sessionActivityCurrentKey = defineState<SessionActivityState>('sess
   lastTurnReason: undefined,
 }));
 
-// NOTE: stays Disposable — its own 'state' collides with the Fiber
 export class SessionActivityView extends Disposable implements ISessionActivityView {
   declare readonly _serviceBrand: undefined;
 
@@ -69,8 +58,8 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
     @ISessionInteractionService private readonly interactions: ISessionInteractionService,
   ) {
     super();
-    this.states.register(sessionActivityFoldsKey);
-    this.states.register(sessionActivityCurrentKey);
+    this.states.contributeState(sessionActivityFoldsKey);
+    this.states.contributeState(sessionActivityCurrentKey);
     for (const handle of this.agents.list()) this.attachAgent(handle);
     this.current = this.aggregate();
     this._register(
@@ -119,7 +108,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
     if (bus === undefined) return;
     this.agentSubscriptions.set(
       handle.id,
-      bus.subscribe('agent.activity.updated', (event) => this.onActivity(handle.id, event)),
+      bus.subscribe(AgentActivityUpdated, (event) => this.onActivity(handle.id, event)),
     );
   }
 

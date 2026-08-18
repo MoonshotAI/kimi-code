@@ -20,6 +20,8 @@ import type { ExperimentalFeatureState } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
 import type { SessionMeta } from '#/session';
 import type { GlobalMcpServerConfig } from '#/mcp/global-config';
+import type { McpServerConfigView } from '#/mcp/config-view';
+import type { McpRegistryPluginOrigin, McpServerSource } from '#/mcp/registry';
 import type { ContentPart } from '@moonshot-ai/kosong';
 import type { SessionWarning } from '@moonshot-ai/protocol';
 
@@ -332,6 +334,14 @@ export interface McpServerInfo {
   readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'removed';
   readonly toolCount: number;
   readonly error?: string;
+  /** Config origin tag (v1 only for now): global layered files / plugin / caller. */
+  readonly source?: McpServerSource;
+  /**
+   * The effective config the entry is running (or last failed) with, in its
+   * wire-facing view: stdio `env` / remote `headers` values are redacted to
+   * key lists because they may carry credentials (v1 only for now).
+   */
+  readonly config?: AppMcpServerConfig;
 }
 
 export interface McpStartupMetrics {
@@ -340,9 +350,55 @@ export interface McpStartupMetrics {
 
 export interface ReconnectMcpServerPayload {
   readonly name: string;
+  /**
+   * Optional full replacement config (the "name + full config" channel).
+   * Omitted: the session re-resolves the current effective config from the
+   * unified registry instead of reusing the boot-time snapshot.
+   */
+  readonly config?: McpServerConfig;
+}
+
+export interface AddSessionMcpServerPayload {
+  readonly server: GlobalMcpServerConfig;
+  /**
+   * Also persist the server to the user-level `mcp.json`. Persisted entries
+   * become `global`-sourced; unpersisted ones are session-local `caller`
+   * entries.
+   */
+  readonly persist?: boolean;
 }
 
 export type { GlobalMcpServerConfig } from '#/mcp/global-config';
+export type { McpServerSource } from '#/mcp/registry';
+
+/**
+ * One entry of the unified MCP management view: the effective config plus its
+ * source metadata. `global` entries from the user-level file are `mutable`;
+ * plugin and project-layer entries are read-only through the management API.
+ * Read-only entries also withhold secret-bearing values: their stdio `env` /
+ * remote `headers` are redacted to the `envKeys` / `headerKeys` lists, while
+ * mutable (user-level) entries keep the full values so edit UIs can prefill.
+ */
+export type McpManagedServerInfo = GlobalMcpServerConfig & {
+  readonly source: McpServerSource;
+  /** global: defining file path; plugin: plugin id. */
+  readonly origin: string;
+  readonly mutable: boolean;
+  readonly plugin?: McpRegistryPluginOrigin;
+  /** Set instead of `env` / `headers` when the entry is read-only. */
+  readonly envKeys?: readonly string[];
+  readonly headerKeys?: readonly string[];
+};
+
+export interface ListGlobalMcpServersPayload {
+  /** Include the project-root / project-local layers for this directory. */
+  readonly cwd?: string;
+}
+
+export interface GetGlobalMcpServerPayload {
+  readonly name: string;
+  readonly cwd?: string;
+}
 
 export interface PutGlobalMcpServerPayload {
   readonly server: GlobalMcpServerConfig;
@@ -352,6 +408,12 @@ export interface GlobalMcpServerNamePayload {
   readonly name: string;
 }
 
+/**
+ * Source-qualified server identity for the app-level MCP surface. Global
+ * servers are addressed by their (runtime) name; plugin servers by plugin id
+ * plus the manifest-local server name — the identity stays stable even when a
+ * runtime-name collision makes the bare name ambiguous.
+ */
 export type McpServerLocator =
   | { readonly source: 'global'; readonly name: string }
   | {
@@ -372,29 +434,44 @@ export type GlobalMcpServerAuthState =
   | 'not-applicable'
   | 'bearer-token'
   | 'oauth-required'
-  | 'oauth-authorized';
+  | 'oauth-authorized'
+  // Stored credentials exist but are expired without a usable refresh token
+  // (or failed an online verification): re-login required.
+  | 'oauth-expired';
 
 export interface GlobalMcpServerAuthStatus {
   readonly name: string;
   readonly authStatus: GlobalMcpServerAuthState;
 }
 
+export interface ListGlobalMcpServerAuthStatusesPayload {
+  readonly cwd?: string;
+  /**
+   * Verify online: run a real connection probe for OAuth-capable servers so
+   * an expired/revoked grant surfaces as `oauth-expired` instead of the
+   * offline `oauth-authorized` guess.
+   */
+  readonly verify?: boolean;
+}
+
+/** App-level inspection adds `unavailable` (probe failed / ambiguous name). */
 export type AppMcpServerAuthState = GlobalMcpServerAuthState | 'unavailable';
 
-export type AppMcpServerConfig =
-  | (Omit<Extract<McpServerConfig, { readonly transport: 'stdio' }>, 'env'> & {
-      readonly envKeys?: readonly string[];
-    })
-  | (Omit<Exclude<McpServerConfig, { readonly transport: 'stdio' }>, 'headers'> & {
-      readonly headerKeys?: readonly string[];
-    });
+/**
+ * Inspection config as exposed on the wire: the effective config with literal
+ * stdio `env` / remote `headers` values redacted to sorted key lists, since
+ * they may carry secrets. Shared with the session MCP status surface.
+ */
+export type AppMcpServerConfig = McpServerConfigView;
 
 export interface AppMcpServerDescriptor {
+  /** `global:<name>` or `plugin:<pluginId>:<serverName>` (URL-encoded parts). */
   readonly serverId: string;
   readonly locator: McpServerLocator;
   readonly runtimeName: string;
   readonly canonicalUrl: string | undefined;
   readonly origin: McpServerLocator['source'];
+  /** The final effective config after source-specific transforms, redacted. */
   readonly config: AppMcpServerConfig;
   readonly enabled: boolean;
   readonly editable: boolean;
@@ -424,7 +501,10 @@ export interface CancelGlobalMcpServerAuthPayload {
 }
 
 export interface TestGlobalMcpServerPayload {
-  readonly name: string;
+  /** Registry lookup by name (covers plugin and project-layer entries). */
+  readonly name?: string;
+  /** Probe a full inline config instead — nothing has to be saved first. */
+  readonly server?: GlobalMcpServerConfig;
   readonly cwd?: string;
 }
 
@@ -590,19 +670,31 @@ export interface CoreAPI extends SessionAPIWithId {
   getConfigDiagnostics: (payload: EmptyPayload) => ConfigDiagnostics;
   setKimiConfig: (payload: SetKimiConfigPayload) => KimiConfig;
   removeKimiProvider: (payload: RemoveKimiProviderPayload) => KimiConfig;
-  listGlobalMcpServers: (payload: EmptyPayload) => readonly GlobalMcpServerConfig[];
+  listGlobalMcpServers: (
+    payload: ListGlobalMcpServersPayload,
+  ) => readonly McpManagedServerInfo[];
+  getGlobalMcpServer: (payload: GetGlobalMcpServerPayload) => McpManagedServerInfo;
   listGlobalMcpServerAuthStatuses: (
-    payload: EmptyPayload,
+    payload: ListGlobalMcpServerAuthStatusesPayload,
   ) => readonly GlobalMcpServerAuthStatus[];
+  /**
+   * App-level inspection: every known server (global + plugin) with its
+   * effective config and its real authorization state, probing OAuth
+   * candidates over a throwaway connection. `targets` narrows to specific
+   * locators; omitted inspects all.
+   */
   inspectAppMcpServers: (
     payload: InspectAppMcpServersPayload,
   ) => readonly AppMcpServerInspection[];
-  addGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
-  updateGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
-  removeGlobalMcpServer: (payload: GlobalMcpServerNamePayload) => readonly GlobalMcpServerConfig[];
+  addGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly McpManagedServerInfo[];
+  updateGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly McpManagedServerInfo[];
+  removeGlobalMcpServer: (
+    payload: GlobalMcpServerNamePayload,
+  ) => readonly McpManagedServerInfo[];
   beginGlobalMcpServerAuth: (
     payload: GlobalMcpServerNamePayload,
   ) => BeginGlobalMcpServerAuthResult;
+  /** Locator-addressed variants, covering plugin servers as first-class. */
   beginMcpServerAuth: (payload: McpServerLocatorPayload) => BeginGlobalMcpServerAuthResult;
   completeGlobalMcpServerAuth: (payload: CompleteGlobalMcpServerAuthPayload) => void;
   completeMcpServerAuth: (payload: CompleteGlobalMcpServerAuthPayload) => void;
@@ -611,6 +703,14 @@ export interface CoreAPI extends SessionAPIWithId {
   resetGlobalMcpServerAuth: (payload: GlobalMcpServerNamePayload) => void;
   resetMcpServerAuth: (payload: McpServerLocatorPayload) => void;
   testGlobalMcpServer: (payload: TestGlobalMcpServerPayload) => GlobalMcpServerTestResult;
+  /**
+   * Session-level add: connect a server in one live session, optionally
+   * persisting it to the user-level `mcp.json` (`persist: true`, making it a
+   * `global` entry; otherwise it stays a session-local `caller` entry).
+   */
+  addSessionMcpServer: (
+    payload: AddSessionMcpServerPayload & { readonly sessionId: string },
+  ) => McpServerInfo;
   createSession: (payload: CreateSessionPayload) => SessionSummary;
   closeSession: (payload: CloseSessionPayload) => void;
   archiveSession: (payload: ArchiveSessionPayload) => void;

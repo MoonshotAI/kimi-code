@@ -6,7 +6,15 @@
 
 import type { ReactNode } from 'react';
 
-export type AppView = 'chat' | 'search' | 'models' | 'services' | 'workspace' | 'bash' | 'di';
+export type AppView =
+  | 'chat'
+  | 'search'
+  | 'models'
+  | 'services'
+  | 'workspace'
+  | 'suggest'
+  | 'bash'
+  | 'di';
 
 interface ViewDef {
   readonly id: AppView;
@@ -74,6 +82,16 @@ const VIEWS: readonly ViewDef[] = [
     icon: (
       <svg {...iconProps}>
         <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+      </svg>
+    ),
+  },
+  {
+    id: 'suggest',
+    title: 'Filesystem Suggest',
+    icon: (
+      <svg {...iconProps}>
+        <path d="M4 4h6l2 2h8v14H4z" />
+        <path d="m9 14 2 2 4-4" />
       </svg>
     ),
   },

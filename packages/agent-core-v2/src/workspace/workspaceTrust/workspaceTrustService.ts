@@ -1,26 +1,8 @@
-/**
- * `workspaceTrust` domain — `IWorkspaceTrust` implementation.
- *
- * Persists the trust marker through the `persistence` domain's
- * `IAtomicDocumentStore` under the `workspace-trust` scope, one document per
- * workspace keyed by `encodeWorkDirKey(root)`, with the raw root kept in the
- * value for inspection. The nearest document for this root or an ancestor
- * decides trust; legacy documents without `trusted` remain trusted. `trust()`
- * writes an allow record and `untrust()` writes a deny record for this root.
- * The record lives under the kimi home,
- * never inside the workspace, so a checked-out tree cannot pre-trust
- * itself. The flag is read through `ready`, watches every ancestor record, and
- * every later mutation goes through this service. A read failure resolves to
- * untrusted. The plain-data state (`trusted`) is registered into
- * `workspaceState` (`IWorkspaceStateService`) and read/written through it.
- * Bound at Workspace scope.
- */
-
 import { dirname, normalize } from 'pathe';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
@@ -42,7 +24,6 @@ export const workspaceTrustTrustedKey = defineState<boolean>(
   () => false,
 );
 
-// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust {
   declare readonly _serviceBrand: undefined;
 
@@ -58,7 +39,7 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
   ) {
     super();
-    this.states.register(workspaceTrustTrustedKey);
+    this.states.contributeState(workspaceTrustTrustedKey);
     this.root = workspace.cwd;
     this.storeKey = encodeWorkDirKey(workspace.cwd);
     this.watchTrustRecords();

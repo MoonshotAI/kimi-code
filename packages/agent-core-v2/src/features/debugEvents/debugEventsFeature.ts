@@ -1,14 +1,3 @@
-/**
- * `debugEvents` domain — `DebugEventsFeature`: the event-subscription
- * introspection capability assembled as one App-scope Feature unit.
- *
- * Contributes the App-scope `IDebugEventsService` (OnDemand) through the
- * `features` base-class seam; retracting the unit withdraws the service
- * across the scope tree. The service is intentionally absent from the static
- * scoped registry — the debug RPC dispatcher reaches it through the
- * contributed-service fallback. Registered into the feature table at import.
- */
-
 import { ScopeActivation } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/app/scopes';
 import { Feature } from '#/features/feature';

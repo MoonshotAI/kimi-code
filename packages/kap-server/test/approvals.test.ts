@@ -97,7 +97,6 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
     return body.data.id;
   }
 
-  /** Park an approval in-process so the REST route has something to list/resolve. */
   function enqueueApproval(sessionId: string, toolCallId: string): string {
     const handle = getLiveSessionById(server!.core.accessor, sessionId);
     expect(handle).toBeDefined();

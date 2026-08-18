@@ -12,6 +12,7 @@ import {
   IAgentShellCommandService,
   IAppendLogStore,
   IDebugEventsService,
+  IEventService,
   IInstantiationService,
   IPluginService,
   ISessionIndex,
@@ -67,9 +68,6 @@ interface GoalToolResultWire {
   goal: GoalSnapshotWire | null;
 }
 
-// Build an `/api/v1/debug` path from a Service token (channel = decorator id) + method
-// name — exactly how the typed client composes URLs, so the test never hardcodes
-// a channel name that could drift from the token.
 function rpc(
   scope: 'core' | 'session' | 'agent',
   service: ServiceIdentifier<unknown>,
@@ -121,8 +119,6 @@ describe('server-v2 /api/v1/debug RPC', () => {
       headers['content-type'] = 'application/json';
       init.body = JSON.stringify(arg);
     }
-    // Default to the persistent bearer token — the debug RPC surface is gated by the
-    // same credential as every other route.
     const credential = token ?? (server as RunningServer).authTokenService.getToken();
     headers['authorization'] = `Bearer ${credential}`;
     const res = await fetch(url, init);
@@ -140,8 +136,6 @@ describe('server-v2 /api/v1/debug RPC', () => {
     return body.data.id;
   }
 
-  // The main agent scope is not created automatically on session creation
-  // (server-v2 gap G10); create it here so the agent-scope dispatch resolves.
   async function createMainAgent(sessionId: string): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
@@ -153,8 +147,6 @@ describe('server-v2 /api/v1/debug RPC', () => {
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     await session.accessor.get(IAgentLifecycleService).create({ agentId });
   }
-
-  // --- Core scope -----------------------------------------------------------
 
   it('describes all channels via GET /api/v1/debug/channels', async () => {
     const { status, body } = await call<
@@ -186,19 +178,18 @@ describe('server-v2 /api/v1/debug RPC', () => {
       arity: 0,
       params: '',
     });
-    // Parameter names come from the declaration source (types are erased).
     expect(meta?.methods.find((m) => m.name === 'setTitle')).toMatchObject({
       arity: 1,
       params: 'title',
     });
-    // Framework plumbing stays out of the listing.
     expect(meta?.methods.map((m) => m.name)).not.toContain('dispose');
+
+    const prompts = byName.get('agentPromptService');
+    expect(prompts?.methods.map((m) => m.name)).toContain('enqueue');
+    expect(prompts?.methods.map((m) => m.name)).not.toContain('reserve');
   });
 
   it('reaches a runtime-contributed Service absent from /channels (decorator-name fallback)', async () => {
-    // IDebugEventsService comes from DebugEventsFeature's contributeService,
-    // which bypasses the static scoped registry: /channels omits it, but the
-    // dispatcher still resolves it through the global decorator registry.
     const channels = await call<readonly { name: string }[]>(
       'GET',
       '/api/v1/debug/channels',
@@ -218,9 +209,6 @@ describe('server-v2 /api/v1/debug RPC', () => {
   });
 
   it('rejects kernel tokens registered neither statically nor by a feature (40001)', async () => {
-    // instantiationService is seeded into every container; a request like
-    // instantiationService/dispose would tear down the root container. The
-    // contributed-service fallback must not widen the surface to it.
     const { body } = await call<null>('POST', rpc('core', IInstantiationService, 'dispose'));
     expect(body.code).toBe(40001);
   });
@@ -354,8 +342,6 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(body.data).toBeGreaterThanOrEqual(1);
   });
 
-  // --- Session scope --------------------------------------------------------
-
   it('reads and updates session metadata', async () => {
     const id = await createSession(home as string);
 
@@ -447,12 +433,118 @@ describe('server-v2 /api/v1/debug RPC', () => {
     const id = await createSession(home as string);
     const { body } = await call<null>('POST', rpc('core', ISessionManager, 'archive'), id);
     expect(body.code).toBe(0);
-    // archive is a method on the handler's session lifecycle service; its
-    // single argument is the session id.
     expect(body.data).toBeNull();
   });
 
-  // --- Agent scope ----------------------------------------------------------
+  it('submits a prompt and returns the turn id', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const { body } = await call<{ turn_id: number }>(
+      'POST',
+      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' }),
+      { input: [{ type: 'text', text: 'hello' }] },
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.turn_id).toBe(0);
+  });
+
+  it('maps a duplicate promptId to 40927 before metadata changes', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const path = rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' });
+
+    const first = await call<{ turn_id: number }>('POST', path, {
+      input: [{ type: 'text', text: 'first prompt' }],
+      promptId: 'submission-1',
+    });
+    expect(first.body.code).toBe(0);
+
+    const duplicate = await call<null>('POST', path, {
+      input: [{ type: 'text', text: 'must not become metadata' }],
+      promptId: 'submission-1',
+    });
+    expect(duplicate.body.code).toBe(40927);
+
+    const metadata = await call<SessionMetaWire>(
+      'POST',
+      rpc('session', ISessionMetadata, 'read', { sid: id }),
+    );
+    expect(metadata.body.data.lastPrompt).toBe('first prompt');
+  });
+
+  it('rejects disabledTools before bind without mutating prompt metadata', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const { body } = await call<null>(
+      'POST',
+      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' }),
+      {
+        input: [{ type: 'text', text: 'must not become metadata' }],
+        disabledTools: ['Bash'],
+      },
+    );
+    expect(body.code).toBe(40001);
+
+    const metadata = await call<SessionMetaWire>(
+      'POST',
+      rpc('session', ISessionMetadata, 'read', { sid: id }),
+    );
+    expect(metadata.body.data.title).toBeUndefined();
+    expect(metadata.body.data.lastPrompt).toBeUndefined();
+  });
+
+  it('derives the session title and lastPrompt from the first prompt', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const events: { type: string; payload: unknown }[] = [];
+    const sub = (server as RunningServer).core.accessor
+      .get(IEventService)
+      .subscribe((event) => events.push(event as unknown as { type: string; payload: unknown }));
+
+    const { body } = await call<{ turn_id: number }>(
+      'POST',
+      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' }),
+      { input: [{ type: 'text', text: 'hello title' }] },
+    );
+    expect(body.code).toBe(0);
+    sub.dispose();
+
+    const meta = await call<SessionMetaWire>('POST', rpc('session', ISessionMetadata, 'read', { sid: id }));
+    expect(meta.body.code).toBe(0);
+    expect(meta.body.data.title).toBe('hello title');
+    expect(meta.body.data.lastPrompt).toBe('hello title');
+
+    const updated = events.find((e) => e.type === 'session.meta.updated');
+    expect(updated).toBeDefined();
+    const payload = updated?.payload as
+      | { title?: string; patch?: { lastPrompt?: string } }
+      | undefined;
+    expect(payload?.title).toBe('hello title');
+    expect(payload?.patch?.lastPrompt).toBe('hello title');
+  });
+
+  it('keeps a custom title and only refreshes lastPrompt on a later prompt', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const renamed = await call<null>('POST', rpc('session', ISessionMetadata, 'setTitle', { sid: id }), 'keep-me');
+    expect(renamed.body.code).toBe(0);
+
+    const { body } = await call<{ turn_id: number }>(
+      'POST',
+      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' }),
+      { input: [{ type: 'text', text: 'should not become the title' }] },
+    );
+    expect(body.code).toBe(0);
+
+    const meta = await call<SessionMetaWire>('POST', rpc('session', ISessionMetadata, 'read', { sid: id }));
+    expect(meta.body.code).toBe(0);
+    expect(meta.body.data.title).toBe('keep-me');
+    expect(meta.body.data.lastPrompt).toBe('should not become the title');
+  });
 
   it('runs a shell command through the shell command service', async () => {
     const id = await createSession(home as string);
@@ -608,12 +700,8 @@ describe('server-v2 /api/v1/debug RPC', () => {
       { input: [{ type: 'text', text: 'hello' }] },
     );
     expect(body.code).toBe(40401);
-    // A missing agent must not be reported as a missing session — the message
-    // names the agent (parity with v1's `agent.not_found`).
     expect(body.msg).toBe(`agent does-not-exist not found in session ${id}`);
   });
-
-  // --- cross-scope channel routing -----------------------------------------
 
   it('routes core / session / agent scopes by channel name', async () => {
     const cwd = home as string;
@@ -628,8 +716,6 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(read.body.code).toBe(0);
     expect(read.body.data.id).toBe(id);
   });
-
-  // --- NFR ------------------------------------------------------------------
 
   it('rejects unknown method (40001)', async () => {
     const { body } = await call<null>('POST', rpc('core', ISessionIndex, 'nope'));
@@ -652,11 +738,6 @@ describe('server-v2 /api/v1/debug RPC', () => {
   });
 
   it('rejects oversized body', async () => {
-    // Fastify's default bodyLimit is 1MB; a larger body is rejected. Fastify's
-    // body-parser throws a 413 which our global error handler currently wraps
-    // as `50001` (HTTP 200) — either way the request is rejected, not served.
-    // A valid token is sent so the request reaches the body parser (the auth
-    // hook would short-circuit with 401 before reading the body otherwise).
     const huge = 'x'.repeat(2 * 1024 * 1024);
     const token = (server as RunningServer).authTokenService.getToken();
     let rejected = false;
@@ -679,8 +760,6 @@ describe('server-v2 /api/v1/debug RPC', () => {
 
   it('surfaces the originating stack trace on error', async () => {
     const { body } = await call<null>('POST', rpc('session', ISessionMetadata, 'read', { sid: 'nope' }));
-    // Contract: error envelopes carry the thrown error's stack so operators can
-    // locate the source (the 40401 below originates in `dispatch`).
     const json = JSON.stringify(body);
     expect(json).toContain('"stack"');
     expect(json).toContain('dispatch');
@@ -812,13 +891,9 @@ describe('server-v2 /api/v1/debug RPC (dev-only, whitelist-free)', () => {
     );
     expect(status).toBe(200);
     expect(body.code).toBe(0);
-    // The debug surface spans the whole
-    // scoped DI registry (App + Session + Agent).
     expect(body.data.length).toBeGreaterThan(50);
     const names = body.data.map((c) => c.name);
-    // Internal Services are included...
     expect(names).toContain(String(IAppendLogStore));
-    // ...alongside the regular ones.
     expect(names).toContain(String(ISessionIndex));
   });
 

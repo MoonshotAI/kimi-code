@@ -1,12 +1,3 @@
-/**
- * `workspaceAgentProfileLoader` domain — `IExplicitAgentProfileLoader` implementation.
- *
- * Loads the runtime-selected agent files through `hostFs`, resolving paths
- * against the workspace root (`workspaceContext`) and `bootstrap`.
- * Bound at Workspace scope.
- */
-
-
 import { ILogService } from '#/_base/log/log';
 import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { parseAgentFileText } from '#/workspace/workspaceAgentProfileLoader/internal/agentFile';

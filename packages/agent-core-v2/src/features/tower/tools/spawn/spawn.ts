@@ -1,12 +1,3 @@
-/**
- * `tools` domain — `ITowerSpawnTool` contract (the `TowerSpawn` tool).
- *
- * Public contract of the tower's worker/reviewer launcher: the input schema
- * (verbatim port of v1 — worker spawns require `mission_id`, reviewer spawns
- * require `review_target`) and the `ITowerSpawnTool` DI decorator. Bound at
- * Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

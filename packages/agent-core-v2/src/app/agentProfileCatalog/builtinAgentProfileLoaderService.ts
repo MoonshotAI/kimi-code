@@ -1,17 +1,3 @@
-/**
- * `agentProfileCatalog` domain — `IBuiltinAgentProfileLoader` implementation.
- *
- * Snapshots the module-level contributions (`registerAgentProfile`, the
- * "import = register" pattern) on construction and contributes them to the
- * `AgentProfileContribution` collection as the global `builtin` record.
- * Register-after-construction is not supported: like
- * `IAgentToolRegistryService`, contributions are expected to accumulate at
- * import time before the container resolves the service. `getDefault()`
- * throws a `BugIndicatingError` when the builtin default profile is missing — a
- * programming-time invariant violation, not a request failure. Bound at App
- * scope.
- */
-
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
@@ -32,7 +18,6 @@ import {
 } from './builtinAgentProfileLoader';
 import { getAgentProfileContributions } from './contribution';
 
-// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class BuiltinAgentProfileLoaderService
   extends Disposable
   implements IBuiltinAgentProfileLoader

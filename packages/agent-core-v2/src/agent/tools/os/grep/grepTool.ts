@@ -1,37 +1,3 @@
-/**
- * `tools` domain — `GrepTool` implementation, content search via ripgrep.
- *
- * Shells out to `rg` through the host process service. The ripgrep binary
- * resolution and subprocess plumbing are shared with the Glob tool.
- *
- * Collaborators injected via constructor:
- *   - `processService` — `IHostProcessService`, spawns the rg subprocess
- *   - `fs`             — `IHostFileSystem`, mtime stat used to order
- *                        files_with_matches results (most recent first)
- *   - `env`            — `IHostEnvironment`, path class for display
- *                        relativization
- *   - `workspaceCtx`   — `ISessionWorkspaceContext`, workspace roots for path
- *                        safety and display
- *   - `telemetry`      — `ITelemetryService`, rg fallback outcome tracking
- *   - `skillCatalog`   — `ISessionSkillCatalog` (optional), extends the
- *                        workspace with skill roots
- *
- * Path safety is enforced before any host I/O. Explicit absolute paths outside
- * the workspace are allowed; relative paths that escape the workspace are
- * rejected.
- *
- * Output is bounded and post-processed before it reaches the model:
- *   - timeout and ambient abort both terminate the rg subprocess;
- *   - stdout/stderr are capped while streams continue draining;
- *   - hidden files are searched, but VCS metadata and common sensitive glob
- *     patterns are prefiltered where possible;
- *   - parsed path records are filtered again after rg returns, using the active
- *     backend path class.
- *
- * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module
- * load.
- */
-
 import { normalize } from 'pathe';
 
 import { ToolResultBuilder } from '#/tool/result-builder';

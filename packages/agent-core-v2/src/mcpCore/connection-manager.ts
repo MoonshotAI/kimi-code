@@ -1,24 +1,3 @@
-/**
- * `mcpCore` domain — `McpConnectionManager`, the workspace-shared MCP
- * server connection orchestrator.
- *
- * Owns the configured MCP servers and their runtime clients: connects
- * (stdio / SSE / HTTP), discovers and registers tools, attaches the OAuth
- * provider when tokens are present, flips failing servers into `needs-auth`
- * on 401, and reconnects after authentication. Applies per-server settings
- * over the configured defaults and emits status changes to subscribers.
- *
- * `resolveClientName` supplies the name announced to servers during initialize
- * (and the OAuth dynamic-registration label), consulted per connection so an
- * identity configured after construction still applies; omitted, or resolving
- * to `undefined`, keeps the built-in name.
- *
- * A server whose config disappears is tombstoned (`markRemoved`): the
- * client is closed but the entry stays with status `removed` so consumers
- * holding its tools can fail calls with a clear notice, until a same-named
- * `connect` replaces it or `shutdown` clears everything.
- */
-
 import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerConfig } from './config-schema';
 import type { ILogger as Logger } from '#/_base/log/log';
@@ -206,6 +185,12 @@ export class McpConnectionManager implements McpConnectionView {
   async connect(name: string, config: McpServerConfig): Promise<void> {
     const previous = this.entries.get(name);
     if (previous !== undefined) {
+      if (
+        (previous.status === 'pending' || previous.status === 'connected') &&
+        mcpServerConfigsEqual(previous.config, config)
+      ) {
+        return;
+      }
       await this.closeClient(previous);
     }
     const disabled = config.enabled === false;
@@ -574,6 +559,24 @@ function stderrTail(client: RuntimeMcpClient | undefined): string | undefined {
   const snapshot = client.stderrSnapshot();
   if (snapshot.length === 0) return undefined;
   return snapshot.trimEnd();
+}
+
+function mcpServerConfigsEqual(a: McpServerConfig, b: McpServerConfig): boolean {
+  return stableConfigJson(a) === stableConfigJson(b);
+}
+
+function stableConfigJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableConfigJson).join(',')}]`;
+  }
+  if (typeof value === 'object' && value !== null) {
+    const entries = Object.entries(value)
+      .filter(([, entryValue]) => entryValue !== undefined)
+      .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableConfigJson(entryValue)}`)
+      .toSorted();
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
 }
 
 async function withTimeout<T>(

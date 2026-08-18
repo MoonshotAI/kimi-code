@@ -1,15 +1,3 @@
-/**
- * `search/worker` — packaged worker-entry registration (mirrors minidb's
- * `worker-runtime.ts` for the text-build worker).
- *
- * In the SEA single-file binary the search worker entry exists only as an
- * embedded asset; the CLI extracts it to the native-asset cache at startup
- * and configures the absolute path here ONCE (see
- * `apps/kimi-code/src/native/search-worker.ts`). Everywhere else the host
- * resolves the entry itself (sibling `.ts` source in dev/tests, bundled
- * `.mjs` sibling in the packaged npm layout), and this stays unconfigured.
- */
-
 import fs from 'node:fs';
 import path from 'node:path';
 

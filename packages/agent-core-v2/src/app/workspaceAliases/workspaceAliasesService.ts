@@ -1,18 +1,3 @@
-/**
- * `workspaceAliases` domain — `IWorkspaceAliases` implementation.
- *
- * Resolves every id spelling of one physical directory by folding the
- * registered catalog (by `workspaceRootKey`) together with `workDir`
- * spellings recorded only in the legacy `session_index.jsonl`. The catalog
- * is reached through
- * `IWorkspaceService.get` first — its once-per-process session-index sync
- * (`ensureMerged`) must have run before the raw catalog is read from
- * `IWorkspacePersistence` — and the raw (un-deduped) catalog is required
- * because `IWorkspaceService.list` collapses sibling spellings to one
- * representative, which would defeat the alias enumeration. Read-only: no id
- * or bucket is ever rewritten here. Bound at App scope.
- */
-
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';

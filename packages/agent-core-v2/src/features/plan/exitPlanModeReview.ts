@@ -1,16 +1,3 @@
-/**
- * `plan` domain — ExitPlanMode plan review.
- *
- * Owns the user-facing review that intercepts an `ExitPlanMode` call carrying
- * a non-empty `plan_review` display: emits `plan_submitted` / `plan_resolved`
- * through `telemetry`, drives the approval round-trip through `toolApproval`
- * (origin `exit-plan-mode-review-ask`, matching the legacy permission
- * policy's telemetry), and folds every approval outcome (approve with or
- * without a selected option, Revise with feedback, Reject and Exit, dismiss)
- * into a synthetic tool result, exiting plan mode through `plan` when the
- * outcome deactivates it.
- */
-
 import type {
   ApprovalResponse,
   PermissionPolicyResolution,

@@ -1,13 +1,3 @@
-/**
- * GlobTool tests for the v2 fileTools domain.
- *
- * Ported from v1 (`packages/agent-core/test/tools/glob.test.ts`) and adapted
- * to the v2 constructor `(fs, env, processService, workspace, telemetry?)`. The
- * Glob search runs `rg --files` through `IHostProcessService.spawn` with the
- * search root passed as `options.cwd`; tests fake the process service and
- * assert on the spawned args / `cwd` value.
- */
-
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';

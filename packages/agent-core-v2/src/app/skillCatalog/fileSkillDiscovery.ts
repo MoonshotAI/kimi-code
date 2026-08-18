@@ -1,14 +1,3 @@
-/**
- * `skillCatalog` domain — filesystem `ISkillDiscovery` backend.
- *
- * Discovers skill bundles by walking caller-supplied roots and parsing each
- * SKILL.md. Exposes discovery through the App-scoped service and a stateless
- * filesystem entry point. A root whose `scanMode` is `root-skill-only` (the
- * plugin manifest root SKILL.md fallback) is a single skill bundle: only its
- * top-level SKILL.md is parsed, never sibling Markdown files or nested
- * directories, so plugin docs like CHANGELOG.md are not mistaken for skills.
- */
-
 import { promises as fs } from 'node:fs';
 import path from 'pathe';
 

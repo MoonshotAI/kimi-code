@@ -71,8 +71,9 @@ they belong to a feature:
   `docs/config-manifest.toml`.
 - **Agent profiles** contributed via `registerAgentProfile` — same static-table
   reasoning.
-- **Wire vocabulary** (`defineOp` / `defineModel` / `defineCheckpointedModel`) — wire
-  records must remain replayable even if the feature unit is retracted.
+- **Wire vocabulary** (durable `Event2` classes /
+  `defineState(...).replayable(...)`) — wire records must remain replayable even if the
+  feature unit is retracted.
 
 The Feature unit carries the **runtime capabilities**: services, tools, commands, hook
 subscriptions. `PlanFeature` is the example: `configSection.ts` and `profile/plan.ts`
@@ -92,7 +93,7 @@ keep their static registrations; the service and the two tools go through the Fe
 
 ## Adding a new feature
 
-1. `src/features/<name>/` — domain files follow the usual conventions (header comments,
+1. `src/features/<name>/` — domain files follow the usual conventions (no comments,
    one service per file pair, `.md?raw` assets move with the feature).
 2. `<name>Feature.ts` — the Feature subclass + `registerFeature(...)`.
 3. `src/index.ts` — precise leaf imports/exports; no barrel.

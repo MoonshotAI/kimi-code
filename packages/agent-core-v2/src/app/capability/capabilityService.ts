@@ -1,15 +1,3 @@
-/**
- * `capability` domain (L3) — `ICapabilityService` implementation.
- *
- * Holds the closed registry of built-in capability entries and serializes
- * install runs per entry. Install progress lives in memory only; clients poll
- * it or subscribe to `onDidChangeInstall` (fired on every transition), and a
- * failed attempt leaves its error in the progress state until the next
- * attempt starts and logs the failure through `log`. Listing degrades a
- * single entry's failing detection to a failed step on that entry instead of
- * rejecting the whole list. Bound at App scope.
- */
-
 import { homedir } from 'node:os';
 
 import { LifecycleScope } from '#/app/scopes';

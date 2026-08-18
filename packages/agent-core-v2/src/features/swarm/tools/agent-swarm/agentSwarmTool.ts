@@ -1,27 +1,3 @@
-/**
- * `swarm` domain — `AgentSwarmTool` implementation (the `AgentSwarm`
- * tool).
- *
- * Launches a batch of child agents (an ordinary Agent scope each) through the
- * session swarm coordinator (`ISessionSwarmService`) and renders the
- * per-subagent XML result. Reads persisted swarm item labels through the
- * Session-scoped coordinator so later `resume_agent_ids` calls relabel
- * resumed subagents like v1. When the caller has a model bound, the tool
- * resolves the explicit tool `model` choice up front via
- * `resolveSubagentBinding` (against `IConfigService`, `IFlagService`,
- * `ISessionAgentProfileCatalog`, and the caller's `IAgentProfileService`) and
- * threads it through the swarm tasks; otherwise binding is left to the
- * service, which keeps its own "no model bound" check and inherit-caller
- * fallback. The advertised `model` parameter lists the configured
- * `[secondary_model.models]` pool via `buildSubagentModelDescriptions`; the
- * pool is gated behind the `secondary-model` experiment, so while it is off
- * (or under `[secondary_model].force`) the parameter is not advertised at
- * all. Swarm mode is
- * entered through `IAgentSwarmService`; the caller's agent id comes from
- * `IAgentScopeContext`. Pure tool — owns no scoped state. Bound at Agent
- * scope — contributed by `SwarmFeature` (`features/swarm/swarmFeature`).
- */
-
 import {
   ToolAccesses,
   type ExecutableToolContext,

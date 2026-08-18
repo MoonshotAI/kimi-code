@@ -1,32 +1,6 @@
-/**
- * `media` domain — `IAgentVideoResolverService` implementation.
- *
- * Resolves each `kimi-file://` video reference in the projected wire messages
- * to a provider-acceptable part right before the request leaves for the wire.
- * Reads the uploaded bytes through the `file` domain (`IFileService`), uploads
- * them through the bound model's `ModelRequester.uploadVideo` (wrapped for
- * `video_upload` telemetry through `createVideoUploader`), and persists the
- * `(file, provider) → llmFileId` mapping through the `blobStore`
- * access-pattern store so the upload happens once across a turn's steps,
- * retries, and media-recovery reprojections. Falls back to an inline base64
- * `video_url` (protocols that carry it) or a `<video path>` text tag (the
- * model then opens the edge-materialized copy with `ReadMediaFile`); auth
- * failures surface so they drive credential refresh instead of masking a bad
- * token, and an upload interrupted by the step's aborted signal re-throws —
- * shape-agnostic, since abort rejections vary by provider — so cancellation
- * ends the request instead of memoizing a degraded fallback for the rest of
- * the agent's lifetime. Resolution outcomes are memoized per (file, provider)
- * for step/retry stability — except a transient upload failure, which
- * degrades only the current request to the tag form so a later step retries
- * the upload instead of freezing the fallback. The plain-data state
- * (`resolved`) is registered into `agentState` (`IAgentStateService`) and
- * read/written through it. Bound at Agent scope.
- */
-
 import { createHash } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -34,6 +8,7 @@ import type { ContentPart, Message } from '#/kosong/contract/message';
 import type { ModelRequester } from '#/kosong/model/modelRequester';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 
+import { mediaResolvedKey } from './mediaResolverService';
 import { detectFileType, MEDIA_SNIFF_BYTES } from './file-type';
 import { type KimiFileRef, isKimiFileUrl, parseKimiFileUrl } from './kimiFileUrl';
 import { createVideoUploader } from './registerMediaTools';
@@ -53,11 +28,6 @@ const VIDEO_UNAVAILABLE_TEXT =
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-export const mediaResolvedKey = defineState<Map<string, ContentPart>>(
-  'media.resolved',
-  () => new Map(),
-);
-
 export class AgentVideoResolverService implements IAgentVideoResolverService {
   declare readonly _serviceBrand: undefined;
 
@@ -66,9 +36,7 @@ export class AgentVideoResolverService implements IAgentVideoResolverService {
     @IBlobStore private readonly blobs: IBlobStore,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
-  ) {
-    this.states.register(mediaResolvedKey);
-  }
+  ) {}
 
   private get resolved(): Map<string, ContentPart> {
     return this.states.get(mediaResolvedKey);
@@ -204,10 +172,10 @@ function hasKimiFileVideoPart(message: Message): boolean {
 }
 
 function tag(ref: KimiFileRef): ContentPart {
-  if (ref.path === undefined || ref.path.length === 0) {
+  if (ref.fileId.length === 0) {
     return { type: 'text', text: VIDEO_UNAVAILABLE_TEXT };
   }
-  return { type: 'text', text: `<video path="${escapeAttribute(ref.path)}"></video>` };
+  return { type: 'text', text: `<video path="${escapeAttribute(ref.fileId)}"></video>` };
 }
 
 function msFileIdFromUrl(url: string): string | undefined {

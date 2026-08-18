@@ -1,14 +1,3 @@
-/**
- * `di` domain — DI Scope tree (`Scope`) and scoped service registry.
- *
- * Scoped services are resolved when their scope is created by default;
- * registrations that defer construction until first resolution use `OnDemand`.
- *
- * The kernel only knows the scope tree and the `ScopeKind` partial order.
- * The tier set is a business concept: the host bootstrap declares it through
- * `setScopeTopology` (see `src/app/scopes.ts`).
- */
-
 import { BugIndicatingError } from '../errors/errors';
 import { SyncDescriptor } from './descriptors';
 import { ScopeActivation, type ProvideAllEntry } from './instantiation';
@@ -54,7 +43,6 @@ const _scopedRegistry: ScopedEntry[] = [];
 export function registerScopedService<T>(
   scope: ScopeKind,
   id: ServiceIdentifier<T>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctor: new (...args: any[]) => T,
   activation: ScopeActivation = ScopeActivation.OnScopeCreated,
   domain: string = 'unknown',
@@ -78,7 +66,6 @@ export function _clearScopedRegistryForTests(): void {
 }
 
 export type ScopeSeed = ReadonlyArray<
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly [ServiceIdentifier<any>, unknown]
 >;
 

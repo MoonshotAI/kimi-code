@@ -1,12 +1,3 @@
-/**
- * Session legacy status scenarios.
- *
- * Resolves the edge adapter through DI and exercises its public status contract
- * with real scope-handle traversal. Agent/session domain collaborators are
- * narrow stubs so the scenario can model a persisted alias removed from the
- * current model catalog.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -164,8 +155,6 @@ describe('Session legacy status (best-effort runtime state)', () => {
 
     const status = await ix.get(ISessionLegacyService).status('session-test');
 
-    // The ghost alias resolves to UNKNOWN_CAPABILITY whose 0 means "unknown"
-    // — the rollup omits the field rather than reporting 0 (WS parity).
     expect(status).toMatchObject({
       busy: false,
       model: 'removed-model',
@@ -198,8 +187,6 @@ describe('Session legacy status (best-effort runtime state)', () => {
         [IAgentPermissionModeService, { mode: 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
-        // Unbound: assembleStatus resolves the default model's context cap,
-        // which asks the model service first — no default model here.
         [IModelService, { getDefaultModel: () => undefined }],
         [
           IAgentActivityView,
@@ -232,13 +219,10 @@ describe('Session legacy status (best-effort runtime state)', () => {
       model: undefined,
       thinking_level: '',
     });
-    // No bound model and no default model — the limit is unknown and omitted.
     expect(status.max_context_tokens).toBeUndefined();
   });
 
   it('falls back to the default model limit when no model is bound', async () => {
-    // Draft-session shape: no model bound, so the capabilities are unknown;
-    // the rollup mirrors the WS push and reads the default model's limit.
     const profile = {
       _serviceBrand: undefined,
       data: () => ({

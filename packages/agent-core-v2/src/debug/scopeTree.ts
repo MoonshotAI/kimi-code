@@ -1,14 +1,3 @@
-/**
- * `debug` domain — container-tree traversal helpers shared by the debug
- * services.
- *
- * Scope paths join `debugLabel` segments from the tree root
- * (`app` / `app/workspace:<id>` / …); an unlabeled container falls back to its
- * tree sequence (`#n`). Resolution walks the live tree and compares whole
- * paths, so labels never need to be separator-safe, and a path re-resolves to
- * the same container for the process lifetime.
- */
-
 import type { CascadeEngine } from '#/_base/di/cascadeEngine';
 import type { InstantiationService } from '#/_base/di/instantiationService';
 

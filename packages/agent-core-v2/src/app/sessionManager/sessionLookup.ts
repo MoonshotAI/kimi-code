@@ -1,16 +1,3 @@
-/**
- * `workspaceLifecycle` domain — pure session-lookup helpers over the handler chain.
- *
- * The explicit `sessionIndex` → `IWorkspaceLifecycleService.handlerFor` →
- * handler `ISessionLifecycleService` composition, shared by every caller
- * that addresses a session by id from outside the Workspace scope (edge
- * routes, in-process SDKs). These are plain functions over a STABLE
- * accessor (a `Scope` / scope-handle `accessor`, never a transient
- * `invokeFunction` one) — they are not an App-scope session lifecycle
- * facade: the live registry and every lifecycle method stay on the
- * handler's own service. Own no scoped state.
- */
-
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { ISessionScopeHandle } from '#/_base/di/scope';

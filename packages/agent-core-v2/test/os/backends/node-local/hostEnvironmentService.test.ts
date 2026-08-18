@@ -1,15 +1,3 @@
-/**
- * HostEnvironmentService — shell-probe error handling.
- *
- * Stubs the host-environment probe to fail the way a Windows host without Git
- * Bash does, so the suite runs identically on any platform. Pins the failure
- * contract: `ready` rejects with the translated `HostProcessError`
- * (`shell.git_bash_not_found`), sync field reads after a failed probe throw
- * the same coded error, and the rejection never surfaces as an
- * unhandledRejection while the App scope is being constructed (vitest fails
- * the file on any unhandled rejection).
- */
-
 import { describe, expect, it, vi } from 'vitest';
 
 import { ProbeShellNotFoundError } from '#/_base/execEnv/environmentProbe';

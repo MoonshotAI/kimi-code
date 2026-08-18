@@ -1,13 +1,3 @@
-/**
- *   GET    /v1/workspaces
- *   POST   /v1/workspaces
- *   PATCH  /v1/workspaces/{workspace_id}
- *   DELETE /v1/workspaces/{workspace_id}
- *   GET    /v1/workspaces/{workspace_id}/trust
- *   POST   /v1/workspaces/{workspace_id}/trust
- *   POST   /v1/workspaces/{workspace_id}/untrust
- */
-
 import { z } from 'zod';
 
 import {

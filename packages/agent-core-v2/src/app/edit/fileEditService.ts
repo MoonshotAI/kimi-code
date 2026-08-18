@@ -1,12 +1,3 @@
-/**
- * `edit` domain — `IFileEditService` implementation.
- *
- * Reads the file through the os `hostFs` domain (`IHostFileSystem`), runs the
- * pure edit logic (`TextModel` + `EditService`), and writes the re-materialized
- * content back. Maps host-level failures (e.g. `EISDIR`) to the domain-neutral
- * `FileEditResult`; it owns no tool-facing message. Bound at App scope.
- */
-
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';

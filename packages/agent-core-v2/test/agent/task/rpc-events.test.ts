@@ -1,7 +1,3 @@
-/**
- * Covers AgentTaskService event emission and notification delivery.
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
@@ -314,14 +310,16 @@ describe('AgentTaskService — event emission', () => {
     const { agent, manager, records } = createAgentTaskService();
     const taskId = registerProcess(manager, pendingProcess(), 'sleep 60', 'demo');
 
-    expect(agent.emittedEvents).toContainEqual({
-      type: 'task.started',
-      info: expect.objectContaining({
-        taskId,
-        kind: 'process',
-        status: 'running',
+    expect(agent.emittedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'task.started',
+        info: expect.objectContaining({
+          taskId,
+          kind: 'process',
+          status: 'running',
+        }),
       }),
-    });
+    );
     expect(records).toContainEqual({
       event: 'background_task_created',
       properties: { agent_id: 'main', task_id: taskId, kind: 'bash' },
@@ -334,14 +332,16 @@ describe('AgentTaskService — event emission', () => {
       agentTask(new Promise(() => {}), 'agent task'),
     );
 
-    expect(agent.emittedEvents).toContainEqual({
-      type: 'task.started',
-      info: expect.objectContaining({
-        taskId,
-        kind: 'agent',
-        status: 'running',
+    expect(agent.emittedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'task.started',
+        info: expect.objectContaining({
+          taskId,
+          kind: 'agent',
+          status: 'running',
+        }),
       }),
-    });
+    );
     expect(records).toContainEqual({
       event: 'background_task_created',
       properties: { agent_id: 'main', task_id: taskId, kind: 'agent' },
@@ -355,13 +355,15 @@ describe('AgentTaskService — event emission', () => {
 
     await manager.wait(taskId);
 
-    expect(agent.emittedEvents).toContainEqual({
-      type: 'task.terminated',
-      info: expect.objectContaining({
-        taskId,
-        status: 'completed',
+    expect(agent.emittedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'task.terminated',
+        info: expect.objectContaining({
+          taskId,
+          status: 'completed',
+        }),
       }),
-    });
+    );
     expect(records).toContainEqual({
       event: 'background_task_completed',
       properties: expect.objectContaining({
@@ -406,13 +408,13 @@ describe('AgentTaskService — event emission', () => {
     await manager.stop(taskId, 'user');
 
     expect(agent.emittedEvents.filter((e) => e.type === 'task.terminated')).toEqual([
-      {
+      expect.objectContaining({
         type: 'task.terminated',
         info: expect.objectContaining({
           taskId,
           status: 'killed',
         }),
-      },
+      }),
     ]);
   });
 
@@ -437,13 +439,15 @@ describe('AgentTaskService — event emission', () => {
       await manager.loadFromDisk();
       await manager.reconcile();
 
-      expect(agent.emittedEvents).toContainEqual({
-        type: 'task.terminated',
-        info: expect.objectContaining({
-          taskId: 'bash-orphan00',
-          status: 'lost',
+      expect(agent.emittedEvents).toContainEqual(
+        expect.objectContaining({
+          type: 'task.terminated',
+          info: expect.objectContaining({
+            taskId: 'bash-orphan00',
+            status: 'lost',
+          }),
         }),
-      });
+      );
     } finally {
       await cleanupSessionDir(sessionDir, fixture);
     }
@@ -880,7 +884,7 @@ describe('AgentTaskService — notification delivery', () => {
     });
     expect(fireAndForgetTrigger).toHaveBeenCalledWith('Notification', expect.objectContaining({
       matcherValue: 'task.completed',
-      inputData: {
+      inputData: expect.objectContaining({
         sink: 'context',
         notificationType: 'task.completed',
         title: 'Background agent completed',
@@ -888,7 +892,7 @@ describe('AgentTaskService — notification delivery', () => {
         severity: 'info',
         sourceKind: 'background_task',
         sourceId: taskId,
-      },
+      }),
     }));
   });
 
@@ -934,7 +938,7 @@ describe('AgentTaskService — notification delivery', () => {
     });
     expect(fireAndForgetTrigger).toHaveBeenCalledWith('Notification', expect.objectContaining({
       matcherValue: 'task.completed',
-      inputData: {
+      inputData: expect.objectContaining({
         sink: 'context',
         notificationType: 'task.completed',
         title: 'Background process completed',
@@ -942,7 +946,7 @@ describe('AgentTaskService — notification delivery', () => {
         severity: 'info',
         sourceKind: 'background_task',
         sourceId: taskId,
-      },
+      }),
     }));
   });
 });

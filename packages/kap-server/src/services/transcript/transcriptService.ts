@@ -1,45 +1,3 @@
-/**
- * `TranscriptService` — kap-server's session-level transcript owner.
- *
- * Live path: one `TranscriptStore` per in-memory session, bound to the core
- * engine via {@link bindSessionTranscript} on first use (idempotent) and torn
- * down by {@link dropSession} (wired to the broadcaster's close path). A
- * session that is not live in this process yields `undefined` — transcript WS
- * streaming only covers live sessions, while cold reads go through
- * {@link readColdSnapshot}.
- *
- * Backfill: a freshly created live store starts empty — the binding only
- * projects events from attach time on. To make full reads (REST pages, WS
- * resets) meaningful for sessions with history, store creation kicks off an
- * idempotent backfill that replays the persisted wire records into the main
- * agent's transcript as ordinary upsert ops (never `reset`, so concurrently
- * arriving live ops survive) and seeds the roster from the session's
- * persisted agent registry. Any other agent's history is replayed on demand
- * via {@link ensureAgentHistory}. Consumers that need the established state
- * await {@link whenReady} / {@link ensureAgentHistory} (the REST route and
- * the WS subscribe path both do). The backfill also guarantees the main
- * agent's presence in the store roster, so a graded subscriber always has a
- * reset target.
- *
- * Cold path: rebuilds one agent's transcript from the persisted wire records
- * (`<sessionDir>/agents/<agentId>/wire.jsonl`, parsed by `readWireRecords` and
- * folded by `reduceContextTranscript`), then groups the flat messages into a
- * base snapshot via `groupMessagesIntoSnapshot` and folds the
- * non-`context.*` records (tasks / interactions / todos / goal / plan /
- * swarm) on top via `foldWireRecordFacts` — best-effort fidelity.
- *
- * Lifecycle: entries are dropped when the session closes or archives
- * (`onDidCloseSession` / `onDidArchiveSession`, plus a lifecycle re-check on
- * the cached-entry path), so later reads fall through to the cold rebuild
- * instead of serving a stale store.
- *
- * Post-turn heal: a projector that attached mid-turn (or a backfill that ran
- * before the request's content was flushed to `wire.jsonl`) holds only the
- * streamed suffix of the turn's text frames. Once a terminal `turn.upsert`
- * flows through the live-op callback, the ended turn is re-read from disk
- * (debounced per agent) and merged back live-first — see `healTurnOps`.
- */
-
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 
@@ -93,20 +51,11 @@ export interface TranscriptServiceDeps {
 interface LiveEntry {
   readonly store: TranscriptStore;
   readonly binding: TranscriptBinding;
-  /** Resolves when the initial main-agent history backfill has landed. */
   readonly ready: Promise<void>;
-  /** Per-agent history backfill promises (dedupe concurrent ensures). */
   readonly agentBackfills: Map<string, Promise<void>>;
-  /** Per-agent op-batch seq counters + bounded journals (die with the store). */
   readonly opsJournals: Map<string, AgentOpsJournal>;
 }
 
-/**
- * Per-agent op-batch journal: every dispatched batch gets the next
- * consecutive seq (from 1) and is retained oldest-first, bounded by
- * {@link TRANSCRIPT_OPS_JOURNAL_CAPACITY}. `nextSeq - 1` is the watermark
- * ("state includes every batch with seq <= N").
- */
 interface AgentOpsJournal {
   nextSeq: number;
   batches: { seq: number; ops: TranscriptOperation[] }[];
@@ -133,10 +82,6 @@ export class TranscriptService {
   private readonly healTimers = new Map<string, { ordinals: Set<number>; timer: NodeJS.Timeout }>();
 
   constructor(private readonly deps: TranscriptServiceDeps) {
-    // Live entries must not outlive their session: once it closes or archives,
-    // reads should fall through to the cold rebuild from disk. Close/archive
-    // events are per-handler (Workspace scope), so follow every handler —
-    // present and future — through the App-scope registry.
     followSessionLifecycles(deps.core.accessor, (service) => {
       const d1 = service.onDidCloseSession(({ sessionId }) => this.dropSession(sessionId));
       const d2 = service.onDidArchiveSession(({ sessionId }) => this.dropSession(sessionId));
@@ -159,8 +104,6 @@ export class TranscriptService {
       if (getLiveSessionById(this.deps.core.accessor, sessionId) !== undefined) {
         return existing.store;
       }
-      // Stale entry for a session already closed/archived (the drop event may
-      // not have fired on every teardown path) — do not serve it.
       this.dropSession(sessionId);
       return undefined;
     }
@@ -173,8 +116,6 @@ export class TranscriptService {
         this.handleLiveOps(sessionId, event),
       );
     } catch (error) {
-      // The session's core scope can be disposed mid-bind during shutdown
-      // (same guard as the broadcaster's `ensureState`).
       if (error instanceof Error && error.message === 'InstantiationService has been disposed') {
         return undefined;
       }
@@ -185,11 +126,6 @@ export class TranscriptService {
       binding,
       ready: (async () => {
         await this.backfillMain(sessionId, store);
-        // Pending interactions announce only after the initial backfill, so
-        // the persisted tool-call frames are present for the resolve-time
-        // approvalId back-link (see TranscriptBinding).
-        // Scoped to the main agent here — other agents seed after their own
-        // on-demand backfill (ensureAgentHistory).
         if (this.live.get(sessionId)?.store === store) {
           binding.seedPendingInteractions(MAIN_AGENT_ID);
         }
@@ -228,8 +164,6 @@ export class TranscriptService {
       entry.agentBackfills.set(agentId, backfill);
     }
     await backfill;
-    // The agent's persisted tool frames are in place now — its pending
-    // interactions can be announced with resolve-time back-links intact.
     if (this.live.get(sessionId)?.store === entry.store) {
       entry.binding.seedPendingInteractions(agentId);
     }
@@ -239,9 +173,6 @@ export class TranscriptService {
   private async backfillMain(sessionId: string, store: TranscriptStore): Promise<void> {
     await this.backfillAgent(sessionId, store, MAIN_AGENT_ID);
     if (this.live.get(sessionId)?.store !== store) return;
-    // Seed the roster from the session's persisted agent registry, so full
-    // reads (and agent pickers) see the complete historical roster —
-    // including subagents not materialized in this process.
     try {
       const session = getLiveSessionById(this.deps.core.accessor, sessionId);
       const meta = await session?.accessor.get(ISessionMetadata).read();
@@ -249,7 +180,6 @@ export class TranscriptService {
         store.describeAgent(descriptorFromMeta(agentId, agentMeta));
       }
     } catch {
-      // Roster seeding is best-effort; transcripts work without descriptors.
     }
   }
 
@@ -270,16 +200,14 @@ export class TranscriptService {
         'transcript: history backfill failed, continuing without it',
       );
     }
-    // The entry may have been dropped (session closed) while reading from disk.
     if (this.live.get(sessionId)?.store !== store) return;
     const transcript = store.ensureAgent(agentId);
     if (snapshot !== undefined) {
-      // Turns merge live-first (`healTurnOps`): ops the projector landed
-      // while the records were being read (a tool frame's display/approvalId,
-      // a longer text frame) must not be replaced by the staler persisted
-      // version.
+      const superseded = supersededColdAttachmentIds(snapshot, transcript);
       const ops = snapshotToOps(snapshot, (turn) =>
         healTurnOps(turn, transcript.getTurn(turn.turnId)),
+      ).filter(
+        (op) => op.op !== 'attachment.upsert' || !superseded.has(op.attachment.attachmentId),
       );
       const overlay = this.liveTurnOverlay(sessionId, agentId, transcript, snapshot);
       if (overlay !== undefined) ops.push(overlay);
@@ -287,15 +215,8 @@ export class TranscriptService {
       if (result.gap !== undefined) {
         this.deps.logger?.warn({ sessionId, agentId, gap: result.gap }, 'transcript: backfill append gap');
       }
-      // Fan the backfill out like any mapped-op batch so attached subscribers
-      // converge; later resets carry it wholesale anyway.
       this.dispatchOps(sessionId, { agentId, ops });
     }
-    // Land the roster entry last, so roster-driven resets already see the
-    // backfilled content. Preserve a richer descriptor already seeded from
-    // session metadata (parentAgentId / label); and skip ids that have
-    // neither a roster presence nor any persisted content — probing a
-    // nonexistent agent id must not conjure a ghost roster entry.
     const existing = store.agents().find((d) => d.agentId === agentId);
     const hasContent =
       snapshot !== undefined && (snapshot.items.length > 0 || snapshot.tasks.length > 0);
@@ -348,7 +269,6 @@ export class TranscriptService {
       try {
         listener(event, seq);
       } catch {
-        // best-effort fan-out; a broken listener is dropped, not fatal
       }
     }
   }
@@ -402,7 +322,6 @@ export class TranscriptService {
     const latestSeq = journal === undefined ? 0 : journal.nextSeq - 1;
     if (sinceSeq > latestSeq) return { batches: [], latestSeq, complete: false };
     const batches = journal?.batches.filter((batch) => batch.seq > sinceSeq) ?? [];
-    // Batches are consecutive, so coverage reduces to the oldest retained seq.
     const oldest = journal?.batches[0]?.seq;
     const complete = batches.length === 0 || (oldest !== undefined && oldest <= sinceSeq + 1);
     return { batches, latestSeq, complete };
@@ -472,6 +391,7 @@ export class TranscriptService {
         state: 'running',
         origin: existing?.origin ?? snapshotTurn?.origin ?? { kind: 'other' },
         prompt: existing?.prompt ?? snapshotTurn?.prompt,
+        attachmentIds: existing?.attachmentIds ?? snapshotTurn?.attachmentIds,
         startedAt: existing?.startedAt ?? snapshotTurn?.startedAt,
       },
     };
@@ -502,19 +422,26 @@ export class TranscriptService {
       );
       return;
     }
-    // The entry may have been dropped (session closed) while reading from disk.
     if (snapshot === undefined || this.live.get(sessionId)?.store !== entry.store) return;
     const transcript = entry.store.getAgent(agentId);
     if (transcript === undefined) return;
-    const ops: TranscriptOperation[] = [];
+    const turnOps: TranscriptOperation[] = [];
     for (const item of snapshot.items) {
       if (item.kind !== 'turn' || !ordinals.has(item.ordinal)) continue;
-      ops.push(...healTurnOps(item, transcript.getTurn(item.turnId)));
+      turnOps.push(...healTurnOps(item, transcript.getTurn(item.turnId)));
     }
-    if (ops.length === 0) return;
+    if (turnOps.length === 0) return;
+    const superseded = supersededColdAttachmentIds(snapshot, transcript);
+    const ops: TranscriptOperation[] = [
+      ...snapshot.attachments
+        .filter((attachment) => !superseded.has(attachment.attachmentId))
+        .map((attachment) => ({
+          op: 'attachment.upsert' as const,
+          attachment,
+        })),
+      ...turnOps,
+    ];
     transcript.apply(ops);
-    // Fan the heal out like any mapped-op batch so attached subscribers
-    // converge; all ops are state-style upserts.
     this.dispatchOps(sessionId, { agentId, ops });
   }
 
@@ -555,8 +482,6 @@ export class TranscriptService {
   ): Promise<AgentTranscriptSnapshot | undefined> {
     const summary = await this.deps.core.accessor.get(ISessionIndex).get(sessionId);
     if (summary === undefined) return undefined;
-    // Path-hostile ids never map to a real agent directory — answer empty
-    // instead of letting the id traverse outside `<sessionDir>/agents/`.
     if (!isPlainAgentId(agentId)) {
       return groupMessagesIntoSnapshot([]);
     }
@@ -580,8 +505,6 @@ export class TranscriptService {
     }
     const messages = [...reduceContextTranscript(records).entries];
     const base = groupMessagesIntoSnapshot(messages);
-    // Second fold: tasks / interactions / todos / meta (goal, plan, swarm)
-    // come from the non-`context.*` records in the same journal.
     return foldWireRecordFacts(records, base);
   }
 
@@ -605,7 +528,8 @@ export class TranscriptService {
  * Flatten a snapshot into idempotent upsert ops (turn/step/frame upserts,
  * standalone items, tasks, meta). Deliberately never a `reset`: upserts merge
  * by id and keep ordinal order, so the backfill cannot clobber live ops that
- * landed while the records were being read.
+ * landed while the records were being read. Global attachment entities flatten
+ * too — without them a backfilled turn's `attachmentIds` would dangle.
  *
  * Standalone items (markers / taskrefs) carry a `beforeTurn` placement anchor:
  * the reducer's standalone path is append-only, so without an anchor a
@@ -623,7 +547,6 @@ export function snapshotToOps(
   turnOps: (turn: TranscriptTurn) => TranscriptOperation[] = snapshotTurnOps,
 ): TranscriptOperation[] {
   const ops: TranscriptOperation[] = [];
-  /** Standalone items seen since the last turn, awaiting their anchor. */
   const pending: (TranscriptMarker | TranscriptTaskRef)[] = [];
   let lastTurnOrdinal: number | undefined;
   const flushPending = (beforeTurn?: number): void => {
@@ -645,10 +568,10 @@ export function snapshotToOps(
       pending.push(item);
     }
   }
-  // Trailing standalone items followed the last snapshot turn in history but
-  // precede the engine's next live turn (`lastTurnOrdinal + 1`, matched
-  // robustly by the reducer's `>=` placement when ordinals drift).
   flushPending(lastTurnOrdinal === undefined ? undefined : lastTurnOrdinal + 1);
+  for (const attachment of snapshot.attachments) {
+    ops.push({ op: 'attachment.upsert', attachment });
+  }
   for (const task of snapshot.tasks) {
     ops.push({ op: 'task.upsert', task });
   }
@@ -671,7 +594,6 @@ export function snapshotTurnOps(turn: TranscriptTurn): TranscriptOperation[] {
   return ops;
 }
 
-/** Post-turn heals fire this long after the last terminal turn of an agent. */
 const TURN_HEAL_DEBOUNCE_MS = 250;
 const TERMINAL_TURN_STATES: ReadonlySet<TranscriptTurn['state']> = new Set([
   'completed',
@@ -679,13 +601,30 @@ const TERMINAL_TURN_STATES: ReadonlySet<TranscriptTurn['state']> = new Set([
   'cancelled',
 ]);
 
+function supersededColdAttachmentIds(
+  snapshot: AgentTranscriptSnapshot,
+  transcript: AgentTranscript,
+): ReadonlySet<string> {
+  const superseded = new Set<string>();
+  for (const item of snapshot.items) {
+    if (item.kind !== 'turn' || item.attachmentIds === undefined) continue;
+    const live = transcript.getTurn(item.turnId);
+    if (live?.attachmentIds === undefined || live.attachmentIds.length === 0) continue;
+    for (const id of item.attachmentIds) superseded.add(id);
+  }
+  return superseded;
+}
+
 /**
  * Merge one persisted (snapshot) turn back into the live store after the turn
  * ended — the post-turn heal for mid-turn attaches:
  *   - turn the live store never saw: taken wholesale;
  *   - header: the snapshot is authoritative for origin/prompt (it reads the
  *     persisted user message, which a mid-turn-attached projector missed);
- *     the live header wins on state and timestamps;
+ *     the live header wins on state, timestamps, and attachment ids (its
+ *     `{turnId}.att<N>` entities are already projected — swapping in the
+ *     snapshot's cold `att_<n>` ids would churn the references and orphan
+ *     the live entities);
  *   - steps the live turn never saw: taken wholesale from the snapshot;
  *   - existing steps: text/thinking frames are re-emitted only when the
  *     persisted text is longer and the kind matches (a fresh live frame may
@@ -721,6 +660,7 @@ export function healTurnOps(
       ...header,
       state: liveTurn.state,
       prompt: liveTurn.prompt ?? header.prompt,
+      attachmentIds: liveTurn.attachmentIds ?? header.attachmentIds,
       startedAt: liveTurn.startedAt ?? header.startedAt,
       endedAt: liveTurn.endedAt ?? header.endedAt,
     },
@@ -738,10 +678,6 @@ export function healTurnOps(
     for (const frame of frames) {
       const liveFrame = liveStep.frames.find((entry) => entry.frameId === frame.frameId);
       if (frame.kind === 'tool') {
-        // Recover frames the live step never saw and results missed in the
-        // attach race (a dropped tool.result is unrecoverable live). Live
-        // frames that already carry the outcome stay untouched, and live-only
-        // extras (display / agentRefs / approvalId) ride the emitted frame.
         const liveTool = liveFrame?.kind === 'tool' ? liveFrame : undefined;
         const liveHasOutcome =
           liveTool !== undefined && (liveTool.output !== undefined || liveTool.error !== undefined);
@@ -764,9 +700,6 @@ export function healTurnOps(
         continue;
       }
       if (frame.kind !== 'text' && frame.kind !== 'thinking') continue;
-      // The length shortcut only applies to the SAME frame kind: a
-      // kind-mismatched live frame (the projector guessed the stream kind
-      // wrong mid-turn) must be replaced by the persisted one, not skipped.
       if (
         liveFrame !== undefined &&
         liveFrame.kind === frame.kind &&

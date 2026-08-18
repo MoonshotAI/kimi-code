@@ -20,11 +20,6 @@ interface Envelope<T> {
   request_id: string;
 }
 
-/**
- * A pruned models.dev-shaped fixture: one clean OpenAI entry, one proprietary
- * SDK entry (rejected), one gateway entry whose endpoint cannot be resolved
- * without a user base URL, and one entry with no usable models.
- */
 const CATALOG = {
   openai: {
     id: 'openai',
@@ -192,11 +187,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     return parseToml(text) as Record<string, unknown>;
   }
 
-  /**
-   * Poll a server-side (in-memory) condition: hand edits to config.toml only
-   * take effect after the file watcher reloads, and a write that starts from
-   * the pre-edit state would silently drop them.
-   */
   async function waitForServerState(check: () => Promise<boolean>, timeoutMs = 3000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -205,10 +195,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     }
     throw new Error('waitForServerState timed out');
   }
-
-  // -------------------------------------------------------------------------
-  // GET /catalog/providers
-  // -------------------------------------------------------------------------
 
   it('lists pruned directory entries with import eligibility resolved', async () => {
     await boot();
@@ -272,7 +258,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     const first = await getJson<{ items: unknown[] }>('/api/v1/catalog/providers');
     expect(first.body.code).toBe(0);
 
-    // Past the 10-minute TTL, with the network now down: stale cache serves.
     now = t0 + 11 * 60 * 1000;
     setModelsDevUpstreamForTest({ fetchImpl: catalogFetchFail() });
     const second = await getJson<{ items: unknown[] }>('/api/v1/catalog/providers');
@@ -288,10 +273,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     expect(body.code).toBe(50004);
     expect(body.msg).toContain('unavailable');
   });
-
-  // -------------------------------------------------------------------------
-  // GET /catalog/providers/{catalog_id}
-  // -------------------------------------------------------------------------
 
   it('gets a single directory entry by id', async () => {
     await boot();
@@ -309,10 +290,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     const { body } = await getJson('/api/v1/catalog/providers/nope');
     expect(body.code).toBe(40417);
   });
-
-  // -------------------------------------------------------------------------
-  // POST /providers:import_catalog
-  // -------------------------------------------------------------------------
 
   it('imports a catalog entry as a provider with all model aliases', async () => {
     await boot();
@@ -381,14 +358,11 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     });
     expect(first.status).toBe(201);
 
-    // Hand-add a stale alias that a refresh must remove.
     const before = await readConfigToml();
     const models = before['models'] as Record<string, unknown>;
     models['openai/retired'] = { provider: 'openai', model: 'retired', max_context_size: 1 };
     const { stringify: stringifyToml } = await import('smol-toml');
     await writeFile(join(home as string, 'config.toml'), stringifyToml(before), 'utf-8');
-    // Wait for the file watcher to actually reload (the next write must start
-    // from the edited state, or the edit is silently lost).
     await waitForServerState(async () => {
       const cfg = await getJson<{ models: Record<string, unknown> }>('/api/v1/config');
       return 'openai/retired' in (cfg.body.data.models ?? {});
@@ -437,8 +411,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     });
     expect(first.status).toBe(201);
 
-    // Hand-edit a kept alias with a field the catalog does not declare
-    // (max_input_size here is real for gpt-4.1 — use a fake extra instead).
     const before = await readConfigToml();
     const models = before['models'] as Record<string, Record<string, unknown>>;
     models['openai/gpt-4o-mini'] = {
@@ -460,8 +432,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     });
     expect(second.status).toBe(201);
 
-    // Import = remove-then-apply: hand edits on a kept alias do NOT survive,
-    // not even as raw on-disk residue.
     const after = await readConfigToml();
     const afterModels = after['models'] as Record<string, Record<string, unknown>>;
     expect(afterModels['openai/gpt-4o-mini']).toEqual({
@@ -562,12 +532,7 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     expect(body.code).toBe(50004);
   });
 
-  // -------------------------------------------------------------------------
-  // POST /providers:import_registry
-  // -------------------------------------------------------------------------
-
   const REGISTRY_URL = 'https://internal.example/api.json';
-  /** Two valid providers plus one invalid entry that must be skipped. */
   const REGISTRY_DOC = {
     'acme-claude': {
       id: 'acme-claude',
@@ -648,7 +613,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
       'thinking',
       'image_in',
     ]);
-    // No rich hints: the default capability set and declared context apply.
     expect(models['acme-gpt/gpt-x']).toMatchObject({
       max_context_size: 128000,
       capabilities: ['tool_use'],
@@ -689,10 +653,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     });
     expect(first.status).toBe(201);
 
-    // Hand-edit one model alias: an import rebuilds listed providers from
-    // scratch (remove-then-apply, the TUI import semantics), so hand edits to
-    // a listed provider do NOT survive — only providers absent upstream get
-    // dropped while unrelated entries stay untouched.
     const before = await readConfigToml();
     const beforeModels = before['models'] as Record<string, Record<string, unknown>>;
     beforeModels['acme-gpt/gpt-x'] = {
@@ -703,7 +663,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     const { stringify: stringifyToml } = await import('smol-toml');
     await writeFile(join(home as string, 'config.toml'), stringifyToml(before), 'utf-8');
 
-    // The upstream doc no longer lists acme-claude.
     const slimDoc = { 'acme-gpt': REGISTRY_DOC['acme-gpt'] };
     setModelsDevUpstreamForTest({ fetchImpl: registryFetch(slimDoc) });
     const second = await postJson('/api/v1/providers:import_registry', {
@@ -725,7 +684,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
       capabilities: ['tool_use'],
       display_name: 'gpt-x',
     });
-    // The default pointing at an unrelated provider stays untouched.
     expect(after['default_model']).toBe('k2');
   });
 

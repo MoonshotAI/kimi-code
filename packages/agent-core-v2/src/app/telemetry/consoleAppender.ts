@@ -1,9 +1,3 @@
-/**
- * `telemetry` domain — `ConsoleAppender`, an `ITelemetryAppender` that
- * echoes events to a log function for development and debugging. App-scoped;
- * has no cross-domain collaborators.
- */
-
 import type { ITelemetryAppender, TelemetryProperties } from './telemetry';
 
 export interface ConsoleAppenderOptions {
@@ -40,6 +34,5 @@ function stringifyProperties(properties: TelemetryProperties, pretty: boolean): 
 }
 
 function defaultLog(message: string): void {
-  // eslint-disable-next-line no-console
   console.log(message);
 }

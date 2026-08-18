@@ -1,17 +1,3 @@
-/**
- * `_base.asyncEventQueue` — push-based async iterable.
- *
- * Bridges a callback-driven producer (e.g. a streaming LLM's `onMessagePart`)
- * to an async-generator consumer. Values pushed while there is a pending
- * `next()` waiter are delivered immediately; otherwise they buffer in-order.
- * `end()` signals normal termination; `fail(err)` terminates with an error
- * that is thrown at the next `next()` (once the buffered values have been
- * drained). Idempotent — repeated `end`/`fail`/`push` after termination are
- * no-ops.
- *
- * Layer L0 substrate.
- */
-
 export class AsyncEventQueue<T> implements AsyncIterable<T>, AsyncIterator<T> {
   private readonly values: T[] = [];
   private readonly waiters: Array<{

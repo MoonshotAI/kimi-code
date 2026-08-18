@@ -1,13 +1,3 @@
-/**
- * Server telemetry bootstrap — wires agent-core-v2's `CloudAppender` into the
- * App-scoped `ITelemetryService` so engine events emitted inside the server
- * process (`session_started`, turn / tool / permission events, `image_compress`,
- * …) actually leave the process. Mirrors the v1 `kimi web` host
- * (`initializeServerTelemetry` in apps/kimi-code): same product app name, the
- * surface distinguished by `ui_mode = "web"`, the config `telemetry` toggle
- * honored at startup (a change takes effect on restart).
- */
-
 import {
   type CloudAppender,
   createCloudAppender,
@@ -20,17 +10,11 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { createKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
 
-// Same product as the CLI; the surface is distinguished by ui_mode (v1
-// convention: CLI_USER_AGENT_PRODUCT / WEB_UI_MODE in apps/kimi-code).
 const SERVER_TELEMETRY_APP_NAME = 'kimi-code-cli';
 const SERVER_TELEMETRY_UI_MODE = 'web';
 const TELEMETRY_DISABLE_ENV = 'KIMI_DISABLE_TELEMETRY';
 const TELEMETRY_DISABLE_ENV_VALUES = new Set(['1', 'true', 't', 'yes', 'y']);
 
-/**
- * Cap on how long server close waits for its best-effort final flush. A wedged
- * telemetry endpoint must not hold shutdown hostage.
- */
 const TELEMETRY_SHUTDOWN_TIMEOUT_MS = 3_000;
 
 export interface ServerTelemetry {
@@ -64,7 +48,6 @@ export async function initializeServerTelemetry(
   });
   const registration = service.addAppender(appender);
   try {
-    // The server is long-lived: flush on a timer, not only at the threshold.
     appender.startPeriodicFlush();
   } catch (error) {
     registration.dispose();

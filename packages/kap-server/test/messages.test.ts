@@ -49,8 +49,6 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-messages-'));
-    // Seed a stub IModelCatalog so the agent scope can instantiate if a
-    // transitive service needs it; IContextMemory itself does not.
     const modelCatalog: IModelCatalog = {
       _serviceBrand: undefined,
       get: () => {
@@ -120,9 +118,6 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     return body.data.id;
   }
 
-  // The main agent scope is not created automatically on session creation
-  // (server-v2 gap G10); create it here, then append messages directly into
-  // its IContextMemory to bypass the LLM loop.
   async function seedMainAgentMessages(
     sessionId: string,
     messages: readonly ContextMessage[],
@@ -135,8 +130,6 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     }
     if (messages.length > 0) {
       agent.accessor.get(IAgentContextMemoryService).append(...messages);
-      // Flush the wire log so the temp home is quiescent before afterEach rm's
-      // it (macOS can ENOTEMPTY an rmdir while an append is still in flight).
       await agent.accessor.get(IWireService).flush();
     }
   }
@@ -176,7 +169,6 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     expect(body.data.items.every((m) => MSG_ID.test(m.id))).toBe(true);
     expect(body.data.items.every((m) => m.session_id === id)).toBe(true);
 
-    // newest first → tool, assistant, user.
     const [tool, assistant, user] = body.data.items;
 
     expect(user).toMatchObject({
@@ -257,23 +249,19 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
       { role: 'user', content: [{ type: 'text', text: 'm2' }], toolCalls: [] },
     ]);
     const all = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?page_size=100`);
-    // newest first → [m2, m1, m0]
     const idsDesc = all.body.data.items.map((m) => m.id);
     expect(idsDesc).toHaveLength(3);
 
-    // page_size=1 → newest only, more available.
     const first = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?page_size=1`);
     expect(first.body.data.items.map((m) => m.id)).toEqual([idsDesc[0]]);
     expect(first.body.data.has_more).toBe(true);
 
-    // before_id = newest → the two older entries.
     const older = await getJson<PageWire>(
       `/api/v1/sessions/${id}/messages?before_id=${idsDesc[0]}`,
     );
     expect(older.body.data.items.map((m) => m.id)).toEqual([idsDesc[1], idsDesc[2]]);
     expect(older.body.data.has_more).toBe(false);
 
-    // after_id = oldest → the two newer entries.
     const newer = await getJson<PageWire>(
       `/api/v1/sessions/${id}/messages?after_id=${idsDesc[2]}`,
     );
@@ -295,18 +283,12 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     expect(body.data.items.every((m) => MSG_ID.test(m.id))).toBe(true);
   });
 
-  // Regression for the cold-session gap: a persisted (non-live) session must
-  // return its full wire transcript — including the pre-compaction prefix —
-  // instead of an empty page / 40403. We seed the wire log through the live
-  // agent (append + a compaction fold + flush), then restart the whole server
-  // on the same home so the session is genuinely cold on the read path.
   it('reads the persisted full transcript for a cold session', async () => {
     const id = await createSession();
     const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
     const agent = await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
     const ctx = agent.accessor.get(IAgentContextMemoryService);
-    // Three messages, then a compaction that folds the prefix into a summary.
     ctx.append(
       { role: 'user', content: [{ type: 'text', text: 'm0' }], toolCalls: [] },
       { role: 'assistant', content: [{ type: 'text', text: 'm1' }], toolCalls: [] },
@@ -320,37 +302,28 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     });
     await agent.accessor.get(IWireService).flush();
 
-    // The live read already serves the full transcript (pre-compaction prefix
-    // + summary), matching v1's `/messages`. Capture the summary id so we can
-    // assert it survives the restart unchanged.
     const livePage = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?page_size=100`);
     expect(livePage.body.data.items).toHaveLength(4);
     const liveSummaryId = livePage.body.data.items[0]!.id;
 
-    // Restart the server on the same homeDir → the session is cold for the next
-    // read (mirrors a session carried over from a prior process).
     await server!.close();
     server = undefined;
     await boot();
 
-    // Full transcript preserved (pre-compaction m0/m1/m2 + summary), newest first.
     const { body } = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?page_size=100`);
     expect(body.code).toBe(0);
     expect(body.data.items).toHaveLength(4);
     expect(body.data.items.every((m) => MSG_ID.test(m.id))).toBe(true);
 
-    // newest first → summary, m2, m1, m0.
     const [summary, _m2, maybeM1] = body.data.items;
     if (maybeM1 === undefined) throw new Error('expected m1 message');
     const m1 = maybeM1;
-    // The summary id derivation is stable across live reads and restore.
     expect(summary!.id).toBe(liveSummaryId);
     expect(summary).toMatchObject({
       role: 'user',
       metadata: { origin: { kind: 'compaction_summary' } },
     });
 
-    // get returns a specific message for a cold session …
     const got = await getJson<MessageWire>(`/api/v1/sessions/${id}/messages/${m1.id}`);
     expect(got.body.code).toBe(0);
     expect(got.body.data).toMatchObject({
@@ -359,7 +332,6 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
       content: [{ type: 'text', text: 'm1' }],
     });
 
-    // … and 40403 for an unknown message id in the same cold session.
     const missing = await getJson<null>(`/api/v1/sessions/${id}/messages/msg_does_not_exist`);
     expect(missing.body.code).toBe(40403);
   });

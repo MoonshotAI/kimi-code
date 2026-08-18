@@ -1,11 +1,3 @@
-/**
- * Tower tool tests against real on-disk git repositories (mkdtemp fixture,
- * same pattern as test/agent/tower/store.test.ts). Tools are resolved by
- * their interface through a TestInstantiationService with the real protocol
- * store on disk and plain stubs for the ambient services (session/agent
- * scope context, tower mode, profile, rate limiter).
- */
-
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, stat, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -321,8 +313,6 @@ describe('tool registration', () => {
   const SHARED = ['TowerSend', 'TowerInbox', 'TowerFinding', 'TowerReview', 'TowerMission', 'TowerStatus'];
 
   it('gates init/plan/spawn/merge/teardown to the main agent and shares the rest', () => {
-    // The tower tools are contributed by the tower Feature; the contribution
-    // table is the registration contract.
     for (const name of MAIN_ONLY) {
       const contribution = TOWER_TOOL_CONTRIBUTIONS.find((c) => c.name === name);
       expect(contribution, name).toBeDefined();

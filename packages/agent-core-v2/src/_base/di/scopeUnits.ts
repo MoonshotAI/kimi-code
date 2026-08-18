@@ -1,31 +1,3 @@
-/**
- * `di` domain — the kernel-side `ScopeUnits(kind)` fold (L3, D11/G2).
- *
- * `ScopeUnits(kind)` is the materialization collection token the kernel mints
- * per scope kind. When a scope of that kind is created, this fold watches the
- * new scope's live view of the token and materializes every record's recipe
- * as a unit INSIDE that scope (cross-scope materialization): a feature
- * contributed once at App scope becomes one live unit per Session/Agent
- * scope, automatically.
- *
- * Lifetime rules (per §5.6):
- * - the materialized unit's disposal hangs on the RECORD PROVIDER's book —
- *   disposing the provider retracts the record and tears the materialized
- *   units down across the tree (连坐);
- * - a target scope's natural death tears its materialized units down with it
- *   (the fold ledger is anchored into the scope's container ledger); both
- *   anchors are idempotent, so a provider dying mid-teardown is a no-op;
- * - records visible at creation are materialized immediately; the view's
- *   incremental changes reconcile the set by record identity.
- *
- * A materialized unit's own `this.provide(...)` registrations are ordinary
- * token provides in the target scope — they join the graph and cascades as
- * usual. The materialized unit itself carries no token identity, so its own
- * constructor dependencies do not independently join cascades (feature
- * recipes are dependency-free assemblies by convention, per the Plan
- * sample); its provided tokens fully participate.
- */
-
 import { onUnexpectedError } from '../errors/unexpectedError';
 import type { IDisposable } from './lifecycle';
 import { Ledger } from '../lifecycle/ledger';
@@ -118,7 +90,6 @@ export function watchScopeUnits(container: InstantiationService, kind: ScopeKind
         materialize(record);
       }
     }
-    // Snapshot: `retract()` deletes its own entry from `materialized`.
     for (const [id, retract] of Array.from(materialized)) {
       if (!seen.has(id)) {
         retract();

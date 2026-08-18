@@ -9,7 +9,8 @@ import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { abortError } from '#/_base/utils/abort';
-import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
+import type { Event2 } from '#/app/event/event2';
+import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { McpConnectionManager, McpServerEntry } from '#/mcpCore/connection-manager';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
@@ -18,9 +19,10 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import type { MCPClient, MCPToolDefinition } from '#/mcpCore/types';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
-import { McpDiscoveryModel } from '#/agent/mcp/mcpDiscoveryOps';
+import { mcpDiscoveryKey } from '#/agent/mcp/mcpDiscoveryOps';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
@@ -35,7 +37,11 @@ import { createTestAgent, mcpServices, type TestAgentContext } from '../../harne
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
 import { stubToolResultTruncationService } from '../toolResultTruncation/stubs';
-import { recordingWireLog, registerTestAgentWire } from '../../wire/stubs';
+import {
+  recordingWireLog,
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+} from '../../wire/stubs';
 
 import { discoverTools, executeTool, fakeMcpClient } from '../../mcpCore/stubs';
 
@@ -197,9 +203,10 @@ class FakeMcpManager {
 describe('AgentMcpService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
-  let events: DomainEvent[];
+  let events: Event2[];
   let telemetryEvents: TelemetryRecord[];
   let wire: IWireService;
+  let dispatcher: IEventDispatcher;
   let wireRecordListeners: Set<(record: WireRecord) => void>;
 
   beforeEach(() => {
@@ -226,6 +233,7 @@ describe('AgentMcpService', () => {
         for (const listener of wireRecordListeners) listener(record);
       }),
     });
+    dispatcher = registerTestEventDispatcher(ix);
   });
   afterEach(() => {
     disposables.dispose();
@@ -1276,8 +1284,8 @@ describe('AgentMcpService', () => {
     try {
       manager.connect('grafana');
       expect(records).toHaveLength(0);
-      await wire.restore();
-      await wire.flush();
+      await dispatcher.restore();
+      await dispatcher.flush();
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({
         type: 'mcp.tools_discovered',
@@ -1316,8 +1324,8 @@ describe('AgentMcpService', () => {
     try {
       manager.connect('grafana');
       expect(records).toHaveLength(0);
-      await wire.restore();
-      await wire.flush();
+      await dispatcher.restore();
+      await dispatcher.flush();
       expect(records).toHaveLength(1);
     } finally {
       off.dispose();
@@ -1343,8 +1351,8 @@ describe('AgentMcpService', () => {
       manager.connect('grafana');
       enabledNames.clear();
       enabledNames.add('mutated_after_observation');
-      await wire.restore();
-      await wire.flush();
+      await dispatcher.restore();
+      await dispatcher.flush();
 
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({
@@ -1371,8 +1379,8 @@ describe('AgentMcpService', () => {
     );
     createService(manager);
     manager.connect('graf.ana');
-    await wire.restore();
-    await wire.flush();
+    await dispatcher.restore();
+    await dispatcher.flush();
 
     const { records, off } = collectDiscoveries();
     try {

@@ -1,8 +1,3 @@
-/**
- * `tower` domain (protocol) — workspace layout and file naming. Every comms
- * file name is built here — agents never construct paths by hand.
- */
-
 export const TOWER_ROOT = '.tower';
 export const COMMS_DIR = `${TOWER_ROOT}/comms`;
 export const INBOX_DIR = `${COMMS_DIR}/inbox`;

@@ -1,11 +1,3 @@
-/**
- * `sessionSkillCatalog` domain — seeded skill-catalog data contract.
- *
- * Defines `ISessionSkillCatalogData`, the pure-data injection contract
- * carrying the workspace's merged skill catalog as a live read view plus the
- * source-keyed change event. The contract carries no IO. Session-scoped.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ScopeSeed } from '#/_base/di/scope';
 import type { Event } from '#/_base/event';

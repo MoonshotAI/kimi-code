@@ -45,20 +45,13 @@ export const sessionSchema = z.object({
   title: z.string(),
   created_at: isoDateTimeSchema,
   updated_at: isoDateTimeSchema,
-  /** Any agent in the session holds an active turn or background lease. */
   busy: z.boolean(),
-  /** Whether the main agent currently owns an active turn. */
   main_turn_active: z.boolean().optional(),
-  /** Highest-priority pending human interaction. */
   pending_interaction: sessionPendingInteractionSchema.optional(),
-  /** Outcome of the main agent's most recent turn. */
   last_turn_reason: z.enum(['completed', 'cancelled', 'failed']).optional(),
   archived: z.boolean().optional(),
-  /** When the session was archived (ISO 8601); absent for sessions archived
-   *  before the field existed — clients fall back to `updated_at`. */
   archived_at: isoDateTimeSchema.optional(),
   current_prompt_id: z.string().min(1).optional(),
-  /** Text of the most recent user prompt, for search/preview. Absent for empty sessions. */
   last_prompt: z.string().optional(),
   metadata: sessionMetadataSchema,
   agent_config: sessionAgentConfigSchema,

@@ -1,27 +1,3 @@
-/**
- * `kosongConfig` bridge tests — `KosongConfigService`, the two-way sync
- * between `IConfigService` (persistence) and kosong's in-memory
- * provider/model registries:
- *
- *  - startup hydration: after `config.ready` the registries are loaded from
- *    the effective config view (records + default pointers) and become
- *    `ready` themselves;
- *  - kosong → config: registry mutations (`set` / `setDefaultModel` / ...)
- *    persist through `config.replace`, serialized in event order; an awaited
- *    mutation only resolves after the persist has landed, and a failed
- *    persist is retried with backoff before being logged;
- *  - config → kosong: section writes (`config.set` / `config.replace`) land
- *    in the registries;
- *  - loop termination: equal writes are silent on the registry side and the
- *    persist handlers skip writes when config already matches, so neither
- *    direction echoes back into the other;
- *  - deleting the default provider clears the pointer and persists the
- *    cleared pointer.
- *
- * The bridge is instantiated directly with the real registries, the shared
- * `StubConfigService`, and a stub log — no DI involved.
- */
-
 import { describe, expect, it, vi } from 'vitest';
 
 import { ILogService, type LogPayload } from '#/_base/log/log';

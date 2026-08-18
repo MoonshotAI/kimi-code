@@ -1,37 +1,9 @@
-/**
- * Host-header allowlist middleware (ROADMAP M4.1).
- *
- * `createHostCheck` builds a Fastify `onRequest` hook that rejects requests
- * whose `Host` header is not in the allowlist with a `403 Invalid Host header`
- * envelope. This is the primary DNS-rebinding defence once the server is
- * reachable beyond localhost (PLAN §3.4).
- *
- * Default-allow set (no configuration required):
- *   - `localhost`, `*.localhost` (any subdomain of `localhost`);
- *   - `127.0.0.1`, `::1`, `[::1]`;
- *   - any literal IP (`net.isIP(host) !== 0`);
- *   - the host the server actually bound to (`boundHost`);
- *   - caller-supplied extras (`extra`), where a leading `.` matches the bare
- *     domain and any subdomain (e.g. `.example.com` matches `example.com` and
- *     `a.example.com`).
- *
- * The default set is intentionally permissive for loopback/IP access so that
- * `app.inject` (default `Host: localhost:80`) and real `fetch` to
- * `127.0.0.1:<port>` keep working — existing HTTP/WS tests rely on this.
- *
- * 403 responses use the reserved daemon code `40301`
- * (`packages/protocol/src/error-codes.ts` intentionally omits it; the protocol
- * package is left untouched). `errEnvelope(code: number, …)` accepts a plain
- * number, so the literal is passed directly.
- */
-
 import net from 'node:net';
 
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { errEnvelope } from '../envelope';
 
-/** Daemon-reserved "invalid Host" code (not in the protocol `ErrorCode` enum). */
 const HOST_ERROR_CODE = 40301;
 
 export interface HostCheckOptions {
@@ -99,7 +71,6 @@ export function stripPort(host: string): string {
       return host.slice(0, lastColon).toLowerCase();
     }
   }
-  // Multiple colons (bare IPv6) or a non-digit suffix — no port to strip.
   return host.toLowerCase();
 }
 

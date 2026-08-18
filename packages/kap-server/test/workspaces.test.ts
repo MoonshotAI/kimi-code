@@ -188,7 +188,6 @@ describe('server-v2 /api/v1/workspaces', () => {
     const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
     expect(created.body.data.session_count).toBe(0);
 
-    // Create a session bound to this workspace via cwd.
     const session = await postJson<{ id: string }>('/api/v1/sessions', { metadata: { cwd: root } });
     expect(session.body.code).toBe(0);
 
@@ -198,8 +197,6 @@ describe('server-v2 /api/v1/workspaces', () => {
   });
 
   it('sums session_count across legacy split buckets of one root', async () => {
-    // Legacy pre-fold data: one physical directory registered under two
-    // spelling variants, with sessions bucketed per minted id.
     const typedRoot = 'C:\\Users\\Foo\\Proj';
     const lowerRoot = 'c:\\users\\foo\\proj';
     const typedId = encodeWorkDirKey(typedRoot);
@@ -239,10 +236,8 @@ describe('server-v2 /api/v1/workspaces', () => {
       );
     };
     await seedBucket(typedId, 's-typed', {});
-    // Archived sessions count too (the wire counts every persisted session).
     await seedBucket(lowerId, 's-lower', { archived: true, updatedAt: 2 });
 
-    // The catalog dedupes to one workspace whose count covers both buckets.
     const { body } = await getJson<ListWire>('/api/v1/workspaces');
     expect(body.code).toBe(0);
     expect(body.data.items).toHaveLength(1);

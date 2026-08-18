@@ -187,7 +187,6 @@ describe('Ledger', () => {
     it('async iterator: a mid-iteration throw rolls back already-yielded disposers in reverse', async () => {
       const events: string[] = [];
       const ledger = new Ledger('test');
-      // eslint-disable-next-line require-yield
       const body = async function* (): AsyncGenerator<Disposer> {
         yield () => { events.push('undo-1'); };
         yield () => { events.push('undo-2'); };
