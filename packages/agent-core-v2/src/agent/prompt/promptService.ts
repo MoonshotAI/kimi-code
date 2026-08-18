@@ -311,7 +311,12 @@ export class AgentPromptService implements IAgentPromptService {
     const steerInput = stillPending.length === selected.length
       ? { message: rerouted, captions }
       : this.extractCompressionCaptions(mergeSteerMessages(stillPending));
-    for (const item of stillPending) this.pending.splice(this.pending.indexOf(item), 1);
+    const removed: { readonly item: Record; readonly index: number }[] = [];
+    for (const item of stillPending) {
+      const index = this.pending.indexOf(item);
+      removed.push({ item, index });
+      this.pending.splice(index, 1);
+    }
     const request = new SteerStepRequest(steerInput.message, steerInput.captions, this.reminders, (materialized) => {
       void this.dispatcher.dispatch(
         new TurnSteer({ input: materialized.content, origin: materialized.origin ?? USER_PROMPT_ORIGIN }),
@@ -323,14 +328,14 @@ export class AgentPromptService implements IAgentPromptService {
     } catch {
       turn = undefined;
     }
-    if (turn === undefined) {
-      this.pending.unshift(...stillPending);
+    if (turn === undefined || this.active !== activeAtEntry) {
+      for (const { item, index } of removed.reverse()) this.pending.splice(index, 0, item);
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
     }
     for (const item of stillPending) { item.state = 'steered'; item.launchedDeferred.resolve(turn); }
     this.steered.set(this.active.id, [...(this.steered.get(this.active.id) ?? []), ...stillPending]);
     void this.dispatcher.dispatch(
-      new PromptSteered({ activePromptId: this.active.id, promptIds: stillPending.map((x) => x.id), content: stripBundledSkillBlocks(steerInput.message) as ContentPart[], steeredAt: new Date().toISOString() }),
+      new PromptSteered({ activePromptId: this.active.id, promptIds: stillPending.map((x) => x.id), content: stillPending.flatMap((item) => stripBundledSkillBlocks(item.message)), steeredAt: new Date().toISOString() }),
     );
     return stillPending.map((item) => item.handle);
   }

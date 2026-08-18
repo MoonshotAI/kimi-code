@@ -8,10 +8,11 @@ import { Event } from '#/_base/event';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContentPart } from '#/kosong/contract/message';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { AgentPromptService, PromptQueued } from '#/agent/prompt/promptService';
+import { AgentPromptService, PromptQueued, PromptSteered } from '#/agent/prompt/promptService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
@@ -279,5 +280,48 @@ describe('AgentPromptService', () => {
     expect(intake.materialize).toHaveBeenCalledWith(
       expect.objectContaining({ fileId: 'file_1', name: 'pic.png' }),
     );
+  });
+
+  it('publishes each record’s user parts when steering bundled prompts', async () => {
+    const { prompt, eventBus } = harness();
+    const steered: ContentPart[][] = [];
+    eventBus.subscribe(PromptSteered, (event) => steered.push(event.content));
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const bundled = (skillName: string, user: string): ContextMessage => ({
+      role: 'user',
+      content: [
+        { type: 'text', text: `<skill>${skillName}</skill>` },
+        { type: 'text', text: user },
+      ],
+      toolCalls: [],
+      origin: { kind: 'user', skillActivations: [{ activationId: `act-${skillName}`, skillName }] },
+    });
+    const one = await prompt.enqueue({ message: bundled('review', 'first user text') });
+    const two = await prompt.enqueue({ message: bundled('security', 'second user text') });
+
+    await prompt.steer([one.id, two.id]);
+
+    expect(steered).toHaveLength(1);
+    expect(steered[0]).toEqual([
+      { type: 'text', text: 'first user text' },
+      { type: 'text', text: 'second user text' },
+    ]);
+  });
+
+  it('restores failed steers to their original queue positions', async () => {
+    const { prompt, loop } = harness();
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    await prompt.enqueue({ id: 'a', message: message('a') });
+    await prompt.enqueue({ id: 'b', message: message('b') });
+    await prompt.enqueue({ id: 'c', message: message('c') });
+    vi.spyOn(loop, 'enqueue').mockImplementation(() => {
+      throw new Error('boom');
+    });
+
+    await expect(prompt.steer(['b'])).rejects.toMatchObject({ code: 'prompt.not_found' });
+
+    expect(prompt.list().pending.map((item) => item.id)).toEqual(['a', 'b', 'c']);
   });
 });

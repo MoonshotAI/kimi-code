@@ -180,4 +180,21 @@ describe('promptWithSkills', () => {
     expect(undone).toBe(1);
     expect(ctx.context.get()).toHaveLength(0);
   });
+
+  it('reserves the bundled prompt id against later prompt_id reuse', async () => {
+    ctx = agentWithSkills();
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    const launched = await ctx.rpc.promptWithSkills({
+      input: [{ type: 'text', text: 'Review this change.' }],
+      skills: [{ name: 'review' }],
+    });
+    await ctx.untilTurnEnd();
+
+    await expect(
+      ctx.rpc.prompt({
+        input: [{ type: 'text', text: 'again' }],
+        promptId: launched.prompt_id,
+      }),
+    ).rejects.toThrow(/already in use/i);
+  });
 });
