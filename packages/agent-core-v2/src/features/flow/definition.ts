@@ -96,6 +96,11 @@ function extractStageNotes(body: string): Map<string, string> {
     const heading = /^##\s+(.+?)\s*$/.exec(line);
     if (heading !== null) {
       flush();
+      if (heading[1] !== undefined && notes.has(heading[1])) {
+        throw new FlowDefinitionParseError(
+          `Duplicate notes heading \`## ${heading[1]}\` — merge the sections into one`,
+        );
+      }
       current = heading[1];
       buffer = [];
       continue;

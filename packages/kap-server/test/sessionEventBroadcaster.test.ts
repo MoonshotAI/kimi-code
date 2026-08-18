@@ -2527,6 +2527,46 @@ describe('SessionEventBroadcaster', () => {
       ).toBeLessThanOrEqual(watermark!);
     });
 
+    it('delivers flow-only status frames to graded connections past the suppression', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      main.set(IAgentTokenCountingService, { statusSize: () => 10 });
+      main.set(IAgentProfileService, {
+        getModel: () => 'example-model',
+        getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
+      });
+      main.set(IAgentUsageService, { status: () => ({}) });
+      main.set(IFlagService, { enabled: () => true });
+      main.set(IAgentFlowService, {
+        run: () => ({
+          active: true,
+          flowId: 'issue-fix',
+          currentStageIndex: 0,
+          stages: [{ id: 'triage', objective: 'find it', completion: 'found', gate: 'human' }],
+        }),
+      });
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const graded = collectingTarget();
+      await bc.subscribe('s1', graded.target, undefined, { '*': 'delta' });
+      await bc.getCursor('s1');
+
+      const statuses = graded.envelopes.filter((e) => e.type === 'agent.status.updated');
+      expect(statuses).toHaveLength(1);
+      const payload = statuses[0]!.payload as Record<string, unknown>;
+      expect(payload['flowRun']).toMatchObject({ flowId: 'issue-fix', stageId: 'triage' });
+      expect(payload['usage']).toBeUndefined();
+      expect(payload['model']).toBeUndefined();
+
+      main.bus.emit(agentEvent('agent.status.updated', { usage: { total: {} } }));
+      await bc.getCursor('s1');
+      const after = graded.envelopes.filter((e) => e.type === 'agent.status.updated');
+      expect(after).toHaveLength(2);
+      expect((after[1]!.payload as Record<string, unknown>)['usage']).toBeUndefined();
+      expect((after[1]!.payload as Record<string, unknown>)['flowRun']).toBeDefined();
+    });
+
     it('suppresses transcript-projected session_events on graded connections only', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');

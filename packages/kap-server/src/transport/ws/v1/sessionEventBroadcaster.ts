@@ -295,7 +295,15 @@ export class SessionEventBroadcaster {
           volatile: true,
         });
         if (!matchesAgentFilter(envelope, sub.agentFilter)) return;
-        if (suppressedByTranscript(envelope, sub.transcriptGrades)) return;
+        if (suppressedByTranscript(envelope, sub.transcriptGrades)) {
+          const flowFrame = flowOnlyEnvelope(envelope);
+          if (flowFrame === undefined) return;
+          try {
+            target.send(flowFrame);
+          } catch {
+          }
+          return;
+        }
         try {
           target.send(envelope);
         } catch {
@@ -1191,7 +1199,16 @@ export class SessionEventBroadcaster {
     } else {
       for (const [target, sub] of targets) {
         if (!matchesAgentFilter(envelope, sub.agentFilter)) continue;
-        if (suppressedByTranscript(envelope, sub.transcriptGrades)) continue;
+        if (suppressedByTranscript(envelope, sub.transcriptGrades)) {
+          const flowFrame = flowOnlyEnvelope(envelope);
+          if (flowFrame !== undefined) {
+            try {
+              target.send(flowFrame);
+            } catch {
+            }
+          }
+          continue;
+        }
         try {
           target.send(envelope);
         } catch {
@@ -1329,6 +1346,28 @@ const TRANSCRIPT_PROJECTED_EVENT_TYPES: ReadonlySet<string> = new Set([
   'event.approval.requested',
   'event.approval.resolved',
 ]);
+
+function flowOnlyEnvelope(envelope: EventEnvelope): EventEnvelope | undefined {
+  if (envelope.type !== 'agent.status.updated') return undefined;
+  const payload = envelope.payload as {
+    flowRun?: unknown;
+    agentId?: unknown;
+    sessionId?: unknown;
+    time?: unknown;
+  };
+  if (payload.flowRun === undefined) return undefined;
+  return {
+    ...envelope,
+    volatile: true,
+    payload: {
+      type: 'agent.status.updated',
+      agentId: payload.agentId,
+      sessionId: payload.sessionId,
+      time: payload.time,
+      flowRun: payload.flowRun,
+    },
+  };
+}
 
 function suppressedByTranscript(
   envelope: EventEnvelope,

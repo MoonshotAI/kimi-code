@@ -78,6 +78,14 @@ describe('parseFlowDefinition', () => {
     ).toThrow(FlowDefinitionParseError);
   });
 
+  it('rejects duplicate notes headings instead of letting the later one overwrite the earlier', () => {
+    expect(() =>
+      parseFlowDefinition(
+        '---\nid: dup-notes\nstages:\n  - id: triage\n    objective: x\n    completion: y\n---\n\n## triage\n\nFirst constraints.\n\n## triage\n\nSecond constraints.\n',
+      ),
+    ).toThrow(FlowDefinitionParseError);
+  });
+
   it('rejects a notes heading that matches no stage id, so a typo cannot silently drop the notes', () => {
     expect(() =>
       parseFlowDefinition(

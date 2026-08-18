@@ -90,6 +90,17 @@ describe('FlowStartTool', () => {
     expect(result.output).toContain('disabled');
   });
 
+  it('reports an active-run race, not a disabled flag, when start loses', async () => {
+    start.mockImplementationOnce(() => {
+      active = true;
+      return false;
+    });
+    const result = await execute('issue-fix');
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('became active');
+    expect(result.output).not.toContain('disabled');
+  });
+
   it('refuses to start while a run is already active', async () => {
     active = true;
     const result = await execute('issue-fix');

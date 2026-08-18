@@ -84,6 +84,13 @@ export class FlowStartTool implements IFlowStartTool {
     }
 
     if (!this.flow.start(definition, args.task)) {
+      if (this.flow.run().active) {
+        return {
+          isError: true,
+          output:
+            'A flow run became active before this call could start one. Finish it or call FlowAbort before starting another.',
+        };
+      }
       return {
         isError: true,
         output: 'Flow runs are disabled (the flow experimental flag is off), so the run was not started.',
