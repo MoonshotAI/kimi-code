@@ -7,10 +7,21 @@ const sourceRoot = join(import.meta.dirname, '../../../src');
 const packageEntry = join(sourceRoot, 'index.ts');
 const flagRegistryModule = join(sourceRoot, 'app/flag/flagRegistry.ts');
 
-// Value imports/re-exports only: type-only statements are erased at runtime and
-// cannot pull in a module's side effects, so they never register a flag.
-const STATIC_SPECIFIER =
+const RUNTIME_EDGE =
   /(?:^|\n)\s*(?:import\s+(?!type[\s{])[^'"]*?from\s+|import\s+|export\s+(?!type[\s{])[^'"]*?from\s+)['"]([^'"]+)['"]/g;
+const REGISTRATION_CALL = /\bregisterFlagDefinition\s*\(/;
+const FLAG_ID_CONSTANT = /export\s+const\s+([A-Z0-9_]+_FLAG_ID)\s*=\s*['"]([^'"]+)['"]/g;
+
+function keepsRuntimeSideEffects(statement: string): boolean {
+  const open = statement.indexOf('{');
+  if (open === -1) return true;
+  const inner = statement.slice(open + 1, statement.lastIndexOf('}'));
+  return inner
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .some((part) => !part.startsWith('type '));
+}
 
 function listTypeScriptFiles(root: string): string[] {
   const result: string[] = [];
@@ -47,16 +58,14 @@ function collectModulesReachableFromEntry(): Set<string> {
     if (reachable.has(file)) continue;
     reachable.add(file);
     const content = readFileSync(file, 'utf8').replaceAll(/\/\*[\s\S]*?\*\//g, ' ');
-    for (const match of content.matchAll(STATIC_SPECIFIER)) {
+    for (const match of content.matchAll(RUNTIME_EDGE)) {
+      if (!keepsRuntimeSideEffects(match[0])) continue;
       const resolved = resolveSpecifier(file, match[1]!);
       if (resolved && !reachable.has(resolved)) queue.push(resolved);
     }
   }
   return reachable;
 }
-
-const REGISTRATION_CALL = /\bregisterFlagDefinition\s*\(/;
-const FLAG_ID_CONSTANT = /export\s+const\s+([A-Z0-9_]+_FLAG_ID)\s*=\s*['"]([^'"]+)['"]/g;
 
 function findRegistrationModules(): string[] {
   return listTypeScriptFiles(sourceRoot)
