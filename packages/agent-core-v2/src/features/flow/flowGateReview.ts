@@ -88,7 +88,7 @@ export class FlowGateReview {
         result: {
           isError: true,
           output:
-            'The gate rejection could not be recorded (the run state changed while the review was open). Check the run status and submit FlowAdvance again.',
+            'The gate rejection could not be recorded (the run state changed while the review was open, or the call arguments were invalid). Check the run status and submit FlowAdvance again.',
         },
       };
     }
@@ -119,13 +119,13 @@ export class FlowGateReview {
     feedback: string,
   ): string | undefined {
     const parsed = FlowAdvanceInputSchema.safeParse(context.args);
-    const stage = parsed.success ? parsed.data.stage : this.flow.currentStage()?.id;
-    if (stage === undefined) return undefined;
+    if (!parsed.success) return undefined;
+    const stage = parsed.data.stage;
     const outcome = this.flow.advance({
       stage,
       result: 'reject',
       decidedBy: 'human',
-      criteria: parsed.success ? parsed.data.criteria : [],
+      criteria: parsed.data.criteria,
       feedback: feedback.length > 0 ? feedback : undefined,
     });
     return outcome.recorded ? stage : undefined;

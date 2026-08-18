@@ -170,7 +170,9 @@ describe('FlowAdvanceTool', () => {
       verdict: 'pass',
       criteria: [{ criterion: 'found', met: true, evidence: '   ' }],
     } as FlowAdvanceInput;
-    const result = await runnable(tool.resolveExecution(args)).execute(CTX);
+    const execution = runnable(tool.resolveExecution(args));
+    expect(execution.display).toBeUndefined();
+    const result = await execution.execute(CTX);
     expect(result.isError).toBe(true);
     expect(result.output).toContain('Invalid FlowAdvance input');
     expect(advance).not.toHaveBeenCalled();
