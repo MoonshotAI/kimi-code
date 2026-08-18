@@ -1,6 +1,8 @@
 import {
   ensureMainAgent,
+  FLOW_FLAG_ID,
   IAgentFlowService,
+  IFlagService,
   resumeSessionById,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
@@ -52,6 +54,10 @@ export function registerFlowRoutes(app: FlowRouteHost, deps: FlowRouteDeps): voi
         reply.send(
           errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
         );
+        return;
+      }
+      if (!core.accessor.get(IFlagService).enabled(FLOW_FLAG_ID)) {
+        reply.send(okEnvelope({ run: { active: false }, gates: [] }, req.id));
         return;
       }
       const main = await ensureMainAgent(handle);
