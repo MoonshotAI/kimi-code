@@ -162,7 +162,12 @@ async function refreshTodoPanel(host: SlashCommandHost): Promise<void> {
   const session = host.session;
   if (session === undefined) return;
   try {
-    host.streamingUI.setTodoList(await session.getTodos());
+    const todos = await session.getTodos();
+    if (todos.length > 0 && todos.every((todo) => todo.status === 'done')) {
+      host.streamingUI.setTodoList([]);
+      return;
+    }
+    host.streamingUI.setTodoList(todos);
   } catch {
     return;
   }

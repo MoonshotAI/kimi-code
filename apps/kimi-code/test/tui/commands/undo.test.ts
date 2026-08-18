@@ -144,4 +144,19 @@ describe('/undo todo panel refresh', () => {
 
     expect(setTodoList).not.toHaveBeenCalled();
   });
+
+  it('hides the panel when the restored todos are all done', async () => {
+    const entries: TranscriptEntry[] = [
+      entry({ kind: 'user', content: 'question' }),
+      entry({ kind: 'assistant', content: 'answer' }),
+    ];
+    const { host, setTodoList } = hostWithTodos(entries, {
+      undoHistory: vi.fn(async () => {}),
+      getTodos: vi.fn(async () => [{ title: 'finished', status: 'done' }]),
+    });
+
+    await handleUndoCommand(host, '1');
+
+    expect(setTodoList).toHaveBeenCalledWith([]);
+  });
 });

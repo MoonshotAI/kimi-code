@@ -1848,7 +1848,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async getTodos(input: SessionIdRpcInput): Promise<readonly SessionTodoItem[]> {
     const session = this.requireLiveSession(input.sessionId);
-    return session.accessor.get(ISessionTodoService).getTodos();
+    return session.accessor
+      .get(ISessionTodoService)
+      .getTodos()
+      .map((todo) => ({ title: todo.title, status: todo.status }));
   }
 
   override async undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void> {

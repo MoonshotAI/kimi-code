@@ -896,6 +896,11 @@ key = "${titleOAuthRef.key}"
         { title: 'write tests', status: 'in_progress' },
         { title: 'ship it', status: 'pending' },
       ]);
+
+      const served = await client.getTodos({ sessionId: 'ses_todos' });
+      const stored = handle!.accessor.get(ISessionTodoService).getTodos();
+      expect(served).not.toBe(stored);
+      expect(served[0]).not.toBe(stored[0]);
       await expect(client.getTodos({ sessionId: 'ses_missing' })).rejects.toMatchObject({
         code: ErrorCodes.SESSION_NOT_FOUND,
       });
