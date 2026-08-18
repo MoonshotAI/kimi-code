@@ -90,8 +90,6 @@ export const flowKey = defineState('flow', (): FlowRunState => ({ active: false 
   })
   .on(FlowRunEnded, (s, e, ctx) => {
     s.active = false;
-    delete s.flowId;
-    delete s.task;
     delete s.stages;
     delete s.currentStageIndex;
     ctx.emit(new AgentStatusUpdated({ flowRun: null }));

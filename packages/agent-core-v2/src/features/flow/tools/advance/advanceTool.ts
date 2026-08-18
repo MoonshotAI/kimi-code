@@ -82,13 +82,19 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
             'A reject verdict requires at least one unmet criterion naming what to rework. Mark the failing criteria met: false with evidence, or submit verdict: "pass" if every criterion is actually met.',
         };
       }
-      this.flow.advance({
+      const rejection = this.flow.advance({
         stage: args.stage,
         result: 'reject',
         decidedBy: 'ai',
         criteria: args.criteria,
         feedback: args.note,
       });
+      if (!rejection.recorded) {
+        return {
+          isError: true,
+          output: 'The rejection could not be recorded. Check the run status and retry.',
+        };
+      }
       return {
         isError: false,
         output: `Rejection recorded for stage \`${args.stage}\`. Rework the stage against the unmet criteria (typically by resuming the same worker with this feedback), then submit FlowAdvance again.`,

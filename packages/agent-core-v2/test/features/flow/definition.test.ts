@@ -110,6 +110,13 @@ describe('parseFlowDefinition', () => {
     expect(definition.stages[0]!.notes).toContain('Done.');
   });
 
+  it('recognizes an ATX heading indented by up to three spaces', () => {
+    const definition = parseFlowDefinition(
+      '---\nid: indent\nstages:\n  - id: triage\n    objective: x\n    completion: y\n---\n\n   ## triage\n\nIndented but valid.\n',
+    );
+    expect(definition.stages[0]!.notes).toBe('Indented but valid.');
+  });
+
   it('rejects a notes heading that matches no stage id, so a typo cannot silently drop the notes', () => {
     expect(() =>
       parseFlowDefinition(
