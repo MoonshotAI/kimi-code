@@ -24,7 +24,6 @@ import {
   DefaultCompactionStrategy,
   type CompactionStrategy,
 } from '../../../src/agent/compaction';
-import { FLAG_DEFINITIONS, MASTER_ENV } from '../../../src/flags';
 import { HookEngine, type HookEngineTriggerArgs } from '../../../src/session/hooks';
 import { estimateTokens, estimateTokensForMessages } from '../../../src/utils/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../fixtures/telemetry';
@@ -46,7 +45,6 @@ const CATALOGUED_MODEL_CAPABILITIES = {
   tool_use: true,
   max_context_tokens: 256_000,
 } as const;
-const MICRO_COMPACTION_FLAG_ENV = getMicroCompactionFlagEnv();
 
 describe('FullCompaction', () => {
   it('runs manual compaction and applies the compacted context', async () => {
@@ -372,42 +370,6 @@ describe('FullCompaction', () => {
           message.toolCalls.length === 0,
       ),
     ).toBe(false);
-  });
-
-  // Micro compaction is disabled; this scenario is skipped because the feature
-  // can no longer be enabled.
-  it.skip('micro-compacts old tool results before sending the summary request', async () => {
-    vi.useFakeTimers();
-    enableMicroCompactionFlag();
-    const ctx = testAgent({
-      compactionStrategy: alwaysCompactOnce,
-      microCompaction: {
-        keepRecentMessages: 2,
-        minContentTokens: 1,
-        cacheMissedThresholdMs: 60 * 60 * 1000,
-        minContextUsageRatio: 0,
-      },
-    });
-    ctx.configure({
-      provider: CATALOGUED_PROVIDER,
-      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
-    });
-
-    vi.setSystemTime(0);
-    ctx.appendToolExchange();
-    ctx.appendToolExchange();
-
-    vi.setSystemTime(61 * 60 * 1000);
-
-    ctx.agent.microCompaction.detect();
-    const compacted = ctx.once('context.apply_compaction');
-    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
-    await ctx.rpc.beginCompaction({ instruction: 'Summarize tool exchanges.' });
-    await compacted;
-
-    const [compactionCall] = ctx.llmCalls;
-    expect(messageText(compactionCall?.history[2])).toBe('[Old tool result content cleared]');
-    expect(messageText(compactionCall?.history[5])).toBe('lookup result');
   });
 
   it('force-refreshes OAuth credentials on compaction 401 and treats replay 401 as provider auth error', async () => {
@@ -2519,17 +2481,6 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
 });
-
-function enableMicroCompactionFlag(): void {
-  vi.stubEnv(MASTER_ENV, '0');
-  vi.stubEnv(MICRO_COMPACTION_FLAG_ENV, '1');
-}
-
-function getMicroCompactionFlagEnv(): string {
-  // Micro compaction is disabled and its flag has been removed from the registry;
-  // the env var name is kept so the (skipped) test still type-checks.
-  return 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION';
-}
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;

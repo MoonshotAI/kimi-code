@@ -26,30 +26,11 @@ afterEach(async () => {
 });
 
 describe('Session.close stops cron', () => {
-  it('stops each agent cron scheduler on close', async () => {
-    const { sessionDir, workDir } = await sessionFixture();
-    const session = new Session({
-      kaos: testKaos.withCwd(workDir),
-      id: 'session-cron-stop',
-      homedir: sessionDir,
-      rpc: createSessionRpc(),
-      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
-    });
-    const main = await session.createMain();
-    const stopSpy = vi.spyOn(main.cron!, 'stop');
-
-    await session.close();
-
-    expect(stopSpy).toHaveBeenCalledTimes(1);
-  });
-
   it('observably tears down cron side effects (SIGUSR1 listener cleared)', async () => {
-    // The spy-only test above proves `stop()` was called but would
-    // still pass if `stop()` no-op'd. Gate manual-tick mode so the
-    // CronManager binds a real SIGUSR1 listener, then assert the
-    // listener count returns to its pre-construction baseline after
-    // `session.close()`. Anything short of `unbindSigusr1` running
-    // would leak a listener.
+    // Gate manual-tick mode so the CronManager binds a real SIGUSR1
+    // listener, then assert the listener count returns to its
+    // pre-construction baseline after `session.close()`. Anything short
+    // of `unbindSigusr1` running would leak a listener.
     if (process.platform === 'win32') return;
     vi.stubEnv('KIMI_CRON_MANUAL_TICK', '1');
 

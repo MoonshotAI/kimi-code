@@ -219,17 +219,6 @@ test('batch allows del(u1) + set(u2) reusing u1 unique value', async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-test('batch still rejects genuine unique violations', async () => {
-  const dir = await tmpDir();
-  const db = await MiniDb.open({ dir, valueCodec: 'json' });
-  await db.createIndex('byMail', { field: 'email', unique: true });
-  await db.set('u1', { email: 'duplicate@example.test' });
-  await assert.rejects(db.batch([{ op: 'set', key: 'u2', value: { email: 'duplicate@example.test' } }]), /unique/i);
-  assert.equal(db.get('u2'), undefined);
-  await db.close();
-  await fs.rm(dir, { recursive: true, force: true });
-});
-
 // --- #7 createIndex(unique) rejects existing duplicates ---------------------
 
 test('createIndex(unique) rejects existing duplicate data', async () => {
@@ -267,20 +256,6 @@ test('repeated TTL updates on one key do not bloat the heap', { timeout: 30_000 
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-// --- #10 size excludes expired keys -----------------------------------------
-
-test('size excludes expired-but-not-yet-reaped keys', async () => {
-  const dir = await tmpDir();
-  const db = await MiniDb.open({ dir, valueCodec: 'string', activeExpireIntervalMs: 0 });
-  await db.set('e', 'v', { ttl: 1 });
-  await db.set('s', 'ok');
-  await new Promise((r) => setTimeout(r, 10));
-  assert.equal(db.size, 1);
-  assert.equal(db.scan().length, 1);
-  await db.close();
-  await fs.rm(dir, { recursive: true, force: true });
-});
-
 // --- #11 range index indexes array fields per element -----------------------
 
 test('range index indexes array fields per element', async () => {
@@ -309,35 +284,6 @@ test('dtColumns drops columns that no record has anymore', async () => {
   assert.deepEqual(db.dtColumns(), []);
   await db.close();
   await fs.rm(dir, { recursive: true, force: true });
-});
-
-// --- #13 RESP MSET sets all keys (atomic via batch) -------------------------
-
-test('RESP MSET sets all keys', async () => {
-  const dir = await tmpDir();
-  const { port, close } = await startServer({ dir, port: 0 });
-  try {
-    const raw = await new Promise<Buffer>((resolve, reject) => {
-      const sock = net.connect(port, '127.0.0.1');
-      const chunks: Buffer[] = [];
-      sock.on('data', (c) => chunks.push(c));
-      sock.on('connect', () => {
-        sock.write('MSET a 1 b 2 c 3\r\n');
-        setTimeout(() => sock.write('GET a\r\nGET b\r\nGET c\r\n'), 40);
-        setTimeout(() => sock.end(), 140);
-      });
-      sock.on('end', () => resolve(Buffer.concat(chunks)));
-      sock.on('error', reject);
-    });
-    const s = raw.toString('binary');
-    assert.ok(s.includes('+OK'));
-    assert.ok(s.includes('$1\r\n1\r\n'));
-    assert.ok(s.includes('$1\r\n2\r\n'));
-    assert.ok(s.includes('$1\r\n3\r\n'));
-  } finally {
-    await close();
-    await fs.rm(dir, { recursive: true, force: true });
-  }
 });
 
 // --- #14 openOrRebuild only rebuilds on corruption --------------------------

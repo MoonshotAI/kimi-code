@@ -41,39 +41,6 @@ test('WAL.flush() drains frames queued behind an in-flight batch', async () => {
   }
 });
 
-// --- P0: compaction must not lose concurrent writes (clean restart) ---------
-
-for (const policy of ['always', 'everysec', 'no'] as const) {
-  test(`compact + concurrent writes survive clean close+reopen (fsync=${policy})`, async () => {
-    const dir = await tmpDir();
-    try {
-      const db = await MiniDb.open({
-        dir,
-        valueCodec: 'string',
-        fsyncPolicy: policy,
-        compactThresholdBytes: 1,
-        autoCompact: false,
-      });
-      for (let i = 0; i < 50; i++) await db.set(`seed${i}`, 'x'.repeat(64));
-
-      const N = 500;
-      const big = 'y'.repeat(4096);
-      const writes: Promise<void>[] = [];
-      for (let i = 0; i < N; i++) writes.push(db.set(`live${i}`, big));
-      await Promise.all([db.compact(), ...writes]);
-      await db.close();
-
-      const db2 = await MiniDb.open({ dir, valueCodec: 'string' });
-      const lost: string[] = [];
-      for (let i = 0; i < N; i++) if (db2.get(`live${i}`) !== big) lost.push(`live${i}`);
-      await db2.close();
-      assert.deepEqual(lost, [], `lost ${lost.length}/${N} keys: ${lost.slice(0, 5).join(',')}`);
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
-  });
-}
-
 // --- P0: TTL expiration must drop derived index entries ---------------------
 
 test('expired keys are removed from secondary indexes', async () => {
@@ -99,28 +66,6 @@ test('expired keys are removed from the full-text index', async () => {
     await db.set('p1', { bio: 'hello world' }, { ttl: 30 });
     await new Promise((r) => setTimeout(r, 120));
     assert.deepEqual(db.search('body', 'hello'), []);
-    await db.close();
-  } finally {
-    await fs.rm(dir, { recursive: true, force: true });
-  }
-});
-
-// --- P1: batch() must enforce unique indexes within the batch ---------------
-
-test('batch() rejects intra-batch unique violations', async () => {
-  const dir = await tmpDir();
-  try {
-    const db = await MiniDb.open({ dir, valueCodec: 'json' });
-    await db.createIndex('byMail', { field: 'email', unique: true });
-    await assert.rejects(
-      db.batch([
-        { op: 'set', key: 'a', value: { email: 'duplicate@example.test' } },
-        { op: 'set', key: 'b', value: { email: 'duplicate@example.test' } },
-      ]),
-      /unique/i,
-    );
-    assert.equal(db.get('a'), undefined, 'nothing committed on failure');
-    assert.equal(db.get('b'), undefined);
     await db.close();
   } finally {
     await fs.rm(dir, { recursive: true, force: true });

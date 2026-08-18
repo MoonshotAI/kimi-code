@@ -12,7 +12,7 @@
 // Compaction is a hot path, so these intentionally drive the real
 // Agent/ContextMemory/FullCompaction machinery through the test harness rather
 // than mocking it.
-import type { ContentPart, Message } from '@moonshot-ai/kosong';
+import type { Message } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
 import type { AgentOptions, AgentRecord } from '../../../src/agent';
@@ -21,8 +21,6 @@ import {
   AGENT_WIRE_PROTOCOL_VERSION,
   InMemoryAgentRecordPersistence,
 } from '../../../src/agent/records';
-import type { ContextMessage } from '../../../src/agent/context';
-import { FLAG_DEFINITIONS, FlagResolver } from '../../../src/flags';
 import { testAgent, type TestAgentContext } from '../harness/agent';
 
 type GenerateFn = NonNullable<AgentOptions['generate']>;
@@ -347,94 +345,6 @@ describe('compaction — probe tests (high-risk scenarios)', () => {
     });
 
     expect(historyTexts(ctx).join('\n')).toContain('TAIL-ASSISTANT');
-  });
-
-  // PROBE #6 — when the summarizer request overflows, historyForModel is shrunk
-  // to a recent suffix but still projected through MicroCompaction.compact()
-  // with the cutoff computed for the FULL history. The absolute cutoff applied
-  // to the shifted suffix can clear recent tool results the summary needs.
-  // SKIPPED: micro-compaction has been disabled and its flag removed, so this
-  // defect no longer exists.
-  it.skip('does not clear recent tool results when projecting a shrunk suffix under an active micro-compaction cutoff', () => {
-    // This defect only exists when micro-compaction is active, so enable the
-    // flag explicitly rather than inheriting the ambient KIMI_CODE_EXPERIMENTAL
-    // master switch — otherwise the probe's pass/fail flips with the runner's
-    // environment (on locally with the master switch, off in CI by default).
-    const ctx = testAgent({
-      experimentalFlags: new FlagResolver(
-        { KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION: '1' },
-        FLAG_DEFINITIONS,
-      ),
-    });
-    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
-
-    const bigToolOutput = 'TOOL-OUTPUT-CONTENT '.repeat(60); // > minContentTokens(100)
-    const full: ContextMessage[] = [];
-    for (let i = 0; i < 20; i++) {
-      if (i === 15) {
-        full.push({
-          role: 'tool',
-          content: [{ type: 'text', text: bigToolOutput } satisfies ContentPart],
-          toolCalls: [],
-          toolCallId: `tool-${String(i)}`,
-        });
-      } else {
-        full.push({
-          role: i % 2 === 0 ? 'user' : 'assistant',
-          content: [{ type: 'text', text: `m${String(i)}` }],
-          toolCalls: [],
-          origin: i % 2 === 0 ? { kind: 'user' } : undefined,
-        });
-      }
-    }
-
-    // Cutoff computed for the full history: keep the recent 10 (indices >= 10).
-    ctx.agent.microCompaction.apply(10);
-
-    // In the full history the tool result is at index 15 (>= cutoff) -> kept.
-    const projectedFull = ctx.agent.context.project(full);
-    const fullToolText = projectedFull
-      .map((m) => m.content.map((p) => (p.type === 'text' ? p.text : '')).join(''))
-      .join('\n');
-    expect(fullToolText).toContain('TOOL-OUTPUT-CONTENT');
-
-    // After an overflow shrink drops the oldest 10, the SAME tool result sits at
-    // suffix index 5; the unchanged cutoff(10) now covers it. It must still be
-    // preserved (it is a recent result the summary depends on).
-    const shrunkSuffix = full.slice(10);
-    const projectedSuffix = ctx.agent.context.project(shrunkSuffix);
-    const suffixToolText = projectedSuffix
-      .map((m) => m.content.map((p) => (p.type === 'text' ? p.text : '')).join(''))
-      .join('\n');
-    expect(suffixToolText).toContain('TOOL-OUTPUT-CONTENT');
-  });
-
-  // PROBE #7 / CMP-07 — when the oldest kept user message overflows the budget it
-  // is truncated to text only, dropping any image/audio/video it carried: media
-  // can't be partially truncated, and keeping it whole would overshoot the
-  // budget. Recent messages that fit keep their media; only this boundary message
-  // loses its attachments. Documented as an accepted limitation rather than fixed.
-  it.fails('keeps media on the oldest kept user message instead of dropping it on truncation', () => {
-    const ctx = testAgent();
-    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
-    // Oldest user message: an image + long text that will overflow the budget.
-    ctx.agent.context.appendUserMessage(
-      [
-        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
-        { type: 'text', text: 'x'.repeat(120_000) }, // ~30k tokens of text
-      ],
-      { kind: 'user' },
-    );
-    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'recent user' }], { kind: 'user' });
-
-    ctx.agent.context.applyCompaction({
-      summary: 'Summary.',
-      compactedCount: 2,
-      tokensBefore: 100,
-    });
-
-    const keptParts = ctx.agent.context.history.flatMap((message) => message.content);
-    expect(keptParts.some((part) => part.type === 'image_url')).toBe(true);
   });
 });
 
