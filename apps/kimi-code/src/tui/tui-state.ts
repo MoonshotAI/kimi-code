@@ -126,6 +126,14 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
         })
         .catch(() => {});
     },
+    // Mouse capture replaces the terminal's own drag-selection, and many
+    // terminals refuse the OSC 52 write pi-tui falls back to, which would leave
+    // "Copied!" claiming a copy that never reached the clipboard. Push the text
+    // through the native binding too when one loaded.
+    onCopy: (text: string) => {
+      if (clipboard?.setText === undefined) return;
+      void clipboard.setText(text).catch(() => {});
+    },
   });
 
   const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);

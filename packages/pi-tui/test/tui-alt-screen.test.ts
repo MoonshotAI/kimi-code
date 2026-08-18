@@ -1004,6 +1004,30 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("copies an application-owned selection through the host hook", async () => {
+		const copied: string[] = [];
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			onCopy: (text) => copied.push(text),
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+
+		// The host hook receives the text, and the OSC 52 fallback still fires so
+		// terminals without a reachable native clipboard keep working.
+		assert.deepStrictEqual(copied, ["alpha\nbeta"]);
+		const expected = `\x1b]52;c;${Buffer.from("alpha\nbeta").toString("base64")}\x07`;
+		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes(expected)));
+
+		tui.stop();
+	});
+
 	it("does not append whitespace to double-click word highlighting", async () => {
 		const terminal = new RecordingTerminal(20, 1);
 		const tui = new TuiAltScreen(terminal);
