@@ -201,7 +201,7 @@ export class CoreSession {
     options: { commandId: string; agentId?: string },
   ): Promise<ShellCommandResult> {
     const agent = await this.agent(options.agentId);
-    return await agent.accessor
+    return agent.accessor
       .get(IAgentShellCommandService)
       .run({ command, commandId: options.commandId });
   }
@@ -214,7 +214,7 @@ export class CoreSession {
   /** Returns the number of history entries actually undone. */
   async undoHistory(count: number, options?: { agentId?: string }): Promise<number> {
     const agent = await this.agent(options?.agentId);
-    return await agent.accessor.get(IAgentConversationUndoService).undo(count);
+    return agent.accessor.get(IAgentConversationUndoService).undo(count);
   }
 
   async activateSkill(input: { name: string; args?: string; agentId?: string }): Promise<void> {
@@ -261,7 +261,7 @@ export class CoreSession {
     options?: { agentId?: string },
   ): Promise<{ model: string; providerName?: string }> {
     const agent = await this.agent(options?.agentId);
-    return await agent.accessor.get(IAgentProfileService).setModel(model);
+    return agent.accessor.get(IAgentProfileService).setModel(model);
   }
 
   async setThinking(level: string, options?: { agentId?: string }): Promise<void> {
@@ -309,7 +309,7 @@ export class CoreSession {
 
   async getPlan(): Promise<PlanData> {
     const agent = await this.agent();
-    return await agent.accessor.get(IAgentPlanService).status();
+    return agent.accessor.get(IAgentPlanService).status();
   }
 
   // -- Queries ----------------------------------------------------------------
@@ -402,7 +402,7 @@ export class CoreSession {
   }
 
   async getSessionMetadata(): Promise<SessionMeta> {
-    return await this.init.handle.accessor.get(ISessionMetadata).read();
+    return this.init.handle.accessor.get(ISessionMetadata).read();
   }
 
   // -- Goal / background tasks -------------------------------------------------
@@ -441,13 +441,13 @@ export class CoreSession {
     options?: { tail?: number; agentId?: string },
   ): Promise<string> {
     const agent = await this.agent(options?.agentId);
-    return await agent.accessor.get(IAgentTaskService).readOutput(taskId, options?.tail);
+    return agent.accessor.get(IAgentTaskService).readOutput(taskId, options?.tail);
   }
 
   /** Resolves with the terminal task info, or `undefined` for an unknown task. */
   async stopBackgroundTask(taskId: string, reason?: string): Promise<AgentTaskInfo | undefined> {
     const agent = await this.agent();
-    return await agent.accessor.get(IAgentTaskService).stop(taskId, reason);
+    return agent.accessor.get(IAgentTaskService).stop(taskId, reason);
   }
 
   /** Resolves with the detached task info, or `undefined` when it already finished. */
@@ -460,14 +460,14 @@ export class CoreSession {
 
   /** Fork the main agent into a side-question child; returns the child agent id. */
   async startBtw(): Promise<string> {
-    return await this.init.handle.accessor.get(ISessionBtwService).start();
+    return this.init.handle.accessor.get(ISessionBtwService).start();
   }
 
   async addAdditionalDir(input: {
     path: string;
     persist?: boolean;
   }): Promise<WorkspaceAdditionalDirsResult> {
-    return await this.init.handle.accessor
+    return this.init.handle.accessor
       .get(IWorkspaceDirs)
       .addDir({ path: input.path, persist: input.persist });
   }
@@ -544,7 +544,7 @@ export class CoreSession {
   /** Resolve the target agent handle; the main agent is created lazily. */
   private async agent(agentId?: string): Promise<IAgentScopeHandle> {
     const id = agentId ?? MAIN_AGENT_ID;
-    if (id === MAIN_AGENT_ID) return await ensureMainAgent(this.init.handle);
+    if (id === MAIN_AGENT_ID) return ensureMainAgent(this.init.handle);
     const handle = this.init.handle.accessor.get(IAgentLifecycleService).get(id);
     if (handle === undefined) {
       throw new CoreError(

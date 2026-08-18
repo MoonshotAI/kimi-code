@@ -1,4 +1,4 @@
-import type { Component, ProcessTerminal, TUI } from '@moonshot-ai/pi-tui';
+import type { ProcessTerminal, TUI } from '@moonshot-ai/pi-tui';
 
 import type { AgentTaskInfo, CoreSession } from '#/core/index';
 

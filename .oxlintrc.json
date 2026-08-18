@@ -173,6 +173,7 @@
     "dist-web/",
     "coverage/",
     "node_modules/",
+    "out/",
     "apps/*/scripts/",
     "docs/smoke-archive/",
     "packages/pi-tui/",

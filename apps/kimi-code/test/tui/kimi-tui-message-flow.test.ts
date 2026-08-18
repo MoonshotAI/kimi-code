@@ -138,7 +138,7 @@ interface MessageDriver {
     handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void;
   };
   init(): Promise<boolean>;
-  handleUserInput(text: string): void;
+  handleUserInput(text: string): Promise<void>;
   persistInputHistory(text: string): Promise<void>;
   sendQueuedMessage(session: unknown, item: QueuedMessage): void;
   sendQueuedGoalMessage(
@@ -482,7 +482,7 @@ async function makeDriver(
   // lazily and asynchronously, so input submission must be awaited.
   const rawHandleUserInput = driver.handleUserInput.bind(driver);
   driver.handleUserInput = ((text: string) => {
-    rawHandleUserInput(text);
+    void rawHandleUserInput(text);
     return flushLazySessionStart();
   }) as MessageDriver['handleUserInput'];
   return { driver, session, harness };
@@ -679,7 +679,7 @@ describe('KimiTUI message flow', () => {
     expect(driver.state.appState.sessionId).toBe('');
     expect(driver.state.appState.model).toBe('k2');
 
-    driver.handleUserInput('hello');
+    void driver.handleUserInput('hello');
 
     await vi.waitFor(() => {
       expect(session.prompt).toHaveBeenCalledWith([{ type: 'text', text: 'hello' }], { agentId: undefined, promptId: undefined });
@@ -706,7 +706,7 @@ describe('KimiTUI message flow', () => {
 
     expect(harness.createSession).not.toHaveBeenCalled();
 
-    driver.handleUserInput('/compact');
+    void driver.handleUserInput('/compact');
 
     await vi.waitFor(() => {
       expect(session.compact).toHaveBeenCalledWith(undefined);
@@ -746,7 +746,7 @@ describe('KimiTUI message flow', () => {
     // Startup resolves skill commands from the workspace, no session needed.
     expect(harness.createSession).not.toHaveBeenCalled();
 
-    driver.handleUserInput('/skill:my-skill');
+    void driver.handleUserInput('/skill:my-skill');
 
     await vi.waitFor(() => {
       expect(session.activateSkill).toHaveBeenCalledWith({ name: 'my-skill', args: '' });
@@ -777,7 +777,7 @@ describe('KimiTUI message flow', () => {
       driver as unknown as { refreshSkillCommands(): Promise<void> }
     ).refreshSkillCommands();
 
-    driver.handleUserInput('please /skill:review and /skill:security this change');
+    void driver.handleUserInput('please /skill:review and /skill:security this change');
 
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalledWith({
@@ -811,7 +811,7 @@ describe('KimiTUI message flow', () => {
       driver as unknown as { refreshSkillCommands(): Promise<void> }
     ).refreshSkillCommands();
 
-    driver.handleUserInput('/skill:review check this /skill:security');
+    void driver.handleUserInput('/skill:review check this /skill:security');
 
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalledWith({
@@ -843,7 +843,7 @@ describe('KimiTUI message flow', () => {
       driver as unknown as { refreshSkillCommands(): Promise<void> }
     ).refreshSkillCommands();
 
-    driver.handleUserInput('/skill:review check /skill:review');
+    void driver.handleUserInput('/skill:review check /skill:review');
 
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalledWith({
@@ -878,7 +878,7 @@ describe('KimiTUI message flow', () => {
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
     const attachment = imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1);
 
-    driver.handleUserInput(`/skill:review inspect ${attachment.placeholder} /skill:security`);
+    void driver.handleUserInput(`/skill:review inspect ${attachment.placeholder} /skill:security`);
 
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalledWith({
@@ -914,7 +914,7 @@ describe('KimiTUI message flow', () => {
       driver as unknown as { refreshSkillCommands(): Promise<void> }
     ).refreshSkillCommands();
 
-    driver.handleUserInput('/skill:review\ncheck this /skill:security');
+    void driver.handleUserInput('/skill:review\ncheck this /skill:security');
 
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalledWith({
@@ -946,7 +946,7 @@ describe('KimiTUI message flow', () => {
       driver as unknown as { refreshSkillCommands(): Promise<void> }
     ).refreshSkillCommands();
 
-    driver.handleUserInput('/dance please use /skill:review');
+    void driver.handleUserInput('/dance please use /skill:review');
 
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalledWith({
@@ -988,7 +988,7 @@ describe('KimiTUI message flow', () => {
     await (driver as unknown as { ensureSession(): Promise<unknown> }).ensureSession();
     driver.state.appState.goal = makeActiveGoalSnapshot();
 
-    driver.handleUserInput('check /skill:review');
+    void driver.handleUserInput('check /skill:review');
 
     expect(session.promptWithSkills).not.toHaveBeenCalled();
     expect(driver.state.queuedMessages).toEqual([
@@ -1023,7 +1023,7 @@ describe('KimiTUI message flow', () => {
     ).refreshSkillCommands();
     driver.state.appState.goal = makeActiveGoalSnapshot();
 
-    driver.handleUserInput('/skill:review check this /skill:security');
+    void driver.handleUserInput('/skill:review check this /skill:security');
 
     expect(session.promptWithSkills).not.toHaveBeenCalled();
     expect(driver.state.queuedMessages).toEqual([
@@ -1063,7 +1063,7 @@ describe('KimiTUI message flow', () => {
       driver as unknown as { refreshSkillCommands(): Promise<void> }
     ).refreshSkillCommands();
 
-    driver.handleUserInput('please /skill:review');
+    void driver.handleUserInput('please /skill:review');
 
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalled();
@@ -1329,7 +1329,7 @@ describe('KimiTUI message flow', () => {
     });
     (session.promptWithSkills as ReturnType<typeof vi.fn>).mockReturnValue(heldPrompt);
 
-    driver.handleUserInput('please /skill:review');
+    void driver.handleUserInput('please /skill:review');
 
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalled();
@@ -1406,7 +1406,7 @@ describe('KimiTUI message flow', () => {
       expect(harness.createSession).toHaveBeenCalledTimes(1);
     });
 
-    driver.handleUserInput('/new');
+    void driver.handleUserInput('/new');
     // /new must not race a second createSession while the lazy one is held.
     await new Promise((resolve) => setImmediate(resolve));
     expect(harness.createSession).toHaveBeenCalledTimes(1);
@@ -1436,11 +1436,11 @@ describe('KimiTUI message flow', () => {
       () => new Promise((resolve) => { resolveCreate = resolve; }),
     );
 
-    driver.handleUserInput('hello');
+    void driver.handleUserInput('hello');
     await vi.waitFor(() => {
       expect(harness.createSession).toHaveBeenCalledTimes(1);
     });
-    driver.handleUserInput('/new');
+    void driver.handleUserInput('/new');
 
     resolveCreate(lazySession);
     // The prompt continuation starts its turn first; /new (idle-only) must
@@ -1488,11 +1488,11 @@ describe('KimiTUI message flow', () => {
       () => new Promise((resolve) => { resolveCreate = resolve; }),
     );
 
-    driver.handleUserInput('hello');
+    void driver.handleUserInput('hello');
     await vi.waitFor(() => {
       expect(harness.createSession).toHaveBeenCalledTimes(1);
     });
-    driver.handleUserInput('/effort low');
+    void driver.handleUserInput('/effort low');
 
     resolveCreate(lazySession);
     // The prompt starts its turn first; the switch must then be rejected
@@ -1531,7 +1531,7 @@ describe('KimiTUI message flow', () => {
       expect(harness.createSession).toHaveBeenCalledTimes(1);
     });
 
-    driver.handleUserInput('/effort low');
+    void driver.handleUserInput('/effort low');
     // While the creation is held the switch must wait, not write pending
     // state that the assembly would overwrite.
     await new Promise((resolve) => setImmediate(resolve));
@@ -1568,7 +1568,7 @@ describe('KimiTUI message flow', () => {
       () => new Promise((resolve) => { resolveCreate = resolve; }),
     );
 
-    driver.handleUserInput('hello');
+    void driver.handleUserInput('hello');
     await vi.waitFor(() => {
       expect(harness.createSession).toHaveBeenCalledTimes(1);
     });
@@ -1604,7 +1604,7 @@ describe('KimiTUI message flow', () => {
       }
     ).authFlow.activateModelSelection('k2', 'high');
 
-    driver.handleUserInput('hello');
+    void driver.handleUserInput('hello');
 
     await vi.waitFor(() => {
       expect(session.prompt).toHaveBeenCalledWith([{ type: 'text', text: 'hello' }], { agentId: undefined, promptId: undefined });
@@ -1639,7 +1639,7 @@ describe('KimiTUI message flow', () => {
 
     // …but the create call must not repeat it: the v2 engine applies
     // defaultPlanMode at create time, and re-entering plan mode throws.
-    driver.handleUserInput('hello');
+    void driver.handleUserInput('hello');
 
     await vi.waitFor(() => {
       expect(session.prompt).toHaveBeenCalledWith([{ type: 'text', text: 'hello' }], { agentId: undefined, promptId: undefined });
@@ -1658,7 +1658,7 @@ describe('KimiTUI message flow', () => {
     };
     const { driver, harness } = await makeDriver(session, {}, startupInput);
 
-    driver.handleUserInput('hello');
+    void driver.handleUserInput('hello');
 
     await vi.waitFor(() => {
       expect(session.prompt).toHaveBeenCalledWith([{ type: 'text', text: 'hello' }], { agentId: undefined, promptId: undefined });
@@ -1679,10 +1679,10 @@ describe('KimiTUI message flow', () => {
     const { driver } = await makeDriver(session, {}, startupInput);
 
     // A prompt and a bash command both trigger the same in-flight creation.
-    driver.handleUserInput('hello');
+    void driver.handleUserInput('hello');
     driver.state.appState.inputMode = 'bash';
     driver.state.editor.inputMode = 'bash';
-    driver.handleUserInput('ls');
+    void driver.handleUserInput('ls');
 
     await vi.waitFor(() => {
       expect(session.prompt).toHaveBeenCalledWith([{ type: 'text', text: 'hello' }], { agentId: undefined, promptId: undefined });
@@ -1705,7 +1705,7 @@ describe('KimiTUI message flow', () => {
     };
     const { driver, harness } = await makeDriver(session, {}, startupInput);
 
-    driver.handleUserInput('/settings');
+    void driver.handleUserInput('/settings');
 
     expect(harness.createSession).not.toHaveBeenCalled();
     expect(driver.state.appState.sessionId).toBe('');
@@ -1738,8 +1738,8 @@ describe('KimiTUI message flow', () => {
     ).refreshSkillCommands();
 
     // A prompt and a skill command both trigger the same in-flight creation.
-    driver.handleUserInput('hello');
-    driver.handleUserInput('/skill:my-skill');
+    void driver.handleUserInput('hello');
+    void driver.handleUserInput('/skill:my-skill');
 
     await vi.waitFor(() => {
       expect(session.prompt).toHaveBeenCalledWith([{ type: 'text', text: 'hello' }], { agentId: undefined, promptId: undefined });
@@ -1761,7 +1761,7 @@ describe('KimiTUI message flow', () => {
     };
     const { driver, harness } = await makeDriver(session, { listPlugins }, startupInput);
 
-    driver.handleUserInput('/plugins list');
+    void driver.handleUserInput('/plugins list');
 
     await vi.waitFor(() => {
       expect(listPlugins).toHaveBeenCalled();
@@ -1780,7 +1780,7 @@ describe('KimiTUI message flow', () => {
     };
     const { driver, harness } = await makeDriver(session, {}, startupInput);
 
-    driver.handleUserInput('/add-dir list');
+    void driver.handleUserInput('/add-dir list');
 
     expect(harness.createSession).not.toHaveBeenCalled();
     expect(driver.state.appState.sessionId).toBe('');
@@ -1795,7 +1795,7 @@ describe('KimiTUI message flow', () => {
     };
     const { driver, harness } = await makeDriver(session, {}, startupInput);
 
-    driver.handleUserInput('/add-dir /tmp/extra');
+    void driver.handleUserInput('/add-dir /tmp/extra');
 
     await vi.waitFor(() => {
       expect(driver.getCurrentSessionId()).toBe('ses-lazy');
@@ -1817,7 +1817,7 @@ describe('KimiTUI message flow', () => {
       'showStatus',
     );
 
-    driver.handleUserInput('/add-dir list');
+    void driver.handleUserInput('/add-dir list');
 
     await vi.waitFor(() => {
       expect(showStatus).toHaveBeenCalledWith(expect.stringContaining('/tmp/extra'));
@@ -1847,7 +1847,7 @@ describe('KimiTUI message flow', () => {
       startupInput,
     );
 
-    driver.handleUserInput('/plugins reload');
+    void driver.handleUserInput('/plugins reload');
 
     await vi.waitFor(() => {
       expect(reloadPlugins).toHaveBeenCalled();
@@ -1881,7 +1881,7 @@ describe('KimiTUI message flow', () => {
       models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
       defaultModel: 'k2',
     });
-    driver.handleUserInput('/reload');
+    void driver.handleUserInput('/reload');
 
     await vi.waitFor(() => {
       expect(driver.state.appState.model).toBe('k2');
@@ -1913,7 +1913,7 @@ describe('KimiTUI message flow', () => {
     getConfig.mockResolvedValue({
       models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
     });
-    driver.handleUserInput('/reload');
+    void driver.handleUserInput('/reload');
 
     await vi.waitFor(() => {
       expect(driver.state.appState.model).toBe('');
@@ -1951,7 +1951,7 @@ describe('KimiTUI message flow', () => {
       startupInput,
     );
 
-    driver.handleUserInput('/plan on');
+    void driver.handleUserInput('/plan on');
 
     await vi.waitFor(() => {
       expect(harness.createSession).toHaveBeenCalledTimes(1);
@@ -1991,7 +1991,7 @@ describe('KimiTUI message flow', () => {
       models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
       defaultModel: 'k2',
     });
-    driver.handleUserInput('/reload');
+    void driver.handleUserInput('/reload');
 
     await vi.waitFor(() => {
       expect(driver.state.appState.permissionMode).toBe('manual');
@@ -2029,7 +2029,7 @@ describe('KimiTUI message flow', () => {
       startupInput,
     );
 
-    driver.handleUserInput('hello');
+    void driver.handleUserInput('hello');
 
     await vi.waitFor(() => {
       expect(session.prompt).toHaveBeenCalledWith([{ type: 'text', text: 'hello' }], { agentId: undefined, promptId: undefined });
@@ -2052,7 +2052,7 @@ describe('KimiTUI message flow', () => {
     };
     const { driver, harness } = await makeDriver(session, {}, startupInput);
 
-    driver.handleUserInput('/status');
+    void driver.handleUserInput('/status');
 
     await vi.waitFor(() => {
       expect(stripSgr(renderTranscript(driver))).toContain('Status');
@@ -2070,7 +2070,7 @@ describe('KimiTUI message flow', () => {
     };
     const { driver, harness } = await makeDriver(session, {}, startupInput);
 
-    driver.handleUserInput('/yolo on');
+    void driver.handleUserInput('/yolo on');
 
     await vi.waitFor(() => {
       expect(driver.state.appState.permissionMode).toBe('yolo');
@@ -2078,7 +2078,7 @@ describe('KimiTUI message flow', () => {
     expect(harness.createSession).not.toHaveBeenCalled();
     expect(session.setPermission).not.toHaveBeenCalled();
 
-    driver.handleUserInput('hello');
+    void driver.handleUserInput('hello');
 
     await vi.waitFor(() => {
       expect(session.prompt).toHaveBeenCalledWith([{ type: 'text', text: 'hello' }], { agentId: undefined, promptId: undefined });
@@ -2142,7 +2142,7 @@ describe('KimiTUI message flow', () => {
       startupInput,
     );
 
-    driver.handleUserInput('/mcp');
+    void driver.handleUserInput('/mcp');
 
     await vi.waitFor(() => {
       expect(listWorkspaceMcpServers).toHaveBeenCalledWith('/tmp/proj-a');
@@ -3557,7 +3557,7 @@ command = "vim"
 
         // Submission is fully synchronous: the paste is copied to the cache and
         // referenced by a `file://` video_url the engine resolves in-turn.
-        driver.handleUserInput(`watch ${attachment.placeholder}`);
+        void driver.handleUserInput(`watch ${attachment.placeholder}`);
 
         const parts = vi.mocked(session.prompt).mock.calls[0]?.[0] as
           | Array<{
@@ -3611,7 +3611,7 @@ command = "vim"
       const attachment = imageStore.addVideo('video/mp4', srcVideo);
       driver.state.appState.streamingPhase = 'waiting';
 
-      driver.handleUserInput(`describe ${attachment.placeholder}`);
+      void driver.handleUserInput(`describe ${attachment.placeholder}`);
 
       expect(session.prompt).not.toHaveBeenCalled();
       expect(driver.state.queuedMessages).toHaveLength(1);
@@ -3690,7 +3690,7 @@ command = "vim"
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
     const attachment = stagedImage(imageStore, 'file-1');
 
-    driver.handleUserInput(attachment.placeholder);
+    void driver.handleUserInput(attachment.placeholder);
 
     expect(session.prompt).toHaveBeenCalledOnce();
     emitTurn(driver, 1, () => {
@@ -3714,7 +3714,7 @@ command = "vim"
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
     const attachment = stagedImage(imageStore, 'file-lazy');
 
-    driver.handleUserInput(attachment.placeholder);
+    void driver.handleUserInput(attachment.placeholder);
 
     // The lease is created at extraction, before the session exists: lazy
     // creation runs setSession mid-dispatch, and the first prompt's lease
@@ -3750,7 +3750,7 @@ command = "vim"
     // The restored draft resubmits and re-retains; the consuming turn must
     // still delete the daemon upload — a retain leaked by the dismissal would
     // keep the count above zero and pin the upload until its TTL.
-    driver.handleUserInput(text);
+    void driver.handleUserInput(text);
 
     expect(session.prompt).toHaveBeenCalledOnce();
     emitTurn(driver, 1, () => {
@@ -3779,7 +3779,7 @@ command = "vim"
       };
     });
 
-    driver.handleUserInput(`describe ${attachment.placeholder}`);
+    void driver.handleUserInput(`describe ${attachment.placeholder}`);
     expect(session.prompt).not.toHaveBeenCalled();
 
     finishIngestion();
@@ -3804,7 +3804,7 @@ command = "vim"
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
     const attachment = stagedImage(imageStore, 'file-reject');
 
-    driver.handleUserInput(attachment.placeholder);
+    void driver.handleUserInput(attachment.placeholder);
 
     await vi.waitFor(() => {
       expect(driver.state.appState.streamingPhase).toBe('idle');
@@ -3856,8 +3856,8 @@ command = "vim"
     const attachment = stagedImage(imageStore, 'file-queued');
     driver.state.appState.streamingPhase = 'waiting';
 
-    driver.handleUserInput(`first ${attachment.placeholder}`);
-    driver.handleUserInput(`second ${attachment.placeholder}`);
+    void driver.handleUserInput(`first ${attachment.placeholder}`);
+    void driver.handleUserInput(`second ${attachment.placeholder}`);
     const stagingPaths = driver.state.queuedMessages.flatMap((item) => item.stagingPaths ?? []);
     expect(driver.state.queuedMessages).toHaveLength(2);
     // An uploaded image stages no local cache copy — the engine's intake
@@ -3881,13 +3881,13 @@ command = "vim"
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
     const attachment = stagedImage(imageStore, 'file-shared-turn');
 
-    driver.handleUserInput(`first ${attachment.placeholder}`);
+    void driver.handleUserInput(`first ${attachment.placeholder}`);
     driver.sessionEventHandler.handleEvent(
       { type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event,
       () => {},
     );
     driver.state.appState.streamingPhase = 'waiting';
-    driver.handleUserInput(`second ${attachment.placeholder}`);
+    void driver.handleUserInput(`second ${attachment.placeholder}`);
     driver.clearQueuedMessages();
 
     await Promise.resolve();
@@ -3934,7 +3934,7 @@ command = "vim"
     driver.state.appState.streamingPhase = 'waiting';
     harness.track.mockClear();
 
-    driver.handleUserInput('/tower refactor auth and ui');
+    void driver.handleUserInput('/tower refactor auth and ui');
 
     expect(session.activateSkill).not.toHaveBeenCalled();
     expect(driver.state.queuedMessages).toEqual([
@@ -3976,7 +3976,7 @@ command = "vim"
     driver.state.appState.isCompacting = true;
     harness.track.mockClear();
 
-    driver.handleUserInput('/tower refactor auth and ui');
+    void driver.handleUserInput('/tower refactor auth and ui');
 
     expect(session.activateSkill).not.toHaveBeenCalled();
     expect(driver.state.queuedMessages).toEqual([
@@ -4003,7 +4003,7 @@ command = "vim"
     const { driver, session } = await makeDriver();
     driver.state.appState.goal = makeActiveGoalSnapshot();
 
-    driver.handleUserInput('hello mid-goal');
+    void driver.handleUserInput('hello mid-goal');
 
     expect(session.steer).toHaveBeenCalledWith([{ type: 'text', text: 'hello mid-goal' }], { agentId: undefined });
     expect(session.prompt).not.toHaveBeenCalled();
@@ -4024,7 +4024,7 @@ command = "vim"
     const { driver } = await makeDriver(session);
     driver.state.appState.goal = makeActiveGoalSnapshot();
 
-    driver.handleUserInput('hello mid-goal');
+    void driver.handleUserInput('hello mid-goal');
 
     expect(driver.state.appState.streamingPhase).toBe('waiting');
     await vi.waitFor(() => {
@@ -4037,7 +4037,7 @@ command = "vim"
     const { driver, session } = await makeDriver();
     driver.state.appState.goal = makeActiveGoalSnapshot();
     driver.state.appState.streamingPhase = 'waiting';
-    driver.handleUserInput('mid-goal note');
+    void driver.handleUserInput('mid-goal note');
     expect(driver.state.queuedMessages).toEqual([{ text: 'mid-goal note', agentId: 'main' }]);
 
     driver.sessionEventHandler.handleEvent(
@@ -4063,7 +4063,7 @@ command = "vim"
   it('prompts the queued message as a new turn when no goal is active', async () => {
     const { driver, session } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
-    driver.handleUserInput('after the turn');
+    void driver.handleUserInput('after the turn');
 
     driver.sessionEventHandler.handleEvent(
       {
@@ -4547,7 +4547,7 @@ command = "vim"
     const attachment = imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1);
     driver.state.appState.streamingPhase = 'waiting';
 
-    driver.handleUserInput(`describe ${attachment.placeholder}`);
+    void driver.handleUserInput(`describe ${attachment.placeholder}`);
 
     expect(session.prompt).not.toHaveBeenCalled();
     const queued = driver.state.queuedMessages[0];
@@ -4624,8 +4624,8 @@ command = "vim"
     driver.streamingUI.setTurnId('1');
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
     const attachment = stagedImage(imageStore, 'file-batched');
-    driver.handleUserInput(`first ${attachment.placeholder}`);
-    driver.handleUserInput(`second ${attachment.placeholder}`);
+    void driver.handleUserInput(`first ${attachment.placeholder}`);
+    void driver.handleUserInput(`second ${attachment.placeholder}`);
     expect(driver.state.queuedMessages).toHaveLength(2);
 
     driver.state.editor.onCtrlS?.();
@@ -4653,8 +4653,8 @@ command = "vim"
 
     // One message referencing the same image twice retains it once; a second
     // queued message retains it again — two retains total.
-    driver.handleUserInput(`compare ${attachment.placeholder} with ${attachment.placeholder}`);
-    driver.handleUserInput(`and ${attachment.placeholder}`);
+    void driver.handleUserInput(`compare ${attachment.placeholder} with ${attachment.placeholder}`);
+    void driver.handleUserInput(`and ${attachment.placeholder}`);
     const [first, second] = driver.state.queuedMessages;
 
     driver.sendQueuedMessage(session, first!);
@@ -4680,7 +4680,7 @@ command = "vim"
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
     const attachment = stagedImage(imageStore, 'file-recall');
 
-    driver.handleUserInput(`look ${attachment.placeholder}`);
+    void driver.handleUserInput(`look ${attachment.placeholder}`);
     expect(driver.state.queuedMessages).toHaveLength(1);
 
     const recalled = driver.recallLastQueued();
@@ -4693,7 +4693,7 @@ command = "vim"
 
     // Re-queueing the restored draft reuses the daemon-ref form, and the
     // consuming turn's end releases the upload exactly once.
-    driver.handleUserInput(recalled!.text);
+    void driver.handleUserInput(recalled!.text);
     const requeued = driver.state.queuedMessages[0]!;
     expect(requeued.parts).toContainEqual({
       type: 'image_url',
@@ -4717,7 +4717,7 @@ command = "vim"
       const attachment = imageStore.addVideo('video/mp4', srcVideo);
       driver.state.appState.streamingPhase = 'waiting';
 
-      driver.handleUserInput(`describe ${attachment.placeholder}`);
+      void driver.handleUserInput(`describe ${attachment.placeholder}`);
       const queued = driver.state.queuedMessages[0]!;
       const cachePath = queued.stagingPaths![0]!;
       expect(existsSync(cachePath)).toBe(true);
@@ -5369,13 +5369,13 @@ command = "vim"
       driver as unknown as { refreshSkillCommands(): Promise<void> }
     ).refreshSkillCommands();
 
-    driver.handleUserInput('/btw');
+    void driver.handleUserInput('/btw');
     await vi.waitFor(() => {
       expect(session.startBtw).toHaveBeenCalledWith();
     });
     expect(stripSgr(renderBtwPanel(driver))).toContain('Ready for a side question...');
 
-    driver.handleUserInput('check /skill:review');
+    void driver.handleUserInput('check /skill:review');
 
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalledWith({
@@ -5413,7 +5413,7 @@ command = "vim"
       driver as unknown as { refreshSkillCommands(): Promise<void> }
     ).refreshSkillCommands();
 
-    driver.handleUserInput('/btw check this /skill:review');
+    void driver.handleUserInput('/btw check this /skill:review');
 
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalledWith({
@@ -5451,7 +5451,7 @@ command = "vim"
       driver as unknown as { refreshSkillCommands(): Promise<void> }
     ).refreshSkillCommands();
 
-    driver.handleUserInput('/btw /skill:review check this');
+    void driver.handleUserInput('/btw /skill:review check this');
 
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalledWith({
@@ -5491,7 +5491,7 @@ command = "vim"
       driver as unknown as { refreshSkillCommands(): Promise<void> }
     ).refreshSkillCommands();
 
-    driver.handleUserInput('/btw check /skill:review /skill:security');
+    void driver.handleUserInput('/btw check /skill:review /skill:security');
 
     await vi.waitFor(() => {
       expect(session.startBtw).toHaveBeenCalledWith();
@@ -7342,7 +7342,7 @@ command = "vim"
     });
 
     // Official sources skip the trust prompt, so the install runs immediately.
-    driver.handleUserInput(
+    void driver.handleUserInput(
       '/plugins install https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
     );
 
@@ -7370,7 +7370,7 @@ command = "vim"
       })),
     });
 
-    driver.handleUserInput('/plugins install ./plugins/kimi-datasource-fork');
+    void driver.handleUserInput('/plugins install ./plugins/kimi-datasource-fork');
 
     await vi.waitFor(() => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
@@ -8043,7 +8043,7 @@ command = "vim"
       setConfig,
     });
 
-    driver.handleUserInput('/model turbo');
+    void driver.handleUserInput('/model turbo');
 
     await vi.waitFor(() => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
@@ -8133,7 +8133,7 @@ command = "vim"
       setConfig,
     });
 
-    driver.handleUserInput('/effort');
+    void driver.handleUserInput('/effort');
 
     await vi.waitFor(() => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
@@ -8192,7 +8192,7 @@ command = "vim"
       setConfig,
     });
 
-    driver.handleUserInput('/model turbo');
+    void driver.handleUserInput('/model turbo');
 
     await vi.waitFor(() => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
@@ -8432,7 +8432,7 @@ command = "vim"
     const forkSession = vi.fn(async () => forked);
     const { driver } = await makeDriver(source, { forkSession });
 
-    driver.handleUserInput('/fork');
+    void driver.handleUserInput('/fork');
 
     await vi.waitFor(() => {
       const transcript = driver.state.transcriptContainer.render(120).join('\n');
@@ -8451,7 +8451,7 @@ command = "vim"
     const forkSession = vi.fn(async () => forked);
     const { driver } = await makeDriver(source, { forkSession });
 
-    driver.handleUserInput('/fork');
+    void driver.handleUserInput('/fork');
 
     await vi.waitFor(() => {
       expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
@@ -8473,7 +8473,7 @@ command = "vim"
         workDir: 'D:\\proj',
       });
 
-      driver.handleUserInput('/fork');
+      void driver.handleUserInput('/fork');
 
       // cmd.exe's `cd` does not switch drives; pushd works in cmd + PowerShell.
       await vi.waitFor(() => {
@@ -8516,7 +8516,7 @@ command = "vim"
     const forkSession = vi.fn(async () => forked);
     const { driver } = await makeDriver(source, { forkSession });
 
-    driver.handleUserInput('/fork');
+    void driver.handleUserInput('/fork');
 
     await vi.waitFor(() => {
       expect(forked.close).toHaveBeenCalledOnce();
@@ -8866,7 +8866,7 @@ describe('/effort support_efforts override', () => {
       })),
     });
 
-    driver.handleUserInput('/effort');
+    void driver.handleUserInput('/effort');
 
     await vi.waitFor(() => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
@@ -8892,7 +8892,7 @@ describe('/effort support_efforts override', () => {
       })),
     });
 
-    driver.handleUserInput('/effort');
+    void driver.handleUserInput('/effort');
 
     await vi.waitFor(() => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
@@ -8919,7 +8919,7 @@ describe('/effort support_efforts override', () => {
       })),
     });
 
-    driver.handleUserInput('/effort');
+    void driver.handleUserInput('/effort');
 
     await vi.waitFor(() => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
@@ -8945,7 +8945,7 @@ describe('/effort support_efforts override', () => {
       })),
     });
 
-    driver.handleUserInput('/effort');
+    void driver.handleUserInput('/effort');
 
     await vi.waitFor(() => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
@@ -8975,7 +8975,7 @@ describe('/effort support_efforts override', () => {
       })),
     });
 
-    driver.handleUserInput('/effort max');
+    void driver.handleUserInput('/effort max');
 
     await vi.waitFor(() => {
       expect(renderTranscript(driver)).toContain(
@@ -9028,7 +9028,7 @@ describe('transcript step and assistant folding', () => {
 
   it('folds the oldest assistant messages and steps beyond their per-turn caps', async () => {
     const { driver } = await makeDriver();
-    driver.handleUserInput('fold me');
+    void driver.handleUserInput('fold me');
 
     const cycles = Math.max(TRANSCRIPT_KEEP_RECENT_ASSISTANT, TRANSCRIPT_KEEP_RECENT_STEPS) + 7;
     driveSteps(driver, cycles);
@@ -9056,7 +9056,7 @@ describe('transcript step and assistant folding', () => {
 
   it('does not fold a turn within the caps', async () => {
     const { driver } = await makeDriver();
-    driver.handleUserInput('small turn');
+    void driver.handleUserInput('small turn');
     driveSteps(driver, 3);
 
     const children = driver.state.transcriptContainer.children;
@@ -9067,7 +9067,7 @@ describe('transcript step and assistant folding', () => {
 
   it('folds a completed turn down to its conclusion tail on turn end', async () => {
     const { driver } = await makeDriver();
-    driver.handleUserInput('round one');
+    void driver.handleUserInput('round one');
     const cycles = 10;
     driveSteps(driver, cycles);
 
