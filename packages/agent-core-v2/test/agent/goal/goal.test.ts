@@ -62,6 +62,8 @@ import {
   type TestAgentServiceOverride,
 } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { stubFlag } from '../../app/flag/stubs';
+import { IFlagService } from '#/app/flag/flag';
 import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { stubAgentSwarm } from './stubs';
@@ -2708,6 +2710,59 @@ describe('AgentGoalService WaitFor background scenarios', () => {
       const waitResultHistory = JSON.stringify(ctx.llmCalls[3]?.history);
       expect(waitResultHistory).toContain('wait_status: completed');
       expect(waitResultHistory).toContain('BG-OUTPUT');
+      expect((await ctx.rpc.getGoal({})).goal).toBeNull();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+});
+
+describe('AgentGoalService WaitFor guidance gating', () => {
+  it('shows the WaitFor guidance in the active-goal reminder when the flag is on', async () => {
+    const ctx = createTestAgent();
+    try {
+      ctx.configure({ tools: ['UpdateGoal'] });
+      await ctx.rpc.createGoal({ objective: 'finish bounded work' });
+
+      ctx.mockNextResponse({ type: 'text', text: 'slice done' });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'ug_1',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
+
+      expect(JSON.stringify(ctx.llmCalls[0])).toContain('re-invoked again and again');
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('hides WaitFor from the reminder, the continuation prompt, and the tools when the flag is off', async () => {
+    const ctx = createTestAgent(appService(IFlagService, stubFlag(false)));
+    try {
+      ctx.configure({ tools: ['UpdateGoal'] });
+      await ctx.rpc.createGoal({ objective: 'finish bounded work' });
+
+      ctx.mockNextResponse({ type: 'text', text: 'slice done' });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'ug_1',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
+
+      const allCalls = JSON.stringify(ctx.llmCalls);
+      expect(allCalls).not.toContain('WaitFor');
+      expect(allCalls).not.toContain('re-invoked again and again');
       expect((await ctx.rpc.getGoal({})).goal).toBeNull();
     } finally {
       await ctx.dispose();

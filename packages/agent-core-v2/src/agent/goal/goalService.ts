@@ -13,7 +13,7 @@ import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
-import { GoalInjection } from '#/agent/goal/injection/goalInjection';
+import { GoalInjection, GOAL_WAIT_FOR_GUIDANCE } from '#/agent/goal/injection/goalInjection';
 import {
   IAgentLoopService,
   type AfterStepContext,
@@ -36,6 +36,7 @@ import { IAgentUsageService, type UsageRecordedContext } from '#/agent/usage/usa
 import type { GoalBudgetProperties } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import {
   ErrorCodes,
   Error2,
@@ -47,6 +48,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { defineState } from '#/state/state';
 
 import { IAgentGoalService, type GoalReasonInput, type ResumeGoalInput } from './goal';
+import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import { IGoalDeadlineScheduler } from './goalDeadlineScheduler';
 import {
   GoalClear,
@@ -144,11 +146,7 @@ const GOAL_CONTINUATION_PROMPT = [
   'validation, would benefit from clarification, or needs more goal turns. Once the 3-turn',
   'threshold is met and you cannot make meaningful progress without user input or an',
   'external-state change, call UpdateGoal with `blocked`; do not keep reporting the blocker while',
-  'leaving the goal active. If you are waiting for background sub-agents or bash tasks to',
-  'finish, call WaitFor to wait for them inside this turn instead of ending the turn; ending',
-  'the turn just gets you re-invoked again and again. You can also use the waiting time to do',
-  'useful parallel work. Either way, make sure every goal turn is productive. Do not ask the',
-  'user for input unless a real blocker prevents progress.',
+  'leaving the goal active. Do not ask the user for input unless a real blocker prevents progress.',
 ].join(' ');
 
 const GOAL_STEP_CAP_CONTINUATION_PROMPT = [
@@ -271,6 +269,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IAgentUsageService usageService: IAgentUsageService,
     @IConfigService private readonly config: IConfigService,
+    @IFlagService private readonly flags: IFlagService,
     @IGoalDeadlineScheduler private readonly deadlineScheduler: IGoalDeadlineScheduler,
     @IAgentScopeContext private readonly agentContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -295,6 +294,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       new GoalInjection(
         {
           getGoal: () => this.getGoal().goal,
+          isWaitForEnabled: () => this.flags.enabled(WAIT_FOR_FLAG_ID),
         },
         injector,
       ),
@@ -902,12 +902,15 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   private launchContinuationTurn(goalId: string, stepCapped = false): void {
     if (!this.isActiveGoal(goalId)) return;
     if (this.pendingContinuation !== undefined) return;
+    const prompt = stepCapped ? GOAL_STEP_CAP_CONTINUATION_PROMPT : GOAL_CONTINUATION_PROMPT;
     const message: ContextMessage = {
       role: 'user',
       content: [
         {
           type: 'text',
-          text: stepCapped ? GOAL_STEP_CAP_CONTINUATION_PROMPT : GOAL_CONTINUATION_PROMPT,
+          text: this.flags.enabled(WAIT_FOR_FLAG_ID)
+            ? `${prompt} ${GOAL_WAIT_FOR_GUIDANCE}`
+            : prompt,
         },
       ],
       toolCalls: [],
