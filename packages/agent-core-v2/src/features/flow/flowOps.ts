@@ -72,6 +72,7 @@ export const flowKey = defineState('flow', (): FlowRunState => ({ active: false 
   .replayable({ schema: z.custom<FlowRunState>() })
   .undoable()
   .on(FlowRunStarted, (s, e, ctx) => {
+    if (s.active) return;
     s.active = true;
     s.flowId = e.flowId;
     s.task = e.task;

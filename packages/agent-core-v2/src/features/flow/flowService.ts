@@ -2,6 +2,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { SkillActivated } from '#/agent/skill/skillOps';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -48,6 +49,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     @IEventBus eventBus: IEventBus,
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
     super();
     this.agentState.contributeState(flowKey);
@@ -80,6 +82,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
       eventBus.subscribe(SkillActivated, (event) => {
         if (event.skillType !== 'flow') return;
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
+        if (this.scopeContext.agentId !== 'main') return;
         void this.startFromActivation(event.skillName, event.skillArgs);
       }),
     );
@@ -129,6 +132,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
 
   start(definition: FlowDefinition, task: string): boolean {
     if (!this.flags.enabled(FLOW_FLAG_ID)) return false;
+    if (this.run().active) return false;
     void this.dispatcher.dispatch(
       new FlowRunStarted({
         flowId: definition.id,

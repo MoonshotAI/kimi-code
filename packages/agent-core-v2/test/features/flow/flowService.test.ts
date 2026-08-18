@@ -15,6 +15,7 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { SkillActivate, skillKey } from '#/agent/skill/skillOps';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
@@ -74,6 +75,7 @@ describe('AgentFlowService', () => {
   let service: IAgentFlowService;
   let agentState: IAgentStateService;
   let dispatcher: IEventDispatcher;
+  let agentId: string;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -109,6 +111,7 @@ describe('AgentFlowService', () => {
       workDir: '/ws',
       additionalDirs: [],
     } as unknown as ISessionWorkspaceContext);
+
     flowFlagOn = true;
     ix.stub(IFlagService, stubFlag((id) => flowFlagOn && id === FLOW_FLAG_ID));
     permissionMode = 'default';
@@ -124,12 +127,25 @@ describe('AgentFlowService', () => {
       log: ix.get(IAppendLogStore),
       eventBus: ix.get(IEventBus),
     });
+    agentId = 'main';
+    ix.stub(IAgentScopeContext, {
+      get agentId() {
+        return agentId;
+      },
+    } as unknown as IAgentScopeContext);
     dispatcher = registerTestEventDispatcher(ix);
     agentState = ix.get(IAgentStateService);
     ix.set(IAgentFlowService, new SyncDescriptor(AgentFlowService));
     service = ix.get(IAgentFlowService);
   });
   afterEach(() => disposables.dispose());
+
+  it('refuses to start while a run is already active', () => {
+    expect(service.start(DEFINITION, 'first')).toBe(true);
+    expect(service.start({ ...DEFINITION, id: 'other-flow' }, 'second')).toBe(false);
+    expect(service.run().flowId).toBe('issue-fix');
+    expect(service.run().task).toBe('first');
+  });
 
   it('start snapshots the definition and positions the run at the first stage', () => {
     expect(service.run().active).toBe(false);
@@ -300,6 +316,26 @@ describe('AgentFlowService', () => {
       expect(service.currentStage()?.id).toBe('triage');
     });
 
+    it('ignores a flow activation on a non-main agent', async () => {
+      agentId = 'agent-1';
+      agentState.contributeState(skillKey);
+      await dispatcher.dispatch(
+        new SkillActivate({
+          origin: {
+            kind: 'skill_activation',
+            activationId: 'act-worker',
+            skillName: 'issue-fix',
+            trigger: 'user-slash',
+            skillType: 'flow',
+            skillPath: '/ws/.kimi-code/flows/issue-fix.md',
+            skillArgs: 'worker task',
+          },
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(service.run().active).toBe(false);
+    });
+
     it('does not restart an already-active run', async () => {
       service.start(DEFINITION, 'original task');
       agentState.contributeState(skillKey);
@@ -383,6 +419,25 @@ describe('AgentFlowService', () => {
         advanceContext(GATE_DISPLAY),
       );
       expect(requestToolApproval).toHaveBeenCalledTimes(1);
+    });
+
+    it('vetoes a gate call that is not the first FlowAdvance in its batch', async () => {
+      service.start(DEFINITION, 'task');
+      const context = advanceContext(GATE_DISPLAY);
+      const earlier: ToolCall = {
+        type: 'function',
+        id: 'call_advance_first',
+        name: 'FlowAdvance',
+        arguments: '{}',
+      };
+      const batched = {
+        ...context,
+        toolCalls: [earlier, context.toolCall],
+      } as ResolvedToolExecutionHookContext;
+      const decision = await executorEvents.fireBeforeExecute(batched);
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('one call at a time');
+      expect(requestToolApproval).not.toHaveBeenCalled();
     });
 
     it('skips approval when the live stage no longer matches the prepared display', async () => {
