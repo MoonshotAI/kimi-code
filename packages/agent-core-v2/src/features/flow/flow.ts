@@ -96,6 +96,11 @@ export interface IAgentFlowService {
   start(definition: FlowDefinition, task: string): boolean;
   advance(outcome: FlowAdvanceOutcome): FlowAdvanceResult;
   abort(note?: string): void;
+  /** Monotonic run generation — bumped on start, abort, and conversation
+   *  undo. Lets consumers (stage reminders, gate reviews) tell a restarted
+   *  run apart from the one they observed, even when every rendered field
+   *  matches. */
+  runEpoch(): number;
   /** One-shot check that the user actually approved this call's gate review
    *  (set by the gate hook when the approval resolves approved; consumed by
    *  FlowAdvance's execution so the verdict provenance cannot be inferred

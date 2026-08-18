@@ -263,13 +263,6 @@ export class SessionEventBroadcaster {
     return true;
   }
 
-  /**
-   * Send one synthesized main-agent `agent.status.updated` frame to a target
-   * that just subscribed. Live status frames are volatile (never journaled,
-   * never replayed), so a subscriber that raced a status edge — e.g. the
-   * flow-run start applied within the first second of a fresh session — would
-   * otherwise hold a stale view until the next edge happens to fire.
-   */
   private enqueueStatusSnapshot(state: SessionState, target: BroadcastTarget): void {
     state.queue = state.queue
       .then(() => {

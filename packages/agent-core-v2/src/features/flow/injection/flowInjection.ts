@@ -16,6 +16,7 @@ interface FlowStageInjectionDisclosure {
   readonly flowId: string;
   readonly stageIndex: number;
   readonly fingerprint?: string;
+  readonly epoch?: number;
 }
 
 export interface IFlowInjection {
@@ -63,18 +64,20 @@ export class FlowInjection extends Disposable implements IFlowInjection {
       'You are the supervisor of this run: dispatch the stage work to a worker subagent instead of doing it yourself; when the worker reports, verify every completion criterion against objective evidence (artifacts, diffs, execution output — not the worker summary), then submit your verdict with FlowAdvance.',
     ].join('\n');
     const fingerprint = fingerprintOf(content);
+    const epoch = this.flow.runEpoch();
     const last = ctx.lastDisclosure;
     if (
       last !== undefined &&
       last.flowId === run.flowId &&
       last.stageIndex === stageIndex &&
-      last.fingerprint === fingerprint
+      last.fingerprint === fingerprint &&
+      last.epoch === epoch
     ) {
       return undefined;
     }
     return {
       content,
-      disclosure: { kind: 'flow_stage', flowId: run.flowId, stageIndex, fingerprint },
+      disclosure: { kind: 'flow_stage', flowId: run.flowId, stageIndex, fingerprint, epoch },
     };
   }
 }

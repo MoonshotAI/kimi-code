@@ -44,7 +44,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
   private readonly review: FlowGateReview;
   private activationInFlight = false;
   private readonly approvedGateCalls = new Set<string>();
-  private runEpoch = 0;
+  private epoch = 0;
 
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
@@ -67,7 +67,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
       (toolCallId) => {
         this.approvedGateCalls.add(toolCallId);
       },
-      () => this.runEpoch,
+      () => this.epoch,
     );
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => {
@@ -113,7 +113,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     this._register(
       eventBus.subscribe(ContextUndone, () => {
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
-        this.runEpoch += 1;
+        this.epoch += 1;
         void this.dispatcher.dispatch(new AgentStatusUpdated({ flowRun: this.summary() }));
       }),
     );
@@ -205,7 +205,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         stages: definition.stages.map((stage) => ({ ...stage })),
       }),
     );
-    this.runEpoch += 1;
+    this.epoch += 1;
     return this.run().active;
   }
 
@@ -233,13 +233,17 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     return { recorded: true, runFinished: false, nextStage: this.currentStage() };
   }
 
+  runEpoch(): number {
+    return this.epoch;
+  }
+
   consumeGateApproval(toolCallId: string): boolean {
     return this.approvedGateCalls.delete(toolCallId);
   }
 
   abort(note?: string): void {
     if (!this.run().active) return;
-    this.runEpoch += 1;
+    this.epoch += 1;
     void this.dispatcher.dispatch(new FlowRunEnded({ reason: 'aborted', note }));
   }
 }
