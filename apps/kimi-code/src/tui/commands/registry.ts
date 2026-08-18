@@ -194,6 +194,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   },
   {
     name: 'visual-model',
+    aliases: [],
     description: 'Configure the visual model for image inspection',
     priority: 91,
     availability: 'always',
