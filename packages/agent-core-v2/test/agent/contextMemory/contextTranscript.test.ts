@@ -439,6 +439,35 @@ describe('live fold parity', () => {
     expect(transcript.foldedLength).toBe(live.length);
   });
 
+  it('keeps the older prompt injection when the removed prompt reuses its id', () => {
+    const records: WireRecord[] = [
+      appendMessage(
+        userMessage('injA', {
+          kind: 'injection',
+          variant: 'image_compression',
+          ownerPromptId: 'shared',
+        }),
+      ),
+      appendMessage({ ...userMessage('u1', { kind: 'user' }), id: 'shared' }),
+      ...assistantStep('s1', 'a1'),
+      appendMessage(
+        userMessage('injB', {
+          kind: 'injection',
+          variant: 'image_compression',
+          ownerPromptId: 'shared',
+        }),
+      ),
+      appendMessage({ ...userMessage('u2', { kind: 'user' }), id: 'shared' }),
+      ...assistantStep('s2', 'a2'),
+      undo(1),
+    ];
+    const live = foldLive(records);
+    const transcript = reduceContextTranscript(records);
+    expect(texts(transcript)).toEqual(['injA', 'u1', 'a1']);
+    expect(comparable(transcript.entries)).toEqual(comparable(live));
+    expect(transcript.foldedLength).toBe(3);
+  });
+
   it('keeps injections not owned by any removed prompt across undo', () => {
     const result = reduceContextTranscript([
       appendMessage(userMessage('note', { kind: 'injection', variant: 'test' })),
