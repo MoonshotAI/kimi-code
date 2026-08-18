@@ -66,11 +66,22 @@ function createTestEnv(home = '/home'): IHostEnvironment {
   };
 }
 
-function stubToolRegistry(registered: readonly string[] = ['ReadMediaFile', 'Bash']): IAgentToolRegistryService {
+function stubToolRegistry(
+  registered: readonly string[] = ['ReadMediaFile', 'Bash'],
+  mcpTools: readonly string[] = [],
+): IAgentToolRegistryService {
   return {
     _serviceBrand: undefined,
     resolve: (name: string) =>
       registered.includes(name) ? ({ name } as unknown as ExecutableTool) : undefined,
+    list: () => [
+      ...registered.map((name) => ({ name, source: 'builtin' as const })),
+      ...mcpTools.map((name) => ({ name, source: 'mcp' as const })),
+    ],
+    listReferences: () => [
+      ...registered.map((name) => ({ name, source: 'builtin' as const })),
+      ...mcpTools.map((name) => ({ name, source: 'mcp' as const })),
+    ],
   } as unknown as IAgentToolRegistryService;
 }
 
@@ -464,7 +475,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/fake.png" is not readable as UTF-8 text. If it is an image or video, use ReadMediaFile. For other binary formats, use Bash or an MCP tool if available.',
+      '"/tmp/fake.png" is not readable as UTF-8 text. If it is an image or video, use ReadMediaFile. For other binary formats, use Bash.',
     );
     expect(readText).not.toHaveBeenCalled();
   });
@@ -518,7 +529,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/blob.bin" is not readable as UTF-8 text. If it is an image or video, use ReadMediaFile. For other binary formats, use Bash or an MCP tool if available.',
+      '"/tmp/blob.bin" is not readable as UTF-8 text. If it is an image or video, use ReadMediaFile. For other binary formats, use Bash.',
     );
     expect(output).not.toContain('Python tools');
     expect(readText).not.toHaveBeenCalled();
@@ -542,7 +553,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/blob-with-late-nul" is not readable as UTF-8 text. If it is an image or video, use ReadMediaFile. For other binary formats, use Bash or an MCP tool if available.',
+      '"/tmp/blob-with-late-nul" is not readable as UTF-8 text. If it is an image or video, use ReadMediaFile. For other binary formats, use Bash.',
     );
     expect(output).not.toContain('Python tools');
   });
@@ -565,7 +576,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/sample.png" is a image file. Image and video reading is unavailable for this agent. Use Bash or an MCP tool to inspect or convert it.',
+      '"/tmp/sample.png" is a image file. Image and video reading is unavailable for this agent. Use Bash to inspect or convert it.',
     );
     expect(output).not.toContain('ReadMediaFile');
     expect(readText).not.toHaveBeenCalled();
@@ -589,9 +600,32 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/sample.png" is a image file. Image and video reading is unavailable for this agent. Use an available MCP tool to inspect or convert it.',
+      '"/tmp/sample.png" is a image file. Image and video reading is unavailable for this agent.',
     );
     expect(output).not.toContain('Bash');
+    expect(readText).not.toHaveBeenCalled();
+  });
+
+  it('recommends an MCP fallback when rejecting an image file only when an MCP tool is active', async () => {
+    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const { fs, readText } = createSpiedMapFs({
+      '/tmp/sample.png': { bytes: pngHeader },
+    });
+    const tool = createReadTool(
+      fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
+      stubToolRegistry([], ['mcp__fs__read']),
+    );
+
+    const result = await execute(tool, { path: '/tmp/sample.png' });
+    const output = toolContentString(result);
+
+    expect(result.isError).toBe(true);
+    expect(output).toBe(
+      '"/tmp/sample.png" is a image file. Image and video reading is unavailable for this agent. Use an MCP tool to inspect or convert it.',
+    );
     expect(readText).not.toHaveBeenCalled();
   });
 
@@ -614,7 +648,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/sample.png" is a image file. The ReadMediaFile tool is disabled by the active tool policy, so image and video reading is unavailable. Use an available MCP tool to inspect or convert it.',
+      '"/tmp/sample.png" is a image file. The ReadMediaFile tool is disabled by the active tool policy, so image and video reading is unavailable.',
     );
     expect(output).not.toContain('cannot read');
     expect(readText).not.toHaveBeenCalled();
@@ -638,7 +672,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/blob.bin" is not readable as UTF-8 text. For binary formats, use an available MCP tool.',
+      '"/tmp/blob.bin" is not readable as UTF-8 text. No tool for binary formats is available to this agent.',
     );
     expect(readText).not.toHaveBeenCalled();
   });
@@ -1104,7 +1138,7 @@ describe('ReadTool description and schema parity', () => {
     );
 
     expect(tool.description).not.toContain('ReadMediaFile');
-    expect(tool.description).toContain('use Bash or an MCP tool for binary formats.');
+    expect(tool.description).toContain('use Bash for binary formats.');
   });
 
   it('drops ReadMediaFile from the description when the media tool is disabled by policy', () => {
@@ -1118,10 +1152,10 @@ describe('ReadTool description and schema parity', () => {
     );
 
     expect(tool.description).not.toContain('ReadMediaFile');
-    expect(tool.description).toContain('use an available MCP tool for binary formats.');
+    expect(tool.description).toContain('no tool for binary formats is available to this agent.');
   });
 
-  it('keeps Bash out of the description when the shell tool is unavailable', () => {
+  it('drops the binary fallback from the description when no fallback tool is available', () => {
     const tool = createReadTool(
       createSpiedFs('').fs,
       createTestEnv(),
@@ -1131,9 +1165,23 @@ describe('ReadTool description and schema parity', () => {
     );
 
     expect(tool.description).toContain(
-      'use `ReadMediaFile` for images or video, and an available MCP tool for other binary formats.',
+      'use `ReadMediaFile` for images or video; no tool for other binary formats is available to this agent.',
     );
     expect(tool.description).not.toContain('Bash or an MCP tool');
+  });
+
+  it('recommends an MCP tool in the description only when one is registered and active', () => {
+    const tool = createReadTool(
+      createSpiedFs('').fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
+      stubToolRegistry(['ReadMediaFile'], ['mcp__fs__read']),
+    );
+
+    expect(tool.description).toContain(
+      'use `ReadMediaFile` for images or video, and an MCP tool for other binary formats.',
+    );
   });
 
   it('reflects media tool policy changes in the description', () => {
