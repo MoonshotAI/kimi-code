@@ -1,80 +1,3 @@
-/**
- * `/skills` REST routes (session- and workspace-scoped) — server-v2 port.
- *
- * Mirrors the v1 server's wire contract
- * (`packages/server/src/routes/skills.ts`) path-for-path and schema-for-schema:
- *
- *   GET  /sessions/{session_id}/skills                       data: {skills: SkillDescriptor[]}
- *   GET  /workspaces/{workspace_id}/skills                   data: {skills: SkillDescriptor[]}
- *   POST /sessions/{session_id}/skills/{skill_name}:activate body: {args?, attachments?}  data: {activated: true, skill_name}
- *
- * The session list is session-scoped: the catalog is built per session
- * (project skills are discovered from the session cwd), so it lives under
- * `/sessions/{session_id}` rather than as a global collection like `/tools`.
- *
- * The workspace list (`/workspaces/{workspace_id}/skills`) is the session-less
- * counterpart: it scans the same roots a new session in that workspace cwd
- * would, so clients can populate the composer skill menu before a session
- * exists. The workspace id is resolved to its root via
- * `IWorkspaceService.get` (`40410` when unknown); the root is then scanned by
- * composing the same five sources the per-session catalog merges — builtin /
- * user / extra / project(workDir) / plugin — through the shared `ISkillDiscovery`,
- * `skillRoots` and `InMemorySkillCatalog` primitives, so the result matches the
- * session listing for the same cwd. The composition is intentionally edge-side:
- * `InMemorySkillCatalog` is not a scoped service and the `skillRoots` helpers
- * are exported for exactly this purpose.
- *
- * **Activation gate**: by convention the session endpoints are only valid for
- * an *activated* session — one that is live in a workspace handler's session
- * registry. When
- * the session is not in the live map we still answer `40401 session.not_found`
- * (the only session error code on the v1 wire contract), but we enrich the
- * message:
- *   - persisted in `ISessionIndex` but not live → `"... is not activated, you need to activate it first"`;
- *   - not in the index at all                  → `"... does not exist"`.
- *
- * **Scope split**: v1 resolves a single `ISkillService` for every verb. v2
- * splits the domain, so the route borrows different scoped services per verb:
- *   - session list → `ISessionSkillCatalog` (Session scope) — `catalog.listSkills()`.
- *   - workspace list → no session: resolves `IWorkspaceService` (App scope)
- *     for the root, then composes the skill scan at the edge (see above).
- *   - activate     → `IAgentSkillService` (Agent scope, on the `main` agent) —
- *                    renders the skill prompt and starts a turn with a
- *                    `skill_activation` origin. The returned `{turn_id}` is
- *                    discarded; clients follow progress via the `skill.activated`
- *                    + `turn.*` events emitted by the service on the WS stream.
- *                    The engine applies the prompt-metadata update itself
- *                    (main agent only) so a first `/<skill>`
- *                    message titles the session, matching the native prompt path.
- *                    Optional `attachments` (image/video/file parts, same wire
- *                    shape as prompt content) run through the shared prompt
- *                    media pipeline (`lib/promptMedia.ts`) and are appended to
- *                    the activation's user message after the skill prompt.
- *
- * **Model projection**: `SkillDefinition` (v2) → protocol `SkillDescriptor`,
- * byte-for-byte with v1's `toProtocolSkill`
- * (`packages/agent-core/src/services/skill/skill.ts`): only
- * `name`/`description`/`path`/`source` plus optional `type` and
- * `disable_model_invocation` are emitted; `isSubSkill` is intentionally
- * dropped.
- *
- * **Error mapping**:
- *   - unknown workspace id          → envelope `code: 40410 workspace.not_found`.
- *   - not live / unknown session    → envelope `code: 40401 session.not_found` (see gate above).
- *   - `skill.not_found` / `skill.name_empty` → envelope `code: 40415 skill.not_found`.
- *   - `skill.type_unsupported`      → envelope `code: 40912 skill.not_activatable`.
- *   - `file.not_found` (attachment) → envelope `code: 40407 file.not_found`.
- *   - `validation.failed` (mis-kinded attachment) → envelope `code: 40001 validation.failed`.
- *   - malformed `{tail}` (bad action, bare)  → envelope `code: 40001 validation.failed`.
- *   - other errors → 50001 via the global `installErrorHandler`.
- *
- * **Action suffix**: the `:activate` POST endpoint uses the shared
- * `parseActionSuffix` helper (no bare form — `:activate` is the only action).
- *
- * **Anti-corruption**: route resolves every service via the accessor; no SDK
- * imports.
- */
-
 import {
   builtinProductSkillsEnabled,
   visibleBuiltinSkills,
@@ -166,20 +89,11 @@ type ResolvedSession =
   | { readonly handle: ISessionScopeHandle }
   | { readonly envelope: ReturnType<typeof errEnvelope> };
 
-/**
- * Resolve the session only when it is activated (live in the lifecycle map).
- * Otherwise build a `40401` envelope whose message distinguishes "not
- * activated" (persisted but not live) from "does not exist" (not persisted).
- */
 async function resolveActivatedSession(
   core: Scope,
   sessionId: string,
   requestId: string,
 ): Promise<ResolvedSession> {
-  // `resume` (not `get`) so listing/activating skills on a freshly-opened cold
-  // session cold-loads it instead of reporting "not activated"; matches v1's
-  // `resumeSession` in SkillService. `resume` returns undefined only when the
-  // session is unknown or its workspace is gone.
   const handle = await resumeSessionById(core.accessor, sessionId);
   if (handle !== undefined) return { handle };
 
@@ -192,7 +106,6 @@ async function resolveActivatedSession(
 }
 
 export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
-  // GET /sessions/{session_id}/skills ------------------------------------
   const listSkillsRoute = defineRoute(
     {
       method: 'GET',
@@ -225,7 +138,6 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
     listSkillsRoute.handler as Parameters<SkillsRouteHost['get']>[2],
   );
 
-  // GET /workspaces/{workspace_id}/skills ------------------------------
   const listWorkspaceSkillsRoute = defineRoute(
     {
       method: 'GET',
@@ -262,7 +174,6 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
     listWorkspaceSkillsRoute.handler as Parameters<SkillsRouteHost['get']>[2],
   );
 
-  // POST /sessions/{session_id}/skills/{skill_name}:activate --------------
   const activateSkillRoute = defineRoute(
     {
       method: 'POST',
@@ -293,7 +204,6 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         return;
       }
       if (parsed.kind === 'bare') {
-        // No bare form for /skills/{name} — only :activate.
         reply.send(
           errEnvelope(ErrorCode.VALIDATION_FAILED, `unsupported action: ${tail}`, req.id),
         );
@@ -308,17 +218,9 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
 
       let preparedMedia: PromptMediaPreparation | undefined;
       try {
-        // Attachments run through the same edge pipeline as prompt uploads
-        // (validate → materialize → convert) BEFORE the activation starts, so
-        // a bad file_id or an unreadable upload rejects the request without
-        // launching a skill turn.
         const attachments = req.body.attachments ?? [];
         const attachmentParts: ContentPart[] = [];
         if (attachments.length > 0) {
-          // Validate the skill BEFORE materializing anything: an unknown or
-          // non-user-activatable name must fail without streaming upload bytes
-          // into the session/cache dirs. activate() re-validates on its own —
-          // this is only the edge fail-fast for the side-effecting pipeline.
           const catalog = resolved.handle.accessor.get(ISessionSkillCatalog);
           await catalog.ready;
           const skill = catalog.catalog.getSkill(parsed.id);
@@ -351,14 +253,9 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
           attachmentParts.push(...contentToCoreParts(preparedMedia.content));
         }
         const agent = await ensureMainAgent(resolved.handle);
-        // The engine applies the prompt-metadata update itself (main agent
-        // only), so a first `/<skill>` message titles the session (same as
-        // routes/prompts.ts).
         await agent.accessor
           .get(IAgentSkillService)
           .activate({ name: parsed.id, args: req.body.args, content: attachmentParts });
-        // Intake materialized the session-owned copies — release the
-        // preparation's uploads, and keep them released on the success path.
         await preparedMedia?.discard();
         preparedMedia = undefined;
         requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
@@ -376,23 +273,6 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Workspace skill scan — session-less composition of the four skill sources
-// (see header). Mirrors `SessionSkillCatalogService`'s ordered merge so the
-// listing matches a session created in the same cwd.
-// ---------------------------------------------------------------------------
-
-/**
- * Scan the skills a new session rooted at `workDir` would see, without creating
- * a session. Resolves the same five sources the per-session catalog merges —
- * builtin / user / extra / project(`workDir`) / plugin — through the shared
- * `ISkillDiscovery` and `skillRoots` primitives, then folds them into an
- * `InMemorySkillCatalog` by the documented source priorities (lower priority
- * first; `replace: true` lets higher-priority sources win name collisions). The
- * priority numbers come from `SKILL_SOURCE_PRIORITY`; the resulting name set is
- * priority-invariant, but matching them keeps descriptor resolution identical to
- * the session catalog.
- */
 async function listWorkspaceSkillsForRoot(
   core: Scope,
   workDir: string,
@@ -444,10 +324,6 @@ async function listWorkspaceSkillsForRoot(
   return catalog.listSkills();
 }
 
-// ---------------------------------------------------------------------------
-// Projection — v2 `SkillDefinition` → protocol `SkillDescriptor` (see header).
-// ---------------------------------------------------------------------------
-
 type SkillElement = ReturnType<ISessionSkillCatalog['catalog']['listSkills']>[number];
 
 function toProtocolSkill(skill: SkillElement): SkillDescriptor {
@@ -468,10 +344,6 @@ function toProtocolSkill(skill: SkillElement): SkillDescriptor {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Error mapping (see header).
-// ---------------------------------------------------------------------------
-
 function sendMappedError(
   reply: { send(payload: unknown): unknown },
   requestId: string,
@@ -486,7 +358,6 @@ function sendMappedError(
       case ErrorCodes.SKILL_TYPE_UNSUPPORTED:
         reply.send(errEnvelope(ErrorCode.SKILL_NOT_ACTIVATABLE, err.message, requestId, err.stack));
         return;
-      // Attachment pipeline failures (same mapping as routes/prompts.ts).
       case ErrorCodes.FILE_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.FILE_NOT_FOUND, err.message, requestId, err.stack));
         return;

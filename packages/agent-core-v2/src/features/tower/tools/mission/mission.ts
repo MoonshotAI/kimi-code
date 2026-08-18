@@ -1,14 +1,3 @@
-/**
- * `tools` domain — `ITowerMissionTool` contract (the `TowerMission` tool).
- *
- * Public contract of the mission reader/patcher: called with only an id it
- * returns the rendered mission view; with patch fields it applies them
- * through the store (workers may only patch their own mission; ownership
- * assignment stays with the tower). Exports the model-facing
- * `TowerMissionToolInputSchema` / `TowerMissionToolInput` and the
- * `ITowerMissionTool` DI decorator. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

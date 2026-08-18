@@ -1,16 +1,3 @@
-/**
- * `GET /sessions/{session_id}/snapshot` — atomic session snapshot for client
- * rebuild: state + `as_of_seq` watermark + `epoch`, assembled from the engine
- * services. Cold sessions are resumed through `ISessionLifecycleService.resume`
- * — the same path `messages` and `:undo` use — and the message page comes from
- * the shared full-transcript loader (`services/messages/messageHistory`), so
- * this endpoint and `GET /sessions/{sid}/messages` serve the same history:
- * full across compactions, media rehydrated.
- *
- * **Error mapping**: `SnapshotNotFoundError` → 40401; everything else falls
- * through to the global error handler (→ 50001).
- */
-
 import {
   ensureMainAgent,
   IAgentPromptService,
@@ -38,10 +25,8 @@ import { toWireApproval } from './approvals';
 import { toWireQuestion } from './questions';
 import { resolveSessionFacts, toWireSession } from './sessions';
 
-/** Most-recent messages included in the snapshot page. */
 const SNAPSHOT_MESSAGE_PAGE_SIZE = 100;
 
-/** Sentinel — the handler maps it to 40401. */
 class SnapshotNotFoundError extends Error {
   constructor(sessionId: string) {
     super(`session ${sessionId} does not exist`);
@@ -108,21 +93,13 @@ async function assembleSnapshot(
   broadcaster: SessionEventBroadcaster,
   sessionId: string,
 ): Promise<SessionSnapshotResponse> {
-  // Resolve the live handle, loading the session from disk when it is cold
-  // (created by a previous process or by v1). `resume` returns `undefined`
-  // only when the session is unknown or its workspace is gone → 404.
   const handle = await resumeSessionById(core.accessor, sessionId);
   if (handle === undefined) {
     throw new SnapshotNotFoundError(sessionId);
   }
 
-  // Watermark + in-flight turn (drains the dispatch queue for consistency).
   const snapState = await broadcaster.getSnapshotState(sessionId);
 
-  // Session wire shape (needs the workspace root for `metadata.cwd`).
-  // `ISessionMetadata` normalizes legacy v1 documents on load (absent
-  // `version` → ISO-string timestamps → epoch ms, id backfilled), so the
-  // metadata read here is always v2-shaped and safe to project.
   const workspaceId = handle.accessor.get(ISessionContext).workspaceId;
   const workspace = await core.accessor.get(IWorkspaceService).get(workspaceId);
   const cwd = workspace?.root ?? '';
@@ -133,8 +110,6 @@ async function assembleSnapshot(
     resolveSessionFacts(core, sessionId),
   );
 
-  // Messages — most recent page of the main agent's full history, from the
-  // loader shared with the `messages` routes.
   const main = await ensureMainAgent(handle);
   const all = await loadMessageHistory(core, main, sessionId, meta.createdAt);
   const hasMore = all.length > SNAPSHOT_MESSAGE_PAGE_SIZE;
@@ -143,7 +118,6 @@ async function assembleSnapshot(
   const currentPromptId = snapState.inFlightTurn === null ? undefined : readCurrentPromptId(main);
   const inFlightTurn = attachCurrentPromptIdToInFlight(snapState.inFlightTurn, currentPromptId);
 
-  // Pending approvals / questions.
   const interaction = handle.accessor.get(ISessionInteractionService);
   const pendingApprovals = interaction
     .listPending('approval')
@@ -169,7 +143,6 @@ function readCurrentPromptId(main: IAgentScopeHandle | undefined): string | unde
   try {
     return main.accessor.get(IAgentPromptService).list().active?.id;
   } catch {
-    // Auxiliary reconnect metadata must not make the whole snapshot fail.
     return undefined;
   }
 }

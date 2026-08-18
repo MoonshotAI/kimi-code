@@ -1,11 +1,3 @@
-/**
- * Scenario: per-agent prompt scheduling and launch-failure settlement.
- *
- * Exercises `IAgentPromptService` through DI with controlled context, loop,
- * wire, compaction, and tool-execution collaborators.
- * Run: `pnpm exec vitest run packages/agent-core-v2/test/agent/prompt/promptService.test.ts`.
- */
-
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';

@@ -93,9 +93,6 @@ describe('extractFromWireLine', () => {
   });
 
   it('indexes only the real text of an upload-carrying user message', () => {
-    // An uploaded image persists as a self-contained `kimi-file://` image
-    // part — no text at all — so an upload-only message drops out of the
-    // index, and a real text beside the ref is indexed on its own.
     const uploadRef = {
       type: 'image_url',
       imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
@@ -107,20 +104,13 @@ describe('extractFromWireLine', () => {
         message: { role: 'user', content, origin: { kind: 'user' } },
       });
 
-    // Upload-only: nothing indexable (the materialization path included).
     expect(extractFromWireLine(record([uploadRef]))).toEqual([]);
-    // With a real text part alongside, exactly that text is indexed.
     expect(
       extractFromWireLine(record([{ type: 'text', text: 'what is this? ' }, uploadRef])),
     ).toEqual([{ role: 'user', text: 'what is this?', time: 1_700_000_000_000 }]);
   });
 
   it('never indexes a standalone <media path> tag, paired or not', () => {
-    // A standalone tag is machine markup (the upload residue of legacy
-    // sessions, or the model-facing degrade form) and leaks the
-    // materialization path — it stays out of the index whether or not a
-    // daemon ref rides alongside. A tag embedded in real user text is
-    // indexed with that text.
     const legacyPair = [
       { type: 'text', text: '<image path="/Users/alice/media/f_1.png"></image>' },
       {
@@ -319,7 +309,6 @@ describe('analyzeWireLine turn effects', () => {
         }),
       ),
     ).toEqual({ kind: 'ensure' });
-    // A tool result folds into a tool message — never opens a turn.
     expect(
       turnOf(
         line({
@@ -328,7 +317,6 @@ describe('analyzeWireLine turn effects', () => {
         }),
       ),
     ).toEqual({ kind: 'none' });
-    // Bare step markers and vacuous content: the folded assistant is dropped.
     expect(
       turnOf(line({ type: 'context.append_loop_event', event: { type: 'step.begin' } })),
     ).toEqual({ kind: 'none' });
@@ -340,8 +328,6 @@ describe('analyzeWireLine turn effects', () => {
         }),
       ),
     ).toEqual({ kind: 'none' });
-    // Thinking parts follow the same vacuous rule: empty unsigned thinking is
-    // dropped at step.end; non-empty or signed thinking survives.
     expect(
       turnOf(
         line({
@@ -383,8 +369,6 @@ describe('analyzeWireLine turn effects', () => {
   });
 
   it('compaction and clear do NOT renumber; undo carries its count; invalid undo is none', () => {
-    // The transcript's cold replay keeps full history and groupTurns numbers
-    // it continuously, so these records have no turn effect.
     expect(
       turnOf(line({ type: 'context.apply_compaction', summary: 's', compactedCount: 2 })),
     ).toEqual({ kind: 'none' });

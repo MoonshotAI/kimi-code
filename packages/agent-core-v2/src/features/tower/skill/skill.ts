@@ -1,10 +1,3 @@
-/**
- * `tower` domain — the builtin `tower` skill definition (the `/tower` slash
- * command body). Self-registers into the builtin skill catalog at import via
- * `registerBuiltinSkill` (the static import=register channel), so no builtin
- * module needs to know the skill exists.
- */
-
 import type { SkillDefinition } from '#/app/skillCatalog/types';
 import { parseSkillText } from '#/app/skillCatalog/parser';
 import { registerBuiltinSkill } from '#/app/skillCatalog/builtin/registry';

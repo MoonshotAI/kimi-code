@@ -1,32 +1,3 @@
-/**
- * `ContextMessage` → v1 wire `Message` projection.
- *
- * Mirrors the v1 protocol projection so the `messages`, `snapshot`, and
- * `sessions` (`:undo`) surfaces produce byte-compatible message objects.
- * Lives in kap-server (next to the wire schema in `protocol/message.ts`) —
- * the engine speaks only the native `ContextMessage`.
- *
- * Tool results project to a single `tool_result` part: plain-text results keep
- * the historical flattened-text output, while a result carrying media parts
- * (image/video/audio — e.g. ReadMediaFile) passes the raw kosong content-part
- * array through, the same shape the live `tool.result` event stream carries,
- * so REST consumers can still render the media after reload/resume.
- *
- * A user `image_url` / `video_url` part projects to a structured `image` /
- * `video` content part so REST consumers can render it: an internal
- * `kimi-file://<id>` reference becomes
- * `{ kind: 'session_media', file_id }` (the internal URL never reaches
- * clients); any other url becomes `{ kind: 'url' }` carrying
- * the provider id. An `audio_url` part still flattens to a text marker.
- *
- * A daemon-ref media part is self-contained (`daemonFileRefFromPart`): the
- * part type carries the kind and the reference the file id, so the
- * projection walks the raw parts directly — there is no tag+ref pairing to
- * fold. A standalone `<media path>` tag text part is user text or the legacy
- * degrade form and passes through verbatim. Assistant output passes through
- * verbatim.
- */
-
 import { daemonFileRefFromPart, parseDaemonFileUrl, type ContentPart, type ContextMessage } from '@moonshot-ai/agent-core-v2';
 
 import type { Message, MessageContent, MessageRole, ToolUseContent } from '../../protocol/message';
@@ -51,8 +22,6 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
         : { type: 'thinking', thinking: part.think };
     }
     case 'image_url': {
-      // Same daemon-reference rule as `video_url`: an internal reference
-      // projects to the Session-owned copy created during prompt intake.
       const ref = parseDaemonFileUrl(part.imageUrl.url);
       return ref !== undefined
         ? { type: 'image', source: { kind: 'session_media', file_id: ref.fileId } }
@@ -96,9 +65,6 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
     return [part];
   }
 
-  // User and assistant content both map part-by-part: daemon-ref media parts
-  // are self-contained and project to `session_media` sources inside
-  // `mapContentPart`; standalone `<media path>` tags stay text.
   const base = msg.content.map((p) => mapContentPart(p));
 
   if (msg.role === 'assistant' && msg.toolCalls.length > 0) {

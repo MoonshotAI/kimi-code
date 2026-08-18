@@ -625,8 +625,6 @@ describe('AgentRunBatch scheduling contract', () => {
 
       await vi.advanceTimersByTimeAsync(0);
       attempts[0]!.markReady();
-      // Print mode fills the subagent timeout with 0 = unbounded; it must not
-      // arm an immediate abort.
       await vi.advanceTimersByTimeAsync(60_000);
 
       attempts[0]!.outcome.resolve({

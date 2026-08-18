@@ -1,13 +1,3 @@
-/**
- * Scenario: `setSessionArchivedBatch` cold-path outcome mapping.
- * Responsibilities: a metadata read failure becomes a per-item internal
- * error (never not_found), a missing metadata document is not_found, and
- * the mirrored summary is built from the authoritative persisted metadata
- * rather than a stale index copy.
- * Wiring: pure stubs — ISessionManager (serialization passthrough),
- * ISessionIndex, IAtomicDocumentStore, ISessionIndexMirror, IEventService.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/workspace/sessionLifecycle/coldSessionArchive.test.ts`.
- */
 
 import { describe, expect, it } from 'vitest';
 
@@ -153,7 +143,6 @@ describe('setSessionArchivedBatch', () => {
     const recorded: SessionSummary[] = [];
     const written: unknown[] = [];
     const legacy = {
-      // v1 shape: ISO-string timestamps, customTitle, workDir, no version.
       workDir: '/workspace',
       customTitle: 'legacy title',
       createdAt: '2026-07-21T19:40:00.000Z',
@@ -179,7 +168,6 @@ describe('setSessionArchivedBatch', () => {
     expect(persisted['version']).toBe(2);
     expect(typeof persisted['updatedAt']).toBe('number');
     expect(persisted['customTitle']).toBeUndefined();
-    // The v1-reader compatibility field rides the write (custom title).
     expect(persisted['isCustomTitle']).toBe(true);
   });
 
@@ -213,7 +201,6 @@ describe('setSessionArchivedBatch', () => {
       true,
     );
     expect(outcomes).toEqual([{ id: 's1', ok: true }]);
-    // Written to the canonical location, and the legacy document removed.
     expect(written).toHaveLength(1);
     expect(written[0]?.scope.endsWith('/session-meta')).toBe(false);
     expect(deleted).toHaveLength(1);

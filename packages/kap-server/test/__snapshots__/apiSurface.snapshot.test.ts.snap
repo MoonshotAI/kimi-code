@@ -454,6 +454,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/workspace/fs:suggest",
+    ],
+    [
+      "POST",
       "/api/v1/workspaces",
     ],
     [

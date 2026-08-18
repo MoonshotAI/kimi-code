@@ -1,7 +1,3 @@
-/**
- * Reconcile marks running persisted tasks from a prior process as lost.
- */
-
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';

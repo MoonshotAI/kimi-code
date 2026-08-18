@@ -1,25 +1,3 @@
-/**
- * `sessionLifecycle` domain — cold-session archive/restore without session
- * materialization, plus the live/cold batch orchestration built on top of it.
- *
- * `setSessionArchivedBatch` answers a batch of ids in input order: each
- * id's classify + mutate runs inside `sessionManager`'s per-session
- * lifecycle serialization (every lifecycle transition queues on the same
- * chain; the section's own archive/restore ride the unguarded view), so
- * no resume can materialize stale state over a cold write and no close
- * can slip between the live check and the archive call. Live sessions
- * go through the full `sessionManager` lifecycle chain (never resumed),
- * and cold sessions are patched straight into the persisted metadata
- * document through `persistence` (existence reads from `sessionIndex`,
- * with the pre-unification `session-meta/` fallback, migrating the
- * document to the canonical location), normalized and encoded through
- * the metadata service's own paths so v1 readers stay compatible,
- * mirrored into the `sessionIndex` read model from the authoritative
- * persisted meta (never the possibly-stale index summary), and announced
- * through `event` — never materialized; storage/decode failures
- * propagate as per-item errors, never as not_found. Plain functions over
- * a STABLE accessor; own no scoped state.
- */
 
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -102,8 +80,6 @@ export async function setSessionArchivedBatch(
         await manager.whenResumeSettled(id);
         const live = getLiveSessionById(accessor, id);
         if (live !== undefined) {
-          // The section holds the chain — the lifecycle calls go through the
-          // unguarded view so they can't self-deadlock it.
           if (archived) await unguarded.archive();
           else await unguarded.restore();
           return { id, ok: true };

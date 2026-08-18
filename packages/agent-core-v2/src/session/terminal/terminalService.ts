@@ -1,12 +1,3 @@
-/**
- * `terminal` domain — Session-scoped terminal facade.
- *
- * Owns this session's terminal set and its per-terminal output buffers and
- * attached sinks; spawns PTYs through the App-scoped `IHostTerminalService`,
- * resolves the working directory through `workspaceContext`, and reads the
- * session id through `sessionContext` to tag frames. Bound at Session scope.
- */
-
 import { randomUUID } from 'node:crypto';
 
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
@@ -67,7 +58,6 @@ export interface ISessionTerminalService {
 export const ISessionTerminalService: ServiceIdentifier<ISessionTerminalService> =
   createDecorator<ISessionTerminalService>('sessionTerminalService');
 
-// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class SessionTerminalService extends Disposable implements ISessionTerminalService {
   declare readonly _serviceBrand: undefined;
 

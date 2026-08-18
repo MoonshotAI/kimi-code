@@ -1,15 +1,3 @@
-/**
- * Scenario: `/api/v2/sessions` domain-grouped session list query + batch actions.
- * Responsibilities: envelope wire shape (business outcome in `code`: 40001
- * invalid params / 40922 page_token mismatch), filters, sort orders, opaque
- * page tokens, page-number mode + total, git domain dedup/cache/degradation,
- * v2 auth error shape, the activity-status mapper, and the
- * `POST /sessions:archive` / `:restore` batch endpoints (per-item results,
- * live/cold split, cold path never materializes).
- * Wiring: real kap-server; the list tests stub `ISessionIndex` / `IGitService`
- * via DI seeds, the batch tests run real sessions in a temp home.
- * Run: `pnpm --filter @moonshot-ai/kap-server exec vitest run test/v2Sessions.test.ts`.
- */
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -62,7 +50,6 @@ interface PageWireV2 {
   next_page_token: string | null;
 }
 
-/** The shared REST envelope: business outcome in `code`, payload in `data`. */
 interface EnvelopeWire {
   code: number;
   msg: string;
@@ -74,8 +61,6 @@ interface EnvelopeWire {
 const WS_A = 'ws_aaa';
 const WS_B = 'ws_bbb';
 
-// updatedAt desc: s1(5000) s2(4000) s3(3000) s4(2000, archived)
-// createdAt desc: s1(3000) s3(2000) s2(1000) s4( 500)
 const SUMMARIES: SessionSummary[] = [
   {
     id: 's1',
@@ -119,7 +104,6 @@ const SUMMARIES: SessionSummary[] = [
   },
 ];
 
-/** Stub honoring the two query options the route pushes down to the index. */
 function stubSessionIndex(summaries: SessionSummary[]): ISessionIndex {
   return {
     _serviceBrand: undefined,
@@ -142,7 +126,6 @@ function stubSessionIndex(summaries: SessionSummary[]): ISessionIndex {
   };
 }
 
-/** Mutable git stub: `responses` maps cwd → status; missing cwd behaves like a non-git directory. */
 const gitState = {
   calls: [] as string[],
   responses: new Map<string, { branch: string; pullRequest: FsPullRequest | null }>(),
@@ -212,7 +195,6 @@ describe('server /api/v2/sessions', () => {
     return { status: res.status, body: (await res.json()) as EnvelopeWire };
   }
 
-  /** Fetch a page expected to succeed; returns the unwrapped `data` payload. */
   async function getData(query = ''): Promise<PageWireV2> {
     const { status, body } = await getPage(query);
     expect(status).toBe(200);
@@ -222,7 +204,6 @@ describe('server /api/v2/sessions', () => {
     return body.data;
   }
 
-  /** Fetch a page expected to fail with a business error code on HTTP 200. */
   async function getError(query = ''): Promise<EnvelopeWire> {
     const { status, body } = await getPage(query);
     expect(status).toBe(200);
@@ -246,12 +227,9 @@ describe('server /api/v2/sessions', () => {
       archived: false,
       archived_at: null,
     });
-    // Stubbed sessions are cold → always idle.
     expect(first.activity).toEqual({ status: 'idle' });
-    // git is opt-in only.
     expect('git' in first).toBe(false);
 
-    // title / last_prompt fall back to null when absent.
     const second = page.items[1] as SessionWireV2;
     expect(second.meta.title).toBeNull();
     const third = page.items[2] as SessionWireV2;
@@ -440,15 +418,12 @@ describe('server /api/v2/sessions', () => {
     const page1 = await getData('?page_size=2');
     const token = page1.next_page_token;
 
-    // page_size changed
     const drifted = await getError(`?page_size=3&page_token=${token}`);
     expect(drifted.code).toBe(40922);
 
-    // filter added mid-pagination
     const filtered = await getError(`?page_size=2&workspace.id=${WS_A}&page_token=${token}`);
     expect(filtered.code).toBe(40922);
 
-    // sort changed
     const resorted = await getError(
       `?page_size=2&sort=meta.updated_at_asc&page_token=${token}`,
     );
@@ -525,7 +500,6 @@ describe('server /api/v2/sessions', () => {
     const page = await getData('?include=git');
 
     const byId = new Map(page.items.map((item) => [item.id, item]));
-    // draft folds into open (the v2 enum has no draft).
     expect(byId.get('s1')?.git).toEqual({
       branch: 'main',
       pull_request: { number: 12, state: 'open', url: 'https://example.com/pr/12' },
@@ -533,16 +507,13 @@ describe('server /api/v2/sessions', () => {
     expect(byId.get('s2')?.git?.branch).toBe('main');
     expect(byId.get('s3')?.git).toEqual({ branch: 'fix/x', pull_request: null });
 
-    // s1 + s2 share one cwd → one git call; /repo/b another; archived s4 excluded.
     expect(gitState.calls.toSorted()).toEqual(['/repo/a', '/repo/b']);
 
-    // Second identical page hits the 60s cache — no new git calls.
     await getData('?include=git');
     expect(gitState.calls.toSorted()).toEqual(['/repo/a', '/repo/b']);
   });
 
   it('degrades non-git cwds to null fields without failing the request', async () => {
-    // '/repo/a' and '/repo/b' both missing from the stub → git unavailable.
     const page = await getData('?include=git&meta.archived=all');
     for (const item of page.items) {
       expect(item.git).toEqual({ branch: null, pull_request: null });
@@ -864,7 +835,6 @@ describe('mapActivityStatus', () => {
     expect(mapActivityStatus(coldIdle, 'completed')).toBe('idle');
     expect(mapActivityStatus(coldIdle, 'cancelled')).toBe('idle');
     expect(mapActivityStatus(coldIdle)).toBe('idle');
-    // A live session never reads the persisted value.
     expect(mapActivityStatus({ ...coldIdle, live: true }, 'failed')).toBe('idle');
     expect(
       mapActivityStatus({ busy: true, mainTurnActive: true, pendingInteraction: 'none', live: true }, 'failed'),

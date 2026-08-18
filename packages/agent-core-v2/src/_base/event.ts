@@ -1,14 +1,3 @@
-/**
- * `event` domain — `Event` / `Emitter` primitives, the async
- * `AsyncEmitter` / `IWaitUntil` participation primitive (for interceptable
- * `onWill` events whose listeners register work via `waitUntil`), the
- * `handleVetos` helper (for `onBefore*` veto events whose listeners answer
- * with `veto(value, id)`), and event combinators (`once` / `map` / `filter`
- * / `any`). `Emitter` accepts an optional debug name that its
- * `EventSubscription` carries as an `on:<name>` ledger label, so event
- * subscriptions stay identifiable in unit-book introspection.
- */
-
 import { onUnexpectedError, safelyCallListener } from './errors/unexpectedError';
 import {
   Disposable,
@@ -207,7 +196,6 @@ export function handleVetos(
   return Promise.allSettled(promises).then(() => lazyValue);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace Event {
   export const None: Event<unknown> = () => Disposable.None;
 

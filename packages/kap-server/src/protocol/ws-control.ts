@@ -1,8 +1,3 @@
-/**
- *   Event:   { type, seq, session_id?, timestamp, payload }
- *   Control: { type, id?, payload }
- *   Ack:     { type: 'ack', id, code, msg, payload }
- */
 import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
@@ -43,14 +38,6 @@ export const wsEventEnvelopeSchema = <T extends z.ZodTypeAny>(payload: T) =>
     seq: z.number().int().nonnegative(),
     epoch: z.string().optional(),
     volatile: z.boolean().optional(),
-    /**
-     * For volatile text-delta frames (`assistant.delta` / `thinking.delta`):
-     * the cumulative character offset of this delta within the in-flight
-     * turn's accumulated stream. Clients align against
-     * `snapshot.in_flight_turn.*_text.length` — `offset < local length` is a
-     * duplicate (skip), `offset > local length` means deltas were missed
-     * (re-snapshot).
-     */
     offset: z.number().int().nonnegative().optional(),
     session_id: z.string().optional(),
     timestamp: isoDateTimeSchema,
@@ -76,12 +63,6 @@ export const wsAckEnvelopeSchema = <T extends z.ZodTypeAny>(payload: T) =>
 export const serverHelloPayloadSchema = z.object({
   ws_connection_id: z.string(),
   protocol_version: z.number().int().positive(),
-  /**
-   * Server heartbeat interval. kap-server sends an application-level `ping`
-   * at this cadence and closes the connection after two silent cycles; older
-   * servers omit the field and send no heartbeat, so clients must treat it as
-   * advisory and not require it.
-   */
   heartbeat_ms: z.number().int().positive().optional(),
   max_event_buffer_size: z.number().int().positive(),
   capabilities: z.object({
@@ -119,11 +100,8 @@ export type AgentFilter = z.infer<typeof agentFilterSchema>;
  */
 export const clientHelloPayloadSchema = z.object({
   client_id: z.string(),
-  /** @deprecated Legacy inline subscriptions — use `subscribe` instead. */
   subscriptions: z.array(z.string()).optional(),
-  /** @deprecated Legacy inline replay cursors — use `subscribe` instead. */
   cursors: cursorsBySessionSchema.optional(),
-  /** @deprecated Legacy inline agent allowlist — use `subscribe` instead. */
   agent_filter: agentFilterSchema.optional(),
 });
 
@@ -138,7 +116,6 @@ export type ClientHelloMessage = z.infer<typeof clientHelloMessageSchema>;
 export const clientHelloAckPayloadSchema = z.object({
   accepted_subscriptions: z.array(z.string()),
   resync_required: z.array(z.string()),
-  /** Server-side current cursor per accepted session ({seq, epoch}). */
   cursors: cursorsBySessionSchema.optional(),
 });
 
@@ -208,7 +185,6 @@ export const subscribeAckPayloadSchema = z.object({
   accepted: z.array(z.string()),
   not_found: z.array(z.string()),
   resync_required: z.array(z.string()),
-  /** Server-side current cursor per accepted session ({seq, epoch}). */
   cursors: cursorsBySessionSchema.optional(),
 });
 
@@ -455,7 +431,6 @@ export const resyncRequiredPayloadSchema = z.object({
   session_id: z.string(),
   reason: z.enum(['buffer_overflow', 'session_recreated', 'epoch_changed']),
   current_seq: z.number().int().nonnegative(),
-  /** Current journal epoch — the client should adopt it after resyncing. */
   epoch: z.string().min(1).optional(),
 });
 

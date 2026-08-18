@@ -1,19 +1,3 @@
-/**
- * `sessionSkillCatalog` domain — `ISessionSkillCatalog` sink
- * implementation.
- *
- * The Session-scope business view over the workspace's merged skill catalog:
- * the data arrives through the seeded `ISessionSkillCatalogData` read view —
- * this service never scans the filesystem itself. It re-folds the data
- * snapshot on every seeded change
- * event (forwarding the source id) and merges session-local ad-hoc
- * contributions (`ISkillCatalogSink`) on top by priority. `reload()` no
- * longer re-scans: it re-folds the current seed and re-fires `catalog`.
- * The plain-data state (`contributions`, `merged`) is registered into
- * `sessionState` (`ISessionStateService`) and read/written through it.
- * Bound at Session scope.
- */
-
 import { Service } from '#/_base/di/service';
 import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope } from '#/app/scopes';

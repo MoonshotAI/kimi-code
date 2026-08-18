@@ -1,39 +1,3 @@
-/**
- * Generates `docs/state-manifest.d.ts` — the single place to see every state
- * key registered into the four scoped state services (App-scope
- * `IAppStateService`, Workspace-scope `IWorkspaceStateService`, Session-scope
- * `ISessionStateService`, Agent-scope `IAgentStateService`).
- *
- * Pure static pass (state keys are registered inside DI scope constructors, so
- * there is no process-level registry to drain the way `gen-wire-manifest`
- * does):
- *   1. A ts-morph scan of `src/{app,workspace,session,agent,features}/**`
- *      collects every top-level `defineState('name', ...)` key constant.
- *   2. Every `.register(key)` call site resolves its argument back to a key
- *      constant (following imports); the key joins the scope of the
- *      registering file (`src/app/**` → App, `src/workspace/**` → Workspace,
- *      `src/session/**` → Session, `src/agent/**` → Agent). Files under
- *      `src/features/**` register into whichever scope their services are
- *      materialized in, so the scope is resolved from the register-call
- *      receiver's type (`IAgentStateService` → Agent, …).
- *      A key that is defined but never registered is excluded.
- *
- * The output is a self-contained `.d.ts`: each key's value type is the
- * compile-time `StateKey<T>` parameter, expanded fully inline through the type
- * checker — no imports and no helper declarations. Every named type is marked
- * at its expansion site with an inline `TypeName — source/file.ts` comment;
- * recursion stops with a `TypeName — recursive` marker on an `unknown`. Generic
- * instantiations are expanded structurally and classes render as their public
- * instance shape; only lib globals (`Map`/`Set`/…) and a few noted external
- * ambient types keep their names.
- *
- * Usage:
- *   pnpm --filter @moonshot-ai/agent-core-v2 gen:state-manifest          # write the file
- *   pnpm --filter @moonshot-ai/agent-core-v2 gen:state-manifest --check  # freshness check (CI-style)
- *
- * Freshness is also enforced by `test/state/stateManifest.test.ts`.
- */
-
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -59,7 +23,6 @@ const REPO_ROOT = join(PKG, '..', '..');
 const SRC = join(PKG, 'src');
 export const MANIFEST_PATH = join(PKG, 'docs', 'state-manifest.d.ts');
 
-/** src first-level directory → manifest section. */
 const SCOPES = [
   {
     dir: 'app',
@@ -92,11 +55,9 @@ type ScopeDir = (typeof SCOPES)[number]['dir'];
 interface KeyDef {
   readonly constName: string;
   readonly keyName: string;
-  /** Absolute path of the file defining the key constant. */
   readonly file: string;
   readonly exported: boolean;
   readonly declaration: VariableDeclaration;
-  /** Present when the key chains `.replayable(...)` — the key is materialized into the Agent-scope state service. */
   readonly replayable?: {
     readonly durable: boolean;
     readonly undoable: boolean;
@@ -111,7 +72,6 @@ interface Registration {
 
 interface StateManifestModel {
   readonly registrations: readonly Registration[];
-  /** Keys defined under the scope dirs but never registered (dead candidates). */
   readonly unregistered: readonly KeyDef[];
 }
 
@@ -124,7 +84,6 @@ function isFeaturesFile(file: string): boolean {
   return relative(SRC, file).split(/[\\/]/)[0] === 'features';
 }
 
-/** Feature files register into the scope of their materialized services — resolve it from the register-call receiver's state-service type. */
 const FEATURES_RECEIVER_SCOPE: Readonly<Record<string, ScopeDir>> = {
   IAppStateService: 'app',
   IWorkspaceStateService: 'workspace',
@@ -132,7 +91,6 @@ const FEATURES_RECEIVER_SCOPE: Readonly<Record<string, ScopeDir>> = {
   IAgentStateService: 'agent',
 };
 
-/** Resolve the scope from the contributeState-call receiver's state-service type. */
 function receiverScope(
   expression: PropertyAccessExpression,
   checker: TypeChecker,
@@ -157,36 +115,23 @@ function featuresRegisterScope(
   return scope;
 }
 
-/** Package-root-relative posix path (used in index/comment columns). */
 function srcRelative(file: string): string {
   return relative(PKG, file).split('\\').join('/');
 }
 
-/** Repo-root-relative posix path (used in type-name comments). */
 function repoRelative(file: string): string {
   return relative(REPO_ROOT, file).split('\\').join('/');
 }
 
-/** Quote a property key only when it is not a plain identifier. */
 function tsFieldKey(key: string): string {
   return /^[$A-Z_a-z][$\w]*$/.test(key) ? key : JSON.stringify(key);
 }
 
-/**
- * The checker names a `unique symbol` key `__@<declName>@<globalSymbolId>` —
- * the numeric id is a compilation-global counter that shifts with unrelated
- * edits, so the manifest renders the stable `__@<declName>` form instead.
- */
 function stableSymbolKey(key: string): string {
   const match = /^__@(.+)@\d+$/.exec(key);
   return match === null ? key : `__@${match[1]}`;
 }
 
-// ---------------------------------------------------------------------------
-// Static pass — key constants and their register call sites
-// ---------------------------------------------------------------------------
-
-/** Pass 1 — every top-level `defineState('name', ...)` constant under the scope dirs. */
 function collectKeyDefs(project: Project): Map<VariableDeclaration, KeyDef> {
   const defs = new Map<VariableDeclaration, KeyDef>();
   for (const sf of project.getSourceFiles()) {
@@ -212,11 +157,6 @@ function collectKeyDefs(project: Project): Map<VariableDeclaration, KeyDef> {
   return defs;
 }
 
-/**
- * Walk a `defineState('name', ...)` / `.replayable({...})` / `.undoable(...)` /
- * `.on(Event, fold)` call chain down to the `defineState` call; returns the key
- * name plus the replayable metadata when the chain promotes the key.
- */
 function parseDefineStateChain(
   initializer: CallExpression,
 ): { keyName: string; replayable?: KeyDef['replayable'] } | undefined {
@@ -260,7 +200,6 @@ function parseDefineStateChain(
   }
 }
 
-/** Resolve a `.register(...)` argument back to its `defineState` constant. */
 function resolveKeyDef(
   identifier: Identifier,
   defs: ReadonlyMap<VariableDeclaration, KeyDef>,
@@ -275,7 +214,6 @@ function resolveKeyDef(
   return undefined;
 }
 
-/** Pass 2 — every `.register(key)` call site whose argument is a state key. */
 function collectRegistrations(
   project: Project,
   defs: ReadonlyMap<VariableDeclaration, KeyDef>,
@@ -331,36 +269,19 @@ function createProject(): Project {
   return project;
 }
 
-// ---------------------------------------------------------------------------
-// Type expansion — render every key's value type fully inline.
-//
-// Every named type declared in the repo is expanded at the use site and marked
-// with a `/* TypeName — source/file.ts */` comment; a recursion point stops
-// with a `/* TypeName — recursive (...) */ unknown` marker. Types from lib
-// (`Map`, `Set`, `Date`, …) or node_modules are ambient and keep their names
-// (type arguments are still rendered recursively). Generic instantiations and
-// anonymous shapes are expanded structurally from their apparent members, so
-// the checker always hands us substituted, concrete member types.
-// ---------------------------------------------------------------------------
-
 const NO_TRUNCATION = ts.TypeFormatFlags.NoTruncation;
 
 class TypeRenderer {
   private readonly checker: ts.TypeChecker;
-  /** Cycle guard for anonymous / generic-instantiation structural expansion. */
   private readonly expanding = new Set<ts.Type>();
-  /** Named types currently being expanded along this path (recursion guard). */
   private readonly expandingNamed: ts.Symbol[] = [];
-  /** Ambient names kept as-is whose declaration lives outside the TS lib. */
   readonly externals = new Set<string>();
-  /** Degradations worth reporting (cycle fallbacks). */
   readonly warnings = new Set<string>();
 
   constructor(private readonly project: Project) {
     this.checker = project.getTypeChecker().compilerObject;
   }
 
-  /** Render the value type `T` of a key's `StateKey<T>`. */
   renderKeyType(def: KeyDef): string {
     const valueType = def.declaration.getType().getTypeArguments()[0];
     if (valueType === undefined) {
@@ -371,8 +292,6 @@ class TypeRenderer {
     return this.renderType(valueType, def.declaration, 0);
   }
 
-  // -- core dispatch --------------------------------------------------------
-
   private renderType(
     type: MorphType,
     location: Node,
@@ -381,12 +300,10 @@ class TypeRenderer {
   ): string {
     if (depth > 40) return this.fallback(type, location, 'depth cap');
 
-    // A single enum-literal type (e.g. `FaultKind.A`) — value + enum comment.
     if ((type.getFlags() & ts.TypeFlags.EnumLiteral) !== 0) {
       return this.renderEnumLiteral(type);
     }
 
-    // The boolean union (`false | true`) collapses to `boolean`.
     if (type.isUnion() && (type.getFlags() & ts.TypeFlags.Boolean) !== 0) return 'boolean';
 
     if (type.isUnion()) {
@@ -431,11 +348,6 @@ class TypeRenderer {
     return this.fallback(type, location, 'unhandled type kind');
   }
 
-  /**
-   * Render union members: a `false | true` pair anywhere collapses to
-   * `boolean`, `null`/`undefined` sort last, duplicates removed, and parens
-   * are only added when the union actually has multiple members.
-   */
   private renderUnionMembers(
     members: readonly MorphType[],
     location: Node,
@@ -488,10 +400,8 @@ class TypeRenderer {
     );
   }
 
-  /** typeToString is only safe on leaf types (never emits `import(...)`). */
   private leafText(type: MorphType): string {
     const text = this.checker.typeToString(type.compilerType, undefined, NO_TRUNCATION);
-    // Normalize double-quoted string literals to the repo's single-quote style.
     if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
       const value = JSON.parse(text) as string;
       return value.includes("'") ? JSON.stringify(value) : `'${value}'`;
@@ -509,9 +419,6 @@ class TypeRenderer {
     return text;
   }
 
-  // -- enums ----------------------------------------------------------------
-
-  /** The literal value of an enum-literal type, quoted TS-style. */
   private enumLiteralValue(type: MorphType): string {
     const value = (type.compilerType as ts.LiteralType).value;
     if (typeof value === 'string') {
@@ -521,7 +428,6 @@ class TypeRenderer {
     return this.leafText(type);
   }
 
-  /** The enum declaration backing an enum-literal type, if any. */
   private enumDeclOf(type: MorphType): Node | undefined {
     const memberDecl = type.getSymbol()?.getDeclarations()[0];
     if (memberDecl === undefined || !Node.isEnumMember(memberDecl)) return undefined;
@@ -540,7 +446,6 @@ class TypeRenderer {
     return text;
   }
 
-  /** Collapse a union covering every member of one enum: comment + values. */
   private tryRenderEnumUnion(type: MorphType): string | undefined {
     const members = type.getUnionTypes();
     if (members.length === 0) return undefined;
@@ -560,13 +465,6 @@ class TypeRenderer {
     return `/* ${sym.getName()} — ${repoRelative(enumDecl.getSourceFile().getFilePath())} */ ${values.join(' | ')}`;
   }
 
-  // -- named-type annotation --------------------------------------------------
-
-  /**
-   * Where do the symbol's declarations live: repo ('named' — expand inline
-   * with a name comment), lib/node_modules ('ambient' — keep the name), or
-   * mixed/anonymous ('inline' — expand without a comment).
-   */
   private classify(sym: MorphSymbol): 'named' | 'ambient' | 'inline' {
     const decls = sym.getDeclarations();
     if (decls.length === 0) return 'inline';
@@ -599,10 +497,6 @@ class TypeRenderer {
     }
   }
 
-  /**
-   * `Name — origin` comment prefixed to the expansion. A named type already
-   * on the expansion path stops with a recursion marker instead.
-   */
   private renderNamed(sym: MorphSymbol, expand: () => string): string {
     const decl = sym.getDeclarations()[0];
     const origin =
@@ -621,14 +515,6 @@ class TypeRenderer {
     }
   }
 
-  /**
-   * Render a type through the alias it was referenced with, when that alias is
-   * worth keeping: a repo-declared non-generic alias expands inline under its
-   * name comment; a lib or node_modules alias (`Readonly`, `Record`,
-   * `Partial`, …) is referenced as `Name<args>` with recursive arguments.
-   * `skipSymbol` suppresses the alias's own annotation while its right-hand
-   * side is being rendered (the alias type still carries itself as aliasSymbol).
-   */
   private tryRenderAlias(
     type: MorphType,
     location: Node,
@@ -655,8 +541,6 @@ class TypeRenderer {
     return undefined;
   }
 
-  // -- object types -----------------------------------------------------------
-
   private renderObjectType(
     type: MorphType,
     location: Node,
@@ -667,8 +551,6 @@ class TypeRenderer {
     if (alias !== undefined) return alias;
     const sym = type.getSymbol();
     const typeArgs = type.getTypeArguments();
-    // `__type`/`__object` are checker names for anonymous shapes — they are
-    // never real symbols, so skip the named-type paths and expand structurally.
     const anonymous = sym === undefined || /^__(type|object)$/.test(sym.getName());
     if (!anonymous && sym.compilerSymbol !== skipSymbol) {
       const kind = this.classify(sym);
@@ -686,9 +568,7 @@ class TypeRenderer {
     return this.renderStructural(type, location, depth);
   }
 
-  /** Structural rendering from the type's apparent members (braced or arrow). */
   private renderStructural(type: MorphType, location: Node, depth: number): string {
-    // Cycle guard for self-referential instantiations expanded inline.
     if (this.expanding.has(type.compilerType)) {
       return this.fallback(type, location, 'cycle expanding');
     }
@@ -719,7 +599,6 @@ class TypeRenderer {
     }
   }
 
-  /** Member lines of an object type, each indented by two spaces. */
   private renderObjectBody(
     type: MorphType,
     location: Node,
@@ -736,7 +615,6 @@ class TypeRenderer {
       const at = decl ?? location;
       const propType = prop.getTypeAtLocation(at);
       const optional = (prop.getFlags() & ts.SymbolFlags.Optional) !== 0;
-      // An optional prop's `| undefined` is redundant with the `?` — drop it.
       const rendered =
         optional && propType.isUnion()
           ? this.renderUnionMembers(
@@ -818,10 +696,6 @@ class TypeRenderer {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Manifest rendering
-// ---------------------------------------------------------------------------
-
 function renderManifest(
   model: StateManifestModel,
   project: Project,
@@ -837,7 +711,6 @@ function renderManifest(
     );
   }
 
-  // Snapshot interfaces — rendering these fills the external-name registry.
   const sections: string[] = [];
   for (const scope of SCOPES) {
     const regs = byScope.get(scope.dir) ?? [];
@@ -968,10 +841,6 @@ function buildAll(): BuildResult {
 export function buildStateManifest(): string {
   return buildAll().manifest;
 }
-
-// ---------------------------------------------------------------------------
-// CLI
-// ---------------------------------------------------------------------------
 
 function main(): void {
   const check = process.argv.includes('--check');

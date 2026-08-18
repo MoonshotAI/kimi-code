@@ -128,7 +128,7 @@ registerScopedService(
 Conventions:
 
 - **Name** the domain `<domain>Legacy` and the interface with the scope prefix, `I<Scope><Domain>LegacyService` (e.g. `prompt` / `IAgentPromptService`), per service-authoring.md.
-- **Header comment** must say it is an `edge adapter` and name both the v1 contract it implements and the native v2 Service it leaves untouched (see `prompt.ts`).
+- **Role is carried by the name** — `<domain>Legacy` marks it as an `edge adapter`; the v1 contract it implements and the native v2 Service it leaves untouched stay evident from its delegation targets (see `prompt.ts`).
 - **Scope** = the lifetime of the *legacy* state it holds (the `prompt` queue is per-agent → `LifecycleScope.Agent`). Apply [orient.md](orient.md) / [design.md](design.md) normally — a LegacyService is not exempt from scope rules.
 - **Delegate, do not duplicate** business logic. The LegacyService translates the v1 contract into native-Service calls and translates results back; the real work stays in the native Service.
 - **Contract types come from the v1 wire schema homes** (the owning v2 domain contract or `kap-server/src/protocol`), so the interface cannot drift from the wire shape.
@@ -236,7 +236,7 @@ Before submitting a server-align change:
 - [ ] Request and response schemas come from their owning home (the `agent-core-v2` domain contract or `packages/kap-server/src/protocol`); no inline re-declaration in server-v2.
 - [ ] Existing schema fields are unchanged in name, type, and semantics; only optional fields added (if any).
 - [ ] Native v2 Service left clean; v1-only behavior isolated in a `<domain>Legacy` / `I<Domain>LegacyService` edge adapter when the semantics diverge.
-- [ ] LegacyService registered with the correct `LifecycleScope` and a header comment naming it an edge adapter + the native Service it preserves.
+- [ ] LegacyService registered with the correct `LifecycleScope` and named as the `<domain>Legacy` edge adapter preserving the native Service.
 - [ ] Domain error codes registered in `agent-core-v2`; wire codes registered in `packages/kap-server/src/protocol`; route maps them in `sendMappedError`, matching v1's status codes and idempotent envelopes.
 - [ ] Route resolves the scope from the URL by `accessor.get(IX)`; no cached scope; finishes before disposal.
 - [ ] Tests assert the wire envelope + protocol shape; wire-shape guards added/updated where the route mirrors v1.

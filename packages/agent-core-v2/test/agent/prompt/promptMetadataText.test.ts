@@ -1,18 +1,3 @@
-/**
- * promptMetadataText — the session title / lastPrompt text derived from
- * prompt content parts.
- *
- * Tests pin:
- *   - media parts render as `[image]` / `[video]` / `[audio]` placeholders
- *   - an inline image-compression caption (harness metadata placed next to
- *     the image by prompt ingestion) never leaks into titles/lastPrompt,
- *     whether it is a standalone text part or merged into the user's text
- *   - a standalone `<media path>` tag (machine markup) never leaks a
- *     materialization path into titles/lastPrompt
- *   - prompt metadata updates retain the latest sanitized prompt and derive
- *     the easy title
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
@@ -62,9 +47,6 @@ describe('promptMetadataTextFromContentParts', () => {
   });
 
   it('keeps an upload <image path> tag out of the metadata text', () => {
-    // A standalone media path tag is machine markup: the materialization path
-    // must never leak into titles / lastPrompt, whether or not a daemon-ref
-    // part rides next to it.
     const text = promptMetadataTextFromContentParts([
       { type: 'text', text: 'what is this?' },
       { type: 'text', text: '<image path="/Users/alice/cache/f_123.png"></image>' },

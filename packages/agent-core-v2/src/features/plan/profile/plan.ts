@@ -1,12 +1,3 @@
-/**
- * `plan` domain — builtin `plan` profile contribution.
- *
- * Registers the read-only planning task-agent profile. The profile is
- * self-contained: its structured `renderSystemPrompt` merges the shared base
- * template with the planning role text at call time, so a child agent no
- * longer inherits the parent's prompt through a runtime overlay.
- */
-
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
 import {
   renderSystemPromptResult,

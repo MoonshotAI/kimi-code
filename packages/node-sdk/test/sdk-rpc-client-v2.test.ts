@@ -34,9 +34,12 @@ import { foldAgentWireReplay } from '#/v2/resume-replay';
 import {
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
+  getLiveSessionById,
   HostProcessError,
+  IAgentLifecycleService,
   IHostRequestHeaders,
   ISessionManager,
+  ISessionTodoService,
   OsProcessErrors,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -868,6 +871,41 @@ key = "${titleOAuthRef.key}"
       });
     } finally {
       await harness.close();
+    }
+  });
+
+  it('serves getTodos from the live session todo state', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_todos', workDir });
+      expect(await client.getTodos({ sessionId: 'ses_todos' })).toEqual([]);
+
+      const handle = getLiveSessionById(client.engineAccessor, 'ses_todos');
+      expect(handle).toBeDefined();
+      await handle!.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+      handle!.accessor.get(ISessionTodoService).setTodos([
+        { title: 'write tests', status: 'in_progress' },
+        { title: 'ship it', status: 'pending' },
+      ]);
+
+      expect(await client.getTodos({ sessionId: 'ses_todos' })).toEqual([
+        { title: 'write tests', status: 'in_progress' },
+        { title: 'ship it', status: 'pending' },
+      ]);
+
+      const served = await client.getTodos({ sessionId: 'ses_todos' });
+      const stored = handle!.accessor.get(ISessionTodoService).getTodos();
+      expect(served).not.toBe(stored);
+      expect(served[0]).not.toBe(stored[0]);
+      await expect(client.getTodos({ sessionId: 'ses_missing' })).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_NOT_FOUND,
+      });
+    } finally {
+      await client.close();
     }
   });
 });

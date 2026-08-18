@@ -1,34 +1,3 @@
-/**
- * `state` domain — `IEventDispatcher` implementation.
- *
- * `EventDispatcherService` is the unified event pipeline for one Agent: the
- * current value of every replayable state key lives in the Agent state
- * service (`IAgentStateService`), while this service owns the per-key patch
- * history and checkpoint markers, the dispatch pipeline, and silent restore.
- * One dispatch prepares every subscribed fold through immer
- * `produceWithPatches` against the current registry value and writes back
- * all-or-nothing; a durable event then serializes to its journal record
- * (blob dehydration queueing preserved through the wire service) and an
- * `observable` event publishes to the agent bus; events emitted from folds
- * or re-dispatched from subscribers queue and drain with `MAX_DRAIN` cycle
- * protection. The whole pipeline executes synchronously — the `Promise`
- * return only surfaces failures to `await`ing callers.
- *
- * Replay (`restore`) reads migrated records through the wire journal adapter,
- * resolves each to its durable `Event2` class from the folded registry,
- * re-runs folds silently (no journal append, no publish, `emit` dropped),
- * then rehydrates blob state and fires `onDidRestore`. Unknown or malformed
- * record types skip-and-count through `onUnexpectedError`, so a journal stays
- * readable after the unit that contributed its vocabulary is withdrawn.
- *
- * Patch history retention: keys with the undo checkpoint protocol keep every
- * entry since the oldest live checkpoint marker (clearing checkpoints
- * truncates history); other keys keep a bounded tail. Bound at Agent scope
- * and constructed when the scope is created.
- */
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 import { applyPatches, produceWithPatches } from 'immer';
 
 import { BugIndicatingError } from '#/_base/errors/errors';

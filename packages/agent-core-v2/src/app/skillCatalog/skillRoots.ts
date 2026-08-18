@@ -1,13 +1,3 @@
-/**
- * `skillCatalog` domain — skill-root resolution primitives.
- *
- * Resolves the ordered `SkillRoot` list a discovery backend should scan for the
- * user (home) and project (workspace) skill locations. Brand directories are
- * preferred over generic ones (`.kimi-code/skills` before `.agents/skills`),
- * and the project root is found by walking up to `.git`. Pure path/fs probes;
- * no scoped state.
- */
-
 import { promises as fs } from 'node:fs';
 import path from 'pathe';
 

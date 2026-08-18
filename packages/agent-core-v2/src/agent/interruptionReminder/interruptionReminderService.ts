@@ -1,11 +1,3 @@
-/**
- * `interruptionReminder` domain — `IAgentInterruptionReminderService` implementation.
- *
- * Observes completed turns through `eventBus`, appends user-cancellation facts
- * through `systemReminder` at the event point, and reads `contextMemory` to
- * collapse retry-only duplicate notices. Bound at Agent scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';

@@ -1,10 +1,3 @@
-/**
- * AskUserQuestionTool unit tests — ported from v1
- * `packages/agent-core/test/tools/ask-user.test.ts` and adapted to the v2 DI
- * constructor (`ISessionQuestionService` / `ITelemetryService` stubs instead
- * of a fake `Agent`).
- */
-
 import { describe, expect, it, vi } from 'vitest';
 
 import { CoreErrors } from '#/_base/errors/codes';

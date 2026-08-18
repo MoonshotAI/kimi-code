@@ -1,16 +1,3 @@
-/**
- * `agentsMdReminder` domain — `IAgentAgentsMdReminderService`
- * implementation.
- *
- * Discovers AGENTS.md files reached through `toolExecutor` and the tool path
- * policy, parsing Bash targets through `bashParser` and probing through the os
- * services. Restores prompt provenance through the `profile` state on the
- * event dispatcher, resolves
- * roots through `sessionContext` and `bootstrap`, stores discovery state in
- * `agentState`, appends through `systemReminder`, and reports through
- * `telemetry`. Bound at Agent scope.
- */
-
 import { basename, dirname, isAbsolute, join, normalize } from 'pathe';
 
 import { Disposable } from '#/_base/di/lifecycle';

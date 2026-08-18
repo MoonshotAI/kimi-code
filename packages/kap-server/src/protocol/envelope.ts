@@ -1,9 +1,3 @@
-/**
- * The wire envelope `{ code, msg, data, request_id }` every REST response is
- * wrapped in, plus the envelope JSON-schema factory used for OpenAPI
- * generation. Owned by the server: it is a pure transport concern.
- */
-
 import { z } from 'zod';
 
 export const envelopeSchema = <T extends z.ZodTypeAny>(data: T) =>

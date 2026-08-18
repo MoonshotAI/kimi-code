@@ -1,18 +1,4 @@
-/**
- * `contextMemory` domain — the durable `context.*` Event2 classes and the
- * observable `context.spliced` fact.
- *
- * The five durable classes are the wire-protocol 1.4 record vocabulary for
- * the per-agent conversation history; their `serialize()` output is the
- * on-disk record (flat payload, epoch-ms `time`), so v1- and v2-written
- * sessions reduce identically and replay stays silent. `ContextSpliced` is
- * the live-only observable counterpart broadcast after every splice-shaped
- * mutation (`clear` / `applyCompaction` / `undo` / verified cross-model
- * trailing removal). Scope-agnostic.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { z } from 'zod';
 
 import { Event2 } from '#/app/event/event2';

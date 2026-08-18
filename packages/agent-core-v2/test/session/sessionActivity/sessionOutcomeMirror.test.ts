@@ -129,7 +129,6 @@ describe('SessionOutcomeMirror (Session scope)', () => {
       stubPair(ISessionMetadata, metadata as unknown as ISessionMetadata),
     ]);
     lifecycle = session.accessor.get(IAgentLifecycleService) as unknown as FakeAgentLifecycle;
-    // Construct the scope-created recorder.
     session.accessor.get(ISessionOutcomeMirror);
   });
 
@@ -188,8 +187,6 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     await tick();
     ended('failed');
     expect(writes).toEqual(['failed']);
-    // A second session scope (same metadata stub) adopts the persisted value
-    // and skips the duplicate write.
     const second = host.child(LifecycleScope.Session, 'session-b', [
       stubPair(ISessionMetadata, {
         read: async () => ({ lastTurnReason: 'failed' }) as SessionMeta,
@@ -214,8 +211,6 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     started();
     ended('completed');
     activityBackfill(1, 'completed');
-    // Nothing was persisted before, so the turn.started clear is a deduped
-    // no-op; the single write is the bumped live outcome.
     expect(writes).toEqual(['completed']);
     expect(touches).toEqual([true]);
   });
@@ -223,11 +218,8 @@ describe('SessionOutcomeMirror (Session scope)', () => {
   it('backfills a restored outcome that never got a turn.ended fact', async () => {
     lifecycle.addMain();
     await tick();
-    // A cold resume restores the outcome through the wire seed and publishes
-    // it as agent.activity.updated — no turn.ended ever fires.
     activityBackfill(3, 'failed');
     expect(writes).toEqual(['failed']);
-    // The same outcome arriving live afterwards stays deduped.
     ended('failed');
     expect(writes).toEqual(['failed']);
   });

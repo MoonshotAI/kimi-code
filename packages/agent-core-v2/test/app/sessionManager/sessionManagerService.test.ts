@@ -51,9 +51,6 @@ function controller(sessionId = 'session-1'): {
   return { service, handle };
 }
 
-/** Deterministic "the queued contender had its chance": every chain hop is
- *  microtask-scheduled, so draining microtasks proves a blocked operation
- *  has NOT run — a wrongly unchained one would start within a few ticks. */
 async function drainMicrotasks(ticks = 50): Promise<void> {
   for (let i = 0; i < ticks; i++) await Promise.resolve();
 }

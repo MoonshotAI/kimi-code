@@ -41,8 +41,6 @@ describe('server-v2 /api/v1 fs folder picker', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-'));
-    // Keep the instance registry OUTSIDE the browsed homeDir so the folder
-    // picker only sees the test fixtures.
     instancesDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-instances-'));
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -103,10 +101,6 @@ describe('server-v2 /api/v1 fs folder picker', () => {
   });
 
   it('does not serve the double-colon URL (v1 parity: only /fs:browse is valid)', async () => {
-    // v1 registers the source path `/fs::browse`, but find-my-way serves it on
-    // the wire as single-colon `/fs:browse`; the double-colon form 404s. This
-    // guards against reintroducing a `/fs:action` parametric dispatcher that
-    // would accept the non-v1 double-colon URL.
     const res = await fetch(`${base}/api/v1/fs::browse`, {
       headers: authHeaders(server as RunningServer),
     } as never);
@@ -328,9 +322,6 @@ describe('server-v2 /api/v1 fs:content', () => {
     path: string,
     headers: Record<string, string> = {},
   ): Promise<Response> {
-    // `connection: close` keeps every fetch on its own short-lived socket so
-    // undici never pools an idle keep-alive connection that would hold
-    // `server.close()` open in afterEach.
     return fetch(contentUrl(path), {
       headers: { connection: 'close', ...authHeaders(server as RunningServer), ...headers },
     } as never);
@@ -431,7 +422,6 @@ describe('server-v2 /api/v1 fs:content', () => {
     expect(body.code).toBe(40906);
   });
 
-  // /dev/null is a character device, not a regular file.
   it.skipIf(process.platform === 'win32')('rejects non-regular files (40001)', async () => {
     const res = await getContent('/dev/null');
     const body = (await res.json()) as Envelope<null>;

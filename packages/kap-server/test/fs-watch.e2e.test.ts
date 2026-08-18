@@ -1,20 +1,3 @@
-/**
- * `event.fs.changed` end-to-end for kap-server (server-v2).
- *
- * Mirrors `packages/server/test/fs-watch.e2e.test.ts` (v1) so the wire contract
- * stays byte-compatible:
- *   1. subscribe `src` → create file → receive `event.fs.changed`
- *   2. burst > 500 changes / 200ms → `truncated` event
- *   3. two clients, disjoint paths → no cross-delivery
- *   4. > 100 paths per connection → `42902 fs.watch_limit_exceeded`
- *   5. idempotent add of the same path
- *   6. `watch_fs_remove` updates `watched_paths`; `..` → `41304`
- *
- * Boots `startServer` in-process (loopback, auth disabled) against a tmp
- * workspace, drives `/api/v1/ws` clients with the raw `ws` library, and mutates
- * the filesystem to trigger chokidar events.
- */
-
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -48,7 +31,6 @@ afterEach(async () => {
   try {
     await server?.close();
   } catch {
-    // ignore
   }
   server = undefined;
   vi.unstubAllEnvs();
@@ -175,7 +157,6 @@ async function helloAndSubscribe(conn: Conn, clientId: string, sessionId: string
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-/** Time given to chokidar to register newly-watched paths before mutating. */
 const WATCH_SETTLE_MS = 150;
 
 describe('WS fs watch (kap-server)', () => {
@@ -255,11 +236,6 @@ describe('WS fs watch (kap-server)', () => {
     'burst > 500 changes inside 200ms window → truncated:true',
     { timeout: 15000 },
     async () => {
-      // Chokidar cannot reliably deliver >500 events inside one 200ms window
-      // under CPU contention (parallel test files), which flaked this test.
-      // Shrink the window capacity instead: 600 files over 500ms windows
-      // guarantees a >100-event window even at ~240 events/s delivery, while
-      // the truncation path under test is identical.
       vi.stubEnv('KIMI_CODE_FS_WATCH_DEBOUNCE_MS', '500');
       vi.stubEnv('KIMI_CODE_FS_WATCH_MAX_CHANGES_PER_WINDOW', '100');
       const r = await boot();

@@ -1,14 +1,4 @@
-/**
- * `mcp` domain — the transient observable `mcp.server.status` /
- * `tool.list.updated` `Event2` classes published through the event dispatcher
- * as workspace MCP servers change state, plus the shared agent-wide `error`
- * observable (`AgentErrorEvent`, a `KimiErrorPayload` on the bus) whose type
- * string is contract-fixed for downstream consumers; this domain only owns
- * the declaration, any agent service may dispatch it.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
 import { Event2 } from '#/app/event/event2';
 

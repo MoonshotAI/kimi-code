@@ -1,16 +1,3 @@
-/**
- * `wire` domain — `IWireService` implementation.
- *
- * `WireService` is the journal adapter for one Agent's wire aggregate: it
- * owns the `wire.jsonl` append-log handle, creation-time sealing, the
- * migration/read protocol (including atomic healing rewrites), and the
- * ordered append path with blob dehydration. It holds no state and runs no
- * folds — state ownership, event dispatch, and restore orchestration live in
- * the state domain's event dispatcher, which consumes `readJournal` and
- * `appendRecord`. It is bound at Agent scope because the aggregate identity
- * is the Agent identity.
- */
-
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';

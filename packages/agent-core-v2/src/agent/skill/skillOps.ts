@@ -1,19 +1,4 @@
-/**
- * `skill` domain — the `skillKey` placeholder state, the transient
- * `skill.activate` event (`SkillActivate`), and the observable
- * `skill.activated` fact (`SkillActivated`).
- *
- * Skill carries no state: `skillKey` is a `null` placeholder whose fold
- * exists to emit `SkillActivated` live (dropped on replay, so neither the
- * event nor telemetry fires on resume, matching the former `restoring`
- * guard). `skill.activate` is live-only because it is not a v1 record type.
- * The `randomUUID()` activation id is generated at the dispatch call site and
- * carried inside `origin`, keeping the fold free of non-determinism.
- * Scope-agnostic.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { z } from 'zod';
 
 import type { SkillActivationOrigin, SkillSource } from '#/agent/contextMemory/types';

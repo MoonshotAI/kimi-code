@@ -1,7 +1,3 @@
-/**
- * `telemetry` tests — `AgentTelemetryContextService` unit tests.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { AgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContextService';

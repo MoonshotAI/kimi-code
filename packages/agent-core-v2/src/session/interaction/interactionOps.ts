@@ -1,27 +1,4 @@
-/**
- * `interaction` domain — the `interactionKey` state and the durable
- * `interaction.request` (`InteractionRequestEvent`) / `interaction.resolved`
- * (`InteractionResolvedEvent`) events that journal the session's
- * human-in-the-loop lifecycle onto the owning agent's wire.
- *
- * The state is the replayable map of `interactionId -> InteractionRecord`
- * (initial empty): `interaction.request` opens an entry, `interaction.resolved`
- * folds the terminal response into it (a resolution without a known request is
- * a no-op so the state's reference-equality stays quiet). The records exist so
- * a cold transcript fold can rebuild interaction entities (kind, the
- * `toolCallId` timeline anchor lifted from the request payload, the raw
- * request, and the terminal response) straight from the journal; the kernel
- * itself does NOT restore pending promises from them — a request left without
- * a resolution means the process died with it pending and folds as cancelled
- * downstream. The durable classes are the wire-protocol record vocabulary:
- * their `serialize()` output is the on-disk record (flat payload, epoch-ms
- * `time`), byte-compatible with the retired op encoding. These events are
- * dispatched to the ORIGIN agent's dispatcher (`origin.agentId ?? 'main'`), so
- * each record lives in the journal of the agent the interaction belongs to.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { z } from 'zod';
 
 import { Event2 } from '#/app/event/event2';

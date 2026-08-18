@@ -1,15 +1,3 @@
-/**
- * Scenario: full compaction refreshes, retries, and resumes agent context under
- * context-window pressure.
- *
- * Responsibilities: assert manual and automatic compaction outcomes, overflow
- * recovery, resume compatibility, dynamic tool context handling, and emitted
- * wire/telemetry effects. Wiring: testAgent harness with fake providers,
- * filesystem sandboxes, real compaction services, and stubs at external model /
- * telemetry boundaries. Run:
- * ../../node_modules/.bin/vitest run test/fullCompaction/full.test.ts
- */
-
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
@@ -1473,9 +1461,6 @@ describe('FullCompaction', () => {
   });
 
   it('auto-compacts very large context in one full-history round when the summarizer accepts it', async () => {
-    // The window must stay above the harness's fixed request overhead
-    // (system prompt + tools, ~17k): the post-compaction size is reported on
-    // the full-request basis, so a smaller window could never be satisfied.
     const maxContextTokens = 22_000;
     const ctx = testAgent();
     ctx.configure({
@@ -1653,10 +1638,6 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         source: 'auto',
         tokens_before: 3_475,
-        // 3429 estimated request-overhead tokens (system prompt + tools) +
-        // 9 measured summary output tokens (scripted compaction exchange) +
-        // 21 estimated tokens for the kept user messages — the summary
-        // component is the REAL provider count, not a text estimate.
         tokens_after: 3_459,
         compacted_count: 7,
         retry_count: 0,
@@ -2201,10 +2182,6 @@ describe('FullCompaction', () => {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-measured-overflow');
       }
       if (callCount === 2) {
-        // The compaction request itself overflows once; the backoff must
-        // shrink the history for the retry. A strategy-gated (all-zero)
-        // estimator would retry the SAME messages until the attempt limit and
-        // fail the turn.
         compactionInputLengths.push(history.length);
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-measured-shrink');
       }
@@ -2920,7 +2897,6 @@ describe('FullCompaction', () => {
     `);
   });
 
-
   it('appends the todo list to the compaction summary', async () => {
     const todos = [
       { title: 'Fix the auth bug', status: 'in_progress' },
@@ -3345,8 +3321,6 @@ describe('goal reminder re-injection after full compaction', () => {
     await ctx.untilTurnEnd();
 
     expect(ctx.llmCalls.length).toBeGreaterThanOrEqual(2);
-    // The goal reminder now enters at the first step head (before the
-    // overflow triggers compaction), so the summarizer request sees it too.
     expect(goalReminderCount(ctx.llmCalls[0]!.history)).toBe(1);
     expect(goalReminderCount(ctx.llmCalls[1]!.history)).toBe(1);
   });
@@ -3367,8 +3341,6 @@ describe('goal reminder re-injection after full compaction', () => {
     await ctx.rpc.beginCompaction({});
     await completed;
 
-    // Re-injection is deferred to the next step head, so nothing is appended
-    // at compaction time and the token floor is exactly the compaction result.
     const reminderMessages = ctx.context
       .get()
       .filter(

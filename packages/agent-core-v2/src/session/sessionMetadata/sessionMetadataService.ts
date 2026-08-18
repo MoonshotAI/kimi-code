@@ -1,53 +1,3 @@
-/**
- * `sessionMetadata` domain — `ISessionMetadata` implementation.
- *
- * Persists the session metadata document (`state.json`) through the `storage`
- * access-pattern store (`IAtomicDocumentStore`), rooted at the `metaScope`
- * namespace from `sessionContext`. Loads the existing document on
- * construction (creating it on first run), and logs through `log`. The
- * plain-data state (`data`) is registered into `sessionState`
- * (`ISessionStateService`) and read/written through it. The
- * document always carries the `agents` / `custom` maps — seeded at creation,
- * backfilled and persisted on load for documents written before the seeding
- * existed (without touching `updatedAt`, so a format heal never reorders
- * session listings) — and `archived` always reads back as a boolean:
- * documents written before the flag existed (including v1-engine documents,
- * which never carry it) normalize to not-archived at load. `updatedAt` tracks content activity only: management
- * writes (rename via `setTitle`, archive/restore via `setArchived`, the
- * generated-title write-back) keep the persisted value through
- * `touchUpdatedAt: false`, an explicit `patch.updatedAt` always wins (fork
- * restores the source's recency), and agent registration is a structural
- * write that never touches it — neither when resume materializes a cold
- * session's agents, nor when a runtime subagent registers mid-turn (the
- * turn's own submit/end moments carry recency). The canonical title state
- * is `titleKind`; every persist additionally double-writes the v1-readable
- * `isCustomTitle` marker derived from it, and on load an explicit
- * `isCustomTitle: true` outranks a stale `titleKind` (a v1 rename spreads
- * the original document, so the two can disagree) while a `false` marker
- * never downgrades a modern generated/custom state. The generated-title
- * write path (`setGeneratedTitleIfUncustomized`) serializes through the same
- * update queue as everything else and re-checks the title kind inside the
- * queued write, so a custom title set while a generation was in flight is
- * never overwritten — unless the caller passes `force` (explicit
- * regeneration, last writer wins). Bound at Session scope.
- *
- * Read-model mirroring (flag `persistence_minidb_readmodel`): after a metadata
- * update is persisted, the fresh summary is recorded into the App-scoped
- * `ISessionIndexMirror` — a bounded, coalescing queue that flushes to the
- * `IQueryStore` read model off the user completion path. The mutation
- * completes with the authoritative `state.json` write; it never waits on the
- * derived store (no mirror flush, no query-store lock), and a mirror failure
- * is logged and swallowed — the read model heals by reconciliation, the
- * session lifecycle never sees it. First-time creation in
- * `load()` records too — a new session must appear in listings immediately
- * (the mirror's pending queue feeds the index's read-your-writes merge);
- * loading an *existing* document (session resume) stays silent. Queued writes
- * are tracked in a module-level pending set, drained through
- * `drainSessionMetadataWrites()` by hosts before the sessions root may be
- * torn down (the query-store/mirror drain pattern); a patch still queued
- * when the scope is disposed is dropped rather than written into a teardown.
- */
-
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -217,9 +167,6 @@ export class SessionMetadata extends Service implements ISessionMetadata {
         }),
       );
     } catch (error) {
-      // The authoritative document is already durable at this point; a mirror
-      // failure only degrades the read model (reconciliation heals it) and
-      // must never fail the session mutation itself.
       this.log.warn('session index mirror record failed; the read model heals by reconciliation', {
         sessionId: this.ctx.sessionId,
         error: error instanceof Error ? error.message : String(error),

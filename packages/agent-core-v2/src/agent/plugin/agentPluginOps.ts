@@ -1,14 +1,4 @@
-/**
- * `agentPlugin` domain — durable session-start guidance snapshot.
- *
- * Owns the `pluginSessionStartSnapshotKey` state that freezes the main
- * agent's rendered plugin session-start guidance until an explicit reload
- * replaces it, folded from the durable `plugin.session_start` event
- * (`PluginSessionStartEvent`). Scope-agnostic.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { z } from 'zod';
 
 import { Event2 } from '#/app/event/event2';

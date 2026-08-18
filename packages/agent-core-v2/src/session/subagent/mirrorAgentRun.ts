@@ -1,28 +1,4 @@
-/**
- * `subagent` domain — caller-side mirroring of an agent run.
- *
- * When one agent drives another through `ISessionSubagentService.run`, the
- * *requesting* agent surfaces that run
- * on its own record stream so the UI can nest the child transcript under the
- * launching tool call, external hooks fire, and telemetry is tracked. That
- * requester ↔ target association is business data of this wrapper layer — the
- * lifecycle registry itself stays flat and knows nothing about it.
- *
- * External hooks (`SubagentStart` / `SubagentStop`) fire by observation, like
- * every other external hook: this wrapper announces "a run is about to start"
- * / "...has stopped" through the `ISessionSubagentService` agent-run hook
- * slot and stop event.
- *
- * Wire shape note: the signals are still named `subagent.spawned / started /
- * completed / failed` and telemetry still tracks `subagent_created` so existing
- * session recordings and dashboards stay valid. The spawned signal also
- * reports the child's bound model alias and its effective thinking effort, so
- * clients can render both at spawn instead of waiting for the first
- * `agent.status.updated` frame.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';

@@ -1,13 +1,3 @@
-/**
- * Scenario: swarm service policy, context reconciliation, persistence, and
- * tool execution.
- *
- * Exercises the Agent-scoped service through DI and public loop boundaries,
- * with storage, session swarm execution, and approvals stubbed. Run:
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/features/swarm/swarm.test.ts`.
- */
-
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 
@@ -126,9 +116,7 @@ function mockSwarmHost({
   run = vi.fn().mockResolvedValue([]),
   getSwarmItem = vi.fn().mockResolvedValue(undefined),
 }: {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly run?: (...args: any[]) => any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly getSwarmItem?: (...args: any[]) => any;
 } = {}) {
   return {
@@ -1096,7 +1084,6 @@ describe('AgentSwarmTool', () => {
 
     expect(configured.description).toContain('Available models (pass via model):');
     expect(configured.description).toContain('- provider/fast [default]: fast and cheap');
-    // The caller's alias is a normal pool entry; the primary line stays distinct.
     expect(configured.description).toContain('- main-model [main model]: the main model');
     expect(configured.description).toContain(
       '- primary (main-model): the main model you are running on, bound with your current thinking level',

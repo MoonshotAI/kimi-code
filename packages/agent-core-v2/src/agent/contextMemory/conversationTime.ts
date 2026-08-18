@@ -1,18 +1,3 @@
-/**
- * `contextMemory` domain — shared conversation clock and the undoable
- * protocol registration.
- *
- * Defines the undo anchor vocabulary and registers the undoable protocol
- * consumed by the state domain's `.undoable()` expansion: the four protocol
- * events (`context.append_message` / `context.apply_compaction` /
- * `context.clear` / `context.undo`), the single `isUndoAnchor` tick
- * predicate, and the undo-count guard. A state key whose value must follow
- * conversation undo chains `.undoable()` — never hand-rolling the
- * checkpoint/clear/rollback folds — so undo anchors push a checkpoint,
- * compaction/clear drop the markers, and `context.undo` rolls back through
- * inverse patches (or through the key's custom `onUndo`). Scope-agnostic.
- */
-
 import { registerUndoableProtocol } from '#/state/state';
 
 import {

@@ -1,10 +1,3 @@
-/**
- * `tower` domain — the `IAgentTowerService` contract: the session-scoped
- * on/off flag marking this agent as the control tower of an active tower
- * session, plus `TOWER_TOOL_NAMES`, the tool set TowerInit activates on
- * entry. Bound at Agent scope.
- */
-
 import { createDecorator } from "#/_base/di/instantiation";
 
 export const TOWER_TOOL_NAMES = [

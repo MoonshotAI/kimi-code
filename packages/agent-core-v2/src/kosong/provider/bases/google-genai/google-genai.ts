@@ -1,23 +1,3 @@
-/**
- * `kosong/provider` domain — Google GenAI (Gemini) wire base.
- *
- * Speaks the Gemini generateContent wire format (and Vertex AI through the
- * same SDK options). This base carries no hook surface today — per-turn
- * intents are encoded inline; a cache key has no native field here and is
- * silently dropped, which is the intended "dialect decides whether to encode
- * an intent" behavior.
- *
- * The local `createAbortError` copy is DELIBERATELY not deduplicated: this
- * module's abort plumbing (abortPromise racing,
- * per-chunk checks, the catch guard that rethrows DOMException aborts before
- * error conversion) is self-contained by design.
- *
- * Error conversion recovers the server-directed retry delay from the wire
- * body: the SDK's `ApiError` drops response headers, so the
- * `google.rpc.RetryInfo` detail inside the stringified error body is the
- * only carrier of that wait time.
- */
-
 import { ApiError as GoogleApiError, GoogleGenAI as GenAIClient } from '@google/genai';
 
 import {
@@ -138,9 +118,7 @@ function applyResponseFormat(
 ): void {
   if (format === undefined) return;
   config['responseMimeType'] = 'application/json';
-  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
   delete config['responseSchema'];
-  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
   delete config['responseJsonSchema'];
   if (format.type === 'json_schema') {
     config['responseJsonSchema'] = format.jsonSchema.schema;
@@ -903,7 +881,6 @@ export class GoogleGenAIChatProvider implements ChatProvider {
     );
   }
 }
-
 
 const GEMINI_CATALOGUED_PREFIXES = [
   'gemini-1.5-pro',

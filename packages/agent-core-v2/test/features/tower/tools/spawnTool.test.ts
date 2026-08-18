@@ -1,12 +1,3 @@
-/**
- * TowerSpawnTool tests: guards (tower mode, rate limiter) and the happy-path
- * spawn composition (roster registration, tower-worker profile binding, the
- * auto permission-mode pin, detached task registration, rate-limit slot
- * release on settle). The store
- * side runs against a real on-disk git repo (mkdtemp fixture); the spawn
- * collaborators (lifecycle / subagents / tasks / rate limit) are stubbed.
- */
-
 import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -142,8 +133,6 @@ describe('TowerSpawnTool', () => {
     } as unknown as ITowerRateLimitService);
     ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-spawn-test' } as unknown as ISessionContext);
     ix.stub(IAgentScopeContext, { agentId: 'main', scope: (subKey?: string) => subKey ?? '' });
-    // The requester handle's accessor mirrors production lookups: the event
-    // bus is real; the lifecycle lookup (context-token probe) finds nothing.
     ix.stub(IAgentLifecycleService, {
       get: (agentId: string) =>
         agentId === 'main'
@@ -218,7 +207,6 @@ describe('TowerSpawnTool', () => {
     expect(createAgent).not.toHaveBeenCalled();
     expect(release).not.toHaveBeenCalled();
 
-    // The mission is untouched by the refused spawn — no phantom active owner.
     const mission = (await store.load()).missions.find((m) => m.id === 'M1');
     expect(mission?.status).toBe('planned');
     expect(mission?.owner).toBeUndefined();

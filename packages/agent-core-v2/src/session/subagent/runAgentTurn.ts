@@ -1,18 +1,3 @@
-/**
- * `subagent` domain — helper that runs one prompt (or retry) turn on
- * an agent and distills a summary from its context once the turn ends.
- *
- * Not a Service: `runAgentTurn` is a pure function that borrows
- * `IAgentPromptService`, `IAgentContextMemoryService`, `IAgentUsageService`,
- * and `IEventBus` from the target agent's scope. It has no notion of a caller:
- * it emits no record signals, runs no hooks, and tracks no telemetry.
- *
- * The lifecycle is imperative — the caller awaits the returned `completion`
- * promise. Turn hooks are not used because there is exactly one observer (the
- * caller who requested the run); a hook indirection would only obscure the
- * flow.
- */
-
 import { APIProviderRateLimitError, isProviderRateLimitError } from '#/kosong/contract/errors';
 import { type TokenUsage } from '#/kosong/contract/usage';
 

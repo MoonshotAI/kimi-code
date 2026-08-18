@@ -1,15 +1,3 @@
-/**
- * `git` domain — `IGitService` implementation.
- *
- * Runs `git status` / `git diff` (and `gh pr view`) against a repository on
- * the local disk, and discovers the enclosing git work tree of a directory
- * (`findWorkTree`). Process spawning goes through the App-scope
- * `IHostProcessService`, and the single path-existence probe in `diff` goes
- * through `IHostFileSystem`; no Node platform API is imported directly. Bound
- * at App scope — it owns no Session dependency, so the caller supplies an
- * absolute `cwd` and already-confined repo-relative paths.
- */
-
 import type { FsDiffResponse, FsGitStatusResponse, FsPullRequest } from './git';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';

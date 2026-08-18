@@ -1,14 +1,3 @@
-/**
- * `tools` domain — `ITowerMergeTool` contract (the `TowerMerge` tool).
- *
- * Public contract of the tower's merge lever: the store is the hard gate —
- * it refuses when the branch has no review, the latest review is not clean,
- * the branch tip moved since the clean review, dependencies are unmerged, or
- * the branch changed files outside its mission scope. Exports the
- * model-facing `TowerMergeToolInputSchema` / `TowerMergeToolInput` and the
- * `ITowerMergeTool` DI decorator. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

@@ -1,13 +1,4 @@
-/**
- * `sessionMetadata` domain — the App-scope `session.meta.updated` event.
- *
- * Observable App-level fact broadcast after the session metadata document
- * changes (title, lastPrompt, …); consumers read the `payload` patch bag.
- * Never persisted. Scope-agnostic.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { Event2 } from '#/app/event/event2';
 
 export interface SessionMetaUpdatedPayload {

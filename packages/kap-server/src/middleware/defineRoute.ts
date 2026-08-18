@@ -1,62 +1,12 @@
-/**
- * `defineRoute` — single-source-of-truth route declaration helper.
- *
- * One object declares **both** the runtime Zod validators (preHandler) and the
- * Swagger/OpenAPI response schema. The 200-response is automatically expanded
- * into a `oneOf` union that covers the success envelope (code: 0) and every
- * declared error envelope (code: 4xxxx / 5xxxx) with its precise `details`
- * shape.
- *
- * Path params use OpenAPI `{param}` syntax; the helper converts them to
- * Fastify `:param` syntax internally.
- *
- * Example:
- * ```ts
- * const route = defineRoute({
- *   method: 'POST',
- *   path: '/sessions/{session_id}/prompts',
- *   body: promptSubmissionSchema,
- *   params: sessionIdParamSchema,
- *   success: { data: promptSubmitResultSchema },
- *   errors: {
- *     40001: { detailsSchema: z.array(z.object({ path: z.string(), message: z.string() })) },
- *     40110: {},
- *     40111: { detailsSchema: z.object({ provider_id: z.string() }) },
- *     40113: { detailsSchema: z.object({ model_id: z.string() }).partial() },
- *     40401: {},
- *     // Errors that carry non-null data (e.g. idempotent conflicts):
- *     // 40903: { dataSchema: z.object({ aborted: z.literal(false) }) },
- *   },
- *   description: 'Submit a prompt to a session',
- *   tags: ['prompts'],
- * }, async (req, reply) => {
- *   // req.body  → PromptSubmission  (inferred from promptSubmissionSchema)
- *   // req.params → { session_id: string } (inferred from sessionIdParamSchema)
- * });
- *
- * app.post(route.path, route.options, route.handler);
- * ```
- */
-
 import { z } from 'zod';
 
 import { jsonSchema, openApiDocumentJsonSchema } from './schema';
 import { validateBody, validateParams, validateQuery } from './validate';
 
-// ---------------------------------------------------------------------------
-// Path conversion
-// ---------------------------------------------------------------------------
-
-/** Convert OpenAPI `{param}` segments to Fastify `:param` segments. */
 function toFastifyPath(openApiPath: string): string {
   return openApiPath.replace(/\{([^}]+)\}/g, ':$1');
 }
 
-// ---------------------------------------------------------------------------
-// Schema builders
-// ---------------------------------------------------------------------------
-
-/** Build a Zod schema for an error envelope with a specific code. */
 function buildErrorEnvelopeSchema(
   code: number,
   dataSchema: z.ZodTypeAny = z.null(),
@@ -80,7 +30,6 @@ function buildErrorEnvelopeSchema(
   });
 }
 
-/** Build a Zod schema for the success envelope (code: 0). */
 function buildSuccessEnvelopeSchema(successDataSchema: z.ZodTypeAny): z.ZodTypeAny {
   return z.object({
     code: z.literal(0),
@@ -91,27 +40,14 @@ function buildSuccessEnvelopeSchema(successDataSchema: z.ZodTypeAny): z.ZodTypeA
   });
 }
 
-/**
- * Build the unified 200-response schema.
- *
- * When error variants are present: returns a `oneOf` array where each variant
- * is an OpenAPI 3 schema object (success first, then errors in ascending code
- * order).
- *
- * When no error variants are present: returns the success envelope schema
- * directly for simpler Swagger output and backward compatibility with tests
- * that expect a plain schema object.
- */
 function buildUnifiedResponseSchema(
   successDataSchema: z.ZodTypeAny,
   errors: Record<number, { dataSchema?: z.ZodTypeAny; detailsSchema?: z.ZodTypeAny }>,
 ): Record<string, unknown> {
-  // Error variants — sorted by code for deterministic output
   const errorEntries = Object.entries(errors)
     .map(([code, cfg]) => [Number(code), cfg] as const)
     .sort((a, b) => a[0] - b[0]);
 
-  // No errors → return the plain envelope schema (not wrapped in oneOf)
   if (errorEntries.length === 0) {
     return openApiDocumentJsonSchema(
       buildSuccessEnvelopeSchema(successDataSchema),
@@ -121,7 +57,6 @@ function buildUnifiedResponseSchema(
 
   const variants: Record<string, unknown>[] = [];
 
-  // Success variant
   variants.push(
     openApiDocumentJsonSchema(
       buildSuccessEnvelopeSchema(successDataSchema),
@@ -140,10 +75,6 @@ function buildUnifiedResponseSchema(
 
   return { oneOf: variants };
 }
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 type InferZod<T extends z.ZodTypeAny | undefined> = T extends z.ZodTypeAny
   ? z.infer<T>
@@ -215,10 +146,6 @@ export interface RouteDefinition<
   ) => Promise<void> | void;
 }
 
-// ---------------------------------------------------------------------------
-// Helper
-// ---------------------------------------------------------------------------
-
 /**
  * Declare a route from a single Zod-based definition.
  *
@@ -239,7 +166,6 @@ export function defineRoute<
   options: DefineRouteOptions<TBody, TParams, TQuery, TSuccessData>,
   handler: RouteDefinition<TBody, TParams, TQuery>['handler'],
 ): RouteDefinition<TBody, TParams, TQuery> {
-  // -- runtime validators ----------------------------------------------------
   const preHandler: unknown[] = [];
 
   if (options.params) {
@@ -252,7 +178,6 @@ export function defineRoute<
     preHandler.push(validateQuery(options.querystring));
   }
 
-  // -- swagger schema --------------------------------------------------------
   const schema: Record<string, unknown> = {};
 
   if (options.body) {

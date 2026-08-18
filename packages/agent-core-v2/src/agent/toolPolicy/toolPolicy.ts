@@ -1,10 +1,3 @@
-/**
- * `toolPolicy` domain — Agent-scope tool authorization contract.
- *
- * Combines profile, global configuration, and Session-owned restrictions into
- * one policy used by both provider schema projection and executor preflight.
- */
-
 import { createDecorator } from '#/_base/di/instantiation';
 import type { ToolSource } from '#/tool/toolContract';
 

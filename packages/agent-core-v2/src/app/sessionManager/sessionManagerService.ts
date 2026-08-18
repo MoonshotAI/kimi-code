@@ -1,15 +1,3 @@
-/**
- * `sessionManager` domain — the App-scope session lifecycle facade.
- *
- * Owns the global live-session registry across per-workspace controllers and
- * routes create / resume / restore / close / archive / delete / fork /
- * createChild to the owning controller; per-session work (resume / restore /
- * close / delete / fork / createChild and the batch archive critical
- * section) queues on one serialization chain per session, and a failed
- * resume is recorded so the next settle observes it until a fresh attempt
- * supersedes it. Cold id→workspace lookups go through `sessionIndex`;
- * workspace materialization through `workspaces`. App scope.
- */
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter, type Event, type IWaitUntil } from '#/_base/event';

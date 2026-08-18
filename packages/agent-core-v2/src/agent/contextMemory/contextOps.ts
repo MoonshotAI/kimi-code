@@ -1,39 +1,3 @@
-/**
- * `contextMemory` domain — the conversation-history state (`contextMemoryKey`)
- * and its folds over the durable `context.*` events (`ContextAppendMessage` /
- * `ContextAppendLoopEvent` / `ContextClear` / `ContextApplyCompaction` /
- * `ContextUndo`), plus the undo-cut and compaction-record helpers.
- *
- * Declares the history as `ContextMessage[]` (initial `[]`); every fold runs
- * on the immer draft and either mutates it or returns a replacement, so a
- * no-op keeps the same reference (immer returns the base state untouched).
- * The live write path emits the v1 vocabulary: non-loop appends (user
- * prompts, injections, hook/task notices) go on the wire as
- * `context.append_message` (persisted without local ids — the on-disk record
- * matches v1's field set), while the agent loop streams each turn as
- * `context.append_loop_event` records — the same on-disk shape the v1 loop
- * writes — folded into assistant / tool messages both at live dispatch time
- * and on replay, so v1- and v2-written sessions reduce identically.
- * Swarm-mode announcements are owned by the `swarm` domain's
- * context-injection provider; the trailing enter-reminder pop on
- * `swarm_mode.exit` is registered by the swarm feature onto `contextMemoryKey`
- * (see `popSwarmModeReminder`).
- *
- * `context.undo` counts conversation ticks with the single `isUndoAnchor`
- * predicate — the same definition the checkpoint
- * protocol pushes with, so anchor counting and checkpoint pushing can never
- * drift apart.
- *
- * Blob handling is declared as a `StateBlobCodec` on `contextMemoryKey.replayable.blobs`:
- * - `dehydrate(record, transform)`: at dispatch time, traverses message content
- *   in `context.append_message` and `context.append_loop_event` records,
- *   passing each `ContentPart[]` through `transform` to offload oversized data
- *   URIs.
- * - `rehydrate(state, transform)`: after replay, traverses the surviving final
- *   state and loads `blobref:` URLs back to inline data — skipping I/O for
- *   data that was compacted away during the session.
- */
-
 import { z } from 'zod';
 
 import { ErrorCodes, Error2 } from '#/errors';

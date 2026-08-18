@@ -1,12 +1,3 @@
-/**
- * `event` domain — error codes, the `EventError` base class, and the domain
- * registration.
- *
- * Aggregates the event domain's coded errors: duplicate durable-event type
- * registration and a durable event missing its payload schema fail fast at
- * import time (`Event2` registry). Scope-agnostic.
- */
-
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2, type Error2Options } from '#/_base/errors/errors';
 

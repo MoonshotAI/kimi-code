@@ -1,31 +1,3 @@
-/**
- * `kosong/provider` Kimi trait probes (probe 6) — every Kimi deviation is a
- * declarative trait hook on one of two trait objects, tested directly
- * against a stub trait context:
- *
- *  - `kimiOpenAITrait.convertTool`: `$`-prefixed tools become
- *    `builtin_function`; regular tools get the Kimi schema dialect
- *    normalization;
- *  - `kimiOpenAITrait.convertMessage`: empty-content assistant tool messages
- *    drop `content`; `tool_calls[].extras` round-trips; message-level
- *    `tools` embed;
- *  - reasoning: the trait does NOT pin a `reasoningKey` — the base
- *    auto-detects the endpoint's dialect, defaulting to `reasoning_content`;
- *    `preserveThinking` force-replays only `keep: 'all'` sessions with
- *    thinking not disabled;
- *  - `kimiOpenAITrait.extractUsage`: usage at the top level or
- *    `choices[0].usage`;
- *  - `kimiOpenAITrait` request params: endpoint chain, `max_tokens` →
- *    `max_completion_tokens` with `extra_body` expansion,
- *    `extra_body.thinking` encoding, no 128k ceiling, `prompt_cache_key`,
- *    and the `strictThinkingValidation` marker;
- *  - `kimiAnthropicTrait` (the `(kimi, anthropic)` registration): thinking
- *    encoding and interleaved-thinking beta stripping;
- *  - `KimiFiles`: an upload failure classifies through
- *    `classifyKimiQuotaError`, so a Moonshot quota 429 from the files API
- *    fails fast instead of converting to a retryable rate limit.
- */
-
 import { APIError as OpenAIAPIError } from 'openai';
 import { describe, expect, it, vi } from 'vitest';
 

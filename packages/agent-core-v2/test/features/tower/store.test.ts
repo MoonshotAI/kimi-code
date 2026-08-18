@@ -1,10 +1,3 @@
-/**
- * TowerStore tests against real on-disk git repositories (mkdtemp fixture).
- * The store is the code-enforced half of the tower protocol — these tests
- * pin the file layout, frontmatter shape, visibility rules, and the merge
- * gate's refusal matrix.
- */
-
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -65,7 +58,6 @@ function rosterEntry(partial: Partial<TowerRosterEntry> & Pick<TowerRosterEntry,
   };
 }
 
-/** Plan one mission, create its worktree, and commit a file on its branch. */
 async function setupMission(input: {
   title: string;
   scope: string;
@@ -218,12 +210,9 @@ describe('plan', () => {
     await store.plan([{ title: 'survey', scope: ['src/a/**'] }]);
     await store.updateMission('tower', 'M1', { status: 'merged' });
 
-    // A merged mission is history, not a reservation: re-planning over the
-    // same paths must not require retro-narrowing its scope.
     const missions = await store.plan([{ title: 'implement', scope: ['src/a/b/**'] }]);
     expect(missions[0]?.id).toBe('M2');
 
-    // Unmerged missions still reserve their scope.
     await expect(store.plan([{ title: 'clash', scope: ['src/a/**'] }])).rejects.toThrow(
       /scopes overlap/,
     );
@@ -237,7 +226,6 @@ describe('plan', () => {
     ]);
     expect(missions.map((m) => m.kind)).toEqual(['survey', 'survey', 'build']);
 
-    // The build mission still reserves its scope against later builds.
     await expect(
       store.plan([{ title: 'touch layers too', scope: ['src/layer/vulkan/shader/**'] }]),
     ).rejects.toThrow(/scopes overlap/);
@@ -374,10 +362,8 @@ describe('merge gate', () => {
       rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: mission.branch }),
     );
 
-    // No review at all.
     await expect(store.merge(mission.branch)).rejects.toThrow(/no review/);
 
-    // A non-clean review does not open the gate.
     await store.submitReview('rev', {
       target: mission.branch,
       status: 'p2-1items',
@@ -387,17 +373,14 @@ describe('merge gate', () => {
     });
     await expect(store.merge(mission.branch)).rejects.toThrow(/clean round is required/);
 
-    // A clean review against the current tip.
     await cleanReview('rev', mission.branch);
     const reviewed = await store.latestReview(mission.branch);
     expect(reviewed?.round).toBe(2);
     expect(reviewed?.reviewedCommit).toBe(await git(repo, 'rev-parse', mission.branch));
 
-    // The branch moved after the clean review — gate closes again.
     await commitFile(worktreeOf(mission), 'src/x/more.ts', 'export const more = 2;\n', 'more work');
     await expect(store.merge(mission.branch)).rejects.toThrow(/moved since the clean review/);
 
-    // Re-review stamps the new tip (round 3) and the gate opens.
     await cleanReview('rev', mission.branch);
     const reReviewed = await store.latestReview(mission.branch);
     expect(reReviewed?.round).toBe(3);
@@ -423,14 +406,11 @@ describe('merge gate', () => {
     );
     await cleanReview('rev', mission.branch);
 
-    // The main checkout moved off the recorded base after TowerInit.
     await git(repo, 'checkout', '-b', 'hotfix');
     const hotfixTip = await git(repo, 'rev-parse', 'HEAD');
 
     await expect(store.merge(mission.branch)).rejects.toThrow(/not the recorded base/);
 
-    // Nothing merged: the mission stays open, the checked-out branch is
-    // untouched, and the refusal lands in the activity log.
     const state = await store.load();
     expect(state.missions.find((m) => m.id === mission.id)?.status).not.toBe('merged');
     expect(await git(repo, 'rev-parse', 'HEAD')).toBe(hotfixTip);
@@ -438,7 +418,6 @@ describe('merge gate', () => {
     expect(log).toContain('merge.blocked');
     expect(log).toContain('base-mismatch');
 
-    // Back on base, the gate opens.
     await git(repo, 'checkout', 'main');
     const { mergeCommit } = await store.merge(mission.branch);
     expect(mergeCommit).toBe(await git(repo, 'rev-parse', 'HEAD'));
@@ -539,11 +518,8 @@ describe('merge gate', () => {
     );
     await cleanReview('rev', mission.branch);
 
-    // The branch changed src/outside.ts, which no scope glob covers.
     await expect(store.merge(mission.branch)).rejects.toThrow(/outside mission M1 scope/);
 
-    // Workers cannot widen the scope themselves, and widening into another
-    // mission's territory is rejected.
     await store.plan([{ title: 'other', scope: ['src/other/**'] }]);
     await expect(
       store.updateMission('w1', mission.id, { scope: ['src/x/**', 'src/outside.ts'] }),
@@ -552,7 +528,6 @@ describe('merge gate', () => {
       store.updateMission('tower', mission.id, { scope: ['src/x/**', 'src/other/**'] }),
     ).rejects.toThrow(/scopes overlap/);
 
-    // The tower widens within the disjoint rules — logged — and the gate opens.
     await store.updateMission('tower', mission.id, { scope: ['src/x/**', 'src/outside.ts'] });
     const log = (await store.recentLog(5)).join('\n');
     expect(log).toContain('mission.update');
@@ -582,15 +557,10 @@ describe('merge gate', () => {
     await cleanReview('rev-1', first.branch);
     await cleanReview('rev-2', second.branch);
 
-    // Out-of-band damage (a confused worker, an external push): the second
-    // branch now also contains a change to the first mission's file. Even
-    // when a reviewer rubber-stamps the new tip, the scope gate stays shut —
-    // containment is code, not discipline.
     await commitFile(worktreeOf(second), 'src/a/shared.ts', 'tampered\n', 'stray edit');
     await cleanReview('rev-2', second.branch);
     await expect(store.merge(second.branch)).rejects.toThrow(/outside mission M2 scope/);
 
-    // …but the first branch merges, and the result names the conflict.
     const { conflictsWith } = await store.merge(first.branch);
     expect(conflictsWith).toEqual([
       { branch: second.branch, files: ['src/a/shared.ts'] },
@@ -610,7 +580,6 @@ describe('merge gate', () => {
     expect(result.mergeCommit).toBe(baseTip);
     expect((await store.load()).missions[0]?.status).toBe('merged');
     expect((await store.recentLog(3)).join('\n')).toContain('merge.noop');
-    // No merge commit was created: master history is untouched.
     expect(await git(repo, 'rev-parse', 'HEAD')).toBe(baseTip);
   });
 
@@ -695,9 +664,7 @@ describe('updateMission', () => {
     await store.updateMission('w1', 'M1', { status: 'active' });
     const before = await store.recentLog(100);
 
-    // A bare task tick is recorded in the mission file, not in the log.
     await store.updateMission('w1', 'M1', { taskDone: 'scaffold' });
-    // An unchanged status with nothing else is a no-op: no render, no log line.
     await store.updateMission('w1', 'M1', { status: 'active' });
 
     const after = await store.recentLog(100);
@@ -788,8 +755,6 @@ describe('teardown', () => {
   });
 
   it('removes clean worktrees that contain an initialized submodule', async () => {
-    // A plain `git worktree remove` refuses worktrees containing submodules
-    // even when they are clean — teardown must not strand them.
     const subRepo = await mkdtemp(join(tmpdir(), 'tower-sub-test-'));
     try {
       await git(subRepo, 'init', '-b', 'main');

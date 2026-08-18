@@ -1,21 +1,3 @@
-/**
- * `kosong/contract` domain — the ChatProvider wire contract.
- *
- * ⚠ Named `provider` but this is the L0 contract, not an implementation:
- * the slimmed `ChatProvider` interface plus everything a single generation
- * call needs. Two invariants hold here:
- *
- *  - A ChatProvider is immutable after construction. The interface has no
- *    `with*` methods; every per-turn intent (prompt-cache key, sampling
- *    overrides, thinking effort/keep, completion-token budget) flows through
- *    `GenerateOptions` on each `generate` call instead of through morphs.
- *  - `GenerateOptions` is the per-turn intent carrier. Each wire dialect
- *    decides how — or whether — to encode an intent (e.g. a cache key may
- *    become `prompt_cache_key`, `metadata.user_id`, or be silently dropped).
- *
- * Pure types only — no other domain, no I/O, no SDKs.
- */
-
 import type { Message, StreamedMessagePart, VideoURLPart } from './message';
 import type { Tool } from './tool';
 import type { TokenUsage } from './usage';

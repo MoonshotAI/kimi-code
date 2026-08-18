@@ -12,7 +12,6 @@ import type { ThinkingFrame, ToolCallFrame } from '#/model/frame';
 import type { TranscriptInteraction } from '#/model/interaction';
 import type { TranscriptItem } from '#/model/item';
 
-/** Display id for order assertions across the item union. */
 function itemLabel(item: TranscriptItem): string {
   if (item.kind === 'turn') return item.turnId;
   if (item.kind === 'marker') return item.markerId;
@@ -138,7 +137,6 @@ describe('AgentTranscript', () => {
     const frame = turn?.steps[0]?.frames[0];
     expect(frame?.kind === 'text' && frame.text).toBe('hello world');
 
-    // duplicate delivery is absorbed
     const dup = tx.apply([
       { op: 'append', target: { type: 'frame', turnId: 't1', stepId: 't1.1', frameId: 't1.1.f1' }, offset: 6, text: 'world' },
     ]);
@@ -153,12 +151,9 @@ describe('AgentTranscript', () => {
   });
 
   it('appendAtOffset treats a mismatched overlap as a gap, never a rewrite', () => {
-    // The chunk is behind local state but is not the local suffix: rewriting
-    // from the offset would silently drop local content ('llo').
     const result = appendAtOffset('hello', 2, ' world');
     expect(result.text).toBe('hello');
     expect(result.gap).toEqual({ expected: 5, got: 2 });
-    // A matching overlap still trims to the novel suffix.
     expect(appendAtOffset('hello wo', 6, 'world')).toEqual({ text: 'hello world', changed: true });
   });
 
@@ -175,7 +170,6 @@ describe('AgentTranscript', () => {
     tx.apply([{ op: 'interaction.upsert', interaction: interaction('approved') }]);
     expect(tx.listPendingInteractions()).toEqual([]);
 
-    // An entity without an anchor tool call tracks pending the same way.
     const unanchored = (state: TranscriptInteraction['state']): TranscriptInteraction => ({
       interactionId: 'appr-2',
       interactionKind: 'question',
@@ -200,7 +194,6 @@ describe('AgentTranscript', () => {
       { op: 'todo.upsert', todo },
     ]);
     expect(first.accepted).toHaveLength(2);
-    // Re-applying the identical entities is a no-op (idempotent upsert).
     const second = tx.apply([
       { op: 'attachment.upsert', attachment },
       { op: 'todo.upsert', todo },
@@ -221,16 +214,12 @@ describe('AgentTranscript', () => {
       createdAt: '2026-07-22T00:00:00.000Z',
     };
     expect(tx.apply([{ op: 'prompt.upsert', prompt: queued }]).accepted).toHaveLength(1);
-    // Re-applying the identical entity is a no-op (idempotent upsert).
     expect(tx.apply([{ op: 'prompt.upsert', prompt: queued }]).accepted).toHaveLength(0);
-    // Same id, new state: whole-entity replace.
     const running = { ...queued, status: 'running' as const, steeredAt: '2026-07-22T00:00:01.000Z' };
     expect(tx.apply([{ op: 'prompt.upsert', prompt: running }]).accepted).toHaveLength(1);
     expect(tx.getPrompt('p1')?.status).toBe('running');
     expect(tx.getPrompt('p1')?.steeredAt).toBe('2026-07-22T00:00:01.000Z');
 
-    // Prompts are global snapshot entities: they survive a snapshot/reset
-    // roundtrip (the full-refresh convergence path).
     const snapshot = tx.snapshot();
     expect(snapshot.prompts).toEqual([running]);
     const fresh = new AgentTranscript('main');
@@ -254,8 +243,6 @@ describe('AgentTranscript', () => {
     ]);
     expect(tx.getTurn('t1')?.steps[0]?.retry?.errorName).toBe('RateLimit');
 
-    // Same identity fields but new usage/timing: must not be swallowed as a
-    // no-op (the equality check covers the extension fields).
     const completed = tx.apply([
       {
         op: 'step.upsert',
@@ -272,7 +259,6 @@ describe('AgentTranscript', () => {
     const step = tx.getTurn('t1')?.steps[0];
     expect(step?.usage?.output).toBe(5);
     expect(step?.timing?.llmFirstTokenLatencyMs).toBe(120);
-    // step.upsert replaces the whole header: no `retry` key means cleared.
     expect(step?.retry).toBeUndefined();
   });
 
@@ -300,10 +286,8 @@ describe('AgentTranscript', () => {
         ...frame,
       },
     });
-    // Delta accumulation: inputText grows while the frame stays running.
     expect(tx.apply([streamed({ inputText: '{"path"', state: 'running' })]).accepted).toHaveLength(1);
     tx.apply([streamed({ inputText: '{"path":"/a"}', state: 'running' })]);
-    // `tool.call.started` lands with the parsed input but keeps the raw text.
     tx.apply([
       streamed({ inputText: '{"path":"/a"}', state: 'running', input: { path: '/a' } }),
       streamed({
@@ -341,8 +325,6 @@ describe('AgentTranscript', () => {
   });
 
   it('items.remove clears anchored interactions and their pending entries', () => {
-    // The interaction entity anchored to a tool call inside a removed turn
-    // dies with its anchor.
     const tx = new AgentTranscript('main');
     tx.apply([
       turn1,
@@ -389,7 +371,6 @@ describe('AgentTranscript', () => {
     const snapshot = tx.snapshot({ tailTurns: 2 });
     expect(snapshot.hasMoreOlder).toBe(true);
     expect(snapshot.items.filter((i) => i.kind === 'turn').map((i) => i.kind === 'turn' && i.turnId)).toEqual(['t4', 't5']);
-    // markers between kept turns survive; the one before t4's segment does not…
     expect(snapshot.items.filter((i) => i.kind === 'marker').length).toBeGreaterThan(0);
 
     const fresh = new AgentTranscript('main');
@@ -404,7 +385,7 @@ describe('AgentTranscript', () => {
     tx.onChange((event) => {
       seen.push(...event.ops.map((op) => op.op));
     });
-    tx.apply([turn1, turn1]); // second upsert is a no-op
+    tx.apply([turn1, turn1]);
     expect(seen).toEqual(['turn.upsert']);
   });
 
@@ -435,7 +416,6 @@ describe('AgentTranscript', () => {
     tx.apply([{ op: 'meta.merge', meta: { modes: { plan: {}, swarm: {} } } }]);
     tx.apply([{ op: 'meta.merge', meta: { modes: { plan: null } } }]);
     expect(tx.getMeta().modes).toEqual({ swarm: {} });
-    // Clearing the last badge normalizes `modes` away entirely.
     tx.apply([{ op: 'meta.merge', meta: { modes: { swarm: null } } }]);
     expect(tx.getMeta().modes).toBeUndefined();
   });
@@ -444,13 +424,10 @@ describe('AgentTranscript', () => {
     const tx = new AgentTranscript('main');
     tx.apply([
       { op: 'meta.merge', meta: { agent: { model: 'k2', permission: 'auto' } } },
-      // Status slices arrive piecemeal: a later op carries only the fields
-      // that changed, and the earlier fields must survive.
       { op: 'meta.merge', meta: { agent: { contextTokens: 1234 } } },
     ]);
     expect(tx.getMeta().agent).toEqual({ model: 'k2', permission: 'auto', contextTokens: 1234 });
 
-    // Same-named fields are overwritten by the newer slice.
     tx.apply([
       { op: 'meta.merge', meta: { agent: { model: 'k3', phase: { kind: 'idle' } } } },
     ]);
@@ -461,7 +438,6 @@ describe('AgentTranscript', () => {
       phase: { kind: 'idle' },
     });
 
-    // An op without the agent key leaves it untouched.
     tx.apply([{ op: 'meta.merge', meta: { activity: 'turn' } }]);
     expect(tx.getMeta().agent?.model).toBe('k3');
     expect(tx.getMeta().activity).toBe('turn');
@@ -478,16 +454,12 @@ describe('AgentTranscript', () => {
 
   it('places anchored standalone items before their following turn, not at the end', () => {
     const tx = new AgentTranscript('main');
-    // A live turn lands first — the engine kept running while the backfill
-    // was still reading history from disk.
     tx.apply([
       {
         op: 'turn.upsert',
         turn: { kind: 'turn', turnId: 't2', ordinal: 2, state: 'running', origin: { kind: 'user' } },
       },
     ]);
-    // Backfill replays history: t0, a marker between t0/t1, t1, and a
-    // taskref that trailed t1 (anchored past it, before the live t2).
     tx.apply([
       {
         op: 'turn.upsert',
@@ -525,7 +497,6 @@ describe('AgentTranscript', () => {
       },
     ]);
     expect(tx.getItems()[0]?.kind).toBe('marker');
-    // Re-applying an existing id replaces in place — no move, no duplicate.
     tx.apply([
       {
         op: 'marker.upsert',
@@ -548,8 +519,6 @@ describe('AgentTranscript', () => {
   it('re-applies tool frames when metadata-only fields change', () => {
     const tx = new AgentTranscript('main');
     tx.apply(toolFrame('running'));
-    // Same state/output but a corrected input (e.g. a live/backfill
-    // reconciliation): the upsert must not be dropped as a no-op.
     const corrected: TranscriptOperation[] = [
       turn1,
       {
@@ -596,7 +565,6 @@ describe('TranscriptStore', () => {
     const store = new TranscriptStore('s1');
     store.ensureAgent('main', { agentId: 'main', type: 'main' });
 
-    // Never-announced agents must not gain a roster entry.
     store.markDisposed('ghost', '2026-07-20T00:00:00.000Z');
     expect(store.agents().map((a) => a.agentId)).toEqual(['main']);
 
@@ -610,7 +578,6 @@ describe('TranscriptStore', () => {
       disposedAt: '2026-07-20T01:00:00.000Z',
     });
 
-    // Idempotent: the first stamp wins and no roster re-emit fires.
     store.markDisposed('main', '2026-07-20T02:00:00.000Z');
     expect(store.agents()[0]?.disposedAt).toBe('2026-07-20T01:00:00.000Z');
     expect(rosters).toHaveLength(1);

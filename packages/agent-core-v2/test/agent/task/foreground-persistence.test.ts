@@ -1,10 +1,3 @@
-/**
- * Foreground task persistence: foreground commands keep their output in memory
- * and only touch disk once they detach or spill past the in-memory buffer. A
- * foreground command that finishes without either leaves nothing on disk, so
- * undiscoverable logs don't accumulate.
- */
-
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';

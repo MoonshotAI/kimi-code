@@ -1,23 +1,3 @@
-/**
- * `cron` domain — `SessionCronService` implementation.
- *
- * Session-level scheduling engine. Holds the in-memory task map (filtered
- * from `ICronTaskPersistence` by `sessionId` tag), runs the polling timer
- * (tick / coalesce / jitter / cursor), persists mutations through the
- * App-scoped `ICronTaskPersistence`, mirrors mutations as transient
- * `CronAdd` / `CronDelete` / `CronCursor` events on the main agent's
- * `dispatcher` (cross-scope borrow) so the live `cronKey` state tracks the task
- * map, dispatches the observable `CronFired` through the same dispatcher,
- * steers the main agent
- * through `IAgentPromptService` when a task fires, and registers the cron
- * tools (`CronCreate` / `CronList` / `CronDelete`) into the main agent's
- * `IAgentToolRegistryService` once `IAgentLifecycleService` signals
- * `onDidCreateMain`. The plain-data state (`tasks`, `parsedCache`,
- * `lastSeenAt`, `seededFromStore`, `inFlight`, `started`) is registered into
- * `sessionState` (`ISessionStateService`) and read/written through it. Bound
- * at Session scope.
- */
-
 import { ulid } from 'ulid';
 
 import type { ContentPart } from '#/kosong/contract/message';
@@ -78,7 +58,6 @@ const MAX_COALESCE_ITERATIONS = 10_000;
 const CRON_ID_REGEX: RegExp = /^(?:[0-9a-f]{8}|[0-9A-HJKMNP-TV-Z]{26})$/i;
 const MAX_ID_ATTEMPTS = 8;
 
-// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class SessionCronServiceImpl extends Disposable implements ISessionCronService {
   declare readonly _serviceBrand: undefined;
 
@@ -207,7 +186,6 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     return this.getCronConfig().disabled;
   }
 
-
   addTask(init: CronTaskInit): CronTask {
     const task: CronTask = {
       ...init,
@@ -244,7 +222,6 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     return Array.from(this.tasks.values());
   }
 
-
   isStale(task: CronTask): boolean {
     return this.isStaleAt(task, this.clocks.wallNow());
   }
@@ -265,7 +242,6 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     if (task === undefined) return null;
     return this.nextFireFor(task);
   }
-
 
   async loadFromStore(options: CronLoadOptions = {}): Promise<void> {
     if (options.replace !== false) {
@@ -448,7 +424,6 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     this.telemetry.track2(CRON_DELETED, properties);
   }
 
-
   private async deliverDue(task: CronTask, coalescedCount: number): Promise<boolean> {
     const firedAt = this.clocks.wallNow();
     const stale = this.isStaleAt(task, firedAt);
@@ -534,7 +509,6 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     );
   }
 
-
   private dispatchCron(event: CronAdd | CronDelete | CronCursor): void {
     const mainHandle = this.agentLifecycle.get('main');
     if (!mainHandle) return;
@@ -546,7 +520,6 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     if (!mainHandle) return;
     void mainHandle.accessor.get(IEventDispatcher).dispatch(event);
   }
-
 
   private getParsed(expr: string): ParsedCronExpression {
     const cached = this.parsedCache.get(expr);
@@ -641,7 +614,6 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     }
   }
 
-
   private adopt(task: CronTask): void {
     this.tasks.set(task.id, task);
   }
@@ -682,7 +654,6 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     return Number.isFinite(age) && age >= STALE_THRESHOLD_MS;
   }
 
-
   private persistEnqueue(id: string, work: () => Promise<void>): void {
     const prev = this.persistQueues.get(id) ?? Promise.resolve();
     const next = prev
@@ -696,7 +667,6 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
       });
     this.persistQueues.set(id, next);
   }
-
 
   private bindSigusr1(): void {
     if (process.platform === 'win32') return;
