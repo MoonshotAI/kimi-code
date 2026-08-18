@@ -259,7 +259,51 @@ export class SessionEventBroadcaster {
         if (state.targets.has(target)) state.transcriptSeeded.add(target);
       }
     }
+    this.enqueueStatusSnapshot(state, target);
     return true;
+  }
+
+  /**
+   * Send one synthesized main-agent `agent.status.updated` frame to a target
+   * that just subscribed. Live status frames are volatile (never journaled,
+   * never replayed), so a subscriber that raced a status edge — e.g. the
+   * flow-run start applied within the first second of a fresh session — would
+   * otherwise hold a stale view until the next edge happens to fire.
+   */
+  private enqueueStatusSnapshot(state: SessionState, target: BroadcastTarget): void {
+    state.queue = state.queue
+      .then(() => {
+        const sub = state.targets.get(target);
+        if (sub === undefined) return;
+        const session = getLiveSessionById(this.opts.core.accessor, state.sessionId);
+        if (session === undefined) return;
+        const main = session.accessor
+          .get(IAgentLifecycleService)
+          .list()
+          .find((handle) => handle.id === MAIN_AGENT_ID);
+        if (main === undefined) return;
+        const snapshot = readLegacyStatus(main);
+        if (snapshot === undefined) return;
+        const event = {
+          type: 'agent.status.updated',
+          agentId: MAIN_AGENT_ID,
+          sessionId: state.sessionId,
+          ...snapshot,
+        } as unknown as Event;
+        const envelope = this.buildEnvelope(state.journal.seq, state.sessionId, event, {
+          epoch: state.journal.epoch,
+          volatile: true,
+        });
+        if (!matchesAgentFilter(envelope, sub.agentFilter)) return;
+        if (suppressedByTranscript(envelope, sub.transcriptGrades)) return;
+        try {
+          target.send(envelope);
+        } catch {
+        }
+      })
+      .catch((error: unknown) =>
+        this.logDispatchDropped(state.sessionId, 'agent.status.updated', error),
+      );
   }
 
   /**

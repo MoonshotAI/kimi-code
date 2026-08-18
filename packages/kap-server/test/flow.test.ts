@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import type { FlowStateResponse } from '../src/protocol/rest-flow';
+import { readLegacyStatus } from '../src/services/legacyStatus/legacyStatus';
 import { authHeaders } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
@@ -132,5 +133,24 @@ describe('server-v2 /api/v1/sessions/{sid}/flow', () => {
     const { body } = await getFlow(sessionId);
     expect(body.code).toBe(0);
     expect(body.data).toEqual({ run: { active: false }, gates: [] });
+  });
+
+  it('carries the live flow run in the legacy status snapshot of the main agent', async () => {
+    process.env[FLOW_ENV] = 'true';
+    const sessionId = await createSession();
+    await startRun(sessionId);
+
+    const handle = getLiveSessionById(server!.core.accessor, sessionId);
+    const main = await ensureMainAgent(handle!);
+    expect(readLegacyStatus(main)?.flowRun).toEqual({
+      flowId: 'issue-fix',
+      stageId: 'triage',
+      stageIndex: 0,
+      stageTotal: 2,
+      gate: 'human',
+    });
+
+    delete process.env[FLOW_ENV];
+    expect(readLegacyStatus(main)?.flowRun).toBeNull();
   });
 });

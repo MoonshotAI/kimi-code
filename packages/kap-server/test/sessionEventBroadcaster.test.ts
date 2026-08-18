@@ -14,8 +14,10 @@ import type {
 import {
   IAgentActivityView,
   LifecycleScope,
+  IAgentFlowService,
   IAgentLifecycleService,
   IAgentProfileService,
+  IFlagService,
   IAgentTokenCountingService,
   IAgentUsageService,
   IEventBus,
@@ -517,8 +519,15 @@ describe('SessionEventBroadcaster', () => {
     await bc.getCursor('s1');
 
     const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
-    expect(statuses).toHaveLength(2);
+    expect(statuses).toHaveLength(3);
     expect(statuses.map((envelope) => envelope.payload)).toMatchObject([
+      {
+        type: 'agent.status.updated',
+        usage,
+        contextTokens: 10,
+        maxContextTokens: 128_000,
+        model: 'example-model',
+      },
       {
         type: 'agent.status.updated',
         usage,
@@ -566,6 +575,78 @@ describe('SessionEventBroadcaster', () => {
       maxContextTokens: 128_000,
       model: 'sub-model',
     });
+    expect(JSON.stringify(statuses[0]!.payload)).not.toContain('flowRun');
+  });
+
+  it('sends a volatile main-agent status snapshot with the live flow run on subscribe', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
+    main.set(IAgentProfileService, {
+      getModel: () => 'example-model',
+      getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
+    });
+    main.set(IAgentUsageService, { status: () => ({}) });
+    main.set(IFlagService, { enabled: () => true });
+    main.set(IAgentFlowService, {
+      run: () => ({
+        active: true,
+        flowId: 'issue-fix',
+        currentStageIndex: 1,
+        stages: [
+          { id: 'triage', objective: 'find it', completion: 'found', gate: 'human' },
+          { id: 'implement', objective: 'fix it', completion: 'fixed', gate: 'ai' },
+        ],
+      }),
+    });
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+    await bc.getCursor('s1');
+
+    const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]!.volatile).toBe(true);
+    expect(statuses[0]!.payload).toMatchObject({
+      type: 'agent.status.updated',
+      agentId: 'main',
+      model: 'example-model',
+      flowRun: {
+        flowId: 'issue-fix',
+        stageId: 'implement',
+        stageIndex: 1,
+        stageTotal: 2,
+        gate: 'ai',
+      },
+    });
+  });
+
+  it('reports flowRun null in the snapshot while the flow flag is off, even with a leftover run', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
+    main.set(IAgentProfileService, {
+      getModel: () => 'example-model',
+      getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
+    });
+    main.set(IAgentUsageService, { status: () => ({}) });
+    main.set(IFlagService, { enabled: () => false });
+    main.set(IAgentFlowService, {
+      run: () => ({
+        active: true,
+        flowId: 'issue-fix',
+        currentStageIndex: 0,
+        stages: [{ id: 'triage', objective: 'find it', completion: 'found', gate: 'human' }],
+      }),
+    });
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+    await bc.getCursor('s1');
+
+    const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
+    expect(statuses).toHaveLength(1);
+    expect((statuses[0]!.payload as { flowRun?: unknown }).flowRun).toBeNull();
   });
 
   it('publishes the input cap as the status context limit when declared', async () => {
@@ -593,6 +674,7 @@ describe('SessionEventBroadcaster', () => {
     const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
     expect(statuses.map((envelope) => envelope.payload)).toMatchObject([
       { type: 'agent.status.updated', maxContextTokens: 64_000 },
+      { type: 'agent.status.updated', maxContextTokens: 64_000 },
     ]);
   });
 
@@ -613,10 +695,12 @@ describe('SessionEventBroadcaster', () => {
     await bc.getCursor('s1');
 
     const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
-    expect(statuses).toHaveLength(1);
-    const payload = statuses[0]!.payload as Record<string, unknown>;
-    expect(payload['maxContextTokens']).toBeUndefined();
-    expect(JSON.stringify(payload)).not.toContain('maxContextTokens');
+    expect(statuses).toHaveLength(2);
+    for (const status of statuses) {
+      const payload = status.payload as Record<string, unknown>;
+      expect(payload['maxContextTokens']).toBeUndefined();
+      expect(JSON.stringify(payload)).not.toContain('maxContextTokens');
+    }
   });
 
   it('falls back to the default model limit when no model is bound', async () => {
@@ -643,8 +727,10 @@ describe('SessionEventBroadcaster', () => {
     await bc.getCursor('s1');
 
     const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
-    expect(statuses).toHaveLength(1);
-    expect(statuses[0]!.payload).toMatchObject({ maxContextTokens: 200_000, model: '' });
+    expect(statuses).toHaveLength(2);
+    for (const status of statuses) {
+      expect(status.payload).toMatchObject({ maxContextTokens: 200_000, model: '' });
+    }
   });
 
   it('omits maxContextTokens when no model is bound and no default model resolves', async () => {
@@ -670,8 +756,10 @@ describe('SessionEventBroadcaster', () => {
     await bc.getCursor('s1');
 
     const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
-    expect(statuses).toHaveLength(1);
-    expect(JSON.stringify(statuses[0]!.payload)).not.toContain('maxContextTokens');
+    expect(statuses).toHaveLength(2);
+    for (const status of statuses) {
+      expect(JSON.stringify(status.payload)).not.toContain('maxContextTokens');
+    }
   });
 
   it('projects agent activity state into legacy running and ended phases', async () => {
