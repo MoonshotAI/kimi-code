@@ -19,11 +19,18 @@ export interface PromptWithSkillsInput {
   readonly skills: readonly PromptSkillActivation[];
 }
 
+export interface PromptWithSkillsResult {
+  readonly turn_id?: number;
+  readonly prompt_id: string;
+  readonly created_at: string;
+  readonly state: 'running' | 'queued' | 'blocked';
+}
+
 export interface IAgentSkillService {
   readonly _serviceBrand: undefined;
 
   activate(input: SkillActivationInput): Promise<PromptLaunchResult>;
-  promptWithSkills(input: PromptWithSkillsInput): Promise<PromptLaunchResult | undefined>;
+  promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult>;
   recordModelToolActivation(origin: SkillActivationOrigin): void;
 }
 

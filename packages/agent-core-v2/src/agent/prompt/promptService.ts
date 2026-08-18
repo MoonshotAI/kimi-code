@@ -109,6 +109,29 @@ interface Record extends PromptSnapshot {
   handle: PromptHandle;
 }
 
+function bundledSkillBlockCount(message: ContextMessage): number {
+  return message.origin?.kind === 'user' ? (message.origin.skillActivations?.length ?? 0) : 0;
+}
+
+function stripBundledSkillBlocks(message: ContextMessage): ContentPart[] {
+  return message.content.slice(bundledSkillBlockCount(message));
+}
+
+function mergeSteerMessages(records: readonly Record[]): ContextMessage {
+  const skillActivations = records.flatMap((item) =>
+    item.message.origin?.kind === 'user' ? (item.message.origin.skillActivations ?? []) : [],
+  );
+  return {
+    role: 'user',
+    content: [
+      ...records.flatMap((item) => item.message.content.slice(0, bundledSkillBlockCount(item.message))),
+      ...records.flatMap((item) => stripBundledSkillBlocks(item.message)),
+    ],
+    toolCalls: [],
+    origin: skillActivations.length === 0 ? USER_PROMPT_ORIGIN : { kind: 'user', skillActivations },
+  };
+}
+
 export const promptLaunchingKey = defineState<boolean>('prompt.launching', () => false);
 
 export class AgentPromptService implements IAgentPromptService {
@@ -117,6 +140,7 @@ export class AgentPromptService implements IAgentPromptService {
   private readonly pending: Record[] = [];
   private readonly steered = new Map<string, Record[]>();
   private readonly reservedPromptIds = new Set<string>();
+  private steering = 0;
   private fullCompactionService: IAgentFullCompactionService | undefined;
   readonly hooks = { onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>() };
 
@@ -284,22 +308,41 @@ export class AgentPromptService implements IAgentPromptService {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
     }
     const selected = this.pending.filter((item) => ids.has(item.id));
-    for (const item of selected) this.pending.splice(this.pending.indexOf(item), 1);
-    const message: ContextMessage = {
-      role: 'user', content: selected.flatMap((item) => item.message.content), toolCalls: [], origin: USER_PROMPT_ORIGIN,
-    };
-    const { message: rerouted, captions } = this.extractCompressionCaptions(message);
+    const activeAtEntry = this.active;
+    const { message: rerouted, captions } = this.extractCompressionCaptions(mergeSteerMessages(selected));
+    await this.materializeDaemonRefs(rerouted);
+    if (selected.some((item) => !this.pending.includes(item)) || this.active !== activeAtEntry) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are no longer pending');
+    }
+    this.steering++;
+    const removed: { readonly item: Record; readonly index: number }[] = [];
+    for (const item of selected) {
+      const index = this.pending.indexOf(item);
+      removed.push({ item, index });
+      this.pending.splice(index, 1);
+    }
     const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
       void this.dispatcher.dispatch(
         new TurnSteer({ input: materialized.content, origin: materialized.origin ?? USER_PROMPT_ORIGIN }),
       );
     }, () => {});
-    const turn = (await this.loop.enqueue(request).assigned).turn;
-    if (turn === undefined) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
+    let turn: Turn | undefined;
+    try {
+      turn = (await this.loop.enqueue(request).assigned).turn;
+    } catch {
+      turn = undefined;
+    } finally {
+      this.steering--;
+    }
+    if (turn === undefined || this.active !== activeAtEntry) {
+      for (const { item, index } of removed.reverse()) this.pending.splice(index, 0, item);
+      if (this.active === undefined) void this.startNext();
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
+    }
     for (const item of selected) { item.state = 'steered'; item.launchedDeferred.resolve(turn); }
     this.steered.set(this.active.id, [...(this.steered.get(this.active.id) ?? []), ...selected]);
     void this.dispatcher.dispatch(
-      new PromptSteered({ activePromptId: this.active.id, promptIds: selected.map((x) => x.id), content: rerouted.content as ContentPart[], steeredAt: new Date().toISOString() }),
+      new PromptSteered({ activePromptId: this.active.id, promptIds: selected.map((x) => x.id), content: selected.flatMap((item) => stripBundledSkillBlocks(item.message)), steeredAt: new Date().toISOString() }),
     );
     return selected.map((item) => item.handle);
   }
@@ -322,6 +365,7 @@ export class AgentPromptService implements IAgentPromptService {
 
   async inject(message: ContextMessage): Promise<Turn | undefined> {
     const { message: rerouted, captions } = this.extractCompressionCaptions(message);
+    await this.materializeDaemonRefs(rerouted);
     const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
       void this.dispatcher.dispatch(
         new TurnSteer({ input: materialized.content, origin: materialized.origin ?? USER_PROMPT_ORIGIN }),
@@ -339,17 +383,13 @@ export class AgentPromptService implements IAgentPromptService {
   }
 
   private async startNext(): Promise<void> {
-    if (this.active !== undefined || this.launching) return;
+    if (this.active !== undefined || this.launching || this.steering > 0) return;
     const item = this.pending.shift(); if (item === undefined) return;
     this.launching = true;
     try {
       if (this.fullCompaction.compacting !== null && this.loop.status().state !== 'running') { this.pending.unshift(item); return; }
       const { message, captions } = this.extractCompressionCaptions(item.message);
-      if (message.content.some((part) => daemonFileRefFromPart(part) !== undefined)) {
-        const files = this.instantiation.invokeFunction((accessor) => accessor.get(IFileService));
-        const mediaStore = this.instantiation.invokeFunction((accessor) => accessor.get(ISessionMediaStore));
-        await materializePromptDaemonRefs(message.content, { files, mediaStore });
-      }
+      await this.materializeDaemonRefs(message);
       if (await this.blockedByHook(message, false)) {
         this.appendPrompt(message, captions); item.state = 'blocked'; item.launchedDeferred.resolve(undefined);
         item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'blocked' });
@@ -379,6 +419,13 @@ export class AgentPromptService implements IAgentPromptService {
     this.steered.delete(item.id);
     if (state === 'cancelled') this.publishAborted(item.id); else this.publishCompleted(item.id, state);
     void this.startNext();
+  }
+
+  private async materializeDaemonRefs(message: ContextMessage): Promise<void> {
+    if (!message.content.some((part) => daemonFileRefFromPart(part) !== undefined)) return;
+    const files = this.instantiation.invokeFunction((accessor) => accessor.get(IFileService));
+    const mediaStore = this.instantiation.invokeFunction((accessor) => accessor.get(ISessionMediaStore));
+    await materializePromptDaemonRefs(message.content, { files, mediaStore });
   }
 
   private async blockedByHook(promptMessage: ContextMessage, isSteer: boolean): Promise<boolean> {
@@ -420,7 +467,7 @@ export class AgentPromptService implements IAgentPromptService {
   private publishCompleted(promptId: string, reason: 'completed' | 'failed' | 'blocked'): void { void this.dispatcher.dispatch(new PromptCompleted({ promptId, finishedAt: new Date().toISOString(), reason })); }
   private publishQueued(record: Record): void {
     if ((record.message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return;
-    void this.dispatcher.dispatch(new PromptQueued({ promptId: record.id, content: record.message.content, queueLength: this.pending.length }));
+    void this.dispatcher.dispatch(new PromptQueued({ promptId: record.id, content: stripBundledSkillBlocks(record.message), queueLength: this.pending.length }));
   }
   private publishAborted(promptId: string): void { void this.dispatcher.dispatch(new PromptAborted({ promptId, abortedAt: new Date().toISOString() })); }
 }

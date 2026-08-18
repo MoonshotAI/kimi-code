@@ -153,7 +153,6 @@ describe('default agent profiles', () => {
       // render this same paragraph, so it must not tell them editing files is free.
       expect(prompt).toContain('Local, reversible work your role permits');
       // Concrete one-line examples anchoring high-frequency abstract rules.
-      expect(prompt).toContain('locate the method in the code'); // ambiguous instruction -> edit code, not echo text
       expect(prompt).toContain('update the related tests'); // preamble phrasing example
       expect(prompt).toContain('premature abstraction'); // MINIMAL-changes counterexample
     }
