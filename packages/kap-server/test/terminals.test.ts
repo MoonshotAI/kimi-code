@@ -6,7 +6,7 @@ import {
   IHostTerminalService,
   ScopeActivation,
   LifecycleScope,
-  registerScopedService,
+  overrideScopedService,
   type TerminalProcess,
   type TerminalSpawnOptions,
 } from '@moonshot-ai/agent-core-v2';
@@ -68,7 +68,7 @@ class FakeHostTerminalService implements IHostTerminalService {
 const spawnOptions: TerminalSpawnOptions[] = [];
 const processes: FakeTerminalProcess[] = [];
 
-registerScopedService(
+overrideScopedService(
   LifecycleScope.App,
   IHostTerminalService,
   FakeHostTerminalService,

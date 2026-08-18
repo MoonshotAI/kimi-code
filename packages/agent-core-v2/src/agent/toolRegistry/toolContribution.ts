@@ -1,7 +1,7 @@
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { collection } from '#/_base/di/collection';
 import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { ScopeActivation, overrideScopedService, registerScopedService } from '#/_base/di/scope';
 import type {
   AgentTool,
   ToolDisclosure,
@@ -45,6 +45,26 @@ export function registerAgentToolService<T extends AnyAgentTool>(
     options.domain ?? 'unknown',
   );
   _agentToolContributions.push({ id, ctor, options });
+}
+
+export function overrideAgentToolService<T extends AnyAgentTool>(
+  id: ServiceIdentifier<T>,
+  ctor: AgentToolCtor<T>,
+  options: AgentToolContributionOptions,
+): void {
+  overrideScopedService(
+    LifecycleScope.Agent,
+    id,
+    ctor,
+    ScopeActivation.OnDemand,
+    options.domain ?? 'unknown',
+  );
+  const index = _agentToolContributions.findIndex((contribution) => contribution.id === id);
+  if (index === -1) {
+    _agentToolContributions.push({ id, ctor, options });
+  } else {
+    _agentToolContributions[index] = { id, ctor, options };
+  }
 }
 
 export function getAgentToolContributions(): readonly AgentToolContribution[] {

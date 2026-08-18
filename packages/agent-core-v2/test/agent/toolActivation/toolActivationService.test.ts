@@ -195,6 +195,7 @@ describe('AgentToolActivationService', () => {
     runtimeData.capabilities.clear();
     runtimeData.capabilities.add('fs');
     runtimeData.capabilities.add('process');
+    _clearScopedRegistryForTests();
     _clearAgentToolContributionsForTests();
     delete profileData.activeToolNames;
     delete profileData.disallowedTools;
@@ -203,6 +204,7 @@ describe('AgentToolActivationService', () => {
 
   afterEach(() => {
     disposables.dispose();
+    _clearScopedRegistryForTests();
     _clearAgentToolContributionsForTests();
     for (const contribution of savedContributions) {
       registerAgentToolService(contribution.id, contribution.ctor, contribution.options);
