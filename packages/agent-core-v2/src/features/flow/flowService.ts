@@ -1,7 +1,6 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { SkillActivated } from '#/agent/skill/skillOps';
 import { ContextUndone } from '#/agent/undo/undoService';
@@ -16,12 +15,10 @@ import { LifecycleScope } from '#/app/scopes';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { DeepReadonly } from '#/state/state';
 
-import { parseFlowDefinition } from './definition';
-
 import {
   FLOW_ADVANCE_TOOL_NAME,
   FLOW_FLAG_ID,
-  FLOWS_PROJECT_DIR,
+  FlowDefinitionSchema,
   IAgentFlowService,
   type FlowAdvanceOutcome,
   type FlowAdvanceResult,
@@ -31,7 +28,8 @@ import {
   type FlowStageDefinition,
 } from './flow';
 import { FlowGateReview } from './flowGateReview';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { flowDefinitionPath } from './flowsSkillSource';
+import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { FlowRunEnded, FlowRunStarted, FlowVerdict, flowGatesKey, flowKey } from './flowOps';
@@ -42,9 +40,8 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
   declare readonly _serviceBrand: undefined;
 
   private readonly review: FlowGateReview;
-  private activationInFlight = false;
   private readonly approvedGateCalls = new Map<string, number>();
-  private epoch = 0;
+  private epoch = Date.now();
 
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
@@ -54,7 +51,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @IFlagService private readonly flags: IFlagService,
     @IEventBus eventBus: IEventBus,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
@@ -83,15 +80,15 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
           return;
         }
         if (event.toolCall.name !== FLOW_ADVANCE_TOOL_NAME) return;
-        if (event.execution.display?.kind !== 'flow_gate_review') return;
         if (event.toolCalls.length > 1) {
           event.veto(
             denyToolExecution(
-              'A human-gated verdict must be the only call in its response: earlier siblings have not executed (their evidence does not exist yet) and later siblings would run even after a rejection. Submit FlowAdvance alone.',
+              'A verdict must be the only call in its response: its evidence must come from work already completed and verified in earlier responses, and later siblings would run even after a rejection. Submit FlowAdvance alone.',
             ),
           );
           return;
         }
+        if (event.execution.display?.kind !== 'flow_gate_review') return;
         if (this.modeService.mode === 'auto') return;
         event.waitUntil(() => this.review.requestApproval(event));
       }),
@@ -122,7 +119,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         if (event.skillType !== 'flow') return;
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
         if (this.scopeContext.agentId !== 'main') return;
-        void this.startFromActivation(event.skillName, event.skillArgs);
+        this.startFromActivation(event.skillName, event.skillArgs, event.skillPath);
       }),
     );
   }
@@ -140,45 +137,19 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     };
   }
 
-  private async startFromActivation(
+  private startFromActivation(
     flowId: string | undefined,
     task: string | undefined,
-  ): Promise<void> {
+    skillPath: string | undefined,
+  ): void {
     if (flowId === undefined || flowId.length === 0 || this.run().active) return;
     if (task === undefined || task.trim().length === 0) return;
-    if (this.activationInFlight) return;
-    this.activationInFlight = true;
-    try {
-      await this.readAndStart(flowId, task);
-    } finally {
-      this.activationInFlight = false;
-    }
-  }
-
-  private async readAndStart(flowId: string, task: string | undefined): Promise<void> {
-    let text: string;
-    try {
-      const view = new RuntimeWorkspaceView(inspectAgentRuntime(this.runtime), {
-        workDir: this.workspaceCtx.workDir,
-        additionalDirs: [...this.workspaceCtx.additionalDirs],
-      });
-      const path = view.resolve(`${FLOWS_PROJECT_DIR}/${flowId}.md`);
-      const lease = this.runtime.acquire(['fs']);
-      try {
-        text = await lease.runtime.fs!.readText(path);
-      } finally {
-        lease.dispose();
-      }
-    } catch {
-      return;
-    }
-    try {
-      const definition = parseFlowDefinition(text);
-      if (definition.id !== flowId) return;
-      this.start(definition, task?.trim() ?? '');
-    } catch {
-      return;
-    }
+    if (skillPath !== flowDefinitionPath(this.workspaceCtx.workDir, flowId)) return;
+    const skill = this.skillCatalog.catalog.getSkill(flowId);
+    if (skill === undefined || skill.path !== skillPath || skill.metadata.type !== 'flow') return;
+    const parsed = FlowDefinitionSchema.safeParse(skill.data);
+    if (!parsed.success || parsed.data.id !== flowId) return;
+    this.start(parsed.data, task.trim());
   }
 
   run(): DeepReadonly<FlowRunState> {

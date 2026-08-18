@@ -13,10 +13,10 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { SkillActivate, skillKey } from '#/agent/skill/skillOps';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
@@ -53,18 +53,18 @@ const DEFINITION: FlowDefinition = {
 
 const CRITERIA = [{ criterion: 'cause located', met: true, evidence: 'src/x.ts:12' }];
 
-const DEFINITION_TEXT = `---
-id: issue-fix
-stages:
-  - id: triage
-    objective: find root cause
-    completion: cause located
-    gate: human
-  - id: implement
-    objective: fix it
-    completion: tests pass
----
-`;
+function flowSkillEntry(id: string, overrides?: { path?: string; type?: string; data?: unknown }) {
+  return {
+    name: id,
+    description: `Run the ${id} flow`,
+    path: overrides?.path ?? `/ws/.kimi-code/flows/${id}.md`,
+    dir: '/ws/.kimi-code/flows',
+    content: 'supervisor prompt',
+    metadata: { name: id, description: '', type: overrides?.type ?? 'flow' },
+    source: 'project',
+    data: overrides && 'data' in overrides ? overrides.data : { ...DEFINITION, id },
+  };
+}
 
 describe('AgentFlowService', () => {
   let disposables: DisposableStore;
@@ -77,8 +77,13 @@ describe('AgentFlowService', () => {
   let agentState: IAgentStateService;
   let dispatcher: IEventDispatcher;
   let agentId: string;
+  let catalogSkills: Map<string, unknown>;
 
   beforeEach(() => {
+    catalogSkills = new Map([
+      ['issue-fix', flowSkillEntry('issue-fix')],
+      ['other-flow', flowSkillEntry('other-flow')],
+    ]);
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
@@ -91,23 +96,11 @@ describe('AgentFlowService', () => {
       requestToolApproval,
       formatDenyMessage: (message: string) => message,
     } as unknown as IAgentToolApprovalService);
-    ix.stub(IAgentRuntimeService, {
-      acquire: () => ({
-        runtime: { fs: { readText: async () => DEFINITION_TEXT } },
-        dispose: () => {},
-      }),
-      inspect: () => ({
-        identity: { workspaceId: 'ws', runtimeId: 'local', generation: 'gen-1' },
-        workspace: { mapRoots: (roots: unknown) => roots },
-        path: {
-          separator: '/',
-          resolve: (...parts: string[]) => parts.join('/'),
-          isAbsolute: (path: string) => path.startsWith('/'),
-          relative: (from: string, to: string) =>
-            to === from ? '' : to.startsWith(`${from}/`) ? to.slice(from.length + 1) : '..',
-        },
-      }),
-    } as unknown as IAgentRuntimeService);
+    ix.stub(ISessionSkillCatalog, {
+      catalog: {
+        getSkill: (name: string) => catalogSkills.get(name),
+      },
+    } as unknown as ISessionSkillCatalog);
     ix.stub(ISessionWorkspaceContext, {
       workDir: '/ws',
       additionalDirs: [],
@@ -408,6 +401,84 @@ describe('AgentFlowService', () => {
       expect(service.run().active).toBe(false);
     });
 
+    it('ignores a flow-typed activation whose path is not the projected flows definition', async () => {
+      agentState.contributeState(skillKey);
+      catalogSkills.set(
+        'issue-fix',
+        flowSkillEntry('issue-fix', { path: '/ws/.kimi-code/skills/issue-fix/SKILL.md' }),
+      );
+      await dispatcher.dispatch(
+        new SkillActivate({
+          origin: {
+            kind: 'skill_activation',
+            activationId: 'act-foreign',
+            skillName: 'issue-fix',
+            trigger: 'user-slash',
+            skillType: 'flow',
+            skillPath: '/ws/.kimi-code/skills/issue-fix/SKILL.md',
+            skillArgs: 'task',
+          },
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(service.run().active).toBe(false);
+    });
+
+    it('ignores an activation whose catalog entry was replaced by a different path', async () => {
+      agentState.contributeState(skillKey);
+      catalogSkills.set(
+        'issue-fix',
+        flowSkillEntry('issue-fix', { path: '/elsewhere/.kimi-code/flows/issue-fix.md' }),
+      );
+      await dispatcher.dispatch(
+        new SkillActivate({
+          origin: {
+            kind: 'skill_activation',
+            activationId: 'act-moved',
+            skillName: 'issue-fix',
+            trigger: 'user-slash',
+            skillType: 'flow',
+            skillPath: '/ws/.kimi-code/flows/issue-fix.md',
+            skillArgs: 'task',
+          },
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(service.run().active).toBe(false);
+    });
+
+    it('starts from the catalog-carried definition rather than any on-disk state', async () => {
+      agentState.contributeState(skillKey);
+      catalogSkills.set(
+        'issue-fix',
+        flowSkillEntry('issue-fix', {
+          data: {
+            id: 'issue-fix',
+            stages: [
+              { id: 'solo', objective: 'do it', completion: 'done', gate: 'ai' },
+            ],
+          },
+        }),
+      );
+      await dispatcher.dispatch(
+        new SkillActivate({
+          origin: {
+            kind: 'skill_activation',
+            activationId: 'act-pinned',
+            skillName: 'issue-fix',
+            trigger: 'user-slash',
+            skillType: 'flow',
+            skillPath: '/ws/.kimi-code/flows/issue-fix.md',
+            skillArgs: 'task',
+          },
+        }),
+      );
+      await vi.waitFor(() => {
+        expect(service.run().active).toBe(true);
+      });
+      expect(service.currentStage()?.id).toBe('solo');
+    });
+
     it('does not restart an already-active run', async () => {
       service.start(DEFINITION, 'original task');
       agentState.contributeState(skillKey);
@@ -496,6 +567,25 @@ describe('AgentFlowService', () => {
     it('vetoes a human-gated verdict batched with any sibling call', async () => {
       service.start(DEFINITION, 'task');
       const context = advanceContext(GATE_DISPLAY);
+      const sibling: ToolCall = {
+        type: 'function',
+        id: 'call_bash',
+        name: 'Bash',
+        arguments: '{}',
+      };
+      const batched = {
+        ...context,
+        toolCalls: [context.toolCall, sibling],
+      } as ResolvedToolExecutionHookContext;
+      const decision = await executorEvents.fireBeforeExecute(batched);
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('Submit FlowAdvance alone');
+      expect(requestToolApproval).not.toHaveBeenCalled();
+    });
+
+    it('vetoes an AI-gated FlowAdvance batched with a non-flow sibling call', async () => {
+      service.start(DEFINITION, 'task');
+      const context = advanceContext(undefined);
       const sibling: ToolCall = {
         type: 'function',
         id: 'call_bash',

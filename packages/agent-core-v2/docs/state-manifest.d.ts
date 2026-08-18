@@ -203,6 +203,7 @@ export interface WorkspaceStateSnapshot {
         readonly d2?: string;
         readonly productSpecific?: boolean;
         readonly experimentalFlag?: string;
+        readonly data?: unknown;
       }[];
       readonly skipped?: readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
         readonly path: string;
@@ -240,6 +241,7 @@ export interface WorkspaceStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }) => void;
     register: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -267,6 +269,7 @@ export interface WorkspaceStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }, options?: {
       readonly replace?: boolean;
     }) => void;
@@ -302,6 +305,7 @@ export interface WorkspaceStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     } | undefined;
     getPluginSkill: (pluginId: string, name: string) => /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -329,6 +333,7 @@ export interface WorkspaceStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     } | undefined;
     renderSkillPrompt: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -356,6 +361,7 @@ export interface WorkspaceStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }, rawArgs: string, context?: {
       readonly sessionId?: string;
     }) => string;
@@ -385,6 +391,7 @@ export interface WorkspaceStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }[];
     listInvocableSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -412,6 +419,7 @@ export interface WorkspaceStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }[];
     getSkillRoots: () => readonly string[];
     getSkippedByPolicy: () => readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
@@ -539,6 +547,7 @@ export interface SessionStateSnapshot {
         readonly d2?: string;
         readonly productSpecific?: boolean;
         readonly experimentalFlag?: string;
+        readonly data?: unknown;
       }[];
       readonly skipped?: readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
         readonly path: string;
@@ -576,6 +585,7 @@ export interface SessionStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }) => void;
     register: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -603,6 +613,7 @@ export interface SessionStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }, options?: {
       readonly replace?: boolean;
     }) => void;
@@ -638,6 +649,7 @@ export interface SessionStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     } | undefined;
     getPluginSkill: (pluginId: string, name: string) => /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -665,6 +677,7 @@ export interface SessionStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     } | undefined;
     renderSkillPrompt: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -692,6 +705,7 @@ export interface SessionStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }, rawArgs: string, context?: {
       readonly sessionId?: string;
     }) => string;
@@ -721,6 +735,7 @@ export interface SessionStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }[];
     listInvocableSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -748,6 +763,7 @@ export interface SessionStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }[];
     getSkillRoots: () => readonly string[];
     getSkippedByPolicy: () => readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
@@ -1591,6 +1607,8 @@ export interface AgentStateSnapshot {
       notes?: string;
     }[];
     currentStageIndex?: number;
+    endedReason?: 'aborted' | 'finished';
+    endedNote?: string;
   };
   // replayable · durable — folds: FlowRunStarted, FlowVerdict
   'flow.gates': /* FlowGatesState — packages/agent-core-v2/src/features/flow/flow.ts */ {

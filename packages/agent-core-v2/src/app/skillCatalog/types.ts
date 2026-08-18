@@ -25,6 +25,7 @@ export interface SkillDefinition {
   readonly d2?: string;
   readonly productSpecific?: boolean;
   readonly experimentalFlag?: string;
+  readonly data?: unknown;
 }
 
 export interface SkillSummary {

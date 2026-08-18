@@ -24,6 +24,14 @@ function joinWorkspacePath(root: string, relative: string): string {
   return `${root.replace(/[\\/]+$/, '')}/${relative}`;
 }
 
+/**
+ * Canonical on-disk path of a project flow definition, as projected into the
+ * skill catalog — automatic run starts verify an activation against it.
+ */
+export function flowDefinitionPath(workDir: string, flowId: string): string {
+  return `${joinWorkspacePath(workDir, FLOWS_PROJECT_DIR)}/${flowId}.md`;
+}
+
 const WATCH_DEBOUNCE_MS = 200;
 
 export interface IFlowsSkillSource extends ISkillSource {
@@ -176,5 +184,6 @@ function toFlowSkill(definition: FlowDefinition, path: string, dir: string): Ski
       disableModelInvocation: true,
     },
     source: 'project',
+    data: definition,
   };
 }

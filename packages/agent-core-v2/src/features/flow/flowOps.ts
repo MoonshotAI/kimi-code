@@ -78,6 +78,8 @@ export const flowKey = defineState('flow', (): FlowRunState => ({ active: false 
     s.task = e.task;
     s.stages = e.stages;
     s.currentStageIndex = 0;
+    delete s.endedReason;
+    delete s.endedNote;
     ctx.emit(new AgentStatusUpdated({ flowRun: flowRunStatus(s) }));
   })
   .on(FlowVerdict, (s, e, ctx) => {
@@ -92,6 +94,9 @@ export const flowKey = defineState('flow', (): FlowRunState => ({ active: false 
     s.active = false;
     delete s.stages;
     delete s.currentStageIndex;
+    s.endedReason = e.reason;
+    if (e.note === undefined) delete s.endedNote;
+    else s.endedNote = e.note;
     ctx.emit(new AgentStatusUpdated({ flowRun: null }));
   });
 

@@ -125,6 +125,24 @@ describe('server-v2 /api/v1/sessions/{sid}/flow', () => {
     expect(body.data.run.current_stage_index).toBe(0);
     expect(body.data.run.stages?.map((stage) => stage.id)).toEqual(['triage', 'implement']);
     expect(body.data.gates).toEqual([]);
+    expect(body.data.gates_flow_id).toBe('issue-fix');
+    expect(body.data.gates_task).toBe('fix the paste bug');
+  });
+
+  it('reports the termination outcome of an ended run', async () => {
+    process.env[FLOW_ENV] = 'true';
+    const sessionId = await createSession();
+    await startRun(sessionId);
+    const handle = getLiveSessionById(server!.core.accessor, sessionId);
+    const main = await ensureMainAgent(handle!);
+    main.accessor.get(IAgentFlowService).abort('changed direction');
+
+    const { body } = await getFlow(sessionId);
+    expect(body.code).toBe(0);
+    expect(body.data.run.active).toBe(false);
+    expect(body.data.run.flow_id).toBe('issue-fix');
+    expect(body.data.run.ended_reason).toBe('aborted');
+    expect(body.data.run.ended_note).toBe('changed direction');
   });
 
   it('hides a leftover run behind the empty state after the flag is turned off', async () => {

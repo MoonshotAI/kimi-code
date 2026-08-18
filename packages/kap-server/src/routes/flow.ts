@@ -77,6 +77,8 @@ export function registerFlowRoutes(app: FlowRouteHost, deps: FlowRouteDeps): voi
             notes: stage.notes,
           })),
           current_stage_index: run.currentStageIndex,
+          ended_reason: run.active ? undefined : run.endedReason,
+          ended_note: run.active ? undefined : run.endedNote,
         },
         gates: flow.gates().records.map((record) => ({
           stage: record.stage,
@@ -89,6 +91,8 @@ export function registerFlowRoutes(app: FlowRouteHost, deps: FlowRouteDeps): voi
           })),
           feedback: record.feedback,
         })),
+        gates_flow_id: gates.flowId,
+        gates_task: gates.task,
       };
       reply.send(okEnvelope(payload, req.id));
     },

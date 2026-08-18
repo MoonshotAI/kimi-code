@@ -31,12 +31,25 @@ export interface FlowDefinition {
   readonly stages: readonly FlowStageDefinition[];
 }
 
+/**
+ * Structural schema of a parsed flow definition, used to revalidate a
+ * definition carried as opaque `data` on a projected flow skill before an
+ * automatic run start.
+ */
+export const FlowDefinitionSchema = z.object({
+  id: z.string().min(1),
+  when: z.string().optional(),
+  stages: z.array(FlowStageDefinitionSchema).min(1),
+});
+
 export interface FlowRunState {
   active: boolean;
   flowId?: string;
   task?: string;
   stages?: FlowStageDefinition[];
   currentStageIndex?: number;
+  endedReason?: 'finished' | 'aborted';
+  endedNote?: string;
 }
 
 export const FlowCriterionVerdictSchema = z.object({
