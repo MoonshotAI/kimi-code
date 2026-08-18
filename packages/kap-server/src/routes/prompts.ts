@@ -282,6 +282,13 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         }
         const parts = contentToCoreParts(resolvedContent);
         if (req.body.skills !== undefined) {
+          if (req.body.agent_id !== undefined && req.body.agent_id !== MAIN_AGENT_ID) {
+            await applyPromptMetadataUpdate({
+              metadata: session.accessor.get(ISessionMetadata),
+              eventService: core.accessor.get(IEventService),
+              sessionId: session_id,
+            }, promptMetadataTextFromContentParts(parts));
+          }
           const settlement = watchPromptSettlements(resolved.events);
           let result: PromptWithSkillsResult;
           try {

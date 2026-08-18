@@ -312,6 +312,26 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.data.user_message_id).toBe('submission-1');
   });
 
+  it('updates session metadata for a bundled prompt routed to a non-main agent', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const session = getLiveSessionById(server!.core.accessor, id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const child = await session.accessor.get(IAgentLifecycleService).fork('main');
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'bundled side question' }],
+      agent_id: child.id,
+      skills: [{ name: 'update-config' }],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    expect((await session.accessor.get(ISessionMetadata).read()).lastPrompt).toBe(
+      'bundled side question',
+    );
+  });
+
   it('rejects a reused prompt_id live and after cold resume without changing metadata', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
