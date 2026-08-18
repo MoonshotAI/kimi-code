@@ -402,6 +402,28 @@ describe('AgentFlowService', () => {
       expect(service.run().active).toBe(false);
     });
 
+    it('accepts an activation path that normalizes to the projected definition', async () => {
+      agentState.contributeState(skillKey);
+      await dispatcher.dispatch(
+        new SkillActivate({
+          origin: {
+            kind: 'skill_activation',
+            activationId: 'act-lexical',
+            skillName: 'issue-fix',
+            trigger: 'user-slash',
+            skillType: 'flow',
+            skillPath: '/ws/./.kimi-code//flows/issue-fix.md',
+            skillArgs: 'task',
+            skillData: DEFINITION,
+          },
+        }),
+      );
+      await vi.waitFor(() => {
+        expect(service.run().active).toBe(true);
+      });
+      expect(service.run().flowId).toBe('issue-fix');
+    });
+
     it('ignores an activation whose carried definition does not match the flow id', async () => {
       agentState.contributeState(skillKey);
       await dispatcher.dispatch(

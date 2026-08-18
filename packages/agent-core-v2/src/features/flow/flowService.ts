@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -143,7 +145,12 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
   ): void {
     if (flowId === undefined || flowId.length === 0 || this.run().active) return;
     if (task === undefined || task.trim().length === 0) return;
-    if (skillPath !== flowDefinitionPath(this.workspaceCtx.workDir, flowId)) return;
+    if (
+      skillPath === undefined ||
+      resolve(skillPath) !== resolve(flowDefinitionPath(this.workspaceCtx.workDir, flowId))
+    ) {
+      return;
+    }
     const parsed = FlowDefinitionSchema.safeParse(skillData);
     if (!parsed.success || parsed.data.id !== flowId) return;
     this.start(parsed.data, task.trim());
