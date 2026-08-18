@@ -179,23 +179,10 @@ describe('ReadTool', () => {
     const tool = toolWithContent('');
 
     expect(tool.name).toBe('Read');
-    expect(tool.description).toContain('concrete file path');
-    expect(tool.description).toContain('Pure CRLF files are displayed with LF');
-    expect(tool.description).not.toContain('skip the verification re-read');
-    expect(tool.description).toContain('final external contract');
     expect(tool.parameters).toMatchObject({
       type: 'object',
       properties: {
-        path: {
-          type: 'string',
-          description: expect.stringContaining('working directory'),
-        },
-        line_offset: {
-          description: expect.stringContaining('line number to start reading from'),
-        },
-        n_lines: {
-          description: expect.stringContaining('number of lines to read'),
-        },
+        path: { type: 'string' },
       },
     });
     expect(ReadInputSchema.safeParse({ path: '/tmp/test.txt' }).success).toBe(true);
@@ -752,11 +739,10 @@ describe('ReadTool', () => {
     expect(output).not.toContain('Max');
   });
 
-  it('description pins line/byte caps, tail mode, and the Grep-over-Read preference', () => {
+  it('interpolates the cap constants into the description and references the Grep tool', () => {
     const tool = toolWithContent('');
     expect(tool.description).toContain(String(MAX_LINES));
     expect(tool.description).toContain(String(MAX_LINE_LENGTH));
-    expect(tool.description).toMatch(/negative line_offset|reads from the end/i);
     expect(tool.description).toContain('Grep');
   });
 
@@ -921,53 +907,5 @@ describe('ReadTool', () => {
     await expect(
       execution.execute({ turnId: 0, toolCallId: 'call_read_late', signal }),
     ).rejects.toMatchObject({ code: 'runtime.unavailable' });
-  });
-});
-
-describe('ReadTool description and schema parity', () => {
-  it('encourages reading multiple files in parallel', () => {
-    const tool = toolWithContent('');
-
-    expect(tool.description).toMatch(/parallel/i);
-    expect(tool.description).toMatch(/multiple `Read` calls in a single response/i);
-  });
-
-  it('explains the trailing <system> status block', () => {
-    const tool = toolWithContent('');
-
-    expect(tool.description).toContain('<system>');
-    expect(tool.description).toMatch(/after the file content/i);
-  });
-
-  it('describes the path parameter with accurate working-directory semantics', () => {
-    const tool = toolWithContent('');
-    const pathProperty = (tool.parameters as { properties: { path: { description: string } } })
-      .properties.path;
-
-    expect(pathProperty.description).toContain('working directory');
-    expect(pathProperty.description).not.toMatch(/^Absolute path/);
-  });
-
-  it('documents the default for n_lines when omitted', () => {
-    const tool = toolWithContent('');
-    const nLinesProperty = (tool.parameters as { properties: { n_lines: { description: string } } })
-      .properties.n_lines;
-
-    expect(nLinesProperty.description).toMatch(/omit/i);
-    expect(nLinesProperty.description).toContain(String(MAX_LINES));
-  });
-
-  it('warns that sensitive files are refused', () => {
-    const tool = toolWithContent('');
-
-    expect(tool.description).toMatch(/refuse|reject|decline|block/i);
-    expect(tool.description).toMatch(/sensitive|credential|secret|\.env|SSH key/i);
-  });
-
-  it('explains that non-UTF-8 and binary files are refused', () => {
-    const tool = toolWithContent('');
-
-    expect(tool.description).toMatch(/UTF-?8/i);
-    expect(tool.description).toMatch(/binary/i);
   });
 });

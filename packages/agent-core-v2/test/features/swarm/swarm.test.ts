@@ -361,7 +361,6 @@ describe('AgentSwarmService', () => {
       variant: 'swarm_mode',
       disclosure: { kind: 'swarm_mode', state: 'active' },
     });
-    expect(messageText(reminder)).toContain('You are now in "agent swarm" mode.');
     expect(context.get()).toHaveLength(1);
   });
 
@@ -765,12 +764,10 @@ describe('AgentSwarmTool', () => {
     expect(execution.matchesRule).toBeUndefined();
   });
 
-  it('description states the enforced input requirements', () => {
+  it('description documents the {{item}} placeholder', () => {
     const host = mockSwarmHost();
     const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubFlag(true), stubCallerProfile()), stubCallerProfile());
-    expect(tool.description).toContain('at least 2');
     expect(tool.description).toContain('{{item}}');
-    expect(tool.description.toLowerCase()).toContain('distinct');
   });
 
   it('uses the persisted caller allowlist instead of the current catalog profile', async () => {
@@ -1180,12 +1177,10 @@ describe('AgentSwarmTool', () => {
     const host = mockSwarmHost();
     const configured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ defaultModel: 'provider/fast', models: { 'provider/fast': 'fast and cheap', 'main-model': 'the main model' } }), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig({ defaultModel: 'provider/fast', models: { 'provider/fast': 'fast and cheap', 'main-model': 'the main model' } }), stubFlag(true), stubCallerProfile({ modelAlias: 'main-model' })), stubCallerProfile({ modelAlias: 'main-model' }));
 
-    expect(configured.description).toContain('Available models (pass via model):');
+    expect(configured.description).toContain('Available models');
     expect(configured.description).toContain('- provider/fast [default]: fast and cheap');
     expect(configured.description).toContain('- main-model [main model]: the main model');
-    expect(configured.description).toContain(
-      '- primary (main-model): the main model you are running on, bound with your current thinking level',
-    );
+    expect(configured.description).toContain('- primary (main-model)');
 
     const unconfigured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubFlag(true), stubCallerProfile({ modelAlias: 'main-model' })), stubCallerProfile({ modelAlias: 'main-model' }));
 

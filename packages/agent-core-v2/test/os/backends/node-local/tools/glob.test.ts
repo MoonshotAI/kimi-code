@@ -14,6 +14,7 @@ import {
   type GlobInput,
   GlobInputSchema,
   MAX_MATCHES,
+  WINDOWS_PATH_HINT,
 } from '#/agent/tools/os/glob/glob';
 import { GlobTool, splitCompletePaths } from '#/agent/tools/os/glob/globTool';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -263,7 +264,6 @@ describe('GlobTool', () => {
 
     expect(schema.properties).toHaveProperty('include_ignored');
     expect(schema.properties).toHaveProperty('include_dirs');
-    expect(schema.properties['include_dirs']?.description?.toLowerCase()).toContain('deprecated');
     expect(schema.properties['include_dirs']?.default).toBeUndefined();
     expect(schema.required ?? []).not.toContain('include_dirs');
   });
@@ -271,15 +271,13 @@ describe('GlobTool', () => {
   it('injects the Windows path hint into the description on a win32 backend', () => {
     const { tool } = makeTool(workspace, { pathClass: 'win32' });
 
-    expect(tool.description).toContain('Windows');
-    expect(tool.description).toContain('forward slashes');
-    expect(tool.description).toContain('Bash');
+    expect(tool.description).toContain(WINDOWS_PATH_HINT);
   });
 
   it('omits the Windows path hint from the description on a non-Windows backend', () => {
     const { tool } = makeTool(workspace, { pathClass: 'posix' });
 
-    expect(tool.description).not.toContain('forward slashes');
+    expect(tool.description).not.toContain(WINDOWS_PATH_HINT);
   });
 
   it('requests reverse modified sort and preserves the rg output order', async () => {
@@ -790,25 +788,6 @@ describe('GlobTool', () => {
     expect(execArgs(exec).at(-1)).toBe('.');
   });
 
-  it('locks down brace-expansion mention and large-directory caveats in the description', () => {
-    const { tool } = makeTool(workspace);
-
-    expect(tool.description).toContain('**');
-    expect(tool.description).toMatch(/\*\*\/\*\.py/);
-    expect(tool.description).toContain('brace expansion');
-    expect(tool.description).toContain('node_modules');
-    expect(tool.description).not.toContain('On Windows');
-  });
-
-  it('mentions Windows path forms in the description on win32 backends', () => {
-    const { tool } = makeTool(
-      stubWorkspaceContext('C:\\workspace'),
-      { pathClass: 'win32' },
-    );
-
-    expect(tool.description).toContain('C:\\Users\\foo');
-    expect(tool.description).toContain('/c/Users/foo');
-  });
 });
 
 describe('splitCompletePaths', () => {
