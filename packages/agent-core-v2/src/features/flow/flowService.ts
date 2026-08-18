@@ -43,7 +43,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
 
   private readonly review: FlowGateReview;
   private activationInFlight = false;
-  private readonly approvedGateCalls = new Set<string>();
+  private readonly approvedGateCalls = new Map<string, number>();
   private epoch = 0;
 
   constructor(
@@ -65,7 +65,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
       this,
       this.toolApproval,
       (toolCallId) => {
-        this.approvedGateCalls.add(toolCallId);
+        this.approvedGateCalls.set(toolCallId, this.epoch);
       },
       () => this.epoch,
     );
@@ -238,7 +238,9 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
   }
 
   consumeGateApproval(toolCallId: string): boolean {
-    return this.approvedGateCalls.delete(toolCallId);
+    const approvedAt = this.approvedGateCalls.get(toolCallId);
+    this.approvedGateCalls.delete(toolCallId);
+    return approvedAt === this.epoch;
   }
 
   abort(note?: string): void {

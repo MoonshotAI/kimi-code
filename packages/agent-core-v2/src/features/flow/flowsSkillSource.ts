@@ -20,6 +20,10 @@ import { FLOW_SUPERVISOR_CONTRACT } from './skill/skill';
 
 export const FLOWS_SKILL_SOURCE_ID = 'flows';
 
+function joinWorkspacePath(root: string, relative: string): string {
+  return `${root.replace(/[\\/]+$/, '')}/${relative}`;
+}
+
 const WATCH_DEBOUNCE_MS = 200;
 
 export interface IFlowsSkillSource extends ISkillSource {
@@ -72,7 +76,7 @@ export class FlowsSkillSource extends Disposable implements IFlowsSkillSource {
   }
 
   private flowsDir(): string {
-    return `${this.workspace.cwd}/${FLOWS_PROJECT_DIR}`;
+    return joinWorkspacePath(this.workspace.cwd, FLOWS_PROJECT_DIR);
   }
 
   async load(): Promise<SkillContribution> {
@@ -92,7 +96,7 @@ export async function discoverFlowSkills(
   fs: IHostFileSystem,
   workDir: string,
 ): Promise<SkillContribution> {
-  const flowsDir = `${workDir}/${FLOWS_PROJECT_DIR}`;
+  const flowsDir = joinWorkspacePath(workDir, FLOWS_PROJECT_DIR);
 
   let names: string[];
   try {
