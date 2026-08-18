@@ -49,10 +49,11 @@ const summary: SessionSummary = {
 };
 
 interface ColdPathOptions {
-  readonly storeGet: () => Promise<SessionMeta | undefined>;
+  readonly storeGet: (scope: string, key: string) => Promise<SessionMeta | undefined>;
   readonly indexSummary?: SessionSummary;
   readonly onMirrorRecord?: (recorded: SessionSummary) => void;
-  readonly onStoreSet?: (value: unknown) => void;
+  readonly onStoreSet?: (scope: string, key: string, value: unknown) => void;
+  readonly onStoreDelete?: (scope: string, key: string) => void;
   readonly resumeError?: unknown;
 }
 
@@ -76,9 +77,12 @@ function coldPathAccessor(options: ColdPathOptions): ServicesAccessor {
     [
       IAtomicDocumentStore,
       {
-        get: options.storeGet,
-        set: async (_scope: string, _key: string, value: unknown) => {
-          options.onStoreSet?.(value);
+        get: (scope: string, key: string) => options.storeGet(scope, key),
+        set: async (scope: string, key: string, value: unknown) => {
+          options.onStoreSet?.(scope, key, value);
+        },
+        delete: async (scope: string, key: string) => {
+          options.onStoreDelete?.(scope, key);
         },
       },
     ],
@@ -160,7 +164,7 @@ describe('setSessionArchivedBatch', () => {
       coldPathAccessor({
         storeGet: async () => legacy,
         onMirrorRecord: (r) => recorded.push(r),
-        onStoreSet: (v) => written.push(v),
+        onStoreSet: (_scope, _key, value) => written.push(value),
       }),
       ['s1'],
       true,
@@ -193,5 +197,26 @@ describe('setSessionArchivedBatch', () => {
     expect(outcomes).toEqual([
       { id: 's1', ok: false, reason: 'error', message: 'resume boom' },
     ]);
+  });
+
+  it('reads and migrates the legacy session-meta location before answering not_found', async () => {
+    const written: Array<{ scope: string; value: unknown }> = [];
+    const deleted: string[] = [];
+    const meta: SessionMeta = { id: 's1', createdAt: 1, updatedAt: 2, archived: false };
+    const outcomes = await setSessionArchivedBatch(
+      coldPathAccessor({
+        storeGet: async (scope) => (scope.endsWith('/session-meta') ? meta : undefined),
+        onStoreSet: (scope, _key, value) => written.push({ scope, value }),
+        onStoreDelete: (scope) => deleted.push(scope),
+      }),
+      ['s1'],
+      true,
+    );
+    expect(outcomes).toEqual([{ id: 's1', ok: true }]);
+    // Written to the canonical location, and the legacy document removed.
+    expect(written).toHaveLength(1);
+    expect(written[0]?.scope.endsWith('/session-meta')).toBe(false);
+    expect(deleted).toHaveLength(1);
+    expect(deleted[0]?.endsWith('/session-meta')).toBe(true);
   });
 });

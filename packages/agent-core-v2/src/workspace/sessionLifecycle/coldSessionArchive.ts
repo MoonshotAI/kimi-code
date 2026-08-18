@@ -10,10 +10,15 @@
  * can slip between the live check and the archive call. Live sessions
  * go through the full `sessionManager` lifecycle chain (never resumed),
  * and cold sessions are patched straight into the persisted metadata
- * document through `persistence` (existence reads from `sessionIndex`),
- * mirrored into the `sessionIndex` read model, and announced through
- * `event` — never materialized. Plain functions over a STABLE accessor;
- * own no scoped state.
+ * document through `persistence` (existence reads from `sessionIndex`,
+ * with the pre-unification `session-meta/` fallback, migrating the
+ * document to the canonical location), normalized and encoded through
+ * the metadata service's own paths so v1 readers stay compatible,
+ * mirrored into the `sessionIndex` read model from the authoritative
+ * persisted meta (never the possibly-stale index summary), and announced
+ * through `event` — never materialized; storage/decode failures
+ * propagate as per-item errors, never as not_found. Plain functions over
+ * a STABLE accessor; own no scoped state.
  */
 
 import type { ServicesAccessor } from '#/_base/di/instantiation';
@@ -27,7 +32,7 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { normalizeSessionMeta, encodeSessionMeta } from '#/session/sessionMetadata/sessionMetadataService';
 
-import { sessionScopeOf, workspacePersistenceScope } from './internal/addressing';
+import { sessionScopeOf, legacySessionMetaScopeOf, workspacePersistenceScope } from './internal/addressing';
 import { SessionArchived } from './sessionLifecycleEvents';
 
 export type ColdSessionArchiveOutcome = 'updated' | 'not_found';
@@ -47,25 +52,18 @@ export async function setColdSessionArchived(
     ),
     sessionId,
   );
-  // Missing document → not_found; storage/decode failures propagate to the
-  // caller's per-item error mapping (a corrupt state.json is an internal
-  // error, never "session does not exist").
-  const raw = await docs.get<SessionMeta>(metaScope, 'state.json');
+  let raw = await docs.get<SessionMeta>(metaScope, 'state.json');
+  let legacyMetaScope: string | undefined;
+  if (raw === undefined) {
+    legacyMetaScope = legacySessionMetaScopeOf(metaScope);
+    raw = await docs.get<SessionMeta>(legacyMetaScope, 'state.json');
+  }
   if (raw === undefined) return 'not_found';
-  // Normalize legacy (v1) representations first — ISO-string timestamps,
-  // customTitle, workDir — or the write-back and the mirror would persist /
-  // broadcast the legacy shape and poison the read model.
   const persisted = normalizeSessionMeta(raw, sessionId);
   const archivedAt = archived ? Date.now() : undefined;
-  // Persist through the metadata service's own encoder: it double-writes
-  // `isCustomTitle` for v1 readers — without it a custom title would look
-  // replaceable to v1 and get overwritten by the next prompt.
   const nextMeta: SessionMeta = { ...persisted, archived, archivedAt };
   await docs.set(metaScope, 'state.json', encodeSessionMeta(nextMeta));
-  // Mirror from the AUTHORITATIVE persisted meta — the index summary can lag
-  // behind it (a failed/lagging mirror), and recording the stale copy would
-  // regress fresher fields (title, last prompt, timestamps) in the list API.
-  // The summary only contributes what meta does not own (workspaceId…).
+  if (legacyMetaScope !== undefined) await docs.delete(legacyMetaScope, 'state.json');
   accessor.get(ISessionIndexMirror).record(
     buildSessionSummary({
       id: sessionId,
