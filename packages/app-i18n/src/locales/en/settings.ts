@@ -11,6 +11,11 @@ export default {
     archived: 'Archived',
     shortcuts: 'Hotkeys',
     plugins: 'Plugins',
+    lab: 'Lab',
+  },
+  lab: {
+    sidebarTabs: 'Multi-tab sidebar',
+    sidebarTabsHint: 'The sidebar shows Open / Done / Workspaces tabs',
   },
   plugins: {
     retry: 'Retry',

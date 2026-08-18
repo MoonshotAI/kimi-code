@@ -111,6 +111,7 @@ import TablerAdjustmentsHorizontal from '~icons/tabler/adjustments-horizontal';
 import TablerChevronLeft from '~icons/tabler/chevron-left';
 import TablerCircleCheck from '~icons/tabler/circle-check';
 import TablerCircleDashed from '~icons/tabler/circle-dashed';
+import TablerFlask from '~icons/tabler/flask';
 import TablerSidebarRightCollapse from '~icons/tabler/layout-sidebar-right-collapse';
 import TablerPaperclip from '~icons/tabler/paperclip';
 
@@ -217,6 +218,7 @@ import RawTablerAdjustmentsHorizontal from '~icons/tabler/adjustments-horizontal
 import RawTablerChevronLeft from '~icons/tabler/chevron-left?raw';
 import RawTablerCircleCheck from '~icons/tabler/circle-check?raw';
 import RawTablerCircleDashed from '~icons/tabler/circle-dashed?raw';
+import RawTablerFlask from '~icons/tabler/flask?raw';
 import RawTablerSidebarRightCollapse from '~icons/tabler/layout-sidebar-right-collapse?raw';
 import RawTablerPaperclip from '~icons/tabler/paperclip?raw';
 
@@ -286,6 +288,7 @@ export type IconName =
   | 'arrow-left'
   | 'minus'
   | 'microscope'
+  | 'flask'
   | 'panel-collapse'
   | 'panel-collapse-right'
   | 'panel-expand'
@@ -410,6 +413,9 @@ export const ICONS: Record<IconName, IconEntry> = {
   'arrow-left': entry(KimiArrowLeft, RawKimiArrowLeft),
   minus: entry(KimiMinus, RawKimiMinus),
   microscope: entry(KimiMicroscope, RawKimiMicroscope),
+  // Settings → 实验室 (lab) tab glyph; the Kimi set has no flask — tabler's,
+  // same stroke family as the state glyphs.
+  flask: entry(TablerFlask, RawTablerFlask),
   'panel-collapse': entry(KimiLeftBar, RawKimiLeftBar),
   'panel-collapse-right': entry(TablerSidebarRightCollapse, RawTablerSidebarRightCollapse),
   'panel-expand': entry(KimiLeftPanelExpand, RawKimiLeftPanelExpand),
@@ -578,6 +584,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'keyboard',
       'trash',
       'microscope',
+      'flask',
     ],
   ],
   ['Communication', ['message', 'mail', 'user', 'robot', 'emoji', 'translate']],

@@ -1688,6 +1688,9 @@ onUnmounted(() => {
             <div class="callout warn"><span class="ico">!</span><div>
               <b>Why New chat / search / inline rename don't use Button / Input:</b> they are "list-style" controls (full-width, left-aligned, compact, borderless), while Button is centered and Input is a 38px bordered control — forcing them in would break the sidebar's visual density and alignment. This is an intentional custom exception, not an oversight.
             </div></div>
+            <div class="callout info"><span class="ico">i</span><div>
+              <b>实验室 multi-tab sidebar toggle</b> (Settings → 实验室, <code>kimi-web.sidebar-multi-tab</code>, default OFF) forks the sidebar into two forms. <b>OFF = the legacy single session list</b>: no 进行中/已完成/工作空间 tabs (<code>statusTab</code> pinned to <code>open</code>, tab shortcuts inert), no session-admin entries (the 列表管理 menu item hides and the workspace home itself falls back to the classic 新建会话 doodle hero — no workspace head, no recent-sessions list), the row hover action + context menu and the chat-header ⋯ menu read <b>归档</b> with the <code>archive</code> glyph (no success-hover variant, the header's Done pill + reopen button hide), and the archive ActionToast is the legacy «撤销 · 或到 · 设置 · 查看已归档的会话» linking to Settings → Archived. <b>ON = the status-tabs form</b> documented in this section (tabs, session admin page, the complete/reopen relabel, «已完成 · 撤销» toast). The preference is an app-core singleton (<code>useSidebarTabs</code>) consumed directly by Sidebar / SessionRow / ConversationPane / App.vue — no prop threading.
+            </div></div>
 
             <h3 class="sub">Session row</h3>
             <p>A session row is an inset rounded pill, structured as: <code>status slot → title → time → attention Badge → hover actions (pin / archive)</code>.</p>

@@ -39,8 +39,12 @@ export default {
   copied: 'Copied ✓',
   copyFailed: 'Copy failed',
   archive: 'Archive',
-  // Complete/reopen toast: "Done · Undo" / "Back to open · Undo".
+  // Archive undo toast (single-list form, lab toggle off): "Undo | or view archived chats in | Settings" (+ tail)
   archiveToastUndo: 'Undo',
+  archiveToastMid: 'or view archived chats in',
+  archiveToastSettings: 'Settings',
+  archiveToastTail: '',
+  // Complete/reopen toast (status-tabs form): "Done · Undo" / "Back to open · Undo".
   // Status tabs (Open / Done / Workspaces)
   tabOpen: 'Open',
   tabDone: 'Done',

@@ -46,6 +46,7 @@ import { useDetailPanel } from '@moonshot-ai/app-client/composables';
 import { useIsMobile } from '@moonshot-ai/app-client/composables';
 import { openDialogCount } from '@moonshot-ai/app-ui';
 import type { SwarmMember } from '@moonshot-ai/app-core/client';
+import { useSidebarTabs } from '@moonshot-ai/app-core';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from '@moonshot-ai/app-core/lib';
 import {
@@ -787,6 +788,10 @@ const showSettings = ref(false);
 // Read once at SettingsDialog mount, then reset on close so later manual
 // opens land on General again.
 const settingsInitialTab = ref<'providers' | 'archived' | undefined>(undefined);
+
+// 实验室开关「多标签页侧边栏」：关（默认）时侧边栏是单一会话列表，归档动作与
+// toast 用回旧版文案（完成⇄恢复 的措辞只在状态标签页形态下出现）。
+const { sidebarTabs } = useSidebarTabs();
 // Same deep link for the mobile settings sheet (its archived sub-view).
 // Reset when the sheet closes so later manual opens land on the main view.
 const mobileSettingsInitialView = ref<'archived' | undefined>(undefined);
@@ -865,6 +870,14 @@ function handleWizardAddProvider(): void {
   showSettings.value = true;
 }
 
+// The single-list form's archive toast links to Settings → Archived (where
+// archived sessions can be restored). Status-tabs form has no such link —
+// its Done tab is the destination.
+function openArchivedSettings(): void {
+  settingsInitialTab.value = 'archived';
+  showSettings.value = true;
+}
+
 async function handleSelectModel(modelId: string): Promise<void> {
   showModelPicker.value = false;
   // Same semantics as the composer dropdown rows: the overlay is just the
@@ -909,7 +922,9 @@ async function handleComposerSelectModel(modelId: string): Promise<void> {
 // inheriting the 60s running one.
 // The archive toast carries a `reopen` flag for the complete⇄reopen two-way
 // flow: completing shows "已完成 · 撤销", reopening shows "已恢复进行中 · 撤销"
-// (whose Undo re-completes).
+// (whose Undo re-completes). That wording is the status-tabs form only — the
+// single-list form (实验室 multi-tab toggle off) renders the legacy archive
+// toast with a Settings → Archived link instead.
 // The adminBatch toast is the session admin page's batch variant: undo runs
 // the same (succeeded) id set through the inverse batch endpoint and swaps
 // the direction — the complete⇄reopen two-way flow, batched.
@@ -2133,12 +2148,23 @@ function openPr(url: string): void {
           @dismiss="dismissActionToast"
         >
           <template v-if="actionToast.kind === 'archive'">
-            {{
-              actionToast.reopen
-                ? t('sidebar.reopenToastLead')
-                : t('sidebar.completeToastLead')
-            }}
-            <button type="button" @click="undoArchive">{{ t('sidebar.archiveToastUndo') }}</button>
+            <!-- 文案随实验室开关分叉：状态标签页形态是 完成⇄恢复（已完成 ·
+                 撤销）；单列表形态是旧归档 toast（撤销 · 或到 · 设置 ·
+                 查看已归档的会话）。 -->
+            <template v-if="sidebarTabs">
+              {{
+                actionToast.reopen
+                  ? t('sidebar.reopenToastLead')
+                  : t('sidebar.completeToastLead')
+              }}
+              <button type="button" @click="undoArchive">{{ t('sidebar.archiveToastUndo') }}</button>
+            </template>
+            <template v-else>
+              <button type="button" @click="undoArchive">{{ t('sidebar.archiveToastUndo') }}</button>
+              {{ t('sidebar.archiveToastMid') }}
+              <button type="button" @click="openArchivedSettings">{{ t('sidebar.archiveToastSettings') }}</button>
+              {{ t('sidebar.archiveToastTail') }}
+            </template>
           </template>
           <template v-else-if="actionToast.kind === 'adminBatch'">
             {{

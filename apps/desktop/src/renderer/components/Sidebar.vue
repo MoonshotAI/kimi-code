@@ -41,6 +41,7 @@ import PinnedSessionList from './PinnedSessionList.vue';
 import SessionRow from './SessionRow.vue';
 import { isMacosDesktop, isWindowsDesktop } from '@moonshot-ai/app-core/lib';
 import { useVibrancy } from '../composables/useVibrancy';
+import { useSidebarTabs } from '@moonshot-ai/app-core';
 import { resolvedBindingKeys } from '../composables/useShortcuts';
 import { SESSIONS_EXPAND_BATCH } from '@moonshot-ai/app-client/client';
 import { track } from '../lib/track';
@@ -442,6 +443,13 @@ function setListMode(mode: SidebarViewMode): void {
 // ---------------------------------------------------------------------------
 const statusTab = ref<'open' | 'done' | 'workspaces'>('open');
 
+// 实验室开关「多标签页侧边栏」：关（默认）时退回单一会话列表——不渲染三 tab，
+// statusTab 钉死在 'open'（完成/工作空间内容区随之不可达），会话管理入口隐藏。
+const { sidebarTabs } = useSidebarTabs();
+watch(sidebarTabs, (on) => {
+  if (!on && statusTab.value !== 'open') statusTab.value = 'open';
+});
+
 // The open and done tabs carry no count — instead a blue dot (same accent as
 // the rows' unread dot) flags that ANY loaded row in that tab wants attention:
 // approval / question / aborted / unread, aggregated by priority. Plain
@@ -491,6 +499,8 @@ const statusTabOptions = computed(() => [
 ]);
 
 function setStatusTab(tab: string): void {
+  // 单列表形态下 tab 不可切换（快捷键路径也走这里）——钉死 进行中。
+  if (!sidebarTabs.value) return;
   statusTab.value = tab as 'open' | 'done' | 'workspaces';
   if (tab === 'done') emit('ensureDoneSessions');
 }
@@ -1348,10 +1358,12 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
-      <!-- The 进行中 / 已完成 / 工作空间 tabs are the sidebar's top level —
-           always rendered. Flat/grouped is a display switch inside the two
-           session tabs (the section label's switcher below). -->
-      <div class="status-tabs">
+      <!-- The 进行中 / 已完成 / 工作空间 tabs are the sidebar's top level when
+           the 实验室 multi-tab toggle is on; the single-list form (toggle off)
+           skips them and pins statusTab to 'open'. Flat/grouped is a display
+           switch inside the two session tabs (the section label's switcher
+           below). -->
+      <div v-if="sidebarTabs" class="status-tabs">
         <SegmentedControl
           class="status-seg"
           size="sm"
@@ -1824,12 +1836,15 @@ onBeforeUnmount(() => {
           </MenuItem>
         </template>
         <!-- Cross-workspace management lives on its own page — separated from
-             the display options above; a plain navigation entry (no check). -->
-        <MenuItem separator />
-        <MenuItem @click="openSessionAdmin">
-          <Icon name="session-admin" size="sm" />
-          {{ t('sidebar.sessionAdmin') }}
-        </MenuItem>
+             the display options above; a plain navigation entry (no check).
+             单列表形态（实验室开关关）下不提供会话管理入口。 -->
+        <template v-if="sidebarTabs">
+          <MenuItem separator />
+          <MenuItem @click="openSessionAdmin">
+            <Icon name="session-admin" size="sm" />
+            {{ t('sidebar.sessionAdmin') }}
+          </MenuItem>
+        </template>
       </Menu>
     </Transition>
     <!-- Dev backend switcher menu (position:fixed, anchored to the brand pill) -->

@@ -20,6 +20,7 @@ import { logWarn } from '@moonshot-ai/app-core/lib';
 import { track } from '../../lib/track';
 import DockIconPicker from './DockIconPicker.vue';
 import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
+import { useSidebarTabs } from '@moonshot-ai/app-core';
 import { useVibrancy } from '../../composables/useVibrancy';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
@@ -37,6 +38,14 @@ const { t } = useI18n();
 // Frosted-sidebar switch (macOS desktop only — the row below is v-if'd on
 // isMacosDesktop; web never renders it).
 const { vibrancy, setVibrancy } = useVibrancy();
+
+// 实验室开关：多标签页侧边栏（app-core 单例，sidebar / 会话行 / toast 共用）。
+const { sidebarTabs, setSidebarTabs } = useSidebarTabs();
+
+function onSidebarTabsChange(on: boolean): void {
+  setSidebarTabs(on);
+  track('settings_changed', { key: 'sidebar-multi-tab', value: on ? 'on' : 'off', source_panel: 'settings' });
+}
 
 function onColorScheme(scheme: ColorScheme): void {
   emit('setColorScheme', scheme);
@@ -56,7 +65,7 @@ function onNotifyChange(on: boolean): void {
   track('settings_changed', { key: 'notifications', value: on ? 'on' : 'off', source_panel: 'settings' });
 }
 
-type SettingsTab = 'general' | 'agent' | 'account' | 'providers' | 'plugins' | 'advanced' | 'archived' | 'shortcuts';
+type SettingsTab = 'general' | 'agent' | 'account' | 'providers' | 'plugins' | 'advanced' | 'lab' | 'archived' | 'shortcuts';
 
 const props = defineProps<{
   colorScheme: ColorScheme;
@@ -159,6 +168,7 @@ const tabs: { id: SettingsTab; labelKey: string; icon: IconName }[] = [
   // Desktop-only tab (web's copy stops at 'archived'; docs/native-todos.md).
   { id: 'shortcuts', labelKey: 'settings.tabs.shortcuts', icon: 'keyboard' },
   { id: 'advanced', labelKey: 'settings.tabs.advanced', icon: 'microscope' },
+  { id: 'lab', labelKey: 'settings.tabs.lab', icon: 'flask' },
   { id: 'archived', labelKey: 'settings.tabs.archived', icon: 'archive' },
 ];
 
@@ -961,6 +971,27 @@ function archiveTime(iso: string): string {
                 <span v-if="!isTraceEnabled()" class="hint">{{ t('settings.logHint') }}</span>
               </span>
               <Button variant="secondary" size="sm" @click="exportLog">{{ t('settings.exportLogBtn') }}</Button>
+            </div>
+            </div>
+          </section>
+        </section>
+
+        <!-- 实验室：early 功能的开关集合。多标签页侧边栏默认关——关掉时侧边栏
+             退回单一会话列表（无 进行中/已完成/工作空间 tabs，归档替代完成）。 -->
+        <section v-show="activeTab === 'lab'" class="panel">
+          <section class="sec">
+            <h3 class="sec-title">{{ t('settings.tabs.lab') }}</h3>
+            <div class="settings-group">
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.lab.sidebarTabs') }}
+                <span class="hint">{{ t('settings.lab.sidebarTabsHint') }}</span>
+              </span>
+              <Switch
+                :model-value="sidebarTabs"
+                :label="t('settings.lab.sidebarTabs')"
+                @update:model-value="onSidebarTabsChange"
+              />
             </div>
             </div>
           </section>

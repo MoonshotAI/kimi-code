@@ -38,8 +38,12 @@ export default {
   copied: '已复制 ✓',
   copyFailed: '复制失败',
   archive: '归档',
-  // 完成/恢复 toast：「已完成 · 撤销」/「已恢复进行中 · 撤销」
+  // 归档撤销 toast（单列表形态，实验室开关关闭时）：「撤销 | 或到 | 设置 | 查看已归档的会话」
   archiveToastUndo: '撤销',
+  archiveToastMid: '或到',
+  archiveToastSettings: '设置',
+  archiveToastTail: '查看已归档的会话',
+  // 完成/恢复 toast（状态标签页形态）：「已完成 · 撤销」/「已恢复进行中 · 撤销」
   // 状态标签页（进行中 / 已完成 / 工作空间 tabs）
   tabOpen: '进行中',
   tabDone: '已完成',

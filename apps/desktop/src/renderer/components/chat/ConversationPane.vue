@@ -6,6 +6,7 @@ import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, Fil
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, SessionPlan, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
 import type { ManagedMembership, PromptAttachment } from '@moonshot-ai/app-client/client';
+import { useSidebarTabs } from '@moonshot-ai/app-core';
 import ChatPane from './ChatPane.vue';
 import ChatHeader from './ChatHeader.vue';
 import Composer from './Composer.vue';
@@ -219,8 +220,11 @@ const activeWorkspaceLabel = computed(() => {
 // The workspace home replaces the doodle hero only for drafts entered from a
 // workspace directory row (or the add-workspace flow) — the primary 新建会话
 // draft, mobile and the starting transition keep the classic empty state.
+// 实验室「多标签页侧边栏」关闭时（单列表形态）整个工作空间主页退回经典
+// 新建会话主页（doodle hero，无工作区头、无最近会话列表）。
+const { sidebarTabs } = useSidebarTabs();
 const showWorkspaceHome = computed(
-  () => !props.mobile && !props.starting && props.draftEntry === 'workspace',
+  () => !props.mobile && !props.starting && props.draftEntry === 'workspace' && sidebarTabs.value,
 );
 
 const hasWorkspaces = computed(() => (props.workspaces?.length ?? 0) > 0);

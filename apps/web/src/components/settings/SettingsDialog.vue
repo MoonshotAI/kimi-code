@@ -20,12 +20,21 @@ import PlanUsageCard from './PlanUsageCard.vue';
 import SecondaryModelPicker from './SecondaryModelPicker.vue';
 import PlanUpgradeCard from './PlanUpgradeCard.vue';
 import { logWarn } from '@moonshot-ai/app-core/lib';
+import { useSidebarTabs } from '@moonshot-ai/app-core';
 import type { IconName } from '@moonshot-ai/app-client/icons';
 import { Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 
-type SettingsTab = 'general' | 'agent' | 'account' | 'providers' | 'advanced' | 'archived';
+// 实验室开关：多标签页侧边栏（app-core 单例，sidebar / 会话行 / toast 共用）。
+// web 无 telemetry——与 onNotifyChange 等本地 handler 一样只写偏好。
+const { sidebarTabs, setSidebarTabs } = useSidebarTabs();
+
+function onSidebarTabsChange(on: boolean): void {
+  setSidebarTabs(on);
+}
+
+type SettingsTab = 'general' | 'agent' | 'account' | 'providers' | 'advanced' | 'lab' | 'archived';
 
 const props = defineProps<{
   colorScheme: ColorScheme;
@@ -124,6 +133,7 @@ const tabs: { id: SettingsTab; labelKey: string; icon: IconName }[] = [
   // No plug-style glyph exists in the icon registry; the bolt is the closest.
   { id: 'providers', labelKey: 'settings.tabs.providers', icon: 'bolt' },
   { id: 'advanced', labelKey: 'settings.tabs.advanced', icon: 'microscope' },
+  { id: 'lab', labelKey: 'settings.tabs.lab', icon: 'flask' },
   { id: 'archived', labelKey: 'settings.tabs.archived', icon: 'archive' },
 ];
 
@@ -817,6 +827,27 @@ function archiveTime(iso: string): string {
                 <span v-if="!isTraceEnabled()" class="hint">{{ t('settings.logHint') }}</span>
               </span>
               <Button variant="secondary" size="sm" @click="exportLog">{{ t('settings.exportLogBtn') }}</Button>
+            </div>
+            </div>
+          </section>
+        </section>
+
+        <!-- 实验室：early 功能的开关集合。多标签页侧边栏默认关——关掉时侧边栏
+             退回单一会话列表（无 进行中/已完成/工作空间 tabs，归档替代完成）。 -->
+        <section v-show="activeTab === 'lab'" class="panel">
+          <section class="sec">
+            <h3 class="sec-title">{{ t('settings.tabs.lab') }}</h3>
+            <div class="settings-group">
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.lab.sidebarTabs') }}
+                <span class="hint">{{ t('settings.lab.sidebarTabsHint') }}</span>
+              </span>
+              <Switch
+                :model-value="sidebarTabs"
+                :label="t('settings.lab.sidebarTabs')"
+                @update:model-value="onSidebarTabsChange"
+              />
             </div>
             </div>
           </section>

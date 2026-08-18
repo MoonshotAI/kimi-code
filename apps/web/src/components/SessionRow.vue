@@ -13,9 +13,14 @@ import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, Tooltip, useImeCompos
 import { applySessionEmoji, splitSessionEmoji } from '@moonshot-ai/app-core/lib';
 import SessionEmojiPicker from './SessionEmojiPicker.vue';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
+import { useSidebarTabs } from '@moonshot-ai/app-core';
 import { sessionDisplayStatus } from '@moonshot-ai/app-core/lib';
 
 const { t } = useI18n();
+
+// 实验室开关「多标签页侧边栏」：关（单列表形态）时行的归档动作用回旧「归档」
+// 外观（archive 图标 + 归档文案）；开时是状态视图的「完成」（state-done 图标）。
+const { sidebarTabs } = useSidebarTabs();
 
 const props = withDefaults(
   defineProps<{
@@ -620,15 +625,16 @@ function openPullRequest(): void {
                 <Icon :name="session.pinned ? 'unpin' : 'pin'" />
               </IconButton>
             </Tooltip>
-            <!-- The archive action, relabeled as 完成 (PR-merge semantics). -->
-            <Tooltip :text="t('sidebar.complete')">
+            <!-- The archive action: relabeled as 完成 (PR-merge semantics) in
+                 the status-tabs form, the legacy 归档 in the single-list form. -->
+            <Tooltip :text="sidebarTabs ? t('sidebar.complete') : t('sidebar.archive')">
               <IconButton
-                class="complete-btn"
+                :class="sidebarTabs ? 'complete-btn' : 'archive-btn'"
                 size="sm"
-                :label="t('sidebar.complete')"
+                :label="sidebarTabs ? t('sidebar.complete') : t('sidebar.archive')"
                 @click.stop="startArchive"
               >
-                <Icon name="state-done" />
+                <Icon :name="sidebarTabs ? 'state-done' : 'archive'" />
               </IconButton>
             </Tooltip>
           </template>
@@ -702,8 +708,8 @@ function openPullRequest(): void {
           {{ t('sidebar.reopen') }}
         </MenuItem>
         <MenuItem v-else @click="startArchive">
-          <Icon name="state-done" size="sm" />
-          {{ t('sidebar.markDone') }}
+          <Icon :name="sidebarTabs ? 'state-done' : 'archive'" size="sm" />
+          {{ sidebarTabs ? t('sidebar.markDone') : t('sidebar.archive') }}
         </MenuItem>
         <MenuItem separator />
         <div class="menu-time">{{ fullTime }}</div>

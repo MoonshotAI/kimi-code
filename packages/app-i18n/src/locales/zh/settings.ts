@@ -11,6 +11,11 @@ export default {
     archived: '已归档',
     shortcuts: '快捷键',
     plugins: '插件',
+    lab: '实验室',
+  },
+  lab: {
+    sidebarTabs: '多标签页侧边栏',
+    sidebarTabsHint: '侧边栏显示「进行中 / 已完成 / 工作空间」三个标签页',
   },
   plugins: {
     retry: '重试',

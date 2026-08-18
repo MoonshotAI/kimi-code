@@ -6,10 +6,15 @@
 import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { useSidebarTabs } from '@moonshot-ai/app-core';
 import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { Button, Icon, IconButton, Menu, MenuItem, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
+
+// 实验室开关「多标签页侧边栏」：关（单列表形态）时归档动作用回旧「归档」
+// 外观，已完成 pill / 恢复入口不显示（恢复在 设置→已归档）。
+const { sidebarTabs } = useSidebarTabs();
 
 const props = defineProps<{
   sessionId?: string;
@@ -321,13 +326,13 @@ const isDev = import.meta.env.DEV;
           <Icon name="download" size="sm" />
           {{ t('header.exportSession') }}
         </MenuItem>
-        <MenuItem v-if="archived" @click="startRestore">
+        <MenuItem v-if="archived && sidebarTabs" @click="startRestore">
           <Icon name="undo" size="sm" />
           {{ t('header.reopenSession') }}
         </MenuItem>
-        <MenuItem v-else @click="startArchive">
-          <Icon name="state-done" size="sm" />
-          {{ t('header.markSessionDone') }}
+        <MenuItem v-if="!archived" @click="startArchive">
+          <Icon :name="sidebarTabs ? 'state-done' : 'archive'" size="sm" />
+          {{ sidebarTabs ? t('header.markSessionDone') : t('header.archiveSession') }}
         </MenuItem>
       </template>
       </Menu>
@@ -374,8 +379,9 @@ const isDev = import.meta.env.DEV;
     </button>
 
     <!-- 已完成 state — display-only Done pill + a quiet reopen, shown only
-         when viewing a completed session (the ⋯ menu carries 标记完成). -->
-    <template v-if="sessionId && archived">
+         when viewing a completed session (the ⋯ menu carries 标记完成).
+         单列表形态（实验室开关关）不显示——旧形态没有已完成词汇。 -->
+    <template v-if="sessionId && archived && sidebarTabs">
       <span class="ch-pill ch-pr pr-merged ch-done-pill">
         <Icon name="state-done" size="sm" />
         <span>{{ t('header.sessionDone') }}</span>
