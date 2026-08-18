@@ -15,10 +15,11 @@ import {
 } from '#/agent/tools/os/read/read';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { RuntimeRegistry } from '#/runtime/runtimeRegistry';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
+import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
 const signal = new AbortController().signal;
 const PERMISSIVE_WORKSPACE = stubWorkspaceContext('/');
@@ -64,6 +65,14 @@ function createTestEnv(home = '/home'): IHostEnvironment {
   };
 }
 
+function stubToolRegistry(registered: readonly string[] = ['ReadMediaFile']): IAgentToolRegistryService {
+  return {
+    _serviceBrand: undefined,
+    resolve: (name: string) =>
+      registered.includes(name) ? ({ name } as unknown as ExecutableTool) : undefined,
+  } as unknown as IAgentToolRegistryService;
+}
+
 function createReadTool(
   fs: IHostFileSystem,
   env: IHostEnvironment,
@@ -71,6 +80,7 @@ function createReadTool(
   skillCatalog: ISessionSkillCatalog = {
     catalog: { getSkillRoots: () => [] },
   } as unknown as ISessionSkillCatalog,
+  toolRegistry: IAgentToolRegistryService = stubToolRegistry(),
 ): ReadTool {
   const runtime = Object.assign(
     new FakeRuntime(
@@ -86,7 +96,7 @@ function createReadTool(
     inspect: () => runtime,
     acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
   };
-  return new ReadTool(resolver, workspace, skillCatalog);
+  return new ReadTool(resolver, workspace, skillCatalog, toolRegistry);
 }
 
 function createSpiedFs(content: string) {
@@ -528,6 +538,53 @@ describe('ReadTool', () => {
     expect(output).not.toContain('Python tools');
   });
 
+  it('rejects image files without pointing to ReadMediaFile when the media tool is unregistered', async () => {
+    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const { fs, readText } = createSpiedMapFs({
+      '/tmp/sample.png': { bytes: pngHeader },
+    });
+    const tool = createReadTool(
+      fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
+      stubToolRegistry([]),
+    );
+
+    const result = await execute(tool, { path: '/tmp/sample.png' });
+    const output = toolContentString(result);
+
+    expect(result.isError).toBe(true);
+    expect(output).toBe(
+      '"/tmp/sample.png" is a image file. The current model cannot read image or video files; use Bash or an MCP tool to inspect or convert it.',
+    );
+    expect(output).not.toContain('ReadMediaFile');
+    expect(readText).not.toHaveBeenCalled();
+  });
+
+  it('rejects NUL-containing binary files without mentioning ReadMediaFile when unregistered', async () => {
+    const header = Buffer.concat([Buffer.from('plain prefix'), Buffer.from([0x00, 0x01])]);
+    const { fs, readText } = createSpiedMapFs({
+      '/tmp/blob.bin': { bytes: header },
+    });
+    const tool = createReadTool(
+      fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
+      stubToolRegistry([]),
+    );
+
+    const result = await execute(tool, { path: '/tmp/blob.bin' });
+    const output = toolContentString(result);
+
+    expect(result.isError).toBe(true);
+    expect(output).toBe(
+      '"/tmp/blob.bin" is not readable as UTF-8 text. For binary formats, use Bash or an MCP tool if available.',
+    );
+    expect(readText).not.toHaveBeenCalled();
+  });
+
   it('rejects invalid UTF-8 instead of returning replacement characters', async () => {
     const replacement = String.fromCodePoint(0xfffd);
     const { fs } = createSpiedMapFs({
@@ -911,6 +968,7 @@ describe('ReadTool', () => {
       runtime,
       stubWorkspaceContext('/workspace'),
       { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
+      stubToolRegistry(),
     );
     const execution = tool.resolveExecution({ path: '/workspace/a.txt' });
     expect('execute' in execution).toBe(true);
@@ -969,5 +1027,39 @@ describe('ReadTool description and schema parity', () => {
 
     expect(tool.description).toMatch(/UTF-?8/i);
     expect(tool.description).toMatch(/binary/i);
+  });
+
+  it('points binary formats to ReadMediaFile while the media tool is registered', () => {
+    const tool = toolWithContent('');
+
+    expect(tool.description).toContain('use `ReadMediaFile` for images or video');
+  });
+
+  it('drops ReadMediaFile from the description when the media tool is unregistered', () => {
+    const tool = createReadTool(
+      createSpiedFs('').fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
+      stubToolRegistry([]),
+    );
+
+    expect(tool.description).not.toContain('ReadMediaFile');
+    expect(tool.description).toContain('use Bash or an MCP tool for binary formats.');
+  });
+
+  it('reflects media tool registration changes in the description', () => {
+    const registered = ['ReadMediaFile'];
+    const tool = createReadTool(
+      createSpiedFs('').fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
+      stubToolRegistry(registered),
+    );
+
+    expect(tool.description).toContain('ReadMediaFile');
+    registered.length = 0;
+    expect(tool.description).not.toContain('ReadMediaFile');
   });
 });

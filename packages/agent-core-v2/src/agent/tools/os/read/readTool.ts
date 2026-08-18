@@ -1,5 +1,6 @@
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
@@ -180,11 +181,17 @@ async function* decodedLines(lines: readonly string[]): AsyncGenerator<string> {
   yield* lines;
 }
 
-function notReadableFileOutput(path: string): string {
+function notReadableFileOutput(path: string, mediaReadable: boolean): string {
+  if (mediaReadable) {
+    return (
+      `"${path}" is not readable as UTF-8 text. ` +
+      'If it is an image or video, use ReadMediaFile. ' +
+      'For other binary formats, use Bash or an MCP tool if available.'
+    );
+  }
   return (
     `"${path}" is not readable as UTF-8 text. ` +
-    'If it is an image or video, use ReadMediaFile. ' +
-    'For other binary formats, use Bash or an MCP tool if available.'
+    'For binary formats, use Bash or an MCP tool if available.'
   );
 }
 
@@ -196,22 +203,35 @@ function notUtf8DecodableFileOutput(path: string): string {
   );
 }
 
-const READ_DESCRIPTION = renderPrompt(readDescriptionTemplate, {
-  MAX_LINES,
-  MAX_BYTES_KB: MAX_BYTES / 1024,
-  MAX_LINE_LENGTH,
-});
+function binaryFormatsHint(mediaReadable: boolean): string {
+  return mediaReadable
+    ? 'use `ReadMediaFile` for images or video, and Bash or an MCP tool for other binary formats.'
+    : 'use Bash or an MCP tool for binary formats.';
+}
 
 export class ReadTool implements IReadTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'Read' as const;
-  readonly description = READ_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
   constructor(
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
+    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
   ) {}
+
+  get description(): string {
+    return renderPrompt(readDescriptionTemplate, {
+      MAX_LINES,
+      MAX_BYTES_KB: MAX_BYTES / 1024,
+      MAX_LINE_LENGTH,
+      BINARY_FORMATS_HINT: binaryFormatsHint(this.mediaReadable()),
+    });
+  }
+
+  private mediaReadable(): boolean {
+    return this.toolRegistry.resolve('ReadMediaFile') !== undefined;
+  }
 
   private workspaceConfig(view: RuntimeWorkspaceView): WorkspaceConfig {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
@@ -275,7 +295,9 @@ export class ReadTool implements IReadTool {
       if (fileType.kind === 'image' || fileType.kind === 'video') {
         return {
           isError: true,
-          output: `"${args.path}" is a ${fileType.kind} file. Use ReadMediaFile to read image or video files.`,
+          output: this.mediaReadable()
+            ? `"${args.path}" is a ${fileType.kind} file. Use ReadMediaFile to read image or video files.`
+            : `"${args.path}" is a ${fileType.kind} file. The current model cannot read image or video files; use Bash or an MCP tool to inspect or convert it.`,
         };
       }
 
@@ -298,7 +320,7 @@ export class ReadTool implements IReadTool {
       } else if (fileType.kind === 'unknown') {
         return {
           isError: true,
-          output: notReadableFileOutput(args.path),
+          output: notReadableFileOutput(args.path, this.mediaReadable()),
         };
       } else {
         lines = fs.readLines(safePath, { errors: 'strict' });
@@ -353,7 +375,7 @@ export class ReadTool implements IReadTool {
 
     for await (const rawLine of lines) {
       if (containsNulByte(rawLine)) {
-        return { isError: true, output: notReadableFileOutput(displayPath) };
+        return { isError: true, output: notReadableFileOutput(displayPath, this.mediaReadable()) };
       }
       currentLineNo += 1;
       updateLineEndingFlags(flags, rawLine);
@@ -411,7 +433,7 @@ export class ReadTool implements IReadTool {
 
     for await (const rawLine of lines) {
       if (containsNulByte(rawLine)) {
-        return { isError: true, output: notReadableFileOutput(displayPath) };
+        return { isError: true, output: notReadableFileOutput(displayPath, this.mediaReadable()) };
       }
       currentLineNo += 1;
       updateLineEndingFlags(flags, rawLine);
