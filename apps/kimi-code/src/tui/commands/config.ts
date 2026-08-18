@@ -297,6 +297,73 @@ export async function handleSecondaryModelCommand(host: SlashCommandHost, args: 
   showSecondaryModelPicker(host, models, current, alias.length > 0 ? alias : undefined);
 }
 
+// ---------------------------------------------------------------------------
+// Visual model (`/visual-model`) — persists `[visual_model] default_model`
+// ---------------------------------------------------------------------------
+
+function showVisualModelPicker(
+  host: SlashCommandHost,
+  models: Record<string, ModelAlias>,
+  currentValue: string,
+  selectedValue?: string,
+): void {
+  host.mountEditorReplacement(
+    new TabbedModelSelectorComponent({
+      models,
+      currentValue,
+      selectedValue,
+      currentThinkingEffort: 'off',
+      thinkingControl: false,
+      title: ' Select a visual model (image inspection)',
+      onSelect: ({ alias }) => {
+        host.restoreEditor();
+        void performVisualModelSave(host, alias);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+async function performVisualModelSave(host: SlashCommandHost, alias: string): Promise<void> {
+  const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+  try {
+    const config = await host.harness.getConfig({ reload: true });
+    const patch: { defaultModel: string } = {
+      defaultModel: alias,
+    };
+    await host.harness.setConfig({ visualModel: patch });
+  } catch (error) {
+    host.showError(`Failed to save visual model: ${formatErrorMessage(error)}`);
+    return;
+  }
+  host.showStatus(
+    `Visual model set to ${displayName}. Image inspection will use it.`,
+    'success',
+  );
+}
+
+export async function handleVisualModelCommand(host: SlashCommandHost, args: string): Promise<void> {
+  const alias = args.trim();
+  await refreshModelsForPicker(host);
+  const models = pickerModelsForHost(host);
+  if (Object.keys(models).length === 0) {
+    host.showNotice(
+      'No models configured',
+      'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
+    );
+    return;
+  }
+  if (alias.length > 0 && models[alias] === undefined) {
+    host.showError(`Unknown model alias: ${alias}`);
+    return;
+  }
+  const visual = (await host.harness.getConfig()).visualModel;
+  const current = visual?.defaultModel ?? visual?.model ?? '';
+  showVisualModelPicker(host, models, current, alias.length > 0 ? alias : undefined);
+}
+
 export async function handleEffortCommand(host: SlashCommandHost, args: string): Promise<void> {
   const alias = host.state.appState.model;
   const model = host.state.appState.availableModels[alias];

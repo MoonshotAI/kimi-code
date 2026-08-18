@@ -35,6 +35,7 @@ import {
   handleModelCommand,
   handlePlanCommand,
   handleSecondaryModelCommand,
+  handleVisualModelCommand,
   handleThemeCommand,
   handleYoloCommand,
   showExperimentsPanel,
@@ -88,6 +89,7 @@ export {
   handleModelCommand,
   handlePlanCommand,
   handleSecondaryModelCommand,
+  handleVisualModelCommand,
   handleThemeCommand,
   handleYoloCommand,
   showModelPicker,
@@ -533,6 +535,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'secondary-model':
       await handleSecondaryModelCommand(host, args);
+      return;
+    case 'visual-model':
+      await handleVisualModelCommand(host, args);
       return;
     case 'effort':
       await handleEffortCommand(host, args);
