@@ -60,7 +60,10 @@ export class ReverseRpcController {
     } else if (response === "approve") {
       resolve({ decision: "approved" });
     } else {
-      resolve({ decision: "rejected" });
+      // The label proves a user actually clicked No — a bare rejection is
+      // reserved for transport failures, which flow-gate provenance treats
+      // as unobserved and refuses to record as a human verdict.
+      resolve({ decision: "rejected", selectedLabel: "Reject" });
     }
     return true;
   }
