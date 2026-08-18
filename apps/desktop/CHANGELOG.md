@@ -1,5 +1,51 @@
 # kimi-code-app
 
+## 0.0.18
+
+### Patch Changes
+
+- [#226](https://github.com/MoonshotAI/kimi-code-app/pull/226) [`dfa3d31`](https://github.com/MoonshotAI/kimi-code-app/commit/dfa3d317599aff0d6bcf2cabcc1aae4baac55793) - @ 提及的文件、文件夹和技能显示为带图标的胶囊，输入框和消息气泡中一致；单技能提及发送时直接激活对应技能。
+
+- [#256](https://github.com/MoonshotAI/kimi-code-app/pull/256) [`a7501ef`](https://github.com/MoonshotAI/kimi-code-app/commit/a7501ef6c2e1bed7f4b2b928abf7cba813cf9a22) - 子 Agent 面板更名为「后台 Agent」。
+
+- [#253](https://github.com/MoonshotAI/kimi-code-app/pull/253) [`c81b815`](https://github.com/MoonshotAI/kimi-code-app/commit/c81b8154c23890171d2c992289c2e40a7d40a51c) - 修复 Windows 上"打开方式"菜单点击 Terminal 没有反应的问题。
+
+- [#239](https://github.com/MoonshotAI/kimi-code-app/pull/239) [`a43de83`](https://github.com/MoonshotAI/kimi-code-app/commit/a43de83237935b82fc25adf717de9f0495ab4062) - 修复消息中 YAML frontmatter 被渲染成巨型标题的问题。
+
+- [#250](https://github.com/MoonshotAI/kimi-code-app/pull/250) [`a031f9c`](https://github.com/MoonshotAI/kimi-code-app/commit/a031f9c1e8b35408e918fd307476d41e35ccae36) - 修复消息中 (c)、(tm)、-- 等普通文本被渲染成 ©、™、破折号等符号的问题。
+
+- [#226](https://github.com/MoonshotAI/kimi-code-app/pull/226) [`dfa3d31`](https://github.com/MoonshotAI/kimi-code-app/commit/dfa3d317599aff0d6bcf2cabcc1aae4baac55793) - @ 提及的文件、文件夹和技能在悬停时显示详情气泡：文件和文件夹展示完整路径，技能展示描述并可直接打开技能文件；消息中的技能和文件提及现在可以点击打开；过长的文件名会中间省略显示；悬停时会检测目标文件是否仍存在，已被删除的会以删除线标出。
+
+- [#243](https://github.com/MoonshotAI/kimi-code-app/pull/243) [`59cd03b`](https://github.com/MoonshotAI/kimi-code-app/commit/59cd03bdee368a961542272dedfba416870beeb1) - 修复任务详情面板长标题把状态标签、复制按钮和关闭按钮挤出可视区的问题：标题超长时省略号截断，悬停可查看完整标题。
+
+- [#259](https://github.com/MoonshotAI/kimi-code-app/pull/259) [`d74636c`](https://github.com/MoonshotAI/kimi-code-app/commit/d74636c5edbef3d32572bc0e839113f64582023c) - 修复复制的文件夹粘贴进输入框会报错的问题。
+
+- [#240](https://github.com/MoonshotAI/kimi-code-app/pull/240) [`b90b406`](https://github.com/MoonshotAI/kimi-code-app/commit/b90b406185b416eacf0213ff7e6d26476156a119) - 降低动画功耗：Rive 吉祥物与首页涂鸦在页面隐藏或滚出视口时暂停渲染循环；running 状态圆点的脉冲改为合成器动画；系统开启「减弱动态效果」时无限动画播放一次即停止，不再永久空转。
+
+- [#245](https://github.com/MoonshotAI/kimi-code-app/pull/245) [`1e8983d`](https://github.com/MoonshotAI/kimi-code-app/commit/1e8983ddc0ea407988a044c7cc7f26dab7015c46) - 审批卡的反馈输入框随内容自动增高，写较长的驳回理由更方便。
+
+- [#237](https://github.com/MoonshotAI/kimi-code-app/pull/237) [`8a4c4bc`](https://github.com/MoonshotAI/kimi-code-app/commit/8a4c4bcf12f50eebad4a86274aad043b4192cc42) - 搜索面板支持搜索工作区，点击工作区或会话结果后侧边栏会展开并滚动置顶定位到对应位置。
+
+- [#221](https://github.com/MoonshotAI/kimi-code-app/pull/221) [`1fb57f0`](https://github.com/MoonshotAI/kimi-code-app/commit/1fb57f0ee3c424675d8768dcc70e56f5c953cd9f) - 新增会话批量管理页面。
+
+- [#221](https://github.com/MoonshotAI/kimi-code-app/pull/221) [`1fb57f0`](https://github.com/MoonshotAI/kimi-code-app/commit/1fb57f0ee3c424675d8768dcc70e56f5c953cd9f) - 侧边栏显示「进行中 / 已完成 / 工作空间」标签，可以标记你已完成的任务。
+
+- [#254](https://github.com/MoonshotAI/kimi-code-app/pull/254) [`29ce233`](https://github.com/MoonshotAI/kimi-code-app/commit/29ce233ce1fdbfaa4c81cb8b4d89e1204cd68c71) - 修复手动停止回答后，重启客户端时空回复下方仍显示完成时间的问题。
+
+- [#256](https://github.com/MoonshotAI/kimi-code-app/pull/256) [`a7501ef`](https://github.com/MoonshotAI/kimi-code-app/commit/a7501ef6c2e1bed7f4b2b928abf7cba813cf9a22) - 修复后台子 Agent 任务刚开始运行时无法取消的问题。
+
+- [#256](https://github.com/MoonshotAI/kimi-code-app/pull/256) [`a7501ef`](https://github.com/MoonshotAI/kimi-code-app/commit/a7501ef6c2e1bed7f4b2b928abf7cba813cf9a22) - 修复前台子代理误入子 Agent 面板导致数量不对、完成后仍显示运行中且无法停止的问题。
+
+- [#243](https://github.com/MoonshotAI/kimi-code-app/pull/243) [`59cd03b`](https://github.com/MoonshotAI/kimi-code-app/commit/59cd03bdee368a961542272dedfba416870beeb1) - 任务详情面板的两个复制图标合并为单个按钮加下拉菜单（复制命令 / 复制输出 / 复制全部），支持键盘操作与触屏尺寸。
+
+- [#256](https://github.com/MoonshotAI/kimi-code-app/pull/256) [`a7501ef`](https://github.com/MoonshotAI/kimi-code-app/commit/a7501ef6c2e1bed7f4b2b928abf7cba813cf9a22) - 修复被取消或异常结束的后台任务误显示为已完成的问题。
+
+- [#247](https://github.com/MoonshotAI/kimi-code-app/pull/247) [`eab2517`](https://github.com/MoonshotAI/kimi-code-app/commit/eab251726b2eed8c5a7a5e1ffd0567abcef1cd76) - 更新弹窗的下载进度从进度条改为在按钮上实时显示，标题保持「发现新版本」不变。
+
+- [#242](https://github.com/MoonshotAI/kimi-code-app/pull/242) [`3421273`](https://github.com/MoonshotAI/kimi-code-app/commit/3421273c044918282dddfe7784a0dab4bec72aba) - 浏览器标签页标题默认显示当前工作区目录名，启动时加 `--web-title` 可自定义，方便区分多台机器的实例。
+
+- [#248](https://github.com/MoonshotAI/kimi-code-app/pull/248) [`edab01d`](https://github.com/MoonshotAI/kimi-code-app/commit/edab01da9d4a5d3571c22d85b2069a626164c040) - 修复 Mac 上输入框里按 Ctrl+K 被会话搜索弹窗抢走、无法删除到行尾的问题。
+
 ## 0.0.17
 
 ### Patch Changes
