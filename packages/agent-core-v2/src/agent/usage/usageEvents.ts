@@ -3,11 +3,20 @@ import { Event2 } from '#/app/event/event2';
 
 import type { UsageStatus } from './usage';
 
+export interface AgentFlowRunStatus {
+  flowId: string;
+  stageId: string;
+  stageIndex: number;
+  stageTotal: number;
+  gate: string;
+}
+
 export interface AgentStatusUpdatedPayload {
   usage?: UsageStatus;
   swarmMode?: boolean;
   towerMode?: boolean;
   planMode?: boolean;
+  flowRun?: AgentFlowRunStatus | null;
   model?: string;
   thinkingEffort?: string;
   maxContextTokens?: number;

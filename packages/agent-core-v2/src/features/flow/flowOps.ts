@@ -1,6 +1,7 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
+import { AgentStatusUpdated, type AgentFlowRunStatus } from '#/agent/usage/usageEvents';
 import { Event2 } from '#/app/event/event2';
 import { defineState } from '#/state/state';
 
@@ -53,29 +54,45 @@ export class FlowRunEnded extends Event2<z.infer<typeof flowRunEndedSchema>> {
 }
 export interface FlowRunEnded extends z.infer<typeof flowRunEndedSchema> {}
 
+function flowRunStatus(s: FlowRunState): AgentFlowRunStatus | null {
+  if (!s.active || s.flowId === undefined) return null;
+  const index = s.currentStageIndex ?? 0;
+  const stage = s.stages?.[index];
+  if (stage === undefined) return null;
+  return {
+    flowId: s.flowId,
+    stageId: stage.id,
+    stageIndex: index,
+    stageTotal: s.stages?.length ?? 0,
+    gate: stage.gate,
+  };
+}
+
 export const flowKey = defineState('flow', (): FlowRunState => ({ active: false }))
   .replayable({ schema: z.custom<FlowRunState>() })
   .undoable()
-  .on(FlowRunStarted, (s, e) => {
+  .on(FlowRunStarted, (s, e, ctx) => {
     s.active = true;
     s.flowId = e.flowId;
     s.task = e.task;
     s.stages = e.stages;
     s.currentStageIndex = 0;
+    ctx.emit(new AgentStatusUpdated({ flowRun: flowRunStatus(s) }));
   })
-  .on(FlowVerdict, (s, e) => {
+  .on(FlowVerdict, (s, e, ctx) => {
     if (!s.active) return;
-    if (e.result !== 'pass') return;
     const index = s.currentStageIndex ?? 0;
     if (s.stages?.[index]?.id !== e.stage) return;
-    s.currentStageIndex = index + 1;
+    if (e.result === 'pass') s.currentStageIndex = index + 1;
+    ctx.emit(new AgentStatusUpdated({ flowRun: flowRunStatus(s) }));
   })
-  .on(FlowRunEnded, (s) => {
+  .on(FlowRunEnded, (s, e, ctx) => {
     s.active = false;
     delete s.flowId;
     delete s.task;
     delete s.stages;
     delete s.currentStageIndex;
+    ctx.emit(new AgentStatusUpdated({ flowRun: null }));
   });
 
 export const flowGatesKey = defineState('flow.gates', (): FlowGatesState => ({ records: [] }))

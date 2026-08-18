@@ -13,6 +13,7 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IFlagService } from '#/app/flag/flag';
@@ -182,6 +183,34 @@ describe('AgentFlowService', () => {
     service.start(DEFINITION, 'task');
     service.abort('user stopped');
     expect(service.run().active).toBe(false);
+  });
+
+  it('emits flowRun status updates as the run starts, advances, and ends', () => {
+    const seen: unknown[] = [];
+    disposables.add(
+      ix.get(IEventBus).subscribe((e) => {
+        if (e.type === 'agent.status.updated') {
+          seen.push((e as AgentStatusUpdated).flowRun);
+        }
+      }),
+    );
+
+    service.start(DEFINITION, 'fix #123');
+    service.advance({
+      stage: 'triage',
+      result: 'reject',
+      decidedBy: 'ai',
+      criteria: [{ criterion: 'cause located', met: false, evidence: 'not yet' }],
+    });
+    service.advance({ stage: 'triage', result: 'pass', decidedBy: 'human', criteria: CRITERIA });
+    service.abort('stop');
+
+    expect(seen).toEqual([
+      { flowId: 'issue-fix', stageId: 'triage', stageIndex: 0, stageTotal: 2, gate: 'human' },
+      { flowId: 'issue-fix', stageId: 'triage', stageIndex: 0, stageTotal: 2, gate: 'human' },
+      { flowId: 'issue-fix', stageId: 'implement', stageIndex: 1, stageTotal: 2, gate: 'ai' },
+      null,
+    ]);
   });
 
   it('conversation undo rolls back the stage pointer but keeps the gate audit trail', async () => {
