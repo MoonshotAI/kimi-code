@@ -38,10 +38,18 @@ export class FlowStartTool implements IFlowStartTool {
   }
 
   private async execution(
-    args: FlowStartInput,
+    rawArgs: FlowStartInput,
     path: string,
     generation: string,
   ): Promise<ExecutableToolResult> {
+    const parsed = FlowStartInputSchema.safeParse(rawArgs);
+    if (!parsed.success) {
+      return {
+        isError: true,
+        output: `Invalid FlowStart input: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`,
+      };
+    }
+    const args = parsed.data;
     if (this.flow.run().active) {
       return {
         isError: true,

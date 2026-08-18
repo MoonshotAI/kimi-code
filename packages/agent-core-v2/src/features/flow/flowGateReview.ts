@@ -16,6 +16,7 @@ export class FlowGateReview {
     private readonly flow: IAgentFlowService,
     private readonly toolApproval: IAgentToolApprovalService,
     private readonly onApproved: (toolCallId: string) => void,
+    private readonly runEpoch: () => number,
   ) {}
 
   async requestApproval(
@@ -27,11 +28,12 @@ export class FlowGateReview {
     if (!this.flow.run().active || stage === undefined || stage.id !== display.stage_id) {
       return undefined;
     }
+    const epochAtRequest = this.runEpoch();
     return this.toolApproval.requestToolApproval(
       context,
       {
         kind: 'ask',
-        resolveApproval: (result) => this.approvalResult(result, context),
+        resolveApproval: (result) => this.approvalResult(result, context, epochAtRequest),
       },
       'flow-gate-review-ask',
     );
@@ -40,7 +42,18 @@ export class FlowGateReview {
   private approvalResult(
     result: ApprovalResponse,
     context: ResolvedToolExecutionHookContext,
+    epochAtRequest: number,
   ): PermissionPolicyResolution | undefined {
+    if (this.runEpoch() !== epochAtRequest) {
+      return {
+        kind: 'result',
+        result: {
+          isError: true,
+          output:
+            'The flow run changed while this gate review was open (undo, abort, or a new run); this stale review is void. Submit FlowAdvance again against the current run.',
+        },
+      };
+    }
     if (result.decision === 'approved') {
       this.onApproved(context.toolCall.id);
       return undefined;
@@ -57,6 +70,17 @@ export class FlowGateReview {
     }
 
     const feedback = result.feedback ?? '';
+    if (feedback.length === 0 && (result.selectedLabel === undefined || result.selectedLabel.length === 0)) {
+      return {
+        kind: 'result',
+        result: {
+          isError: true,
+          stopTurn: true,
+          output:
+            'The gate review ended without an observed user decision (transport failure or dismissal). No verdict was recorded; the flow stays at the current stage — wait for the user.',
+        },
+      };
+    }
     const rejection = this.recordHumanRejection(context, feedback);
     if (rejection === undefined) {
       return {

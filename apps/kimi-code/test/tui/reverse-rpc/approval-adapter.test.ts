@@ -342,7 +342,7 @@ describe('approval adapter', () => {
     expect(adapted.choices).toEqual([
       { label: 'Pass the gate', response: 'approved' },
       { label: 'Reject with feedback', response: 'rejected', requires_feedback: true },
-      { label: 'Reject', response: 'rejected' },
+      { label: 'Reject', response: 'rejected', selected_label: 'Reject' },
     ]);
   });
 

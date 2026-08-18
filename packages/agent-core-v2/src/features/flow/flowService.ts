@@ -44,6 +44,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
   private readonly review: FlowGateReview;
   private activationInFlight = false;
   private readonly approvedGateCalls = new Set<string>();
+  private runEpoch = 0;
 
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
@@ -60,9 +61,14 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     super();
     this.agentState.contributeState(flowKey);
     this.agentState.contributeState(flowGatesKey);
-    this.review = new FlowGateReview(this, this.toolApproval, (toolCallId) => {
-      this.approvedGateCalls.add(toolCallId);
-    });
+    this.review = new FlowGateReview(
+      this,
+      this.toolApproval,
+      (toolCallId) => {
+        this.approvedGateCalls.add(toolCallId);
+      },
+      () => this.runEpoch,
+    );
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => {
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
@@ -77,8 +83,16 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
           return;
         }
         if (event.toolCall.name !== FLOW_ADVANCE_TOOL_NAME) return;
-        if (this.modeService.mode === 'auto') return;
         if (event.execution.display?.kind !== 'flow_gate_review') return;
+        if (event.toolCalls[0] !== event.toolCall) {
+          event.veto(
+            denyToolExecution(
+              'A human-gated verdict must be the only call in its response: earlier calls in this batch have not executed yet, so the review would show evidence that does not exist. Submit FlowAdvance alone.',
+            ),
+          );
+          return;
+        }
+        if (this.modeService.mode === 'auto') return;
         event.waitUntil(() => this.review.requestApproval(event));
       }),
     );
@@ -99,6 +113,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     this._register(
       eventBus.subscribe(ContextUndone, () => {
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
+        this.runEpoch += 1;
         void this.dispatcher.dispatch(new AgentStatusUpdated({ flowRun: this.summary() }));
       }),
     );
@@ -190,6 +205,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         stages: definition.stages.map((stage) => ({ ...stage })),
       }),
     );
+    this.runEpoch += 1;
     return this.run().active;
   }
 
@@ -223,6 +239,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
 
   abort(note?: string): void {
     if (!this.run().active) return;
+    this.runEpoch += 1;
     void this.dispatcher.dispatch(new FlowRunEnded({ reason: 'aborted', note }));
   }
 }
