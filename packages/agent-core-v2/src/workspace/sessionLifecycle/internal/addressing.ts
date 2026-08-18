@@ -15,3 +15,7 @@ export function sessionDirOf(homeDir: string, handlerScope: string, sessionId: s
 export function agentScopeOf(sessionScope: string, agentId: string): string {
   return `${sessionScope}/agents/${agentId}`;
 }
+
+export function legacySessionMetaScopeOf(sessionScope: string): string {
+  return `${sessionScope}/session-meta`;
+}

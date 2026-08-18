@@ -56,6 +56,12 @@ export const KIMI_CODE_UPDATE_INSTALL_STATE_FILE_NAME = 'install.json';
 export const KIMI_CODE_UPDATE_INSTALL_LOCK_FILE_NAME = 'install.lock';
 export const KIMI_CODE_UPDATE_ROLLOUT_LOG_FILE_NAME = 'rollout.log';
 export const KIMI_CODE_PLUGIN_UPDATE_NOTICE_STATE_FILE_NAME = 'plugin-notices.json';
+// Native staged update: the staged binary + metadata live next to the running
+// executable (`<exe dir>/.staging/`); the re-exec guard env breaks the
+// swap → re-exec → swap loop.
+export const KIMI_CODE_NATIVE_STAGING_DIR_NAME = '.staging';
+export const KIMI_CODE_NATIVE_STAGED_STATE_FILE_NAME = 'staged.json';
+export const KIMI_CODE_UPDATE_REEXEC_ENV = 'KIMI_CODE_UPDATE_REEXEC';
 export const KIMI_CODE_INPUT_HISTORY_DIR_NAME = 'user-history';
 export const KIMI_CODE_BANNER_DIR_NAME = 'banner';
 export const KIMI_CODE_BANNER_STATE_FILE_NAME = 'state.json';
@@ -97,6 +103,12 @@ export function kimiCodeCdnLatestUrl(): string {
 // bodies, and the CDN install scripts read it for fresh installs.
 export function kimiCodeCdnLatestJsonUrl(): string {
   return `${kimiCodeCdnBase()}/latest.json`;
+}
+// Per-release native artifacts: `/binaries/<version>/manifest.json` +
+// `/binaries/<version>/kimi-code-<target>[.exe]` — the bare platform binary
+// (same layout install.ps1 consumes).
+export function kimiCodeCdnBinariesBase(): string {
+  return `${kimiCodeCdnBase()}/binaries`;
 }
 // The tips banner rides the content CDN, which both regions currently share.
 export function kimiCodeTipsBannerUrl(): string {

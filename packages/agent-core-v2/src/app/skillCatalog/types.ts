@@ -24,6 +24,7 @@ export interface SkillDefinition {
   readonly mermaid?: string | undefined;
   readonly d2?: string;
   readonly productSpecific?: boolean;
+  readonly experimentalFlag?: string;
 }
 
 export interface SkillSummary {

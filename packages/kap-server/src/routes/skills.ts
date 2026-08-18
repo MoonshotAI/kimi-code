@@ -8,6 +8,7 @@ import {
   IBootstrapService,
   IConfigService,
   IFileService,
+  IFlagService,
   IPluginService,
   ISessionContext,
   ISessionIndex,
@@ -281,6 +282,7 @@ async function listWorkspaceSkillsForRoot(
   const bootstrap = core.accessor.get(IBootstrapService);
   const plugins = core.accessor.get(IPluginService);
   const config = core.accessor.get(IConfigService);
+  const flags = core.accessor.get(IFlagService);
   await config.ready;
   const extraSkillDirs = config.get<ExtraSkillDirsConfig>(EXTRA_SKILL_DIRS_SECTION) ?? [];
   const mergeAllAvailableSkills =
@@ -309,7 +311,7 @@ async function listWorkspaceSkillsForRoot(
   const catalog = new InMemorySkillCatalog();
   const ordered = [
     {
-      skills: visibleBuiltinSkills(builtinProductSkillsEnabled(config)),
+      skills: visibleBuiltinSkills(builtinProductSkillsEnabled(config), flags),
       priority: SKILL_SOURCE_PRIORITY.builtin,
     },
     { skills: plugin.skills, priority: SKILL_SOURCE_PRIORITY.plugin },

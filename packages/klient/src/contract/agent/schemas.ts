@@ -58,6 +58,14 @@ export const promptWithSkillsPayloadSchema = promptPayloadSchema.extend({
   skills: z.array(promptSkillActivationSchema).min(1),
 });
 
+/** Same shape as `PromptWithSkillsResult` in the engine. */
+export const promptWithSkillsResultSchema = z.object({
+  turn_id: z.number().optional(),
+  prompt_id: z.string(),
+  created_at: z.string(),
+  state: z.enum(['running', 'queued', 'blocked']),
+});
+
 /** Same shape as `SteerPayload` in the engine. */
 export const steerPayloadSchema = z.object({
   input: z.array(promptPartSchema),

@@ -9,6 +9,7 @@ import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { LifecycleScope } from '#/app/scopes';
+import { IFlagService } from '#/app/flag/flag';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { isWithinDirectory } from '#/tool/path-access';
 import type { ToolFileAccess } from '#/tool/toolContract';
@@ -18,7 +19,7 @@ import {
   WORKTREES_DIR,
   resolveTowerRepoRoot,
 } from './protocol/index';
-import { IAgentTowerService, TOWER_WORKER_PROFILE } from './tower';
+import { IAgentTowerService, TOWER_FLAG_ID, TOWER_WORKER_PROFILE } from './tower';
 import { TowerModeEnter, TowerModeExit, towerKey } from './towerOps';
 
 export class AgentTowerService extends Disposable implements IAgentTowerService {
@@ -32,11 +33,13 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @ISessionContext private readonly sessionCtx: ISessionContext,
+    @IFlagService private readonly flags: IFlagService,
   ) {
     super();
     this.agentState.contributeState(towerKey);
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => {
+        if (!this.flags.enabled(TOWER_FLAG_ID)) return;
         if (!this.isActive) return;
         if (event.toolCall.name !== 'TodoList') return;
         event.veto(
@@ -50,6 +53,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     );
     this._register(
       toolExecutor.onBeforeExecuteTool(async (event) => {
+        if (!this.flags.enabled(TOWER_FLAG_ID)) return;
         if (this.profile.data().profileName !== TOWER_WORKER_PROFILE) return;
         const toolName = event.toolCall.name;
         if (toolName !== 'Write' && toolName !== 'Edit') return;
@@ -88,6 +92,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   }
 
   enter(): void {
+    if (!this.flags.enabled(TOWER_FLAG_ID)) return;
     if (this.isActive) return;
     void this.dispatcher.dispatch(new TowerModeEnter({}));
   }
