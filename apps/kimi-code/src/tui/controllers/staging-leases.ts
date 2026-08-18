@@ -8,11 +8,11 @@
  *
  * - Daemon uploads become garbage — the engine materialized its own session
  *   copy at intake — so the turn-end release deletes them.
- * - Local cache copies may still be referenced by persisted history: a v1
- *   video degrade writes its `<video path="…">` tag with the cache path, and
- *   skill/plugin args carry the path as plain text; neither form is rewritten
- *   to the session media dir. Turn-end release therefore retires cache copies
- *   to a session-lifetime bucket, deleted at session close / shutdown.
+ * - Local cache copies may still be referenced by persisted history: slash /
+ *   plugin command args carry the path as plain text (the model reads it
+ *   with `ReadMediaFile`), and that form is never rewritten to the session
+ *   media dir. Turn-end release therefore retires cache copies to a
+ *   session-lifetime bucket, deleted at session close / shutdown.
  *
  * Media that never gets consumed (validation/render failure, queue discard,
  * a dispatch RPC that failed before any turn claimed the lease) is deleted
@@ -59,7 +59,7 @@ import type { QueuedMessage } from '../types';
 export type StagingLeaseOrigin = 'user' | 'skill_activation' | 'plugin_command';
 
 export interface StagingLease {
-  readonly imageAttachmentIds: readonly number[];
+  readonly mediaAttachmentIds: readonly number[];
   readonly paths: readonly string[];
   readonly origin: StagingLeaseOrigin;
   readonly submissionId?: string;
@@ -69,9 +69,9 @@ export interface StagingLease {
 
 export interface StagingLeaseEffects {
   /** Resolve attachment ids to the staged daemon file ids, consuming the mapping. */
-  readonly takeFileIds: (imageAttachmentIds: readonly number[]) => readonly string[];
+  readonly takeFileIds: (mediaAttachmentIds: readonly number[]) => readonly string[];
   /** Consume retains without taking the staged files (queue recall keeps them). */
-  readonly releaseRetains: (imageAttachmentIds: readonly number[]) => void;
+  readonly releaseRetains: (mediaAttachmentIds: readonly number[]) => void;
   /** Delete staged files (daemon uploads + local cache copies); never rejects. */
   readonly deleteFiles: (fileIds: readonly string[], paths: readonly string[]) => Promise<void>;
   /**
@@ -91,27 +91,27 @@ export class StagingLeaseTracker {
   private readonly leasesBySubmissionId = new Map<string, StagingLease>();
   /**
    * Cache copies whose consuming turn already ended. Persisted history may
-   * still reference their paths (v1 video degrade tags, skill/plugin text
-   * references), so they survive until the session closes.
+   * still reference their paths (skill/plugin args carry them as plain
+   * text), so they survive until the session closes.
    */
   private readonly retiredPaths = new Set<string>();
 
   constructor(private readonly effects: StagingLeaseEffects) {}
 
   create(
-    imageAttachmentIds: readonly number[],
+    mediaAttachmentIds: readonly number[],
     paths: readonly string[],
     origin: StagingLeaseOrigin,
     submissionId?: string,
   ): StagingLease | undefined {
-    // `imageAttachmentIds` multiplicity is the retain count this lease must
+    // `mediaAttachmentIds` multiplicity is the retain count this lease must
     // release: each extraction/rewrite retains once per unique id, so callers
     // dedupe repeated placeholder occurrences per contribution before handing
     // the ids over (one message referencing an image twice contributes it
     // once; two batched messages sharing an image contribute it twice).
-    if (imageAttachmentIds.length === 0 && paths.length === 0) return undefined;
+    if (mediaAttachmentIds.length === 0 && paths.length === 0) return undefined;
     const lease: StagingLease = {
-      imageAttachmentIds: [...imageAttachmentIds],
+      mediaAttachmentIds: [...mediaAttachmentIds],
       paths: [...paths],
       origin,
       submissionId,
@@ -211,32 +211,36 @@ export class StagingLeaseTracker {
   }
 
   /** Release staged media that never got a lease (validation/render failures). */
-  releaseMedia(imageAttachmentIds: readonly number[], paths: readonly string[]): void {
-    const fileIds = this.effects.takeFileIds(imageAttachmentIds);
+  releaseMedia(mediaAttachmentIds: readonly number[], paths: readonly string[]): void {
+    const fileIds = this.effects.takeFileIds(mediaAttachmentIds);
     this.deleteStaged(fileIds, paths);
   }
 
   releaseQueued(items: readonly QueuedMessage[]): void {
     const fileIds = items.flatMap((item) =>
-      this.effects.takeFileIds(item.imageAttachmentIds ?? []),
+      this.effects.takeFileIds([
+        ...(item.imageAttachmentIds ?? []),
+        ...(item.videoAttachmentIds ?? []),
+      ]),
     );
-    const paths = items.flatMap((item) => item.stagingPaths ?? []);
-    this.deleteStaged(fileIds, paths);
+    this.deleteStaged(fileIds, []);
   }
 
   /**
    * Release a queued item (or a cache-hint stash's extraction) recalled into
    * the editor: the restored draft still references its attachments, so this
    * is not a discard — daemon uploads stay staged (only the retain is
-   * consumed; the next submit re-retains them) and cache copies retire to
-   * session lifetime instead of being deleted.
+   * consumed; the next submit re-retains them). `retirePaths` carries the
+   * slash/plugin-args channel's cache copies: the queued rewrite's args
+   * reference them by path, so they retire to session lifetime instead of
+   * being deleted.
    */
-  releaseRecalled(item: {
-    imageAttachmentIds?: readonly number[];
-    stagingPaths?: readonly string[];
-  }): void {
-    this.effects.releaseRetains(item.imageAttachmentIds ?? []);
-    for (const path of item.stagingPaths ?? []) this.retiredPaths.add(path);
+  releaseRecalled(
+    mediaAttachmentIds: readonly number[],
+    retirePaths: readonly string[] = [],
+  ): void {
+    this.effects.releaseRetains(mediaAttachmentIds);
+    for (const path of retirePaths) this.retiredPaths.add(path);
   }
 
   /**
@@ -298,6 +302,6 @@ export class StagingLeaseTracker {
     // Multiplicity in the lease's id list is the retain count (creation sites
     // dedupe per extraction before contributing ids): consume one retain per
     // occurrence.
-    return lease.imageAttachmentIds.flatMap((id) => this.effects.takeFileIds([id]));
+    return lease.mediaAttachmentIds.flatMap((id) => this.effects.takeFileIds([id]));
   }
 }

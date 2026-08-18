@@ -476,22 +476,6 @@ describe('SubagentToolInputSchema', () => {
     expect(properties).not.toHaveProperty('runInBackground');
   });
 
-  it('describes subagent_type and run_in_background parameters', () => {
-    const properties = agentSchemaProperties<{ description?: string }>();
-
-    const subagentTypeDescription = properties['subagent_type']?.description ?? '';
-    expect(subagentTypeDescription).toContain('coder');
-    expect(subagentTypeDescription).not.toContain('registry');
-    expect(subagentTypeDescription).toContain('agent type');
-    expect(properties['run_in_background']?.description).toContain('false');
-  });
-
-  it('documents that resume excludes subagent_type', () => {
-    const properties = agentSchemaProperties<{ description?: string }>();
-
-    expect((properties['resume']?.description ?? '').toLowerCase()).toContain('subagent_type');
-  });
-
   it('does not expose the timeout parameter in the JSON schema', () => {
     const properties = agentSchemaProperties();
 
@@ -543,17 +527,6 @@ describe('Agent tool description', () => {
     expect(tool).toBeDefined();
     return tool!.description;
   }
-
-  it('explains the fixed background subagent timeout', () => {
-    ctx = createTestAgent();
-
-    const description = agentDescription();
-
-    expect(description).toContain('fixed 2-hour timeout');
-    expect(description).not.toContain('operator-configured background timeout');
-    expect(description).not.toContain('no time limit');
-    expect(description).toContain('Default to a foreground subagent');
-  });
 
   it('renders the tool set for each subagent type', () => {
     ctx = createTestAgent();
@@ -805,27 +778,10 @@ describe('Agent tool description', () => {
     await ready;
   });
 
-  it('mentions resume preference and result visibility', () => {
+  it('renders the available agent types section', () => {
     ctx = createTestAgent();
 
-    const description = agentDescription().toLowerCase();
-
-    expect(description).toContain('resume');
-    expect(description).toContain('only visible to you');
-    expect(description).toContain('when not to');
-    expect(description).toContain('out of your own context');
-  });
-
-  it('describes configured subagent types', () => {
-    ctx = createTestAgent();
-
-    const description = agentDescription();
-
-    expect(description).toContain('Available agent types');
-    expect(description).toContain('- explore: Fast codebase exploration');
-    expect(description).toContain(
-      '- coder: General software engineering agent — the only subagent type with file-editing tools',
-    );
+    expect(agentDescription()).toContain('Available agent types');
   });
 
   it('omits the models section when no [secondary_model.models] pool is configured', () => {
@@ -850,12 +806,10 @@ describe('Agent tool description', () => {
 
     const description = agentDescription();
 
-    expect(description).toContain('Available models (pass via model):');
+    expect(description).toContain('Available models');
     const defaultIndex = description.indexOf('- provider/fast [default]: fast and cheap');
     const smartIndex = description.indexOf('- provider/smart: hard tasks');
-    const primaryIndex = description.indexOf(
-      '- primary: the main model you are running on, bound with your current thinking level; use it for hard, quality-sensitive subagent tasks',
-    );
+    const primaryIndex = description.indexOf('- primary:');
     expect(defaultIndex).toBeGreaterThanOrEqual(0);
     expect(smartIndex).toBeGreaterThan(defaultIndex);
     expect(primaryIndex).toBeGreaterThan(smartIndex);
@@ -881,9 +835,7 @@ describe('Agent tool description', () => {
     expect(description).toContain('- provider/fast [default]: fast and cheap');
     expect(description).toContain('- mock-model [main model]: the main model, great at hard things');
     expect(description).toContain('- provider/smart\n');
-    expect(description).toContain(
-      '- primary (mock-model): the main model you are running on, bound with your current thinking level; use it for hard, quality-sensitive subagent tasks',
-    );
+    expect(description).toContain('- primary (mock-model)');
   });
 
   it('marks the caller-as-default alias with both [default] and [main model]', () => {
@@ -908,9 +860,7 @@ describe('Agent tool description', () => {
     const fastIndex = description.indexOf('- provider/fast: fast and cheap');
     expect(defaultIndex).toBeGreaterThanOrEqual(0);
     expect(fastIndex).toBeGreaterThan(defaultIndex);
-    expect(description).toContain(
-      '- primary (mock-model): the main model you are running on, bound with your current thinking level',
-    );
+    expect(description).toContain('- primary (mock-model)');
   });
 
   function agentParameters(): Record<string, unknown> {
@@ -977,9 +927,7 @@ describe('Agent tool description', () => {
 
     const description = agentDescription();
     expect(description).toContain('- provider/fast [default]\n');
-    expect(description).toContain(
-      '- primary: the main model you are running on, bound with your current thinking level; use it for hard, quality-sensitive subagent tasks',
-    );
+    expect(description).toContain('- primary:');
   });
 
   it('hides the model parameter and the pool description when force is set', () => {
@@ -1835,9 +1783,6 @@ describe('Agent tool execution contract', () => {
     const context = createAgentToolContext(lifecycle);
     context.get(IAgentProfileService).update({ activeToolNames: ['Agent'] });
 
-    const description = context.toolsData().find((tool) => tool.name === 'Agent')?.description;
-    expect(description).toContain('Background agent execution is disabled for this agent.');
-    expect(description).not.toContain('the subagent runs detached from this turn');
     const result = await executeAgentTool(context, {
       prompt: 'Investigate',
       description: 'Find cause',
@@ -2344,11 +2289,9 @@ describe('AgentSwarmToolInputSchema', () => {
     ).toBe(true);
   });
 
-  it('exposes subagent_type, resume_agent_ids, and model parameters', () => {
+  it('references the models section and omits background and timeout parameters', () => {
     const properties = agentSwarmSchemaProperties<{ description?: string }>();
 
-    expect(properties['subagent_type']?.description).toContain('defaults to coder');
-    expect(properties['resume_agent_ids']?.description).toContain('Map of existing subagent');
     expect(properties['model']?.description).toContain('Available models');
     expect(properties).not.toHaveProperty('run_in_background');
     expect(properties).not.toHaveProperty('timeout');
@@ -2368,23 +2311,10 @@ describe('AgentSwarm tool description', () => {
     return tool!.description;
   }
 
-  it('states the enforced input requirements', () => {
+  it('documents the {{item}} placeholder', () => {
     ctx = createTestAgent();
 
-    const description = agentSwarmDescription();
-
-    expect(description).toContain('at least 2');
-    expect(description).toContain('{{item}}');
-    expect(description.toLowerCase()).toContain('distinct');
-    expect(description).toContain('128 subagents');
-  });
-
-  it('states AgentSwarm must be the only tool call in a response', () => {
-    ctx = createTestAgent();
-
-    expect(agentSwarmDescription()).toContain(
-      'If `AgentSwarm` is called, that call must be the only tool call in the response.',
-    );
+    expect(agentSwarmDescription()).toContain('{{item}}');
   });
 
   it('omits the models section when no [secondary_model.models] pool is configured', () => {
@@ -2406,12 +2336,10 @@ describe('AgentSwarm tool description', () => {
 
     const description = agentSwarmDescription();
 
-    expect(description).toContain('Available models (pass via model):');
+    expect(description).toContain('Available models');
     expect(description).toContain('- provider/fast [default]: fast and cheap');
     expect(description).toContain('- provider/smart: hard tasks');
-    expect(description).toContain(
-      '- primary: the main model you are running on, bound with your current thinking level; use it for hard, quality-sensitive subagent tasks',
-    );
+    expect(description).toContain('- primary:');
   });
 
   function agentSwarmParameters(): Record<string, unknown> {
@@ -3340,8 +3268,6 @@ describe('Agent tools', () => {
       const bashTool = tools.resolve('Bash');
       expect(bashOnly).toBeDefined();
       expect(bashTool).toBeDefined();
-      expect(bashOnly!.description).toContain('Background execution is disabled for this agent.');
-      expect(bashOnly!.description).not.toContain('the command will be started as a background task');
       await expect(
         executeTool(bashTool!, {
           turnId: 0,

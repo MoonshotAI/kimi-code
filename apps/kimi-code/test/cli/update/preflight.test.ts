@@ -1,5 +1,4 @@
 import type * as ChildProcess from 'node:child_process';
-import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,7 +9,7 @@ import {
   readUpdateInstallState,
   writeUpdateInstallState,
 } from '#/cli/update/install-state';
-import { runUpdatePreflight, spawnForSource } from '#/cli/update/preflight';
+import { runUpdatePreflight } from '#/cli/update/preflight';
 import { promptForInstallChoice } from '#/cli/update/prompt';
 import type * as PromptModule from '#/cli/update/prompt';
 import { refreshUpdateCache } from '#/cli/update/refresh';
@@ -500,7 +499,7 @@ describe('runUpdatePreflight', () => {
     expect(mocks.spawn).not.toHaveBeenCalled();
   });
 
-  it('native on darwin: spawns bash -c with pipefail-guarded curl|bash', async () => {
+  it('native: self-spawns the staged downloader sub-command', async () => {
     disableAutoInstall();
     mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
     mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
@@ -510,35 +509,38 @@ describe('runUpdatePreflight', () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     try {
-      const { options } = captureOutput();
-      await runUpdatePreflight('0.4.0', options);
-      const call = mocks.spawn.mock.calls[0];
-      expect(call?.[0]).toBe('bash');
-      expect(call?.[2]).toEqual({ stdio: 'inherit' });
-      const [flag, script] = call?.[1] as string[];
-      expect(flag).toBe('-c');
-      // pipefail must come before the pipeline so a failed `curl` is not masked
-      // by the trailing `bash` exiting 0 (see "surfaces a failed curl" below).
-      expect(script).toContain('set -o pipefail');
-      expect(script).toContain('curl -fsSL https://code.kimi.com/kimi-code/install.sh');
-      expect(script).toContain('| bash');
+      const { stdout, options } = captureOutput();
+      await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('exit');
+      expect(mocks.spawn).toHaveBeenCalledWith(
+        process.execPath,
+        ['__update_download', '0.5.0', '--manual'],
+        expect.objectContaining({ stdio: 'inherit' }),
+      );
+      expect(stdout.join('')).toContain('Updated @moonshot-ai/kimi-code to 0.5.0');
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform });
     }
   });
 
-  it('native on win32: prints manual powershell command, does not spawn', async () => {
+  it('native on win32: auto-installs via the staged downloader sub-command', async () => {
+    disableAutoInstall();
     mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
     mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
     mocks.detectInstallSource.mockResolvedValue('native');
+    mocks.promptForInstallChoice.mockResolvedValue('install');
+    mockSpawnExit(0);
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32' });
     try {
       const { stdout, options } = captureOutput();
-      await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
-      expect(stdout.join('')).toContain('irm https://code.kimi.com/kimi-code/install.ps1 | iex');
-      expect(promptForInstallChoice).not.toHaveBeenCalled();
-      expect(mocks.spawn).not.toHaveBeenCalled();
+      await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('exit');
+      expect(mocks.spawn).toHaveBeenCalledWith(
+        process.execPath,
+        ['__update_download', '0.5.0', '--manual'],
+        expect.objectContaining({ stdio: 'inherit' }),
+      );
+      expect(stdout.join('')).toContain('Updated @moonshot-ai/kimi-code to 0.5.0');
+      expect(stdout.join('')).not.toContain('Auto-update is not supported');
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform });
     }
@@ -696,6 +698,71 @@ describe('runUpdatePreflight', () => {
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform });
     }
+  });
+
+  it('native: retries the background install when an old active record has no live lock', async () => {
+    // Orphaned `active`: older than the spawn grace window and the lock is
+    // free (beforeEach default) ⇒ the previous downloader is gone; retry.
+    mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.readUpdateInstallState.mockResolvedValue(installState({
+      active: {
+        version: '0.5.0',
+        source: 'native',
+        startedAt: new Date(Date.now() - 120_000).toISOString(),
+      },
+    }));
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.detectInstallSource.mockResolvedValue('native');
+    mockSpawnExit(0);
+    const { options } = captureOutput();
+
+    await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      process.execPath,
+      ['__update_download', '0.5.0'],
+      expect.objectContaining({ detached: true, stdio: 'ignore' }),
+    );
+  });
+
+  it('native: does not re-spawn while the install lock is genuinely held', async () => {
+    mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.readUpdateInstallState.mockResolvedValue(installState({
+      active: {
+        version: '0.5.0',
+        source: 'native',
+        startedAt: new Date(Date.now() - 120_000).toISOString(),
+      },
+    }));
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.detectInstallSource.mockResolvedValue('native');
+    // Lock probe fails ⇒ a downloader is actually in flight; trust it.
+    mocks.tryAcquireUpdateInstallLock.mockResolvedValue(null);
+    mockSpawnExit(0);
+    const { options } = captureOutput();
+
+    await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+
+  it('native: trusts a fresh active record within the spawn grace window', async () => {
+    mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.readUpdateInstallState.mockResolvedValue(installState({
+      active: {
+        version: '0.5.0',
+        source: 'native',
+        startedAt: new Date().toISOString(),
+      },
+    }));
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.detectInstallSource.mockResolvedValue('native');
+    mockSpawnExit(0);
+    const { options } = captureOutput();
+
+    await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    // Inside the grace window the lock is never probed — the freshly spawned
+    // worker may simply not have reached its self-acquire yet.
+    expect(mocks.tryAcquireUpdateInstallLock).not.toHaveBeenCalled();
   });
 
   it('tracks and logs successful background update installs', async () => {
@@ -1178,24 +1245,4 @@ describe('runUpdatePreflight', () => {
       );
     });
   });
-});
-
-describe('spawnForSource native', () => {
-  // No spawn mock here — we run real bash to prove the failure contract
-  // end-to-end. `curl … | bash` reports only the trailing bash's exit status,
-  // so a curl that never connects (exit 7, empty stdin → bash exits 0) is
-  // masked and the update is wrongly reported as successful. `set -o pipefail`
-  // makes the pipeline surface curl's failure. Shadowing `curl` with a shell
-  // function keeps this offline and deterministic; skipped on Windows (no bash,
-  // and native auto-install is unsupported there anyway).
-  it.skipIf(process.platform === 'win32')(
-    'surfaces a failed curl download as a non-zero exit',
-    () => {
-      const { cmd, args } = spawnForSource('native', '0.5.0', 'darwin');
-      const script = `curl() { return 7; }\n${args[1] ?? ''}`;
-      const result = spawnSync(cmd, [args[0] ?? '-c', script], { encoding: 'utf8' });
-      expect(result.error).toBeUndefined();
-      expect(result.status).toBeGreaterThan(0);
-    },
-  );
 });

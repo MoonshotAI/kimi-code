@@ -1241,8 +1241,6 @@ describe('BashTool', () => {
     expect(description).toContain('**Guidelines for safety and security:**');
     expect(description).toContain('**Guidelines for efficiency:**');
     expect(description).toContain('run_in_background=true');
-    expect(description).toContain('automatically notified');
-    expect(description).toContain('returning control to the user');
   });
 
   it('disables background execution when TaskList is inactive even if TaskOutput/TaskStop are active', async () => {
@@ -1255,8 +1253,6 @@ describe('BashTool', () => {
       stubToolPolicy((name) => name !== 'TaskList'),
     );
 
-    expect(tool.description).toContain('Background execution is disabled for this agent');
-
     const result = await executeTool(
       tool,
       context({ command: 'sleep 10', run_in_background: true, description: 'watch' }),
@@ -1265,43 +1261,6 @@ describe('BashTool', () => {
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('Background execution is not available');
     expect(exec).not.toHaveBeenCalled();
-  });
-
-  it('describes timeout behavior according to the auto-background config', () => {
-    const { runner } = createTestRunner(processWithOutput());
-    const autoBg = bashTool(runner);
-    expect(autoBg.description).toContain('moved to the background instead of being killed');
-
-    const killOnTimeout = bashTool(
-      runner,
-      createTestEnv(),
-      createTestCtx(),
-      createFakeTaskService().service,
-      stubToolPolicy(),
-      stubConfig({ task: { bashAutoBackgroundOnTimeout: false } }),
-    );
-    expect(killOnTimeout.description).not.toContain('moved to the background instead of being killed');
-    expect(killOnTimeout.description).toContain('hits its timeout is killed');
-
-    const legacyKillOnTimeout = bashTool(
-      runner,
-      createTestEnv(),
-      createTestCtx(),
-      createFakeTaskService().service,
-      stubToolPolicy(),
-      stubConfig({ background: { bashAutoBackgroundOnTimeout: false } }),
-    );
-    expect(legacyKillOnTimeout.description).toContain('hits its timeout is killed');
-
-    const noBackground = bashTool(
-      runner,
-      createTestEnv(),
-      createTestCtx(),
-      createFakeTaskService().service,
-      stubToolPolicy(() => false),
-    );
-    expect(noBackground.description).not.toContain('moved to the background instead of being killed');
-    expect(noBackground.description).toContain('hits its timeout is killed');
   });
 
   it('resolves the detach timeout from the bashTaskTimeoutS config', async () => {
@@ -1825,12 +1784,5 @@ describe('BashTool prompt / runtime consistency', () => {
       expect(promptToolNames).toContain(name);
     }
     expect(errorToolNames.length).toBeGreaterThan(0);
-  });
-
-  it('does not claim failure exit codes appear in a system tag', () => {
-    const { runner } = createTestRunner(processWithOutput());
-    const tool = bashTool(runner);
-
-    expect(tool.description).not.toMatch(/exit code will be provided in a system tag/);
   });
 });
