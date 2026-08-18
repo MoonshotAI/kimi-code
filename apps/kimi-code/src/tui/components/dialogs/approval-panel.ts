@@ -280,6 +280,9 @@ export class ApprovalPanelComponent extends Container implements Focusable {
   private submit(index: number, feedback: string = ''): void {
     const option = this.choiceAt(index);
     if (!option) return;
+    if (option.requires_feedback === true && feedback.trim().length === 0) {
+      return;
+    }
     this.onResponse({
       response: option.response,
       feedback: feedback || undefined,

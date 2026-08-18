@@ -493,6 +493,25 @@ describe('AgentFlowService', () => {
       expect(requestToolApproval).toHaveBeenCalledTimes(1);
     });
 
+    it('vetoes a human-gated verdict batched with any sibling call', async () => {
+      service.start(DEFINITION, 'task');
+      const context = advanceContext(GATE_DISPLAY);
+      const sibling: ToolCall = {
+        type: 'function',
+        id: 'call_bash',
+        name: 'Bash',
+        arguments: '{}',
+      };
+      const batched = {
+        ...context,
+        toolCalls: [context.toolCall, sibling],
+      } as ResolvedToolExecutionHookContext;
+      const decision = await executorEvents.fireBeforeExecute(batched);
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('Submit FlowAdvance alone');
+      expect(requestToolApproval).not.toHaveBeenCalled();
+    });
+
     it('vetoes a flow call preceded by another flow call in the same batch', async () => {
       service.start(DEFINITION, 'task');
       const context = advanceContext(GATE_DISPLAY);

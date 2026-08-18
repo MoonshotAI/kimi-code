@@ -84,10 +84,10 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         }
         if (event.toolCall.name !== FLOW_ADVANCE_TOOL_NAME) return;
         if (event.execution.display?.kind !== 'flow_gate_review') return;
-        if (event.toolCalls[0] !== event.toolCall) {
+        if (event.toolCalls.length > 1) {
           event.veto(
             denyToolExecution(
-              'A human-gated verdict must be the only call in its response: earlier calls in this batch have not executed yet, so the review would show evidence that does not exist. Submit FlowAdvance alone.',
+              'A human-gated verdict must be the only call in its response: earlier siblings have not executed (their evidence does not exist yet) and later siblings would run even after a rejection. Submit FlowAdvance alone.',
             ),
           );
           return;
