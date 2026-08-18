@@ -1,6 +1,6 @@
 ---
 name: gen-changesets
-description: Use when generating changesets in the kimi-code repository, including package bump selection, internal package and CLI bundle handling, bump levels, major confirmation, and English changelog wording.
+description: Use when generating changesets in the kimi-code repository, including package bump selection, internal package and CLI bundle handling, bump levels, major confirmation, and user-facing English changelog wording.
 ---
 
 # Generate Changesets
@@ -13,7 +13,7 @@ All other `@moonshot-ai/*` packages are treated as internal packages, including 
 
 `@moonshot-ai/pi-tui` is a special internal package: it is a private fork (`private: true`) that is never published, but it keeps its own changelog through changesets. It is an exception to Core Rule 4 — see the dedicated section below.
 
-Only the CLI changelog gets a curated, user-facing presentation (the docs-site changelog sync). The SDK and other internal package changelogs are raw changesets output kept for version history — nobody curates them, so write those entries honestly and technically; their wording does not need to suit end users.
+Only the CLI changelog gets a curated, user-facing presentation (the docs-site changelog sync). The SDK and other internal package changelogs are raw changesets output kept for version history — nobody curates them later, so what you write is exactly what people read. Keep those entries honest and technical in vocabulary, but still short and readable: summarize the capability change — what callers can now do, what behavior changed — in one or two sentences, naming at most the entry points a caller must know. Never enumerate methods, parameters, or fields like an API reference; that detail belongs in docs and code, not in a changelog.
 
 ## Core Rules
 
@@ -37,6 +37,7 @@ Only the CLI changelog gets a curated, user-facing presentation (the docs-site c
 4. If an ignored internal package change enters the CLI bundle, put `@moonshot-ai/kimi-code` in frontmatter instead of mixing the ignored package into the same changeset.
 5. Create a short kebab-case file under `.changeset/`.
 6. Split unrelated changes into separate changesets; keep one logical change in one file.
+7. Re-read the finished entry as a user with no codebase knowledge: can you tell what changed, whether it affects you, and how to try it? If not, rewrite. For user-facing changes, have the human author proofread the entry before merge — AI-drafted changelog wording is a starting point, not a pass.
 
 Before a release, review the accumulated `.changeset/` entries against Core Rule 6 and prune non-user-facing ones; the release PR regenerates from `.changeset/` on `main`, so deleting a changeset removes its changelog entry without affecting the shipped code.
 
@@ -73,6 +74,8 @@ If you believe a change qualifies as major, stop first, explain why, and ask the
 
 - Changelog entries **must be written in English**.
 - **Keep the whole entry concise.** Aim for one short sentence that states what was done; at most a short sentence plus a one-line usage hint. Do not write a paragraph, do not pile on technical detail, and do not enumerate every sub-change.
+- **Write for a reader who does not know the codebase.** State the user-visible outcome in plain language, one outcome per entry. Do not cram several effects into one sentence with semicolons and slash lists — if a change has several distinct user-visible effects, split it into separate changesets, or keep only the one that matters most to users.
+- **Say who can actually use it.** If the change is experimental, flag-gated, or limited to one engine (legacy / v2), one platform, or one surface (TUI / `kimi web` / VSCode), the entry must say so in plain words (e.g. `experimental`, `on the legacy engine only`, `behind the --foo flag`). A reader must be able to tell whether the feature is available to them and how mature it is.
 - **For new user-facing features, append a brief usage hint** so users know how to try it. Keep it to a single short line — a command name, a subcommand, a flag, or a one-line "how to use". Do not explain design rationale or list edge cases. Skip the hint for bug fixes, internal changes, and refactors.
   - Slash command: `Add the /foo slash command to list active sessions. Run /foo to see them.`
   - CLI subcommand: `Add the kimi web subcommand to open the web UI. Run kimi web to launch it.`
@@ -204,3 +207,7 @@ Fix the transcript jumping to the top when scrolling up through history during s
 - The CLI wording mentions internal package names, class names, or PR numbers.
 - The entry includes real internal identifiers instead of neutral placeholders.
 - A change that only touches `@moonshot-ai/pi-tui` lists `@moonshot-ai/kimi-code` instead of `@moonshot-ai/pi-tui`, or mixes both packages in one frontmatter.
+- The entry reads like an API reference — it enumerates method, parameter, or field names instead of summarizing the capability change. This applies to SDK and other internal entries too: technical vocabulary is fine, enumeration is not.
+- An experimental, flag-gated, engine-gated, platform-gated, or surface-specific change is presented without saying who can use it or how mature it is.
+- One sentence stuffing several user-visible effects together with semicolons or slash lists — split it into separate changesets.
+- User-facing wording was committed without anyone re-reading it from a user's perspective.
