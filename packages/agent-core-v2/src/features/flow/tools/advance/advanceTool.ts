@@ -26,11 +26,13 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
 
   resolveExecution(args: FlowAdvanceInput): ToolExecution {
     const display = this.gateDisplay(args);
+    const epochAtPrepare = this.flow.runEpoch();
     return {
       description: `Submitting ${args.verdict} verdict for stage ${args.stage}`,
       display,
       approvalRule: this.name,
-      execute: (ctx) => this.execution(args, this.flow.consumeGateApproval(ctx.toolCallId)),
+      execute: (ctx) =>
+        this.execution(args, this.flow.consumeGateApproval(ctx.toolCallId), epochAtPrepare),
     };
   }
 
@@ -64,6 +66,7 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
   private async execution(
     rawArgs: FlowAdvanceInput,
     reviewedByUser: boolean,
+    epochAtPrepare: number,
   ): Promise<ExecutableToolResult> {
     const parsed = FlowAdvanceInputSchema.safeParse(rawArgs);
     if (!parsed.success) {
@@ -76,6 +79,13 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
     const run = this.flow.run();
     if (!run.active) {
       return { isError: true, output: 'No active flow run. Use FlowStart first.' };
+    }
+    if (this.flow.runEpoch() !== epochAtPrepare) {
+      return {
+        isError: true,
+        output:
+          'The flow run changed after this call was prepared (undo, abort, or a new run); the verdict and any review it received are stale. Submit FlowAdvance again against the current run.',
+      };
     }
     const stage = this.flow.currentStage();
     if (stage === undefined || stage.id !== args.stage) {

@@ -9,7 +9,9 @@ import {
   type Scope,
 } from '#/_base/di/scope';
 import { createScopedTestHost } from '#/_base/di/test';
+import { Emitter } from '#/_base/event';
 import { AgentProfileContribution } from '#/app/agentProfileCatalog/agentProfileContribution';
+import { IConfigService, type ConfigChangedEvent } from '#/app/config/config';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { FeatureManagerService } from '#/app/feature/featureManagerService';
 import { IFlagService } from '#/app/flag/flag';
@@ -31,8 +33,21 @@ function collectionViewOf<T>(scope: Scope, token: CollectionToken<T>): Collectio
   return (scope.instantiation as InstantiationService).fiberHost.collectionView(token);
 }
 
+function stubConfig(onDidChangeConfiguration: Emitter<ConfigChangedEvent>['event']): [typeof IConfigService, IConfigService] {
+  return [
+    IConfigService,
+    {
+      get: () => undefined,
+      onDidChangeConfiguration,
+    } as unknown as IConfigService,
+  ];
+}
+
 describe('FlowFeature — experimental flag gating', () => {
+  let configChanged: Emitter<ConfigChangedEvent>;
+
   beforeEach(() => {
+    configChanged = new Emitter<ConfigChangedEvent>();
     _clearScopedRegistryForTests();
     _clearFeatureRecipesForTests();
     registerScopedService(
@@ -53,7 +68,10 @@ describe('FlowFeature — experimental flag gating', () => {
   });
 
   it('assembles an empty unit when the flow flag is off', () => {
-    const host = createScopedTestHost([[IFlagService, stubFlag(false)]]);
+    const host = createScopedTestHost([
+      [IFlagService, stubFlag(false)],
+      stubConfig(configChanged.event),
+    ]);
     const manager = host.app.accessor.get(IFeatureManager);
     expect(manager.units().map((unit) => unit.name)).toEqual(['flow']);
     expect(manager.contributedServices()).toHaveLength(0);
@@ -66,6 +84,7 @@ describe('FlowFeature — experimental flag gating', () => {
   it('contributes tools, the reviewer profile, and the injection service when the flow flag is on', () => {
     const host = createScopedTestHost([
       [IFlagService, stubFlag((id) => id === FLOW_FLAG_ID)],
+      stubConfig(configChanged.event),
     ]);
     const manager = host.app.accessor.get(IFeatureManager);
     expect(
@@ -84,6 +103,30 @@ describe('FlowFeature — experimental flag gating', () => {
       (record) => record.options.name,
     );
     expect(tools.toSorted()).toEqual(['FlowAbort', 'FlowAdvance', 'FlowStart']);
+    host.dispose();
+  });
+
+  it('reconciles contributions when the flag flips at runtime', () => {
+    let flagOn = false;
+    const host = createScopedTestHost([
+      [IFlagService, stubFlag((id) => flagOn && id === FLOW_FLAG_ID)],
+      stubConfig(configChanged.event),
+    ]);
+    const manager = host.app.accessor.get(IFeatureManager);
+    expect(manager.units().map((unit) => unit.name)).toEqual(['flow']);
+    expect(collectionViewOf(host.app, AgentProfileContribution).items).toHaveLength(0);
+
+    flagOn = true;
+    configChanged.fire({ affects: () => true } as unknown as ConfigChangedEvent);
+    expect(collectionViewOf(host.app, AgentProfileContribution).items).toHaveLength(1);
+    const agent = host.child(LifecycleScope.Agent, 'agent-on');
+    expect(
+      collectionViewOf(agent, AgentToolContribution).items.map((record) => record.options.name).toSorted(),
+    ).toEqual(['FlowAbort', 'FlowAdvance', 'FlowStart']);
+
+    flagOn = false;
+    configChanged.fire({ affects: () => true } as unknown as ConfigChangedEvent);
+    expect(collectionViewOf(host.app, AgentProfileContribution).items).toHaveLength(0);
     host.dispose();
   });
 });

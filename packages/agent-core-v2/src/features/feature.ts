@@ -73,11 +73,13 @@ export abstract class Feature extends Service {
     id: ServiceIdentifier<T>,
     ctor: AgentToolCtor<T>,
     options: AgentToolContributionOptions,
-  ): void {
-    this.contributeService(LifecycleScope.Agent, id, ctor, {
-      activation: ScopeActivation.OnDemand,
-    });
-    this.provide(AgentToolContribution, { id, ctor, options });
+  ): FiberHandle[] {
+    return [
+      this.contributeService(LifecycleScope.Agent, id, ctor, {
+        activation: ScopeActivation.OnDemand,
+      }),
+      this.provide(AgentToolContribution, { id, ctor, options }),
+    ];
   }
 
   contributeCommand(contribution: CommandContributionPayload): FiberHandle {

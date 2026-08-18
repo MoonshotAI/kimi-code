@@ -67,8 +67,8 @@ export function registerFlowRoutes(app: FlowRouteHost, deps: FlowRouteDeps): voi
       const payload: FlowStateResponse = {
         run: {
           active: run.active,
-          flow_id: run.active ? run.flowId : (gates.flowId ?? run.flowId),
-          task: run.active ? run.task : (gates.task ?? run.task),
+          flow_id: run.flowId ?? gates.flowId,
+          task: run.task ?? gates.task,
           stages: run.stages?.map((stage) => ({
             id: stage.id,
             objective: stage.objective,

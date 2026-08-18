@@ -1,6 +1,8 @@
 import { ScopeActivation } from '#/_base/di/instantiation';
 import type { ServicesAccessor } from '#/_base/di/instantiation';
+import type { FiberHandle } from '#/_base/di/fiber';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
@@ -26,29 +28,50 @@ const supervisorOnly = (accessor: ServicesAccessor): boolean =>
 export class FlowFeature extends Feature {
   static override readonly name = 'flow';
 
-  constructor(@IFlagService flags: IFlagService) {
+  private handles: FiberHandle[] | undefined;
+
+  constructor(
+    @IFlagService flags: IFlagService,
+    @IConfigService config: IConfigService,
+  ) {
     super();
-    if (!flags.enabled(FLOW_FLAG_ID)) return;
-    this.contributeAgentService(IFlowInjection, FlowInjection, {
-      activation: ScopeActivation.OnScopeCreated,
-    });
-    this.contributeTool(IFlowStartTool, FlowStartTool, {
-      name: FLOW_START_TOOL_NAME,
-      domain: 'flow',
-      when: supervisorOnly,
-      requiredRuntimeCapabilities: ['fs'],
-    });
-    this.contributeTool(IFlowAdvanceTool, FlowAdvanceTool, {
-      name: FLOW_ADVANCE_TOOL_NAME,
-      domain: 'flow',
-      when: supervisorOnly,
-    });
-    this.contributeTool(IFlowAbortTool, FlowAbortTool, {
-      name: FLOW_ABORT_TOOL_NAME,
-      domain: 'flow',
-      when: supervisorOnly,
-    });
-    this.contributeProfiles([FLOW_REVIEWER_PROFILE_DEF]);
+    this.reconcile(flags.enabled(FLOW_FLAG_ID));
+    this._register(
+      config.onDidChangeConfiguration(() => {
+        this.reconcile(flags.enabled(FLOW_FLAG_ID));
+      }),
+    );
+  }
+
+  private reconcile(enabled: boolean): void {
+    if (enabled === (this.handles !== undefined)) return;
+    if (!enabled) {
+      for (const handle of this.handles ?? []) void handle.dispose();
+      this.handles = undefined;
+      return;
+    }
+    this.handles = [
+      this.contributeAgentService(IFlowInjection, FlowInjection, {
+        activation: ScopeActivation.OnScopeCreated,
+      }),
+      ...this.contributeTool(IFlowStartTool, FlowStartTool, {
+        name: FLOW_START_TOOL_NAME,
+        domain: 'flow',
+        when: supervisorOnly,
+        requiredRuntimeCapabilities: ['fs'],
+      }),
+      ...this.contributeTool(IFlowAdvanceTool, FlowAdvanceTool, {
+        name: FLOW_ADVANCE_TOOL_NAME,
+        domain: 'flow',
+        when: supervisorOnly,
+      }),
+      ...this.contributeTool(IFlowAbortTool, FlowAbortTool, {
+        name: FLOW_ABORT_TOOL_NAME,
+        domain: 'flow',
+        when: supervisorOnly,
+      }),
+      this.contributeProfiles([FLOW_REVIEWER_PROFILE_DEF]),
+    ];
   }
 }
 

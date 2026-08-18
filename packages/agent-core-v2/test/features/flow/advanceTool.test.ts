@@ -37,6 +37,7 @@ describe('FlowAdvanceTool', () => {
   let mode: string;
   let advance: ReturnType<typeof vi.fn>;
   let approvedCalls: Set<string>;
+  let epoch: number;
 
   beforeEach(() => {
     ix = new TestInstantiationService();
@@ -48,11 +49,13 @@ describe('FlowAdvanceTool', () => {
         ({ recorded: true, runFinished: false, nextStage: STAGES[stageIndex + 1] }) as const,
     );
     approvedCalls = new Set(['call_advance']);
+    epoch = 1;
     ix.stub(IAgentFlowService, {
       run: () => ({ active, flowId: 'issue-fix', task: 'fix #1', stages: STAGES, currentStageIndex: stageIndex }),
       currentStage: () => (active ? STAGES[stageIndex] : undefined),
       advance,
       consumeGateApproval: (toolCallId: string) => approvedCalls.delete(toolCallId),
+      runEpoch: () => epoch,
     } as unknown as IAgentFlowService);
     ix.stub(IAgentPermissionModeService, {
       get mode() {
@@ -191,6 +194,15 @@ describe('FlowAdvanceTool', () => {
       criteria: [{ criterion: '', met: true, evidence: 'src/x.ts:12' }],
     });
     expect(blankCriterion.success).toBe(false);
+  });
+
+  it('rejects any verdict prepared against a run that changed before execution', async () => {
+    const execution = runnable(tool.resolveExecution(passArgs('triage')));
+    epoch = 2;
+    const result = await execution.execute(CTX);
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('changed after this call was prepared');
+    expect(advance).not.toHaveBeenCalled();
   });
 
   it('records an ai-gated pass without review', async () => {
