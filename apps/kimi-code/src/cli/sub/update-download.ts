@@ -14,8 +14,10 @@ import {
   type UpdateInstallLockHandle,
 } from '#/cli/update/install-lock';
 import {
+  hashFileSha256,
   promoteStagedUpdateToManual,
   readStagedNativeUpdate,
+  stagedExePath,
   stageNativeUpdate,
 } from '#/cli/update/native-stage';
 import { detectNativeInstall } from '#/cli/update/source';
@@ -35,6 +37,13 @@ type StagedUpdateWait =
  * (see install-lock), so a killed downloader cannot strand a foreground
  * `kimi upgrade` in this loop.
  *
+ * Adoption applies the same integrity bar as stageNativeUpdate's
+ * already-staged path: the recorded size proves nothing, and the holder may
+ * still be RE-STAGING a same-size-corrupted payload (its metadata is only
+ * replaced when the new generation publishes). A recorded stage whose payload
+ * fails the checksum is treated as not-yet-staged — the lock poll below takes
+ * over once the holder finishes without repairing it.
+ *
  * A manual (explicit-upgrade) waiter adopts only after CONFIRMING the manual
  * marker landed on the stage — a concurrent startup swap may be claiming and
  * restoring the metadata right now, and reporting adoption for a promotion
@@ -47,7 +56,11 @@ async function waitForStagedUpdate(
 ): Promise<StagedUpdateWait> {
   for (;;) {
     const staged = await readStagedNativeUpdate(exePath);
-    if (staged !== null && staged.version === version) {
+    const digest =
+      staged !== null && staged.version === version
+        ? await hashFileSha256(stagedExePath(exePath, staged))
+        : null;
+    if (staged !== null && digest === staged.sha256) {
       if (!manual || (await promoteStagedUpdateToManual(exePath, staged))) {
         return { status: 'staged' };
       }
@@ -57,7 +70,8 @@ async function waitForStagedUpdate(
     } else {
       // Poll the acquisition itself: while the holder lives its lock stays
       // fresh and this returns null without side effects; when the holder
-      // finishes (or dies) without staging, the takeover happens right here.
+      // finishes (or dies) without staging a VERIFIED payload, the takeover
+      // happens right here.
       const lock = await tryAcquireUpdateInstallLock({ version });
       if (lock !== null) return { status: 'takeover', lock };
     }
