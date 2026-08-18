@@ -343,10 +343,14 @@ class RemoteControlClient {
       throw new Error(`Remote Control expected register_ack, received ${registration.type}`);
     }
 
+    const managementEnd = waitForSocketEnd(management);
     const http = await this.connectRelay(
       `/v1/remote/http?device_id=${encodeURIComponent(this.deviceId)}`,
     );
     this.http = http;
+    if (management.readyState !== WebSocket.OPEN) {
+      throw new Error('management connection closed');
+    }
     management.on('message', (data) => this.handleManagementMessage(data));
     http.on('message', (data) => this.handleHttpMessage(data));
     this.reconnectAttempt = 0;
@@ -358,7 +362,7 @@ class RemoteControlClient {
       this.initialReject = undefined;
     }
 
-    await Promise.race([waitForSocketEnd(management), waitForSocketEnd(http)]);
+    await Promise.race([managementEnd, waitForSocketEnd(http)]);
     if (!this.stopped) throw new Error('relay connection closed');
   }
 
@@ -650,9 +654,9 @@ function waitForRelayMessage(socket: WebSocket, timeoutMs: number): Promise<Rela
 }
 
 function waitForSocketEnd(socket: WebSocket): Promise<void> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     socket.once('close', () => resolve());
-    socket.once('error', reject);
+    socket.once('error', () => resolve());
   });
 }
 

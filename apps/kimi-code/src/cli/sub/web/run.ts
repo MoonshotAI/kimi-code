@@ -181,6 +181,9 @@ export async function handleWebCommand(
   if (opts.remoteControl === true && parsed.dangerousBypassAuth) {
     throw new Error('--remote-control cannot be combined with --dangerous-bypass-auth.');
   }
+  if (opts.remoteControl === true && !isLoopbackHost(parsed.host)) {
+    throw new Error('--remote-control requires a loopback host.');
+  }
   const run = deps.startServerForeground ?? startServerForeground;
   let remoteControl: RemoteControlHandle | undefined;
   await run(parsed, {
