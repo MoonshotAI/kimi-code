@@ -41,8 +41,11 @@ const props = withDefaults(
         may append). Keeps the row expanded and the summary in live shape even
         across the brief gap between two tool calls. */
     streaming?: boolean;
+    /** Inspector mode (subagent detail panel): pin the body open — the head
+        becomes a plain caption (no toggle, no chevron). */
+    forceOpen?: boolean;
   }>(),
-  { mobile: false, streaming: false },
+  { mobile: false, streaming: false, forceOpen: false },
 );
 
 const emit = defineEmits<{
@@ -78,6 +81,8 @@ const runStatus = computed<'running' | 'error' | 'done'>(() => {
 
 // The default applies only at mount; manual toggles stick.
 const open = ref(runStatus.value === 'running');
+// Inspector mode pins the body open no matter what the fold state says.
+const effectiveOpen = computed(() => props.forceOpen || open.value);
 
 const pinScroll = inject<(el: HTMLElement, ms?: number) => void>('pinScroll', () => {});
 const headEl = ref<HTMLElement | null>(null);
@@ -136,6 +141,7 @@ watch(
 );
 
 function toggle(): void {
+  if (props.forceOpen) return;
   open.value = !open.value;
   // A streaming run keeps growing on its own — no pin: the follow (or native
   // anchoring off-follow) absorbs the toggle (same rule as ThinkingBlock).
@@ -200,8 +206,15 @@ function isThinkingStreaming(item: ActivityItem): boolean {
 </script>
 
 <template>
-  <div class="activity-run" :class="{ open }">
-    <button ref="headEl" class="ar-head" type="button" :aria-expanded="open" @click="toggle">
+  <div class="activity-run" :class="{ open: effectiveOpen }">
+    <component
+      :is="forceOpen ? 'div' : 'button'"
+      ref="headEl"
+      class="ar-head"
+      :class="{ 'is-static': forceOpen }"
+      v-bind="forceOpen ? {} : { type: 'button', 'aria-expanded': effectiveOpen }"
+      @click="toggle"
+    >
       <span
         class="ar-glyph"
         :class="{ run: runStatus === 'running', err: runStatus === 'error', ok: runStatus === 'done' }"
@@ -220,9 +233,9 @@ function isThinkingStreaming(item: ActivityItem): boolean {
           >
         </template>
       </span>
-      <Icon class="ar-car" name="chevron-right" size="sm" aria-hidden="true" />
-    </button>
-    <div class="ar-body" :class="{ open }" :inert="!open">
+      <Icon v-if="!forceOpen" class="ar-car" name="chevron-right" size="sm" aria-hidden="true" />
+    </component>
+    <div class="ar-body" :class="{ open: effectiveOpen }" :inert="!effectiveOpen">
       <div class="ar-body-inner">
         <template v-for="item in items" :key="itemKey(item)">
           <ThinkingBlock
@@ -232,6 +245,7 @@ function isThinkingStreaming(item: ActivityItem): boolean {
             :streaming="isThinkingStreaming(item)"
             :started-at="item.startedAt"
             :duration-ms="item.durationMs"
+            :force-open="forceOpen"
           />
           <ToolCall
             v-else
@@ -281,6 +295,12 @@ function isThinkingStreaming(item: ActivityItem): boolean {
 }
 .ar-head:hover {
   color: var(--color-text);
+}
+/* Inspector mode: the head is a plain caption, not a toggle. */
+.ar-head.is-static,
+.ar-head.is-static:hover {
+  cursor: default;
+  color: var(--color-text-faint);
 }
 .ar-head:focus-visible {
   outline: none;

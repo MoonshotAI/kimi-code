@@ -208,6 +208,17 @@ function computeAssistantFold(turn: ChatTurn): AssistantFold {
   return { folded, visible };
 }
 
+/** Inspector-mode flattening of the fold split: every block inline, back in
+    source order (the split punches notification cards out of the folded
+    prefix into the visible tail, so a plain concat would misplace them). */
+export function flattenAssistantFold(fold: AssistantFold): AssistantRenderBlock[] {
+  // An activity-run spans several source items and carries no index of its
+  // own — its first item's position anchors it.
+  const indexOf = (block: AssistantRenderBlock): number =>
+    block.kind === 'activity-run' ? (block.items[0]?.sourceIndex ?? -1) : block.sourceIndex;
+  return [...fold.folded, ...fold.visible].sort((a, b) => indexOf(a) - indexOf(b));
+}
+
 /** Earliest thinking-block streaming-open stamp across the turn (renderer-
     measured, live sessions only) — seeds the turn-fold clock so the measured
     span covers the first step too. Undefined for history turns. */

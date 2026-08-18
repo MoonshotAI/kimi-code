@@ -27,6 +27,7 @@ import { getKimiWebApi } from '../../api';
 import {
   formatTokens,
   isoMs,
+  flattenAssistantFold,
   renderBlockKey,
   splitAssistantFold,
   turnActivitySeedMs,
@@ -36,7 +37,7 @@ import {
   turnToMarkdown,
   turnVisibleFinalText,
 } from '../chatTurnRendering';
-import type { AssistantFold, TurnFileChange } from '../chatTurnRendering';
+import type { AssistantFold, AssistantRenderBlock, TurnFileChange } from '../chatTurnRendering';
 
 const { t } = useI18n();
 
@@ -121,6 +122,10 @@ const props = withDefaults(
     isFollowing?: boolean;
     /** Suppress main-conversation mutation affordances in transcript-only views. */
     readOnly?: boolean;
+    /** Inspector mode (subagent detail panel): keep every turn fully expanded
+        (no TurnFold row) and skip the run-end footer — an inspection view
+        exists to show the whole trajectory, so nothing folds away. */
+    inspector?: boolean;
     /**
      * Pending user messages queued while the session is busy. Rendered inline
      * at the tail of the transcript (after the running turn) — click to edit,
@@ -168,6 +173,7 @@ const props = withDefaults(
     loadingMoreError: false,
     isFollowing: false,
     readOnly: false,
+    inspector: false,
     queued: () => [],
     undoHintTurnId: null,
     interruptedTurnId: null,
@@ -837,6 +843,14 @@ function assistantFold(turn: ChatTurn): AssistantFold {
   return splitAssistantFold(turn);
 }
 
+/** The blocks rendered inline after any TurnFold row. Inspector mode renders
+    the folded prefix inline too — flattened back into source order (see
+    flattenAssistantFold). Nothing folds away in an inspection view. */
+function assistantVisibleBlocks(turn: ChatTurn): AssistantRenderBlock[] {
+  const fold = assistantFold(turn);
+  return props.inspector ? flattenAssistantFold(fold) : fold.visible;
+}
+
 /** The sourceIndex of the turn's live tail block while it streams; null for
     every settled turn (the TurnFold's streaming vocabulary). A settled
     thinking tail — or a tool tail awaiting a pending approval/question —
@@ -1052,7 +1066,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           <span>{{ t('conversation.goal.continuation') }}</span>
         </div>
         <TurnFold
-          v-if="assistantFold(turn).folded.length > 0"
+          v-if="!inspector && assistantFold(turn).folded.length > 0"
           :items="assistantFold(turn).folded"
           mobile
           :streaming-tail-index="streamingTailIndex(turn)"
@@ -1066,14 +1080,15 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           @open-file="onOpenFile"
           @open-agent="onOpenAgent"
         />
-        <template v-for="(blk, bi) in assistantFold(turn).visible" :key="renderBlockKey(blk, bi)">
-          <ThinkingBlock v-if="blk.kind === 'thinking'" :text="blk.thinking" mobile :streaming="isStreamingRenderBlock(turn, blk)" :started-at="blk.startedAt" :duration-ms="blk.durationMs" />
+        <template v-for="(blk, bi) in assistantVisibleBlocks(turn)" :key="renderBlockKey(blk, bi)">
+          <ThinkingBlock v-if="blk.kind === 'thinking'" :text="blk.thinking" mobile :streaming="isStreamingRenderBlock(turn, blk)" :started-at="blk.startedAt" :duration-ms="blk.durationMs" :force-open="inspector" />
           <div v-else-if="blk.kind === 'text' && blk.text" class="msg"><Markdown :text="blk.text" :streaming="isStreamingRenderBlock(turn, blk)" :open-file="onOpenFile" /></div>
           <ActivityRun
             v-else-if="blk.kind === 'activity-run'"
             :items="blk.items"
             mobile
             :streaming="isStreamingActivityRun(turn, blk)"
+            :force-open="inspector"
             @open-media="onOpenMedia"
             @open-file="onOpenFile"
             @open-agent="onOpenAgent"
@@ -1089,7 +1104,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           @open-diff="onOpenTurnDiff"
           @open-file="onOpenFile"
         />
-        <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && assistantRunHasOutput(ti) && (assistantRunFinalText(ti).trim().length > 0 || turnTimeLabel(turn))" class="a-msg-ft">
+        <div v-if="!inspector && turn.id !== streamingTurnId && isAssistantRunEnd(ti) && assistantRunHasOutput(ti) && (assistantRunFinalText(ti).trim().length > 0 || turnTimeLabel(turn))" class="a-msg-ft">
           <span v-if="turnTimeLabel(turn)" class="a-time">{{ turnTimeLabel(turn) }}</span>
           <Tooltip :text="t('filePreview.copy')">
           <button

@@ -6,6 +6,7 @@ import {
   formatTokens,
   rendersToolCard,
   renderBlockKey,
+  flattenAssistantFold,
   splitAssistantFold,
   turnActivitySeedMs,
   turnBlocks,
@@ -22,6 +23,22 @@ function tool(id: string, over: Partial<ToolCall> = {}): ToolCall {
 
 function toolBlock(id: string, over: Partial<ToolCall> = {}): Extract<TurnBlock, { kind: 'tool' }> {
   return { kind: 'tool', tool: tool(id, over) };
+}
+
+function ntfBlock(id: string, type = 'task.completed'): Extract<TurnBlock, { kind: 'notification' }> {
+  return {
+    kind: 'notification',
+    notification: {
+      id,
+      category: 'task',
+      type,
+      sourceKind: 'background_task',
+      sourceId: id,
+      title: 'task',
+      body: `task ${id}`,
+      raw: `<notification id="${id}"></notification>`,
+    },
+  };
 }
 
 function assistantTurn(blocks: TurnBlock[], over: Partial<ChatTurn> = {}): ChatTurn {
@@ -617,5 +634,26 @@ describe('turnFileChanges', () => {
     ]);
     const change = turnFileChanges(turn)[0]!;
     expect(change.diff!.some((l) => l.type === 'hunk')).toBe(true);
+  });
+});
+
+describe('flattenAssistantFold', () => {
+  it('restores source order for notifications punched out of the folded prefix', () => {
+    // A notification BETWEEN two tool runs is punched out of the folded
+    // prefix into the visible tail by the split — a plain concat would move
+    // it after the second run.
+    const fold = splitAssistantFold(assistantTurn([
+      toolBlock('a'),
+      ntfBlock('n1'),
+      toolBlock('b'),
+      { kind: 'text', text: 'done' },
+    ]));
+    expect(fold.folded.map((b) => b.kind)).toEqual(['tool', 'tool']);
+    expect(fold.visible[0]?.kind).toBe('notification');
+    const flat = flattenAssistantFold(fold);
+    expect(flat.map((b) => b.kind)).toEqual(['tool', 'notification', 'tool', 'text']);
+    expect(
+      flat.map((b) => (b.kind === 'activity-run' ? (b.items[0]?.sourceIndex ?? -1) : b.sourceIndex)),
+    ).toEqual([0, 1, 2, 3]);
   });
 });

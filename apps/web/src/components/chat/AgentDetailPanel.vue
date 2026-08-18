@@ -385,6 +385,7 @@ const subtitle = computed(() => {
           :loading-more-error="loadMoreError"
           :is-following="following"
           read-only
+          inspector
           @load-older-messages="emit('loadOlderMessages')"
           @open-agent="emit('openAgent', $event)"
           @open-file="emit('openFile', $event)"

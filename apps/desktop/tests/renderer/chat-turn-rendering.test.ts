@@ -6,6 +6,7 @@ import {
   formatTokens,
   rendersToolCard,
   renderBlockKey,
+  flattenAssistantFold,
   splitAssistantFold,
   turnActivitySeedMs,
   turnBlocks,
@@ -722,5 +723,26 @@ describe('turnHasOutput', () => {
 
   it('is true for a notification-only turn — the card is the turn output', () => {
     expect(turnHasOutput(assistantTurn([ntfBlock('n')]))).toBe(true);
+  });
+});
+
+describe('flattenAssistantFold', () => {
+  it('restores source order for notifications punched out of the folded prefix', () => {
+    // A notification BETWEEN two tool runs is punched out of the folded
+    // prefix into the visible tail by the split — a plain concat would move
+    // it after the second run.
+    const fold = splitAssistantFold(assistantTurn([
+      toolBlock('a'),
+      ntfBlock('n1'),
+      toolBlock('b'),
+      { kind: 'text', text: 'done' },
+    ]));
+    expect(fold.folded.map((b) => b.kind)).toEqual(['tool', 'tool']);
+    expect(fold.visible[0]?.kind).toBe('notification');
+    const flat = flattenAssistantFold(fold);
+    expect(flat.map((b) => b.kind)).toEqual(['tool', 'notification', 'tool', 'text']);
+    expect(
+      flat.map((b) => (b.kind === 'activity-run' ? (b.items[0]?.sourceIndex ?? -1) : b.sourceIndex)),
+    ).toEqual([0, 1, 2, 3]);
   });
 });
