@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 98 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 99 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -106,6 +106,7 @@
 //     mcp.mcpToolsByServer                            src/agent/mcp/mcpService.ts
 //     media.registeredKey                             src/agent/media/mediaToolsRegistrar.ts
 //     media.resolved                                  src/agent/media/mediaResolverService.ts
+//     modelSnapshot.records                           src/agent/modelSnapshot/modelSnapshotOps.ts
 //     permissionMode                                  src/agent/permissionMode/permissionModeOps.ts
 //     permissionMode.configured                       src/agent/permissionMode/permissionModeOps.ts
 //     permissionMode.lastMode                         src/agent/permissionMode/injection/permissionModeInjection.ts
@@ -1341,6 +1342,47 @@ export interface AgentStateSnapshot {
   }>;
   // src/agent/media/mediaToolsRegistrar.ts
   'media.registeredKey': string | undefined;
+  // src/agent/modelSnapshot/modelSnapshotOps.ts
+  // replayable · durable — folds: ModelSnapshot
+  'modelSnapshot.records': /* ModelSnapshotsState — packages/agent-core-v2/src/agent/modelSnapshot/modelSnapshotOps.ts */ {
+    [key: string]: /* ModelSnapshotRecord — packages/agent-core-v2/src/agent/modelSnapshot/modelSnapshot.ts */ {
+    providerId?: string;
+    baseUrl?: string;
+    oauth?: /* OAuthRef — packages/agent-core-v2/src/kosong/provider/provider.ts */ {
+      storage: 'file' | 'keyring';
+      key: string;
+      oauthHost?: string;
+    };
+    protocol?: 'anthropic' | 'openai' | 'openai_responses' | 'google-genai';
+    name?: string;
+    aliases?: string[];
+    provider?: string;
+    model?: string;
+    maxContextSize?: number;
+    maxInputSize?: number;
+    maxOutputSize?: number;
+    capabilities?: string[];
+    displayName?: string;
+    reasoningKey?: string;
+    adaptiveThinking?: boolean;
+    betaApi?: boolean;
+    supportEfforts?: string[];
+    defaultEffort?: string;
+    offEffort?: string;
+    overrides?: /* ModelOverride — packages/agent-core-v2/src/kosong/model/model.ts */ {
+      maxContextSize?: number;
+      maxInputSize?: number;
+      maxOutputSize?: number;
+      capabilities?: string[];
+      displayName?: string;
+      reasoningKey?: string;
+      adaptiveThinking?: boolean;
+      supportEfforts?: string[];
+      defaultEffort?: string;
+      offEffort?: string;
+    };
+  };
+  };
   // src/agent/permissionMode/injection/permissionModeInjection.ts
   'permissionMode.lastMode': 'manual' | 'yolo' | 'auto' | undefined;
   // src/agent/permissionMode/permissionModeOps.ts

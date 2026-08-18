@@ -180,6 +180,8 @@ export interface IModelCatalog {
 
   get(id: string): Model;
   getRequester(id: string): ModelRequester;
+  getFromRecord(id: string, record: ModelRecord): Model;
+  getRequesterFromRecord(id: string, record: ModelRecord): ModelRequester;
   inspect(id: string): ModelInspection;
   ping(id: string): Promise<ModelPingResult>;
   findByName(name: string): readonly string[];

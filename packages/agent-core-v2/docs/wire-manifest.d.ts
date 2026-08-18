@@ -24,7 +24,7 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (49 record types)
+// Index (50 record types)
 //   config.update                      profile                                                               src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory, turn                                                   src/agent/contextMemory/contextEvents.ts
 //   context.append_message             contextMemory, goalForkNotice, plan, task.notificationDelivery, todo  src/agent/contextMemory/contextEvents.ts
@@ -44,6 +44,7 @@
 //   llm.request                        llm.requestTrace                                                      src/agent/llmRequester/llmRequestOps.ts
 //   llm.tools_snapshot                 llm.requestTrace                                                      src/agent/llmRequester/llmRequestOps.ts
 //   mcp.tools_discovered               mcp.discovery                                                         src/agent/mcp/mcpDiscoveryOps.ts
+//   model.snapshot                     modelSnapshot.records                                                 src/agent/modelSnapshot/modelSnapshotOps.ts
 //   permission.record_approval_result  permissionRules                                                       src/agent/permissionRules/permissionRulesOps.ts
 //   permission.set_mode                permissionMode, permissionMode.configured                             src/agent/permissionMode/permissionModeOps.ts
 //   plan_mode.cancel                   plan                                                                  src/features/plan/planOps.ts
@@ -339,6 +340,52 @@ interface McpToolsDiscoveredPayload {
     toolName: string;
     collidesWith: { kind: 'same_server', toolName: string } | { kind: 'other_server', serverName: string };
   }[];
+}
+
+/**
+ * states: modelSnapshot.records
+ * owner: src/agent/modelSnapshot/modelSnapshotOps.ts
+ */
+interface ModelSnapshotPayload {
+  _name: 'model.snapshot';
+  alias: string;
+  record: {
+    providerId?: string;
+    baseUrl?: string;
+    oauth?: {
+      storage: 'file' | 'keyring';
+      key: string;
+      oauthHost?: string;
+    };
+    protocol?: 'anthropic' | 'openai' | 'openai_responses' | 'google-genai';
+    name?: string;
+    aliases?: string[];
+    provider?: string;
+    model?: string;
+    maxContextSize?: number;
+    maxInputSize?: number;
+    maxOutputSize?: number;
+    capabilities?: string[];
+    displayName?: string;
+    reasoningKey?: string;
+    adaptiveThinking?: boolean;
+    betaApi?: boolean;
+    supportEfforts?: string[];
+    defaultEffort?: string;
+    offEffort?: string;
+    overrides?: {
+      maxContextSize?: number;
+      maxInputSize?: number;
+      maxOutputSize?: number;
+      capabilities?: string[];
+      displayName?: string;
+      reasoningKey?: string;
+      adaptiveThinking?: boolean;
+      supportEfforts?: string[];
+      defaultEffort?: string;
+      offEffort?: string;
+    };
+  };
 }
 
 /**
@@ -728,6 +775,7 @@ interface WirePayloadMap {
   "llm.request": LlmRequestPayload;
   "llm.tools_snapshot": LlmToolsSnapshotPayload;
   "mcp.tools_discovered": McpToolsDiscoveredPayload;
+  "model.snapshot": ModelSnapshotPayload;
   "permission.record_approval_result": PermissionRecordApprovalResultPayload;
   "permission.set_mode": PermissionSetModePayload;
   "plan_mode.cancel": PlanModeCancelPayload;

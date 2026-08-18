@@ -11,6 +11,7 @@ import {
 import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentModelSnapshotService } from '#/agent/modelSnapshot/modelSnapshot';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
@@ -155,6 +156,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IAgentModelSnapshotService private readonly modelSnapshots: IAgentModelSnapshotService,
   ) {
     this.states.contributeState(llmRequestTraceKey);
     this.states.contributeState(llmRequesterLastConfigLogSignatureKey);
@@ -588,7 +590,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           ? this.tokenCounting.get().measured
           : undefined,
     });
-    const requester = this.modelCatalog.getRequester(resolved.modelAlias);
+    const requester = this.modelSnapshots.resolveRequester(resolved.modelAlias);
 
     const messages = overrides.messages ?? this.context.get();
     return {

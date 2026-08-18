@@ -8,6 +8,7 @@ import { interruptionReminderKey } from '#/agent/interruptionReminder/interrupti
 import { llmRequestTraceKey } from '#/agent/llmRequester/llmRequestOps';
 import { turnKey } from '#/agent/loop/turnOps';
 import { mcpDiscoveryKey } from '#/agent/mcp/mcpDiscoveryOps';
+import { modelSnapshotsKey } from '#/agent/modelSnapshot/modelSnapshotOps';
 import {
   permissionModeConfiguredKey,
   permissionModeKey,
@@ -39,6 +40,7 @@ export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] =
   llmRequestTraceKey,
   turnKey,
   mcpDiscoveryKey,
+  modelSnapshotsKey,
   permissionModeKey,
   permissionModeConfiguredKey,
   permissionRulesKey,

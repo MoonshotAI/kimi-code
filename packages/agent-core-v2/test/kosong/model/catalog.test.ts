@@ -1354,3 +1354,102 @@ describe('ModelCatalog setDefaultModel', () => {
     }
   });
 });
+
+describe('ModelCatalog record-based assembly', () => {
+  const ghostRecord: ModelRecord = {
+    provider: 'kimi',
+    model: 'kimi-k2-ghost',
+    maxContextSize: 131_072,
+  };
+
+  it('builds a model from an explicit record while reading provider data live', async () => {
+    const { host, catalog } = createHost(kimiSections);
+    try {
+      const model = catalog.getFromRecord('ghost', ghostRecord);
+      expect(model.name).toBe('kimi-k2-ghost');
+      expect(model.providerName).toBe('kimi');
+      expect(model.baseUrl).toBe('https://api.moonshot.ai/v1');
+      expect(model.maxContextSize).toBe(131_072);
+      await expect(model.authProvider.getAuth()).resolves.toEqual({ apiKey: 'sk-test' });
+      expect(catalog.getRequesterFromRecord('ghost', ghostRecord).model).toBe(model);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('rebuilds from live provider data after config changes clear the record cache', async () => {
+    const { host, catalog, providers } = createHost(kimiSections);
+    try {
+      const before = catalog.getFromRecord('ghost', ghostRecord);
+      expect(before.baseUrl).toBe('https://api.moonshot.ai/v1');
+
+      providers.loadAll(
+        { kimi: { type: 'kimi', apiKey: 'sk-rotated', baseUrl: 'https://rotated.example.test/v1' } },
+        undefined,
+      );
+
+      const after = catalog.getFromRecord('ghost', ghostRecord);
+      expect(after.baseUrl).toBe('https://rotated.example.test/v1');
+      await expect(after.authProvider.getAuth()).resolves.toEqual({ apiKey: 'sk-rotated' });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('throws config.invalid when the record references a missing provider', () => {
+    const { host, catalog } = createHost(kimiSections);
+    try {
+      let thrown: unknown;
+      try {
+        catalog.getFromRecord('ghost', { provider: 'gone', model: 'x', maxContextSize: 1024 });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toSatisfy((e) => isError2(e) && e.code === 'config.invalid');
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('keeps the record cache separate from the configured-alias cache', () => {
+    const { host, catalog } = createHost(kimiSections);
+    try {
+      const shadow = catalog.getFromRecord('k1', {
+        provider: 'kimi',
+        model: 'shadow-model',
+        maxContextSize: 64_000,
+      });
+      expect(shadow.name).toBe('shadow-model');
+      expect(catalog.get('k1').name).toBe('kimi-k2');
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('keys record-built entries by the supplied record', () => {
+    const { host, catalog } = createHost(kimiSections);
+    try {
+      const a = catalog.getFromRecord('ghost', {
+        provider: 'kimi',
+        model: 'model-a',
+        maxContextSize: 64_000,
+      });
+      const b = catalog.getFromRecord('ghost', {
+        provider: 'kimi',
+        model: 'model-b',
+        maxContextSize: 32_000,
+      });
+      expect(a.name).toBe('model-a');
+      expect(b.name).toBe('model-b');
+      expect(
+        catalog.getFromRecord('ghost', {
+          provider: 'kimi',
+          model: 'model-a',
+          maxContextSize: 64_000,
+        }),
+      ).toBe(a);
+    } finally {
+      host.dispose();
+    }
+  });
+});

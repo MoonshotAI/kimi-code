@@ -12,6 +12,7 @@ import {
   type EnvironmentDisclosureSnapshot,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
+import { IAgentModelSnapshotService } from '#/agent/modelSnapshot/modelSnapshot';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -107,6 +108,12 @@ function createModelCatalogStub(models: Readonly<Record<string, Model>> = {}): I
       return model;
     },
     getRequester: () => {
+      throw new Error('not exercised');
+    },
+    getFromRecord: () => {
+      throw new Error('not exercised');
+    },
+    getRequesterFromRecord: () => {
       throw new Error('not exercised');
     },
     inspect: () => {
@@ -205,6 +212,10 @@ function buildHost(key: string): {
   );
   host.stub(IConfigService, createConfigStub());
   host.stub(IModelCatalog, modelCatalog);
+  host.stub(IAgentModelSnapshotService, {
+    resolve: (alias) => modelCatalog.get(alias),
+    resolveRequester: (alias) => modelCatalog.getRequester(alias),
+  });
   host.stub(IProtocolAdapterRegistry, createProtocolRegistryStub());
   host.stub(IHostEnvironment, stubUnused());
   host.stub(IHostFileSystem, stubUnused());

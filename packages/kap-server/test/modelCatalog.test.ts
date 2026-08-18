@@ -267,6 +267,12 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       getRequester: () => {
         throw new Error('unused');
       },
+      getFromRecord: () => {
+        throw new Error('unused');
+      },
+      getRequesterFromRecord: () => {
+        throw new Error('unused');
+      },
       inspect: () => {
         throw new Error('unused');
       },

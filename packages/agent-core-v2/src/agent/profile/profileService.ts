@@ -42,6 +42,7 @@ import { IPluginService } from '#/app/plugin/plugin';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
+import { IAgentModelSnapshotService } from '#/agent/modelSnapshot/modelSnapshot';
 
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
@@ -165,6 +166,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IPluginService private readonly plugins: IPluginService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
     @IAgentAgentsMdReminderService private readonly agentsMdReminder: IAgentAgentsMdReminderService,
+    @IAgentModelSnapshotService private readonly modelSnapshots: IAgentModelSnapshotService,
   ) {
     super();
     this.states.contributeState(profileKey);
@@ -486,7 +488,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   resolveModelContext(): ProfileModelContext {
     const modelAlias = this.model;
-    const model = this.modelCatalog.get(modelAlias);
+    const model = this.modelSnapshots.resolve(modelAlias);
     const loopControl = this.config.get<LoopControl>('loopControl');
     return {
       modelAlias,

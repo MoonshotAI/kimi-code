@@ -640,6 +640,9 @@ export * from '#/mcpCore/config-schema';
 export * from '#/agent/media/mediaTools';
 export * from '#/agent/media/mediaToolsRegistrar';
 export * from '#/agent/media/registerMediaTools';
+export * from '#/agent/modelSnapshot/modelSnapshot';
+export * from '#/agent/modelSnapshot/modelSnapshotOps';
+export * from '#/agent/modelSnapshot/modelSnapshotService';
 export {
   buildDaemonFileUrl,
   buildMediaPathTag,

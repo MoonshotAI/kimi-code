@@ -47,6 +47,12 @@ describe('server-v2 /api/v1 fs routes', () => {
       getRequester: () => {
         throw new Error('modelCatalog.getRequester not exercised in this test');
       },
+      getFromRecord: () => {
+        throw new Error('modelCatalog.getFromRecord not exercised in this test');
+      },
+      getRequesterFromRecord: () => {
+        throw new Error('modelCatalog.getRequesterFromRecord not exercised in this test');
+      },
       inspect: () => {
         throw new Error('modelCatalog.inspect not exercised in this test');
       },

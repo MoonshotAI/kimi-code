@@ -81,6 +81,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   declare readonly _serviceBrand: undefined;
 
   private readonly cache = new Map<string, CatalogEntry>();
+  private readonly recordCache = new Map<string, CatalogEntry>();
 
   constructor(
     @IProviderService private readonly providers: IProviderService,
@@ -97,6 +98,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
 
   notifyConfigChanged(): void {
     this.cache.clear();
+    this.recordCache.clear();
   }
 
   get(id: string): Model {
@@ -105,6 +107,14 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
 
   getRequester(id: string): ModelRequester {
     return this.entry(id).requester;
+  }
+
+  getFromRecord(id: string, record: ModelRecord): Model {
+    return this.recordEntry(id, record).model;
+  }
+
+  getRequesterFromRecord(id: string, record: ModelRecord): ModelRequester {
+    return this.recordEntry(id, record).requester;
   }
 
   findByName(name: string): readonly string[] {
@@ -119,14 +129,39 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   private entry(id: string): CatalogEntry {
     const cached = this.cache.get(id);
     if (cached !== undefined) return cached;
+    const configuredModel = this.models.get(id);
+    if (configuredModel === undefined) {
+      throw new Error2(
+        CONFIG_INVALID_ERROR_CODE,
+        `Model "${id}" is not configured in config.toml.`,
+        { details: { model: id } },
+      );
+    }
+    return this.buildEntry(id, configuredModel, id, this.cache, true);
+  }
+
+  private recordEntry(id: string, record: ModelRecord): CatalogEntry {
+    const key = `${id}\0${JSON.stringify(record)}`;
+    const cached = this.recordCache.get(key);
+    if (cached !== undefined) return cached;
+    return this.buildEntry(id, record, key, this.recordCache, false);
+  }
+
+  private buildEntry(
+    id: string,
+    record: ModelRecord,
+    cacheKey: string,
+    cache: Map<string, CatalogEntry>,
+    allowDefaultProvider: boolean,
+  ): CatalogEntry {
     const trace = new ResolutionTraceCollector();
-    const model = this.buildModel(id, trace);
+    const model = this.buildModel(id, record, trace, allowDefaultProvider);
     const entry: CatalogEntry = {
       model,
       requester: new ModelRequesterImpl(model, this.protocolRegistry),
       trace,
     };
-    this.cache.set(id, entry);
+    cache.set(cacheKey, entry);
     return entry;
   }
 
@@ -252,21 +287,18 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     return this.providers.get(providerId ?? '')?.type ?? record.protocol;
   }
 
-  private buildModel(id: string, trace: ResolutionTraceCollector): Model {
-    const configuredModel = this.models.get(id);
-    if (configuredModel === undefined) {
-      throw new Error2(
-        CONFIG_INVALID_ERROR_CODE,
-        `Model "${id}" is not configured in config.toml.`,
-        { details: { model: id } },
-      );
-    }
+  private buildModel(
+    id: string,
+    configuredModel: ModelRecord,
+    trace: ResolutionTraceCollector,
+    allowDefaultProvider: boolean,
+  ): Model {
     trace.capture(TRACE.configuredModel, configuredModel);
     trace.record('model.record', { kind: 'config', detail: '[models.*] section' });
 
     const routingModel = effectiveModelConfig(configuredModel);
     const { providerConfig, providerName, resolvedBaseUrl: rawBaseUrl } =
-      this.resolveProviderContext(id, routingModel, trace);
+      this.resolveProviderContext(id, routingModel, trace, allowDefaultProvider);
     trace.capture(TRACE.providerConfig, providerConfig);
     trace.capture(TRACE.providerName, providerName);
     trace.capture(TRACE.rawBaseUrl, rawBaseUrl);
@@ -375,13 +407,16 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     id: string,
     model: ModelRecord,
     trace: ResolutionTraceCollector,
+    allowDefaultProvider: boolean,
   ): {
     readonly providerConfig: ProviderConfig | undefined;
     readonly providerName: string;
     readonly resolvedBaseUrl: string | undefined;
   } {
     const providerId =
-      model.providerId ?? model.provider ?? this.providers.getDefaultProvider();
+      model.providerId ??
+      model.provider ??
+      (allowDefaultProvider ? this.providers.getDefaultProvider() : undefined);
     if (providerId !== undefined) {
       trace.record('provider', {
         kind: 'config',

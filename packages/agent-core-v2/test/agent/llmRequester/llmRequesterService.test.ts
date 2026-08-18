@@ -21,6 +21,7 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
+import { IAgentModelSnapshotService } from '#/agent/modelSnapshot/modelSnapshot';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
 import type { Event2 } from '#/app/event/event2';
@@ -240,6 +241,10 @@ function createService(
     get: () => requester.model,
     getRequester: () => requester,
     findByName: () => [],
+  });
+  ix.stub(IAgentModelSnapshotService, {
+    resolve: () => requester.model,
+    resolveRequester: () => requester,
   });
   ix.stub(IModelService, {
     get: () => undefined,
