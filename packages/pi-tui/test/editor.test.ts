@@ -199,13 +199,63 @@ describe("Editor component", () => {
 				const editor = new Editor(createTestTUI(), defaultEditorTheme);
 				editor.addToHistory("first");
 				editor.addToHistory("second");
+				editor.addToHistory("third");
 
+				editor.handleInput("\x1b[A"); // discrete press - shows "third"
+				assert.strictEqual(editor.getText(), "third");
+
+				mock.timers.tick(200);
 				editor.handleInput("\x1b[A"); // discrete press - shows "second"
 				assert.strictEqual(editor.getText(), "second");
 
-				mock.timers.tick(30); // held-key repeat keeps browsing
+				// The user then holds the key: the first autorepeat outruns the
+				// repeat threshold (initial delay), but browsing continues —
+				// navigation past the first entry is already deliberate.
+				mock.timers.tick(500);
 				editor.handleInput("\x1b[A");
 				assert.strictEqual(editor.getText(), "first");
+
+				mock.timers.tick(30); // held-key repeat - no snap-back, keeps browsing
+				editor.handleInput("\x1b[A");
+				assert.strictEqual(editor.getText(), "first");
+			} finally {
+				mock.timers.reset();
+			}
+		});
+
+		it("snaps back out of history when a held Up key's initial repeat delay outruns the threshold", () => {
+			mock.timers.enable({ apis: ["Date"] });
+			mock.timers.setTime(1000);
+			try {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				editor.addToHistory("older");
+				editor.addToHistory("newer");
+				editor.setText("one line draft");
+
+				editor.handleInput("\x1b[A"); // discrete press - jumps to line start
+				assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
+
+				// First autorepeat after the keyboard's initial repeat delay:
+				// too slow for the repeat threshold, so it still crosses...
+				mock.timers.tick(500);
+				editor.handleInput("\x1b[A");
+				assert.strictEqual(editor.getText(), "newer");
+
+				// ...but the next repeat arrives fast and proves the hold:
+				// snap back out to the draft.
+				mock.timers.tick(30);
+				editor.handleInput("\x1b[A");
+				assert.strictEqual(editor.getText(), "one line draft");
+
+				// Still held: further repeats stay on the draft.
+				mock.timers.tick(30);
+				editor.handleInput("\x1b[A");
+				assert.strictEqual(editor.getText(), "one line draft");
+
+				// Released and pressed again: a discrete press enters history.
+				mock.timers.tick(200);
+				editor.handleInput("\x1b[A");
+				assert.strictEqual(editor.getText(), "newer");
 			} finally {
 				mock.timers.reset();
 			}
@@ -246,7 +296,9 @@ describe("Editor component", () => {
 				editor.handleInput("\x1b[A"); // start of draft
 				mock.timers.tick(200);
 				editor.handleInput("\x1b[A"); // third
+				mock.timers.tick(200);
 				editor.handleInput("\x1b[A"); // second
+				mock.timers.tick(200);
 				editor.handleInput("\x1b[A"); // first
 
 				// Navigate back
