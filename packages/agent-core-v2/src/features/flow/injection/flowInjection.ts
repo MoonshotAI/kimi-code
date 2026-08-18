@@ -52,7 +52,10 @@ export class FlowInjection extends Disposable implements IFlowInjection {
     const total = run.stages?.length ?? 0;
     const notes =
       stage.notes === undefined ? '' : `\nStage notes: ${escapeUntrustedText(stage.notes)}`;
-    const task = run.task === undefined ? '' : `\nTask: ${escapeUntrustedText(run.task)}`;
+    const task =
+      run.task === undefined || run.task.length === 0
+        ? ''
+        : `\nTask: ${escapeUntrustedText(run.task)}`;
     const content = [
       `Flow run \`${run.flowId}\` is at stage \`${stage.id}\` (${stageIndex + 1}/${total}, gate: ${stage.gate}).${task}`,
       `Objective: ${escapeUntrustedText(stage.objective)}`,

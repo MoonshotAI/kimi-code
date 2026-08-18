@@ -15,7 +15,7 @@ import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 import { FlowDefinitionParseError, parseFlowDefinition } from './definition';
-import { FLOW_FLAG_ID, FLOWS_PROJECT_DIR } from './flow';
+import { FLOW_FLAG_ID, FLOWS_PROJECT_DIR, type FlowDefinition } from './flow';
 import { FLOW_SUPERVISOR_CONTRACT } from './skill/skill';
 
 export const FLOWS_SKILL_SOURCE_ID = 'flows';
@@ -112,7 +112,7 @@ export async function discoverFlowSkills(
         });
         continue;
       }
-      skills.push(toFlowSkill(definition.id, definition.when, path, flowsDir));
+      skills.push(toFlowSkill(definition, path, flowsDir));
     } catch (error) {
       skipped.push({
         path,
@@ -125,24 +125,33 @@ export async function discoverFlowSkills(
   return { skills, skipped, scannedRoots: [flowsDir] };
 }
 
-function toFlowSkill(
-  id: string,
-  when: string | undefined,
-  path: string,
-  dir: string,
-): SkillDefinition {
+function toFlowSkill(definition: FlowDefinition, path: string, dir: string): SkillDefinition {
+  const id = definition.id;
+  const when = definition.when;
   const description =
     when === undefined || when.trim().length === 0
       ? `Run the \`${id}\` flow: a staged workflow with gated transitions.`
       : `Run the \`${id}\` flow. Use when: ${when.trim()}`;
+  const stages = definition.stages
+    .map((stage, index) => {
+      const notes = stage.notes === undefined ? '' : `\n   - Notes: ${stage.notes}`;
+      return `${index + 1}. \`${stage.id}\` (gate: ${stage.gate})\n   - Objective: ${stage.objective}\n   - Completion: ${stage.completion}${notes}`;
+    })
+    .join('\n');
   const content = [
     FLOW_SUPERVISOR_CONTRACT,
     '',
-    `This activation is bound to the flow \`${id}\` (defined at ${FLOWS_PROJECT_DIR}/${id}.md): call FlowStart with flow: "${id}" and the user's task — do not ask which flow to run.`,
+    `This activation already started a run of the flow \`${id}\` — the engine starts it for you, so do NOT call FlowStart, do NOT read ${FLOWS_PROJECT_DIR}/${id}.md yourself, and do NOT mirror the stages into TodoList (the engine tracks stage progress and the UI shows it). The run's blueprint:`,
+    '',
+    stages,
+    '',
+    'Your first actions: restate the task and this blueprint to the user in your own words, clarify any completion criteria too vague to verify, then dispatch the first stage to a worker.',
     '',
     "The user's input for this activation is the task: `$ARGUMENTS`",
     '',
-    'If the input is empty, ask the user what this run should accomplish before starting.',
+    'If the task is empty, ask the user what this run should accomplish before dispatching anything. If no current-stage reminder appears in your context (the automatic start failed), recover by calling FlowStart with flow: "' +
+      id +
+      '" yourself.',
   ].join('\n');
   return {
     name: id,

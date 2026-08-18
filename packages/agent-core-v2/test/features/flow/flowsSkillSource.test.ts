@@ -58,7 +58,9 @@ describe('FlowsSkillSource', () => {
     expect(skill.metadata.type).toBe('flow');
     expect(skill.metadata.disableModelInvocation).toBe(true);
     expect(skill.description).toContain('GitHub issue bugs');
-    expect(skill.content).toContain('flow: "issue-fix"');
+    expect(skill.content).toContain('already started a run');
+    expect(skill.content).toContain('do NOT call FlowStart');
+    expect(skill.content).toContain('`triage` (gate: ai)');
     expect(skill.content).toContain('$ARGUMENTS');
     expect(skill.content).toContain('## Contract');
   });

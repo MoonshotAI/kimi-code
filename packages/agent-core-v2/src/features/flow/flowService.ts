@@ -1,13 +1,19 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { SkillActivated } from '#/agent/skill/skillOps';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { DeepReadonly } from '#/state/state';
+
+import { parseFlowDefinition } from './definition';
 
 import {
   FLOW_ADVANCE_TOOL_NAME,
@@ -31,15 +37,17 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly agentState: IAgentStateService,
-    @IAgentToolApprovalService toolApproval: IAgentToolApprovalService,
+    @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @IFlagService private readonly flags: IFlagService,
+    @IEventBus eventBus: IEventBus,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
   ) {
     super();
     this.agentState.contributeState(flowKey);
     this.agentState.contributeState(flowGatesKey);
-    this.review = new FlowGateReview(this, toolApproval);
+    this.review = new FlowGateReview(this, this.toolApproval);
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => {
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
@@ -49,6 +57,48 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         event.waitUntil(() => this.review.requestApproval(event));
       }),
     );
+    this._register(
+      toolExecutor.onBeforeExecuteTool((event) => {
+        if (!this.flags.enabled(FLOW_FLAG_ID)) return;
+        if (!this.run().active) return;
+        if (event.toolCall.name !== 'TodoList') return;
+        event.veto(
+          denyToolExecution(
+            this.toolApproval.formatDenyMessage(
+              'TodoList is unavailable during a flow run — stage progress lives in the flow itself (the engine tracks it and the UI shows it). Dispatch and accept stages instead of mirroring them into todos.',
+            ),
+          ),
+        );
+      }),
+    );
+    this._register(
+      eventBus.subscribe(SkillActivated, (event) => {
+        if (event.skillType !== 'flow') return;
+        if (!this.flags.enabled(FLOW_FLAG_ID)) return;
+        void this.startFromActivation(event.skillPath, event.skillArgs);
+      }),
+    );
+  }
+
+  private async startFromActivation(
+    path: string | undefined,
+    task: string | undefined,
+  ): Promise<void> {
+    if (path === undefined || this.run().active) return;
+    let text: string;
+    const lease = this.runtime.acquire(['fs']);
+    try {
+      text = await lease.runtime.fs!.readText(path);
+    } catch {
+      return;
+    } finally {
+      lease.dispose();
+    }
+    try {
+      this.start(parseFlowDefinition(text), task?.trim() ?? '');
+    } catch {
+      return;
+    }
   }
 
   run(): DeepReadonly<FlowRunState> {

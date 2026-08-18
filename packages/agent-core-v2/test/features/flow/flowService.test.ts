@@ -13,6 +13,8 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { SkillActivate, skillKey } from '#/agent/skill/skillOps';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
@@ -48,6 +50,19 @@ const DEFINITION: FlowDefinition = {
 
 const CRITERIA = [{ criterion: 'cause located', met: true, evidence: 'src/x.ts:12' }];
 
+const DEFINITION_TEXT = `---
+id: issue-fix
+stages:
+  - id: triage
+    objective: find root cause
+    completion: cause located
+    gate: human
+  - id: implement
+    objective: fix it
+    completion: tests pass
+---
+`;
+
 describe('AgentFlowService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
@@ -70,7 +85,14 @@ describe('AgentFlowService', () => {
     requestToolApproval = vi.fn(async () => undefined);
     ix.stub(IAgentToolApprovalService, {
       requestToolApproval,
+      formatDenyMessage: (message: string) => message,
     } as unknown as IAgentToolApprovalService);
+    ix.stub(IAgentRuntimeService, {
+      acquire: () => ({
+        runtime: { fs: { readText: async () => DEFINITION_TEXT } },
+        dispose: () => {},
+      }),
+    } as unknown as IAgentRuntimeService);
     flowFlagOn = true;
     ix.stub(IFlagService, stubFlag((id) => flowFlagOn && id === FLOW_FLAG_ID));
     permissionMode = 'default';
@@ -233,6 +255,76 @@ describe('AgentFlowService', () => {
 
     expect(agentState.get(flowKey)).toEqual({ active: false });
     expect(agentState.get(flowGatesKey).records).toHaveLength(1);
+  });
+
+  describe('flow skill activation auto-start', () => {
+    async function activateFlowSkill(): Promise<void> {
+      agentState.contributeState(skillKey);
+      await dispatcher.dispatch(
+        new SkillActivate({
+          origin: {
+            kind: 'skill_activation',
+            activationId: 'act-1',
+            skillName: 'issue-fix',
+            trigger: 'user-slash',
+            skillType: 'flow',
+            skillPath: '/ws/.kimi-code/flows/issue-fix.md',
+            skillArgs: 'fix the paste bug',
+          },
+        }),
+      );
+      await vi.waitFor(() => expect(service.run().active).toBe(true));
+    }
+
+    it('starts the run from a flow-typed skill activation', async () => {
+      await activateFlowSkill();
+      const run = service.run();
+      expect(run.flowId).toBe('issue-fix');
+      expect(run.task).toBe('fix the paste bug');
+      expect(service.currentStage()?.id).toBe('triage');
+    });
+
+    it('does not restart an already-active run', async () => {
+      service.start(DEFINITION, 'original task');
+      agentState.contributeState(skillKey);
+      await dispatcher.dispatch(
+        new SkillActivate({
+          origin: {
+            kind: 'skill_activation',
+            activationId: 'act-2',
+            skillName: 'issue-fix',
+            trigger: 'user-slash',
+            skillType: 'flow',
+            skillPath: '/ws/.kimi-code/flows/issue-fix.md',
+            skillArgs: 'another task',
+          },
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(service.run().task).toBe('original task');
+    });
+
+    it('vetoes TodoList while a run is active, and only then', async () => {
+      const todoCall: ToolCall = {
+        type: 'function',
+        id: 'call_todo',
+        name: 'TodoList',
+        arguments: '{}',
+      };
+      const context: ResolvedToolExecutionHookContext = {
+        turnId: 0,
+        signal,
+        toolCall: todoCall,
+        toolCalls: [todoCall],
+        args: {},
+        execution: { approvalRule: 'TodoList', execute: async () => ({ output: '' }) },
+      };
+      expect(await executorEvents.fireBeforeExecute(context)).toBeUndefined();
+      service.start(DEFINITION, 'task');
+      const decision = await executorEvents.fireBeforeExecute(context);
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('flow run');
+    });
   });
 
   describe('FlowAdvance human-gate guard', () => {
