@@ -700,6 +700,7 @@ export const turnStartedEventSchema = z.object({
 
 export const turnEndedEventSchema = z.object({
   type: z.literal('turn.ended'),
+  time: z.number().optional(),
   turnId: z.number(),
   reason: turnEndReasonSchema,
   error: kimiErrorPayloadSchema.optional(),

@@ -77,7 +77,7 @@ Error codes are grouped by band:
 List endpoints come in two styles:
 
 - **Cursor style**: `before_id` / `after_id` (mutually exclusive) plus `page_size` (1–100), responding with `{ items, has_more }`. Used by the session list, message list, transcript, and others.
-- **`page_token`**: an opaque token (bound to a fingerprint of the query conditions), used by `POST /api/v1/search` and `GET /api/v2/sessions`. Changing any query condition mid-pagination invalidates the token: v2 returns `40922`, search returns `40001`.
+- **`page_token`**: an opaque token (bound to a fingerprint of the query conditions), used by `POST /api/v1/search` and `GET /api/v2/sessions`. Changing any query condition mid-pagination invalidates the token: v2 returns `40922`, search returns `40001`. `GET /api/v2/sessions` also offers a stateless `page` page-number mode as an alternative.
 
 ## REST endpoints
 
@@ -245,6 +245,8 @@ In-session file operations go through `POST /api/v1/sessions/{session_id}/fs:{ac
 | `POST /api/v1/search` | Cross-session full-text search; `mode` is `terms` (default) or `literal` (exact substring); `page_token` pagination |
 | `GET /api/v1/connections` | List live WebSocket connections |
 | `GET /api/v2/sessions` | Next-generation session list, see below |
+| `POST /api/v2/sessions:archive` | Batch-archive sessions, see below |
+| `POST /api/v2/sessions:restore` | Batch-restore archived sessions, see below |
 | `/api/v1/debug/*` | Reflection debug RPC; mounted only with `--debug-endpoints` on loopback, not a stable protocol |
 
 ### `GET /api/v2/sessions`
@@ -256,13 +258,38 @@ A next-generation session query for list views — filtering, sorting, and field
 | `workspace.id` | Filter by workspace; repeatable |
 | `activity.status` | Filter by activity status: `running` / `approval` / `question` / `failed` / `idle`; repeatable |
 | `meta.updated_after` | Only sessions updated after this time (epoch milliseconds) |
+| `meta.updated_before` | Only sessions updated before this time (epoch milliseconds) |
 | `meta.archived` | `true` / `false` (default) / `all` |
 | `sort` | `meta.updated_at_desc` (default) / `meta.updated_at_asc` / `meta.created_at_desc` |
 | `include` | Comma-separated extra field groups; currently only `git` (branch and PR info, deduplicated per directory and cached for 60 seconds) |
-| `page_size` | 1–100, default 50 |
+| `fields` | Comma-separated item projection; currently only `id,archived`, trimming each item to `{ id, archived }` (select-all-matching flows). Not combinable with `include=git` (`40001`) |
+| `page_size` | 1–100, default 50; up to 10000 with the `id,archived` projection |
 | `page_token` | Pagination token from the previous page |
+| `page` | Stateless 1-based page number; mutually exclusive with `page_token` (`40001` when combined) |
 
-Every response item carries the `workspace`, `meta`, and `activity` groups, plus `git` when `include=git`. The page token binds the first page's query conditions; changing them mid-pagination returns `40922`.
+Every response item carries the `workspace`, `meta`, and `activity` groups, plus `git` when `include=git` — or just `{ id, archived }` under `fields=id,archived`. Every page additionally carries `total`, the size of the filtered set. The page token binds the first page's query conditions (including the projection); changing them mid-pagination returns `40922`. `page` mode is a stateless alternative for jumping to arbitrary pages: every request is an independent snapshot, no token is minted, and `next_page_token` is always `null`.
+
+### `POST /api/v2/sessions:archive` and `POST /api/v2/sessions:restore`
+
+Batch archive/restore for session-management views. The body is `{ "ids": ["session_..."] }` — non-empty, at most 5000 unique ids (duplicates collapse). Live sessions go through the full lifecycle; cold sessions are patched on disk without being loaded.
+
+Only a body validation failure fails the whole request (`40001`). Otherwise the response is per-item: `data.results` keeps the input order with `{ id, ok }` or `{ id, ok: false, error }` (an unknown id reports `40401` in its own item), plus `succeeded` / `failed` counts.
+
+```json
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "results": [
+      { "id": "session_a", "ok": true },
+      { "id": "session_b", "ok": false, "error": { "code": 40401, "message": "session session_b does not exist" } }
+    ],
+    "succeeded": 1,
+    "failed": 1
+  },
+  "request_id": "req_..."
+}
+```
 
 ## WebSocket protocol
 

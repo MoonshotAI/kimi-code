@@ -8,8 +8,9 @@
  * walks the text and expands image placeholders to image content parts
  * (dispatch-time caption resolution then precedes them with a compression
  * caption when paste-time compression shrank the bytes — see
- * `ImageAttachment.original`) and video placeholders to file-path tags
- * for `ReadMediaFile`.
+ * `ImageAttachment.original`) and video placeholders to `kimi-file://`
+ * daemon references (the paste was uploaded to the daemon file store in
+ * the background, exactly like an uploaded image).
  *
  * Scope is per-`KimiTUI` instance. Reloads (`/new`, `/clear`,
  * session switch) call `clear()` so ids restart from 1 and stale
@@ -82,6 +83,21 @@ export interface VideoAttachment {
   readonly filename: string;
   readonly sourcePath: string;
   readonly label: string;
+  /**
+   * Daemon file-store id, set when the source file was uploaded at paste
+   * time. Submit-time expansion emits a `kimi-file://` video reference;
+   * absent means the upload failed or is still in flight (`pending`), and
+   * expansion refuses the submission — a video has no inline fallback.
+   */
+  fileId?: string;
+  /** Epoch milliseconds when the daemon staging upload expires. */
+  fileExpiresAt?: number;
+  /**
+   * Background upload still in flight (see `ImageAttachment.pending` — the
+   * same bounded submit wait applies, `pendingMediaIngestions`). Cleared
+   * when the upload completes.
+   */
+  pending?: Promise<void>;
   /** Rendered placeholder string, e.g. `[video #1 sample.mov]`. */
   readonly placeholder: string;
 }
@@ -90,10 +106,6 @@ export type MediaAttachment = ImageAttachment | VideoAttachment;
 
 type MutableImageAttachment = {
   -readonly [Property in keyof ImageAttachment]: ImageAttachment[Property];
-};
-
-type MutableVideoAttachment = {
-  -readonly [Property in keyof VideoAttachment]: VideoAttachment[Property];
 };
 
 export class ImageAttachmentStore {
@@ -181,6 +193,26 @@ export class ImageAttachmentStore {
   }
 
   /**
+   * Complete a video whose background daemon upload finished. Returns
+   * undefined when the attachment was cleared while the upload was in
+   * flight — the caller then deletes the orphaned upload.
+   */
+  completeVideo(
+    attachment: VideoAttachment,
+    input: {
+      fileId?: string;
+      fileExpiresAt?: number;
+    },
+  ): VideoAttachment | undefined {
+    const current = this.byId.get(attachment.id);
+    if (current !== attachment || attachment.kind !== 'video') return undefined;
+    attachment.fileId = input.fileId;
+    attachment.fileExpiresAt = input.fileExpiresAt;
+    attachment.pending = undefined;
+    return attachment;
+  }
+
+  /**
    * Record where an attachment's pre-compression original was persisted and
    * release the in-memory buffer — the on-disk copy is the original from
    * then on, and the caption only needs the retained metadata. Dispatch-time
@@ -198,8 +230,15 @@ export class ImageAttachmentStore {
     return this.byId.get(id);
   }
 
+  /**
+   * Drop every attachment and return the staged daemon file ids to delete.
+   * Uploads with an outstanding retain are excluded: a stashed/queued draft
+   * still references them (e.g. a cache-hint resend into the NEXT session),
+   * so they stay alive for that consumer; if none claims them, the daemon's
+   * staging TTL reaps them.
+   */
   clear(): readonly string[] {
-    const fileIds = this.fileIds();
+    const fileIds = this.fileIds((id) => (this.stagingUses.get(id) ?? 0) === 0);
     this.byId.clear();
     this.stagingUses.clear();
     this.nextId = 1;
@@ -212,7 +251,7 @@ export class ImageAttachmentStore {
    */
   remove(id: number): string | undefined {
     const attachment = this.byId.get(id);
-    const fileId = attachment?.kind === 'image' ? attachment.fileId : undefined;
+    const fileId = attachment?.fileId;
     this.byId.delete(id);
     this.stagingUses.delete(id);
     return fileId;
@@ -234,7 +273,7 @@ export class ImageAttachmentStore {
       if (retained.has(id)) continue;
       retained.add(id);
       const attachment = this.byId.get(id);
-      if (attachment?.kind !== 'image' || attachment.fileId === undefined) continue;
+      if (attachment?.fileId === undefined) continue;
       this.stagingUses.set(id, (this.stagingUses.get(id) ?? 0) + 1);
     }
   }
@@ -246,7 +285,7 @@ export class ImageAttachmentStore {
       if (taken.has(id)) continue;
       taken.add(id);
       const attachment = this.byId.get(id);
-      if (attachment?.kind !== 'image' || attachment.fileId === undefined) continue;
+      if (attachment?.fileId === undefined) continue;
       const uses = this.stagingUses.get(id) ?? 0;
       if (uses > 1) {
         this.stagingUses.set(id, uses - 1);
@@ -277,21 +316,12 @@ export class ImageAttachmentStore {
     }
   }
 
-  /**
-   * Repoint a recalled video at its staged cache copy: the original source
-   * (e.g. a clipboard temp file) may be gone by the time the restored draft
-   * is resubmitted, and re-extraction re-materializes from `sourcePath`.
-   */
-  rebaseVideoSource(id: number, sourcePath: string): void {
-    const attachment = this.byId.get(id);
-    if (attachment?.kind !== 'video') return;
-    (attachment as MutableVideoAttachment).sourcePath = sourcePath;
-  }
-
-  private fileIds(): readonly string[] {
-    return [...this.byId.values()]
-      .filter((attachment): attachment is ImageAttachment => attachment.kind === 'image')
-      .flatMap((attachment) => attachment.fileId ?? []);
+  private fileIds(include?: (id: number) => boolean): readonly string[] {
+    return [...this.byId.values()].flatMap((attachment) =>
+      attachment.fileId !== undefined && (include?.(attachment.id) ?? true)
+        ? [attachment.fileId]
+        : [],
+    );
   }
 
   size(): number {

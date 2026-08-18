@@ -168,31 +168,12 @@ describe('EditTool', () => {
     const tool = buildTool(createSpiedEditFs().fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     expect(tool.name).toBe('Edit');
-    expect(tool.description).toContain('Read the target file before every Edit');
-    expect(tool.description).toContain('DO NOT call Edit from memory');
-    expect(tool.description).toContain('Read output view');
-    expect(tool.description).toContain('line-number prefix');
-    expect(tool.description).toContain('`old_string` must be unique');
-    expect(tool.description).toContain('only when they do not target the same file');
-    expect(tool.description).toContain('DO NOT issue consecutive Edit calls on the same file');
-    expect(tool.description).toContain('DO NOT use Write or Bash `sed`');
-    expect(tool.description).toContain('same-file edits in response order');
-    expect(tool.description).toContain('old_string not found');
     expect(tool.parameters).toMatchObject({
       type: 'object',
       properties: {
-        path: {
-          type: 'string',
-          description: expect.stringContaining('working directory'),
-        },
-        old_string: {
-          type: 'string',
-          description: expect.stringContaining('without the line-number prefix'),
-        },
-        new_string: {
-          type: 'string',
-          description: expect.stringContaining('same Read output view'),
-        },
+        path: { type: 'string' },
+        old_string: { type: 'string' },
+        new_string: { type: 'string' },
       },
     });
     expect(

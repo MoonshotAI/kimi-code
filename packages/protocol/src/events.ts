@@ -461,6 +461,14 @@ export interface McpOAuthAuthorizationUrlUpdateData {
 
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
 
+export type TurnInterruptReason =
+  | 'user_cancelled'
+  | 'aborted'
+  | 'max_steps'
+  | 'error'
+  | 'filtered'
+  | 'blocked';
+
 export type AgentPhase =
   | { readonly kind: 'idle' }
   | {
@@ -678,10 +686,12 @@ export interface TurnStartedEvent {
 
 export interface TurnEndedEvent {
   readonly type: 'turn.ended';
+  readonly time?: number;
   readonly turnId: number;
   readonly reason: TurnEndReason;
   readonly error?: KimiErrorPayload;
   readonly durationMs?: number;
+  readonly interruptReason?: TurnInterruptReason;
 }
 
 export interface TurnStepStartedEvent {
@@ -1444,6 +1454,8 @@ export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
 
 export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed', 'blocked']) satisfies z.ZodType<TurnEndReason>;
 
+export const turnInterruptReasonSchema = z.enum(['user_cancelled', 'aborted', 'max_steps', 'error', 'filtered', 'blocked']) satisfies z.ZodType<TurnInterruptReason>;
+
 export const agentPhaseSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('idle') }),
   z.object({
@@ -1639,10 +1651,12 @@ export const turnStartedEventSchema = z.object({
 
 export const turnEndedEventSchema = z.object({
   type: z.literal('turn.ended'),
+  time: z.number().optional(),
   turnId: z.number(),
   reason: turnEndReasonSchema,
   error: kimiErrorPayloadSchema.optional(),
   durationMs: z.number().optional(),
+  interruptReason: turnInterruptReasonSchema.optional(),
 }) satisfies z.ZodType<TurnEndedEvent>;
 
 export const turnStepStartedEventSchema = z.object({

@@ -23,6 +23,8 @@ import {
   type FsStatManyResponse,
   type FsStatRequest,
   type FsStatResponse,
+  type FsSuggestRequest,
+  type FsSuggestResponse,
 } from './fs';
 
 const FsWireErrorCode = {
@@ -59,15 +61,21 @@ import {
   compileGrepPattern,
   computeFuzzyScore,
   computeMatchPositions,
+  evaluateSuggestCandidate,
   matchesAnyGlob,
   type RgJsonRecord,
   rgPath,
   rgText,
   stripTrailingNewline,
+  SuggestTopHeap,
+  type SuggestQuery,
+  VCS_METADATA_DIRS,
 } from './internal/fsSearch';
 
 const SEARCH_HARD_CAP = 500;
 const GREP_TIMEOUT_MS = 30_000;
+const SUGGEST_TIMEOUT_MS = 10_000;
+const SUGGEST_WALK_ABORTED = new Error('suggest walk aborted');
 const WALK_MAX_DEPTH = 64;
 
 const FS_READ_MAX_BYTES = 10 * 1024 * 1024;
@@ -487,6 +495,214 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const effectiveCap = Math.min(req.limit, SEARCH_HARD_CAP);
     const truncated = candidates.length > effectiveCap;
     return { items: candidates.slice(0, effectiveCap), truncated };
+  }
+
+  async suggest(req: FsSuggestRequest): Promise<FsSuggestResponse> {
+    if (req.query === '') {
+      const listed = await this.list({
+        path: '.',
+        depth: 1,
+        limit: SEARCH_HARD_CAP,
+        show_hidden: req.show_hidden,
+        follow_gitignore: req.follow_gitignore,
+        exclude_globs: req.exclude_globs,
+        sort: 'type_first',
+        include_git_status: false,
+      });
+      const filtered = listed.items
+        .filter((entry) => !VCS_METADATA_DIRS.has(entry.name))
+        .filter(
+          (entry) =>
+            req.include_globs === undefined || matchesAnyGlob(entry.path, req.include_globs),
+        );
+      const items = filtered.slice(0, req.limit).map((entry) => ({
+        path: entry.path,
+        name: entry.name,
+        kind: entry.kind,
+        score: 1,
+        match_positions: [],
+      }));
+      return { items, truncated: listed.truncated || filtered.length > req.limit };
+    }
+
+    const queryLower = req.query.toLowerCase();
+    const pathSegments = queryLower.includes('/')
+      ? queryLower.split('/').filter((seg) => seg.length > 0)
+      : [];
+    if (queryLower.includes('/') && pathSegments.length === 0) {
+      return { items: [], truncated: false };
+    }
+    const query: SuggestQuery = {
+      nameQuery: queryLower,
+      pathSegments,
+      showHidden: req.show_hidden,
+      followGitignore: req.follow_gitignore,
+      includeGlobs: req.include_globs,
+      excludeGlobs: req.exclude_globs,
+    };
+    const cap = req.limit;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SUGGEST_TIMEOUT_MS);
+    timer.unref?.();
+    try {
+      let resolution: RgResolution | null = null;
+      try {
+        resolution = await this.resolveRg();
+      } catch {
+        resolution = null;
+      }
+      if (resolution !== null) {
+        try {
+          return await this.suggestWithRg(query, cap, controller.signal, resolution.path);
+        } catch (err) {
+          if (controller.signal.aborted) throw err;
+          this.telemetry.track2('fs_suggest_node_fallback', { reason: 'rg_error' });
+          return await this.suggestWithNode(query, cap, controller.signal);
+        }
+      }
+      this.telemetry.track2('fs_suggest_node_fallback', { reason: 'rg_missing' });
+      return await this.suggestWithNode(query, cap, controller.signal);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async suggestWithRg(
+    query: SuggestQuery,
+    cap: number,
+    signal: AbortSignal,
+    rgBinary: string,
+  ): Promise<FsSuggestResponse> {
+    const args = ['--files'];
+    if (query.followGitignore) {
+      args.push('--no-require-git');
+    } else {
+      args.push('--no-ignore');
+    }
+    if (query.showHidden) args.push('--hidden');
+    for (const dir of VCS_METADATA_DIRS) args.push('-g', `!${dir}`, '-g', `!${dir}/**`);
+
+    const lease = this.resolver.acquire(
+      { workspaceId: this.workspaceId, runtimeId: this.runtimeId },
+      ['process'],
+    );
+    const proc = await lease.runtime.process!.spawn(rgBinary, args, { cwd: this.workDir });
+
+    const top = new SuggestTopHeap(cap);
+    const seenDirs = new Set<string>();
+    let matched = 0;
+    let killed = false;
+    const kill = (): void => {
+      if (killed) return;
+      killed = true;
+      void proc.kill('SIGKILL');
+    };
+    const onAbort = (): void => kill();
+    if (signal.aborted) kill();
+    else signal.addEventListener('abort', onAbort, { once: true });
+
+    const handleLine = (raw: string): void => {
+      let line = raw;
+      if (line.endsWith('\r')) line = line.slice(0, -1);
+      if (line.startsWith('./')) line = line.slice(2);
+      if (line.length === 0) return;
+      const file = evaluateSuggestCandidate(line, 'file', query);
+      if (file !== null) {
+        matched += 1;
+        top.push(file);
+      }
+      let slash = line.lastIndexOf('/');
+      while (slash > 0) {
+        const dir = line.slice(0, slash);
+        if (!seenDirs.has(dir)) {
+          seenDirs.add(dir);
+          const candidate = evaluateSuggestCandidate(dir, 'directory', query);
+          if (candidate !== null) {
+            matched += 1;
+            top.push(candidate);
+          }
+        }
+        slash = line.lastIndexOf('/', slash - 1);
+      }
+    };
+
+    let stdoutBuf = '';
+    const drainStdout = async (): Promise<void> => {
+      proc.stdout.setEncoding('utf-8');
+      try {
+        for await (const chunk of proc.stdout) {
+          stdoutBuf += chunk as string;
+          let nl = stdoutBuf.indexOf('\n');
+          while (nl >= 0) {
+            handleLine(stdoutBuf.slice(0, nl));
+            stdoutBuf = stdoutBuf.slice(nl + 1);
+            nl = stdoutBuf.indexOf('\n');
+          }
+        }
+        if (stdoutBuf.length > 0) handleLine(stdoutBuf);
+      } catch (error) {
+        if (!(killed && isPrematureCloseError(error))) throw error;
+      }
+    };
+
+    let exitCode: number;
+    try {
+      [, , exitCode] = await Promise.all([
+        drainStdout(),
+        readStream(proc.stderr),
+        proc.wait().catch(() => -1),
+      ]);
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+      try {
+        void proc.dispose();
+      } catch {
+      }
+      lease.dispose();
+    }
+
+    if (!killed && exitCode !== 0 && exitCode !== 1) {
+      throw new Error(`rg --files exited with code ${exitCode}`);
+    }
+
+    const items = top.drain().map((candidate) => ({
+      path: candidate.path,
+      name: candidate.name,
+      kind: candidate.kind,
+      score: candidate.score,
+      match_positions: [...candidate.positions],
+    }));
+    return { items, truncated: matched > cap || signal.aborted };
+  }
+
+  private async suggestWithNode(
+    query: SuggestQuery,
+    cap: number,
+    signal: AbortSignal,
+  ): Promise<FsSuggestResponse> {
+    const matcher = query.followGitignore ? await this.matcher() : undefined;
+    const top = new SuggestTopHeap(cap);
+    let matched = 0;
+    try {
+      await this.walk('', matcher, async (relPath, _name, kind) => {
+        if (signal.aborted) throw SUGGEST_WALK_ABORTED;
+        const candidate = evaluateSuggestCandidate(relPath, kind, query);
+        if (candidate === null) return;
+        matched += 1;
+        top.push(candidate);
+      });
+    } catch (err) {
+      if (err !== SUGGEST_WALK_ABORTED) throw err;
+    }
+    const items = top.drain().map((candidate) => ({
+      path: candidate.path,
+      name: candidate.name,
+      kind: candidate.kind,
+      score: candidate.score,
+      match_positions: [...candidate.positions],
+    }));
+    return { items, truncated: matched > cap || signal.aborted };
   }
 
   async grep(req: FsGrepRequest): Promise<FsGrepResponse> {

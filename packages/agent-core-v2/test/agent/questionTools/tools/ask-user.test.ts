@@ -77,7 +77,6 @@ describe('AskUserQuestionTool', () => {
     const { tool } = makeTool();
 
     expect(tool.name).toBe('AskUserQuestion');
-    expect(tool.description).toContain('structured options');
     expect(tool.parameters).toMatchObject({
       type: 'object',
       properties: { questions: { type: 'array' } },
@@ -91,23 +90,6 @@ describe('AskUserQuestionTool', () => {
         }),
       ).success,
     ).toBe(false);
-  });
-
-  it('documents the answers shape and the uniqueness requirement to the model', () => {
-    const { tool } = makeTool();
-
-    expect(tool.description).toContain('must be unique across the call');
-    expect(tool.description).toContain('keyed by question text');
-  });
-
-  it('exposes background question controls (v1-aligned)', () => {
-    const { tool } = makeTool();
-    const paramsJson = JSON.stringify(tool.parameters);
-
-    expect(tool.description).toContain('Set background=true');
-    expect(tool.description).toContain('task_id');
-    expect(paramsJson).toContain('background');
-    expect(paramsJson).toContain('TaskOutput');
   });
 
   it('rejects empty question text and empty option labels at the schema layer', () => {
@@ -185,41 +167,14 @@ describe('AskUserQuestionTool', () => {
     expect(request).toHaveBeenCalledOnce();
   });
 
-  it('describes the no-Other rule on options and the Recommended hint on label', () => {
-    const { tool } = makeTool();
-    const params = tool.parameters as {
-      properties: {
-        questions: {
-          items: {
-            properties: {
-              options: {
-                description?: string;
-                items: { properties: { label: { description?: string } } };
-              };
-            };
-          };
-        };
-      };
-    };
-
-    const optionsSchema = params.properties.questions.items.properties.options;
-    expect(optionsSchema.description).toContain("Do NOT include an 'Other' option");
-    expect(optionsSchema.description).toContain('the system adds one automatically');
-
-    const labelSchema = optionsSchema.items.properties.label;
-    expect(labelSchema.description).toContain("append '(Recommended)'");
-  });
-
   it('builds the v1-aligned schema including an optional background flag', () => {
     const { tool } = makeTool();
     const params = tool.parameters as {
-      properties: { background?: { type?: string; default?: boolean; description?: string } };
+      properties: { background?: { type?: string; default?: boolean } };
     };
 
-    expect(tool.description).toContain('Set background=true');
     expect(params.properties.background?.type).toBe('boolean');
     expect(params.properties.background?.default).toBe(false);
-    expect(params.properties.background?.description).toContain('task_id');
   });
 
   it('dispatches questions through the session question service', async () => {

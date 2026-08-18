@@ -18,13 +18,14 @@ import type {
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 import { TowerStore } from '#/features/tower/protocol/index';
-import { IAgentTowerService } from '#/features/tower/tower';
+import { IAgentTowerService, TOWER_FLAG_ID } from '#/features/tower/tower';
 import { AgentTowerService } from '#/features/tower/towerService';
 import { towerKey } from '#/features/tower/towerOps';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { IFlagService } from '#/app/flag/flag';
 import type { ToolCall } from '#/kosong/contract/message';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -35,6 +36,7 @@ import { ToolAccesses } from '#/tool/toolContract';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 import {
   registerTestAgentWire,
   registerTestEventDispatcher,
@@ -83,6 +85,7 @@ describe('AgentTowerService', () => {
   let executorEvents: ToolExecutorEventStubs;
   let permissionGateRan: boolean;
   let formatDenyMessage: Mock<(message: string) => string>;
+  let towerFlagOn: boolean;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -95,6 +98,8 @@ describe('AgentTowerService', () => {
     ix.stub(IAgentToolExecutorService, executorEvents.executor);
     formatDenyMessage = vi.fn((message: string) => message);
     ix.stub(IAgentToolApprovalService, { formatDenyMessage });
+    towerFlagOn = true;
+    ix.stub(IFlagService, stubFlag((id) => towerFlagOn && id === TOWER_FLAG_ID));
     ix.stub(IAgentProfileService, {
       data: () => ({ profileName: undefined }),
     } as unknown as IAgentProfileService);
@@ -279,6 +284,36 @@ describe('AgentTowerService', () => {
     expect(formatDenyMessage).not.toHaveBeenCalled();
   });
 
+  it('enter() is a no-op while the tower flag is off', () => {
+    towerFlagOn = false;
+    const tower = ix.get(IAgentTowerService);
+    const events: { readonly type: string }[] = [];
+    disposables.add(
+      ix.get(IEventBus).subscribe((e) => {
+        if (e.type === 'agent.status.updated') events.push({ type: e.type });
+      }),
+    );
+
+    tower.enter();
+
+    expect(tower.isActive).toBe(false);
+    expect(events).toEqual([]);
+  });
+
+  it('does not veto TodoList while the tower flag is off, even with tower mode persisted active', async () => {
+    const tower = ix.get(IAgentTowerService);
+    tower.enter();
+    expect(tower.isActive).toBe(true);
+    towerFlagOn = false;
+
+    const decision = await fire(hookContext([toolCall('TodoList', 'call_todo')]));
+
+    expect(decision).toBeUndefined();
+    expect(permissionGateRan).toBe(true);
+    expect(formatDenyMessage).not.toHaveBeenCalled();
+    expect(tower.isActive).toBe(true);
+  });
+
   describe('tower-worker write guard', () => {
     const WORKER_AGENT_ID = 'agent-worker-1';
     let repo: string;
@@ -355,6 +390,17 @@ describe('AgentTowerService', () => {
       ix.get(IAgentTowerService);
 
       const decision = await fire(hookContext([toolCall('Bash', 'call_bash')]));
+
+      expect(decision).toBeUndefined();
+      expect(permissionGateRan).toBe(true);
+      expect(formatDenyMessage).not.toHaveBeenCalled();
+    });
+
+    it('does not guard worker writes while the tower flag is off', async () => {
+      towerFlagOn = false;
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(writeHookContext('Write', [`${repo}/src/gemm.cpp`]));
 
       expect(decision).toBeUndefined();
       expect(permissionGateRan).toBe(true);

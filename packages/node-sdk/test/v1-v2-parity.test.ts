@@ -367,6 +367,7 @@ function projectBackgroundTask(info: BackgroundTaskInfo): unknown {
   delete projected['startedAt'];
   delete projected['endedAt'];
   delete projected['timeoutMs'];
+  delete projected['terminalNotificationSuppressed'];
   return projected;
 }
 
@@ -3455,11 +3456,11 @@ describe('v1↔v2 print policy parity', () => {
         input.sessionId,
         'sleep 0.3 && echo drain-done',
       );
-      await Promise.all([v1Task.run, v2Task.run]);
-      await Promise.all([
+      const drain = Promise.all([
         pair.v1.waitForBackgroundTasksOnPrint(input),
         pair.v2.waitForBackgroundTasksOnPrint(input),
       ]);
+      await Promise.all([v1Task.run, v2Task.run, drain]);
       // By the time the drain returns the task is terminal on both engines,
       // with its terminal notification suppressed (same drain side effect).
       const projectList = KNOWN_DIFFS.listBackgroundTasks;
@@ -3472,6 +3473,8 @@ describe('v1↔v2 print policy parity', () => {
       expect(v1Tasks[0]).toMatchObject({
         status: 'completed',
         exitCode: 0,
+      });
+      expect(v2Tasks[0]).toMatchObject({
         terminalNotificationSuppressed: true,
       });
       const [v1Output, v2Output] = await Promise.all([

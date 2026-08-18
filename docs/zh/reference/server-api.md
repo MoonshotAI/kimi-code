@@ -77,7 +77,7 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 列表端点有两种分页风格：
 
 - **游标式**：`before_id` / `after_id`（互斥）加 `page_size`（1–100），响应为 `{ items, has_more }`。用于会话列表、消息列表、转录等。
-- **`page_token`**：不透明令牌（内部绑定了查询条件指纹），用于 `POST /api/v1/search` 与 `GET /api/v2/sessions`。翻页途中改变任何查询条件会使令牌失效：v2 返回 `40922`，search 返回 `40001`。
+- **`page_token`**：不透明令牌（内部绑定了查询条件指纹），用于 `POST /api/v1/search` 与 `GET /api/v2/sessions`。翻页途中改变任何查询条件会使令牌失效：v2 返回 `40922`，search 返回 `40001`。`GET /api/v2/sessions` 另提供无状态的 `page` 页码模式作为替代。
 
 ## REST 端点
 
@@ -245,6 +245,8 @@ PTY 终端接口，仅 loopback 绑定时挂载。
 | `POST /api/v1/search` | 跨会话全文搜索，`mode` 为 `terms`（默认）或 `literal`（精确子串），`page_token` 分页 |
 | `GET /api/v1/connections` | 列出当前在线的 WebSocket 连接 |
 | `GET /api/v2/sessions` | 新一代会话列表，见下节 |
+| `POST /api/v2/sessions:archive` | 批量归档会话，见下节 |
+| `POST /api/v2/sessions:restore` | 批量恢复已归档会话，见下节 |
 | `/api/v1/debug/*` | 反射式调试 RPC，仅 `--debug-endpoints` 且 loopback 时挂载，不属于稳定协议 |
 
 ### `GET /api/v2/sessions`
@@ -256,13 +258,38 @@ PTY 终端接口，仅 loopback 绑定时挂载。
 | `workspace.id` | 按工作区过滤，可重复 |
 | `activity.status` | 按活动状态过滤：`running` / `approval` / `question` / `failed` / `idle`，可重复 |
 | `meta.updated_after` | 只看该时间（epoch 毫秒）之后更新过的会话 |
+| `meta.updated_before` | 只看该时间（epoch 毫秒）之前更新过的会话 |
 | `meta.archived` | `true` / `false`（默认）/ `all` |
 | `sort` | `meta.updated_at_desc`（默认）/ `meta.updated_at_asc` / `meta.created_at_desc` |
 | `include` | 逗号分隔的附加字段组；目前支持 `git`（分支与 PR 信息，按目录去重并缓存 60 秒） |
-| `page_size` | 1–100，默认 50 |
+| `fields` | 逗号分隔的字段投影；目前仅支持 `id,archived`，每项裁剪为 `{ id, archived }`（用于全选匹配场景）。不可与 `include=git` 同传（`40001`） |
+| `page_size` | 1–100，默认 50；使用 `id,archived` 投影时上限放宽至 10000 |
 | `page_token` | 上一页返回的翻页令牌 |
+| `page` | 无状态的 1 起始页码；与 `page_token` 互斥（同传返回 `40001`） |
 
-响应每项固定包含 `workspace`、`meta`、`activity` 三组，`include=git` 时附加 `git` 组。翻页令牌绑定首页查询条件，中途改条件返回 `40922`。
+响应每项固定包含 `workspace`、`meta`、`activity` 三组，`include=git` 时附加 `git` 组；`fields=id,archived` 时仅返回 `{ id, archived }`。每页额外携带 `total`，即过滤后的集合大小。翻页令牌绑定首页查询条件（含投影），中途改条件返回 `40922`。`page` 模式是跳页用的无状态替代：每次请求都是独立快照，不签发令牌，`next_page_token` 恒为 `null`。
+
+### `POST /api/v2/sessions:archive` 与 `POST /api/v2/sessions:restore`
+
+面向会话管理页的批量归档/恢复。请求体为 `{ "ids": ["session_..."] }`——非空、去重后不超过 5000 条。仍在线的会话走完整生命周期；未加载的冷会话直接改写磁盘上的元数据，不会被加载。
+
+只有请求体校验失败才会让整个请求失败（`40001`）；其余情况按条返回：`data.results` 保持输入顺序，每项为 `{ id, ok }` 或 `{ id, ok: false, error }`（不存在的 id 在自身条目里报 `40401`），并附 `succeeded` / `failed` 计数。
+
+```json
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "results": [
+      { "id": "session_a", "ok": true },
+      { "id": "session_b", "ok": false, "error": { "code": 40401, "message": "session session_b does not exist" } }
+    ],
+    "succeeded": 1,
+    "failed": 1
+  },
+  "request_id": "req_..."
+}
+```
 
 ## WebSocket 协议
 

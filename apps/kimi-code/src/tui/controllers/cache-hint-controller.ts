@@ -52,7 +52,7 @@ export interface CacheHintHost {
    * staged media with queue-recall semantics (consume retains, retire staged
    * copies, rebase videos) — without this the retains/copies would leak.
    */
-  recallStashedMedia(text: string, extraction: ExtractionResult | undefined): void;
+  recallStashedMedia(extraction: ExtractionResult | undefined): void;
   showError(message: string): void;
   createNewSession(): Promise<void>;
   sendNormalUserInput(text: string, preExtracted?: ExtractionResult): Promise<void>;
@@ -394,7 +394,7 @@ export class CacheHintController {
     if (stash === undefined) return;
     this.restoredTexts.push(stash.text);
     this.host.restoreInputText(this.restoredTexts.join('\n'));
-    this.host.recallStashedMedia(stash.text, stash.extraction);
+    this.host.recallStashedMedia(stash.extraction);
   }
 
   private upstreamModelId(): string | undefined {

@@ -6,6 +6,32 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.37.0（2026-08-18）
+
+### 新功能
+
+- 支持在单条提示词中激活多个 skill：在空白后输入 `/` 即可插入 skill 标记。
+- Windows 原生（单文件）CLI 现支持自动更新。
+- web: 侧边栏新增 Open / Done / Workspaces 标签页，会话可标记为 Done。
+- web: 新增会话管理页面。
+
+### 优化
+
+- Agent 忙碌时输入的 skill 斜杠命令现在会排队执行，不再直接拒绝。
+- web: 聊天消息中 @提及的文件、文件夹和 skill 现在渲染为图标胶囊。
+- web: 浏览器标签页标题现在显示当前工作区目录名。
+- web: 搜索对话框现在支持搜索工作区，选中结果后会展开侧边栏并滚动定位到该条目。
+- web: Subagent 面板更名为 "Background Agent"。
+- 输入的 `/goal` 目标超过 4000 字符限制时现在会给出警告，且被拒绝时保留已输入的内容。
+
+### 修复
+
+- 修复 Gemini 工具调用会话后续请求失败的问题。
+- web: 修复 macOS 上输入框中 Ctrl+K 误打开会话搜索的问题，会话搜索现仅响应 Cmd+K。
+- web: 修复 Background Agent 面板显示数量和状态不对的问题。
+- web: 修复把复制的文件夹粘贴进输入框会导致上传报连接错误的问题，现在文件夹会被直接跳过。
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
 ## 0.36.1（2026-08-14）
 
 ### 新功能
