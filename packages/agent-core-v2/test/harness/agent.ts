@@ -1264,8 +1264,16 @@ export class AgentTestContext {
                 Promise.reject(
                   new Error('IAgentLifecycleService.fork is not supported in the test harness'),
                 ),
-              get: () => undefined,
-              list: () => [],
+              get: (agentId: string) => {
+                const agent = this.agent as Scope | undefined;
+                return agent !== undefined && agentId === agent.id
+                  ? (agent as unknown as IAgentScopeHandle)
+                  : undefined;
+              },
+              list: () => {
+                const agent = this.agent as Scope | undefined;
+                return agent === undefined ? [] : [agent as unknown as IAgentScopeHandle];
+              },
               remove: () => Promise.resolve(),
               broadcastPermissionMode: (mode: PermissionMode) => {
                 this.agent.accessor.get(IAgentPermissionModeService).setMode(mode);

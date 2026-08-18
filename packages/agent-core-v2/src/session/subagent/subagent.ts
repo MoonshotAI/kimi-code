@@ -5,6 +5,13 @@ import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentP
 import type { Turn } from '#/agent/loop/loop';
 import type { Hooks } from '#/hooks';
 
+import type {
+  SpawnSubagentOptions,
+  SpawnedSubagent,
+  SubagentSpawnPlan,
+  SubagentSpawnPlanInput,
+} from './spawn';
+
 export type AgentRunRequest =
   | { readonly kind: 'prompt'; readonly prompt: string }
   | { readonly kind: 'retry'; readonly trigger?: string };
@@ -44,6 +51,10 @@ export interface ISessionSubagentService {
   readonly onDidStopAgentTask: Event<AgentTaskStopHookContext>;
 
   run(agentId: string, request: AgentRunRequest, opts: RunAgentOptions): Promise<AgentRunHandle>;
+
+  planSpawn(input: SubagentSpawnPlanInput): Promise<SubagentSpawnPlan>;
+
+  spawn(opts: SpawnSubagentOptions): Promise<SpawnedSubagent>;
 
   notifyAgentTaskStopped(context: AgentTaskStopHookContext): void;
 }

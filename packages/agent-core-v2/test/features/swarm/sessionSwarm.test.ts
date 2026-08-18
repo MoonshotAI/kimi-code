@@ -1,5 +1,5 @@
 import { createControlledPromise } from '@antfu/utils';
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
@@ -14,12 +14,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2 } from '#/app/event/event2';
-import { IConfigService } from '#/app/config/config';
-import { IFlagService } from '#/app/flag/flag';
-import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { APIProviderRateLimitError } from '#/kosong/contract/errors';
-import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
   IAgentLifecycleService,
@@ -31,16 +26,18 @@ import {
   type AgentTaskHooks,
   ISessionSubagentService,
 } from '#/session/subagent/subagent';
-import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
+import {
+  FORK_CONTEXT_NOTICE,
+  type SpawnSubagentOptions,
+  type SubagentSpawnPlanInput,
+} from '#/session/subagent/spawn';
+import { wrapSubagentModelError } from '#/session/subagent/configSection';
 import {
   ISessionMetadata,
   type AgentMeta,
   type SessionMetadataChangedEvent,
 } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { ILogService } from '#/_base/log/log';
-import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import {
   AgentRunBatch,
@@ -57,10 +54,6 @@ import { ISessionSwarmService, type SessionSwarmSpawnTask, type SessionSwarmTask
 import { Error2 } from '#/_base/errors/errors';
 import { ConfigErrors } from '#/app/config/errors';
 import { SessionSwarmService } from '#/features/swarm/session/sessionSwarmService';
-
-import { stubLog } from '../../_base/log/stubs';
-import { stubFlag } from '../../app/flag/stubs';
-import { StubConfigService } from '../../kosong/stubs';
 
 describe('resolveSwarmMaxConcurrency', () => {
   it('returns undefined when the variable is unset', () => {
@@ -846,6 +839,7 @@ describe('AgentRunBatch swarm item forwarding', () => {
       description: 'Review #1 (subagent)',
       swarmItem,
       runInBackground: false,
+      plan: { profileName: 'subagent', model: 'mock-model', thinking: 'off', fork: false },
     };
   }
 
@@ -882,7 +876,6 @@ describe('SessionSwarmService metadata compatibility', () => {
   let createAgent: ReturnType<typeof vi.fn>;
   let runAgent: ReturnType<typeof vi.fn>;
   let eventBus: IEventBus;
-  let resolverAcquire: Mock<(binding: unknown, required: unknown) => void>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -891,33 +884,13 @@ describe('SessionSwarmService metadata compatibility', () => {
     handles = new Map();
     eventBus = eventBusStub();
     lifecycle = lifecycleStub(handles, eventBus);
-    subagents = subagentStub();
+    subagents = subagentStub(lifecycle);
     createAgent = lifecycle.create as ReturnType<typeof vi.fn>;
     runAgent = subagents.run as ReturnType<typeof vi.fn>;
     handles.set('main', agentHandle('main', lifecycle, eventBus));
 
     ix.stub(IAgentLifecycleService, lifecycle);
     ix.stub(ISessionSubagentService, subagents);
-    ix.stub(ISessionAgentProfileCatalog, {
-      _serviceBrand: undefined,
-      ready: Promise.resolve(),
-      get: (name: string) =>
-        name === 'coder'
-          ? normalizeAgentProfile({ name: 'coder', tools: [], systemPrompt: () => '' })
-          : undefined,
-      getDefault: () => normalizeAgentProfile({ name: 'agent', tools: [], systemPrompt: () => '' }),
-      list: () => [],
-    });
-    ix.stub(
-      ISessionContext,
-      makeSessionContext({
-        sessionId: 's1',
-        workspaceId: 'w1',
-        sessionDir: '/tmp/kimi/s1',
-        sessionScope: 'sessions/w1/s1',
-        cwd: '/repo',
-      }),
-    );
     ix.stub(ISessionMetadata, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -936,38 +909,6 @@ describe('SessionSwarmService metadata compatibility', () => {
         agents[agentId] = meta;
       },
     });
-    resolverAcquire = vi.fn();
-    ix.stub(IRuntimeResolver, {
-      _serviceBrand: undefined,
-      acquire: (binding: unknown, required: unknown) => {
-        resolverAcquire(binding, required);
-        const runtime = new FakeRuntime({ workspaceId: 'w1', runtimeId: 'local', generation: 'g1' });
-        Object.assign(runtime, {
-          process: { spawn: async () => { throw new Error('unexpected process exec'); } },
-        });
-        return {
-          runtime,
-          track: <T,>(resource: T): T => resource,
-          dispose: () => {},
-        };
-      },
-    });
-    ix.stub(ILogService, stubLog());
-    ix.stub(IConfigService, new StubConfigService({}));
-    ix.stub(IFlagService, stubFlag(() => false));
-    ix.stub(IModelCatalog, {
-      _serviceBrand: undefined,
-      get: (alias: string) => {
-        if (alias === 'provider/bad') {
-          throw new Error2(
-            ConfigErrors.codes.CONFIG_INVALID,
-            'Model "provider/bad" is not configured in config.toml.',
-            { details: { model: 'provider/bad' } },
-          );
-        }
-        return { id: alias } as Model;
-      },
-    } as IModelCatalog);
     ix.set(ISessionSwarmService, new SyncDescriptor(SessionSwarmService));
   });
 
@@ -1068,34 +1009,6 @@ describe('SessionSwarmService metadata compatibility', () => {
     );
   });
 
-  it('inherits the caller runtime binding on spawned children', async () => {
-    handles.set(
-      'main',
-      agentHandle('main', lifecycle, eventBus, {}, new Map([
-        [IAgentRuntimeBindingService, {
-          _serviceBrand: undefined,
-          current: { workspaceId: 'w1', runtimeId: 'acp:s1' },
-          switch: () => {},
-          onDidChange: Event.None,
-        }],
-      ])),
-    );
-    const service = ix.get(ISessionSwarmService);
-
-    await service.run({
-      callerAgentId: 'main',
-      tasks: [spawnSessionTask('src/a.ts')],
-    });
-
-    expect(createAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ runtimeId: 'acp:s1' }),
-    );
-    expect(resolverAcquire).toHaveBeenCalledWith(
-      { workspaceId: 'w1', runtimeId: 'acp:s1' },
-      ['process'],
-    );
-  });
-
   it('inherits parent user tools on spawned children', async () => {
     const parentUserTools = userToolServiceStub();
     const childUserTools = userToolServiceStub();
@@ -1187,12 +1100,12 @@ describe('SessionSwarmService metadata compatibility', () => {
     );
   });
 
-  it('prefers the spawn task binding over the caller model', async () => {
+  it('prefers the spawn task plan over the caller model', async () => {
     const service = ix.get(ISessionSwarmService);
     const spawnTask: SessionSwarmSpawnTask = {
       ...spawnSessionTask('src/a.ts'),
       kind: 'spawn',
-      binding: { model: 'provider/pool', thinking: 'low' },
+      plan: { profileName: 'coder', model: 'provider/pool', thinking: 'low', fork: false },
     };
 
     await expect(
@@ -1221,12 +1134,19 @@ describe('SessionSwarmService metadata compatibility', () => {
     );
   });
 
-  it('points at the [secondary_model.models] config when a spawn task binding is invalid', async () => {
+  it('points at the [secondary_model.models] config when a spawn task plan is invalid', async () => {
+    createAgent.mockRejectedValueOnce(
+      new Error2(
+        ConfigErrors.codes.CONFIG_INVALID,
+        'Model "provider/bad" is not configured in config.toml.',
+        { details: { model: 'provider/bad' } },
+      ),
+    );
     const service = ix.get(ISessionSwarmService);
     const spawnTask: SessionSwarmSpawnTask = {
       ...spawnSessionTask('src/a.ts'),
       kind: 'spawn',
-      binding: { model: 'provider/bad', thinking: 'low' },
+      plan: { profileName: 'coder', model: 'provider/bad', thinking: 'low', fork: false },
     };
 
     await expect(
@@ -1240,7 +1160,7 @@ describe('SessionSwarmService metadata compatibility', () => {
         error: expect.stringContaining('comes from [secondary_model.models]'),
       },
     ]);
-    expect(createAgent).not.toHaveBeenCalled();
+    expect(createAgent).toHaveBeenCalledTimes(1);
   });
 
   it('does not emit spawned again when a rate-limited child retries', async () => {
@@ -1353,6 +1273,7 @@ function spawnSessionTask(swarmItem?: string): SessionSwarmSpawnTask {
     swarmIndex: 1,
     swarmItem,
     runInBackground: false,
+    plan: { profileName: 'coder', model: 'kimi-test', thinking: 'medium', fork: false },
   };
 }
 
@@ -1403,7 +1324,7 @@ function lifecycleStub(
   return lifecycle as IAgentLifecycleService;
 }
 
-function subagentStub(): ISessionSubagentService {
+function subagentStub(lifecycle: IAgentLifecycleService): ISessionSubagentService {
   return {
     _serviceBrand: undefined,
     hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
@@ -1413,6 +1334,46 @@ function subagentStub(): ISessionSubagentService {
       turn: {} as never,
       completion: Promise.resolve({ summary: 'child summary' }),
     })),
+    planSpawn: vi.fn(async (input: SubagentSpawnPlanInput) => ({
+      profileName: input.profileName ?? 'coder',
+      model: input.model ?? 'kimi-test',
+      fork: input.fork === true,
+    })),
+    spawn: vi.fn(async (opts: SpawnSubagentOptions) => {
+      const { plan } = opts;
+      const caller = lifecycle.get(opts.callerAgentId);
+      let created: IAgentScopeHandle;
+      try {
+        created = plan.fork
+          ? await lifecycle.fork(opts.callerAgentId, { labels: opts.labels })
+          : await lifecycle.create({
+              binding: {
+                profile: plan.profileName,
+                model: plan.model,
+                thinking: plan.thinking,
+              },
+              labels: opts.labels,
+            });
+      } catch (error) {
+        throw wrapSubagentModelError(
+          error,
+          plan.model,
+          caller?.accessor.get(IAgentProfileService).data().modelAlias,
+        );
+      }
+      created.accessor
+        .get(IAgentPermissionModeService)
+        .setMode(caller!.accessor.get(IAgentPermissionModeService).mode);
+      created.accessor
+        .get(IAgentUserToolService)
+        .inheritUserTools(caller!.accessor.get(IAgentUserToolService));
+      return {
+        agentId: created.id,
+        profileName: plan.profileName,
+        model: plan.model,
+        promptText: plan.fork ? `${FORK_CONTEXT_NOTICE}\n\n${opts.prompt}` : opts.prompt,
+      };
+    }),
     notifyAgentTaskStopped: () => {},
   } as ISessionSubagentService;
 }
@@ -1670,5 +1631,6 @@ function queuedAgentRunTask(index: number): QueuedAgentRunTask<number> {
     prompt: `Review item-${String(index)}`,
     description: `Review #${String(index)}`,
     runInBackground: false,
+    plan: { profileName: 'coder', model: 'mock-model', thinking: 'off', fork: false },
   };
 }

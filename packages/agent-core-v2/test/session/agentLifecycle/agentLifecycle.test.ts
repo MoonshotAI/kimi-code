@@ -64,6 +64,7 @@ import { interactionKey } from '#/session/interaction/interactionOps';
 import '#/agent/toolDedupe/toolDedupeService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import '#/app/event/eventBusService';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
@@ -98,6 +99,7 @@ import {
 } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 
 const noopLog = {
   _serviceBrand: undefined,
@@ -360,6 +362,7 @@ describe('AgentLifecycleService', () => {
     ix.stub(IHostFileSystem, { _serviceBrand: undefined } as IHostFileSystem);
     ix.stub(IHostClock, { _serviceBrand: undefined } as IHostClock);
     ix.stub(IModelCatalog, { _serviceBrand: undefined } as IModelCatalog);
+    ix.stub(IFlagService, stubFlag());
     ix.stub(IProtocolAdapterRegistry, {
       _serviceBrand: undefined,
     } as IProtocolAdapterRegistry);

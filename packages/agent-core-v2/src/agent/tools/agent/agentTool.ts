@@ -18,10 +18,8 @@ import {
   resolveActiveToolNames,
 } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import {
   ToolAccesses,
   type ExecutableToolContext,
@@ -35,41 +33,27 @@ import {
 import { IAgentToolRegistryService, type ToolReference } from '#/agent/toolRegistry/toolRegistry';
 import { type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
-import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
-import {
-  subagentAllowlistFor,
-  subagentTypeNotAllowedMessage,
-} from '#/app/agentProfileCatalog/profile-shared';
+import { subagentAllowlistFor } from '#/app/agentProfileCatalog/profile-shared';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
-import { IModelCatalog } from '#/kosong/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { Runtime } from '#/runtime/runtime';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
+import { forkIncompatibility } from '#/session/subagent/spawn';
 import {
   buildSubagentModelDescriptions,
   exposesSubagentModelChoice,
   formatSubagentTimeoutDescription,
-  PRIMARY_SUBAGENT_MODEL_CHOICE,
-  resolveSubagentBinding,
   resolveSubagentTimeoutMs,
   stripSubagentModelParameter,
-  wrapSubagentModelError,
 } from '#/session/subagent/configSection';
 import {
   BACKGROUND_AGENT_UNAVAILABLE,
   DEFAULT_PROFILE_NAME,
-  FORK_CONTEXT_NOTICE,
-  FORK_WITH_MODEL_UNAVAILABLE,
-  FORK_WITH_RESUME_UNAVAILABLE,
-  FORK_WITH_TYPE_UNAVAILABLE,
   ISubagentTool,
   RESUME_WITH_TYPE_UNAVAILABLE,
   RESUMED_LABEL,
@@ -111,14 +95,10 @@ export class SubagentTool implements ISubagentTool {
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @ILogService private readonly log: ILogService,
-    @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IConfigService private readonly config: IConfigService,
     @IFlagService private readonly flags: IFlagService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
   ) {
     this.callerAgentId = scopeContext.agentId;
@@ -196,7 +176,7 @@ export class SubagentTool implements ISubagentTool {
     }
 
     if (args.fork === true) {
-      const forkError = this.forkCompatibilityError(args);
+      const forkError = forkIncompatibility(args, this.profile.data());
       if (forkError !== undefined) {
         return { output: forkError, isError: true };
       }
@@ -231,31 +211,10 @@ export class SubagentTool implements ISubagentTool {
     return target.accessor.get(IAgentProfileService).data().profileName;
   }
 
-  private forkCompatibilityError(args: SubagentToolInput): string | undefined {
-    const resumeAgentId = args.resume?.trim();
-    if (resumeAgentId !== undefined && resumeAgentId.length > 0) {
-      return FORK_WITH_RESUME_UNAVAILABLE;
-    }
-    const own = this.profile.data();
-    const requestedProfileName = args.subagent_type?.length ? args.subagent_type : undefined;
-    if (requestedProfileName !== undefined && requestedProfileName !== own.profileName) {
-      return FORK_WITH_TYPE_UNAVAILABLE;
-    }
-    if (
-      args.model !== undefined &&
-      args.model !== PRIMARY_SUBAGENT_MODEL_CHOICE &&
-      args.model !== own.modelAlias
-    ) {
-      return FORK_WITH_MODEL_UNAVAILABLE;
-    }
-    return undefined;
-  }
-
   private async launch(
     args: SubagentToolInput,
     toolCallId: string,
     controller: AbortController,
-    runtime: Runtime,
   ): Promise<SubagentHandle> {
     const requester = this.lifecycle.get(this.callerAgentId);
     if (requester === undefined) {
@@ -286,78 +245,22 @@ export class SubagentTool implements ISubagentTool {
       profileName = resumed.profileName ?? RESUMED_LABEL;
       displayModel = resumed.modelAlias;
     } else {
-      const fork = args.fork === true;
-      await this.catalog.ready;
-      const own = this.profile.data();
-      const requestedProfileName = args.subagent_type?.length
-        ? args.subagent_type
-        : fork
-          ? (own.profileName ?? DEFAULT_PROFILE_NAME)
-          : DEFAULT_PROFILE_NAME;
-      const allowlist = subagentAllowlistFor(this.catalog, own);
-      if (!fork && allowlist !== undefined && !allowlist.includes(requestedProfileName)) {
-        throw new Error2(
-          ErrorCodes.AGENT_TYPE_NOT_ALLOWED,
-          subagentTypeNotAllowedMessage(requestedProfileName, allowlist),
-          { details: { profileName: requestedProfileName, allowlist } },
-        );
-      }
-      const profile = this.catalog.get(requestedProfileName);
-      if (!fork && profile === undefined) {
-        throw new Error2(ErrorCodes.PROFILE_UNKNOWN, `Unknown agent type: "${requestedProfileName}"`, {
-          details: { profileName: requestedProfileName },
-        });
-      }
-      if (own.modelAlias === undefined) {
-        throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, 'Caller agent has no model bound', {
-          details: { agentId: this.callerAgentId },
-        });
-      }
-      const binding = fork
-        ? { model: own.modelAlias, thinking: own.thinkingLevel }
-        : resolveSubagentBinding(
-            this.config,
-            this.flags,
-            { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
-            args.model,
-          );
-      let created: IAgentScopeHandle;
-      try {
-        this.modelCatalog.get(binding.model);
-        if (fork) {
-          created = await this.lifecycle.fork(this.callerAgentId, {
-            labels: subagentLabels(this.callerAgentId),
-          });
-        } else {
-          created = await this.lifecycle.create({
-            binding: {
-              profile: profile!.name,
-              model: binding.model,
-              thinking: binding.thinking,
-            },
-            labels: subagentLabels(this.callerAgentId),
-            runtimeId: runtime.identity.runtimeId,
-          });
-        }
-      } catch (error) {
-        throw wrapSubagentModelError(error, binding.model, own.modelAlias);
-      }
-      created.accessor.get(IAgentPermissionModeService).setMode(this.permissionMode.mode);
-      created.accessor
-        .get(IAgentUserToolService)
-        .inheritUserTools(requester.accessor.get(IAgentUserToolService));
-      agentId = created.id;
-      profileName = profile?.name ?? requestedProfileName;
-      displayModel = binding.model;
-      if (fork) {
-        promptText = `${FORK_CONTEXT_NOTICE}\n\n${args.prompt}`;
-      } else {
-        promptText = await applyProfilePromptPrefix(profile!, args.prompt, {
-          cwd: this.workspace.workDir,
-          process: runtime.process!,
-          log: this.log,
-        });
-      }
+      const plan = await this.subagents.planSpawn({
+        callerAgentId: this.callerAgentId,
+        profileName: args.subagent_type,
+        model: args.model,
+        fork: args.fork === true,
+      });
+      const spawned = await this.subagents.spawn({
+        callerAgentId: this.callerAgentId,
+        plan,
+        labels: subagentLabels(this.callerAgentId),
+        prompt: args.prompt,
+      });
+      agentId = spawned.agentId;
+      profileName = spawned.profileName;
+      displayModel = spawned.model;
+      promptText = spawned.promptText;
     }
 
     const runInBackground = args.run_in_background === true;
@@ -437,7 +340,7 @@ export class SubagentTool implements ISubagentTool {
       }
 
       if (args.fork === true) {
-        const forkError = this.forkCompatibilityError(args);
+        const forkError = forkIncompatibility(args, this.profile.data());
         if (forkError !== undefined) {
           return { output: forkError, isError: true };
         }
@@ -448,7 +351,6 @@ export class SubagentTool implements ISubagentTool {
         return { output: BACKGROUND_AGENT_UNAVAILABLE, isError: true };
       }
       const timeoutMs = resolveSubagentTimeoutMs(this.config);
-      const runtimeLease = this.runtime.acquire(['process']);
 
       const controller = new AbortController();
       const abortBeforeRegister = (): void => {
@@ -460,7 +362,7 @@ export class SubagentTool implements ISubagentTool {
 
       let handle: SubagentHandle;
       try {
-        handle = await this.launch(args, toolCallId, controller, runtimeLease.runtime);
+        handle = await this.launch(args, toolCallId, controller);
       } catch (error) {
         signal.removeEventListener('abort', abortBeforeRegister);
         this.log.warn('subagent launch failed', {
@@ -472,8 +374,6 @@ export class SubagentTool implements ISubagentTool {
           error,
         });
         throw error;
-      } finally {
-        runtimeLease.dispose();
       }
 
       let taskId: string;

@@ -4,6 +4,8 @@ Use AgentSwarm when many subagents should run the same kind of task over differe
 
 Use `resume_agent_ids` to continue subagents that already exist from earlier work, such as ones that failed or timed out: map each agent id to the prompt for that resumed subagent (usually `continue` if no extra information is needed). You may combine `resume_agent_ids` with `items` in the same call to resume existing subagents and launch new ones. Do not duplicate resumed work in `items`.
 
+By default, each spawned subagent starts with zero context — brief it through the template. When every item builds on the current conversation, pass `fork: true` instead: each item-spawned subagent then starts with a snapshot of your completed history (inheriting your own agent type, tool set, and model), so the template only needs the task itself. `fork` is rejected together with `resume_agent_ids`, `subagent_type`, or `model`, and stays off for independent tasks — it copies the full history into every subagent.
+
 Each of these is enforced — a violation is rejected before any subagent starts: provide at least 2 `items` unless you pass `resume_agent_ids`; whenever `items` are present, `prompt_template` is required and must contain `{{item}}`; and the filled-in prompts must be distinct (two items that expand to the same prompt are rejected).
 
 Use enough subagents to keep the work focused and parallel. AgentSwarm supports up to 128 subagents, and launches are queued automatically, so it is safe to split large tasks into many clear, independent items.
