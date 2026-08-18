@@ -85,6 +85,7 @@ export const flowKey = defineState('flow', (): FlowRunState => ({ active: false 
     const index = s.currentStageIndex ?? 0;
     if (s.stages?.[index]?.id !== e.stage) return;
     if (e.result === 'pass') s.currentStageIndex = index + 1;
+    if ((s.currentStageIndex ?? 0) >= (s.stages?.length ?? 0)) s.active = false;
     ctx.emit(new AgentStatusUpdated({ flowRun: flowRunStatus(s) }));
   })
   .on(FlowRunEnded, (s, e, ctx) => {

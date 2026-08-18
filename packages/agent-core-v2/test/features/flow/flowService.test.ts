@@ -24,7 +24,7 @@ import { EventBusService } from '#/app/event/eventBusService';
 import { IFlagService } from '#/app/flag/flag';
 import { FLOW_FLAG_ID, IAgentFlowService, type FlowDefinition } from '#/features/flow/flow';
 import { AgentFlowService } from '#/features/flow/flowService';
-import { flowGatesKey, flowKey } from '#/features/flow/flowOps';
+import { FlowVerdict, flowGatesKey, flowKey } from '#/features/flow/flowOps';
 import type { ToolCall } from '#/kosong/contract/message';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -266,6 +266,16 @@ describe('AgentFlowService', () => {
       { flowId: 'issue-fix', stageId: 'implement', stageIndex: 1, stageTotal: 2, gate: 'ai' },
       null,
     ]);
+  });
+
+  it('replays to an inactive run when only the final verdict record survived', () => {
+    service.start(DEFINITION, 'task');
+    service.advance({ stage: 'triage', result: 'pass', decidedBy: 'human', criteria: CRITERIA });
+    void dispatcher.dispatch(
+      new FlowVerdict({ stage: 'implement', result: 'pass', decidedBy: 'ai', criteria: CRITERIA }),
+    );
+    expect(service.run().active).toBe(false);
+    expect(service.currentStage()).toBeUndefined();
   });
 
   it('republishes the flow summary after a conversation undo', () => {

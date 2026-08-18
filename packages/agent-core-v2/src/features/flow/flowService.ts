@@ -207,7 +207,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     );
     if (outcome.result !== 'pass') return { recorded: true, runFinished: false };
     const run = this.run();
-    if (run.active && (run.currentStageIndex ?? 0) >= (run.stages?.length ?? 0)) {
+    if ((run.currentStageIndex ?? 0) >= (run.stages?.length ?? 0)) {
       void this.dispatcher.dispatch(new FlowRunEnded({ reason: 'finished' }));
       return { recorded: true, runFinished: true };
     }
