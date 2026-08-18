@@ -1,12 +1,35 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { tryAcquireUpdateInstallLock } from '#/cli/update/install-lock';
 import { getUpdateInstallLockFile } from '#/utils/paths';
+
+const fsMocks = vi.hoisted(() => ({
+  /** When set, link() throws an error with this code (no hard-link support). */
+  linkError: null as string | null,
+}));
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    link: async (
+      src: Parameters<typeof actual.link>[0],
+      dst: Parameters<typeof actual.link>[1],
+    ) => {
+      if (fsMocks.linkError !== null) {
+        throw Object.assign(new Error('link() is not supported (mocked)'), {
+          code: fsMocks.linkError,
+        });
+      }
+      return actual.link(src, dst);
+    },
+  };
+});
 
 const originalEnv = { ...process.env };
 
@@ -15,6 +38,7 @@ let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'kimi-update-install-lock-'));
   process.env['KIMI_CODE_HOME'] = dir;
+  fsMocks.linkError = null;
 });
 
 afterEach(() => {
@@ -74,6 +98,59 @@ describe('update install lock', () => {
     const filePath = getUpdateInstallLockFile();
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, '{', 'utf-8');
+    // Crash residue is old; a YOUNG unparseable file is treated as a publish
+    // still in progress (see the publish grace), so age it past the grace.
+    const old = new Date(Date.now() - 2 * 60 * 1000);
+    utimesSync(filePath, old, old);
+
+    const lock = await tryAcquireUpdateInstallLock({ version: '0.5.0' });
+
+    expect(lock).not.toBeNull();
+    await lock?.release();
+  });
+
+  it('treats a young unparseable lock as a publish in progress', async () => {
+    // The exclusive-create fallback (filesystems without hard links) is
+    // observable between create and write; sweeping that window would break
+    // exclusivity, so young unparseable content is NOT stale.
+    const filePath = getUpdateInstallLockFile();
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, '{', 'utf-8');
+
+    const lock = await tryAcquireUpdateInstallLock({ version: '0.5.0' });
+
+    expect(lock).toBeNull();
+  });
+
+  it('acquires, excludes and releases on filesystems without hard-link support', async () => {
+    fsMocks.linkError = 'ENOTSUP';
+
+    const first = await tryAcquireUpdateInstallLock({ version: '0.5.0' });
+    expect(first).not.toBeNull();
+    expect(await tryAcquireUpdateInstallLock({ version: '0.5.0' })).toBeNull();
+
+    await first?.release();
+    const again = await tryAcquireUpdateInstallLock({ version: '0.5.0' });
+    expect(again).not.toBeNull();
+    await again?.release();
+  });
+
+  it('grants exactly one winner under concurrent exclusive-create publishes', async () => {
+    fsMocks.linkError = 'ENOTSUP';
+
+    const attempts = await Promise.all(
+      Array.from({ length: 20 }, () => tryAcquireUpdateInstallLock({ version: '0.5.0' })),
+    );
+    const winners = attempts.filter((handle) => handle !== null);
+    expect(winners).toHaveLength(1);
+    await winners[0]?.release();
+  });
+
+  it('takes over a stale lock without hard-link support', async () => {
+    fsMocks.linkError = 'ENOTSUP';
+    const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+    await new Promise((resolve) => child.once('exit', resolve));
+    writeAgedLock(child.pid ?? -1);
 
     const lock = await tryAcquireUpdateInstallLock({ version: '0.5.0' });
 

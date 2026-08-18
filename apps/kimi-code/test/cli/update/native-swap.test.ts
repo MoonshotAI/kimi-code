@@ -18,6 +18,8 @@ import { getNativeStagedStateFile, getNativeStagingDir } from '#/utils/paths';
 const fsMocks = vi.hoisted(() => ({
   /** When set, renames matching the predicate fail with an injected error. */
   renameBlocker: null as null | ((src: string, dst: string) => boolean),
+  /** When set, link() throws an error with this code (no hard-link support). */
+  linkError: null as string | null,
 }));
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -32,6 +34,17 @@ vi.mock('node:fs/promises', async (importOriginal) => {
         throw new Error('injected rename failure');
       }
       return actual.rename(src, dst);
+    },
+    link: async (
+      src: Parameters<typeof actual.link>[0],
+      dst: Parameters<typeof actual.link>[1],
+    ) => {
+      if (fsMocks.linkError !== null) {
+        throw Object.assign(new Error('link() is not supported (mocked)'), {
+          code: fsMocks.linkError,
+        });
+      }
+      return actual.link(src, dst);
     },
   };
 });
@@ -168,6 +181,7 @@ describe('maybeRelaunchWithStagedNativeUpdate', () => {
     await writeFile(exePath, 'old-binary');
     vi.stubEnv('KIMI_CODE_HOME', homeDir);
     fsMocks.renameBlocker = null;
+    fsMocks.linkError = null;
   });
 
   afterEach(async () => {
@@ -342,6 +356,21 @@ describe('maybeRelaunchWithStagedNativeUpdate', () => {
     await expect(
       stat(join(getNativeStagingDir(exePath), stagedExeFileName(STAGED_VERSION, 'linux'))),
     ).resolves.toBeDefined();
+  });
+
+  it('restores the staged metadata without hard-link support', async () => {
+    await seedStagedUpdate(exePath, STAGED_VERSION);
+    // The restore publishes create-if-absent; on filesystems without hard
+    // links it must fall back to an exclusive create, not drop the stage.
+    fsMocks.linkError = 'ENOTSUP';
+    // rename(exe → bak) fails when the in-service exe is gone.
+    await rm(exePath);
+    const { spawnImpl } = createSpawnMock({});
+    const relaunched = await maybeRelaunchWithStagedNativeUpdate(makeDeps(exePath, { spawnImpl }));
+
+    expect(relaunched).toBe(false);
+    const restored = await readStagedNativeUpdate(exePath);
+    expect(restored).toMatchObject({ version: STAGED_VERSION });
   });
 
   it('falls back to a pid-named backup when the plain .bak cannot be removed', async () => {

@@ -17,7 +17,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { link, readdir, rename, rmdir, stat, unlink, utimes } from 'node:fs/promises';
+import { readdir, readFile, rename, rmdir, stat, unlink, utimes } from 'node:fs/promises';
 import { constants as osConstants } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
@@ -39,6 +39,7 @@ import {
 } from './native-stage';
 import { isAutoUpdateDisabledByEnv, shouldAutoInstallUpdates } from './preflight';
 import { getNativeStagedStateFile, getNativeStagingDir } from '#/utils/paths';
+import { createFileIfAbsent } from '#/utils/persistence';
 
 export interface NativeSwapDeps {
   readonly exePath: string;
@@ -194,17 +195,17 @@ async function claimStagedUpdate(exePath: string): Promise<ClaimedStaged | null>
 /**
  * Put a claimed stage's metadata back so a later launch can retry — but only
  * into a still-free state-file path: a downloader may have published a NEWER
- * stage meanwhile, and a rename restore would silently replace it. link() is
- * create-if-absent, so the restore never overwrites; when the path is taken,
- * the newer stage wins and ours is discarded.
+ * stage meanwhile, and an unconditional restore would silently replace it.
+ * The publish is create-if-absent (hard link, or an exclusive create on
+ * filesystems without hard-link support), so the restore never overwrites;
+ * when the path is taken, the newer stage wins and ours is discarded.
  */
 async function restoreClaimedUpdate(exePath: string, claimedPath: string): Promise<void> {
-  try {
-    await link(claimedPath, getNativeStagedStateFile(exePath));
-    await unlink(claimedPath).catch(() => {});
-  } catch {
-    await discardClaimedUpdate(claimedPath);
+  const content = await readFile(claimedPath, 'utf-8').catch(() => null);
+  if (content !== null) {
+    await createFileIfAbsent(getNativeStagedStateFile(exePath), content).catch(() => {});
   }
+  await unlink(claimedPath).catch(() => {});
 }
 
 /**
@@ -463,9 +464,9 @@ export async function maybeRelaunchWithStagedNativeUpdate(
     // claimed metadata so a later launch retries the swap (transient locks
     // clear on reboot) — but only into a still-free state-file path: a
     // downloader may have published a NEWER stage while we smoke-checked,
-    // and a rename restore would silently replace it. link() is
-    // create-if-absent, so the restore can never overwrite; when the path is
-    // taken, the newer stage wins and ours is discarded.
+    // and an unconditional restore would silently replace it. The restore is
+    // create-if-absent, so it can never overwrite; when the path is taken,
+    // the newer stage wins and ours is discarded.
     logSwap('failed to move exe aside', { exePath: deps.exePath, error: String(error) });
     await restoreClaimedUpdate(deps.exePath, claimedPath);
     return false;

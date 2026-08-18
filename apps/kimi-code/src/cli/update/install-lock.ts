@@ -1,7 +1,8 @@
-import { link, mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { getUpdateInstallLockFile } from '#/utils/paths';
+import { createFileIfAbsent } from '#/utils/persistence';
 
 const UPDATE_INSTALL_LOCK_STALE_MS = 30 * 60 * 1000;
 
@@ -11,8 +12,14 @@ const UPDATE_INSTALL_LOCK_STALE_MS = 30 * 60 * 1000;
  */
 const TAKEOVER_LOCK_STALE_MS = 60_000;
 
-/** Uniquifies the publish-temp path across concurrent in-process acquirers. */
-let lockTempCounter = 0;
+/**
+ * On filesystems without hard links the lock is published by an exclusive
+ * create + write (see createFileIfAbsent), which IS observable between create
+ * and write. A young unparseable lock is almost always that publish window,
+ * not corruption — only an unparseable lock older than this is swept as
+ * crash residue.
+ */
+const LOCK_PUBLISH_GRACE_MS = 60_000;
 
 export interface UpdateInstallLockRequest {
   readonly version: string;
@@ -52,23 +59,41 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+interface LockInspection {
+  readonly content: string;
+  readonly mtimeMs: number;
+}
+
+/** Read the lock file's content and mtime; null when it is gone/unreadable. */
+async function inspectLockFile(filePath: string): Promise<LockInspection | null> {
+  const content = await readFile(filePath, 'utf-8').catch(() => null);
+  if (content === null) return null;
+  const info = await stat(filePath).catch(() => null);
+  if (info === null) return null;
+  return { content, mtimeMs: info.mtimeMs };
+}
+
 /**
- * Staleness check over the lock file's CONTENTS. Unparseable or shapeless
- * content counts as stale (crash residue). A holder that is gone can never
- * release its lock (a killed process skips its finally) nor make progress —
- * stale at ANY age; the atomic publish guarantees the pid was written
- * complete by a then-live process, so a dead pid means the holder died
- * afterwards. Past the age threshold a LIVE holder still survives: a native
- * download is idle-bounded but intentionally not duration-bounded, so a slow
- * link legitimately exceeds it. (A pid reused by an unrelated process can pin
- * the lock until that process exits — a delayed update, never a corrupt one.)
+ * Staleness check over the lock file's CONTENTS. Shapeless content counts as
+ * stale (crash residue). Unparseable content is also crash residue — but only
+ * once it is older than the publish grace: on filesystems without hard links
+ * a fallback publish is observable mid-write (see LOCK_PUBLISH_GRACE_MS), and
+ * sweeping that window would break exclusivity. A holder that is gone can
+ * never release its lock (a killed process skips its finally) nor make
+ * progress — stale at ANY age; the atomic publish guarantees the pid was
+ * written complete by a then-live process, so a dead pid means the holder
+ * died afterwards. Past the age threshold a LIVE holder still survives: a
+ * native download is idle-bounded but intentionally not duration-bounded, so
+ * a slow link legitimately exceeds it. (A pid reused by an unrelated process
+ * can pin the lock until that process exits — a delayed update, never a
+ * corrupt one.)
  */
-function isStaleLockContent(raw: string, now: Date): boolean {
+function isStaleLock(inspection: LockInspection, now: Date): boolean {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(inspection.content);
   } catch {
-    return true;
+    return now.getTime() - inspection.mtimeMs > LOCK_PUBLISH_GRACE_MS;
   }
   if (typeof parsed !== 'object' || parsed === null) return true;
   const lock = parsed as { readonly startedAt?: unknown; readonly pid?: unknown };
@@ -90,19 +115,12 @@ async function createLockFile(
     pid: process.pid,
     startedAt: now.toISOString(),
   }, null, 2)}\n`;
-  // Publish atomically: hard-link a fully-written temp file into place (link
-  // fails when the destination already exists, same exclusivity as 'wx'). A
-  // plain 'wx' open would expose a momentarily EMPTY lock file, and a
-  // concurrent acquirer could misread it as corrupt, sweep it, and also win —
-  // two "holders" then write the same `.staging` paths.
-  const tempPath = `${filePath}.${process.pid}.${lockTempCounter}.tmp`;
-  lockTempCounter += 1;
-  await writeFile(tempPath, content, { encoding: 'utf-8', mode: 0o600 });
-  try {
-    await link(tempPath, filePath);
-  } finally {
-    await unlink(tempPath).catch(() => {});
-  }
+  // Publish atomically and only into a still-free path (EEXIST propagates to
+  // the caller's inspection flow). The lock file is never observable empty
+  // on filesystems with hard links; elsewhere the exclusive-create fallback
+  // leaves a brief publish window, which the inspection side covers with
+  // LOCK_PUBLISH_GRACE_MS.
+  await createFileIfAbsent(filePath, content);
   // A racing stale-takeover may have removed our just-published lock and
   // published its own; only the survivor may proceed.
   const published = await readFile(filePath, 'utf-8').catch(() => null);
@@ -135,8 +153,8 @@ export async function tryAcquireUpdateInstallLock(
   }
 
   // A lock file exists. Inspect it once to decide whether it is stale.
-  const inspected = await readFile(filePath, 'utf-8').catch(() => null);
-  if (inspected !== null && !isStaleLockContent(inspected, request.now ?? new Date())) {
+  const inspected = await inspectLockFile(filePath);
+  if (inspected !== null && !isStaleLock(inspected, request.now ?? new Date())) {
     return null;
   }
   if (inspected === null) {
@@ -156,8 +174,8 @@ export async function tryAcquireUpdateInstallLock(
   const takeoverPath = `${filePath}.takeover`;
   if (!(await acquireTakeoverLock(takeoverPath))) return null;
   try {
-    const current = await readFile(filePath, 'utf-8').catch(() => null);
-    if (current !== null && !isStaleLockContent(current, request.now ?? new Date())) {
+    const current = await inspectLockFile(filePath);
+    if (current !== null && !isStaleLock(current, request.now ?? new Date())) {
       // A fresh lock appeared while we waited for the takeover section.
       return null;
     }
@@ -178,35 +196,31 @@ export async function tryAcquireUpdateInstallLock(
 }
 
 /**
- * The takeover lock serializes stale-lock recovery. create-if-absent via hard
- * link; an ancient holder is crash residue (a live section lasts microseconds)
- * and is swept, then retried once.
+ * The takeover lock serializes stale-lock recovery. create-if-absent via the
+ * shared primitive (hard link, or an exclusive create where unsupported); an
+ * ancient holder is crash residue (a live section lasts microseconds) and is
+ * swept, then retried once.
  */
 async function acquireTakeoverLock(takeoverPath: string): Promise<boolean> {
-  if (await linkLockFile(takeoverPath)) return true;
+  if (await publishTakeoverMarker(takeoverPath)) return true;
   const info = await stat(takeoverPath).catch(() => null);
   if (info !== null && Date.now() - info.mtimeMs <= TAKEOVER_LOCK_STALE_MS) return false;
   await unlink(takeoverPath).catch(() => {});
-  return linkLockFile(takeoverPath);
+  return publishTakeoverMarker(takeoverPath);
 }
 
 /** Create-if-absent publish of a small lock marker file. */
-async function linkLockFile(target: string): Promise<boolean> {
+async function publishTakeoverMarker(target: string): Promise<boolean> {
   // Unique marker content doubles as the ownership identity below.
-  const marker = `${process.pid}.${lockTempCounter}`;
-  const tempPath = `${target}.${marker}.tmp`;
-  lockTempCounter += 1;
-  await writeFile(tempPath, marker, { encoding: 'utf-8', mode: 0o600 });
+  const marker = `${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`;
   try {
-    await link(tempPath, target);
+    await createFileIfAbsent(target, marker);
   } catch (error) {
     if (isAlreadyExists(error)) return false;
     throw error;
-  } finally {
-    await unlink(tempPath).catch(() => {});
   }
   // The stale-marker sweep races this publish: it may unlink our fresh marker
-  // and link its own. Verify ownership so only the survivor of that race
+  // and publish its own. Verify ownership so only the survivor of that race
   // proceeds. (A delete landing after this read is the irreducible residual
   // of pathname-only locking — there is no conditional-delete syscall; its
   // worst case is a duplicated download cycle, never a corrupt install,
