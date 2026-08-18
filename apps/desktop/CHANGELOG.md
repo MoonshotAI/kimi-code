@@ -1,5 +1,13 @@
 # kimi-code-app
 
+## 0.0.19
+
+### Patch Changes
+
+- [#260](https://github.com/MoonshotAI/kimi-code-app/pull/260) [`824dca3`](https://github.com/MoonshotAI/kimi-code-app/commit/824dca3db83edbd0c81fddd1515a90ddb838cf7c) - 子代理详情面板不再折叠工作过程，并移除回合结尾的时间栏。
+
+- [#265](https://github.com/MoonshotAI/kimi-code-app/pull/265) [`d96494d`](https://github.com/MoonshotAI/kimi-code-app/commit/d96494db0602378cb5f9032c8e1e1230dc06817a) - 设置页新增「实验室」，内含「多标签页侧边栏」开关（默认关闭），开启后侧边栏显示「进行中 / 已完成 / 工作空间」标签页。
+
 ## 0.0.18
 
 ### Patch Changes
