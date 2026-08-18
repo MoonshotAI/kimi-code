@@ -5,6 +5,7 @@ import { KimiI18nKey, type KimiI18nApi } from '@moonshot-ai/app-i18n';
 import App from './App.vue';
 import i18n from './i18n';
 import { useKimiWebClient, setKimiClientDeps } from '@moonshot-ai/app-client/client';
+import { clientPinia } from '@moonshot-ai/app-client/stores';
 import { initVibrancy } from './composables/useVibrancy';
 import { isDesktop, isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
@@ -48,6 +49,9 @@ setKimiClientDeps({
 });
 
 const app = createApp(App).use(i18n);
+// Install the package-held pinia instance (app-client/stores): the domain
+// stores' truth source, shared with the client singletons' module-level code.
+app.use(clientPinia);
 // Hand packages (e.g. app-markdown) a translator without forcing them to import
 // the global vue-i18n. Wrap the composer as a minimal `KimiI18nApi` (its `locale`
 // is a Ref, not a string), so `inject(KimiI18nKey)` stays type-safe.

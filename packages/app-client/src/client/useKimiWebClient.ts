@@ -34,12 +34,9 @@ import { workspaceRootKey } from '@moonshot-ai/app-core/lib';
 import { mergeSnapshotMessages } from '@moonshot-ai/app-core/lib';
 import { mergeSnapshotSubagents } from '@moonshot-ai/app-core/lib';
 import { createCoalescedAsyncRunner } from '@moonshot-ai/app-core/lib';
-import { detectShellDanger } from '@moonshot-ai/app-core/lib';
-import { buildDiffLines, buildVerbatimDiffLines } from '@moonshot-ai/app-core/client';
-import type { DiffFullTexts } from '@moonshot-ai/app-core/client';
+import { buildApprovalBlock } from '@moonshot-ai/app-core/client';
 import { ackThinkingPending, foldDaemonThinkingLevel } from '@moonshot-ai/app-core/lib';
 import {
-  loadPinnedSessions,
   loadUnread,
   loadWorkspaceOrder,
   loadWorkspaceRecencyFloor,
@@ -47,18 +44,13 @@ import {
   safeGetString,
   safeRemove,
   safeSetString,
-  savePinnedSessions,
   saveUnread,
   saveWorkspaceOrder,
   saveWorkspaceRecencyFloor,
   saveWorkspaceSort,
   STORAGE_KEYS,
 } from '@moonshot-ai/app-core/lib';
-import {
-  partitionByPinned,
-  pinSessionId,
-  unpinSessionId,
-} from '@moonshot-ai/app-core/lib';
+import { partitionByPinned } from '@moonshot-ai/app-core/lib';
 import {
   coalesceAppRenderEvents,
   createEventBatcher,
@@ -69,7 +61,8 @@ import {
 } from '@moonshot-ai/app-core/client';
 import { applyRecordDiff } from '@moonshot-ai/app-core/client';
 import { useAppearance } from '@moonshot-ai/app-core';
-import { useNotification, shouldNotifyCompletion } from '../composables/useNotification';
+import { shouldNotifyCompletion } from '../composables/useNotification';
+import { notificationsStore } from '../stores/notifications';
 import { promptAttachmentToTurnAttachment } from './attachmentsToContent';
 import { useModelProviderState } from './useModelProviderState';
 import { useSideChat } from './useSideChat';
@@ -85,9 +78,11 @@ import {
   useWorkspaceState,
 } from './useWorkspaceState';
 import { useDocumentTitle } from '../composables/useDocumentTitle';
+import { sessionsStore } from '../stores/sessions';
+import { approvalsStore } from '../stores/approvals';
+import { filesStore } from '../stores/files';
 
 const appearance = useAppearance();
-const notification = useNotification({ t });
 import type {
   AppEvent,
   AppApprovalRequest,
@@ -324,6 +319,38 @@ export type {
 
 const rawState: ExtendedState = reactive({
   ...createInitialState(),
+  // The sessions slice (list + active id) lives in the sessions Pinia store
+  // (stores/sessions.ts) since P8 — the store is the single source of truth and
+  // every write lands in a store action. These accessors bridge legacy
+  // read/write sites to the store so the P9–P15 teardown can migrate them
+  // incrementally; new code must use sessionsStore() directly.
+  get sessions() {
+    return sessionsStore().sessions;
+  },
+  set sessions(next: AppSession[]) {
+    sessionsStore().setSessions(next);
+  },
+  get activeSessionId() {
+    return sessionsStore().activeSessionId;
+  },
+  set activeSessionId(id: string | undefined) {
+    sessionsStore().setActiveSessionId(id);
+  },
+  // Pending approvals/questions live in the approvals store (P11). Read-only
+  // accessors: writes go through the store's actions (the reducer write-back
+  // uses applyApprovalsDiff/applyQuestionsDiff, per the applyRecordDiff
+  // discipline), so these getters deliberately have no setters.
+  get approvalsBySession() {
+    return approvalsStore().approvalsBySession;
+  },
+  get questionsBySession() {
+    return approvalsStore().questionsBySession;
+  },
+  // Per-session git status lives in the files store (P12) — read-only here;
+  // writes go through loadGitStatus / clearSessionGitStatus actions.
+  get gitStatusBySession() {
+    return filesStore().gitStatusBySession;
+  },
   connected: false,
   serverVersion: '',
   webTitle: '',
@@ -353,7 +380,6 @@ const rawState: ExtendedState = reactive({
   loading: false,
   sessionLoading: false,
   queuedBySession: {},
-  gitStatusBySession: {},
   promptIdBySession: {},
   inFlightBySession: {},
   unreadBySession: loadUnread(),
@@ -652,11 +678,11 @@ function forgetSession(sessionId: string): void {
   removeSession(sessionId);
   removeSessionMessages(sessionId);
   forgetSessionPlans(sessionId);
-  delete rawState.approvalsBySession[sessionId];
-  delete rawState.questionsBySession[sessionId];
+  approvalsStore().clearSessionApprovals(sessionId);
+  approvalsStore().clearSessionQuestions(sessionId);
   delete rawState.tasksBySession[sessionId];
   delete rawState.goalBySession[sessionId];
-  delete rawState.gitStatusBySession[sessionId];
+  filesStore().clearSessionGitStatus(sessionId);
   delete rawState.lastSeqBySession[sessionId];
   delete rawState.compactionBySession[sessionId];
   delete rawState.messagesLoadingMoreBySession[sessionId];
@@ -691,26 +717,16 @@ function forgetSession(sessionId: string): void {
   saveGoalModeToStorage();
   // A deleted/archived session also leaves the pinned section (and its
   // persisted id list) — both removal entry points funnel through here.
-  if (pinnedSessionIds.value.includes(sessionId)) {
-    pinnedSessionIds.value = unpinSessionId(pinnedSessionIds.value, sessionId);
-    savePinnedSessions(pinnedSessionIds.value);
-  }
+  sessionsStore().unpinSession(sessionId);
 }
 
 // Models + Providers reactive state and helpers live in
 // ./client/useModelProviderState. It is instantiated below (after the
 // `activity` computed it depends on) as `modelProvider`.
 
-// ~/diff line-by-line view: the file the user tapped + its parsed unified diff.
-// Loaded on demand via loadFileDiff(); cleared when the file list is shown.
-const selectedDiffPath = ref<string | null>(null);
-const fileDiffLines = ref<DiffViewLine[]>([]);
-const fileDiffLoading = ref(false);
-// Full old/new texts behind the open diff (full-file syntax highlighting);
-// null → the panel highlights the stitched fragments instead.
-const fileDiffTexts = ref<DiffFullTexts | null>(null);
-// True when the open diff's file is empty (0 bytes) — see loadFileDiff.
-const fileDiffEmptyFile = ref(false);
+// The ~/diff view state and the per-session git status live in the files Pinia
+// store (stores/files.ts, P12), together with the loadFileDiff / clearFileDiff
+// / loadGitStatus / readFileContent actions.
 
 // False until the very first load() settles (success OR failure). Gates the
 // global connecting-splash so a page refresh doesn't flash a half-empty app.
@@ -956,9 +972,9 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     setActiveSessionId(next.activeSessionId);
   }
   setMessagesBySession(next.messagesBySession);
-  applyRecordDiff(rawState.approvalsBySession, next.approvalsBySession);
+  approvalsStore().applyApprovalsDiff(next.approvalsBySession);
   applyRecordDiff(rawState.planReviewByToolCallId, next.planReviewByToolCallId);
-  applyRecordDiff(rawState.questionsBySession, next.questionsBySession);
+  approvalsStore().applyQuestionsDiff(next.questionsBySession);
   applyRecordDiff(rawState.tasksBySession, next.tasksBySession);
   applyRecordDiff(rawState.goalBySession, next.goalBySession);
   applyRecordDiff(rawState.goalVersionBySession, next.goalVersionBySession);
@@ -1357,10 +1373,10 @@ function applySessionWorkBaseline(
   if (turnActiveChanged) applyRecordDiff(rawState.turnActiveBySession, nextTurnActive);
   for (const [sessionId, pendingInteraction] of authoritativePendingBySession) {
     if (pendingInteraction === 'none') {
-      delete rawState.approvalsBySession[sessionId];
-      delete rawState.questionsBySession[sessionId];
+      approvalsStore().clearSessionApprovals(sessionId);
+      approvalsStore().clearSessionQuestions(sessionId);
     } else if (pendingInteraction === 'question') {
-      delete rawState.approvalsBySession[sessionId];
+      approvalsStore().clearSessionApprovals(sessionId);
     }
   }
   for (const sessionId of finishedSessionIds) {
@@ -1977,7 +1993,7 @@ async function syncSessionFromSnapshot(
       rawState.tasksBySession[sessionId] ?? [],
     );
     rawState.messagesHasMoreBySession[sessionId] = snap.hasMoreMessages;
-    rawState.approvalsBySession[sessionId] = snap.pendingApprovals;
+    approvalsStore().setSessionApprovals(sessionId, snap.pendingApprovals);
     // Preserve plan_review paths from the snapshot so the ExitPlanMode tool
     // card can link to the plan file even after a reload.
     for (const a of snap.pendingApprovals) {
@@ -1989,7 +2005,7 @@ async function syncSessionFromSnapshot(
         };
       }
     }
-    rawState.questionsBySession[sessionId] = snap.pendingQuestions;
+    approvalsStore().setSessionQuestions(sessionId, snap.pendingQuestions);
     rawState.lastSeqBySession[sessionId] = snap.asOfSeq;
     epochBySession[sessionId] = snap.epoch;
     sessionsRequiringSnapshot.delete(sessionId);
@@ -2188,128 +2204,6 @@ if (import.meta.hot) {
     stopSessionTimeClock();
     enqueueEvent.dispose();
   });
-}
-
-/** Build ApprovalBlock from AppApprovalRequest (discriminated union) */
-function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
-  // Cast display to a loose dict for defensive reading
-  const d = (a.display ?? {}) as Record<string, unknown>;
-  const kind = typeof d.kind === 'string' ? d.kind : '';
-
-  // diff (display kind): before/after pair or a prebuilt row array
-  if (kind === 'diff') {
-    const path = typeof d.path === 'string' ? d.path : '';
-    if (Array.isArray(d.diff)) {
-      return { kind: 'diff', path, diff: d.diff as DiffViewLine[] };
-    }
-    const before = typeof d.old_text === 'string' ? d.old_text : (typeof d.before === 'string' ? d.before : undefined);
-    const after = typeof d.new_text === 'string' ? d.new_text : (typeof d.after === 'string' ? d.after : undefined);
-    if (before !== undefined && after !== undefined) {
-      // An oversized before/after pair makes the LCS diff refuse (null) — fall
-      // back to a verbatim +/- listing so the approval never shows an empty diff.
-      const diff = buildDiffLines(before, after) ?? buildVerbatimDiffLines(before, after);
-      return { kind: 'diff', path, diff };
-    }
-    return { kind: 'diff', path, diff: [] };
-  }
-
-  // file_io (Write / Edit / Read / Grep / Glob approvals). Write carries the
-  // full new-file content; Edit carries the old/new hunk — same mapping the
-  // TUI's approval adapter makes (content preview vs before/after diff).
-  if (kind === 'file_io') {
-    const path = typeof d.path === 'string' ? d.path : '';
-    const operation = typeof d.operation === 'string' ? d.operation : '';
-    if (operation === 'write' && typeof d.content === 'string') {
-      return { kind: 'file', path, content: d.content };
-    }
-    if (operation === 'edit' && typeof d.before === 'string' && typeof d.after === 'string') {
-      const diff = buildDiffLines(d.before, d.after) ?? buildVerbatimDiffLines(d.before, d.after);
-      return { kind: 'diff', path, diff };
-    }
-    const detail = typeof d.detail === 'string' ? d.detail : undefined;
-    return { kind: 'fileop', op: operation || kind, path, detail };
-  }
-
-  // shell / command
-  if (kind === 'shell' || kind === 'command') {
-    const command = typeof d.command === 'string' ? d.command : a.action;
-    const cwd = typeof d.cwd === 'string' ? d.cwd : undefined;
-    // The daemon's `danger` slot is currently never filled — fall back to a
-    // display-layer heuristic so destructive commands still get the hint.
-    const danger = typeof d.danger === 'string' ? d.danger : detectShellDanger(command);
-    return { kind: 'shell', command, cwd, danger };
-  }
-
-  // file_content / file
-  if (kind === 'file_content' || kind === 'file') {
-    const path = typeof d.path === 'string' ? d.path : '';
-    const content = typeof d.content === 'string' ? d.content : '';
-    const language = typeof d.language === 'string' ? d.language : undefined;
-    return { kind: 'file', path, content, language };
-  }
-
-  // file_op / fileop
-  if (kind === 'file_op' || kind === 'fileop') {
-    const op = typeof d.operation === 'string' ? d.operation : (typeof d.op === 'string' ? d.op : kind);
-    const path = typeof d.path === 'string' ? d.path : '';
-    const detail = typeof d.detail === 'string' ? d.detail : undefined;
-    return { kind: 'fileop', op, path, detail };
-  }
-
-  // url_fetch / url
-  if (kind === 'url_fetch' || kind === 'url') {
-    const url = typeof d.url === 'string' ? d.url : a.action;
-    const method = typeof d.method === 'string' ? d.method : undefined;
-    return { kind: 'url', method, url };
-  }
-
-  // search
-  if (kind === 'search') {
-    const query = typeof d.query === 'string' ? d.query : a.action;
-    const scope = typeof d.scope === 'string' ? d.scope : undefined;
-    return { kind: 'search', query, scope };
-  }
-
-  // invocation / agent_call / skill_call
-  if (kind === 'invocation' || kind === 'agent_call' || kind === 'skill_call') {
-    const kind2 = typeof d.kind === 'string' ? d.kind : kind;
-    const name = typeof d.name === 'string' ? d.name : a.toolName;
-    const description = typeof d.description === 'string' ? d.description : undefined;
-    return { kind: 'invocation', kind2, name, description };
-  }
-
-  // todo / todo_list
-  if (kind === 'todo' || kind === 'todo_list') {
-    const rawItems = Array.isArray(d.items) ? d.items : [];
-    const items = rawItems.map((item: unknown) => {
-      const it = (item ?? {}) as Record<string, unknown>;
-      return {
-        title: typeof it.title === 'string' ? it.title : '',
-        status: typeof it.status === 'string' ? it.status : 'pending',
-      };
-    });
-    return { kind: 'todo', items };
-  }
-
-  // plan_review — finalised plan presented at plan-mode exit
-  if (kind === 'plan_review') {
-    const plan = typeof d.plan === 'string' ? d.plan : '';
-    const path = typeof d.path === 'string' ? d.path : undefined;
-    const rawOptions = Array.isArray(d.options) ? d.options : [];
-    const options = rawOptions
-      .map((item: unknown): { label: string; description?: string } | null => {
-        const it = (item ?? {}) as Record<string, unknown>;
-        const label = typeof it.label === 'string' ? it.label : '';
-        if (!label) return null;
-        const description = typeof it.description === 'string' ? it.description : undefined;
-        return { label, description };
-      })
-      .filter((o): o is { label: string; description?: string } => o !== null);
-    return { kind: 'plan_review', plan, path, options: options.length > 0 ? options : undefined };
-  }
-
-  // Unknown daemon display.kind → 'generic' with summary = action
-  return { kind: 'generic', summary: a.action };
 }
 
 /** Map AppQuestionRequest to UIQuestion */
@@ -3032,7 +2926,7 @@ const status = computed<ConversationStatus>(() => {
 });
 
 /** Parsed unified-diff lines for the file selected in the ~/diff tab. */
-const fileDiff = computed<DiffViewLine[]>(() => fileDiffLines.value);
+const fileDiff = computed<DiffViewLine[]>(() => filesStore().fileDiffLines);
 
 /** Cumulative cost (USD) for the active session, from daemon usage. 0 if unknown. */
 const sessionCost = computed<number>(() => {
@@ -3196,42 +3090,31 @@ watch(
 );
 
 // ---------------------------------------------------------------------------
-// Pinned sessions (sidebar section above all workspace groups). The id list is
-// the single source of truth: persisted to localStorage, ordered by the user's
-// drag arrangement, per-device by design (no server sync). Pin state never
-// lives on the session objects — every view derives it from this list.
+// Pinned sessions (sidebar section above all workspace groups). The id list's
+// truth source is the sessions store (persisted there to localStorage); this
+// computed alias keeps the facade's read sites unchanged, and the actions
+// below delegate to the store.
 // ---------------------------------------------------------------------------
-const pinnedSessionIds = ref<string[]>(loadPinnedSessions());
+const pinnedSessionIds = computed<string[]>(() => sessionsStore().pinnedSessionIds);
 
 /** Pin a session. New pins land at the END of the pinned section. */
 function pinSession(id: string): void {
-  const next = pinSessionId(pinnedSessionIds.value, id);
-  if (next === pinnedSessionIds.value) return;
-  pinnedSessionIds.value = next;
-  savePinnedSessions(next);
+  sessionsStore().pinSession(id);
 }
 
 /** Unpin a session (no-op when it isn't pinned). */
 function unpinSession(id: string): void {
-  const next = unpinSessionId(pinnedSessionIds.value, id);
-  if (next === pinnedSessionIds.value) return;
-  pinnedSessionIds.value = next;
-  savePinnedSessions(next);
+  sessionsStore().unpinSession(id);
 }
 
 /** Unpin a batch of sessions (e.g. the backfill's stale-id cleanup). */
 function unpinSessions(ids: string[]): void {
-  const stale = new Set(ids);
-  const next = pinnedSessionIds.value.filter((id) => !stale.has(id));
-  if (next.length === pinnedSessionIds.value.length) return;
-  pinnedSessionIds.value = next;
-  savePinnedSessions(next);
+  sessionsStore().unpinSessions(ids);
 }
 
 /** Toggle entry point for the session-row menu (pin ↔ unpin). */
 function togglePinSession(id: string): void {
-  if (pinnedSessionIds.value.includes(id)) unpinSession(id);
-  else pinSession(id);
+  sessionsStore().togglePinSession(id);
 }
 
 /** Sidebar-facing workspace list. 'manual' mode follows the user's dragged /
@@ -3696,11 +3579,6 @@ const workspaceState = useWorkspaceState(rawState, {
   goalErrorMessage,
   initialized,
   connectIssue,
-  selectedDiffPath,
-  fileDiffLines,
-  fileDiffLoading,
-  fileDiffTexts,
-  fileDiffEmptyFile,
 });
 
 /** True when the user is actually watching this session: it is the active
@@ -3773,7 +3651,7 @@ function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: b
   // opened a PR): for the on-screen session this drives the header; the load
   // also mirrors pullRequest into the sessions pool — the sidebar row's only
   // live update channel, since WS events never carry the git domain.
-  void workspaceState.loadGitStatus(sid);
+  void filesStore().loadGitStatus(sid);
   if (sid === rawState.activeSessionId) {
     // Runtime status (model/context usage may have changed this turn) is only
     // shown for the session on screen.
@@ -3793,7 +3671,7 @@ function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: b
   const hasPendingApproval = (rawState.approvalsBySession[sid] ?? []).length > 0;
   const hasPendingQuestion = (rawState.questionsBySession[sid] ?? []).length > 0;
   if (!goalActive && shouldNotifyCompletion(status, hasPendingApproval, hasPendingQuestion)) {
-    notification.maybeNotifyCompletion(sid, {
+    notificationsStore().maybeNotifyCompletion(sid, {
       isUserWatching: isUserWatching(sid),
       sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
       promptId: finishedPromptId,
@@ -3815,7 +3693,7 @@ function onQuestionRequested(sid: string, question: AppQuestionRequest): void {
     header && questionText ? `${header}: ${questionText}` : questionText || header;
 
   // Browser notification when the user isn't watching this session.
-  notification.maybeNotifyQuestion({
+  notificationsStore().maybeNotifyQuestion({
     isUserWatching: isUserWatching(sid),
     sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
     questionPreview: preview,
@@ -3828,7 +3706,7 @@ function onQuestionRequested(sid: string, question: AppQuestionRequest): void {
 
 function onApprovalRequested(sid: string, approval: AppApprovalRequest): void {
   // Browser notification when the user isn't watching this session.
-  notification.maybeNotifyApproval({
+  notificationsStore().maybeNotifyApproval({
     isUserWatching: isUserWatching(sid),
     sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
     toolName: approval.toolName,
@@ -3891,10 +3769,10 @@ export function useKimiWebClient() {
     status,
     sessionCost,
     fileDiff,
-    selectedDiffPath,
-    fileDiffLoading,
-    fileDiffTexts,
-    fileDiffEmptyFile,
+    selectedDiffPath: computed(() => filesStore().selectedDiffPath),
+    fileDiffLoading: computed(() => filesStore().fileDiffLoading),
+    fileDiffTexts: computed(() => filesStore().fileDiffTexts),
+    fileDiffEmptyFile: computed(() => filesStore().fileDiffEmptyFile),
     changes,
     gitInfo,
     gitDiffStats,
@@ -3948,11 +3826,11 @@ export function useKimiWebClient() {
     colorScheme: appearance.colorScheme,
     setColorScheme: appearance.setColorScheme,
 
-    notifyEnabled: notification.notifyEnabled,
-    notifySound: notification.notifySound,
-    notifyPermission: notification.notifyPermission,
-    setNotifyEnabled: notification.setNotifyEnabled,
-    setNotifySound: notification.setNotifySound,
+    notifyEnabled: computed(() => notificationsStore().notifyEnabled),
+    notifySound: computed(() => notificationsStore().notifySound),
+    notifyPermission: computed(() => notificationsStore().notifyPermission),
+    setNotifyEnabled: (on: boolean) => notificationsStore().setNotifyEnabled(on),
+    setNotifySound: (on: boolean) => notificationsStore().setNotifySound(on),
     onboarded,
     setOnboarded,
 
@@ -4032,13 +3910,13 @@ export function useKimiWebClient() {
     unqueue: workspaceState.unqueue,
     reorderQueue: workspaceState.reorderQueue,
     searchFiles: workspaceState.searchFiles,
-    loadGitStatus: workspaceState.loadGitStatus,
-    loadFileDiff: workspaceState.loadFileDiff,
-    clearFileDiff: workspaceState.clearFileDiff,
+    loadGitStatus: filesStore().loadGitStatus,
+    loadFileDiff: filesStore().loadFileDiff,
+    clearFileDiff: filesStore().clearFileDiff,
 
     // File system actions
     listDir: workspaceState.listDir,
-    readFileContent: workspaceState.readFileContent,
+    readFileContent: filesStore().readFileContent,
     readHostFileContent: workspaceState.readHostFileContent,
     getFileDownloadUrl: workspaceState.getFileDownloadUrl,
     openWorkspaceFile: workspaceState.openWorkspaceFile,

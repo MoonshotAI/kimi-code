@@ -5,6 +5,7 @@ import {
   useModelProviderState,
   type UseModelProviderStateDeps,
 } from '../src/client/useModelProviderState';
+import { modelsStore } from '../src/stores/models';
 import type { ExtendedState } from '../src/client/types';
 import {
   ackThinkingPending,
@@ -355,7 +356,12 @@ describe('useModelProviderState thinking on model selection', () => {
       ...depOverrides,
     };
     const provider = useModelProviderState(state, deps);
-    provider.models.value = [effortAppModel, booleanAppModel, maxOnlyAppModel];
+    // Models state lives in the shared store now (P10) — seed it there, and
+    // reset the other slices so tests stay isolated.
+    const store = modelsStore();
+    store.setModels([effortAppModel, booleanAppModel, maxOnlyAppModel]);
+    store.setDraftModel(null);
+    store.setProviders([]);
     return provider;
   }
 
@@ -615,8 +621,10 @@ describe('useModelProviderState thinking on model selection', () => {
       { id: 'session-2', model: lowHighAppModel.id },
     ] as AppSession[];
     state.thinkingBySession = { 'session-2': 'max' };
-    const provider = createModelProvider(state);
-    provider.models.value = [...provider.models.value, lowHighAppModel];
+    // Constructing the provider registers the re-resolution watcher; the models
+    // themselves live in the shared store (P10).
+    createModelProvider(state);
+    modelsStore().setModels([...modelsStore().models, lowHighAppModel]);
 
     state.activeSessionId = 'session-2';
     await nextTick();

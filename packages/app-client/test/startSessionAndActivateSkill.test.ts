@@ -151,11 +151,6 @@ function createWorkspaceState() {
     goalErrorMessage: vi.fn(),
     initialized: ref(true),
     connectIssue: ref(null),
-    selectedDiffPath: ref(null),
-    fileDiffLines: ref([]),
-    fileDiffLoading: ref(false),
-    fileDiffTexts: ref(null),
-    fileDiffEmptyFile: ref(false),
   };
 
   return {

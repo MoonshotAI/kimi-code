@@ -101,11 +101,6 @@ function createWorkspaceState(getSession: (sessionId: string) => Promise<AppSess
     goalErrorMessage: vi.fn(),
     initialized: ref(true),
     connectIssue: ref(null),
-    selectedDiffPath: ref(null),
-    fileDiffLines: ref([]),
-    fileDiffLoading: ref(false),
-    fileDiffTexts: ref(null),
-    fileDiffEmptyFile: ref(false),
   };
 
   return useWorkspaceState(rawState as never, deps as never);

@@ -284,11 +284,11 @@ export function toAgentMember(task: AppTask, recoveredCommand?: string): AgentMe
 }
 
 // ---------------------------------------------------------------------------
-// Inline buildApprovalBlock (mirrors the one in useKimiWebClient.ts; kept
-// here to avoid a circular import when tests import this module directly).
+// buildApprovalBlock — the single implementation (the facade's copy was merged
+// here in P11; exported via the client barrel).
 // ---------------------------------------------------------------------------
 
-function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
+export function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
   const d = (a.display ?? {}) as Record<string, unknown>;
   const kind = typeof d['kind'] === 'string' ? d['kind'] : '';
 

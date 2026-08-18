@@ -4,7 +4,7 @@ Package-local rules for `apps/kimi-web` (`kimi-code-web`).
 
 ## What it is
 
-The browser web UI for Kimi Code — a peer to the TUI in `apps/kimi-code`. It talks to the local server over REST + WebSocket under `/api/v1`. Stack: Vue 3 + Vite 6 + TypeScript (strict) + vue-i18n v11. (Tailwind was removed; all styling is via design tokens in `src/style.css` + scoped component styles.) There is no client router and no Pinia; state lives in composables/refs and provide/inject.
+The browser web UI for Kimi Code — a peer to the TUI in `apps/kimi-code`. It talks to the local server over REST + WebSocket under `/api/v1`. Stack: Vue 3 + Vite 6 + TypeScript (strict) + vue-i18n v11 + Pinia. (Tailwind was removed; all styling is via design tokens in `src/style.css` + scoped component styles.) There is no client router. Shared state lives in the Pinia domain stores in `@moonshot-ai/app-client/stores` (the package-held `clientPinia` instance, installed in `main.ts`; conventions in the renderer-architecture spec §5) and the client singletons in `@moonshot-ai/app-client/client`; component-local state lives in refs/composables and provide/inject.
 
 ## Design system (normative — required when modifying the UI)
 
@@ -17,7 +17,7 @@ The browser web UI for Kimi Code — a peer to the TUI in `apps/kimi-code`. It t
 
 ## Layout (`src/`)
 
-- `main.ts` — bootstrap (creates the app, installs i18n, mounts `#app`). `App.vue` — root component, holds most app state.
+- `main.ts` — bootstrap (creates the app, installs i18n + the package-held `clientPinia`, mounts `#app`). `App.vue` — root component, holds most app state.
 - `api/` — app-side wiring only: `bootstrap.ts` composes the shared `createKimiWebApi` factory (from `@moonshot-ai/app-core/api`) with this app's tracer / credential store / runtime config / i18n `t`; `index.ts` exposes the `getKimiWebApi()` singleton; `config.ts` reads `window` / `import.meta.env` / sessionStorage for origin and identity; `types.ts` / `errors.ts` are re-export shells. The transport, wire types, mappers, event reducer, and agent event projector all live in `@moonshot-ai/app-core/api` so web + desktop share one implementation.
 - `components/` — SFCs grouped by area: `chat/` (conversation/chat UI), `settings/` (settings & configuration), `dialogs/` (modal dialogs & sheets), `mobile/` (mobile-specific shell), plus shared layout components at the top level. The design-system primitives formerly under `components/ui/` now live in the `@moonshot-ai/app-ui` package (see "Design system" above).
 - `composables/` — app-side composables that remain here (`useDialogFocus`, …). The client singletons (`useKimiWebClient`, `useWorkspaceState`, `client/*`) live in `@moonshot-ai/app-client/client`; their platform seams (api / translator / tracer / optional desktop hooks) are registered via `setKimiClientDeps` in `main.ts`. Shared, non-diverged composables (`useIsMobile`, `useFilePreview`, `useDetailPanel`, …) live in `@moonshot-ai/app-client/composables` and take api / translator / tracker by injection — new shared composables go there, not here.

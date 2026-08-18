@@ -1,10 +1,12 @@
 // packages/app-client/test/workspaceStateGitStatus.test.ts
-// Merged from the two apps' identical copies (web + desktop differed only in
-// the api/track mock wiring, now the deps/tracker registries).
+// loadGitStatus lives in the files store (P12); the pullRequest mirror writes
+// the sessions store's pool. Both stores are resolved through the package-held
+// pinia instance, so the tests seed and assert the stores directly.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
-import { useWorkspaceState } from '../src/client/useWorkspaceState';
+import { filesStore } from '../src/stores/files';
+import { sessionsStore } from '../src/stores/sessions';
 import type { AppSession } from '@moonshot-ai/app-core/api';
 
 const getKimiWebApiMock = vi.fn();
@@ -33,24 +35,17 @@ function gitStatus(pullRequest: GitStatusResult['pullRequest']): GitStatusResult
 
 const OPEN_PR = { number: 12, state: 'open', url: 'https://github.com/o/r/pull/12' };
 
-function createState(sessions: Array<Pick<AppSession, 'id'> & Partial<AppSession>>) {
-  const rawState = {
-    sessions,
-    gitStatusBySession: {} as Record<string, GitStatusResult>,
-  };
-  const deps = {
-    updateSession: (id: string, update: (s: AppSession) => AppSession) => {
-      rawState.sessions = rawState.sessions.map((s) => (s.id === id ? update(s as AppSession) : s));
-    },
-    pushOperationFailure: vi.fn(),
-  };
-  return { rawState, ws: useWorkspaceState(rawState as never, deps as never) };
+function seedSessions(sessions: Array<Pick<AppSession, 'id'> & Partial<AppSession>>) {
+  sessionsStore().setSessions(sessions as AppSession[]);
 }
 
 describe('loadGitStatus — pullRequest mirror into the sessions pool', () => {
   beforeEach(() => {
     getKimiWebApiMock.mockReset();
     setKimiClientDeps({ api: () => getKimiWebApiMock(), t: (key) => key });
+    sessionsStore().setSessions([]);
+    filesStore().clearSessionGitStatus('s1');
+    filesStore().clearSessionGitStatus('archived-away');
   });
 
   afterEach(() => {
@@ -59,12 +54,12 @@ describe('loadGitStatus — pullRequest mirror into the sessions pool', () => {
 
   it('mirrors a fresh PR onto the pooled session so the sidebar chip updates', async () => {
     getKimiWebApiMock.mockReturnValue({ getGitStatus: vi.fn().mockResolvedValue(gitStatus(OPEN_PR)) });
-    const { rawState, ws } = createState([{ id: 's1', pullRequest: null }]);
+    seedSessions([{ id: 's1', pullRequest: null }]);
 
-    await ws.loadGitStatus('s1');
+    await filesStore().loadGitStatus('s1');
 
-    expect(rawState.gitStatusBySession['s1']?.pullRequest).toEqual(OPEN_PR);
-    expect(rawState.sessions[0]!.pullRequest).toEqual({
+    expect(filesStore().gitStatusBySession['s1']?.pullRequest).toEqual(OPEN_PR);
+    expect(sessionsStore().sessions[0]!.pullRequest).toEqual({
       number: 12,
       state: 'open',
       url: 'https://github.com/o/r/pull/12',
@@ -73,13 +68,13 @@ describe('loadGitStatus — pullRequest mirror into the sessions pool', () => {
 
   it('clears the pooled PR when the branch no longer has one', async () => {
     getKimiWebApiMock.mockReturnValue({ getGitStatus: vi.fn().mockResolvedValue(gitStatus(null)) });
-    const { rawState, ws } = createState([
+    seedSessions([
       { id: 's1', pullRequest: { number: 12, state: 'open', url: 'https://github.com/o/r/pull/12' } },
     ]);
 
-    await ws.loadGitStatus('s1');
+    await filesStore().loadGitStatus('s1');
 
-    expect(rawState.sessions[0]!.pullRequest).toBeNull();
+    expect(sessionsStore().sessions[0]!.pullRequest).toBeNull();
   });
 
   it('keeps the session object identity when the PR is unchanged (no pool churn)', async () => {
@@ -88,41 +83,44 @@ describe('loadGitStatus — pullRequest mirror into the sessions pool', () => {
       id: 's1',
       pullRequest: { number: 12, state: 'open', url: 'https://github.com/o/r/pull/12' } as const,
     };
-    const { rawState, ws } = createState([pooled]);
+    seedSessions([pooled]);
 
-    await ws.loadGitStatus('s1');
+    const before = sessionsStore().sessions[0];
+    await filesStore().loadGitStatus('s1');
 
-    expect(rawState.sessions[0]).toBe(pooled);
+    // Unchanged PR → updateSession's mapper returns the same object, so the
+    // pooled entry keeps its identity (the sidebar row is not dirtied).
+    expect(sessionsStore().sessions[0]).toBe(before);
   });
 
   it('narrows an unrecognized PR state to null instead of guessing', async () => {
     getKimiWebApiMock.mockReturnValue({
       getGitStatus: vi.fn().mockResolvedValue(gitStatus({ number: 3, state: 'draft', url: 'https://github.com/o/r/pull/3' })),
     });
-    const { rawState, ws } = createState([{ id: 's1', pullRequest: null }]);
+    seedSessions([{ id: 's1', pullRequest: null }]);
 
-    await ws.loadGitStatus('s1');
+    await filesStore().loadGitStatus('s1');
 
-    expect(rawState.sessions[0]!.pullRequest).toBeNull();
+    expect(sessionsStore().sessions[0]!.pullRequest).toBeNull();
   });
 
   it('leaves the pool untouched when the request fails', async () => {
     getKimiWebApiMock.mockReturnValue({ getGitStatus: vi.fn().mockRejectedValue(new Error('404')) });
-    const { rawState, ws } = createState([{ id: 's1', pullRequest: null }]);
+    seedSessions([{ id: 's1', pullRequest: null }]);
 
-    await ws.loadGitStatus('s1');
+    await filesStore().loadGitStatus('s1');
 
-    expect(rawState.gitStatusBySession['s1']).toBeUndefined();
-    expect(rawState.sessions[0]!.pullRequest).toBeNull();
+    expect(filesStore().gitStatusBySession['s1']).toBeUndefined();
+    expect(sessionsStore().sessions[0]!.pullRequest).toBeNull();
   });
 
   it('is a no-op for a session that is no longer pooled', async () => {
     getKimiWebApiMock.mockReturnValue({ getGitStatus: vi.fn().mockResolvedValue(gitStatus(OPEN_PR)) });
-    const { rawState, ws } = createState([{ id: 's1' }]);
+    seedSessions([{ id: 's1' }]);
 
-    await ws.loadGitStatus('archived-away');
+    await filesStore().loadGitStatus('archived-away');
 
-    expect(rawState.sessions).toHaveLength(1);
-    expect(rawState.sessions[0]!.id).toBe('s1');
+    expect(sessionsStore().sessions).toHaveLength(1);
+    expect(sessionsStore().sessions[0]!.id).toBe('s1');
   });
 });

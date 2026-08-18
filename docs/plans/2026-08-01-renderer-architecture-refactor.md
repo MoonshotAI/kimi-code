@@ -521,7 +521,7 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 - 验收：`pnpm test` 2295 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅ / `check:style` 29 findings 与基线同 ✅；**provider 增删改全流程冒烟（两端）+ 双端发消息冒烟待人工补**。
 - 无 changeset（纯重构）。
 
-### P7b — 本地实施 + 验收完成（2026-08-17；待提交 PR，合并后本条转「已完成」）
+### P7b — 已完成（2026-08-17；PR #255 合入 main squash a657d569）
 
 - 完成：两大单例（`useKimiWebClient.ts` 4072 行 / `useWorkspaceState.ts` 3687 行）`git mv` 自 desktop 副本进 `packages/app-client/src/client/`，web 副本删除——**双份副本正式消灭**：`apps/web/src/composables/` 只剩 `useDialogFocus`，desktop `composables/` 只剩专属文件（useNativeTerminal / usePlugins / useShortcuts 等），`composables/client/` 目录两端均消失。两端 38 个文件 import 改指 `@moonshot-ai/app-client/client`。
 - **注入缝落地（`client/deps.ts` 注册表）**：`KimiClientDeps` = `api` / `t` + 可选 `traceClientEvent` / `traceKeyEvent` / `sessionExportTraceToJsonl` / `onSessionDestroyed` / `onWorkspaceDestroyed` / `consumeSessionIntent` / `onPluginsShelfEvent`；`setKimiClientDeps` 在两端 `main.ts`（composition root）注册，web 只注册 api/t/trace 三项，可选 hook 全 no-op 即 web 现状。registry cell 存 `globalThis`——`vi.resetModules` 后 fresh module graph 仍共享同一注册表，单例集成测试（event-batcher / goal-turn-end 等的动态 import 模式）接线零特殊处理。
@@ -534,4 +534,47 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 - **尾巴**：① ~~会话全链路冒烟待人工补~~ **已完成（2026-08-17，agent-browser 双端实测）**：临时工作区（/tmp 两个 git repo）+ 独立 server 实例（58628，不碰用户 58627 进程）下——web：新建（draft→session）/选择/归档/prompt/Bash 工具/审批批准/AskUserQuestion 选择提交/工作区增删/杀 server 后页面不重载自动重连并恢复流式，全过；desktop（外部 server 模式 + CDP）：同清单全过，另验证原生工作区选择面板正常打开。存量会话与工作区零触碰，测试产物已清理（3 个测试会话已归档、两个临时工作区已注销）。② 存量行为确认非回归：server 不广播 `event.workspace.created`（REST 建的工作区其他客户端 reload 才见）；③ 根 AGENTS.md「开发顺序」条目涉及双副本同步的措辞待 P18 核对。
 - **Review（2026-08-17，4 代理分切面全量）**：移动文件逐 hunk diff / 注入缝与接线 / import 重接与导出完整性 / 测试迁移保真度四切面，无 blocker/major。跟进修复（commit ea220f7d）：① 补掉唯一漏网的 `[kimi-web]` 前缀（session-work 重试日志，两端 main 存量同行，desktop 日志输出因此变一行）；② native-todos.md 两条指向 `useKimiWebClient.ts` 的分叉条目就地更新为注入 hook 现状（全文重写仍留 P18）；③ trace 假桩白名单去掉 `busy`（真实 export ring 不投影它）并修正注释；④ 两端 App.vue 同桶重复 value import 合并。PR 描述对齐声明补 `logout` 一条。记录在案不修：immediate watcher 安全性依赖「模块求值时 workspaces 为空」隐式不变量（当前可证明安全）。
 - **合 main（2026-08-17 晚，#242 web document.title）**：冲突为两个 web 副本的 modify/delete——按 P1 既定口径，main 侧修改落进包内正本后 `git rm` 旧路径。`useDocumentTitle`（#242 新增、web 侧文件）连同其测试迁包（包单例不能 import app 侧模块），`webTitle`/`documentBaseTitle`/applyMeta 赋值/facade 导出 4 个 hunk 逐字补进包单例（其中 `webTitle: ''`、types 字段、applyMeta 行已被 rename-merge 自动落进包内，diff 核实零丢失）。desktop 标题行为不变（`usePageTitle({ running })` 静态标题，isDesktop 分支）。注意坑：`git mv` 后的文件再被 perl 改会出现 AM 状态——merge commit 里漏了头注释/测试 import 两处路径修正，追加 ec72a2b7 补齐。验收：test 2541 ✅ / typecheck 仅 2 个 main 存量 ✅ / lint 0 error ✅ / build ✅；PR mergeable=CLEAN。
+- 无 changeset（纯重构）。
+
+### P8 — 本地实施 + 验收完成（2026-08-17；待提交 PR，合并后本条转「已完成」）
+
+- 完成：Pinia 全量引入（pinia 4.0.3，仅 app-client 声明依赖）+ 首个 domain store `kimi.sessions`（`packages/app-client/src/stores/sessions.ts`）。state 收编：sessions / activeSessionId / pinnedSessionIds；facade 的写入漏斗（setSessions / updateSession / upsertSessionSorted / appendSession / removeSession / setActiveSessionId）与 pin 系列（pinSession / unpinSession / unpinSessions / togglePinSession）**逐字搬入 store action**。
+- **关键设计（计划未预判）：pinia 实例由包持有**。`stores/pinia.ts` 导出 `clientPinia`，两端 `main.ts` `app.use(clientPinia)` 安装同一实例。起因：包内 client 单例在 import 时构造（先于任何 app），`useTaskPoller` 的模块级 immediate watcher 读 `activeSessionId`——`getActivePinia()` 时序根本不可用。每个 store 配 `xxxStore()` accessor（内部 `useXStore(clientPinia)` 显式传实例），模块级 / 测试 / 生产全场景安全；组件内 `useXStore()` 走 inject 解析到同一实例。
+- **桥接而非批量替换**：facade `rawState` 的 sessions / activeSessionId 改 accessor（getter/setter 转发 store），`pinnedSessionIds` 改 computed 别名、pin 函数改委托——**~180 处存量读取点零改动**，useWorkspaceState / useModelProviderState / useTaskPoller / useSideChat 与 SessionsMutators deps 注入接口零改动，apps 两端组件零改动（facade 导出面不变）。写入纪律由 store action 收口（桥接 setter 同样转发 action，devtools 可见）。规范 §5 按实践校准（包持 pinia / `kimi.` 前缀 id / 桥接为过渡形态、新代码必须直接用 store / setup store devtools 无 mutation 记录故无需规避 / 测试模式）。
+- **测试**：新增 `sessions-store.test.ts`（11 个）：漏斗行为（recency 排序 / id 去重 / pin 持久化经内存 localStorage stub）+ 桥接双向联动（store→facade computed 响应式跟踪；facade renameSession/pinSession→store action）。集成层模式：`vi.resetModules` 后动态 import facade 与 store（同一 fresh 模块图共享 fresh clientPinia）。存量 2544 测试零改动全绿（模块级 import 安全由全体 facade 集成测试顺带证明）。
+- **行为对齐点**：无实质行为变化。`forgetSession` 的 pin 清理简化为 `unpinSession` action（内部 no-op 判断与原 includes 守卫等价）；pinnedSessionIds 从 import 时初始化变为首次 store 解析时初始化（均为 app 运行路径，等价）。
+- **验收**：`pnpm test` 2555 ✅ / typecheck 仅 2 个 main 存量 error（同 P7b，与本 PR 无关）✅ / lint 0 error（5 warning 全 app-core 存量，与基线同）✅ / build ✅ / check:style 29 与基线同 ✅。
+- **冒烟（2026-08-17，agent-browser 双端实测）**：临时工作区（/tmp git repo）+ 独立 server 实例（58628，不碰用户 58627 进程），存量会话只读浏览零触碰。**web**：列表分组渲染 / 会话切换 / draft→新建（upsertSessionSorted）/ 流式 busy / AI 自动标题 / pin（置顶区 + 「有 1 条对话被置顶」计数）/ **刷新后 pin 保持**（localStorage→store 初始化链路）/ 归档（列表移除 + pin 自动清理 + 自动选中下一会话），全过。**desktop**（外部 server 模式 + CDP 9223，不碰用户 9222 实例）：同清单全过（pin 为 per-device localStorage，两端互不干扰符合预期）。测试产物已清理（2 个测试会话已归档、临时工作区已 REST 注销、实例与端口全释放，用户 58627 未受影响）。
+- **Review（2026-08-17，explore 代理全量）**：无 blocker/major。action 逐字等价 / 桥接正确性（cloneState 引用比较优化仍有效）/ 漏网零（pinnedSessionIds 无写入残留）/ import 时序安全 / 测试保真 / 文档一致。跟进：lockfile 剔除 submodule 回退衍生物（semver 修剪 hunk，仅存 pinia 新增）；规范 §5 反例行号修正（useTaskPoller.ts:34→:74）。记录在案：pinia peer `@vue/devtools-api@^8.1.5` 解析到 6.6.4（strict-peer-dependencies=false 容忍，仅影响 devtools 集成，运行时无感）；store 四个 action（updateSession/upsertSessionSorted/appendSession/removeSession）暂仅测试调用、生产走 facade 漏斗经桥接落 store——P9+ 收敛时删 facade 副本。
+- 无 changeset（纯重构）。
+
+### P9 — 本地完成（2026-08-18；与 P8 同 PR，commit 4802c7a6）
+
+- `kimi.notifications` store 收编：notifyEnabled / notifySound / notifyPermission state + setNotifyEnabled / setNotifySound + maybeNotifyCompletion / Question / Approval（自 `composables/useNotification.ts` 逐字搬入；该文件只剩纯函数与 types——shouldNotifyCompletion / copy builders / ctx types）。facade 三处触发点（onMainTurnEnd / onQuestionRequested / onApprovalRequested 的 ctx 组装）留 facade——深嵌事件流，P14/P15 时自然迁移。
+- 行为对齐点：t 的注入路径等价（旧工厂注入的 t 与 store import 的 deps t 同为注册表委托）。无实质行为变化。
+- 测试：notification-logic.test.ts 23 个原样保留（preferences/tags/copy 三组），迁移为 store 模式（state 直写复位 + setKimiClientDeps 注册真 i18n t）。
+
+### P10 — 本地完成（2026-08-18；commit a65309a7）
+
+- `kimi.models` store 收编 state：models / starredModelIds（持久化）/ providers / draftModel / skillsBySession / skillsByWorkspace；toggleStarModel 与 loadSkillsForSession / loadSkillsForWorkspace 整体搬（api 经包内 getKimiWebApi()）。useModelProviderState 工厂保留编排 action（setModel / activateSkill / provider CRUD / OAuth / setThinking——依赖 facade 注入的 12 个回调，真整体转会成环，故 state 收编 + 工厂读写 store），return 的 state 改 computed 别名（组件 `client.models.value` 零改动）。
+- useWorkspaceState 的 draftModel 读/写（startSessionAndSendPrompt 的 draft 应用）改 `modelsStore()` 直取——deps 注入接口开始按规范「跨层共享一律 store 直取」收缩。
+- 测试：modelThinking.test.ts 62 个保留，播种/断言改 store（createModelProvider 内 setModels + draftModel/providers 复位隔离；625 行一处漏网的 `provider.models.value =` 直写是迁移中唯一被 computed 只读抓出来的点）。
+
+### P11 — 本地完成（2026-08-18；commit 12f4bd73）
+
+- `kimi.approvals` store 收编 approvalsBySession / questionsBySession（rawState 改 **getter-only 桥接**——整表替换在编译期即被拒，比 sessions 的 setter 桥更严）。actions：applyApprovalsDiff / applyQuestionsDiff（reducer 写回，包 applyRecordDiff 守逐 key 纪律）、setSession*（快照种子）、removePending*（**从 useWorkspaceState 的整表替换改为 per-key 写**——读取方全部按 `[sid]` 键或 Object.entries 读、无浅 watch，触发语义等价且跨会话失效更少，属拆解期顺手修复）、clearSession*（forgetSession / pendingInteraction 权威清理）。
+- **buildApprovalBlock 双份合并**：facade 副本（useKimiWebClient.ts:2203）删除，app-core `messagesToTurns.ts` 副本改 export 成唯一实现（11 个分支逐字语义比对一致，差异仅 `d.x` vs `d['x']` 语法）。
+- 测试：workspace-state.test.ts 的 respond 三例播种/断言改 store（respondApproval 保留 mock rawState 播种——其实现仍经桥接读 ExitPlanMode 查找，双播种对齐）；131 个全绿。
+
+### P12 — 本地完成（2026-08-18；commit 2faed870）
+
+- `kimi.files` store 收编：~/diff 视图五件套（selectedDiffPath / fileDiffLines / fileDiffLoading / fileDiffTexts / fileDiffEmptyFile）+ gitStatusBySession（getter-only 桥接）。loadFileDiff / clearFileDiff / loadGitStatus / readFileContent **整体搬入**（跨域读取仅 sessionsStore().activeSessionId 与 sessionsStore().updateSession——store 间依赖单向 files → sessions）。FS_PATH_NOT_FOUND_CODE / toSessionPullRequest / samePullRequest 随迁。loadGitStatus 的 record 整表替换顺手改 per-key 写（同 P11 修复）。
+- useWorkspaceState 的 deps 接口删掉 5 个 ref 字段（facade 传参同步收缩）；facade return 的 fileDiff 系导出改 store 委托。
+- 测试：workspaceStateGitStatus.test.ts 重写为 store 直测（播种 sessionsStore、断言 filesStore/sessionsStore；「无 pool churn」的 toBe 身份断言改为 reactive proxy 读取比较，语义保留）。
+
+### P9–P12 合并验收（2026-08-18）
+
+- **门禁**：`pnpm test` 2555 ✅ / typecheck 仅 2 个 main 存量（auxiliaryTranscriptToTurns.ts，与本 PR 无关）✅ / lint 0 error（5 warning 基线）✅ / build ✅ / check:style 29 基线 ✅。
+- **Review（explore 代理全量，47f0970a..HEAD）**：无 blocker/major。搬运保真 / buildApprovalBlock 逐分支等价 / 漏网零 / 分层无环 / 模块级时序安全 / 测试保真。跟进（commit 1ff04e5f）：barrel 补 filesStore 导出、useModelProviderState 多余缩进、三个测试文件的死传参（P12 已删的 5 个 ref 字段，被 as cast 掩盖）、spec §5 桥接清单补三个 getter-only 条目。记录在案：workspace-state.test.ts 的 createDeps 缺 connectIssue 为 P8 前存量（cast 掩盖）。
+- **冒烟（agent-browser 双端，独立 server 58628 + 临时工作区 /tmp/kimi-p9-ws-a，不碰用户 58627 与存量会话）**：**web**——通知设置渲染（权限未授予时系统通知开关正确置灰）/ 提示音切换 + 刷新后保持（localStorage→store 初始化）、模型选择器列表渲染 + 切换（K3 0813→K3，含 thinking 重解析）、审批卡 shell 分支渲染（命令/cwd/四操作）+ 批准（卡片消失 + 待授权 badge 消失 + echo 执行）、变更面板（分支/+1 -1/M 标记）→ diff 视图（-hello world/+hello kimi 红绿行）→ 返回（clearFileDiff）、文件预览（readFileContent 内容随修改更新），全过。**desktop**（外部 server + CDP 9223）：审批卡渲染 + 批准全链路、变更面板 → diff 视图，全过。测试产物已清理（2 个测试会话已归档、工作区已注销、实例与端口全释放）。
 - 无 changeset（纯重构）。

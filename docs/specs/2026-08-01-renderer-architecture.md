@@ -161,11 +161,15 @@ DaemonEventSocket（app-core/api：握手 / 心跳 / 重连 / 订阅 LRU / seq+e
 
 ## 5. Store 规范（Pinia）
 
-- **全部 setup store 形态**（`defineStore('id', () => { ... })`），不用 options store。
-- **state 不直接导出可变引用，消费端只读**；写路径只走 action。写入纪律由模块边界强制，不靠注释。
-- **禁用 `$patch` 整表替换**——沿用 `applyRecordDiff` 逐 key 写回纪律（`useTaskPoller.ts:34` 的整体替换为现存反例，拆解期修复）。
-- **高频流式 delta 只经 eventBatcher 合批后落地**；该路径（eventBatcher → reducer → 写回）不进 devtools 时间旅行——store 创建时 `devtools: false` 或按 action 粒度规避。
+P8 起生效。首个 store：`kimi.sessions`（`packages/app-client/src/stores/sessions.ts`）。
+
+- **pinia 实例由包持有**：`stores/pinia.ts` 导出 `clientPinia`，两端 `main.ts` 以 `app.use(clientPinia)` 安装同一实例。包内模块级代码（client 单例在 import 时构造，先于任何 app 存在）经每个 store 的 `xxxStore()` accessor 解析（内部 `useXStore(clientPinia)` 显式传实例），**禁止依赖 `getActivePinia()` 时序**；组件内直接 `useXStore()`（走 inject，解析到同一实例）。
+- **全部 setup store 形态**（`defineStore('kimi.<domain>', () => { ... })`，id 带 `kimi.` 前缀），不用 options store。
+- **state 消费端只读，写路径只走 action**；写入纪律由模块边界强制，不靠注释。迁移期例外：facade `rawState` 的桥接 accessor（P8 的 `sessions` / `activeSessionId` 为 getter/setter；P11 的 `approvalsBySession` / `questionsBySession` 与 P12 的 `gitStatusBySession` 为 getter-only——整表替换在编译期即被拒绝）让存量读取点零改动——这是过渡形态，新代码必须直接使用 store，P9–P15 拆解时存量读取点逐步显式化。
+- **禁用 `$patch` 整表替换**——沿用 `applyRecordDiff` 逐 key 写回纪律（`useTaskPoller.ts:74`（另 :133、:255）的整体替换为现存反例，拆解期修复）。
+- **高频流式 delta 只经 eventBatcher 合批后落地**。devtools 无需特殊规避：setup store 的 state 变化本就不产生 devtools mutation 记录（无时间旅行回滚），action 调用日志量可接受。
 - store 间依赖单向化（如 approvals → sessions 只允许一个方向），禁止环。
+- **测试**：store 层直接 import accessor 测；facade 集成层 `vi.resetModules` 后动态 import facade 与 store（同一 fresh 模块图共享 fresh `clientPinia`）。参照 `packages/app-client/test/sessions-store.test.ts`。
 
 ## 6. 迁移期纪律（自 P1 合并起生效，直到 god object 拆解收尾）
 

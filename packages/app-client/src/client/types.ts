@@ -15,7 +15,7 @@ import type {
 } from '@moonshot-ai/app-core/api';
 import type { ConnectionState, PermissionMode } from '@moonshot-ai/app-core/client/types';
 
-interface GitStatusEntry {
+export interface GitStatusEntry {
   branch: string;
   ahead: number;
   behind: number;

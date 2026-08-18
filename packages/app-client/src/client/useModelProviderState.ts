@@ -1,16 +1,16 @@
 // packages/app-client/src/client/useModelProviderState.ts
 // Models, providers, starred/favorite models, the active-session thinking
 // level, session-scoped slash skills, and the managed OAuth device flow.
-// Owns the lazy-loaded model/provider caches plus the new-session "draft"
-// model pick. Cross-dependencies (failure reporting, status refresh, activity,
-// in-flight set, thinking storage) are injected by the facade.
+// The state itself (model/provider caches, starred list, skills, draft pick)
+// lives in the models Pinia store (stores/models.ts, P10) — this module holds
+// the orchestrating actions. Cross-dependencies (failure reporting, status
+// refresh, activity, in-flight set, thinking storage) are injected by the facade.
 
-import { ref, watch, type ComputedRef } from 'vue';
+import { computed, watch, type ComputedRef } from 'vue';
 import { DaemonApiError } from '@moonshot-ai/app-core/api';
-import type { AddProviderInput, AppCatalogProvider, AppMessage, AppModel, AppProvider, AppProviderDetail, AppSession, AppSkill, DeleteProviderResult, ImportCatalogProviderInput, ImportCustomRegistryInput, KimiWebApi, ManagedUsageResult, OAuthLoginStartResult, ThinkingLevel, UpdateProviderInput } from '@moonshot-ai/app-core/api';
+import type { AddProviderInput, AppCatalogProvider, AppMessage, AppModel, AppProvider, AppProviderDetail, AppSession, DeleteProviderResult, ImportCatalogProviderInput, ImportCustomRegistryInput, KimiWebApi, ManagedUsageResult, OAuthLoginStartResult, ThinkingLevel, UpdateProviderInput } from '@moonshot-ai/app-core/api';
 import { logError, logWarn } from '@moonshot-ai/app-core/lib';
 import { attachmentsToContent } from './attachmentsToContent';
-import { safeGetString, safeSetString, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import {
   ackThinkingPending,
   defaultThinkingLevelFor,
@@ -21,36 +21,13 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import type { ActivityState } from '@moonshot-ai/app-core/client/types';
 import type { ExtendedState, PromptAttachment } from './types';
-
-const STARRED_MODELS_STORAGE_KEY = STORAGE_KEYS.starredModels;
+import { modelsStore } from '../stores/models';
 
 /** Sentinel thrown to abort a skill activation when the prerequisite profile
  *  persist failed — persistSessionProfile already surfaced that failure, so
  *  the catch skips activating without reporting a second, synthetic error.
  *  (An actual Error instance: oxlint only-throw-error.) */
 const PROFILE_PERSIST_FAILED = new Error('profile persist failed');
-
-function loadStarredModelsFromStorage(): string[] {
-  try {
-    const raw = safeGetString(STARRED_MODELS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) {
-      return parsed as string[];
-    }
-  } catch {
-    // ignore (localStorage not available or malformed)
-  }
-  return [];
-}
-
-function saveStarredModelsToStorage(v: string[]): void {
-  try {
-    safeSetString(STARRED_MODELS_STORAGE_KEY, JSON.stringify(v));
-  } catch {
-    // ignore
-  }
-}
 
 export interface PersistSessionProfilePatch {
   model?: string;
@@ -119,29 +96,17 @@ export function useModelProviderState(
     settleLocalTurn,
   } = deps;
 
-  // Models + Providers reactive state (lazy-loaded, cached)
-  const models = ref<AppModel[]>([]);
-  const starredModelIds = ref<string[]>(loadStarredModelsFromStorage());
-
-  // Session-scoped skills (slash-invocable). Loaded lazily per session; the active
-  // session's list feeds the composer's `/` menu.
-  const skillsBySession = ref<Record<string, AppSkill[]>>({});
-  // Workspace-scoped skills, used to populate the `/` menu before a session exists
-  // (onboarding composer). Keyed by workspace id; loaded once per workspace.
-  const skillsByWorkspace = ref<Record<string, AppSkill[]>>({});
-  const providers = ref<AppProvider[]>([]);
-
-  // Model picked while in the "new session draft" state (onboarding composer —
-  // no backend session exists yet, so POST /profile has nothing to target).
-  // Applied and cleared when the first prompt creates the session.
-  const draftModel = ref<string | null>(null);
+  // The models/providers/skills/draft-model state lives in the models Pinia
+  // store (stores/models.ts, P10); this module's actions read and write it
+  // through the store.
+  const store = modelsStore();
 
   function modelById(modelId: string | null | undefined): AppModel | undefined {
     if (modelId === undefined || modelId === null || modelId.length === 0) return undefined;
     // Prefer the exact id — model names can collide across providers.
     return (
-      models.value.find((m) => m.id === modelId) ??
-      models.value.find((m) => m.model === modelId)
+      store.models.find((m) => m.id === modelId) ??
+      store.models.find((m) => m.model === modelId)
     );
   }
 
@@ -151,7 +116,7 @@ export function useModelProviderState(
       : undefined;
     const rawModel =
       activeSession === undefined
-        ? draftModel.value ?? rawState.defaultModel
+        ? store.draftModel ?? rawState.defaultModel
         : activeSession.model || rawState.defaultModel;
     return modelById(rawModel)?.id ?? rawModel ?? undefined;
   }
@@ -275,30 +240,10 @@ export function useModelProviderState(
       .catch((error: unknown) => pushOperationFailure('setConfig', error));
   }
 
-  async function loadSkillsForSession(sessionId: string): Promise<void> {
-    try {
-      const list = await api.listSkills(sessionId);
-      skillsBySession.value = { ...skillsBySession.value, [sessionId]: list };
-    } catch {
-      // Skills are side data; an older daemon without /skills just yields no
-      // slash-skills, the built-in commands still work.
-    }
-  }
-
-  async function loadSkillsForWorkspace(workspaceId: string): Promise<void> {
-    try {
-      const list = await api.listSkillsForWorkspace(workspaceId);
-      skillsByWorkspace.value = { ...skillsByWorkspace.value, [workspaceId]: list };
-    } catch {
-      // Side data; an older daemon without /workspaces/{id}/skills just yields
-      // no slash-skills for the onboarding composer.
-    }
-  }
-
   /** Load models (cached — call again to force refresh) */
   async function loadModels(): Promise<void> {
     try {
-      models.value = await api.listModels();
+      store.setModels(await api.listModels());
       // Resolve the active session's level: its own daemon-reported level when
       // still declared, else the model's catalog default. Always re-resolved
       // (not just when unset) so a level carried over from another model can't
@@ -315,7 +260,7 @@ export function useModelProviderState(
   /** Load providers */
   async function loadProviders(): Promise<void> {
     try {
-      providers.value = await api.listProviders();
+      store.setProviders(await api.listProviders());
     } catch (err) {
       pushOperationFailure('loadProviders', err);
     }
@@ -349,7 +294,7 @@ export function useModelProviderState(
       // In-memory only: a model switch is not a thinking pick, so nothing is
       // persisted beyond the in-memory level (a derived default would otherwise
       // masquerade as an explicit choice later).
-      draftModel.value = modelId;
+      store.setDraftModel(modelId);
       rawState.thinking = nextThinking;
       if (nextThinking !== prevThinking && nextThinking !== undefined) {
         persistGlobalThinking(nextThinking);
@@ -406,18 +351,6 @@ export function useModelProviderState(
     ackThinkingPending(rawState, sid, thinkingWriteToken);
     await refreshSessionStatus(sid);
     return true;
-  }
-
-  /** Toggle whether a model is starred (favorited) in the model picker. */
-  function toggleStarModel(modelId: string): void {
-    const set = new Set(starredModelIds.value);
-    if (set.has(modelId)) {
-      set.delete(modelId);
-    } else {
-      set.add(modelId);
-    }
-    starredModelIds.value = Array.from(set);
-    saveStarredModelsToStorage(starredModelIds.value);
   }
 
   /**
@@ -744,23 +677,23 @@ export function useModelProviderState(
   }
 
   return {
-    // state
-    models,
-    starredModelIds,
-    providers,
-    draftModel,
-    skillsBySession,
-    skillsByWorkspace,
+    // state (models store — computed aliases keep this return shape stable)
+    models: computed(() => store.models),
+    starredModelIds: computed(() => store.starredModelIds),
+    providers: computed(() => store.providers),
+    draftModel: computed(() => store.draftModel),
+    skillsBySession: computed(() => store.skillsBySession),
+    skillsByWorkspace: computed(() => store.skillsByWorkspace),
     // actions
-    loadSkillsForSession,
-    loadSkillsForWorkspace,
+    loadSkillsForSession: store.loadSkillsForSession,
+    loadSkillsForWorkspace: store.loadSkillsForWorkspace,
     loadModels,
     loadProviders,
     setModel,
     thinkingLevelForModelId,
     thinkingLevelForSessionId,
     resolveThinkingForPrompt,
-    toggleStarModel,
+    toggleStarModel: store.toggleStarModel,
     activateSkill,
     addProvider,
     updateProvider,

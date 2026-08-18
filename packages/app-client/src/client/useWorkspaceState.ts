@@ -39,19 +39,19 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import { isDesktop } from '@moonshot-ai/app-core/lib';
 import { logWarn } from '@moonshot-ai/app-core/lib';
-import { parseDiff } from '@moonshot-ai/app-core/client';
 import { workspaceRootKey } from '@moonshot-ai/app-core/lib';
 import { pathRelativeTo } from '@moonshot-ai/app-core/lib';
-import { buildFullDiffTexts, type DiffFullTexts } from '@moonshot-ai/app-core/client';
 import { readSessionIdFromLocation, sessionUrl } from '@moonshot-ai/app-core/lib';
 import { ackThinkingPending, markThinkingPending } from '@moonshot-ai/app-core/lib';
 import { attachmentsToContent } from './attachmentsToContent';
 import type { SessionUrlMode } from '@moonshot-ai/app-core/lib';
 import { track } from '../contracts';
+import { modelsStore } from '../stores/models';
+import { approvalsStore } from '../stores/approvals';
+import { filesStore } from '../stores/files';
 import type {
   ActivityState,
   ConversationStatus,
-  DiffViewLine,
   PermissionMode,
   WorkspaceView,
 } from '@moonshot-ai/app-core/client/types';
@@ -75,7 +75,6 @@ export const FLAT_SESSIONS_PAGE_SIZE = 50;
 const SESSION_NOT_FOUND_CODE = 40401;
 const PROMPT_NOT_FOUND_CODE = 40402;
 const WORKSPACE_NOT_FOUND_CODE = 40410;
-const FS_PATH_NOT_FOUND_CODE = 40409;
 // Shared "already resolved" conflict (40902). The daemon reuses it for both
 // approvals and questions when a second client races the resolve, so a
 // duplicate submit is reported as a conflict even though the desired end
@@ -97,23 +96,6 @@ const TASK_ALREADY_FINISHED_CODE = 40904;
 
 function isTaskAlreadyFinishedError(err: unknown): boolean {
   return isDaemonApiError(err) && err.code === TASK_ALREADY_FINISHED_CODE;
-}
-
-/** Narrow the fs:git_status PR payload to the session-pool shape. The daemon
- *  normalizes `state` to open/closed/merged (anything else fails its parse and
- *  comes back as null), so an unrecognized value means a newer daemon — treat
- *  it as no-PR rather than render a chip with unknown styling. */
-function toSessionPullRequest(
-  pr: { number: number; state: string; url: string } | null,
-): AppSession['pullRequest'] {
-  if (!pr) return null;
-  if (pr.state !== 'open' && pr.state !== 'closed' && pr.state !== 'merged') return null;
-  return { number: pr.number, state: pr.state, url: pr.url };
-}
-
-function samePullRequest(a: AppSession['pullRequest'], b: AppSession['pullRequest']): boolean {
-  if (a == null || b == null) return a == null && b == null;
-  return a.number === b.number && a.state === b.state && a.url === b.url;
 }
 
 /**
@@ -351,17 +333,6 @@ export interface UseWorkspaceStateDeps {
   /** Diagnostic for the connecting splash, set by checkAuth on transient
    *  failures and cleared once a check gets through. */
   connectIssue: Ref<string | null>;
-  selectedDiffPath: Ref<string | null>;
-  fileDiffLines: Ref<DiffViewLine[]>;
-  fileDiffLoading: Ref<boolean>;
-  /** Full old/new texts behind the open diff, for full-file syntax
-      highlighting; null while loading or when unavailable (fallback: the
-      panel highlights the stitched fragments). */
-  fileDiffTexts: Ref<DiffFullTexts | null>;
-  /** True when the open diff's file is empty (0 bytes) — git has no line
-      diff for it, so the panel shows an "empty file" state instead of the
-      misleading "no line changes". */
-  fileDiffEmptyFile: Ref<boolean>;
 }
 
 export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceStateDeps) {
@@ -408,11 +379,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     goalErrorMessage,
     initialized,
     connectIssue,
-    selectedDiffPath,
-    fileDiffLines,
-    fileDiffLoading,
-    fileDiffTexts,
-    fileDiffEmptyFile,
   } = deps;
   /** Monotonic selectSession serial: an off-list fetch that returns after a
       newer select started is stale and bails (see selectSession). */
@@ -496,95 +462,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
   function refreshSessionSidecars(sessionId: string, opts?: { skipStatus?: boolean }): void {
     void taskPoller.loadTasksForSession(sessionId);
-    void loadGitStatus(sessionId);
+    void filesStore().loadGitStatus(sessionId);
     if (opts?.skipStatus !== true) void refreshSessionStatus(sessionId);
     void refreshSessionGoal(sessionId);
     void refreshSessionPlans(sessionId);
     if (!Object.prototype.hasOwnProperty.call(modelProvider.skillsBySession.value, sessionId)) {
       void modelProvider.loadSkillsForSession(sessionId);
-    }
-  }
-
-  async function loadFileDiff(path: string): Promise<void> {
-    const sid = rawState.activeSessionId;
-    if (!sid) return;
-    selectedDiffPath.value = path;
-    fileDiffLines.value = [];
-    fileDiffTexts.value = null;
-    fileDiffEmptyFile.value = false;
-    fileDiffLoading.value = true;
-    try {
-      const api = getKimiWebApi();
-      const result = await api.getFileDiff(sid, path);
-      // Guard against a stale response when the user tapped another file or
-      // switched sessions — later awaits re-check the same pair.
-      if (selectedDiffPath.value !== path || rawState.activeSessionId !== sid) return;
-      const rows = parseDiff(result.diff);
-      fileDiffLines.value = rows;
-      if (rows.length === 0) {
-        // An empty (0-byte) new file has no line diff — git has nothing to
-        // add — and the generic "no line changes" state would wrongly read
-        // as "nothing changed". Read the file to tell the two apart.
-        const file = await readFileContent(path).catch(() => null);
-        if (selectedDiffPath.value !== path || rawState.activeSessionId !== sid) return;
-        fileDiffEmptyFile.value = file !== null && file.size === 0;
-        return;
-      }
-      // The rows are renderable now — don't keep the spinner up for the
-      // optional full-file highlighting, which fills in asynchronously and
-      // falls back to fragment mode when unavailable.
-      fileDiffLoading.value = false;
-      const texts = await buildFullDiffTexts(rows, {
-        truncated: result.truncated,
-        readNewText: async () => {
-          const file = await readFileContent(path).catch(() => null);
-          if (!file || file.isBinary || file.encoding !== 'utf-8') return null;
-          return file.content;
-        },
-      });
-      // The file read is a second await — re-check staleness before committing.
-      if (selectedDiffPath.value !== path || rawState.activeSessionId !== sid) return;
-      fileDiffTexts.value = texts;
-    } catch (err) {
-      // A single file's diff failing (a new/untracked/binary/deleted file the
-      // daemon can't diff) is LOCAL to this pane, not a session-level fault — the
-      // DiffView already shows a graceful "no diff" state when the lines are
-      // empty. Surfacing it as a global "kimi server api" error toast on a routine
-      // file click is disproportionate, so log it for the trace export instead.
-      if (selectedDiffPath.value === path) fileDiffLines.value = [];
-      logWarn('[loadFileDiff] diff unavailable for', path, err);
-    } finally {
-      if (selectedDiffPath.value === path) fileDiffLoading.value = false;
-    }
-  }
-
-  /** Close the ~/diff line-by-line view and return to the changed-file list. */
-  function clearFileDiff(): void {
-    selectedDiffPath.value = null;
-    fileDiffLines.value = [];
-    fileDiffTexts.value = null;
-    fileDiffEmptyFile.value = false;
-    fileDiffLoading.value = false;
-  }
-
-  /** Load git status for a session — defensive, never throws */
-  async function loadGitStatus(sessionId: string): Promise<void> {
-    try {
-      const api = getKimiWebApi();
-      const result = await api.getGitStatus(sessionId);
-      rawState.gitStatusBySession = {
-        ...rawState.gitStatusBySession,
-        [sessionId]: result,
-      };
-      // The sidebar row's PR chip reads session.pullRequest, which otherwise
-      // only the v2 list's git domain seeds (WS events never carry it) —
-      // mirror the fresh value into the pool so the row updates together
-      // with the header. Guarded by a field compare: loadGitStatus runs on
-      // every session select, so an unchanged PR must not churn the pool.
-      const pr = toSessionPullRequest(result.pullRequest);
-      updateSession(sessionId, (s) => (samePullRequest(s.pullRequest, pr) ? s : { ...s, pullRequest: pr }));
-    } catch {
-      // Stale/old sessions may 404 — leave undefined, no crash
     }
   }
 
@@ -1570,7 +1453,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       }
       setActiveSessionId(undefined);
       rawState.sessionLoading = false;
-      clearFileDiff();
+      filesStore().clearFileDiff();
       writeSessionUrl(undefined, 'replace');
     }
   }
@@ -1587,7 +1470,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   function openWorkspaceDraft(workspaceId: string): void {
     selectWorkspace(workspaceId);
     clearActiveSession();
-    clearFileDiff();
+    filesStore().clearFileDiff();
   }
 
   /**
@@ -1621,13 +1504,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     } catch {
       // Older daemons may not have /workspaces.
     }
-    const draftPick = modelProvider.draftModel.value ?? undefined;
+    const draftPick = modelsStore().draftModel ?? undefined;
     const session = await api.createSession({
       workspaceId: workspaceIdForCreate,
       cwd: cwdForCreate,
       model: draftPick,
     });
-    modelProvider.draftModel.value = null; // applied — the next draft starts from the default
+    modelsStore().setDraftModel(null); // applied — the next draft starts from the default
     // The create echo may return model as '' (same daemon quirk as /profile);
     // keep the user's pick so the status line doesn't snap back to the default.
     const created =
@@ -2023,7 +1906,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         saveUnread({ [sessionId]: false });
       }
       // A diff belongs to the session it was loaded from — drop it on switch.
-      clearFileDiff();
+      filesStore().clearFileDiff();
 
       // NOTE: persisted sessions are directly promptable on the current daemon —
       // selecting one and sending a message just works, no re-activation needed.
@@ -2630,22 +2513,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
-  function removePendingApproval(sid: string, approvalId: string): void {
-    const list = rawState.approvalsBySession[sid] ?? [];
-    rawState.approvalsBySession = {
-      ...rawState.approvalsBySession,
-      [sid]: list.filter((a) => a.approvalId !== approvalId),
-    };
-  }
-
-  function removePendingQuestion(sid: string, questionId: string): void {
-    const list = rawState.questionsBySession[sid] ?? [];
-    rawState.questionsBySession = {
-      ...rawState.questionsBySession,
-      [sid]: list.filter((q) => q.questionId !== questionId),
-    };
-  }
-
   async function respondApproval(
     approvalId: string,
     response: { decision: ApprovalDecision; scope?: 'session'; feedback?: string; selectedLabel?: string },
@@ -2669,7 +2536,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       };
       await api.respondApproval(sid, approvalId, fullResponse);
       // Remove from local approvals immediately (WS event will confirm)
-      removePendingApproval(sid, approvalId);
+      approvalsStore().removePendingApproval(sid, approvalId);
       if (planToolCallId !== undefined) {
         // The POST answered before the WS event: the event handler's settled
         // lookup finds nothing once the approval is removed above — settle
@@ -2685,7 +2552,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (isAlreadyResolvedError(err)) {
         // Already resolved (another client or a raced event) — that is the
         // desired end state, so drop it locally without surfacing an error.
-        removePendingApproval(sid, approvalId);
+        approvalsStore().removePendingApproval(sid, approvalId);
         if (planToolCallId !== undefined) {
           void refreshSessionPlans(sid, planToolCallId);
         }
@@ -2709,12 +2576,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       const api = getKimiWebApi();
       await api.respondQuestion(sid, questionId, response);
-      removePendingQuestion(sid, questionId);
+      approvalsStore().removePendingQuestion(sid, questionId);
     } catch (err) {
       if (isAlreadyResolvedError(err)) {
         // Already resolved (another client or a raced event) — that is the
         // desired end state, so drop it locally without surfacing an error.
-        removePendingQuestion(sid, questionId);
+        approvalsStore().removePendingQuestion(sid, questionId);
       } else {
         pushOperationFailure('respondQuestion', err, { sessionId: sid });
       }
@@ -2732,10 +2599,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       const api = getKimiWebApi();
       await api.dismissQuestion(sid, questionId);
-      removePendingQuestion(sid, questionId);
+      approvalsStore().removePendingQuestion(sid, questionId);
     } catch (err) {
       if (isAlreadyResolvedError(err)) {
-        removePendingQuestion(sid, questionId);
+        approvalsStore().removePendingQuestion(sid, questionId);
       } else {
         pushOperationFailure('dismissQuestion', err, { sessionId: sid });
       }
@@ -3094,7 +2961,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (removingActiveWorkspace || activeSessionInRemovedWorkspace) {
       setActiveSessionId(undefined);
       rawState.sessionLoading = false;
-      clearFileDiff();
+      filesStore().clearFileDiff();
       writeSessionUrl(undefined, 'replace');
     }
   }
@@ -3407,45 +3274,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
-  /**
-   * Read file content for the active session.
-   * Returns the file metadata + content (including path), or null on error or
-   * no active session. A genuinely-absent path (fs.path_not_found) is RETHROWN
-   * instead of nulled — the file preview maps it to a dedicated not-found
-   * state, which a shared "read failed" can't express.
-   */
-  async function readFileContent(path: string): Promise<{
-    path: string;
-    content: string;
-    encoding: 'utf-8' | 'base64';
-    mime: string;
-    languageId?: string;
-    isBinary: boolean;
-    size: number;
-    lineCount?: number;
-  } | null> {
-    const sid = rawState.activeSessionId;
-    if (!sid) return null;
-    try {
-      const api = getKimiWebApi();
-      const result = await api.readFile(sid, { path });
-      return {
-        path: result.path,
-        content: result.content,
-        encoding: result.encoding,
-        mime: result.mime,
-        languageId: result.languageId,
-        isBinary: result.isBinary,
-        size: result.size,
-        lineCount: result.lineCount,
-      };
-    } catch (err) {
-      logWarn('[kimi-code] readFileContent failed for', path, err);
-      if (isDaemonApiError(err) && err.code === FS_PATH_NOT_FOUND_CODE) throw err;
-      return null;
-    }
-  }
-
   // Absolute-path read via the daemon's global fs:content — no workspace prefix
   // gate, so a file the turn touched outside the active cwd (e.g. a worktree)
   // opens too. Throws on daemon not-found so the preview can show the real cause.
@@ -3576,9 +3404,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   return {
-    loadFileDiff,
-    clearFileDiff,
-    loadGitStatus,
     checkAuth,
     probeManagedMembership,
     loadConfig,
@@ -3651,7 +3476,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     forkSession,
     undo,
     listDir,
-    readFileContent,
     readHostFileContent,
     getFileDownloadUrl,
     openWorkspaceFile,

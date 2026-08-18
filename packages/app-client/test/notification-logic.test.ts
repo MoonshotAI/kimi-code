@@ -7,8 +7,10 @@ import {
   completionNotificationCopy,
   questionNotificationCopy,
   shouldNotifyCompletion,
-  useNotification,
 } from '../src/composables/useNotification';
+import { notificationsStore } from '../src/stores/notifications';
+import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
+import type { KimiWebApi } from '@moonshot-ai/app-core/api';
 
 // Real i18n (the tests assert on localized output); the copy builders take the
 // translator by injection.
@@ -46,12 +48,12 @@ function installStorage(storage: Storage): void {
   });
 }
 
-// Singleton — module-level refs + setters. The OS Notification API is absent in
-// the test env, so the *enable* path is a no-op; the disable path and the
-// load-from-storage defaults are what we exercise here.
-const { notifyEnabled, notifySound, setNotifyEnabled, setNotifySound } = useNotification({ t });
-const importedEnabledDefault = notifyEnabled.value;
-const importedSoundDefault = notifySound.value;
+// Store-backed preferences. The OS Notification API is absent in the test env,
+// so the *enable* path is a no-op; the disable path and the load-from-storage
+// defaults are what we exercise here.
+const store = notificationsStore();
+const importedEnabledDefault = store.notifyEnabled;
+const importedSoundDefault = store.notifySound;
 
 describe('useNotification preferences', () => {
   beforeEach(() => {
@@ -70,15 +72,15 @@ describe('useNotification preferences', () => {
     expect(importedSoundDefault).toBe(true);
   });
 
-  it('disabling notifications persists "0" and updates the ref', () => {
-    void setNotifyEnabled(false);
-    expect(notifyEnabled.value).toBe(false);
+  it('disabling notifications persists "0" and updates the state', () => {
+    void store.setNotifyEnabled(false);
+    expect(store.notifyEnabled).toBe(false);
     expect(safeGetString(STORAGE_KEYS.notifyEnabled)).toBe('0');
   });
 
-  it('disabling the notification sound persists "0" and updates the ref', () => {
-    setNotifySound(false);
-    expect(notifySound.value).toBe(false);
+  it('disabling the notification sound persists "0" and updates the state', () => {
+    store.setNotifySound(false);
+    expect(store.notifySound).toBe(false);
     expect(safeGetString(STORAGE_KEYS.notifySound)).toBe('0');
   });
 });
@@ -187,20 +189,23 @@ describe('notification tags', () => {
     close(): void {}
   }
 
-  const { maybeNotifyCompletion, maybeNotifyQuestion, maybeNotifyApproval } = useNotification({ t });
+  const { maybeNotifyCompletion, maybeNotifyQuestion, maybeNotifyApproval } = store;
   const base = { isUserWatching: false, sessionTitle: 'T', onClick: () => {} };
 
   beforeEach(() => {
     FakeNotification.fired = [];
     (globalThis as Record<string, unknown>).Notification = FakeNotification;
-    notifyEnabled.value = true;
-    notifySound.value = true;
+    // The store's copy builders translate through the deps registry.
+    setKimiClientDeps({ api: () => ({}) as unknown as KimiWebApi, t });
+    store.notifyEnabled = true;
+    store.notifySound = true;
   });
 
   afterEach(() => {
     delete (globalThis as Record<string, unknown>).Notification;
-    notifyEnabled.value = true;
-    notifySound.value = true;
+    resetKimiClientDeps();
+    store.notifyEnabled = true;
+    store.notifySound = true;
   });
 
   it('completion tags carry the prompt id so each turn in a session alerts', () => {
@@ -234,7 +239,7 @@ describe('notification tags', () => {
   });
 
   it('fires nothing while the master toggle is off', () => {
-    notifyEnabled.value = false;
+    store.notifyEnabled = false;
     maybeNotifyCompletion('s1', { ...base, promptId: 'p1' });
     maybeNotifyQuestion({ ...base, questionPreview: 'q', questionId: 'q1' });
     maybeNotifyApproval({ ...base, toolName: 'bash', approvalId: 'a1' });
@@ -242,7 +247,7 @@ describe('notification tags', () => {
   });
 
   it('fires silent notifications while the sound toggle is off', () => {
-    notifySound.value = false;
+    store.notifySound = false;
     maybeNotifyCompletion('s1', { ...base, promptId: 'p1' });
     expect(FakeNotification.fired[0]?.silent).toBe(true);
   });

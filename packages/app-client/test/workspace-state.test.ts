@@ -15,6 +15,7 @@ import { insertSessionByRecency } from '@moonshot-ai/app-core/lib';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import type { Translator } from '@moonshot-ai/app-core/contracts';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
+import { approvalsStore } from '../src/stores/approvals';
 import type { ExtendedState } from '../src/client/types';
 import { useWorkspaceState, forgetLocalTurnState, type UseWorkspaceStateDeps } from '../src/client/useWorkspaceState';
 
@@ -228,11 +229,6 @@ function createDeps(): UseWorkspaceStateDeps {
     goalErrorMessage: vi.fn(),
     basename: (path: string) => path.split('/').at(-1) ?? path,
     initialized: ref(true),
-    selectedDiffPath: ref(null),
-    fileDiffLines: ref([]),
-    fileDiffLoading: ref(false),
-    fileDiffTexts: ref(null),
-    fileDiffEmptyFile: ref(false),
   } as unknown as UseWorkspaceStateDeps;
 }
 
@@ -743,6 +739,7 @@ describe('useWorkspaceState — respondQuestion', () => {
 
   beforeEach(() => {
     apiMock.respondQuestion.mockReset();
+    approvalsStore().clearSessionQuestions('sess_1');
   });
 
   it('removes the question locally and stays silent when already resolved (40902)', async () => {
@@ -750,7 +747,7 @@ describe('useWorkspaceState — respondQuestion', () => {
       new DaemonApiError({ code: 40902, msg: 'question q_1 already resolved', requestId: 'r' }),
     );
     const state = createState();
-    state.questionsBySession = { sess_1: [questionRequest('q_1')] };
+    approvalsStore().setSessionQuestions('sess_1', [questionRequest('q_1')]);
     const deps = createDeps();
     const ws = useWorkspaceState(state, deps);
 
@@ -759,7 +756,7 @@ describe('useWorkspaceState — respondQuestion', () => {
     expect(apiMock.respondQuestion).toHaveBeenCalledOnce();
     // Already resolved is the desired end state, so the card is dropped locally
     // without surfacing a duplicate error to the user.
-    expect(state.questionsBySession['sess_1']).toEqual([]);
+    expect(approvalsStore().questionsBySession['sess_1']).toEqual([]);
     expect(deps.pushOperationFailure).not.toHaveBeenCalled();
   });
 
@@ -768,13 +765,13 @@ describe('useWorkspaceState — respondQuestion', () => {
       new DaemonApiError({ code: 50001, msg: 'boom', requestId: 'r' }),
     );
     const state = createState();
-    state.questionsBySession = { sess_1: [questionRequest('q_1')] };
+    approvalsStore().setSessionQuestions('sess_1', [questionRequest('q_1')]);
     const deps = createDeps();
     const ws = useWorkspaceState(state, deps);
 
     await ws.respondQuestion('q_1', response);
 
-    expect(state.questionsBySession['sess_1']).toHaveLength(1);
+    expect(approvalsStore().questionsBySession['sess_1']).toHaveLength(1);
     expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
   });
 
@@ -786,7 +783,7 @@ describe('useWorkspaceState — respondQuestion', () => {
       }),
     );
     const state = createState();
-    state.questionsBySession = { sess_1: [questionRequest('q_1')] };
+    approvalsStore().setSessionQuestions('sess_1', [questionRequest('q_1')]);
     const deps = createDeps();
     const ws = useWorkspaceState(state, deps);
 
@@ -799,13 +796,14 @@ describe('useWorkspaceState — respondQuestion', () => {
     // Resolve the first request and ensure the question is removed.
     resolveRespond({ resolved: true, resolvedAt: '2026-01-01T00:00:00.000Z' });
     await first;
-    expect(state.questionsBySession['sess_1']).toEqual([]);
+    expect(approvalsStore().questionsBySession['sess_1']).toEqual([]);
   });
 });
 
 describe('useWorkspaceState — respondApproval', () => {
   beforeEach(() => {
     apiMock.respondApproval.mockReset();
+    approvalsStore().clearSessionApprovals('sess_1');
   });
 
   it('removes the approval locally and stays silent when already resolved (40902)', async () => {
@@ -814,13 +812,14 @@ describe('useWorkspaceState — respondApproval', () => {
     );
     const state = createState();
     state.approvalsBySession = { sess_1: [approvalRequest('a_1')] };
+    approvalsStore().setSessionApprovals('sess_1', [approvalRequest('a_1')]);
     const deps = createDeps();
     const ws = useWorkspaceState(state, deps);
 
     await ws.respondApproval('a_1', { decision: 'approved' });
 
     expect(apiMock.respondApproval).toHaveBeenCalledOnce();
-    expect(state.approvalsBySession['sess_1']).toEqual([]);
+    expect(approvalsStore().approvalsBySession['sess_1']).toEqual([]);
     expect(deps.pushOperationFailure).not.toHaveBeenCalled();
   });
 });
