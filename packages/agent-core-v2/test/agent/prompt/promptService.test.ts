@@ -40,6 +40,15 @@ function message(text: string): ContextMessage {
   return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
 }
 
+function bundledMessage(skillName: string, user: string, extra: readonly ContentPart[] = []): ContextMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text: `<skill>${skillName}</skill>` }, { type: 'text', text: user }, ...extra],
+    toolCalls: [],
+    origin: { kind: 'user', skillActivations: [{ activationId: `act-${skillName}`, skillName }] },
+  };
+}
+
 const noopBlob: IAgentBlobService = {
   _serviceBrand: undefined,
   offloadParts: async (parts) => parts,
@@ -288,17 +297,8 @@ describe('AgentPromptService', () => {
     eventBus.subscribe(PromptSteered, (event) => steered.push(event.content));
     const active = await prompt.enqueue({ message: message('active') });
     await active.launched;
-    const bundled = (skillName: string, user: string): ContextMessage => ({
-      role: 'user',
-      content: [
-        { type: 'text', text: `<skill>${skillName}</skill>` },
-        { type: 'text', text: user },
-      ],
-      toolCalls: [],
-      origin: { kind: 'user', skillActivations: [{ activationId: `act-${skillName}`, skillName }] },
-    });
-    const one = await prompt.enqueue({ message: bundled('review', 'first user text') });
-    const two = await prompt.enqueue({ message: bundled('security', 'second user text') });
+    const one = await prompt.enqueue({ message: bundledMessage('review', 'first user text') });
+    const two = await prompt.enqueue({ message: bundledMessage('security', 'second user text') });
 
     await prompt.steer([one.id, two.id]);
 
@@ -323,5 +323,58 @@ describe('AgentPromptService', () => {
     await expect(prompt.steer(['b'])).rejects.toMatchObject({ code: 'prompt.not_found' });
 
     expect(prompt.list().pending.map((item) => item.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('publishes only caller parts when a bundled prompt queues', async () => {
+    const { prompt, eventBus } = harness();
+    const queued: Array<{ promptId: string; content: ContentPart[] }> = [];
+    eventBus.subscribe(PromptQueued, (event) => {
+      queued.push({ promptId: event.promptId, content: event.content });
+    });
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+
+    await prompt.enqueue({ id: 'bundled', message: bundledMessage('review', 'user text') });
+
+    expect(queued).toEqual([
+      { promptId: 'bundled', content: [{ type: 'text', text: 'user text' }] },
+    ]);
+  });
+
+  it('rejects the whole steer when a selected prompt is aborted during intake', async () => {
+    const { prompt, intake } = harness();
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    let releaseIntake!: () => void;
+    intake.get.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseIntake = () =>
+            resolve({
+              meta: {
+                id: 'file_1',
+                size: 3,
+                name: 'pic.png',
+                media_type: 'image/png',
+                created_at: '2026-01-01T00:00:00.000Z',
+              },
+              stream: () => Readable.from([new Uint8Array([1, 2, 3])]),
+            });
+        }),
+    );
+    await prompt.enqueue({
+      id: 'a',
+      message: bundledMessage('review', 'a text', [
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file_1' } },
+      ]),
+    });
+    await prompt.enqueue({ id: 'b', message: message('b') });
+
+    const steerPromise = prompt.steer(['a', 'b']);
+    prompt.abort('a');
+    releaseIntake();
+
+    await expect(steerPromise).rejects.toMatchObject({ code: 'prompt.not_found' });
+    expect(prompt.list().pending.map((item) => item.id)).toEqual(['b']);
   });
 });
