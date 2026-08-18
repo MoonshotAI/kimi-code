@@ -653,6 +653,16 @@ async function handleSkillCommand(
     return;
   }
 
+  // Recheck busy state after loading skills (P1: Block /skill while a turn is active)
+  const busyCheckAfterLoad = slashCommandBusyReason({
+    isStreaming: host.state.appState.streamingPhase !== 'idle',
+    isCompacting: host.state.appState.isCompacting,
+  });
+  if (busyCheckAfterLoad !== undefined) {
+    host.showError(slashBusyMessage('skill', busyCheckAfterLoad));
+    return;
+  }
+
   const activatableSkills = skills.filter(isUserActivatableSkill);
   const trimmedArgs = args.trim();
 

@@ -211,6 +211,7 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: ['skills'],
     description: 'Select skill from hierarchical group selector',
     priority: 90,
+    availability: 'idle-only',
   },
   {
     name: 'btw',

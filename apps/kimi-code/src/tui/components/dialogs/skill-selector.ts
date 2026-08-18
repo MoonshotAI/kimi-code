@@ -47,11 +47,21 @@ export type SkillSelectorItem =
     };
 
 function countSkillsInTree(node: SkillGroupNode): number {
-  let count = node.skills.length;
-  for (const child of node.childGroups) {
-    count += countSkillsInTree(child);
+  const seen = new Set<string>();
+  function countNode(node: SkillGroupNode): number {
+    let count = 0;
+    for (const skill of node.skills) {
+      if (!seen.has(skill.name)) {
+        seen.add(skill.name);
+        count++;
+      }
+    }
+    for (const child of node.childGroups) {
+      count += countNode(child);
+    }
+    return count;
   }
-  return count;
+  return countNode(node);
 }
 
 function collectDescendantSkills(
@@ -184,6 +194,16 @@ export class SkillSelectorComponent extends Container implements Focusable {
         return;
       }
       this.opts.onCancel();
+      return;
+    }
+
+    // Handle left/right arrow keys for pagination (P2: Implement advertised left/right paging keys)
+    if (matchesKey(data, Key.left)) {
+      this.list.pageUp();
+      return;
+    }
+    if (matchesKey(data, Key.right)) {
+      this.list.pageDown();
       return;
     }
 
