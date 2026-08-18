@@ -1,7 +1,10 @@
 import {
   Container,
+  KeybindingsManager,
   ProcessTerminal,
   ScrollView,
+  setKeybindings,
+  TUI_KEYBINDINGS,
   TuiAltScreen,
   VStack,
   type TUI,
@@ -89,6 +92,17 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
 
   const terminal = new ProcessTerminal();
   setMarkdownRenderLatex(initialAppState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true);
+  // The alternate screen's viewport listener runs before the focused component,
+  // so its default home/end bindings would swallow the editor's line-start /
+  // line-end keys once the transcript is long enough to scroll. The editor is
+  // focused for almost the whole session, so home/end belong to it; scrolling
+  // the transcript to top/bottom moves to the shift-ed pair.
+  setKeybindings(
+    new KeybindingsManager(TUI_KEYBINDINGS, {
+      'tui.altScreen.top': 'shift+home',
+      'tui.altScreen.bottom': 'shift+end',
+    }),
+  );
   // The interactive TUI always runs on the alternate screen, so the editor and
   // chrome stay docked at the bottom while the transcript scrolls above them.
   // `stopUiForExit` replays the transcript through a main-screen renderer on

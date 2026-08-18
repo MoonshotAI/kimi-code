@@ -165,4 +165,45 @@ describe('fullscreen layout', () => {
 
     state.ui.stop();
   });
+
+  it('leaves Home/End to the focused editor even when the transcript can scroll', async () => {
+    const { state, vt } = await mountFullscreen();
+
+    // Fill the transcript so the primary scroll view can scroll — that is the
+    // condition under which the viewport claims Home/End.
+    state.transcriptContainer.addChild(new UserMessageComponent('提问'));
+    const answer = new AssistantMessageComponent();
+    state.transcriptContainer.addChild(answer);
+    answer.updateContent(`回答\n\n${LONG_MARKDOWN}`);
+    state.ui.requestRender(true);
+    await vt.waitForRender();
+    state.editor.setText('hello world');
+    state.ui.requestRender();
+    await vt.waitForRender();
+    expect(state.editor.getCursor().col).toBe('hello world'.length);
+
+    // Home must move the cursor to the line start, not scroll the transcript.
+    vt.sendInput('\x1b[H');
+    await vt.waitForRender();
+    expect(state.editor.getCursor().col).toBe(0);
+
+    // End must move it back to the line end.
+    vt.sendInput('\x1b[F');
+    await vt.waitForRender();
+    expect(state.editor.getCursor().col).toBe('hello world'.length);
+
+    // Scroll-to-top/bottom moved to the shift-ed pair and still works.
+    const alt = state.ui as TuiAltScreen;
+    expect(alt.isFollowingOutput).toBe(true);
+    vt.sendInput('\x1b[7$'); // shift+home
+    await vt.waitForRender();
+    expect(alt.isFollowingOutput).toBe(false);
+    expect(alt.viewportTop).toBe(0);
+
+    vt.sendInput('\x1b[8$'); // shift+end
+    await vt.waitForRender();
+    expect(alt.isFollowingOutput).toBe(true);
+
+    state.ui.stop();
+  });
 });
