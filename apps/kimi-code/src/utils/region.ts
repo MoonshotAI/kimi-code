@@ -53,6 +53,7 @@ export function currentKimiRegion(): KimiRegion {
     cached = resolveKimiRegion({
       configuredOAuthHost: persisted?.oauthHost,
       configuredOAuthKey: persisted?.key,
+      readMarker: process.env['KIMI_CODE_REGION_MARKER'] !== 'off',
     });
   }
   return cached;
