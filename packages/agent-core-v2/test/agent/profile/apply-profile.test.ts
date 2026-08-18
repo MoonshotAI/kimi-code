@@ -108,7 +108,6 @@ describe('AgentProfileService.applyProfile', () => {
   }
 
   describe('custom identity', () => {
-    // The default builtin profile opens with `You are ${product_name}`.
     const selfNaming: ResolvedAgentProfile = normalizeAgentProfile({
       name: 'self-naming',
       systemPrompt: (context) => `You are ${context.productName ?? DEFAULT_PRODUCT_NAME}`,
@@ -295,7 +294,7 @@ describe('AgentProfileService.applyProfile', () => {
     await svc.applyProfile(pluginProfile);
     const before = svc.data().systemPrompt;
 
-    sections.value = []; // plugin uninstalled
+    sections.value = [];
     await svc.refreshSystemPrompt();
 
     expect(svc.data().systemPrompt).toBe(before);
@@ -313,10 +312,6 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.data().systemPrompt).toBe(before);
   });
 
-  // While the initial plugin load has failed, `enabledSystemPrompts()`
-  // resolves to its consumption fallback instead of rejecting — that empty
-  // read must not freeze, or a later successful reload would never reach
-  // the live agent.
   it('freezes plugin sections only once the plugin snapshot has loaded', async () => {
     const sections = { value: [] as readonly EnabledPluginSystemPrompt[] };
     const loaded = { value: false };
@@ -365,9 +360,6 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.data().systemPrompt).toContain('cite');
   });
 
-  // The skill listing is frozen together with the plugin sections: even the
-  // builtin source's reload rebuilds from the frozen listing, so a live
-  // agent's prompt stays byte-identical. New agents snapshot the new listing.
   it('keeps the skill listing frozen when the builtin skill source reloads', async () => {
     const change = new Emitter<string>();
     const listing = { value: 'before' };
@@ -401,9 +393,6 @@ describe('AgentProfileService.applyProfile', () => {
     change.fire(PLUGIN_SKILL_SOURCE_ID);
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    // Plugin-derived inputs are frozen for the agent's lifetime, so a plugin
-    // source change must not trigger a rebuild at all — a rebuild would only
-    // churn `${now}` and invalidate the provider's prompt cache.
     expect(svc.data().systemPrompt).toBe('render:1');
     change.dispose();
   });
@@ -446,8 +435,6 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.data().systemPrompt).toContain('<!-- From: plugin first -->');
     expect(svc.data().systemPrompt).not.toContain('<!-- From: plugin second -->');
 
-    // A reload-driven re-render reuses the frozen sections: the prompt does
-    // not change and the budget warning is not re-emitted.
     sections.value = [...sections.value, { pluginId: 'third', content: 'small' }];
     change.fire(PLUGIN_SKILL_SOURCE_ID);
     await svc.refreshSystemPrompt();

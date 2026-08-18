@@ -1,44 +1,3 @@
-/**
- * `goal` domain — `IAgentGoalService` implementation.
- *
- * Owns the main-agent goal lifecycle; persists the goal in the `goalKey`
- * state (`GoalState | null`) through the durable `GoalCreate` / `GoalUpdate` /
- * `GoalClear` events (`dispatcher.dispatch`), reads it through
- * `dispatcher.getState`, dispatches the live-only `GoalUpdated` observable
- * through the same dispatcher, and forces a replayed `active`
- * goal back to `paused` via `dispatcher.hooks.onDidRestore`. The accumulated
- * `wallClockMs` lives in the state (set from each event payload, never by
- * `Date.now()` inside a fold); the active interval's epoch-ms
- * `wallClockResumedAt` anchor is
- * persisted at create/resume boundaries so recovery can settle crash-spanning
- * elapsed time without periodic writes. A `forked` journal record (written at
- * a fork boundary) clears the state. Injects reminders through
- * `contextInjector`, drives continuation turns by enqueueing `newTurn`
- * `StepRequest`s onto `loop` (the continuation message materializes when the
- * loop pops it), accounts live
- * turn usage through `usage`, observes terminal goal tool results through
- * `toolExecutor`, appends one-time reminder events through `systemReminder`, reports
- * telemetry through `telemetry`, and checks main-agent eligibility through
- * `scopeContext`. Measures time and arms hard deadlines through `goal`'s
- * App-scoped deadline scheduler. Two `onBeforeExecuteTool` veto listeners
- * guard the goal lifecycle: stale or budget-exhausted goal tool calls are
- * vetoed with synthetic results, and a `CreateGoal` call carrying a
- * `goal_start` display outside `auto` mode defers to a cold `waitUntil`
- * factory that runs the goal-start review through `toolApproval` under the
- * origin `goal-start-review-ask` — including the permission-mode switch
- * picked on the approval surface. The mutable turn-tracking and wall-clock
- * state (`liveTurnId`, `goalDrivenTurns`, `countedGoalTurns`,
- * `goalStarterTurns`, `goalOutcomeToolResultTurns`,
- * `goalOutcomeContinuationTurns`, `budgetGraceTurns`,
- * `pendingContinuationGoals`, `goalTurnTargets`, `exhaustedTurnBudgetGoals`,
- * `liveWallClockStartedAt`, `resumeContinuation`) is registered into
- * `agentState` (`IAgentStateService`) and read/written through it; the
- * `pendingContinuation` promise lock and the `wallClockDeadline` disposable
- * slot stay plain fields. Bound at Agent scope.
- * Subagent instances reject every goal command and do not install goal
- * injection, accounting, budget, or continuation hooks.
- */
-
 import { randomUUID } from 'node:crypto';
 
 import { z } from 'zod';
@@ -290,7 +249,6 @@ export const goalResumeContinuationKey = defineState<ResumeContinuation | undefi
   () => undefined as ResumeContinuation | undefined,
 );
 
-// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class AgentGoalService extends Disposable implements IAgentGoalService {
   declare readonly _serviceBrand: undefined;
 

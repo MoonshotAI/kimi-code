@@ -1,22 +1,3 @@
-/**
- * `bootstrap` domain — frozen startup snapshot and composition root.
- *
- * Defines the `IBootstrapService`, the snapshot of the world the process runs
- * in, resolved once at startup and frozen for the process: observed host facts
- * (`platform`, `arch`, `cwd`, `osHomeDir`, `getEnv`, `clientIdentity`), the
- * app path layout (`homeDir`, `configPath`, …), and the host's process-level
- * invocation arguments (`args` — mirroring VS Code's `NativeParsedArgs`
- * carried on the environment service: the host states them once in
- * `BootstrapInput`; downstream services read them here instead of through
- * per-domain runtime-options services). `resolveBootstrapOptions` is
- * the single place that reads `process.env` / `os.homedir()` / invocation
- * input to resolve the snapshot; everything downstream reads from
- * `IBootstrapService` instead of touching `process` directly. Bound at App
- * scope. Also seeds the `IFileSystemStorageService` with a `FileStorageService`
- * rooted at `homeDir` so the byte layer (and every Store above it) persists
- * to disk.
- */
-
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 

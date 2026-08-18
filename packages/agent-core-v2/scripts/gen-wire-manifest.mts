@@ -1,28 +1,3 @@
-/**
- * Generates `docs/wire-manifest.d.ts` — the single place to see every durable
- * wire record type declared as an `Event2` subclass (`static type` +
- * `static durable = true` + `static schema`).
- *
- * Two passes:
- *   1. Static scan of `src/**` maps each durable event type to the source file
- *      that declares it — the "owner" — and collects the migration chain from
- *      `src/wire/migration/v*.ts`.
- *   2. Runtime pass imports `src/index.ts` plus every event/state module found
- *      in the static pass ("import = register") and drains `EVENT2_REGISTRY`
- *      (type → class → schema) and `REPLAYABLE_STATE_KEYS` (folding states, blob
- *      codecs) exactly as the running process sees them.
- *
- * The output is a `.d.ts` — one payload declaration per record type, with a
- * `WirePayloadMap` from record type to declaration — using real TypeScript
- * type syntax for the sketches.
- *
- * Usage:
- *   pnpm --filter @moonshot-ai/agent-core-v2 gen:wire-manifest          # write the file
- *   pnpm --filter @moonshot-ai/agent-core-v2 gen:wire-manifest --check  # freshness check (CI-style)
- *
- * Freshness is also enforced by `test/wire/wireManifest.test.ts`.
- */
-
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -43,10 +18,6 @@ const PKG = join(import.meta.dirname, '..');
 const SRC = join(PKG, 'src');
 export const MANIFEST_PATH = join(PKG, 'docs', 'wire-manifest.d.ts');
 
-// ---------------------------------------------------------------------------
-// Static pass — durable event type → owner file; migration chain
-// ---------------------------------------------------------------------------
-
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     const p = join(dir, entry);
@@ -60,14 +31,6 @@ const TYPE_DECL_RE = /static\s+override\s+readonly\s+type\s*=\s*'([^']+)'/g;
 const DURABLE_DECL_RE = /static\s+override\s+readonly\s+durable\s*=\s*true/;
 const CLASS_DECL_RE = /class\s+(\w+)\s+extends\s+Event2/g;
 
-/**
- * event type → owner file (relative to the package root), the files worth
- * importing for the runtime pass, the types statically declared durable
- * (the class window between one `type` declaration and the next carries
- * `durable = true`), and the event class name → type map (the class window
- * between one `class … extends Event2` declaration and the next carries one
- * `static type`).
- */
 function scanEventDeclarations(): {
   owners: Map<string, string>;
   importFiles: string[];
@@ -104,7 +67,6 @@ function scanEventDeclarations(): {
   return { owners, importFiles, durableTypes, classTypes };
 }
 
-/** `1.0 -> 1.1 -> ...` chain read from the `src/wire/migration/v*.ts` files. */
 function scanMigrationChain(): string {
   const dir = join(SRC, 'wire', 'migration');
   const pairs: { source: string; target: string }[] = [];
@@ -122,10 +84,6 @@ function scanMigrationChain(): string {
   return chain.join(' -> ');
 }
 
-// ---------------------------------------------------------------------------
-// Static pass — replayable state keys and their fold targets
-// ---------------------------------------------------------------------------
-
 interface ReplayableStateScan {
   readonly keyName: string;
   readonly constName: string;
@@ -138,7 +96,6 @@ const ON_FOLD_RE = /\.on\(\s*([A-Za-z_$][\w$]*)/g;
 const KEY_ON_RE = /\b([A-Za-z_$][\w$]*)\.on\(\s*([A-Za-z_$][\w$]*)/g;
 const PROTOCOL_EVENT_RE = /(?:appendMessage|applyCompaction|clear|undo):\s*([A-Za-z_$][\w$]*)/g;
 
-/** Balanced-paren read of the argument list starting at the `(` after a chain method. */
 function readCallArguments(text: string, parenIndex: number): string {
   let depth = 0;
   for (let i = parenIndex; i < text.length; i++) {
@@ -161,11 +118,6 @@ function readCallArguments(text: string, parenIndex: number): string {
   return text.slice(parenIndex + 1);
 }
 
-/**
- * `readExpression` variant for `defineState(...)` chains: the fold bodies are
- * arbitrary code, where `<` / `>` are comparison operators as often as generic
- * brackets — only `()` `{}` `[]` delimit the statement reliably.
- */
 function readChain(source: string, start: number): string {
   let depth = 0;
   const n = source.length;
@@ -214,8 +166,6 @@ function scanReplayableStates(): ReplayableStateScan[] {
       byConst.set(constName, scan);
     }
   }
-  // A key's fold vocabulary may grow outside its defining chain
-  // (`otherKey.on(Event, …)` in a feature module).
   for (const file of walk(SRC)) {
     const source = readFileSync(file, 'utf-8');
     if (!source.includes('.on(')) continue;
@@ -229,7 +179,6 @@ function scanReplayableStates(): ReplayableStateScan[] {
   return states;
 }
 
-/** The four undoable-protocol event types, resolved through the class-name map. */
 function scanUndoableProtocolTypes(classTypes: ReadonlyMap<string, string>): string[] {
   for (const file of walk(SRC)) {
     const source = readFileSync(file, 'utf-8');
@@ -252,23 +201,12 @@ function scanUndoableProtocolTypes(classTypes: ReadonlyMap<string, string>): str
   throw new Error('[gen-wire-manifest] registerUndoableProtocol call not found under src/');
 }
 
-// ---------------------------------------------------------------------------
-// Payload sketch
-//
-// A Sketch is a small tree: strings are one-line type annotations, dicts are
-// object shapes, and a one-element array marks an array-of shape. The d.ts
-// renderer below turns the tree into real TypeScript syntax.
-// ---------------------------------------------------------------------------
-
 type SketchDict = { [key: string]: Sketch };
 type Sketch = string | SketchDict | [Sketch];
 
-/** First key of a dict produced by expanding a named type. */
 const TYPE_KEY = '_type';
-/** Marker key rendered as a `// …` comment when a field list is capped. */
 const MORE_KEY = '…';
 
-/** Compact one-line rendering of a Sketch (used inside unions/intersections). */
 function stringifySketch(sketch: Sketch): string {
   if (typeof sketch === 'string') return sketch;
   if (Array.isArray(sketch)) {
@@ -280,7 +218,6 @@ function stringifySketch(sketch: Sketch): string {
     .join(', ')} }`;
 }
 
-/** Build a Sketch tree from a zod JSON-schema projection. */
 function sketchFromJsonSchema(schema: unknown, root: JsonSchema, depth: number): Sketch {
   const resolved = resolveRef(schema, root);
   const s = asJsonSchema(resolved);
@@ -301,7 +238,6 @@ function sketchFromJsonSchema(schema: unknown, root: JsonSchema, depth: number):
   return describeType(resolved, tsQuote);
 }
 
-/** Build the payload Sketch tree for one op (all three data paths converge). */
 function buildPayloadSketch(
   schema: unknown,
   staticSketch?: string | Map<string, Sketch>,
@@ -322,7 +258,6 @@ function buildPayloadSketch(
     }
     return dict;
   }
-  // An empty object schema (`z.object({})`) is a payload-less record.
   if (
     jsonSchema.type === 'object' &&
     (jsonSchema.additionalProperties === undefined || jsonSchema.additionalProperties === false)
@@ -331,10 +266,6 @@ function buildPayloadSketch(
   }
   return describeType(jsonSchema, tsQuote);
 }
-
-// ---------------------------------------------------------------------------
-// d.ts rendering — Sketch tree → TypeScript declarations
-// ---------------------------------------------------------------------------
 
 function pascalCase(name: string): string {
   return name
@@ -348,11 +279,6 @@ function tsFieldKey(key: string): string {
   return /^[$A-Z_a-z][$\w]*$/.test(key) ? key : JSON.stringify(key);
 }
 
-/**
- * Convert a one-line sketch annotation into a valid TS type expression.
- * Returns the type plus an optional doc note (the expanded type's name, or a
- * hoisted shared spread that cannot be expressed inline).
- */
 function sketchStringToTs(text: string): { type: string; doc?: string } {
   let t = text.trim();
   const docs: string[] = [];
@@ -361,7 +287,6 @@ function sketchStringToTs(text: string): { type: string; doc?: string } {
     docs.push(named[1]);
     t = named[2].trim();
   }
-  // A hoisted shared spread (`...base & A | B`) becomes a doc note + variants.
   const spread = /^((?:\.\.\.[$\w]+(?: \+ )?)+) & ([\s\S]+)$/.exec(t);
   if (spread?.[1] !== undefined && spread[2] !== undefined) {
     docs.push(`shared base: ${spread[1]}`);
@@ -373,10 +298,6 @@ function sketchStringToTs(text: string): { type: string; doc?: string } {
   return { type: t, doc: docs.length > 0 ? docs.join(' · ') : undefined };
 }
 
-/**
- * Render a Sketch as TS type-expression lines. The first line continues after
- * the field's `key: `; subsequent lines carry `indent`.
- */
 function renderTsType(sketch: Sketch, indent: string): { doc?: string; lines: string[] } {
   if (typeof sketch === 'string') {
     const { type, doc } = sketchStringToTs(sketch);
@@ -401,7 +322,7 @@ function emitTsDict(lines: string[], dict: SketchDict, indent: string): void {
       lines.push(`${indent}// …`);
       continue;
     }
-    if (key === TYPE_KEY) continue; // surfaces as the field's doc comment
+    if (key === TYPE_KEY) continue;
     if (key.startsWith('...')) {
       lines.push(`${indent}// spread: ${key}`);
       continue;
@@ -418,7 +339,6 @@ function emitTsDict(lines: string[], dict: SketchDict, indent: string): void {
   }
 }
 
-/** One record type's payload declaration (`interface` for objects, `type` otherwise). */
 function renderPayloadDecl(
   entry: { type: string },
   owner: string | undefined,
@@ -436,7 +356,6 @@ function renderPayloadDecl(
   if (typeof sketch === 'string') {
     const { type, doc } = sketchStringToTs(sketch);
     if (type.startsWith('(')) {
-      // Unrepresentable schema note — keep the declaration parseable.
       header.push(` * ${type.slice(1, -1)}`);
       header.push(' */');
       return [...header, `interface ${name} {\n  ${nameField}\n}`, ''];
@@ -470,12 +389,6 @@ function renderPayloadDecl(
   return lines;
 }
 
-// ---------------------------------------------------------------------------
-// Static payload fallback — sketch fields from source when the zod schema
-// cannot be projected to JSON Schema (payloads using `z.custom<T>()`)
-// ---------------------------------------------------------------------------
-
-/** Find the index of the closer matching the opener at `start` (quotes-aware). */
 function matchDelimiter(source: string, start: number, open: string, close: string): number {
   let depth = 0;
   for (let i = start; i < source.length; i++) {
@@ -509,7 +422,6 @@ function matchDelimiter(source: string, start: number, open: string, close: stri
   return -1;
 }
 
-/** Split `body` into top-level parts on any of `separators` (quotes/nesting-aware). */
 function splitTopLevel(body: string, separators: readonly string[] = [',']): string[] {
   const parts: string[] = [];
   let depth = 0;
@@ -537,7 +449,6 @@ function splitTopLevel(body: string, separators: readonly string[] = [',']): str
   return parts.filter((p) => p !== '');
 }
 
-/** Split an object literal's body into top-level `key: expr` fields. */
 function splitObjectFields(body: string): Map<string, string> {
   const fields = new Map<string, string>();
   for (const part of splitTopLevel(body)) {
@@ -552,13 +463,11 @@ function splitObjectFields(body: string): Map<string, string> {
   return fields;
 }
 
-/** Extract the body of the first balanced `{...}` in `text` starting at `braceIndex`. */
 function objectBody(text: string, braceIndex: number): string | undefined {
   const end = matchDelimiter(text, braceIndex, '{', '}');
   return end === -1 ? undefined : text.slice(braceIndex + 1, end);
 }
 
-/** Read one expression from `start` up to the top-level `;` that ends the statement. */
 function readExpression(source: string, start: number): string {
   let depth = 0;
   const n = source.length;
@@ -580,7 +489,6 @@ function readExpression(source: string, start: number): string {
   return source.slice(start);
 }
 
-/** Quote a string literal TS-style (single quotes) so sketches need no JSON escapes. */
 function tsQuote(raw: string): string {
   return raw.includes("'") ? JSON.stringify(raw) : `'${raw}'`;
 }
@@ -589,15 +497,12 @@ function escapeRegExp(raw: string): string {
   return raw.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Resolve a `schema:` expression to an object-literal body, following local consts. */
 function resolveSchemaLiteral(expr: string, source: string, depth = 0): string | undefined {
   if (depth > 2) return undefined;
-  // z.object({ ... }) / z.strictObject({ ... }) — inline literal.
   const inline = /^z\.\w*[oO]bject\s*\(/.exec(expr);
   if (inline !== null) {
     const rest = expr.slice(inline[0].length).trimStart();
     if (rest.startsWith('{')) return objectBody(rest, 0);
-    // z.object(SHAPE_CONST) — look up the local shape const.
     const shapeName = /^([$\w]+)/.exec(rest)?.[1];
     if (shapeName !== undefined) {
       const constRe = new RegExp(`const\\s+${shapeName}\\s*(?::[^=;]+)?=\\s*\\{`);
@@ -606,7 +511,6 @@ function resolveSchemaLiteral(expr: string, source: string, depth = 0): string |
     }
     return undefined;
   }
-  // schema: SOME_CONST — follow `const X = z.object(...)` in the same file.
   const ident = /^([$\w]+)$/.exec(expr.trim())?.[1];
   if (ident !== undefined) {
     const constRe = new RegExp(`const\\s+${ident}\\s*(?::[^=;]+)?=\\s*`);
@@ -618,13 +522,6 @@ function resolveSchemaLiteral(expr: string, source: string, depth = 0): string |
   }
   return undefined;
 }
-
-// ---------------------------------------------------------------------------
-// TS type summarizer — expand `z.custom<T>()` type names into readable sketches
-// by resolving the alias (or interface) across local definitions, imports, and
-// re-exports. Discriminated unions collapse to `union on type: "a" | "b"`.
-// Resolution work is bounded by a per-expansion step budget.
-// ---------------------------------------------------------------------------
 
 interface Budget {
   remaining: number;
@@ -654,7 +551,6 @@ interface TsField {
   readonly optional: boolean;
 }
 
-/** Split a TS object type literal body into fields (separators: `;` / `,`). */
 function splitTsTypeFields(body: string): Map<string, TsField> {
   const fields = new Map<string, TsField>();
   for (const part of splitTopLevel(body, [';', ','])) {
@@ -697,7 +593,6 @@ function renderTsFields(
   return dict;
 }
 
-/** Find a local `type X = ...` / `interface X {...}` definition's RHS text. */
 function findTsTypeDef(name: string, file: string): string | undefined {
   const source = readCached(file);
   const typeRe = new RegExp(`(?:export\\s+)?type\\s+${name}(?:<[^>;=]*>)?\\s*=\\s*`);
@@ -712,7 +607,6 @@ function findTsTypeDef(name: string, file: string): string | undefined {
   return undefined;
 }
 
-/** Find the module specifier a name is imported (or named-re-exported) from. */
 function findImportSource(file: string, name: string): string | undefined {
   const source = readCached(file);
   const re = /(?:import|export)\s+(?:type\s+)?\{([^}]+)\}\s*from\s*'([^']+)'/g;
@@ -744,8 +638,6 @@ function summarizeTsUnion(
   charBudget: number,
   depth: number,
 ): string {
-  // Resolve member idents one level so alias unions (ContextMessage = A | B | C)
-  // still expose their object shapes.
   const resolved = members.map((m) => {
     const t = m.trim();
     if (/^[$\w]+$/.test(t)) {
@@ -757,7 +649,6 @@ function summarizeTsUnion(
   const bodies = resolved.map((m) => (m.trim().startsWith('{') ? objectBody(m.trim(), 0) : undefined));
   if (bodies.length > 0 && bodies.every((b) => b !== undefined)) {
     const fieldMaps = bodies.map((b) => splitTsTypeFields(b!));
-    // Discriminated union: one field is a string literal in every member.
     for (const [name, info] of fieldMaps[0]!) {
       if (
         /^'[^']*'$/.test(info.type) &&
@@ -767,7 +658,6 @@ function summarizeTsUnion(
         return truncate(`union on ${name}: ${values.join(' | ')}`, charBudget);
       }
     }
-    // Unions stay one-line strings; object members use the compact renderer.
     return truncate(
       fieldMaps
         .map((fm) => stringifySketch(renderTsFields(fm, file, budget, charBudget, depth + 1)))
@@ -810,7 +700,6 @@ function summarizeTsTypeExpr(
   if (intersections.length > 1) {
     if (!spend(budget)) return truncate(text, 80);
     const sides = intersections.map((m) => summarizeTsTypeExpr(m, file, budget, charBudget, depth + 1));
-    // An intersection of object shapes merges into one dictionary.
     if (sides.every((side) => typeof side !== 'string' && !Array.isArray(side))) {
       return Object.assign({}, ...sides) as SketchDict;
     }
@@ -830,7 +719,6 @@ function summarizeTsTypeExpr(
   return truncate(text, 80);
 }
 
-/** Resolve a type name to a readable summary across aliases, imports, re-exports. */
 function summarizeTsType(name: string, fromFile: string, budget: Budget): Sketch | undefined {
   if (!spend(budget)) return undefined;
   const def = findTsTypeDef(name, fromFile);
@@ -849,16 +737,8 @@ function summarizeTsType(name: string, fromFile: string, budget: Budget): Sketch
   return undefined;
 }
 
-/**
- * Render a zod field expression as a Sketch, in the same notation the
- * JSON-Schema path produces (`string`, `'a' | 'b'`, `Foo[]`). `z.custom<T>()`
- * and bare type idents expand through the TS type summarizer — object shapes
- * become nested dicts (keyed with the type name under `_type`), everything
- * else stays a one-line string.
- */
 function friendlyZodExpr(expr: string, ownerFile: string, depth = 0): Sketch {
   let text = expr.replaceAll(/\s+/g, ' ').trim();
-  // Strip trailing modifiers the sketch does not mark.
   let stripped = true;
   while (stripped) {
     stripped = false;
@@ -874,8 +754,6 @@ function friendlyZodExpr(expr: string, ownerFile: string, depth = 0): Sketch {
   const custom = /^z\.custom<(.+)>\(\)$/.exec(text);
   if (custom?.[1] !== undefined) {
     const typeName = custom[1].trim();
-    // Expand the TS type only at the top levels — nested fields keep the bare
-    // type name so long union member sketches stay readable.
     if (depth > 1) return typeName;
     const summary = summarizeTsType(typeName, ownerFile, TS_BUDGET());
     if (summary === undefined) return typeName;
@@ -949,14 +827,12 @@ function friendlyZodExpr(expr: string, ownerFile: string, depth = 0): Sketch {
   return truncate(text, 80);
 }
 
-/** Sketch a `z.union([...])` body (one-line string); object members get field sketches. */
 function friendlyZodUnion(body: string, ownerFile: string, depth: number): string {
   const members = splitTopLevel(body.trim().replace(/^\[/, '').replace(/\]$/, ''));
   const source = readCached(ownerFile);
   const bodies = members.map((m) => resolveSchemaLiteral(m, source));
   if (members.length > 0 && bodies.every((b) => b !== undefined)) {
     const fieldMaps = bodies.map((b) => splitObjectFields(b));
-    // Hoist spreads shared by every member (`...base & { … } | { … }`).
     const spreadSets = fieldMaps.map((fm) => [...fm.keys()].filter((k) => fm.get(k) === ''));
     const commonSpreads = (spreadSets[0] ?? []).filter((s) =>
       spreadSets.every((set) => set.includes(s)),
@@ -979,12 +855,6 @@ function friendlyZodUnion(body: string, ownerFile: string, depth: number): strin
   );
 }
 
-/**
- * Best-effort payload sketch from the owner source for schemas that use
- * `z.custom` (not representable as JSON Schema). Returns a field map for
- * object payloads, a type string for whole-payload custom schemas, or
- * `undefined` when the source shape is not recognized.
- */
 function sketchPayloadFromSource(
   ownerFile: string,
   type: string,
@@ -1025,15 +895,8 @@ function sketchPayloadFromSource(
   return sketch;
 }
 
-// ---------------------------------------------------------------------------
-// Manifest rendering
-// ---------------------------------------------------------------------------
-
 export async function buildWireManifest(): Promise<string> {
   const { owners, importFiles, durableTypes, classTypes } = scanEventDeclarations();
-  // "import = register": loading the package root plus every event/state module
-  // found in the static pass fills EVENT2_REGISTRY, even for
-  // modules index.ts does not load.
   await import('../src/index.ts');
   for (const file of importFiles) {
     await import(relative(join(PKG, 'scripts'), file));
@@ -1045,7 +908,6 @@ export async function buildWireManifest(): Promise<string> {
   const entries = [...EVENT2_REGISTRY.values()].toSorted((a, b) => a.type.localeCompare(b.type));
   const migrationChain = scanMigrationChain();
 
-  // type → folding states / blob codec owners, scanned from the defineState chains.
   const folding = new Map<string, { states: string[]; blobs: string[] }>();
   const protocolTypes = scanUndoableProtocolTypes(classTypes);
   for (const state of scanReplayableStates()) {
@@ -1138,7 +1000,6 @@ export async function buildWireManifest(): Promise<string> {
     declNames.push([entry.type, `${pascalCase(entry.type)}Payload`]);
   }
 
-  // Record type → payload declaration map.
   out.push('/** Record type → payload sketch. */');
   out.push('interface WirePayloadMap {');
   for (const [type, declName] of declNames) {
@@ -1148,10 +1009,6 @@ export async function buildWireManifest(): Promise<string> {
   out.push('');
   return out.join('\n');
 }
-
-// ---------------------------------------------------------------------------
-// CLI
-// ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
   const check = process.argv.includes('--check');

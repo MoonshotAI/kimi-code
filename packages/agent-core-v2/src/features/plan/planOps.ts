@@ -1,35 +1,4 @@
-/**
- * `plan` domain — the plan-mode state (`planKey`) and the durable
- * `plan_mode.enter` / `plan_mode.cancel` / `plan_mode.exit` / `plan.revision`
- * events that mirror the plan-mode lifecycle into a persisted, replayable
- * `{ active, id }` state.
- *
- * The state holds the persistent, replayable fields — whether plan mode is
- * active, the plan id, and the last recorded revision version per plan id —
- * participating in conversation undo through the undoable state protocol
- * so plan mode stays aligned with it. The lifecycle records keep exactly v1's field set
- * (`{ id }`); the plan file path is NOT persisted — it is derived from the id
- * at read time, matching v1's `restoreEnter`. Plan content is recorded
- * separately: every ExitPlanMode submit snapshots the plan file into blob
- * storage and persists a `plan.revision` record carrying only the reference
- * (`{ id, version, path, sha256, bytes }`, `path` homeDir-relative) — never
- * the content. `revisionCount` tracks the latest version per plan id so
- * `recordRevision` can mint the next version replay-consistently; it is kept
- * across enter/exit so a re-entered plan id continues its counter instead of
- * overwriting earlier blobs. Each fold keeps the same reference on a no-op
- * (re-entering the same plan, or cancelling/exiting while already inactive)
- * so the state's reference-equality stays quiet. The side effects —
- * `telemetryContext` mode, plan-directory/file fs I/O, and the blob write —
- * are NOT part of the folds: they run after dispatch on the live path, and
- * restore rebuilds the state silently from the persisted `plan_mode.*` /
- * `plan.revision` records. The lifecycle folds emit the
- * `agent.status.updated` planMode slice live (never on replay), and
- * `PlanRevision` is itself observable so the live transcript projector can
- * map it onto a marker plus the plan badge.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { z } from 'zod';
 
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';

@@ -1,49 +1,3 @@
-/**
- * `state` domain — the unified `defineState` key factory and the replayable
- * state vocabulary.
- *
- * `defineState(name, initial)` manufactures a `StateKey<T>`: registered into
- * a scope's state service (`register`), read through `get`, and — for plain
- * ephemeral keys — replaced imperatively through `set`. Chaining
- * `.replayable({ schema, durable?, blobs? })` promotes the key to a
- * `ReplayableStateKey`: its value lives in the Agent-scope state service like
- * any other key, but the only write path is event folding — `.on(EventClass,
- * fold)` subscribes a mutation-style immer producer `(draft, event, ctx) =>
- * void | S` that the dispatcher commits through `produceWithPatches`, so every
- * committed fold yields the patch pair behind `history()` / `undo()` /
- * `checkpoint()`; a fold may also return a replacement state instead of
- * mutating the draft. The fold `ctx` carries the participation surface:
- * `checkpoint()` / `clearCheckpoints()` / `undoToCheckpoint(count)` drive the
- * conversation-undo checkpoint protocol, `emit(event)` queues a follow-up
- * event for dispatch after the current one commits, and `silent` marks
- * replay folds (no journal, no publish, `emit` dropped). `durable` (default
- * `true`) declares that the state's folds replay from the journal — a
- * non-durable state folding a durable event is a build-time error, as is a
- * second fold for the same event on the same key. The optional `blobs` codec
- * declares the dehydrate/rehydrate pair for large inline media, same
- * contract as the retired wire Model codec.
- *
- * `.undoable(opts?)` marks the key as participating in conversation undo:
- * the dispatcher expands the checkpoint protocol folds around the key's own
- * folds (undo anchors push a checkpoint, compaction/clear drop the markers,
- * `context.undo` rolls back `count` markers through inverse patches), and the
- * key's patch history is retained from the oldest live checkpoint instead of
- * the bounded tail. `opts.onUndo` replaces the inverse-patch rollback with a
- * custom fold (e.g. the conversation history's anchor-counted truncation) —
- * such keys push no checkpoints and keep the bounded tail. The protocol
- * itself is registered by the `contextMemory` domain through
- * `registerUndoableProtocol` (the protocol events and the anchor predicate
- * live there), keeping this module free of any business-domain dependency.
- *
- * A replayable key's `initial` value is frozen and its `StateKey` value type
- * is `DeepReadonly<S>`: folds own every write. Replayable keys are excluded
- * from `snapshot()` / `inspect()` (their authoritative copy is the wire
- * journal). `REPLAYABLE_STATE_KEYS` collects every replayable key at import
- * time ("import = register"), the static built-in channel materialized into
- * the Agent-scope state service at scope creation and folded into the
- * dispatcher's runtime tables. Scope-agnostic.
- */
-
 import { enableMapSet, enablePatches, type Draft, type Patch } from 'immer';
 import type { z } from 'zod';
 
@@ -73,7 +27,6 @@ export interface FoldContext {
   emit(event: Event2): void;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type StateFold<S, E extends Event2<any> = Event2<any>> = (
   state: Draft<S>,
   event: E,
@@ -102,14 +55,12 @@ export interface ReplayableStateMeta<S> {
   readonly durable: boolean;
   readonly blobs?: StateBlobCodec<S>;
   readonly undoable?: UndoableOptions<S>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly folds: ReadonlyMap<Event2Class<any, any>, StateFold<S, any>>;
 }
 
 export interface ReplayableStateKey<S> extends StateKey<DeepReadonly<S>> {
   readonly replayable: ReplayableStateMeta<S>;
   undoable(opts?: UndoableOptions<S>): ReplayableStateKey<S>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   on<P, E extends Event2<P>>(cls: Event2Class<P, E>, fold: StateFold<S, E>): ReplayableStateKey<S>;
 }
 
@@ -126,7 +77,6 @@ class ReplayableStateKeyImpl<S> implements ReplayableStateKey<S> {
     readonly durable: boolean;
     readonly blobs?: StateBlobCodec<S>;
     undoable?: UndoableOptions<S>;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     readonly folds: Map<Event2Class<any, any>, StateFold<S, any>>;
   };
 
@@ -159,7 +109,6 @@ class ReplayableStateKeyImpl<S> implements ReplayableStateKey<S> {
     return this;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   on<P, E extends Event2<P>>(cls: Event2Class<P, E>, fold: StateFold<S, E>): ReplayableStateKey<S> {
     if (this.meta.folds.has(cls)) {
       throw new StateError(
@@ -197,15 +146,10 @@ export function defineState<T>(name: string, initial: () => T): StateKeyBuilder<
 }
 
 export interface UndoableProtocol {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly events: {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     readonly appendMessage: Event2Class<any, any>;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     readonly applyCompaction: Event2Class<any, any>;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     readonly clear: Event2Class<any, any>;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     readonly undo: Event2Class<any, any>;
   };
   readonly isUndoAnchor: (message: unknown) => boolean;
@@ -225,7 +169,6 @@ export function registerUndoableProtocol(protocol: UndoableProtocol): void {
 }
 
 export function keepsUndoCheckpoints(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   key: ReplayableStateKey<any>,
 ): boolean {
   const undoable = key.replayable.undoable;
@@ -233,9 +176,7 @@ export function keepsUndoCheckpoints(
 }
 
 export function expandedStateFolds(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   key: ReplayableStateKey<any>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): ReadonlyMap<Event2Class<any, any>, StateFold<any, any>> {
   const meta = key.replayable;
   if (meta.undoable === undefined) return meta.folds;
@@ -253,7 +194,6 @@ export function expandedStateFolds(
     );
   }
   const custom = meta.undoable.onUndo !== undefined;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const folds = new Map<Event2Class<any, any>, StateFold<any, any>>(meta.folds);
   const domainAppend = folds.get(protocol.events.appendMessage);
   folds.set(protocol.events.appendMessage, (state, event, ctx) => {

@@ -1,15 +1,4 @@
-/**
- * `pluginCommand` domain — Agent-scoped plugin command activation contract.
- *
- * `IAgentPluginCommandService.activate` drives a user-slash plugin command
- * into the agent's prompt pipeline: the command definition lives in the
- * App-scope `plugin` domain, while activation (argument expansion, the
- * `plugin_command.activated` domain event, prompt enqueue) must run inside the
- * agent scope. Bound at Agent scope.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Event2 } from '#/app/event/event2';
 

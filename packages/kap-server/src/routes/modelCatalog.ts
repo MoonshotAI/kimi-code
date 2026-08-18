@@ -1,54 +1,3 @@
-/**
- * `/models` + `/providers` catalog route handlers — server-v2 port.
- *
- * Implements the v1 model/provider catalog wire contract on top of
- * `agent-core-v2`'s `IModelCatalog` (the remote-discovery refresh lives on
- * `IProviderDiscoveryService`; the OAuth-only managed refresh additionally
- * lives on `IOAuthService`; the models.dev directory browse and the
- * catalog/registry imports live on `IModelsDevImportService`):
- *   GET    /models                       — list configured model aliases
- *   GET    /providers                    — list configured providers
- *   GET    /providers/{provider_id}      — get a configured provider by id
- *   POST   /providers                    — create a provider manually
- *   PUT    /providers/{provider_id}      — replace a provider + rebuild its model aliases
- *   DELETE /providers/{provider_id}      — delete a provider + its model aliases
- *   GET    /catalog/providers            — browse the models.dev directory (proxied)
- *   GET    /catalog/providers/{catalog_id} — get one directory entry
- *   POST   /providers:import_catalog     — import a directory entry as a provider
- *   POST   /models/{tail} (:set_default) — set the global default model alias
- *   POST   /providers:refresh            — refresh ALL refreshable providers
- *   POST   /providers:refresh_oauth      — refresh OAuth-backed provider models
- *   POST   /providers/{tail} (:refresh)  — refresh a single provider by id
- *
- * **Wire fidelity**: reuses agent-core-v2's catalog schemas and the local
- * numeric `ErrorCode` envelope verbatim, so the response shape and error codes
- * (`40412` provider-not-found, `40413` model-not-found, `40001` validation) are
- * byte-for-byte compatible with v1's `routes/modelCatalog.ts`. The v2 domain
- * throws coded `Error2`s (`provider.not_found` / `model.not_found` /
- * `provider.catalog_*` / `provider.*_import_invalid` / `provider.oauth_managed`);
- * this edge maps them to the numeric protocol codes by `code` (never
- * `instanceof`).
- *
- * **Write surface**: create/replace/delete write the user config layer through
- * `IConfigService` (the catalog/registry imports write through
- * `IModelsDevImportService` in the engine — this edge only maps the wire).
- * Replace and delete use whole-section `replace` (deep-merge
- * `set` can never drop a key). One subtlety shapes all the write code below:
- * the providers/models TOML transforms rebuild each section's entries but
- * overlay each entry's fields onto the old on-disk raw — so an entry id
- * absent from the replacement truly disappears, while a FIELD absent from a
- * kept entry would silently survive on disk (and resurrect on the next boot).
- * Field-level clears therefore always assign an explicit `undefined` (the
- * transform's `setDefined` drops those). The kosong
- * persistence bridge then pushes the change into the registries, which is
- * also what invalidates the catalog cache. Multi-step sequences are
- * serialized through `enqueueProviderWrite`. Replace and delete additionally
- * cascade into the `[secondary_model]` subagent pool (repointing renamed
- * aliases, filtering entries whose model alias disappeared, clearing the
- * section when its default dangles) so the engine's create/resume pool
- * validation never meets a dangling pool.
- */
-
 import {
   IConfigService,
   IKosongConfigService,
@@ -134,7 +83,6 @@ interface ModelCatalogRouteHost {
   ): unknown;
 }
 
-/** Reply shape used where a route answers a non-200 status (201/204). */
 interface StatusReply {
   code(status: number): StatusReply;
   send(payload?: unknown): unknown;
@@ -160,24 +108,11 @@ const catalogIdParamSchema = z.object({
   catalog_id: z.string().min(1),
 });
 
-/**
- * Resolve the catalog service after the config layer is ready. Config loads
- * asynchronously during bootstrap; mirroring `routes/config.ts`, route handlers
- * await `IConfigService.ready` so an immediate request never observes an empty
- * (not-yet-loaded) catalog.
- */
 async function loadCatalog(core: Scope): Promise<IModelCatalog> {
   await core.accessor.get(IConfigService).ready;
   return core.accessor.get(IModelCatalog);
 }
 
-/**
- * Resolve the config service for the write routes once the kosong persistence
- * bridge is also ready. The bridge subscribes to section changes after the
- * initial hydration; awaiting it guarantees a write below reaches the kosong
- * registries (and the catalog-cache invalidation riding them) before the
- * handler reads back or returns.
- */
 async function loadConfig(core: Scope): Promise<IConfigService> {
   const config = core.accessor.get(IConfigService);
   await config.ready;
@@ -195,13 +130,6 @@ async function loadOAuth(core: Scope): Promise<IOAuthService> {
   return core.accessor.get(IOAuthService);
 }
 
-/**
- * Serializes the provider write routes' multi-step sequences (inspect → build
- * → replace × N). The config service only serializes individual writes, so
- * two interleaved edits could otherwise lose each other's section rebuilds
- * (or land a half-migrated rename). The refresh routes are excluded — the
- * discovery service chains its own runs.
- */
 let providerWriteChain: Promise<unknown> = Promise.resolve();
 
 function enqueueProviderWrite<T>(task: () => Promise<T>): Promise<T> {
@@ -213,14 +141,6 @@ function enqueueProviderWrite<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
-/**
- * Seed the global default model when — and only when — none is configured.
- * Provider writes otherwise never move the default pointers, but a fresh
- * setup has no pointer at all: the first provider added must leave the
- * daemon usable (GET /auth's readiness requires a default model). An
- * existing pointer is never rewritten here, not even a dangling one — it is
- * the user's setting, not this route's to second-guess.
- */
 async function seedDefaultModelWhenUnset(config: IConfigService, alias: string): Promise<void> {
   const current = config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
   if (current !== undefined && current.trim() !== '') return;
@@ -343,8 +263,6 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         if (req.body.api_key !== undefined) provider.apiKey = req.body.api_key;
         if (req.body.base_url !== undefined) provider.baseUrl = req.body.base_url;
         if (req.body.default_model !== undefined) {
-          // The provider-level default references the model alias id
-          // (`<id>/<model>`), the form runtime resolution reads back.
           provider.defaultModel = `${id}/${req.body.default_model}`;
         }
         await config.set(PROVIDERS_SECTION, { [id]: provider });
@@ -367,9 +285,6 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         }
         await config.set(MODELS_SECTION, aliases);
 
-        // A fresh setup has no default model at all: seed it with the
-        // provider's own default (or its first model) so the first provider
-        // added leaves the daemon usable. Existing pointers are never moved.
         const firstModel = req.body.models[0];
         if (firstModel !== undefined) {
           await seedDefaultModelWhenUnset(
@@ -434,16 +349,6 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           return;
         }
 
-        // Whole-section replace (not deep-merge `set`, which could never drop
-        // the old api_key/base_url/default_model keys when they leave the form).
-        // The provider record itself merges like the model records below do:
-        // fields the form does not know (custom_headers / env / the registry
-        // `source` blob that scheduled refreshes rediscover by) ride along on
-        // `target`; the fields the form owns are authoritative — absent from
-        // the body means cleared. api_key tri-state: field absent keeps the
-        // stored key, "" clears it — persisted as `api_key = ""`, the same
-        // cleared form authService writes (runtime credential resolution
-        // treats "" as no key).
         const newId = req.body.new_id ?? provider_id;
         if (newId !== provider_id && providers[newId] !== undefined) {
           reply.send(
@@ -457,20 +362,13 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         }
 
         const provider: ProviderConfig = { ...target, type: req.body.type };
-        // Explicit `undefined` assignments (NOT `delete`): the TOML transform is
-        // a raw overlay that only drops a key when the new value carries the key
-        // with an undefined value (`setDefined`); a missing key would keep the
-        // old on-disk value alive and resurrect it on the next boot.
         provider.apiKey = req.body.api_key ?? target.apiKey;
         provider.baseUrl = req.body.base_url;
         provider.defaultModel =
           req.body.default_model !== undefined
-            ? // The provider-level default references the model alias id
-              // (`<id>/<model>`), the same form create persists.
+            ?
               `${newId}/${req.body.default_model}`
             : undefined;
-        // A rename is a key swap on the same section; every other entry (and its
-        // TOML position) is untouched.
         const nextProviders = Object.fromEntries(
           Object.entries(providers).map(([key, value]) => [
             key === provider_id ? newId : key,
@@ -479,10 +377,6 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         );
         nextProviders[newId] = provider;
 
-        // Foreign-prefix collision guard: alias keys are global, and a kept
-        // alias owned by ANOTHER provider may already sit on a `<newId>/<model>`
-        // key the rebuild would write — refuse instead of silently retargeting
-        // it. Checked BEFORE any write so a collision never lands half the edit.
         const models = config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {};
         const newAliasKeys = new Set(req.body.models.map((entry) => `${newId}/${entry.model}`));
         const colliding = Object.entries(models)
@@ -502,8 +396,6 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
 
         await config.replace(PROVIDERS_SECTION, nextProviders);
 
-        // Rebuild the provider's aliases from the submitted list: keep every
-        // alias owned by other providers, drop the old set, append the new one.
         const previousAliasIds = new Set(
           Object.entries(models)
             .filter(([, record]) => record.provider === provider_id)
@@ -518,14 +410,6 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
             .map((record) => [record.model as string, record] as const),
         );
         for (const entry of req.body.models) {
-          // Merge onto the existing record so fields the form does not know
-          // (betaApi / reasoningKey / protocol / per-model baseUrl / overrides /
-          // defaultEffort / maxInputSize …) survive an edit; only models the
-          // user removed lose their record. Fields the form does know are
-          // authoritative — absent from the body means cleared, and the clear
-          // must be an explicit `undefined` assignment (never `delete`): the
-          // TOML transform is a raw overlay that only drops a key when the new
-          // record carries it with an undefined value.
           const alias: ModelRecord = {
             ...previousByModel.get(entry.model),
             provider: newId,
@@ -544,12 +428,6 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         }
         await config.replace(MODELS_SECTION, nextModels);
 
-        // Migrate the global pointers on rename — and ONLY on rename: provider
-        // writes never clear default_provider/default_model, not even when the
-        // rebuild drops the alias they point at (the pointer is the user's
-        // setting, not this endpoint's to garbage-collect). default_model is
-        // repointed via the old record's bare model name, not the alias key —
-        // old aliases may carry a foreign prefix.
         if (newId !== provider_id) {
           const defaultProvider = config.inspect<string>(DEFAULT_PROVIDER_SECTION).userValue;
           if (defaultProvider === provider_id) {
@@ -599,10 +477,6 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
       method: 'POST',
       path: '/providers:action',
       params: providerCollectionActionParamSchema,
-      // One route hosts every collection-level action because find-my-way
-      // cannot register a static `/providers:import_catalog` next to the
-      // in-segment `:action` parameter. The body applies to `import_catalog`
-      // only; the refresh actions are invoked without one.
       body: providerCollectionActionBodySchema.optional(),
       success: {
         data: z.union([
@@ -868,7 +742,6 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
   );
 }
 
-/** Map a coded domain error to the numeric protocol envelope. Returns true if handled. */
 function sendMappedError(
   reply: { send(payload: unknown): unknown },
   requestId: string,
@@ -886,7 +759,6 @@ function sendMappedError(
   return false;
 }
 
-/** The engine's provider-import error codes mapped onto the numeric protocol codes. */
 const MODELS_DEV_IMPORT_ERROR_CODES: Record<string, number> = {
   [ModelsDevImportErrors.codes.CATALOG_UNAVAILABLE]: ErrorCode.CATALOG_UNAVAILABLE,
   [ModelsDevImportErrors.codes.CATALOG_ENTRY_NOT_FOUND]: ErrorCode.CATALOG_ENTRY_NOT_FOUND,
@@ -895,7 +767,6 @@ const MODELS_DEV_IMPORT_ERROR_CODES: Record<string, number> = {
   [ModelsDevImportErrors.codes.PROVIDER_OAUTH_MANAGED]: ErrorCode.PROVIDER_OAUTH_MANAGED,
 };
 
-/** Map a provider-import domain error to the numeric protocol envelope. Returns true if handled. */
 function sendModelsDevImportError(
   reply: { send(payload: unknown): unknown },
   requestId: string,
@@ -908,11 +779,6 @@ function sendModelsDevImportError(
   return true;
 }
 
-/**
- * The `:import_catalog` collection action. Lives behind `/providers:action`
- * because find-my-way cannot register a static `/providers:import_catalog`
- * next to the in-segment `:action` parameter.
- */
 async function handleImportCatalog(
   req: { id: string; body: ProviderCollectionActionBody | undefined },
   reply: { send(payload: unknown): unknown },
@@ -951,13 +817,6 @@ async function handleImportCatalog(
   }
 }
 
-/**
- * The `:import_registry` collection action: fetch a models.dev-shaped private
- * registry (api.json) and apply every entry. The orchestration (fetch +
- * validation + the two persisted remove/apply passes) lives in the engine's
- * `IModelsDevImportService`; this edge only validates the wire body and maps
- * the result and errors.
- */
 async function handleImportRegistry(
   req: { id: string; body: ProviderCollectionActionBody | undefined },
   reply: { send(payload: unknown): unknown },

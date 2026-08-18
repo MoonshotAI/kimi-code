@@ -1,11 +1,3 @@
-/**
- * Scenario: undo validation and restoration across conversation-scoped models.
- * Responsibility: AgentConversationUndoService commits one undo and publishes
- * restored observable state.
- * Wiring: full TestAgentContext with real wire models and event bus.
- * Run: pnpm --filter @moonshot-ai/agent-core-v2 test -- test/agent/undo/undo.test.ts
- */
-
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';

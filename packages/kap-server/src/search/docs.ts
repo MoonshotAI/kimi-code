@@ -1,16 +1,3 @@
-/**
- * `search` module — stored document shapes of the `<homeDir>/search-index`
- * minidb database (pure types, no runtime imports).
- *
- * Extracted from `searchService.ts` so both the main-process service (hit
- * assembly, live route) and the host-agnostic index core (`indexCore.ts` —
- * which also runs inside the search worker thread) share one definition.
- * The worker entry's import closure is loaded under Node's native type
- * stripping, so every RELATIVE import in that closure uses an explicit `.ts`
- * specifier.
- */
-
-/** Cap one indexed document's text so huge pastes do not bloat the index. */
 export const MAX_DOC_TEXT_CHARS = 20_000;
 
 export interface MessageDoc {
@@ -46,8 +33,6 @@ export interface TitleDoc {
   readonly text: string;
   readonly time: number;
 }
-
-// -- turn/step counter states, persisted on file metas for resume ------------
 
 export interface TurnOpener {
   readonly turn: number;

@@ -120,10 +120,6 @@ describe('ConfigState model capabilities', () => {
   });
 
   it('omits maxContextTokens when the bound model no longer resolves', () => {
-    // `update` accepts an alias without validating resolvability; a model entry
-    // removed from config afterwards lands in the same state. The capabilities
-    // then fall back to UNKNOWN_CAPABILITY, whose 0 means "unknown" — the
-    // status event must drop the field rather than publish 0.
     profile.update({ modelAlias: 'ghost/model' });
 
     const statuses = ctx.allEvents.filter((entry) => entry.event === 'agent.status.updated');

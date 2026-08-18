@@ -1,12 +1,3 @@
-/**
- * Scenario: agent context injection position tracking and wire restoration.
- *
- * Exercises the real injector through its service contract with in-memory
- * context, loop, reminder, event-bus, and wire collaborators.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/agent/contextInjector/contextInjector.test.ts`.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';

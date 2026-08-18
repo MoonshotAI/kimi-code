@@ -1,17 +1,3 @@
-/**
- * `contextProjector` domain — `IAgentContextProjectorService` implementation.
- *
- * Projects stored context history into the wire messages sent to the model,
- * applies the read-side media fallbacks selected by `policy.media`, and
- * surfaces every repair the projection had to apply: the repairs are
- * summarized once per distinct signature into a single deduped warning
- * (through `log`) plus a `context_projection_repaired` telemetry event
- * (through `telemetry`), so a silently-mangled history always leaves a
- * trace. The mutable repair-dedup signature (`lastRepairSignature`) is
- * registered into `agentState` (`IAgentStateService`) and read/written
- * through it. Bound at Agent scope.
- */
-
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';

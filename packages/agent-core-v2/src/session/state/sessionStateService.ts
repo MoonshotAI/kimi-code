@@ -1,11 +1,3 @@
-/**
- * `state` domain — `ISessionStateService` implementation.
- *
- * Thin per-scope binding over the `_base` `StateRegistry`; the container owns
- * construction and disposal, so registered state dies with the scope. Bound at
- * Session scope.
- */
-
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';

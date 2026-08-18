@@ -12,6 +12,7 @@ import {
   fsGrepMatchSchema,
   fsKindSchema,
   fsSearchHitSchema,
+  fsSuggestItemSchema,
   type FsChangeEntry,
   type FsChangeEvent,
   type FsEntry,
@@ -19,6 +20,7 @@ import {
   type FsGrepFileHit,
   type FsGrepMatch,
   type FsSearchHit,
+  type FsSuggestItem,
 } from '../fs';
 
 describe('fsKindSchema', () => {
@@ -145,6 +147,31 @@ describe('fsSearchHitSchema (W11.1 / Chain 11)', () => {
 
   it('accepts an empty match_positions list', () => {
     expect(fsSearchHitSchema.parse({ ...hit, match_positions: [] }).match_positions).toEqual([]);
+  });
+});
+
+describe('fsSuggestItemSchema', () => {
+  const item: FsSuggestItem = {
+    path: 'apps/desktop',
+    name: 'desktop',
+    kind: 'directory',
+    score: 0.87,
+    match_positions: [5, 6],
+  };
+
+  it('round-trips a populated item', () => {
+    expect(fsSuggestItemSchema.parse(item)).toEqual(item);
+  });
+
+  it('rejects score outside 0..1', () => {
+    expect(fsSuggestItemSchema.safeParse({ ...item, score: 1.5 }).success).toBe(false);
+    expect(fsSuggestItemSchema.safeParse({ ...item, score: -0.1 }).success).toBe(false);
+  });
+
+  it('rejects negative match positions', () => {
+    expect(
+      fsSuggestItemSchema.safeParse({ ...item, match_positions: [-1] }).success,
+    ).toBe(false);
   });
 });
 

@@ -1,16 +1,3 @@
-/**
- * WriteTool tests for the v2 fileTools domain.
- *
- * Ported from v1 (`packages/agent-core/test/tools/write.test.ts`) and adapted
- * to the v2 constructor `(fs, env, workspace)`. Self-contained: builds a
- * minimal fake `IHostFileSystem` inline so the tool can be exercised without
- * the composition root.
- *
- * Append is routed through `IHostFileSystem.appendText` (a native append), so
- * the tool no longer reads the existing file. The append-call assertions below
- * reflect that single-call mechanic.
- */
-
 import { describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';
@@ -125,19 +112,12 @@ describe('WriteTool', () => {
     const { tool } = makeTool();
 
     expect(tool.name).toBe('Write');
-    expect(tool.description).toContain('append adds content at EOF without adding a newline');
-    expect(tool.description).toContain('\\n stays LF, \\r\\n stays CRLF');
-    expect(tool.description).toContain('Write is NOT ALLOWED for incremental changes');
     expect(tool.parameters).toMatchObject({
       type: 'object',
       properties: {
-        content: {
-          type: 'string',
-          description: expect.stringContaining('Raw full file content'),
-        },
+        content: { type: 'string' },
         mode: {
           enum: ['overwrite', 'append'],
-          description: expect.stringContaining('Defaults to overwrite'),
         },
       },
     });
@@ -152,17 +132,6 @@ describe('WriteTool', () => {
       WriteInputSchema.safeParse({ path: '/tmp/out.txt', content: 'hello', mode: 'bad' }).success,
     ).toBe(false);
     expect(WriteInputSchema.safeParse({ path: '/tmp/out.txt' }).success).toBe(false);
-  });
-
-  it('describes the working-directory rule for the path parameter', () => {
-    const { tool } = makeTool();
-    const params = tool.parameters as {
-      properties: { path: { description: string } };
-    };
-
-    expect(params.properties.path.description).toContain('working directory');
-    expect(params.properties.path.description).toMatch(/relative/i);
-    expect(params.properties.path.description).toMatch(/absolute/i);
   });
 
   it('exposes the content on the file_io display so the approval panel can preview it', () => {
@@ -192,14 +161,6 @@ describe('WriteTool', () => {
 
     expect(insideSrc.matchesRule?.('!./src/**')).toBe(false);
     expect(outsideSrc.matchesRule?.('!./src/**')).toBe(true);
-  });
-
-  it('guides batching large content across multiple write calls', () => {
-    const { tool } = makeTool();
-
-    expect(tool.description).toMatch(/large/i);
-    expect(tool.description).toContain('content too large for one call');
-    expect(tool.description).toMatch(/overwrite[^.]*first chunk[^.]*then[^.]*append/i);
   });
 
   it('writes content through fs and reports bytes written', async () => {

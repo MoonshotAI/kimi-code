@@ -1,26 +1,3 @@
-/**
- * `/sessions/{session_id}/terminals*` route handlers — server-v2 port.
- *
- * Mirrors `packages/server/src/routes/terminals.ts` path-for-path and
- * schema-for-schema so existing v1 clients keep working against server-v2.
- * Backed by the v2 Session-scoped `ISessionTerminalService`
- * (`agent-core-v2/src/session/terminal`): the route resolves the session from
- * the URL, then dispatches to the matching `ISessionTerminalService` method.
- * The wire schema comes from the engine's own terminal contract
- * (`agent-core-v2`).
- *
- * The v2 service is Session-scoped (one instance owns only its own session's
- * terminals), so unlike v1 the methods do not take a `session_id` — the session
- * is fixed by the scope the service is resolved from. The actual OS PTY
- * processes are owned by the App-scoped `IHostTerminalService`.
- *
- * **Error mapping**:
- *   - unknown session     → `40401` (session.not_found)
- *   - unknown terminal    → `40414` (terminal.not_found)
- *   - cwd escapes workspace → `41304` (fs.path_escapes_session)
- *   - invalid suffix/body → `40001` (validation.failed, via defineRoute / parseActionSuffix)
- */
-
 import {
   ErrorCodes,
   ISessionTerminalService,
@@ -82,12 +59,6 @@ const sessionAndTailParamSchema = z.object({
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-/**
- * Resolve the session's `ISessionTerminalService` from the URL session id,
- * cold-loading a persisted-but-not-live session first (matches v1, which spawns
- * from the persisted cwd). Throws `session.not_found` only when the session is
- * unknown or its workspace is gone.
- */
 async function resolveTerminal(core: Scope, sessionId: string): Promise<ISessionTerminalService> {
   const session = await resumeSessionById(core.accessor, sessionId);
   if (session === undefined) {
@@ -252,10 +223,6 @@ function sendMappedError(
         return;
     }
   }
-  // `ISessionWorkspaceContext.assertAllowed` throws a plain (uncoded) Error when a cwd
-  // escapes the workspace — map it to the same wire code v1 uses for path
-  // escapes. TODO: push a coded error into `assertAllowed` so this branch can
-  // be folded into the `isError2` switch above.
   if (err instanceof Error && err.message.startsWith('Path outside workspace')) {
     reply.send(errEnvelope(ErrorCode.FS_PATH_ESCAPES_SESSION, err.message, requestId, err.stack));
     return;

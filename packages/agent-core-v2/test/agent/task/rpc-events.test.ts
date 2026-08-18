@@ -1,7 +1,3 @@
-/**
- * Covers AgentTaskService event emission and notification delivery.
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';

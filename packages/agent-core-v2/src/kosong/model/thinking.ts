@@ -1,34 +1,3 @@
-/**
- * `kosong/model` domain — the single authority on thinking semantics.
- *
- * Three kinds of knowledge live here, and nowhere else:
- *
- *  1. The `thinking` config-section type (`[thinking]`: enabled / effort /
- *     keep, plus the env-only `forcedEffort` field). Kosong owns only the
- *     type.
- *  2. Effort/keep resolution: pure helpers that fold a requested effort, the
- *     config defaults, and the model's declared thinking metadata into the
- *     effective `ThinkingEffort`, and that resolve the thinking-keep value.
- *  3. The registry-driven vendor verdicts: `drivesThinkingThroughTraits`
- *     (definition lookup: the vendor's traits take over thinking encoding)
- *     and `usesTraitDrivenThinking` (the resolved adapter identity for the
- *     (protocol, providerType) pair contains a `withThinking` hook). Neither
- *     hardcodes a vendor or protocol string — trait-driven thinking means
- *     "thinking is driven by traits", which the registry answers.
- *     `requiresStrictThinkingValidation` reads the same identity for the
- *     strict-validation flag. Strict gates only listed-effort validation
- *     and the `'on'` projection; the always-on clamp is UNCONDITIONAL — a
- *     model that declares `always_thinking` never resolves to `'off'` on
- *     any wire (a claimed off state would be a lie, since upstream keeps
- *     reasoning at its default when no off encoding exists). Unlisted
- *     concrete efforts stay lenient on compatible transports
- *     (warn-and-send, `anthropic-thinking-effort-not-listed`) because the
- *     backend may accept values the local catalog does not list. The
- *     strict flag is declared by `kimiOpenAITrait` — Kimi's native API
- *     rejects unlisted efforts — and deliberately NOT by
- *     `kimiAnthropicTrait`.
- */
-
 import type { ThinkingEffort } from '#/kosong/contract/provider';
 import type { IProtocolAdapterRegistry, Protocol } from '#/kosong/protocol/protocol';
 
@@ -36,14 +5,12 @@ import { getProviderDefinitions } from '../provider/providerDefinition';
 
 import type { ModelThinkingMetadata, ThinkingDefaults } from './model.types';
 
-
 export interface ThinkingConfig {
   enabled?: boolean;
   effort?: string;
   forcedEffort?: string;
   keep?: string;
 }
-
 
 export function drivesThinkingThroughTraits(providerType: string | undefined): boolean {
   if (providerType === undefined) return false;
@@ -81,7 +48,6 @@ export function requiresStrictThinkingValidation(
 export function wireHasProtocolThinkingDisable(protocol: string | undefined): boolean {
   return protocol === 'anthropic' || protocol === 'kimi';
 }
-
 
 function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -215,7 +181,6 @@ export function resolveThinkingEffortForModel(
   }
   return normalizeThinkingEffortForModel(effort, model, strictValidation);
 }
-
 
 const KEEP_OFF_VALUES = new Set(['0', 'false', 'no', 'off', 'none', 'null']);
 

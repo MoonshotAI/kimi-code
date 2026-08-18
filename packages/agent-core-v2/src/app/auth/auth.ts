@@ -1,15 +1,3 @@
-/**
- * `auth` domain (cross-cutting) — app-scope OAuth + auth summary contracts.
- *
- * Defines the public contracts of authentication: the `AuthStatus` model, the
- * `IOAuthService` used to drive device-code login / logout / flow inspection,
- * to resolve a per-provider `BearerTokenProvider`, and to refresh a managed
- * OAuth provider's server-side model configuration, the `IOAuthToolkit`
- * device-code client that `IOAuthService` delegates the OAuth protocol to, and
- * the `IAuthSummaryService` used to summarize auth state and provide the
- * prompt auth-readiness gate. App-scoped — shared across the application.
- */
-
 import type {
   AuthManagedUserInfoResult,
   AuthManagedUsageResult,

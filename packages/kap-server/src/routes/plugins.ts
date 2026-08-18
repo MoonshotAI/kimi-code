@@ -1,37 +1,3 @@
-/**
- * `/plugins` REST routes — plugin management and the marketplace catalog.
- *
- *   GET  /plugins                                  data: {plugins: PluginSummary[]}
- *   GET  /plugins/marketplace                      data: {entries: MarketplaceEntry[]}
- *   POST /plugins                 body {source}    data: PluginSummary
- *   POST /plugins/{plugin_id}:enable|:disable|:remove
- *
- * Thin projection of the App-scope `IPluginService` (install/remove/enable
- * are serialized there and fire `onDidReload`, which converges session skill
- * catalogs and the capability shelf-install hook). The marketplace catalog is
- * read on demand from the configured location (`pluginMarketplaceUrl` server
- * option, env `KIMI_CODE_PLUGIN_MARKETPLACE_URL`, default the production
- * catalog) through the shared `app/plugin/marketplace` client — catalog
- * reading, the lenient entry normalization, source resolution, and version
- * derivation all live there (one implementation, consumed by the CLI too).
- * When the location is the built-in default, a failed read falls back to the
- * source checkout's own catalog (offline dev); an explicitly configured
- * catalog fails hard. The route merges the entries with the live install
- * state — install status is always detected from the local records, never
- * from the catalog — and marks capability wiring rows with `capabilityId` so
- * clients route them through `/capabilities/{id}:install`.
- *
- * **Action suffix**: `:enable` / `:disable` / `:remove` via `parseActionSuffix`
- * (bare ids rejected).
- *
- * **Error mapping**:
- *   - unknown plugin id            → `40419 plugin.not_found` (from the domain code)
- *   - bad install source / path    → `40001 validation.failed` / `40409 fs.path_not_found`
- *   - malformed `{tail}` / body    → `40001 validation.failed`
- *   - catalog unreachable/invalid  → `50001` with a plain-language message
- *   - other errors                 → `50001` via the global error handler
- */
-
 import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
@@ -85,30 +51,14 @@ interface PluginsRouteHost {
 
 const PLUGIN_ACTIONS = ['enable', 'disable', 'remove'] as const;
 
-/**
- * Capability wiring plugin id → capability id, applied only to the DEFAULT
- * catalog (a custom catalog may legitimately carry a same-id fork — the CLI
- * likewise injects built-in rows only for the default catalog). The closed
- * id set belongs to the client/engine contract (mirrored by the klient
- * schema; the CLI names it inline). Marking these rows lets clients route
- * them through `/capabilities/{id}:install` — a plain `POST /plugins`
- * installs only the wiring layer, never the binary runtime.
- */
 const CAPABILITY_ROW_IDS: Readonly<
   Record<string, { capabilityId: string; wiringPluginIds: readonly string[] }>
 > = {
-  // kimi-cu's wiring plugin id is platform-specific ('kimi-cu-win' on
-  // Windows x64); the catalog row joins install state through either id.
   'kimi-cu': { capabilityId: 'kimi-cu', wiringPluginIds: ['kimi-cu', 'kimi-cu-win'] },
   'kimi-cu-win': { capabilityId: 'kimi-cu', wiringPluginIds: ['kimi-cu', 'kimi-cu-win'] },
   'kimi-webbridge': { capabilityId: 'kimi-webbridge', wiringPluginIds: ['kimi-webbridge'] },
 };
 
-/**
- * Wiring plugin ids in this platform's preference order — the canonical one
- * first ('kimi-cu-win' on Windows x64), so a stale same-id record never
- * shadows the capability's actual wiring plugin.
- */
 function orderedWiringPluginIds(ids: readonly string[]): readonly string[] {
   if (process.platform === 'win32' && process.arch === 'x64' && ids.includes('kimi-cu-win')) {
     return ['kimi-cu-win', ...ids.filter((id) => id !== 'kimi-cu-win')];
@@ -123,11 +73,6 @@ function fetchWithTimeout(...args: Parameters<typeof fetch>): Promise<Response> 
   return fetch(input, { ...init, signal: AbortSignal.timeout(MARKETPLACE_FETCH_TIMEOUT_MS) });
 }
 
-/**
- * The repo checkout's own catalog — the fallback when the default location
- * is unreachable (offline / source-checkout dev). Absent in bundled
- * installs, where the fallback simply never fires.
- */
 async function getSourceCheckoutLocation(): Promise<MarketplaceLocation | undefined> {
   const candidate = resolve(import.meta.dirname, '../../../../plugins/marketplace.json');
   const info = await stat(candidate).catch(() => undefined);
@@ -153,8 +98,6 @@ export function registerPluginsRoutes(
   core: Scope,
   opts: PluginsRouteOptions,
 ): void {
-  // GET /plugins/marketplace — registered BEFORE /plugins/{tail} so the
-  // literal segment wins over the param route.
   const marketplaceRoute = defineRoute(
     {
       method: 'GET',
@@ -199,11 +142,6 @@ export function registerPluginsRoutes(
         );
         return;
       }
-      // The default catalog is completed with the built-in capability rows
-      // it does not carry itself (e.g. kimi-cu) — the CLI injects the same
-      // rows client-side. Injected before the projection below so they get
-      // the same install-state join and capabilityId marker; the
-      // `capability:<id>` source is a sentinel, never a plain-plugin source.
       if (opts.marketplaceIsDefault === true) {
         const presentIds = new Set(marketplace.plugins.map((entry) => entry.id));
         const missing = core.accessor
@@ -224,8 +162,6 @@ export function registerPluginsRoutes(
       marketplace = await withLatestVersions(marketplace, fetchImpl);
       const installed = await core.accessor.get(IPluginService).listPlugins();
       const byId = new Map(installed.map((p) => [p.id, p]));
-      // Capability rows unsupported on this host are hidden entirely (the CLI
-      // does the same for its built-in rows) — never marked, never offered.
       const supportedCapabilityIds = new Set<string>(
         core.accessor
           .get(ICapabilityService)
@@ -244,8 +180,6 @@ export function registerPluginsRoutes(
           continue;
         }
 
-        // Capability rows join through the wiring plugin ids (platform order)
-        // BEFORE the bare catalog id — a stale same-id record must not win.
         const record =
           capabilityRow !== undefined
             ? (orderedWiringPluginIds(capabilityRow.wiringPluginIds)
@@ -282,7 +216,6 @@ export function registerPluginsRoutes(
     marketplaceRoute.handler as Parameters<PluginsRouteHost['get']>[2],
   );
 
-  // GET /plugins ------------------------------------------------------------
   const listRoute = defineRoute(
     {
       method: 'GET',
@@ -304,7 +237,6 @@ export function registerPluginsRoutes(
     listRoute.handler as Parameters<PluginsRouteHost['get']>[2],
   );
 
-  // POST /plugins {source} --------------------------------------------------
   const installRoute = defineRoute(
     {
       method: 'POST',
@@ -334,7 +266,6 @@ export function registerPluginsRoutes(
     installRoute.handler as Parameters<PluginsRouteHost['post']>[2],
   );
 
-  // POST /plugins/{plugin_id}:{enable|disable|remove} ------------------------
   const actionRoute = defineRoute(
     {
       method: 'POST',
@@ -389,9 +320,6 @@ export function registerPluginsRoutes(
 
 const PLUGIN_ERROR_MAP: Readonly<Record<string, ErrorCode>> = {
   [PluginErrors.codes.PLUGIN_NOT_FOUND]: ErrorCode.PLUGIN_NOT_FOUND,
-  // Client-fixable input mistakes (relative source, missing local path, an
-  // unloadable manifest at a valid location) keep their 4xx semantics
-  // instead of collapsing into a 50001.
   [PluginErrors.codes.PLUGIN_LOAD_FAILED]: ErrorCode.VALIDATION_FAILED,
   [DomainErrorCodes.VALIDATION_FAILED]: ErrorCode.VALIDATION_FAILED,
   [DomainErrorCodes.FS_PATH_NOT_FOUND]: ErrorCode.FS_PATH_NOT_FOUND,

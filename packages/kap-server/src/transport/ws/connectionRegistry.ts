@@ -1,23 +1,3 @@
-/**
- * `connection-registry` transport module — server-local registry of live
- * WebSocket connections.
- *
- * Backs `GET /api/v1/connections`. Holds both `/api/v1/ws` (v1 protocol) and
- * `/api/v1/ws` connections through the common {@link ConnectionLike}
- * shape. Mirrors v1's `IConnectionRegistry`
- * (`packages/server/src/services/gateway`).
- *
- * Owned by the server bootstrap (`start.ts`) and passed by parameter to the WS
- * layers and the route. It is intentionally NOT registered into the
- * `agent-core-v2` Core `Scope`: the registry is transport state, not a business
- * service, so it carries no `_serviceBrand` and is not DI-managed.
- */
-
-/**
- * Common shape of a WebSocket connection tracked by the registry — the fields
- * the `GET /api/v1/connections` route projects onto the wire. Both the v1
- * (`WsConnectionV1`) and v2 (`WsConnection`) connections satisfy this.
- */
 export interface ConnectionLike {
   readonly id: string;
   readonly connectedAt: string;
@@ -69,7 +49,6 @@ export class ConnectionRegistry implements IConnectionRegistry {
       try {
         conn.close(1001, reason);
       } catch {
-        // best-effort cleanup on shutdown
       }
     }
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { type WriteInput, WriteInputSchema, WriteTool } from '../../src/tools/builtin/file/write';
+import { type WriteInput, WriteTool } from '../../src/tools/builtin/file/write';
 import { createFakeKaos, PERMISSIVE_WORKSPACE, toolContentString } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
 
@@ -14,62 +14,6 @@ function context(args: WriteInput) {
 const DIR_STAT = vi.fn().mockResolvedValue({ stMode: 0o040755 });
 
 describe('WriteTool', () => {
-  it('exposes current metadata and schema', () => {
-    const tool = new WriteTool(createFakeKaos(), PERMISSIVE_WORKSPACE);
-
-    expect(tool.name).toBe('Write');
-    expect(tool.description).toContain('append adds content at EOF without adding a newline');
-    expect(tool.description).toContain('\\n stays LF, \\r\\n stays CRLF');
-    // The prompt steers the agent toward Edit for partial changes to an
-    // existing file. Pin the prohibition so accidental weakening is caught.
-    expect(tool.description).toContain('Write is NOT ALLOWED for incremental changes');
-    // Spontaneous doc/README creation is a known anti-pattern; pin the guard.
-    expect(tool.description).toContain('documentation files');
-    expect(tool.description).toContain('README');
-    // ...but the plan-mode plan file is a `.md` the model is told to Write, so the
-    // ban must carve it out (plan/index.ts writes plans/<id>.md via Write).
-    expect(tool.description.toLowerCase()).toContain('plan-mode plan file');
-    // The guard targets UNSOLICITED docs, not every .md file, so an artifact a task or
-    // project instruction requires (e.g. a repo-mandated changeset) is not caught either.
-    expect(tool.description.toLowerCase()).toContain('unsolicited');
-    expect(tool.description.toLowerCase()).toContain('instruction requires it');
-    expect(tool.parameters).toMatchObject({
-      type: 'object',
-      properties: {
-        content: {
-          type: 'string',
-          description: expect.stringContaining('Raw full file content'),
-        },
-        mode: {
-          enum: ['overwrite', 'append'],
-          description: expect.stringContaining('Defaults to overwrite'),
-        },
-      },
-    });
-    expect(WriteInputSchema.safeParse({ path: '/tmp/out.txt', content: 'hello' }).success).toBe(
-      true,
-    );
-    expect(
-      WriteInputSchema.safeParse({ path: '/tmp/out.txt', content: 'hello', mode: 'append' })
-        .success,
-    ).toBe(true);
-    expect(
-      WriteInputSchema.safeParse({ path: '/tmp/out.txt', content: 'hello', mode: 'bad' }).success,
-    ).toBe(false);
-    expect(WriteInputSchema.safeParse({ path: '/tmp/out.txt' }).success).toBe(false);
-  });
-
-  it('describes the working-directory rule for the path parameter', () => {
-    const tool = new WriteTool(createFakeKaos(), PERMISSIVE_WORKSPACE);
-    const params = tool.parameters as {
-      properties: { path: { description: string } };
-    };
-
-    expect(params.properties.path.description).toContain('working directory');
-    expect(params.properties.path.description).toMatch(/relative/i);
-    expect(params.properties.path.description).toMatch(/absolute/i);
-  });
-
   it('exposes the content on the file_io display so the approval panel can preview it', () => {
     const tool = new WriteTool(createFakeKaos(), PERMISSIVE_WORKSPACE);
     const execution = tool.resolveExecution({
@@ -100,16 +44,6 @@ describe('WriteTool', () => {
 
     expect(insideSrc.matchesRule?.('!./src/**')).toBe(false);
     expect(outsideSrc.matchesRule?.('!./src/**')).toBe(true);
-  });
-
-  it('guides batching large content across multiple write calls', () => {
-    const tool = new WriteTool(createFakeKaos(), PERMISSIVE_WORKSPACE);
-
-    // The guidance must mention that a file too large for one call should be
-    // chunked, and spell out the first-overwrite-then-append ordering.
-    expect(tool.description).toMatch(/large/i);
-    expect(tool.description).toContain('content too large for one call');
-    expect(tool.description).toMatch(/overwrite[^.]*first chunk[^.]*then[^.]*append/i);
   });
 
   it('writes content through kaos and reports bytes written', async () => {

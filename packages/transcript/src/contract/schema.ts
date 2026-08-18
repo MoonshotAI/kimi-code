@@ -1,12 +1,4 @@
-/**
- * zod schemas for every value that crosses a process boundary (REST body,
- * WS payload). Structure is closed and validated; open content envelopes
- * (tool input/output/display, payloads) validate as `z.unknown()`.
- */
-
 import { z } from 'zod';
-
-// ------------------------------------------------------------------ ids
 
 export const turnIdSchema = z.string().min(1);
 export const stepIdSchema = z.string().min(1);
@@ -14,13 +6,6 @@ export const frameIdSchema = z.string().min(1);
 export const taskIdSchema = z.string().min(1);
 export const agentIdSchema = z.string().min(1);
 
-/**
- * Filename-safe agent id shape (engine-minted ids are slugs / ulids /
- * uuids). Beyond traversal (`/`, `\`, `.` segments), anything outside this
- * set — NUL bytes, control characters, overlong segments — makes the
- * filesystem throw unhandled errors (`ERR_INVALID_ARG_VALUE`,
- * `ENAMETOOLONG`) instead of reading a `wire.jsonl`.
- */
 const AGENT_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 
 /**
@@ -32,8 +17,6 @@ const AGENT_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 export function isPlainAgentId(agentId: string): boolean {
   return AGENT_ID_PATTERN.test(agentId) && agentId !== '.' && agentId !== '..';
 }
-
-// ---------------------------------------------------------------- model
 
 export const turnOriginSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('user'), payload: z.unknown().optional() }),
@@ -343,8 +326,6 @@ export const transcriptMetaMergeSchema = transcriptMetaSchema.extend({
   modes: modesMetaMergeSchema.optional(),
 });
 
-// ---------------------------------------------------------------- ops
-
 export const attachmentSchema = z.object({
   attachmentId: z.string(),
   mediaType: z.string(),
@@ -384,7 +365,6 @@ export const transcriptPromptSchema = z.object({
 export const agentTranscriptSnapshotSchema = z.object({
   items: z.array(transcriptItemSchema),
   tasks: z.array(transcriptTaskSchema),
-  // Added later; defaulted so newer consumers tolerate older servers.
   interactions: z.array(interactionSchema).default([]),
   attachments: z.array(attachmentSchema).default([]),
   todos: z.array(todoSchema).default([]),
@@ -446,8 +426,6 @@ export const transcriptOpBatchSchema = z.object({
   ops: z.array(transcriptOperationSchema),
 });
 
-// ---------------------------------------------------------------- subscription
-
 export const transcriptGradeSchema = z.enum(['off', 'turn', 'block', 'delta']);
 
 /**
@@ -495,8 +473,6 @@ export const transcriptSubscribeV2PayloadSchema = z.object({
 
 export type TranscriptSubscribeV2Payload = z.infer<typeof transcriptSubscribeV2PayloadSchema>;
 
-// ---------------------------------------------------------------- REST
-
 /**
  * `GET /v1/sessions/{session_id}/transcript` contract shape, owned by this
  * package: `agent_id` (required) + turn cursor (`before_turn` / `after_turn`,
@@ -543,7 +519,6 @@ export const transcriptResponseSchema = z.object({
   items: z.array(transcriptItemSchema),
   has_more: z.boolean(),
   tasks: z.array(transcriptTaskSchema),
-  // Added later; defaulted so newer consumers tolerate older servers.
   interactions: z.array(interactionSchema).default([]),
   attachments: z.array(attachmentSchema).default([]),
   todos: z.array(todoSchema).default([]),
@@ -551,7 +526,6 @@ export const transcriptResponseSchema = z.object({
   meta: transcriptMetaSchema,
   agents: z.array(agentDescriptorSchema),
   pending_interactions: z.array(z.string()),
-  /** Op-batch watermark: this state includes every batch with seq <= N. */
   seq: transcriptSeqSchema.optional(),
 });
 
@@ -610,9 +584,7 @@ export const transcriptUserMessagesResponseSchema = z.object({
  */
 export const transcriptPlanReviewSchema = z.object({
   state: z.enum(['pending', 'approved', 'rejected', 'cancelled']),
-  /** `response.selectedLabel` — a plan option label, or a reserved one ('Revise' / 'Reject and Exit'). */
   selected_option: z.string().optional(),
-  /** `response.feedback` — the user's revision / rejection feedback. */
   feedback: z.string().optional(),
 });
 
@@ -626,9 +598,7 @@ export const transcriptPlanEntrySchema = z.object({
   tool_call_id: z.string(),
   turn_id: turnIdSchema,
   source: z.enum(['interaction', 'display', 'output']),
-  /** Full plan content as submitted for review. */
   plan: z.string(),
-  /** The plan file path, when known. */
   path: z.string().optional(),
   options: z
     .array(z.object({ label: z.string(), description: z.string().optional() }))
@@ -647,19 +617,15 @@ export const transcriptPlanResponseSchema = z.object({
   plans: z.array(transcriptPlanEntrySchema),
 });
 
-// ---------------------------------------------------------------- WS payloads
-
 export const transcriptResetPayloadSchema = z.object({
   agent_id: agentIdSchema,
   snapshot: agentTranscriptSnapshotSchema,
   has_more_older: z.boolean(),
-  /** Watermark: the snapshot includes every op batch with seq <= N. */
   seq: transcriptSeqSchema.optional(),
 });
 
 export const transcriptOpsPayloadSchema = z.object({
   agent_id: agentIdSchema,
   ops: z.array(transcriptOperationSchema),
-  /** This batch's sequence number (consecutive per agent; see transcriptSeqSchema). */
   seq: transcriptSeqSchema.optional(),
 });

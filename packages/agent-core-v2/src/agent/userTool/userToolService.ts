@@ -1,22 +1,3 @@
-/**
- * `userTool` domain — `IAgentUserToolService` implementation.
- *
- * Holds the set of host-registered user tools in the `userToolKey` state
- * (`Map<string, UserToolRegistration>`), mutating it only through the durable
- * `ToolsRegisterUserTool` / `ToolsUnregisterUserTool` events
- * (`dispatcher.dispatch(...)`). The live side effects — `registry.register` +
- * `profile.addActiveTool` (and the matching dispose / `removeActiveTool`) — run
- * after the dispatch, and are re-derived from the rebuilt state by the
- * dispatcher's `onDidRestore` hook after restore, so a resumed agent
- * re-registers exactly the tools the persisted records describe without
- * re-firing any live notification.
- * The restore re-registers into the tool registry only: the active-tool set is
- * owned by the persisted `profileActiveToolsKey`, so the ephemeral `addActiveTool`
- * overlay is not rebuilt (it is live-only by design). The per-tool
- * `IDisposable` handles stay live-only (they cannot be persisted).
- * Bound at Agent scope.
- */
-
 import { randomUUID } from 'node:crypto';
 
 import { type IDisposable } from '#/_base/di/lifecycle';

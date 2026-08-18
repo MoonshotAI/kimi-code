@@ -1,23 +1,4 @@
-/**
- * `userTool` domain — the `userToolKey` state and the durable
- * `tools.register_user_tool` (`ToolsRegisterUserTool`) /
- * `tools.unregister_user_tool` (`ToolsUnregisterUserTool`) events for the set
- * of user-defined tools registered by the host.
- *
- * The state holds the registered user tools as a
- * `Map<string, UserToolRegistration>` (initial empty). Each fold keeps the
- * same reference when nothing changes (registering an already-equal tool /
- * unregistering an unknown name) so the state's reference-equality stays
- * quiet. The side effects — `registry.register` and `profile.addActiveTool`
- * (and the matching dispose / `removeActiveTool`) — are NOT part of the folds:
- * they run after dispatch on the live path and are re-derived from the rebuilt
- * state by the dispatcher's `onDidRestore` hook after restore, so a resumed
- * agent re-registers exactly the tools the persisted records describe.
- * Scope-agnostic.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { original } from 'immer';
 import { z } from 'zod';
 

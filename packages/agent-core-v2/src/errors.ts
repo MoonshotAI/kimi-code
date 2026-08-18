@@ -1,9 +1,3 @@
-/**
- * Error facade — aggregates every domain's error contribution into the unified
- * `ErrorCodes` const and re-exports the error primitives. Importing this
- * module registers every domain's codes.
- */
-
 import { CoreErrors } from '#/_base/errors/codes';
 import { AgentLifecycleErrors } from '#/session/agentLifecycle/errors';
 import { AuthErrors } from '#/app/auth/errors';

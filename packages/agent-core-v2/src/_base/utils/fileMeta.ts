@@ -1,14 +1,3 @@
-/**
- * File content metadata helpers — binary detection, line counting, etag, and
- * extension-based mime / language guessing.
- *
- * Pure functions over bytes, text, and stat-like shapes; no io happens here.
- * Binary detection samples the leading `FS_BINARY_SAMPLE_BYTES` of a file and
- * flags it as binary when the non-printable fraction exceeds
- * `FS_BINARY_NONPRINTABLE_FRACTION`; etags are built from any stat-like shape
- * carrying `size` / `mtimeMs` / `ino` (`FileMetaStat`).
- */
-
 import { extname } from 'node:path';
 
 import { classifyTextSample } from '#/_base/text/encoding';

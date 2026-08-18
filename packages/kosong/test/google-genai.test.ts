@@ -1048,9 +1048,9 @@ describe('GoogleGenAIChatProvider', () => {
       const provider = new GoogleGenAIChatProvider({
         model: 'gemini-2.5-flash',
         apiKey: 'test-key',
-        baseUrl: 'https://qianxun.example/v1beta',
+        baseUrl: 'https://genai-gateway.example/v1beta',
       });
-      expect(customBaseUrl(provider)).toBe('https://qianxun.example/v1beta');
+      expect(customBaseUrl(provider)).toBe('https://genai-gateway.example/v1beta');
     });
 
     it('leaves the SDK default endpoint in place when no baseUrl is set', () => {
@@ -1065,7 +1065,7 @@ describe('GoogleGenAIChatProvider', () => {
       const provider = new GoogleGenAIChatProvider({
         model: 'gemini-2.5-flash',
         apiKey: 'test-key',
-        baseUrl: 'https://qianxun.example/v1beta',
+        baseUrl: 'https://genai-gateway.example/v1beta',
         defaultHeaders: { 'User-Agent': 'kimi-code-cli/test' },
       });
       const client = (
@@ -1078,7 +1078,7 @@ describe('GoogleGenAIChatProvider', () => {
           };
         }
       )._client;
-      expect(client.apiClient.getCustomBaseUrl()).toBe('https://qianxun.example/v1beta');
+      expect(client.apiClient.getCustomBaseUrl()).toBe('https://genai-gateway.example/v1beta');
       expect(client.apiClient.getHeaders()).toMatchObject({
         'User-Agent': 'kimi-code-cli/test',
       });
@@ -1089,9 +1089,9 @@ describe('GoogleGenAIChatProvider', () => {
         model: 'gemini-1.5-pro',
         apiKey: 'test-key',
         vertexai: true,
-        baseUrl: 'https://qianxun.example/vertex',
+        baseUrl: 'https://genai-gateway.example/vertex',
       });
-      expect(customBaseUrl(provider)).toBe('https://qianxun.example/vertex');
+      expect(customBaseUrl(provider)).toBe('https://genai-gateway.example/vertex');
     });
   });
 

@@ -1,9 +1,3 @@
-/**
- * Scenario: goal lifecycle, durable wire records, and continuation scheduling.
- * Responsibilities: verify public goal commands, replayable state, and one-turn admission.
- * Wiring: real goal/wire services; loop is stubbed only for focused scheduling cases.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/agent/goal/goal.test.ts`.
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isUserCancellation } from '#/_base/utils/abort';
@@ -685,8 +679,6 @@ describe('AgentGoalService', () => {
       });
       expect(goals.getGoal().goal?.budget.turnBudget).toBe(2);
     });
-
-
 
     it('normalizes active replayed goals to paused', async () => {
       records.length = 0;

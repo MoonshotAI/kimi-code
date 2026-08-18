@@ -17,7 +17,6 @@ interface Envelope<T> {
   details?: Array<{ path: string; message: string }>;
 }
 
-/** default_provider/default_model both point at the openai provider. */
 const DEFAULTED_TOML = [
   'default_provider = "openai"',
   'default_model = "gpt4o"',
@@ -42,13 +41,11 @@ const DEFAULTED_TOML = [
   '',
 ].join('\n');
 
-/** Same providers/models, but the global default model belongs to kimi. */
 const KEEP_DEFAULT_TOML = DEFAULTED_TOML.replace('default_provider = "openai"\n', '').replace(
   'default_model = "gpt4o"',
   'default_model = "k2"',
 );
 
-/** A default_model pointing at an alias that does not exist. */
 const DANGLING_DEFAULT_TOML = [
   'default_model = "gone"',
   '',
@@ -58,7 +55,6 @@ const DANGLING_DEFAULT_TOML = [
   '',
 ].join('\n');
 
-/** Subagent pool whose default survives an openai deletion; one entry dangles. */
 const POOL_TOML = [
   DEFAULTED_TOML,
   '[secondary_model]',
@@ -70,7 +66,6 @@ const POOL_TOML = [
   '',
 ].join('\n');
 
-/** Subagent pool whose effective default belongs to the deleted provider. */
 const POOL_DANGLING_DEFAULT_TOML = POOL_TOML.replace('default_model = "k2"', 'default_model = "gpt4o"');
 
 const MANAGED_TOML = [
@@ -105,7 +100,6 @@ const CREATE_BODY = {
   ],
 } as const;
 
-/** Full "edit & save" form for the openai provider; api_key deliberately absent. */
 const REPLACE_BODY = {
   type: 'openai',
   base_url: 'https://api.openai.example/v1',
@@ -123,8 +117,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-provider-write-'));
-    // Disable the background refresh scheduler so it never rewrites config
-    // underneath the write-path assertions below.
     process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START'] = '0';
     process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS'] = '0';
   });
@@ -210,10 +202,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     return parseToml(text) as Record<string, unknown>;
   }
 
-  // -------------------------------------------------------------------------
-  // POST /providers
-  // -------------------------------------------------------------------------
-
   it('creates a provider with model aliases and persists them to config.toml', async () => {
     await boot();
     const { status, body } = await postJson<unknown>('/api/v1/providers', CREATE_BODY);
@@ -287,8 +275,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(body.data).toEqual({
       id: 'vertex',
       type: 'vertexai',
-      // No provider-level default, but the fresh-setup seeding made this
-      // model the global default — and the projection falls back to it.
       default_model: 'vertex/gemini-2.5-pro',
       has_api_key: false,
       status: 'unconfigured',
@@ -304,7 +290,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     const onDisk = await readConfigToml();
     expect(onDisk['default_model']).toBe('my-openai/gpt-4.1');
 
-    // End-to-end: the readiness probe now reports a usable daemon.
     const auth = await getJson<{ ready: boolean; default_model: string | null }>('/api/v1/auth');
     expect(auth.body.data).toMatchObject({ ready: true, default_model: 'my-openai/gpt-4.1' });
   });
@@ -353,7 +338,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(body.code).toBe(40921);
     expect(body.data).toBeNull();
 
-    // The existing provider is left untouched.
     const providers = await getJson<{ items: Array<{ id: string }> }>('/api/v1/providers');
     expect(providers.body.data.items.map((p) => p.id)).toEqual(['kimi', 'openai']);
   });
@@ -428,10 +412,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     }
   });
 
-  // -------------------------------------------------------------------------
-  // DELETE /providers/{provider_id}
-  // -------------------------------------------------------------------------
-
   it('deletes a provider and its model aliases, keeping unrelated defaults', async () => {
     await boot(KEEP_DEFAULT_TOML);
     const { status, text } = await deleteJson<unknown>('/api/v1/providers/openai');
@@ -458,8 +438,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(text).toBe('');
 
     const onDisk = await readConfigToml();
-    // The pointers are the user's settings: they stay put even though the
-    // provider/aliases they reference are gone.
     expect(onDisk['default_provider']).toBe('openai');
     expect(onDisk['default_model']).toBe('gpt4o');
     expect(onDisk['providers']).toEqual({ kimi: { type: 'kimi', api_key: 'sk-test' } });
@@ -485,8 +463,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     const { status } = await deleteJson<unknown>('/api/v1/providers/openai');
     expect(status).toBe(204);
 
-    // A leftover pool table without its default would fail the engine's pool
-    // validation on every session create — the whole section goes instead.
     const onDisk = await readConfigToml();
     expect(onDisk['secondary_model']).toBeUndefined();
   });
@@ -500,11 +476,8 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(status).toBe(204);
 
     const onDisk = await readConfigToml();
-    // The last provider/model drops the whole TOML table, not an empty stub.
     expect(onDisk['providers']).toBeUndefined();
     expect(onDisk['models']).toBeUndefined();
-    // Except the seeded global default: pointers are the user's settings and
-    // deletes never garbage-collect them (it dangles until re-pointed).
     expect(onDisk['default_model']).toBe('my-openai/gpt-4.1');
 
     const providers = await getJson<{ items: unknown[] }>('/api/v1/providers');
@@ -527,10 +500,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(body?.code).toBe(40412);
   });
 
-  // -------------------------------------------------------------------------
-  // PUT /providers/{provider_id}
-  // -------------------------------------------------------------------------
-
   it('replaces a provider, keeping the stored api_key and rebuilding its aliases', async () => {
     await boot(KEEP_DEFAULT_TOML);
     const { status, body } = await putJson<{
@@ -549,8 +518,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     });
 
     const onDisk = await readConfigToml();
-    // The removed alias (`gpt4o`) is really gone from config.toml; the other
-    // provider's alias (`k2`) and its global default pointer are untouched.
     expect(onDisk['providers']).toEqual({
       kimi: { type: 'kimi', api_key: 'sk-test' },
       openai: {
@@ -614,8 +581,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(body.data.provider.has_api_key).toBe(false);
     expect(body.data.provider.status).toBe('unconfigured');
 
-    // Cleared persists as `api_key = ""` — the same form authService writes
-    // for keyless providers; runtime credential resolution treats it as no key.
     const onDisk = await readConfigToml();
     expect(onDisk['providers']).toEqual({
       kimi: { type: 'kimi', api_key: 'sk-test' },
@@ -664,10 +629,8 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
         provider: 'openai',
         model: 'gpt-4o',
         max_context_size: 256000,
-        // Unknown to the form — preserved:
         beta_api: true,
         default_effort: 'high',
-        // Form-authoritative:
         capabilities: ['thinking', 'tool_use'],
         support_efforts: ['low', 'high', 'max'],
         adaptive_thinking: true,
@@ -685,8 +648,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(body.code).toBe(0);
 
     const onDisk = await readConfigToml();
-    // `gpt4o` is gone from the models section, yet the global default pointer
-    // stays — it is the user's setting, not this endpoint's to clear.
     expect(onDisk['default_model']).toBe('gpt4o');
     expect(onDisk['default_provider']).toBe('openai');
     expect(onDisk['providers']).toEqual({
@@ -732,8 +693,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
       'my-openai/gpt-4.1': { provider: 'my-openai', model: 'gpt-4.1', max_context_size: 1047576 },
     });
     expect(onDisk2['default_provider']).toBe('my-openai');
-    // The old default alias (`gpt4o`, record model gpt-4o) is repointed at the
-    // rebuilt alias under the new prefix.
     expect(onDisk2['default_model']).toBe('my-openai/gpt-4o');
   });
 
@@ -748,8 +707,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
 
     const onDisk = await readConfigToml();
     expect(onDisk['default_provider']).toBe('my-openai');
-    // The dropped model's alias can no longer be repointed — and the pointer
-    // is still left dangling rather than cleared.
     expect(onDisk['default_model']).toBe('gpt4o');
   });
 
@@ -839,7 +796,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(body.code).toBe(40003);
     expect(body.msg).toContain('/oauth/logout');
 
-    // The managed provider and its alias are left untouched.
     const providers = await getJson<{ items: Array<{ id: string }> }>('/api/v1/providers');
     expect(providers.body.data.items.map((p) => p.id)).toEqual(['managed:kimi-code']);
     const models = await getJson<{ items: Array<{ model: string }> }>('/api/v1/models');
@@ -853,11 +809,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(body.data).toBeNull();
   });
 
-  // Field-level clears must reach the disk: the TOML transform overlays each
-  // kept entry onto its old on-disk raw, so a field absent from the body
-  // would silently survive (and resurrect on the next boot) unless the route
-  // assigns an explicit undefined. These cases lock the disk state, not just
-  // the in-memory view.
   it('clears omitted provider fields (base_url/default_model) from config.toml for real', async () => {
     const FULL_TOML = [
       '[providers.openai]',
@@ -883,8 +834,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(status).toBe(200);
 
     const onDisk = await readConfigToml();
-    // base_url/default_model are gone from the DISK too — while the
-    // form-unknown custom_headers rides along.
     expect(onDisk['providers']).toEqual({
       openai: {
         type: 'openai',
@@ -892,7 +841,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
         custom_headers: { 'X-Org': 'acme' },
       },
     });
-    // Alias-level form fields are cleared the same way.
     expect(onDisk['models']).toEqual({
       'openai/gpt-4.1': {
         provider: 'openai',
@@ -901,7 +849,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
       },
     });
 
-    // The in-memory projection agrees (no base_url/default_model either).
     const single = await getJson<Record<string, unknown>>('/api/v1/providers/openai');
     expect(single.body.data).not.toHaveProperty('base_url');
     expect(single.body.data).not.toHaveProperty('default_model');
@@ -909,9 +856,7 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
 
   it('does not reveal an empty-string api_key on the single GET', async () => {
     await boot(KEEP_DEFAULT_TOML);
-    // Clear the key first (persists as api_key = "")…
     await putJson<unknown>('/api/v1/providers/openai', { ...REPLACE_BODY, api_key: '' });
-    // …then the single GET must not surface the empty sentinel as a real key.
     const { body } = await getJson<Record<string, unknown>>('/api/v1/providers/openai');
     expect(body.data).not.toHaveProperty('api_key');
   });
@@ -960,8 +905,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
   });
 
   it('rejects a rename/rebuild whose alias key is owned by another provider (40001, no writes)', async () => {
-    // A foreign-prefix alias: the key says openai/… but the record belongs to
-    // "other" (hand-edited config or a historical leftover).
     const FOREIGN_TOML = [
       '[providers.openai]',
       'type = "openai"',
@@ -991,7 +934,6 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(body.code).toBe(40001);
     expect(body.msg).toContain('openai/gpt-4.1');
 
-    // No partial write: both providers and the foreign alias are untouched.
     const onDisk = await readConfigToml();
     expect(onDisk['providers']).toEqual({
       openai: { type: 'openai', api_key: 'sk-openai' },

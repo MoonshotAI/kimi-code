@@ -1,40 +1,3 @@
-/**
- * Cold-path fact fold: enrich a base snapshot (the turn tree built by
- * `groupMessagesIntoSnapshot`) with the durable facts carried by the
- * non-`context.*` wire records — tasks, interactions, todos, turn ends, and
- * the goal/plan/swarm meta.
- *
- * This is the second half of the cold rebuild: the engine persists these
- * records next to the context messages in the same `wire.jsonl`, and the live
- * path projects their events into global entities and timeline markers, so a
- * restart must be able to rebuild them from the records alone. The fold is
- * last-wins in record order, mirroring the live upsert semantics.
- *
- * Known limitations, accepted by design:
- *  - markers and taskrefs cannot be placed at their exact mid-timeline
- *    position (the base items carry no timestamps to interleave with), so
- *    they append IN RECORD ORDER at the END of the base items with an
- *    accurate `at` (record time). Entity state is complete.
- *  - turn end facts (terminal state / durationMs / error message) are
- *    rebuilt from the persisted `turn.ended` records when the journal
- *    carries them, with engine turn ids mapped to grouping ordinals
- *    through the replayed turn clock (hidden retry turns and cancelled
- *    queued reservations shift the ordinals); journals written before
- *    those records existed keep the grouping default (`completed`).
- *  - live-only detail is never backfilled: step usage / finishReason /
- *    timing / retry, tool inputText / progress, and task resultSummary /
- *    error / stateReason / usage exist only on live engine events — the
- *    persisted records do not carry them.
- *  - prompts are NOT cold-rebuilt: the wire journal has no prompt records
- *    (`prompt.submitted/completed/aborted/steered` are in-memory eventBus
- *    events of the engine's prompt service, never persisted as Ops), so a
- *    cold snapshot always carries `prompts: []`.
- *
- * The input type is structural so the engine's `WireRecord` is directly
- * assignable without a dependency from this package onto the engine (same
- * idiom as `HistoryMessage` in `groupTurns`).
- */
-
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
 import type { GoalMeta, GoalStatus, TranscriptMeta } from '../model/meta';
@@ -49,18 +12,11 @@ export interface HistoryWireRecord {
   readonly [key: string]: unknown;
 }
 
-// ---------------------------------------------------------------------------
-// Record payload shapes (structural reads of the engine op payloads — see
-// `agent-core-v2` goal/plan/swarm/todo/task/interaction ops).
-// ---------------------------------------------------------------------------
-
-/** `tools.update_store` payload. */
 interface UpdateStorePayload {
   readonly key?: unknown;
   readonly value?: unknown;
 }
 
-/** `goal.create` / `goal.update` payload (the GoalState source fields). */
 interface GoalPayload {
   readonly objective?: unknown;
   readonly completionCriterion?: unknown;
@@ -69,7 +25,6 @@ interface GoalPayload {
   readonly budgetLimits?: { readonly tokenBudget?: unknown };
 }
 
-/** `task.started` / `task.terminated` `info` (`AgentTaskInfo`). */
 interface TaskInfoPayload {
   readonly taskId?: unknown;
   readonly kind?: unknown;
@@ -81,7 +36,6 @@ interface TaskInfoPayload {
   readonly endedAt?: unknown;
 }
 
-/** `interaction.request` payload. */
 interface InteractionRequestPayload {
   readonly id?: unknown;
   readonly kind?: unknown;
@@ -89,13 +43,11 @@ interface InteractionRequestPayload {
   readonly request?: unknown;
 }
 
-/** `interaction.resolved` payload. */
 interface InteractionResolvedPayload {
   readonly id?: unknown;
   readonly response?: unknown;
 }
 
-/** `plan.revision` payload (a versioned, reference-style plan content record). */
 interface PlanRevisionPayload {
   readonly id?: unknown;
   readonly version?: unknown;
@@ -104,7 +56,6 @@ interface PlanRevisionPayload {
   readonly bytes?: unknown;
 }
 
-/** `turn.ended` payload (the loop's terminal turn record). */
 interface TurnEndedPayload {
   readonly turnId?: unknown;
   readonly reason?: unknown;
@@ -112,7 +63,6 @@ interface TurnEndedPayload {
   readonly durationMs?: unknown;
 }
 
-/** `turn.prompt` / `turn.cancel` payloads (the loop's turn-clock records). */
 interface TurnPromptPayload {
   readonly origin?: unknown;
 }
@@ -122,14 +72,6 @@ interface TurnCancelPayload {
   readonly reason?: unknown;
 }
 
-/**
- * Mirror of groupTurns' turn-opening rules, applied to `turn.prompt`
- * origins: whether the turn opens a visible transcript item. The engine
- * opens a real turn a transcript never shows for retry turns
- * (`RetryStepRequest` — origin `retry`, no context messages); hidden
- * mid-turn origins never produce `turn.prompt` records at all, but are
- * classified here anyway for completeness.
- */
 function isVisibleTurnOrigin(origin: unknown): boolean {
   const kind = (origin as { kind?: unknown } | undefined)?.kind;
   if (kind === 'system_trigger') {
@@ -140,11 +82,9 @@ function isVisibleTurnOrigin(origin: unknown): boolean {
     return (origin as { trigger?: unknown } | undefined)?.trigger === 'user-slash';
   }
   if (kind === 'injection' || kind === 'retry' || kind === 'compaction_summary') return false;
-  // user / cron / task / hook / shell_command / unknown kinds open visible turns.
   return true;
 }
 
-/** Engine task kinds (`AgentTaskInfoByKind`: process / agent / question) → transcript kinds. */
 function mapTaskKind(kind: unknown): TranscriptTask['kind'] {
   switch (kind) {
     case 'process':
@@ -167,7 +107,6 @@ const TASK_STATES = new Set<TranscriptTask['state']>([
 
 const GOAL_STATUSES = new Set<GoalStatus>(['active', 'paused', 'blocked', 'complete']);
 
-/** Interaction terminal state — mirrors the live path's `mapInteractionEndState`. */
 function mapInteractionEndState(
   kind: TranscriptInteraction['interactionKind'],
   response: unknown,
@@ -180,7 +119,6 @@ function mapInteractionEndState(
   return 'cancelled';
 }
 
-/** Turn terminal state — mirrors the live path's `mapTurnEndState` (`blocked` folds into `failed`). */
 function mapTurnEndReason(reason: unknown): TranscriptTurn['state'] | undefined {
   switch (reason) {
     case 'completed':
@@ -195,14 +133,12 @@ function mapTurnEndReason(reason: unknown): TranscriptTurn['state'] | undefined 
   }
 }
 
-/** The transcript turn carries only the terminal error's message. */
 function readTurnErrorMessage(error: unknown): string | undefined {
   if (error === null || typeof error !== 'object') return undefined;
   const message = (error as { message?: unknown }).message;
   return typeof message === 'string' ? message : undefined;
 }
 
-/** Epoch-ms record times become ISO `at` stamps; ISO strings pass through. */
 function recordTimeIso(record: HistoryWireRecord): string | undefined {
   const time: unknown = record.time;
   if (typeof time === 'number' && Number.isFinite(time)) return new Date(time).toISOString();
@@ -216,13 +152,11 @@ function epochMsToIso(value: unknown): string | undefined {
     : undefined;
 }
 
-/** The record payload (everything but the envelope fields), carried on markers. */
 function payloadOf(record: HistoryWireRecord): Record<string, unknown> {
   const { type: _type, time: _time, ...payload } = record;
   return payload;
 }
 
-/** Mirror of the engine's `readTodoItems`: keep only well-formed entries. */
 function readTodoItems(raw: unknown): TodoItem[] {
   if (!Array.isArray(raw)) return [];
   const items: TodoItem[] = [];
@@ -242,19 +176,11 @@ export function foldWireRecordFacts(
 ): AgentTranscriptSnapshot {
   const tasks = new Map<string, TranscriptTask>();
   const interactions = new Map<string, TranscriptInteraction>();
-  /** Latest `turn.ended` record per engine turn id (last-wins). */
   const endedTurns = new Map<number, HistoryWireRecord>();
-  /**
-   * Turn-clock replay (mirrors the loop's TurnModel): engine turn ids are
-   * assigned to `turn.prompt` records in order, skipping queued-then-
-   * cancelled reservations. Turns whose origin opens no visible transcript
-   * item (retry turns) make engine ids drift from the grouping ordinals.
-   */
   let nextTurnId = 0;
   const cancelledTurnIds = new Set<number>();
   const hiddenTurnIds = new Set<number>();
   const skipCancelledTurnIds = (): void => {
-    // A skipped reservation never starts: no prompt, no messages, no item.
     while (cancelledTurnIds.delete(nextTurnId)) {
       hiddenTurnIds.add(nextTurnId);
       nextTurnId += 1;
@@ -264,15 +190,11 @@ export function foldWireRecordFacts(
   let goal: GoalMeta | undefined;
   let goalTouched = false;
   let planActive: boolean | undefined;
-  /** Latest folded `plan.revision` reference; feeds the active plan badge. */
   let planRevision: { readonly reviewPath?: string; readonly version?: number } | undefined;
   let swarmActive: boolean | undefined;
 
-  /** Markers/taskrefs generated by the fold, appended after the base items. */
   const appended: TranscriptItem[] = [];
   const activeCancelTurnIds = new Set<number>();
-  // Marker ids continue the base's `m<N>` numbering (groupTurns uses the same
-  // namespace); taskref ids dedupe against refs the base already carries.
   let markerSeq = 0;
   const usedRefIds = new Set<string>();
   for (const item of base.items) {
@@ -308,12 +230,9 @@ export function foldWireRecordFacts(
         typeof status === 'string' && TASK_STATES.has(status as TranscriptTask['state'])
           ? (status as TranscriptTask['state'])
           : (prev?.state ?? 'running'),
-      // Legacy records omit the flag and are treated as detached (mirrors the
-      // live `info.detached ?? prev?.detached ?? true`).
       detached: typeof info.detached === 'boolean' ? info.detached : (prev?.detached ?? true),
       description: typeof info.description === 'string' ? info.description : prev?.description,
       agentId: typeof info.agentId === 'string' ? info.agentId : prev?.agentId,
-      // `task.terminated` records may carry the captured output tail.
       outputTail:
         typeof record['outputTail'] === 'string'
           ? record['outputTail']
@@ -352,8 +271,6 @@ export function foldWireRecordFacts(
       case 'goal.create': {
         const payload = record as GoalPayload;
         goalTouched = true;
-        // Mirrors the model's `apply`: a create always lands active with zero
-        // usage; budget limits arrive via `goal.update`.
         goal = {
           objective: typeof payload.objective === 'string' ? payload.objective : '',
           status: 'active',
@@ -406,9 +323,6 @@ export function foldWireRecordFacts(
       }
       case 'plan.revision': {
         const payload = record as PlanRevisionPayload;
-        // A revision is submitted while plan mode is active; it refines the
-        // badge with the offloaded plan file reference, and the exit/cancel
-        // record still clears the badge afterwards (the marker stays).
         planActive = true;
         planRevision = {
           reviewPath: typeof payload.path === 'string' ? payload.path : undefined,
@@ -459,8 +373,6 @@ export function foldWireRecordFacts(
       }
       case 'interaction.request': {
         const payload = record as InteractionRequestPayload;
-        // The live path projects only approvals/questions (`user_tool`
-        // requests never become transcript entities).
         if (payload.kind !== 'approval' && payload.kind !== 'question') break;
         if (typeof payload.id !== 'string') break;
         const requestToolCallId = (payload.request as { toolCallId?: unknown } | undefined)
@@ -509,22 +421,12 @@ export function foldWireRecordFacts(
     }
   }
 
-  // A request without a resolve means the process died while the interaction
-  // was pending — crash == cancelled (never rebuild a ghost pending).
   for (const [id, entity] of interactions) {
     if (entity.state === 'pending') {
       interactions.set(id, { ...entity, state: 'cancelled' });
     }
   }
 
-  // `turn.ended` records rewrite the matching base turn items. An engine
-  // turn id maps to the grouping ordinal `id - (hidden ids below it)`:
-  // hidden turns (retry turns, queued-then-cancelled reservations) consume
-  // an engine id without opening a visible item. Their own end records map
-  // nowhere and are dropped; ids with no matching item are ignored (e.g.
-  // turns compacted out of the message history). One residual gap,
-  // accepted: a turn that ends between `turn.prompt` and its first context
-  // message leaves no message trace and still shifts the ordinals behind it.
   const endedByOrdinal = new Map<number, HistoryWireRecord>();
   for (const [turnId, record] of endedTurns) {
     if (hiddenTurnIds.has(turnId)) continue;
@@ -558,10 +460,6 @@ export function foldWireRecordFacts(
     modes: modesTouched
       ? {
           ...base.meta.modes,
-          // The plan badge carries the latest revision reference when
-          // `plan.revision` records exist; without them (older sessions) it
-          // stays the bare `{}` the live path projects. Same for the swarm
-          // trigger.
           plan:
             planActive === undefined
               ? base.meta.modes?.plan

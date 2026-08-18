@@ -1,20 +1,3 @@
-/**
- * `tower` domain (protocol) — `TowerStore`, the code-enforced half of the
- * tower protocol.
- *
- * Every comms artifact (inbox message, finding, review, mission file,
- * MISSIONS.md, activity log line) is produced HERE, never by an agent writing
- * files by hand. That is what makes the protocol invariants actual
- * invariants: file naming, frontmatter shape, recipient validity, review
- * rounds, the merge gate, and the exact activity-log format are not subject
- * to model discipline.
- *
- * State lives in `.tower/comms/state.json` (machine truth). `MISSIONS.md`
- * and `missions/*.md` are regenerated human views after every mutation.
- * All store instances in the process share one activity log via append-only
- * `fs.appendFile` — one line per action, written immediately.
- */
-
 import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, open, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -146,10 +129,6 @@ export class TowerStore {
   /** Absolute path of the main checkout (the session working directory). */
   constructor(readonly repoRoot: string) {}
 
-  // ---------------------------------------------------------------------
-  // Lifecycle
-  // ---------------------------------------------------------------------
-
   async isInitialized(): Promise<boolean> {
     try {
       await readFile(this.abs(STATE_FILE), 'utf8');
@@ -244,7 +223,6 @@ export class TowerStore {
     try {
       existing = await readFile(excludePath, 'utf8');
     } catch {
-      // no exclude file yet
     }
     if (existing.split(/\r?\n/).some((line) => line.trim() === '.tower/')) return;
     await appendFile(excludePath, `${existing.endsWith('\n') || existing.length === 0 ? '' : '\n'}.tower/\n`, 'utf8');
@@ -260,7 +238,6 @@ export class TowerStore {
       );
     }
     const state = JSON.parse(raw) as TowerState;
-    // Backward compat: state files written before mission kinds existed are all builds.
     for (const mission of state.missions) {
       mission.kind ??= 'build';
     }
@@ -273,10 +250,6 @@ export class TowerStore {
     await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
     await rename(tmp, file);
   }
-
-  // ---------------------------------------------------------------------
-  // Activity log — the ONLY writer of activity.log lines.
-  // ---------------------------------------------------------------------
 
   async appendLog(
     actor: string,
@@ -304,10 +277,6 @@ export class TowerStore {
     const all = content.split('\n').filter((line) => line.trim().length > 0);
     return all.slice(-lines);
   }
-
-  // ---------------------------------------------------------------------
-  // Roster
-  // ---------------------------------------------------------------------
 
   resolveCallerName(state: TowerState, agentId: string): string {
     if (agentId === 'main') return TOWER_NAME;
@@ -341,10 +310,6 @@ export class TowerStore {
     await this.save(state);
   }
 
-  // ---------------------------------------------------------------------
-  // Missions
-  // ---------------------------------------------------------------------
-
   async plan(input: readonly TowerPlanInput[]): Promise<readonly TowerMission[]> {
     if (input.length === 0) {
       throw new TowerProtocolError('TowerPlan needs at least one mission');
@@ -371,7 +336,6 @@ export class TowerStore {
       };
     });
 
-    // Mission ids referenced by deps must exist (already planned or in this batch).
     const knownIds = new Set([...state.missions.map((m) => m.id), ...missions.map((m) => m.id)]);
     for (const mission of missions) {
       for (const dep of mission.deps) {
@@ -380,8 +344,6 @@ export class TowerStore {
         }
       }
     }
-    // Merged missions are history, not reservations: their scopes stay on
-    // record but must not block new missions from taking the same paths.
     this.assertScopesDisjoint([
       ...state.missions.filter((m) => m.status !== 'merged'),
       ...missions,
@@ -456,8 +418,6 @@ export class TowerStore {
       }
     }
 
-    // No-op patches (an unchanged status, nothing else) neither render nor
-    // log — e.g. a worker re-declaring `active` after the tower already set it.
     const isNoOp =
       patch.status === mission.status &&
       patch.note === undefined &&
@@ -508,8 +468,6 @@ export class TowerStore {
     await this.save(state);
     await this.renderMissionsIndex(state);
     await this.renderMissionFile(mission);
-    // Task ticks alone are not log-worthy: the mission file is their record.
-    // The activity log keeps state transitions and decision-shaped changes.
     const taskTickOnly =
       patch.taskDone !== undefined &&
       patch.status === undefined &&
@@ -530,10 +488,6 @@ export class TowerStore {
     }
     return mission;
   }
-
-  // ---------------------------------------------------------------------
-  // Inbox
-  // ---------------------------------------------------------------------
 
   async send(callerName: string, input: TowerSendInput): Promise<string> {
     const state = await this.load();
@@ -604,14 +558,8 @@ export class TowerStore {
       });
     }
     items.sort((a, b) => b.sentAt.localeCompare(a.sentAt));
-    // Reads are not actions — the activity log records what participants DID,
-    // not what they looked at. No inbox.read line here.
     return items.slice(0, Math.max(1, limit));
   }
-
-  // ---------------------------------------------------------------------
-  // Findings
-  // ---------------------------------------------------------------------
 
   async fileFinding(callerName: string, input: TowerFindingInput): Promise<string> {
     if (!FINDING_TYPES.includes(input.type)) {
@@ -668,10 +616,6 @@ export class TowerStore {
     await this.appendLog(callerName, 'finding.file', { type: input.type, slug: slugify(input.title) }, rel);
     return rel;
   }
-
-  // ---------------------------------------------------------------------
-  // Reviews
-  // ---------------------------------------------------------------------
 
   async submitReview(callerName: string, input: TowerReviewInput): Promise<string> {
     const state = await this.load();
@@ -777,15 +721,9 @@ export class TowerStore {
     return reviews.at(-1);
   }
 
-  // ---------------------------------------------------------------------
-  // Merge — the hard gate. The tower LLM decides WHEN to call this; the
-  // gate itself decides WHETHER it happens.
-  // ---------------------------------------------------------------------
-
   async merge(branch: string): Promise<{
     readonly mergeCommit: string;
     readonly conflictsWith: ReadonlyArray<{ readonly branch: string; readonly files: readonly string[] }>;
-    /** True when a read-only survey closed without a git merge. */
     readonly noop?: boolean;
   }> {
     const state = await this.load();
@@ -793,8 +731,6 @@ export class TowerStore {
     if (mission === undefined) {
       throw new TowerProtocolError(`no tower mission owns branch "${branch}"`);
     }
-    // A blocked merge is a decision with a reason — it belongs in the
-    // activity log just as much as a successful one.
     const block = async (reason: string, message: string): Promise<TowerProtocolError> => {
       await this.appendLog(TOWER_NAME, 'merge.blocked', { branch, reason });
       return new TowerProtocolError(message);
@@ -811,9 +747,6 @@ export class TowerStore {
       );
     }
 
-    // Survey missions are read-only: a clean (zero-diff) branch closes with a
-    // noop merge — no review, no git ceremony. Any change on the branch is a
-    // read-only violation the tower must investigate.
     if (mission.kind === 'survey') {
       const changed = await diffNameOnly(this.repoRoot, state.base, branch);
       if (changed.length > 0) {
@@ -852,10 +785,6 @@ export class TowerStore {
       );
     }
 
-    // Scope isolation, enforced: every file the branch changed must fall
-    // inside the mission's declared scope globs (picomatch semantics — `**`
-    // crosses directories). A legitimate expansion goes through a tower
-    // TowerMission scope update first, which is logged.
     const changed = await diffNameOnly(this.repoRoot, state.base, branch);
     const outOfScope = changed.filter(
       (file) => !mission.scope.some((glob) => picomatch.isMatch(file, glob)),
@@ -867,10 +796,6 @@ export class TowerStore {
       );
     }
 
-    // The merge lands wherever the main checkout currently points: refuse
-    // when it has moved off the recorded base since TowerInit (a hotfix
-    // branch, a detached HEAD) — otherwise the mission would be marked
-    // merged while the base branch never received it.
     let checkedOut: string;
     try {
       checkedOut = await currentBranch(this.repoRoot);
@@ -890,14 +815,10 @@ export class TowerStore {
     const mergeCommit = await mergeNoFf(this.repoRoot, branch);
     mission.status = 'merged';
 
-    // Informational: unmerged branches that touched the same files now likely
-    // conflict with the new base. The tower tells them to rebase — their tip
-    // moves, and the reviewed_commit gate then forces a re-review.
     const changedSet = new Set(changed);
     const conflictsWith: Array<{ readonly branch: string; readonly files: readonly string[] }> = [];
     for (const other of state.missions) {
       if (other.branch === branch || other.status === 'merged') continue;
-      // Planned missions may have no branch yet (never spawned) — nothing to conflict with.
       if (!(await branchExists(this.repoRoot, other.branch))) continue;
       const otherChanged = await diffNameOnly(this.repoRoot, state.base, other.branch);
       const overlap = otherChanged.filter((file) => changedSet.has(file));
@@ -912,10 +833,6 @@ export class TowerStore {
     await this.appendLog(TOWER_NAME, 'merge', { branch, base: state.base, merge_commit: mergeCommit.slice(0, 7) });
     return { mergeCommit, conflictsWith };
   }
-
-  // ---------------------------------------------------------------------
-  // Worktrees / teardown
-  // ---------------------------------------------------------------------
 
   async addWorktree(worktree: string, branch: string, base: string): Promise<string> {
     const rel = join(WORKTREES_DIR, worktree);
@@ -956,10 +873,6 @@ export class TowerStore {
     await this.appendLog(TOWER_NAME, 'teardown', { force: options.force === true ? 'yes' : undefined });
     return report;
   }
-
-  // ---------------------------------------------------------------------
-  // Human views (generated, never hand-edited)
-  // ---------------------------------------------------------------------
 
   private async renderMissionsIndex(state: TowerState): Promise<void> {
     const rows = state.missions.map(
@@ -1023,10 +936,6 @@ export class TowerStore {
     await writeFile(this.abs(rel), content, 'utf8');
   }
 
-  // ---------------------------------------------------------------------
-  // Helpers
-  // ---------------------------------------------------------------------
-
   abs(rel: string): string {
     return join(this.repoRoot, rel);
   }
@@ -1055,7 +964,6 @@ export class TowerStore {
   }
 }
 
-/** Locate the real git dir (a worktree's `.git` is a file pointing elsewhere). */
 async function readGitDir(cwd: string): Promise<string | null> {
   try {
     const raw = await readFile(join(cwd, '.git'), 'utf8');

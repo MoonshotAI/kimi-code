@@ -1,15 +1,3 @@
-/**
- * `agent_config` patch dispatch for `POST /sessions/{session_id}/profile`.
- *
- * The `agent_config` body field is a wire-to-native translation, not a v1-only
- * projection, so it lives at the server edge alongside the other routes that
- * call the native v2 services directly (`fork` / `compact` / `undo` / `abort`)
- * instead of inside `ISessionLegacyService`. The helper resumes the session
- * (cold-load if needed), resolves its main agent, and fans each present field
- * out to the owning Agent-scope service, preserving the per-field
- * apply-only-when-set semantics and the plan/swarm idempotency guards.
- */
-
 import {
   ErrorCodes,
   Error2,

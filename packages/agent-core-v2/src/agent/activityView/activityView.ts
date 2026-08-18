@@ -1,19 +1,4 @@
-/**
- * `activityView` domain — the agent's one-way activity projection.
- *
- * Defines `IAgentActivityView`: a per-agent, read-only, event-folded read
- * model of "what this agent is doing" — the current turn with its live
- * phase/stream/step/retry/pending-approval/tool-call detail and the latest
- * turn outcome, published on the agent's event bus as
- * `agent.activity.updated`. The view OWNS NO authoritative state: every fact
- * is folded from the agent's own event bus (loop turn/step/delta/tool/retry,
- * permission approval, task, and full-compaction events) and seeded once from
- * the owning services; it can be discarded and rebuilt at any time. Bound at
- * Agent scope — one instance per agent, dying with it.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { TurnEndReason } from '#/agent/loop/turnEvents';

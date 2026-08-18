@@ -1,17 +1,3 @@
-/**
- * `auth` domain (cross-cutting) — `IOAuthService` / `IAuthSummaryService`
- * implementation.
- *
- * Owns the device-code OAuth flows and the auth readiness view; reads and
- * writes provider configuration through `provider`, refreshes the managed
- * OAuth provider's server-side model configuration through `config`, publishes
- * model-catalog changes through `event`, reports through `telemetry`,
- * logs through `log`, and delegates
- * the device-code protocol, token storage, and token refresh to `IOAuthToolkit`
- * (provided by `OAuthToolkitService` over `@moonshot-ai/kimi-code-oauth`,
- * which locates token storage through `bootstrap`). Bound at App scope.
- */
-
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -102,7 +88,6 @@ interface FlowState {
   resolvedAt: string | undefined;
 }
 
-// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class OAuthService extends Disposable implements IOAuthService {
   declare readonly _serviceBrand: undefined;
   private readonly flows = new Map<string, FlowState>();

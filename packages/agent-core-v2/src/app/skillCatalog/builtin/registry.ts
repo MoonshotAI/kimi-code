@@ -1,16 +1,3 @@
-/**
- * `skillCatalog` domain — module-level builtin-skill contribution registry.
- *
- * Feature-authored builtin skills contribute themselves at module load via
- * `registerBuiltinSkill(skill)` — the same "import = register" pattern used
- * by `registerAgentToolService` for agent tools and `registerAgentProfile`
- * for agent profiles. `visibleBuiltinSkills` folds these with the
- * code-defined `BUILTIN_SKILLS`, so a feature (e.g. tower) ships its builtin
- * skill without editing the builtin module. Uniqueness is enforced by
- * `name`: later registrations replace earlier ones, so tests can override a
- * built-in by re-registering.
- */
-
 import type { SkillDefinition } from '#/app/skillCatalog/types';
 
 const _builtinSkillContributions: SkillDefinition[] = [];

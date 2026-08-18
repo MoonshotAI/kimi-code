@@ -1,11 +1,3 @@
-/**
- * `bootstrap` test stubs — shared `IBootstrapService` stub for unit tests.
- *
- * Lives under `test/` (not `src/`) so test-support code stays out of the
- * production tree. Import from a relative path (`./stubs` or
- * `../bootstrap/stubs`).
- */
-
 import type { ServiceRegistration } from '#/_base/di/test';
 import {
   IBootstrapService,

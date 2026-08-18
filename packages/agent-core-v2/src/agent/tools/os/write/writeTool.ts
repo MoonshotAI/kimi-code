@@ -1,23 +1,3 @@
-/**
- * `tools` domain — `WriteTool` implementation.
- *
- * Resolves path access policy before any filesystem I/O, creates missing
- * parent directories (`mkdir(recursive)`), and writes through
- * `IHostFileSystem.writeText` / `appendText`. Append uses a native
- * `O_APPEND`-style append, so existing content is never read or rewritten —
- * keeping appends atomic with respect to concurrent writers and safe against
- * mid-write crashes.
- *
- * Write access flows through the os `hostFs` domain (`IHostFileSystem`); path
- * semantics (home expansion, path class) come from the `hostEnvironment`
- * domain; the workspace and skill roots come from `ISessionWorkspaceContext`
- * / `ISessionSkillCatalog`.
- *
- * Ported from v1.
- * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module
- * load.
- */
-
 import { dirname } from 'pathe';
 
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';

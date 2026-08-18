@@ -2,9 +2,6 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// Keep these server boots on the WORKER search host (the suite-level setup
-// disables the flag to spare non-search suites the background worker load):
-// this file is the end-to-end coverage of the production worker path.
 process.env['KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER'] = '1';
 
 import { ISessionIndex, type SessionSummary } from '@moonshot-ai/agent-core-v2';
@@ -68,7 +65,6 @@ describe('server-v2 /api/v1/search', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-search-'));
-    // Fixture first: the boot-time background sync picks it up on its own.
     const sessionDir = join(home, 'sessions', WS, 's1', 'agents', 'main');
     await mkdir(sessionDir, { recursive: true });
     await writeFile(
@@ -142,7 +138,6 @@ describe('server-v2 /api/v1/search', () => {
   }
 
   it('searches across sessions and returns the wire-shaped page', { timeout: 20_000 }, async () => {
-    // The first sync runs in the background at boot; poll until it lands.
     let body: Envelope<SearchPageWire> | undefined;
     for (let attempt = 0; attempt < 100; attempt++) {
       body = await postSearch({ query: '苹果' });
@@ -153,7 +148,6 @@ describe('server-v2 /api/v1/search', () => {
     expect(body).toBeDefined();
     expect(body!.data.items.length).toBeGreaterThan(0);
 
-    // Both the user message and the session title match '苹果'.
     const hit = body!.data.items.find((h) => h.role === 'user');
     expect(hit).toBeDefined();
     expect(hit!.session_id).toBe('s1');
@@ -162,7 +156,6 @@ describe('server-v2 /api/v1/search', () => {
     expect(hit!.agent_id).toBe('main');
     expect(hit!.snippet).toContain('苹果');
     expect(hit!.step_id).toBeUndefined();
-    // The assistant hit carries its transcript step id.
     const assistant = body!.data.items.find((h) => h.role === 'assistant');
     expect(assistant).toBeDefined();
     expect(assistant!.turn).toBe(0);
@@ -170,7 +163,6 @@ describe('server-v2 /api/v1/search', () => {
     expect(body!.data.items.some((h) => h.role === 'title')).toBe(true);
     expect(body!.data.has_more).toBe(false);
     expect(['building', 'ready', 'readonly']).toContain(body!.data.index_state.state);
-    // No session is live in this server, so the page comes from the index.
     expect(body!.data.source).toBe('index');
   });
 
@@ -187,12 +179,10 @@ describe('server-v2 /api/v1/search', () => {
     const badMode = await postSearch({ query: '苹果', mode: 'exact' });
     expect(badMode.code).toBe(40001);
 
-    // A 1-character literal query is rejected by the service, not the schema.
     const shortLiteral = await postSearch({ query: '苹', mode: 'literal' });
     expect(shortLiteral.code).toBe(40001);
     expect(shortLiteral.msg).toContain('at least 2 characters');
 
-    // A page token that decodes to a non-object is a parameter error, not a 500.
     const nullToken = await postSearch({
       query: '苹果',
       page_token: Buffer.from('null').toString('base64url'),
@@ -218,13 +208,6 @@ describe('server-v2 /api/v1/search', () => {
   });
 });
 
-/**
- * Index-separation contract (phase 2): with the global search database
- * unavailable, session list / get / create / cold resume keep working — only
- * the real full-text search request reports the outage. The sabotage below
- * plants a plain FILE at `<home>/search-index`, so every search-MiniDb open
- * fails for the whole server lifetime.
- */
 describe('server-v2 session routes with the global search DB unavailable', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
@@ -273,22 +256,17 @@ describe('server-v2 session routes with the global search DB unavailable', () =>
 
   it('session list / create / get / cold resume pass with the search index down', { timeout: 30_000 }, async () => {
     await boot();
-    // create (the write path)
     const created = await postJson<{ id: string }>('/api/v1/sessions', {
       metadata: { cwd: home },
     });
     expect(created.code).toBe(0);
     const id = created.data.id;
-    // list (the listSessions path)
     const list = await getJson<{ items: { id: string }[] }>('/api/v1/sessions');
     expect(list.code).toBe(0);
     expect(list.data.items.map((item) => item.id)).toContain(id);
     await server!.close();
     server = undefined;
 
-    // A fresh server over the same home: every session is cold, so the
-    // messages route resumes it from authoritative metadata — the
-    // `--resume` / `--continue` equivalent.
     await boot();
     const coldList = await getJson<{ items: { id: string }[] }>('/api/v1/sessions');
     expect(coldList.code).toBe(0);
@@ -298,8 +276,6 @@ describe('server-v2 session routes with the global search DB unavailable', () =>
     const messages = await getJson<{ items: unknown[] }>(`/api/v1/sessions/${id}/messages`);
     expect(messages.code).toBe(0);
 
-    // The session flows never opened the search database: the sabotage file
-    // is still exactly what the test planted.
     const probe = await stat(join(home as string, 'search-index'));
     expect(probe.isFile()).toBe(true);
   });
@@ -311,8 +287,6 @@ describe('server-v2 session routes with the global search DB unavailable', () =>
     });
     expect(created.code).toBe(0);
 
-    // The search request surfaces the failure (50001) once the boot-time
-    // background open has failed; until then it may answer `building`.
     await expect
       .poll(
         async () => (await postJson<SearchPageWire>('/api/v1/search', { query: 'anything' })).code,
@@ -323,7 +297,6 @@ describe('server-v2 session routes with the global search DB unavailable', () =>
     expect(search.code).toBe(50001);
     expect(search.msg).toContain('search index failed to open');
 
-    // Session routes stay green throughout.
     const list = await getJson<{ items: unknown[] }>('/api/v1/sessions');
     expect(list.code).toBe(0);
   });

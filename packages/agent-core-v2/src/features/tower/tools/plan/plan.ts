@@ -1,13 +1,3 @@
-/**
- * `tools` domain — `ITowerPlanTool` contract (the `TowerPlan` tool).
- *
- * Public contract of the tower's mission splitter: each mission gets an id,
- * a branch, and a worktree slot; scopes must be pairwise disjoint and deps
- * must reference known mission ids (both enforced by the store). Exports the
- * model-facing `TowerPlanToolInputSchema` / `TowerPlanToolInput` and the
- * `ITowerPlanTool` DI decorator. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

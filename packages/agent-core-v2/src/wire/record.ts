@@ -1,13 +1,3 @@
-/**
- * `wire` domain — the persisted journal record language.
- *
- * A `WireRecord` is the flat JSONL representation of one persisted durable
- * event. The first line of an Agent journal is a `WireMetadataRecord`;
- * metadata is a journal envelope, not an event, so it never enters the state
- * fold registry. This module owns only pure encoding and decoding plus the
- * blob-offload transform types.
- */
-
 import { WIRE_PROTOCOL_VERSION } from './migration/migration';
 
 export const AGENT_WIRE_RECORD_KEY = 'wire.jsonl';

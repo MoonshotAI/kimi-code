@@ -1,27 +1,3 @@
-/**
- * `sessionLifecycle` domain — per-handler session lifecycle contract.
- *
- * Defines the public contract of one workspace handler: the
- * `CreateSessionOptions`, `ForkSessionOptions`, `CreateChildSessionOptions`,
- * `ResumeSessionOptions`, and the `ISessionLifecycleService` used to create
- * sessions (`create`), look up the live ones (`get` / `list`), close them
- * (`close`), archive/restore them, delete them (`delete` — closes a live
- * session first, then removes its persisted data and its index entries;
- * unknown ids raise `session.not_found`), fork them (`fork`), and
- * fork-then-tag
- * them as direct children (`createChild`) — always as child scopes of THIS
- * handler's Workspace scope, so a handler owns exactly the sessions of one
- * workspace and fork never crosses handlers. Announces lifecycle transitions
- * through `onDidCreateSession` / `onDidCloseSession` / `onDidArchiveSession`
- * / `onDidForkSession`; the ordered hook slots are per-session seeds.
- * Workspace-scope services that must participate in a session's creation
- * (read its seeded facts, contribute a session seed, attach teardown to its
- * lifetime) subscribe to `onWillCreateSession` — the participation surface
- * speaks the session domain's own vocabulary, so the lifecycle depends on
- * neither its participants nor the DI kernel's assembly mechanics.
- * Workspace-scoped — one instance per materialized handler.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import { type Event, type IWaitUntil } from '#/_base/event';

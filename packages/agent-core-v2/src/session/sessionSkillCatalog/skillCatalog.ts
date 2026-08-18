@@ -1,10 +1,3 @@
-/**
- * `sessionSkillCatalog` domain — Session-scoped skill catalog contract.
- *
- * Defines the merged session read view, source-specific change events, and the
- * sink used by ad-hoc skill contributors. Bound at Session scope.
- */
-
 import { createDecorator } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
 

@@ -1,9 +1,3 @@
-/**
- * `state` domain — `IAgentStateService` snapshot safety over a fully
- * assembled agent scope. Registered keys hold plain data only: every
- * registered key must serialize, and the whole snapshot must stay small.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { IAgentStateService } from '#/agent/state/agentState';

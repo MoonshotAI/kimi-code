@@ -1,9 +1,3 @@
-/**
- * Unit tests for the server-layer `ContextMessage → wire Message` projection
- * (`services/messages/messageProjection.ts`) — the shape served on the
- * `messages`, `snapshot`, and `sessions` (`:undo`) v1 surfaces.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
@@ -41,9 +35,6 @@ describe('toProtocolMessage', () => {
   });
 
   it('projects a daemon-ref image part to a session_media source', () => {
-    // The persisted upload shape is a single self-contained daemon-ref part:
-    // the reference projects to the Session-owned copy; a legacy `?path=`
-    // query is ignored, never leaked.
     const msg: ContextMessage = {
       role: 'user',
       content: [
@@ -60,9 +51,6 @@ describe('toProtocolMessage', () => {
   });
 
   it('keeps a legacy tag+ref pair as text plus the ref projection', () => {
-    // Legacy sessions persist an upload as the pair `<image path>` tag text
-    // part + daemon-ref media part. Tolerated, not folded: the tag passes
-    // through as text and the self-contained ref projects on its own.
     const msg: ContextMessage = {
       role: 'user',
       content: [
@@ -79,8 +67,6 @@ describe('toProtocolMessage', () => {
   });
 
   it('keeps a bare <media path> tag as text in user messages', () => {
-    // A standalone tag without a daemon ref is user-visible text (or the
-    // legacy degrade form): it passes through as a text part.
     const msg: ContextMessage = {
       role: 'user',
       content: [
@@ -97,7 +83,6 @@ describe('toProtocolMessage', () => {
   });
 
   it('passes assistant tag-shaped text through verbatim', () => {
-    // The fold applies to user uploads only — model output is never eaten.
     const msg: ContextMessage = {
       role: 'assistant',
       content: [{ type: 'text', text: '<image path="/cache/out.png"></image>' }],

@@ -1,28 +1,3 @@
-/**
- * `workspaceMcpConfig` domain — `IWorkspaceMcpConfigService`
- * implementation.
- *
- * Resolves the handler's effective MCP server set from exactly two sources —
- * the MCP config files (`resolveMcpJsonPaths`: user `mcp.json`, project-root
- * `.mcp.json`, `.kimi-code/mcp.json` — read through the os `hostFs`) and the
- * enabled plugins; on a name collision the file config wins, and when one
- * source's server vanishes the same-named entry from the other source takes
- * over. The two project-level files are gated by `workspaceTrust`: while the
- * workspace is untrusted they are skipped (the user file and plugin
- * contributions still load), and a trust flip triggers the same reload path
- * as a file edit, so trusting connects the project servers and untrusting
- * drops them. The config files are watched (the user file directly, the
- * project root recursively pruned to the two project candidates) and plugin
- * contributions follow `plugins.onDidReload`; every re-resolve recomputes the
- * merged view and publishes the fingerprint diff through `onDidChange`, so a
- * config edit or a plugin installed, enabled or reloaded AFTER the handler
- * materialized still reaches the connection side. Reloads are debounced and
- * serialized on a mutation tail; an outright initial-load or reload failure
- * is logged, leaving the last published snapshot in place. The initial
- * resolve waits for `config.ready` so the file/plugin read and the `[mcp]`
- * section read are deterministic. Bound at Workspace scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
@@ -49,7 +24,6 @@ import {
 
 const WATCH_DEBOUNCE_MS = 200;
 
-// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceMcpConfigService {
   declare readonly _serviceBrand: undefined;
 

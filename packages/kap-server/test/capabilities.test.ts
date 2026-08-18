@@ -1,18 +1,3 @@
-/**
- * `/api/v1` capabilities routes — wire contract:
- *   - GET  /api/v1/capabilities                    → envelope shape + both entries
- *   - GET  /api/v1/capabilities/{unknown}          → 40418
- *   - POST /api/v1/capabilities/{unknown}:install  → 40418
- *   - POST /api/v1/capabilities/{id} (bare)        → 40001
- *   - POST /api/v1/capabilities/{id}:{bogus}       → 40001
- *   - POST /api/v1/capabilities/kimi-cu:install on an unsupported host → 40925
- *     (skipped on macOS and Windows x64, where kimi-cu is supported)
- *
- * Real installs are never triggered from tests: the only `:install` calls
- * target an unknown id or an unsupported platform. `GET` runs the entries'
- * read-only detection against the isolated home dir.
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -88,7 +73,6 @@ describe('server-v2 /api/v1 capabilities', () => {
       expect(capabilityStatusSchema.parse(capability)).toBeTruthy();
       expect(capability.install.running).toBe(false);
     }
-    // Platform-gated entry: kimi-cu runs on macOS and Windows x64.
     const kimiCu = parsed.capabilities.find((c) => c.id === 'kimi-cu');
     if (process.platform === 'darwin' || (process.platform === 'win32' && process.arch === 'x64')) {
       expect(kimiCu?.supported).toBe(true);
@@ -96,11 +80,9 @@ describe('server-v2 /api/v1 capabilities', () => {
       expect(kimiCu?.supported).toBe(false);
       expect(kimiCu?.state).toBe('unsupported');
     }
-    // The isolated home dir has no plugin records → the skill step is missing.
     const webbridge = parsed.capabilities.find((c) => c.id === 'kimi-webbridge');
     expect(webbridge?.supported).toBe(true);
     expect(webbridge?.steps.find((s) => s.id === 'skill')?.state).toBe('missing');
-    // The browser extension is a soft gate (never blocks readiness).
     expect(webbridge?.steps.find((s) => s.id === 'extension')?.optional).toBe(true);
   });
 
@@ -126,8 +108,6 @@ describe('server-v2 /api/v1 capabilities', () => {
     expect(bogus.body.code).toBe(40001);
   });
 
-  // kimi-cu is supported on macOS and Windows x64 — only genuinely
-  // unsupported platforms (Linux, win32-arm64, …) get the 40924 rejection.
   it.skipIf(process.platform === 'darwin' || (process.platform === 'win32' && process.arch === 'x64'))(
     'rejects kimi-cu install on unsupported platforms with 40925',
     async () => {

@@ -147,9 +147,6 @@ describe('DefaultCompactionStrategy', () => {
       textMessage('assistant', 'pending assistant'),
     ];
 
-    // Message sizes are invisible: exactly the last `maxRecentMessages`
-    // messages stay recent and the compacted prefix is never shrunk to fit
-    // the window — the real estimator would shrink it from 4 to 2 here.
     expect(zeroed.computeCompactCount(messages, 'auto')).toBe(4);
     expect(testCompactionStrategy(1_000).computeCompactCount(messages, 'auto')).toBe(2);
   });
