@@ -135,7 +135,7 @@ interface MessageDriver {
   persistInputHistory(text: string): Promise<void>;
   sendQueuedMessage(session: unknown, item: QueuedMessage): void;
   recallLastQueued(): QueuedMessage | undefined;
-  recallStashedMedia(text: string, extraction: ExtractionResult | undefined): void;
+  recallStashedMedia(extraction: ExtractionResult | undefined): void;
   clearQueuedMessages(): void;
   closeSession(reason: string): Promise<void>;
   setSession(session: unknown): Promise<void>;
