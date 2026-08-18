@@ -1,6 +1,6 @@
 import type { AutocompleteProvider, AutocompleteSuggestions } from "../autocomplete.ts";
 import { getKeybindings } from "../keybindings.ts";
-import { decodePrintableKey, matchesKey } from "../keys.ts";
+import { decodePrintableKey, isKeyRepeat, isKittyProtocolActive, matchesKey } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
 import { PasteBurst } from "../paste-burst.ts";
 import { type Component, CURSOR_MARKER, type Focusable, type TUI } from "../tui.ts";
@@ -24,6 +24,13 @@ const PASTE_MARKER_REGEX = /\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]/g;
 
 /** Non-global version for single-segment testing. */
 const PASTE_MARKER_SINGLE = /^\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]$/;
+
+/**
+ * Two ↑ events arriving closer together than this are treated as a held key
+ * (key repeat) rather than discrete presses. Terminals emit held-key repeats
+ * every ~25-40ms; humans rarely re-press faster than ~100ms.
+ */
+const UP_ARROW_REPEAT_THRESHOLD_MS = 100;
 
 /** Check if a segment is a paste marker (i.e. was merged by segmentWithMarkers). */
 function isPasteMarker(segment: string): boolean {
@@ -344,6 +351,8 @@ export class Editor implements Component, Focusable {
 	private historyDraft: EditorState | null = null;
 	private hostHistoryDraft: unknown = undefined;
 	private historyFilter: ((entry: string) => boolean) | null = null;
+	/** Timestamp of the previous ↑ key event, for held-key repeat detection. */
+	private lastUpArrowAt = 0;
 
 	// Kill ring for Emacs-style kill/yank operations
 	private killRing = new KillRing();
@@ -482,6 +491,24 @@ export class Editor implements Component, Focusable {
 		const visualLines = this.buildVisualLineMap(this.lastWidth);
 		const currentVisualLine = this.findCurrentVisualLine(visualLines);
 		return currentVisualLine === visualLines.length - 1;
+	}
+
+	/**
+	 * Whether this ↑ event is a held-key repeat: the terminal reported a
+	 * repeat event (Kitty keyboard protocol), or — without that protocol —
+	 * the key arrived faster after the previous ↑ than a human re-presses.
+	 * A user holding ↑ to reach the top of a long draft expects to stop
+	 * there, so repeats must not carry the editor from the draft into
+	 * history browsing; once history was entered by a discrete press,
+	 * repeats may keep browsing.
+	 */
+	private isUpArrowRepeat(data: string): boolean {
+		const now = Date.now();
+		const repeat = isKittyProtocolActive()
+			? isKeyRepeat(data)
+			: now - this.lastUpArrowAt < UP_ARROW_REPEAT_THRESHOLD_MS;
+		this.lastUpArrowAt = now;
+		return repeat;
 	}
 
 	private navigateHistory(direction: 1 | -1): void {
@@ -946,9 +973,13 @@ export class Editor implements Component, Focusable {
 
 		// Arrow key navigation (with history support)
 		if (kb.matches(data, "tui.editor.cursorUp")) {
+			const upArrowRepeat = this.isUpArrowRepeat(data);
 			if (
 				this.isOnFirstVisualLine() &&
-				(this.isEditorEmpty() || this.historyIndex > -1 || this.state.cursorCol === 0)
+				(this.isEditorEmpty() || this.historyIndex > -1 || this.state.cursorCol === 0) &&
+				// A held ↑ must not cross from the draft into history; a discrete
+				// press still enters, and once browsing, repeats keep browsing.
+				!(upArrowRepeat && this.historyIndex === -1 && this.history.length > 0)
 			) {
 				this.navigateHistory(-1);
 			} else if (this.isOnFirstVisualLine()) {
