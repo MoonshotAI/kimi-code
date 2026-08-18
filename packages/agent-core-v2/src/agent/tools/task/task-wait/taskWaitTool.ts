@@ -118,14 +118,12 @@ export class WaitForTool implements IWaitForTool {
     }
 
     const extras = this.collectExtras(runningAtStart, waited.taskId);
+    const output = await this.formatCompleted(waited, extras, startedAt, timeoutMs);
     this.tasks.markTasksDeliveredViaWait(
       [waited, ...extras].map((info) => ({ taskId: info.taskId, status: info.status })),
     );
     this.track(args, startedAt, timeoutMs, 'completed', extras.length);
-    return {
-      output: await this.formatCompleted(waited, extras, startedAt, timeoutMs),
-      isError: false,
-    };
+    return { output, isError: false };
   }
 
   private async waitAny(

@@ -168,10 +168,13 @@ class FakeTaskService implements IAgentTaskService {
 
   persistOutput(_taskId: string): void {}
 
+  readonly failSnapshotTaskIds = new Set<string>();
+
   async getOutputSnapshot(
     taskId: string,
     _maxPreviewBytes: number,
   ): Promise<AgentTaskOutputSnapshot> {
+    if (this.failSnapshotTaskIds.has(taskId)) throw new Error('snapshot read failed');
     return this.entries.get(taskId)?.output ?? outputSnapshot();
   }
 
@@ -968,6 +971,27 @@ describe('WaitForTool', () => {
     await expect(pending).rejects.toThrow('Aborted');
     expect(tasks.getTask('bash-abort02')?.status).toBe('running');
     expect(tasks.getTask('bash-abort03')?.status).toBe('running');
+    expect(tasks.waitDeliveries).toEqual([]);
+  });
+
+  it('does not mark tasks delivered when formatting the result fails', async () => {
+    const tasks = new FakeTaskService();
+    const taskId = tasks.add(
+      processTask({
+        taskId: 'bash-fmtfail1',
+        status: 'completed',
+        endedAt: 1_700_000_001_000,
+        exitCode: 0,
+      }),
+    );
+    tasks.failSnapshotTaskIds.add(taskId);
+
+    await expect(
+      executeTool(
+        new WaitForTool(tasks, recordingTelemetry([])),
+        context('wait_fmt_fail', { timeout: 10, task_id: taskId }),
+      ),
+    ).rejects.toThrow('snapshot read failed');
     expect(tasks.waitDeliveries).toEqual([]);
   });
 });
