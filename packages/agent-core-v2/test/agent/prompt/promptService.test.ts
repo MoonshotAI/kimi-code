@@ -435,4 +435,44 @@ describe('AgentPromptService', () => {
     await expect(queued.launched).resolves.toBeDefined();
     expect(prompt.list().active?.id).toBe('queued');
   });
+
+  it('does not advance the queue while a steer assignment is in flight', async () => {
+    const { prompt, loop } = harness({ manualTurnResult: true });
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const a = await prompt.enqueue({ id: 'a', message: message('a') });
+    await prompt.enqueue({ id: 'b', message: message('b') });
+    let steerEnqueued!: () => void;
+    const enqueued = new Promise<void>((resolve) => {
+      steerEnqueued = resolve;
+    });
+    let rejectSteer!: (reason?: unknown) => void;
+    const original = loop.enqueue.bind(loop);
+    vi.spyOn(loop, 'enqueue').mockImplementation((request, options) => {
+      if (request instanceof SteerStepRequest) {
+        return {
+          assigned: new Promise<never>((_, reject) => {
+            rejectSteer = reject;
+            steerEnqueued();
+          }),
+          abort: () => true,
+        };
+      }
+      return original(request, options);
+    });
+
+    const steerPromise = prompt.steer([a.id]);
+    await enqueued;
+    loop.settleActive();
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+    expect(loop.launches).toHaveLength(1);
+    rejectSteer(new Error('held'));
+
+    await expect(steerPromise).rejects.toMatchObject({ code: 'prompt.not_found' });
+    await expect(a.launched).resolves.toBeDefined();
+    expect(prompt.list().active?.id).toBe('a');
+    expect(prompt.list().pending.map((item) => item.id)).toEqual(['b']);
+  });
 });

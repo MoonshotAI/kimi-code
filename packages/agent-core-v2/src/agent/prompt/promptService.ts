@@ -140,6 +140,7 @@ export class AgentPromptService implements IAgentPromptService {
   private readonly pending: Record[] = [];
   private readonly steered = new Map<string, Record[]>();
   private readonly reservedPromptIds = new Set<string>();
+  private steering = 0;
   private fullCompactionService: IAgentFullCompactionService | undefined;
   readonly hooks = { onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>() };
 
@@ -313,6 +314,7 @@ export class AgentPromptService implements IAgentPromptService {
     if (selected.some((item) => !this.pending.includes(item)) || this.active !== activeAtEntry) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are no longer pending');
     }
+    this.steering++;
     const removed: { readonly item: Record; readonly index: number }[] = [];
     for (const item of selected) {
       const index = this.pending.indexOf(item);
@@ -329,6 +331,8 @@ export class AgentPromptService implements IAgentPromptService {
       turn = (await this.loop.enqueue(request).assigned).turn;
     } catch {
       turn = undefined;
+    } finally {
+      this.steering--;
     }
     if (turn === undefined || this.active !== activeAtEntry) {
       for (const { item, index } of removed.reverse()) this.pending.splice(index, 0, item);
@@ -379,7 +383,7 @@ export class AgentPromptService implements IAgentPromptService {
   }
 
   private async startNext(): Promise<void> {
-    if (this.active !== undefined || this.launching) return;
+    if (this.active !== undefined || this.launching || this.steering > 0) return;
     const item = this.pending.shift(); if (item === undefined) return;
     this.launching = true;
     try {
