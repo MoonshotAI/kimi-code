@@ -385,6 +385,13 @@ describe('AgentFlowService', () => {
       expect(requestToolApproval).toHaveBeenCalledTimes(1);
     });
 
+    it('skips approval when the live stage no longer matches the prepared display', async () => {
+      service.start(DEFINITION, 'task');
+      service.advance({ stage: 'triage', result: 'pass', decidedBy: 'human', criteria: CRITERIA });
+      await executorEvents.fireBeforeExecute(advanceContext(GATE_DISPLAY));
+      expect(requestToolApproval).not.toHaveBeenCalled();
+    });
+
     it('skips approval without a flow_gate_review display, in auto mode, and while the flag is off', async () => {
       service.start(DEFINITION, 'task');
       await executorEvents.fireBeforeExecute(advanceContext(undefined));

@@ -22,6 +22,10 @@ export class FlowGateReview {
   ): Promise<BeforeExecuteDecision | undefined> {
     const display = context.execution.display;
     if (display?.kind !== 'flow_gate_review') return undefined;
+    const stage = this.flow.currentStage();
+    if (!this.flow.run().active || stage === undefined || stage.id !== display.stage_id) {
+      return undefined;
+    }
     return this.toolApproval.requestToolApproval(
       context,
       {
