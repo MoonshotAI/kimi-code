@@ -4,10 +4,10 @@ import { currentKimiRegion, KIMI_CODE_OVERSEAS_PLATFORM_VALUE } from '#/utils/re
 
 import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 
-const KIMI_CODE_CN_OPTION: ChoiceOption = { value: 'kimi-code', label: 'Kimi Code (China)' };
+const KIMI_CODE_CN_OPTION: ChoiceOption = { value: 'kimi-code', label: 'Kimi Code (kimi.com/code)' };
 const KIMI_CODE_OVERSEAS_OPTION: ChoiceOption = {
   value: KIMI_CODE_OVERSEAS_PLATFORM_VALUE,
-  label: 'Kimi Code (International)',
+  label: 'Kimi Code (kimi.ai/code)',
 };
 
 function platformOptions(): readonly ChoiceOption[] {
