@@ -144,7 +144,11 @@ const GOAL_CONTINUATION_PROMPT = [
   'validation, would benefit from clarification, or needs more goal turns. Once the 3-turn',
   'threshold is met and you cannot make meaningful progress without user input or an',
   'external-state change, call UpdateGoal with `blocked`; do not keep reporting the blocker while',
-  'leaving the goal active. Do not ask the user for input unless a real blocker prevents progress.',
+  'leaving the goal active. If you are waiting for background sub-agents or bash tasks to',
+  'finish, call WaitFor to wait for them inside this turn instead of ending the turn; ending',
+  'the turn just gets you re-invoked again and again. You can also use the waiting time to do',
+  'useful parallel work. Either way, make sure every goal turn is productive. Do not ask the',
+  'user for input unless a real blocker prevents progress.',
 ].join(' ');
 
 const GOAL_STEP_CAP_CONTINUATION_PROMPT = [
