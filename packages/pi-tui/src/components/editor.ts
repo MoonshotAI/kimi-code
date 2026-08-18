@@ -739,6 +739,12 @@ export class Editor implements Component, Focusable {
 	handleInput(data: string): void {
 		const kb = getKeybindings();
 
+		// A non-↑ key between two ↑ presses breaks the repeat stream — the
+		// next ↑ is a fresh press, not an autorepeat of the earlier one.
+		if (!kb.matches(data, "tui.editor.cursorUp")) {
+			this.lastUpArrowAt = 0;
+		}
+
 		// Handle character jump mode (awaiting next character to jump to)
 		if (this.jumpMode !== null) {
 			// Cancel if the hotkey is pressed again

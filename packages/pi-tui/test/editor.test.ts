@@ -261,6 +261,27 @@ describe("Editor component", () => {
 			}
 		});
 
+		it("treats an Up after an intervening key as a fresh press", () => {
+			mock.timers.enable({ apis: ["Date"] });
+			mock.timers.setTime(1000);
+			try {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				editor.addToHistory("entry");
+
+				editor.handleInput("\x1b[A"); // discrete press - enters history
+				assert.strictEqual(editor.getText(), "entry");
+
+				mock.timers.tick(30);
+				editor.handleInput("\x1b[B"); // Down restores the empty draft
+
+				mock.timers.tick(30); // quick, but the Down broke the repeat stream
+				editor.handleInput("\x1b[A");
+				assert.strictEqual(editor.getText(), "entry");
+			} finally {
+				mock.timers.reset();
+			}
+		});
+
 		it("bars Kitty protocol repeat events from entering history", () => {
 			setKittyProtocolActive(true);
 			try {
@@ -643,7 +664,8 @@ describe("Editor component", () => {
 
 				editor.handleInput("\x1b[A"); // recall
 				editor.handleInput("\x1b[B"); // restore draft (count=1)
-				mock.timers.tick(200); // discrete press, not a held-key repeat
+				// No clock advance needed: the intervening Down broke the ↑
+				// repeat stream, so the next Up reads as a fresh press.
 				editor.handleInput("\x1b[A"); // recall again
 				editor.handleInput("\x1b[B"); // restore draft again (count=2)
 				assert.strictEqual(count, 2);
