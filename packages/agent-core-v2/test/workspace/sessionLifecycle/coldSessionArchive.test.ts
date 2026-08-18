@@ -44,7 +44,7 @@ interface ColdPathOptions {
   readonly onMirrorRecord?: (recorded: SessionSummary) => void;
   readonly onStoreSet?: (scope: string, key: string, value: unknown) => void;
   readonly onStoreDelete?: (scope: string, key: string) => void;
-  readonly resumeError?: unknown;
+  readonly resumeError?: Error;
 }
 
 function coldPathAccessor(options: ColdPathOptions): ServicesAccessor {

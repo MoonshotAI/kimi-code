@@ -133,7 +133,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private readonly _onDidForkSession = this._register(new Emitter<SessionForkedEvent>());
   readonly onDidForkSession: Event<SessionForkedEvent> = this._onDidForkSession.event;
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
-  private readonly resumeFailures = new Map<string, unknown>();
+  private readonly resumeFailures = new Map<string, Error>();
 
   constructor(
     private readonly instantiation: IInstantiationService,
@@ -320,7 +320,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           .track2('session_load_failed', {
             reason: isError2(error) ? error.code : error instanceof Error ? error.name : 'unknown',
           });
-        this.resumeFailures.set(sessionId, error);
+        this.resumeFailures.set(sessionId, error instanceof Error ? error : new Error('session resume failed'));
         throw error;
       })
       .finally(() => this.resuming.delete(sessionId));

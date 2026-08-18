@@ -37,7 +37,7 @@ export class SessionManager implements ISessionManager {
   private readonly sessions = new Map<string, ISessionScopeHandle>();
   private readonly owners = new Map<string, SessionLifecycleService>();
   private readonly pendingResumes = new Map<string, Promise<ISessionScopeHandle | undefined>>();
-  private readonly resumeFailures = new Map<string, unknown>();
+  private readonly resumeFailures = new Map<string, Error>();
   private readonly lifecycleChains = new Map<string, Promise<void>>();
   private readonly controllers = new Map<string, SessionControllerEntry>();
   private readonly controllerEntries = new Set<SessionControllerEntry>();
@@ -65,7 +65,9 @@ export class SessionManager implements ISessionManager {
         ? { root: options.workDir }
         : { workspaceId: options.workspaceId, root: options.workDir },
     );
-    return this.controllerForWorkspace(workspace.id).create(options);
+    const controller = this.controllerForWorkspace(workspace.id);
+    if (options.sessionId === undefined) return controller.create(options);
+    return this.serializeLifecycle(options.sessionId, () => controller.create(options));
   }
 
   async resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
@@ -77,7 +79,7 @@ export class SessionManager implements ISessionManager {
     ).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
     void promise.catch((error: unknown) => {
-      this.resumeFailures.set(sessionId, error);
+      this.resumeFailures.set(sessionId, error instanceof Error ? error : new Error('session resume failed'));
     });
     return promise;
   }
