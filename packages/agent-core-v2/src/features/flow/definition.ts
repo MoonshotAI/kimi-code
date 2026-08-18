@@ -92,14 +92,18 @@ function extractStageNotes(body: string): Map<string, string> {
     const text = buffer.join('\n').trim();
     if (text.length > 0) notes.set(current, text);
   };
-  let inFence = false;
+  let fence: { marker: string; length: number } | undefined;
   for (const line of lines) {
-    if (/^\s*(```|~~~)/.test(line)) {
-      inFence = !inFence;
+    const fenceMatch = /^\s*(`{3,}|~{3,})/.exec(line);
+    if (fenceMatch !== undefined && fenceMatch !== null) {
+      const marker = fenceMatch[1]![0]!;
+      const length = fenceMatch[1]!.length;
+      if (fence === undefined) fence = { marker, length };
+      else if (fence.marker === marker && length >= fence.length) fence = undefined;
       if (current !== undefined) buffer.push(line);
       continue;
     }
-    if (inFence) {
+    if (fence !== undefined) {
       if (current !== undefined) buffer.push(line);
       continue;
     }

@@ -9,6 +9,7 @@ import { authHeaders } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
 const FLOW_ENV = 'KIMI_CODE_EXPERIMENTAL_FLOW';
+const inheritedFlowEnv = process.env[FLOW_ENV];
 
 const DEF = `---
 id: issue-fix
@@ -39,7 +40,8 @@ describe('flows skill source e2e', () => {
   });
 
   afterEach(async () => {
-    delete process.env[FLOW_ENV];
+    if (inheritedFlowEnv === undefined) delete process.env[FLOW_ENV];
+    else process.env[FLOW_ENV] = inheritedFlowEnv;
     if (server) await server.close();
     if (home) await rm(home, { recursive: true, force: true });
   });
