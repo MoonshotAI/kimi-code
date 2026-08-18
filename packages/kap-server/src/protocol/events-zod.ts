@@ -543,6 +543,14 @@ export const agentPhaseSchema = z.discriminatedUnion('kind', [
   }),
 ]);
 
+export const agentFlowRunStatusSchema = z.object({
+  flowId: z.string(),
+  stageId: z.string(),
+  stageIndex: z.number(),
+  stageTotal: z.number(),
+  gate: z.string(),
+});
+
 export const agentStatusUpdatedEventSchema = z.object({
   type: z.literal('agent.status.updated'),
   model: z.string().optional(),
@@ -555,6 +563,7 @@ export const agentStatusUpdatedEventSchema = z.object({
   permission: permissionModeSchema.optional(),
   usage: usageStatusSchema.optional(),
   phase: agentPhaseSchema.optional(),
+  flowRun: agentFlowRunStatusSchema.nullable().optional(),
 });
 
 export const sessionMetaUpdatedEventSchema = z.object({

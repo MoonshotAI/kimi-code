@@ -37,8 +37,10 @@ describe('server-v2 /api/v1/sessions/{sid}/flow', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let base: string;
+  const inheritedFlowEnv = process.env[FLOW_ENV];
 
   beforeEach(async () => {
+    delete process.env[FLOW_ENV];
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-flow-'));
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -51,7 +53,8 @@ describe('server-v2 /api/v1/sessions/{sid}/flow', () => {
   });
 
   afterEach(async () => {
-    delete process.env[FLOW_ENV];
+    if (inheritedFlowEnv === undefined) delete process.env[FLOW_ENV];
+    else process.env[FLOW_ENV] = inheritedFlowEnv;
     if (server !== undefined) {
       await server.close();
       server = undefined;

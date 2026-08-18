@@ -77,4 +77,12 @@ describe('parseFlowDefinition', () => {
       ),
     ).toThrow(FlowDefinitionParseError);
   });
+
+  it('rejects a notes heading that matches no stage id, so a typo cannot silently drop the notes', () => {
+    expect(() =>
+      parseFlowDefinition(
+        '---\nid: typo\nstages:\n  - id: implement\n    objective: x\n    completion: y\n---\n\n## implemnt\n\nImportant guidance.\n',
+      ),
+    ).toThrow(FlowDefinitionParseError);
+  });
 });

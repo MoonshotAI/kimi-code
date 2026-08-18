@@ -15,6 +15,7 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { SkillActivate, skillKey } from '#/agent/skill/skillOps';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
@@ -92,7 +93,22 @@ describe('AgentFlowService', () => {
         runtime: { fs: { readText: async () => DEFINITION_TEXT } },
         dispose: () => {},
       }),
+      inspect: () => ({
+        identity: { workspaceId: 'ws', runtimeId: 'local', generation: 'gen-1' },
+        workspace: { mapRoots: (roots: unknown) => roots },
+        path: {
+          separator: '/',
+          resolve: (...parts: string[]) => parts.join('/'),
+          isAbsolute: (path: string) => path.startsWith('/'),
+          relative: (from: string, to: string) =>
+            to === from ? '' : to.startsWith(`${from}/`) ? to.slice(from.length + 1) : '..',
+        },
+      }),
     } as unknown as IAgentRuntimeService);
+    ix.stub(ISessionWorkspaceContext, {
+      workDir: '/ws',
+      additionalDirs: [],
+    } as unknown as ISessionWorkspaceContext);
     flowFlagOn = true;
     ix.stub(IFlagService, stubFlag((id) => flowFlagOn && id === FLOW_FLAG_ID));
     permissionMode = 'default';

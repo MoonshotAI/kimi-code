@@ -1,7 +1,7 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { SkillActivated } from '#/agent/skill/skillOps';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -18,6 +18,7 @@ import { parseFlowDefinition } from './definition';
 import {
   FLOW_ADVANCE_TOOL_NAME,
   FLOW_FLAG_ID,
+  FLOWS_PROJECT_DIR,
   IAgentFlowService,
   type FlowAdvanceOutcome,
   type FlowAdvanceResult,
@@ -27,6 +28,9 @@ import {
   type FlowStageDefinition,
 } from './flow';
 import { FlowGateReview } from './flowGateReview';
+import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+
 import { FlowRunEnded, FlowRunStarted, FlowVerdict, flowGatesKey, flowKey } from './flowOps';
 
 export class AgentFlowService extends Disposable implements IAgentFlowService {
@@ -43,6 +47,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     @IFlagService private readonly flags: IFlagService,
     @IEventBus eventBus: IEventBus,
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
   ) {
     super();
     this.agentState.contributeState(flowKey);
@@ -75,24 +80,31 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
       eventBus.subscribe(SkillActivated, (event) => {
         if (event.skillType !== 'flow') return;
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
-        void this.startFromActivation(event.skillPath, event.skillArgs);
+        void this.startFromActivation(event.skillName, event.skillArgs);
       }),
     );
   }
 
   private async startFromActivation(
-    path: string | undefined,
+    flowId: string | undefined,
     task: string | undefined,
   ): Promise<void> {
-    if (path === undefined || this.run().active) return;
+    if (flowId === undefined || flowId.length === 0 || this.run().active) return;
     let text: string;
-    const lease = this.runtime.acquire(['fs']);
     try {
-      text = await lease.runtime.fs!.readText(path);
+      const view = new RuntimeWorkspaceView(inspectAgentRuntime(this.runtime), {
+        workDir: this.workspaceCtx.workDir,
+        additionalDirs: [...this.workspaceCtx.additionalDirs],
+      });
+      const path = view.resolve(`${FLOWS_PROJECT_DIR}/${flowId}.md`);
+      const lease = this.runtime.acquire(['fs']);
+      try {
+        text = await lease.runtime.fs!.readText(path);
+      } finally {
+        lease.dispose();
+      }
     } catch {
       return;
-    } finally {
-      lease.dispose();
     }
     try {
       this.start(parseFlowDefinition(text), task?.trim() ?? '');

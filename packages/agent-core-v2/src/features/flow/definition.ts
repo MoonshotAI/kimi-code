@@ -67,6 +67,13 @@ export function parseFlowDefinition(text: string): FlowDefinition {
   }
 
   const notes = extractStageNotes(parsed.body);
+  for (const key of notes.keys()) {
+    if (!stageIds.has(key)) {
+      throw new FlowDefinitionParseError(
+        `Notes heading \`## ${key}\` does not match any stage id (stages: ${[...stageIds].join(', ')})`,
+      );
+    }
+  }
   const stages: FlowStageDefinition[] = result.data.stages.map((stage) => ({
     ...stage,
     notes: notes.get(stage.id),
