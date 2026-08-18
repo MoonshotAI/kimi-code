@@ -825,10 +825,58 @@ describe('projector tool-exchange normalization', () => {
   });
 });
 
-// Tests for the fold contract: collapse folds anchor on the untouched live
-// history and run before view folds reshape it, same-order folds compose in
-// registration order, and projections over an explicit (non-live) message
-// list skip folds entirely.
+describe('projector blank thinking cleanup', () => {
+  let disposables: DisposableStore;
+  let projector: IAgentContextProjectorService;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.set(ILogService, createCapturingLog([]));
+    ix.set(ITelemetryService, recordingTelemetry([]));
+    ix.set(IAgentStateService, new AgentStateService());
+    ix.set(IAgentContextProjectorService, new SyncDescriptor(AgentContextProjectorService));
+    projector = ix.get(IAgentContextProjectorService);
+  });
+
+  afterEach(() => disposables.dispose());
+
+  it('drops an assistant whose only content is an unsigned empty thinking block', () => {
+    const history: ContextMessage[] = [
+      user('go'),
+      { role: 'assistant', content: [{ type: 'think', think: '' }], toolCalls: [] },
+    ];
+    expect(projector.project(history).map((message) => message.role)).toEqual(['user']);
+  });
+
+  it('drops a whitespace-only thinking block in both normal and strict projections', () => {
+    const history: ContextMessage[] = [
+      user('go'),
+      { role: 'assistant', content: [{ type: 'think', think: '  \n' }], toolCalls: [] },
+    ];
+    for (const projected of [
+      projector.project(history),
+      projector.project(history, { structure: 'strict' }),
+    ]) {
+      expect(projected.map((message) => message.role)).toEqual(['user']);
+    }
+  });
+
+  it('keeps a signed (encrypted) empty thinking block verbatim', () => {
+    const history: ContextMessage[] = [
+      user('go'),
+      {
+        role: 'assistant',
+        content: [{ type: 'think', think: '', encrypted: 'sig-1' }],
+        toolCalls: [],
+      },
+    ];
+    const projected = projector.project(history);
+    expect(projected).toHaveLength(2);
+    expect(projected[1]?.content).toEqual([{ type: 'think', think: '', encrypted: 'sig-1' }]);
+  });
+});
+
 describe('context fold contract', () => {
   let disposables: DisposableStore;
   let projector: IAgentContextProjectorService;
@@ -863,8 +911,6 @@ describe('context fold contract', () => {
 
     projector.project(history);
 
-    // The collapse fold anchored on the live history's full length; the view
-    // fold only saw the collapsed output.
     expect(collapseSaw).toBe(3);
     expect(viewSaw).toBe(1);
   });
