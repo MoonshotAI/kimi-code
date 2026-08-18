@@ -182,18 +182,16 @@ async function* decodedLines(lines: readonly string[]): AsyncGenerator<string> {
   yield* lines;
 }
 
-function notReadableFileOutput(path: string, mediaReadable: boolean): string {
+function notReadableFileOutput(path: string, mediaReadable: boolean, bashAvailable: boolean): string {
+  const binary = bashAvailable ? 'use Bash or an MCP tool if available.' : 'use an available MCP tool.';
   if (mediaReadable) {
     return (
       `"${path}" is not readable as UTF-8 text. ` +
       'If it is an image or video, use ReadMediaFile. ' +
-      'For other binary formats, use Bash or an MCP tool if available.'
+      `For other binary formats, ${binary}`
     );
   }
-  return (
-    `"${path}" is not readable as UTF-8 text. ` +
-    'For binary formats, use Bash or an MCP tool if available.'
-  );
+  return `"${path}" is not readable as UTF-8 text. For binary formats, ${binary}`;
 }
 
 function notUtf8DecodableFileOutput(path: string): string {
@@ -204,10 +202,11 @@ function notUtf8DecodableFileOutput(path: string): string {
   );
 }
 
-function binaryFormatsHint(mediaReadable: boolean): string {
+function binaryFormatsHint(mediaReadable: boolean, bashAvailable: boolean): string {
+  const binary = bashAvailable ? 'Bash or an MCP tool' : 'an available MCP tool';
   return mediaReadable
-    ? 'use `ReadMediaFile` for images or video, and Bash or an MCP tool for other binary formats.'
-    : 'use Bash or an MCP tool for binary formats.';
+    ? `use \`ReadMediaFile\` for images or video, and ${binary} for other binary formats.`
+    : `use ${binary} for binary formats.`;
 }
 
 export class ReadTool implements IReadTool {
@@ -227,15 +226,32 @@ export class ReadTool implements IReadTool {
       MAX_LINES,
       MAX_BYTES_KB: MAX_BYTES / 1024,
       MAX_LINE_LENGTH,
-      BINARY_FORMATS_HINT: binaryFormatsHint(this.mediaReadable()),
+      BINARY_FORMATS_HINT: binaryFormatsHint(this.mediaReadable(), this.bashAvailable()),
     });
   }
 
   private mediaReadable(): boolean {
+    return this.mediaRegistered() && this.toolPolicy.isToolActive('ReadMediaFile');
+  }
+
+  private mediaRegistered(): boolean {
+    return this.toolRegistry.resolve('ReadMediaFile') !== undefined;
+  }
+
+  private bashAvailable(): boolean {
     return (
-      this.toolRegistry.resolve('ReadMediaFile') !== undefined &&
-      this.toolPolicy.isToolActive('ReadMediaFile')
+      this.toolRegistry.resolve('Bash') !== undefined && this.toolPolicy.isToolActive('Bash')
     );
+  }
+
+  private mediaUnavailableOutput(path: string, kind: string): string {
+    const reason = this.mediaRegistered()
+      ? 'The ReadMediaFile tool is disabled by the active tool policy, so image and video reading is unavailable.'
+      : 'Image and video reading is unavailable for this agent.';
+    const fallback = this.bashAvailable()
+      ? ' Use Bash or an MCP tool to inspect or convert it.'
+      : ' Use an available MCP tool to inspect or convert it.';
+    return `"${path}" is a ${kind} file. ${reason}${fallback}`;
   }
 
   private workspaceConfig(view: RuntimeWorkspaceView): WorkspaceConfig {
@@ -302,7 +318,7 @@ export class ReadTool implements IReadTool {
           isError: true,
           output: this.mediaReadable()
             ? `"${args.path}" is a ${fileType.kind} file. Use ReadMediaFile to read image or video files.`
-            : `"${args.path}" is a ${fileType.kind} file. The current model cannot read image or video files; use Bash or an MCP tool to inspect or convert it.`,
+            : this.mediaUnavailableOutput(args.path, fileType.kind),
         };
       }
 
@@ -325,7 +341,7 @@ export class ReadTool implements IReadTool {
       } else if (fileType.kind === 'unknown') {
         return {
           isError: true,
-          output: notReadableFileOutput(args.path, this.mediaReadable()),
+          output: notReadableFileOutput(args.path, this.mediaReadable(), this.bashAvailable()),
         };
       } else {
         lines = fs.readLines(safePath, { errors: 'strict' });
@@ -380,7 +396,7 @@ export class ReadTool implements IReadTool {
 
     for await (const rawLine of lines) {
       if (containsNulByte(rawLine)) {
-        return { isError: true, output: notReadableFileOutput(displayPath, this.mediaReadable()) };
+        return { isError: true, output: notReadableFileOutput(displayPath, this.mediaReadable(), this.bashAvailable()) };
       }
       currentLineNo += 1;
       updateLineEndingFlags(flags, rawLine);
@@ -438,7 +454,7 @@ export class ReadTool implements IReadTool {
 
     for await (const rawLine of lines) {
       if (containsNulByte(rawLine)) {
-        return { isError: true, output: notReadableFileOutput(displayPath, this.mediaReadable()) };
+        return { isError: true, output: notReadableFileOutput(displayPath, this.mediaReadable(), this.bashAvailable()) };
       }
       currentLineNo += 1;
       updateLineEndingFlags(flags, rawLine);

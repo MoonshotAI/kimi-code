@@ -66,7 +66,7 @@ function createTestEnv(home = '/home'): IHostEnvironment {
   };
 }
 
-function stubToolRegistry(registered: readonly string[] = ['ReadMediaFile']): IAgentToolRegistryService {
+function stubToolRegistry(registered: readonly string[] = ['ReadMediaFile', 'Bash']): IAgentToolRegistryService {
   return {
     _serviceBrand: undefined,
     resolve: (name: string) =>
@@ -557,6 +557,30 @@ describe('ReadTool', () => {
       createTestEnv(),
       PERMISSIVE_WORKSPACE,
       undefined,
+      stubToolRegistry(['Bash']),
+    );
+
+    const result = await execute(tool, { path: '/tmp/sample.png' });
+    const output = toolContentString(result);
+
+    expect(result.isError).toBe(true);
+    expect(output).toBe(
+      '"/tmp/sample.png" is a image file. Image and video reading is unavailable for this agent. Use Bash or an MCP tool to inspect or convert it.',
+    );
+    expect(output).not.toContain('ReadMediaFile');
+    expect(readText).not.toHaveBeenCalled();
+  });
+
+  it('recommends only available fallback tools when rejecting an image file', async () => {
+    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const { fs, readText } = createSpiedMapFs({
+      '/tmp/sample.png': { bytes: pngHeader },
+    });
+    const tool = createReadTool(
+      fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
       stubToolRegistry([]),
     );
 
@@ -565,13 +589,13 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/sample.png" is a image file. The current model cannot read image or video files; use Bash or an MCP tool to inspect or convert it.',
+      '"/tmp/sample.png" is a image file. Image and video reading is unavailable for this agent. Use an available MCP tool to inspect or convert it.',
     );
-    expect(output).not.toContain('ReadMediaFile');
+    expect(output).not.toContain('Bash');
     expect(readText).not.toHaveBeenCalled();
   });
 
-  it('rejects image files without pointing to ReadMediaFile when the media tool is disabled by policy', async () => {
+  it('rejects image files without attributing the reason to model capability when the media tool is disabled by policy', async () => {
     const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const { fs, readText } = createSpiedMapFs({
       '/tmp/sample.png': { bytes: pngHeader },
@@ -589,7 +613,10 @@ describe('ReadTool', () => {
     const output = toolContentString(result);
 
     expect(result.isError).toBe(true);
-    expect(output).not.toContain('ReadMediaFile');
+    expect(output).toBe(
+      '"/tmp/sample.png" is a image file. The ReadMediaFile tool is disabled by the active tool policy, so image and video reading is unavailable. Use an available MCP tool to inspect or convert it.',
+    );
+    expect(output).not.toContain('cannot read');
     expect(readText).not.toHaveBeenCalled();
   });
 
@@ -611,7 +638,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/blob.bin" is not readable as UTF-8 text. For binary formats, use Bash or an MCP tool if available.',
+      '"/tmp/blob.bin" is not readable as UTF-8 text. For binary formats, use an available MCP tool.',
     );
     expect(readText).not.toHaveBeenCalled();
   });
@@ -1073,7 +1100,7 @@ describe('ReadTool description and schema parity', () => {
       createTestEnv(),
       PERMISSIVE_WORKSPACE,
       undefined,
-      stubToolRegistry([]),
+      stubToolRegistry(['Bash']),
     );
 
     expect(tool.description).not.toContain('ReadMediaFile');
@@ -1091,7 +1118,22 @@ describe('ReadTool description and schema parity', () => {
     );
 
     expect(tool.description).not.toContain('ReadMediaFile');
-    expect(tool.description).toContain('use Bash or an MCP tool for binary formats.');
+    expect(tool.description).toContain('use an available MCP tool for binary formats.');
+  });
+
+  it('keeps Bash out of the description when the shell tool is unavailable', () => {
+    const tool = createReadTool(
+      createSpiedFs('').fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
+      stubToolRegistry(['ReadMediaFile']),
+    );
+
+    expect(tool.description).toContain(
+      'use `ReadMediaFile` for images or video, and an available MCP tool for other binary formats.',
+    );
+    expect(tool.description).not.toContain('Bash or an MCP tool');
   });
 
   it('reflects media tool policy changes in the description', () => {
