@@ -57,7 +57,24 @@ describe('flows skill source e2e', () => {
     } as never);
     const body = (await res.json()) as { data: { skills: { name: string; type?: string }[] } };
     const flow = body.data.skills.find((s) => s.name === 'issue-fix');
-    console.log('SKILLS:', body.data.skills.map((s) => `${s.name}(${s.type ?? '-'})`).join(', '));
+    expect(flow).toBeDefined();
+    expect(flow?.type).toBe('flow');
+  });
+
+  it('lists the flow definition on the session-less workspace skills route too', async () => {
+    const base = `http://127.0.0.1:${server!.port}`;
+    const created = await fetch(`${base}/api/v1/sessions`, {
+      method: 'POST',
+      headers: authHeaders(server!, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ metadata: { cwd: home } }),
+    } as never);
+    const session = (await created.json()) as { data: { workspace_id: string } };
+    const res = await fetch(
+      `${base}/api/v1/workspaces/${session.data.workspace_id}/skills`,
+      { headers: authHeaders(server!) } as never,
+    );
+    const body = (await res.json()) as { data: { skills: { name: string; type?: string }[] } };
+    const flow = body.data.skills.find((s) => s.name === 'issue-fix');
     expect(flow).toBeDefined();
     expect(flow?.type).toBe('flow');
   });

@@ -72,77 +72,90 @@ export class FlowsSkillSource extends Disposable implements IFlowsSkillSource {
 
   async load(): Promise<SkillContribution> {
     if (!this.flags.enabled(FLOW_FLAG_ID)) return { skills: [] };
-    const flowsDir = this.flowsDir();
+    return discoverFlowSkills(this.fs, this.workspace.cwd);
+  }
+}
 
-    let names: string[];
+/**
+ * Scan `<workDir>/.kimi-code/flows/` and project every valid definition into
+ * a flow-typed skill. Shared by the workspace-scoped FlowsSkillSource and
+ * kap-server's session-less workspace skills route — callers gate on the flow
+ * flag themselves.
+ */
+export async function discoverFlowSkills(
+  fs: IHostFileSystem,
+  workDir: string,
+): Promise<SkillContribution> {
+  const flowsDir = `${workDir}/${FLOWS_PROJECT_DIR}`;
+
+  let names: string[];
+  try {
+    names = (await fs.readdir(flowsDir))
+      .filter((entry) => entry.isFile && entry.name.endsWith('.md'))
+      .map((entry) => entry.name);
+  } catch {
+    return { skills: [], scannedRoots: [flowsDir] };
+  }
+
+  const skills: SkillDefinition[] = [];
+  const skipped: SkippedSkill[] = [];
+  for (const name of names.toSorted()) {
+    const path = `${flowsDir}/${name}`;
+    const stem = name.slice(0, -3);
     try {
-      names = (await this.fs.readdir(flowsDir))
-        .filter((entry) => entry.isFile && entry.name.endsWith('.md'))
-        .map((entry) => entry.name);
-    } catch {
-      return { skills: [], scannedRoots: [flowsDir] };
-    }
-
-    const skills: SkillDefinition[] = [];
-    const skipped: SkippedSkill[] = [];
-    for (const name of names.toSorted()) {
-      const path = `${flowsDir}/${name}`;
-      const stem = name.slice(0, -3);
-      try {
-        const definition = parseFlowDefinition(await this.fs.readText(path));
-        if (definition.id !== stem) {
-          skipped.push({
-            path,
-            type: 'flow',
-            reason: `declared id \`${definition.id}\` does not match the file name \`${stem}\``,
-          });
-          continue;
-        }
-        skills.push(this.toSkill(definition.id, definition.when, path, flowsDir));
-      } catch (error) {
+      const definition = parseFlowDefinition(await fs.readText(path));
+      if (definition.id !== stem) {
         skipped.push({
           path,
           type: 'flow',
-          reason:
-            error instanceof FlowDefinitionParseError ? error.message : 'unreadable flow definition',
+          reason: `declared id \`${definition.id}\` does not match the file name \`${stem}\``,
         });
+        continue;
       }
+      skills.push(toFlowSkill(definition.id, definition.when, path, flowsDir));
+    } catch (error) {
+      skipped.push({
+        path,
+        type: 'flow',
+        reason:
+          error instanceof FlowDefinitionParseError ? error.message : 'unreadable flow definition',
+      });
     }
-    return { skills, skipped, scannedRoots: [flowsDir] };
   }
+  return { skills, skipped, scannedRoots: [flowsDir] };
+}
 
-  private toSkill(
-    id: string,
-    when: string | undefined,
-    path: string,
-    dir: string,
-  ): SkillDefinition {
-    const description =
-      when === undefined || when.trim().length === 0
-        ? `Run the \`${id}\` flow: a staged workflow with gated transitions.`
-        : `Run the \`${id}\` flow. Use when: ${when.trim()}`;
-    const content = [
-      FLOW_SUPERVISOR_CONTRACT,
-      '',
-      `This activation is bound to the flow \`${id}\` (defined at ${FLOWS_PROJECT_DIR}/${id}.md): call FlowStart with flow: "${id}" and the user's task — do not ask which flow to run.`,
-      '',
-      "The user's input for this activation is the task: `$ARGUMENTS`",
-      '',
-      'If the input is empty, ask the user what this run should accomplish before starting.',
-    ].join('\n');
-    return {
+function toFlowSkill(
+  id: string,
+  when: string | undefined,
+  path: string,
+  dir: string,
+): SkillDefinition {
+  const description =
+    when === undefined || when.trim().length === 0
+      ? `Run the \`${id}\` flow: a staged workflow with gated transitions.`
+      : `Run the \`${id}\` flow. Use when: ${when.trim()}`;
+  const content = [
+    FLOW_SUPERVISOR_CONTRACT,
+    '',
+    `This activation is bound to the flow \`${id}\` (defined at ${FLOWS_PROJECT_DIR}/${id}.md): call FlowStart with flow: "${id}" and the user's task — do not ask which flow to run.`,
+    '',
+    "The user's input for this activation is the task: `$ARGUMENTS`",
+    '',
+    'If the input is empty, ask the user what this run should accomplish before starting.',
+  ].join('\n');
+  return {
+    name: id,
+    description,
+    path,
+    dir,
+    content,
+    metadata: {
       name: id,
       description,
-      path,
-      dir,
-      content,
-      metadata: {
-        name: id,
-        description,
-        type: 'flow',
-        disableModelInvocation: true,
-      },
-      source: 'project',
-    };
-  }
+      type: 'flow',
+      disableModelInvocation: true,
+    },
+    source: 'project',
+  };
 }
