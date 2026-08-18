@@ -430,6 +430,28 @@ describe('live fold parity', () => {
     expect(transcript.foldedLength).toBe(live.length);
   });
 
+  it('keeps legacy compaction recovery on the pre-settlement count', () => {
+    const records: WireRecord[] = [
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      loopEvent({ type: 'step.begin', uuid: 's2' }),
+      compaction('SUM', 1),
+      ...assistantStep('s3', 'a3'),
+    ];
+    const live = foldLive(records);
+    const transcript = reduceContextTranscript(records);
+    expect(live.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant', 'assistant']);
+    expect(live[2]!.partial).toBe(true);
+    expect(transcript.entries.map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'assistant',
+      'user',
+      'assistant',
+    ]);
+    expect(transcript.foldedLength).toBe(live.length);
+  });
+
   it('tracks the live context length across clear and undo', () => {
     const records: WireRecord[] = [
       appendMessage(userMessage('u1')),

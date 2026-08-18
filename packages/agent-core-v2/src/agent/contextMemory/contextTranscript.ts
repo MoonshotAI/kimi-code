@@ -125,7 +125,11 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
         break;
       }
       case 'context.apply_compaction': {
-        fold.settle(record.time);
+        if (readNumber(record, 'keptUserMessageCount') !== undefined) {
+          fold.settle(record.time);
+        } else {
+          resetOpenState();
+        }
         transcript.push({
           message: {
             role: 'user',
