@@ -182,6 +182,31 @@ export const fsSearchResponseSchema = z.object({
 });
 export type FsSearchResponse = z.infer<typeof fsSearchResponseSchema>;
 
+export const fsSuggestItemSchema = z.object({
+  path: z.string(),
+  name: z.string(),
+  kind: fsKindSchema,
+  score: z.number().min(0).max(1),
+  match_positions: z.array(z.number().int().nonnegative()),
+});
+export type FsSuggestItem = z.infer<typeof fsSuggestItemSchema>;
+
+export const fsSuggestRequestSchema = z.object({
+  query: z.string(),
+  limit: z.number().int().min(1).max(200).default(50),
+  follow_gitignore: z.boolean().default(true),
+  show_hidden: z.boolean().default(false),
+  include_globs: z.array(z.string()).optional(),
+  exclude_globs: z.array(z.string()).optional(),
+});
+export type FsSuggestRequest = z.infer<typeof fsSuggestRequestSchema>;
+
+export const fsSuggestResponseSchema = z.object({
+  items: z.array(fsSuggestItemSchema),
+  truncated: z.boolean(),
+});
+export type FsSuggestResponse = z.infer<typeof fsSuggestResponseSchema>;
+
 export const fsGrepRequestSchema = z.object({
   pattern: z.string().min(1),
   regex: z.boolean().default(false),
@@ -229,6 +254,7 @@ export interface IWorkspaceFsService {
   statMany(req: FsStatManyRequest): Promise<FsStatManyResponse>;
   mkdir(req: FsMkdirRequest): Promise<FsMkdirResponse>;
   search(req: FsSearchRequest): Promise<FsSearchResponse>;
+  suggest(req: FsSuggestRequest): Promise<FsSuggestResponse>;
   grep(req: FsGrepRequest): Promise<FsGrepResponse>;
   gitStatus(req: FsGitStatusRequest): Promise<FsGitStatusResponse>;
   diff(req: FsDiffRequest): Promise<FsDiffResponse>;
