@@ -22,6 +22,7 @@ export interface SkillActivatedPayload {
   readonly skillArgs?: string;
   readonly skillPath?: string;
   readonly skillSource?: SkillSource;
+  readonly skillData?: unknown;
 }
 
 export class SkillActivated extends Event2<SkillActivatedPayload> {
@@ -42,6 +43,7 @@ export const skillKey = defineState('skill', (): null => null)
       skillArgs: e.origin.skillArgs,
       skillPath: e.origin.skillPath,
       skillSource: e.origin.skillSource,
+      skillData: e.origin.skillData,
     }),
   );
 });

@@ -29,6 +29,7 @@ export interface SkillActivationOrigin {
   readonly skillType?: string | undefined;
   readonly skillPath?: string | undefined;
   readonly skillSource?: SkillSource | undefined;
+  readonly skillData?: unknown;
 }
 
 export interface PluginCommandOrigin {

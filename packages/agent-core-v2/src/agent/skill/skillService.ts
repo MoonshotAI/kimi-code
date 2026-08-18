@@ -92,6 +92,7 @@ export class AgentSkillService extends Service implements IAgentSkillService {
         skillType: skill.metadata.type,
         skillPath: skill.path,
         skillSource: skill.source,
+        skillData: skill.data,
         skillArgs: input.args,
       },
       content,
@@ -199,6 +200,7 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       skillType: skill.metadata.type,
       skillPath: skill.path,
       skillSource: skill.source,
+      skillData: skill.data,
       skillArgs: input.args,
     };
     return {

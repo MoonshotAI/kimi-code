@@ -16,7 +16,6 @@ import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/tool
 import { SkillActivate, skillKey } from '#/agent/skill/skillOps';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
@@ -53,18 +52,6 @@ const DEFINITION: FlowDefinition = {
 
 const CRITERIA = [{ criterion: 'cause located', met: true, evidence: 'src/x.ts:12' }];
 
-function flowSkillEntry(id: string, overrides?: { path?: string; type?: string; data?: unknown }) {
-  return {
-    name: id,
-    description: `Run the ${id} flow`,
-    path: overrides?.path ?? `/ws/.kimi-code/flows/${id}.md`,
-    dir: '/ws/.kimi-code/flows',
-    content: 'supervisor prompt',
-    metadata: { name: id, description: '', type: overrides?.type ?? 'flow' },
-    source: 'project',
-    data: overrides && 'data' in overrides ? overrides.data : { ...DEFINITION, id },
-  };
-}
 
 describe('AgentFlowService', () => {
   let disposables: DisposableStore;
@@ -77,13 +64,8 @@ describe('AgentFlowService', () => {
   let agentState: IAgentStateService;
   let dispatcher: IEventDispatcher;
   let agentId: string;
-  let catalogSkills: Map<string, unknown>;
 
   beforeEach(() => {
-    catalogSkills = new Map([
-      ['issue-fix', flowSkillEntry('issue-fix')],
-      ['other-flow', flowSkillEntry('other-flow')],
-    ]);
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
@@ -96,11 +78,6 @@ describe('AgentFlowService', () => {
       requestToolApproval,
       formatDenyMessage: (message: string) => message,
     } as unknown as IAgentToolApprovalService);
-    ix.stub(ISessionSkillCatalog, {
-      catalog: {
-        getSkill: (name: string) => catalogSkills.get(name),
-      },
-    } as unknown as ISessionSkillCatalog);
     ix.stub(ISessionWorkspaceContext, {
       workDir: '/ws',
       additionalDirs: [],
@@ -326,6 +303,7 @@ describe('AgentFlowService', () => {
             skillType: 'flow',
             skillPath: '/ws/.kimi-code/flows/issue-fix.md',
             skillArgs: 'fix the paste bug',
+            skillData: DEFINITION,
           },
         }),
       );
@@ -353,6 +331,7 @@ describe('AgentFlowService', () => {
               skillType: 'flow',
               skillPath: `/ws/.kimi-code/flows/${skillName}.md`,
               skillArgs: 'task',
+              skillData: { ...DEFINITION, id: skillName },
             },
           }),
         );
@@ -375,6 +354,7 @@ describe('AgentFlowService', () => {
             skillType: 'flow',
             skillPath: '/ws/.kimi-code/flows/issue-fix.md',
             skillArgs: 'worker task',
+            skillData: DEFINITION,
           },
         }),
       );
@@ -394,6 +374,7 @@ describe('AgentFlowService', () => {
             skillType: 'flow',
             skillPath: '/ws/.kimi-code/flows/issue-fix.md',
             skillArgs: '   ',
+            skillData: DEFINITION,
           },
         }),
       );
@@ -403,10 +384,6 @@ describe('AgentFlowService', () => {
 
     it('ignores a flow-typed activation whose path is not the projected flows definition', async () => {
       agentState.contributeState(skillKey);
-      catalogSkills.set(
-        'issue-fix',
-        flowSkillEntry('issue-fix', { path: '/ws/.kimi-code/skills/issue-fix/SKILL.md' }),
-      );
       await dispatcher.dispatch(
         new SkillActivate({
           origin: {
@@ -417,6 +394,7 @@ describe('AgentFlowService', () => {
             skillType: 'flow',
             skillPath: '/ws/.kimi-code/skills/issue-fix/SKILL.md',
             skillArgs: 'task',
+            skillData: DEFINITION,
           },
         }),
       );
@@ -424,17 +402,33 @@ describe('AgentFlowService', () => {
       expect(service.run().active).toBe(false);
     });
 
-    it('ignores an activation whose catalog entry was replaced by a different path', async () => {
+    it('ignores an activation whose carried definition does not match the flow id', async () => {
       agentState.contributeState(skillKey);
-      catalogSkills.set(
-        'issue-fix',
-        flowSkillEntry('issue-fix', { path: '/elsewhere/.kimi-code/flows/issue-fix.md' }),
-      );
       await dispatcher.dispatch(
         new SkillActivate({
           origin: {
             kind: 'skill_activation',
-            activationId: 'act-moved',
+            activationId: 'act-mismatch',
+            skillName: 'issue-fix',
+            trigger: 'user-slash',
+            skillType: 'flow',
+            skillPath: '/ws/.kimi-code/flows/issue-fix.md',
+            skillArgs: 'task',
+            skillData: { ...DEFINITION, id: 'other-flow' },
+          },
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(service.run().active).toBe(false);
+    });
+
+    it('ignores an activation that carries no definition', async () => {
+      agentState.contributeState(skillKey);
+      await dispatcher.dispatch(
+        new SkillActivate({
+          origin: {
+            kind: 'skill_activation',
+            activationId: 'act-bare',
             skillName: 'issue-fix',
             trigger: 'user-slash',
             skillType: 'flow',
@@ -447,19 +441,8 @@ describe('AgentFlowService', () => {
       expect(service.run().active).toBe(false);
     });
 
-    it('starts from the catalog-carried definition rather than any on-disk state', async () => {
+    it('starts from the activation-carried definition rather than any on-disk state', async () => {
       agentState.contributeState(skillKey);
-      catalogSkills.set(
-        'issue-fix',
-        flowSkillEntry('issue-fix', {
-          data: {
-            id: 'issue-fix',
-            stages: [
-              { id: 'solo', objective: 'do it', completion: 'done', gate: 'ai' },
-            ],
-          },
-        }),
-      );
       await dispatcher.dispatch(
         new SkillActivate({
           origin: {
@@ -470,6 +453,10 @@ describe('AgentFlowService', () => {
             skillType: 'flow',
             skillPath: '/ws/.kimi-code/flows/issue-fix.md',
             skillArgs: 'task',
+            skillData: {
+              id: 'issue-fix',
+              stages: [{ id: 'solo', objective: 'do it', completion: 'done', gate: 'ai' }],
+            },
           },
         }),
       );
@@ -492,6 +479,7 @@ describe('AgentFlowService', () => {
             skillType: 'flow',
             skillPath: '/ws/.kimi-code/flows/issue-fix.md',
             skillArgs: 'another task',
+            skillData: DEFINITION,
           },
         }),
       );

@@ -29,7 +29,6 @@ import {
 } from './flow';
 import { FlowGateReview } from './flowGateReview';
 import { flowDefinitionPath } from './flowsSkillSource';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { FlowRunEnded, FlowRunStarted, FlowVerdict, flowGatesKey, flowKey } from './flowOps';
@@ -51,7 +50,6 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @IFlagService private readonly flags: IFlagService,
     @IEventBus eventBus: IEventBus,
-    @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
@@ -119,7 +117,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         if (event.skillType !== 'flow') return;
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
         if (this.scopeContext.agentId !== 'main') return;
-        this.startFromActivation(event.skillName, event.skillArgs, event.skillPath);
+        this.startFromActivation(event.skillName, event.skillArgs, event.skillPath, event.skillData);
       }),
     );
   }
@@ -141,13 +139,12 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     flowId: string | undefined,
     task: string | undefined,
     skillPath: string | undefined,
+    skillData: unknown,
   ): void {
     if (flowId === undefined || flowId.length === 0 || this.run().active) return;
     if (task === undefined || task.trim().length === 0) return;
     if (skillPath !== flowDefinitionPath(this.workspaceCtx.workDir, flowId)) return;
-    const skill = this.skillCatalog.catalog.getSkill(flowId);
-    if (skill === undefined || skill.path !== skillPath || skill.metadata.type !== 'flow') return;
-    const parsed = FlowDefinitionSchema.safeParse(skill.data);
+    const parsed = FlowDefinitionSchema.safeParse(skillData);
     if (!parsed.success || parsed.data.id !== flowId) return;
     this.start(parsed.data, task.trim());
   }
