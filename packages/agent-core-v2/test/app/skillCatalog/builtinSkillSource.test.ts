@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import { TestInstantiationService } from '#/_base/di/test';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { BUILTIN_SKILLS, visibleBuiltinSkills } from '#/app/skillCatalog/builtin/builtin';
 import { BuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
 import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/app/skillCatalog/configSection';
 
+import { stubFlag } from '../flag/stubs';
 import { StubConfigService } from '../../kosong/stubs';
 
 const PRODUCT_SKILLS = [
@@ -27,6 +29,7 @@ async function loadNames(configured?: boolean): Promise<readonly string[]> {
       configured === undefined ? {} : { [BUILTIN_PRODUCT_SKILLS_SECTION]: configured },
     ),
   );
+  ix.set(IFlagService, stubFlag(true));
   const source = ix.createInstance(BuiltinSkillSource);
   return (await source.load()).skills.map((s) => s.name);
 }
@@ -65,6 +68,7 @@ describe('BuiltinSkillSource product-skill switch', () => {
     const config = new StubConfigService({ [BUILTIN_PRODUCT_SKILLS_SECTION]: true });
     const ix = new TestInstantiationService();
     ix.set(IConfigService, config);
+    ix.set(IFlagService, stubFlag(true));
     const source = ix.createInstance(BuiltinSkillSource);
 
     let fired = 0;
@@ -95,6 +99,7 @@ describe('BuiltinSkillSource product-skill switch', () => {
 
     const ix = new TestInstantiationService();
     ix.set(IConfigService, config);
+    ix.set(IFlagService, stubFlag(true));
     const source = ix.createInstance(BuiltinSkillSource);
 
     const loading = source.load();

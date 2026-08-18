@@ -36,6 +36,7 @@ import type {
   SessionPlan,
   SessionStatus,
   SessionSummary,
+  SessionTodoItem,
   SessionUsage,
   SkillSummary,
   PluginCommandDef,
@@ -367,6 +368,11 @@ export class Session {
   async undoHistory(count: number = 1): Promise<void> {
     this.ensureOpen();
     await this.rpc.undoHistory({ sessionId: this.id, count });
+  }
+
+  async getTodos(): Promise<readonly SessionTodoItem[]> {
+    this.ensureOpen();
+    return this.rpc.getTodos({ sessionId: this.id });
   }
 
   /** Clear this session's model context without creating a new session. */

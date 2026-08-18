@@ -51,7 +51,366 @@ function controller(sessionId = 'session-1'): {
   return { service, handle };
 }
 
+async function drainMicrotasks(ticks = 50): Promise<void> {
+  for (let i = 0; i < ticks; i++) await Promise.resolve();
+}
+
 describe('SessionManager', () => {
+  it('serializes resume, close, and lifecycle critical sections per session', async () => {
+    const didCreate = new Emitter<SessionCreatedEvent>();
+    const didClose = new Emitter<SessionClosedEvent>();
+    const handle = { id: 'session-1' } as unknown as ISessionScopeHandle;
+    let releaseResume!: () => void;
+    const resumeGate = new Promise<void>((resolve) => {
+      releaseResume = resolve;
+    });
+    const order: string[] = [];
+    const service = {
+      onWillCreateSession: Event.None,
+      onDidCreateSession: didCreate.event,
+      onWillCloseSession: Event.None,
+      onDidCloseSession: didClose.event,
+      onDidArchiveSession: Event.None,
+      onDidForkSession: Event.None,
+      create: async () => handle,
+      get: () => undefined,
+      list: () => [],
+      resume: async () => {
+        order.push('resume:start');
+        await resumeGate;
+        didCreate.fire({ sessionId: 'session-1', handle, source: 'startup' });
+        order.push('resume:end');
+        return handle;
+      },
+      close: async () => {
+        order.push('close');
+        didClose.fire({ sessionId: 'session-1' });
+      },
+      archive: async () => {},
+      restore: async () => handle,
+      delete: async () => {},
+      fork: async () => handle,
+      createChild: async () => handle,
+      dispose: () => {},
+    } as unknown as SessionLifecycleService;
+    const workspace = {
+      id: 'workspace-1',
+      program: { sessionControllerGeneration: 'generation-1', createSessionController: () => service },
+    } as unknown as WorkspaceInstance;
+    const workspaces = {
+      getOrCreate: async () => workspace,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const index = {
+      get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
+    } as unknown as ISessionIndex;
+    const manager = new SessionManager(workspaces, index);
+
+    const resumePromise = manager.resume('session-1');
+    const section = manager.withLifecycleSerialization('session-1', async () => {
+      order.push('section');
+    });
+    const closePromise = manager.close('session-1');
+    await drainMicrotasks();
+    expect(order).toEqual(['resume:start']);
+    releaseResume();
+    await Promise.all([resumePromise, section, closePromise]);
+    expect(order).toEqual(['resume:start', 'resume:end', 'section', 'close']);
+    manager.dispose();
+  });
+
+  it('holds a resume started during a lifecycle critical section', async () => {
+    const fake = controller();
+    const workspace = {
+      id: 'workspace-1',
+      program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
+    } as unknown as WorkspaceInstance;
+    const workspaces = {
+      getOrCreate: async () => workspace,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const index = {
+      get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
+    } as unknown as ISessionIndex;
+    const manager = new SessionManager(workspaces, index);
+
+    let releaseSection!: () => void;
+    const sectionGate = new Promise<void>((resolve) => {
+      releaseSection = resolve;
+    });
+    const order: string[] = [];
+    const section = manager.withLifecycleSerialization('session-1', async () => {
+      order.push('section:start');
+      await sectionGate;
+      order.push('section:end');
+    });
+    const resumePromise = manager.resume('session-1').then((handle) => {
+      order.push('resume');
+      return handle;
+    });
+    await drainMicrotasks();
+    expect(order).toEqual(['section:start']);
+    releaseSection();
+    await Promise.all([section, resumePromise]);
+    expect(order).toEqual(['section:start', 'section:end', 'resume']);
+    manager.dispose();
+  });
+
+  it('serializes delete with the per-session lifecycle chain', async () => {
+    const order: string[] = [];
+    const fake = controller();
+    (fake.service as unknown as { delete: () => Promise<void> }).delete = async () => {
+      order.push('delete');
+    };
+    const workspace = {
+      id: 'workspace-1',
+      program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
+    } as unknown as WorkspaceInstance;
+    const workspaces = {
+      getOrCreate: async () => workspace,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const index = {
+      get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
+    } as unknown as ISessionIndex;
+    const manager = new SessionManager(workspaces, index);
+
+    let releaseSection!: () => void;
+    const sectionGate = new Promise<void>((resolve) => {
+      releaseSection = resolve;
+    });
+    const section = manager.withLifecycleSerialization('session-1', async () => {
+      order.push('section:start');
+      await sectionGate;
+      order.push('section:end');
+    });
+    const deletePromise = manager.delete('session-1');
+    await drainMicrotasks();
+    expect(order).toEqual(['section:start']);
+    releaseSection();
+    await Promise.all([section, deletePromise]);
+    expect(order).toEqual(['section:start', 'section:end', 'delete']);
+    manager.dispose();
+  });
+
+  it('serializes fork of the source session with the lifecycle chain', async () => {
+    const order: string[] = [];
+    const fake = controller();
+    (fake.service as unknown as { fork: () => Promise<unknown> }).fork = async () => {
+      order.push('fork');
+      return fake.handle;
+    };
+    const workspace = {
+      id: 'workspace-1',
+      program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
+    } as unknown as WorkspaceInstance;
+    const workspaces = {
+      getOrCreate: async () => workspace,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const index = {
+      get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
+    } as unknown as ISessionIndex;
+    const manager = new SessionManager(workspaces, index);
+
+    let releaseSection!: () => void;
+    const sectionGate = new Promise<void>((resolve) => {
+      releaseSection = resolve;
+    });
+    const section = manager.withLifecycleSerialization('session-1', async () => {
+      order.push('section:start');
+      await sectionGate;
+      order.push('section:end');
+    });
+    const forkPromise = manager.fork({ sourceSessionId: 'session-1' } as never);
+    await drainMicrotasks();
+    expect(order).toEqual(['section:start']);
+    releaseSection();
+    await Promise.all([section, forkPromise]);
+    expect(order).toEqual(['section:start', 'section:end', 'fork']);
+    manager.dispose();
+  });
+
+  it('serializes fork of an explicit target id with the lifecycle chain', async () => {
+    const order: string[] = [];
+    const fake = controller();
+    (fake.service as unknown as { fork: () => Promise<unknown> }).fork = async () => {
+      order.push('fork');
+      return fake.handle;
+    };
+    const workspace = {
+      id: 'workspace-1',
+      program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
+    } as unknown as WorkspaceInstance;
+    const workspaces = {
+      getOrCreate: async () => workspace,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const index = {
+      get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
+    } as unknown as ISessionIndex;
+    const manager = new SessionManager(workspaces, index);
+
+    let releaseSection!: () => void;
+    const sectionGate = new Promise<void>((resolve) => {
+      releaseSection = resolve;
+    });
+    const section = manager.withLifecycleSerialization('session-2', async () => {
+      order.push('section:start');
+      await sectionGate;
+      order.push('section:end');
+    });
+    const forkPromise = manager.fork({ sourceSessionId: 'session-1', newSessionId: 'session-2' } as never);
+    await drainMicrotasks();
+    expect(order).toEqual(['section:start']);
+    releaseSection();
+    await Promise.all([section, forkPromise]);
+    expect(order).toEqual(['section:start', 'section:end', 'fork']);
+    manager.dispose();
+  });
+
+  it('serializes createChild of an explicit target id with the lifecycle chain', async () => {
+    const order: string[] = [];
+    const fake = controller();
+    (fake.service as unknown as { createChild: () => Promise<unknown> }).createChild = async () => {
+      order.push('createChild');
+      return fake.handle;
+    };
+    const workspace = {
+      id: 'workspace-1',
+      program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
+    } as unknown as WorkspaceInstance;
+    const workspaces = {
+      getOrCreate: async () => workspace,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const index = {
+      get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
+    } as unknown as ISessionIndex;
+    const manager = new SessionManager(workspaces, index);
+
+    let releaseSection!: () => void;
+    const sectionGate = new Promise<void>((resolve) => {
+      releaseSection = resolve;
+    });
+    const section = manager.withLifecycleSerialization('session-2', async () => {
+      order.push('section:start');
+      await sectionGate;
+      order.push('section:end');
+    });
+    const childPromise = manager.createChild({ sourceSessionId: 'session-1', newSessionId: 'session-2' } as never);
+    await drainMicrotasks();
+    expect(order).toEqual(['section:start']);
+    releaseSection();
+    await Promise.all([section, childPromise]);
+    expect(order).toEqual(['section:start', 'section:end', 'createChild']);
+    manager.dispose();
+  });
+
+  it('serializes create with an explicit session id with the lifecycle chain', async () => {
+    const order: string[] = [];
+    const fake = controller();
+    (fake.service as unknown as { create: () => Promise<unknown> }).create = async () => {
+      order.push('create');
+      return fake.handle;
+    };
+    const workspace = {
+      id: 'workspace-1',
+      program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
+    } as unknown as WorkspaceInstance;
+    const workspaces = {
+      getOrCreate: async () => workspace,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const index = {
+      get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
+    } as unknown as ISessionIndex;
+    const manager = new SessionManager(workspaces, index);
+
+    let releaseSection!: () => void;
+    const sectionGate = new Promise<void>((resolve) => {
+      releaseSection = resolve;
+    });
+    const section = manager.withLifecycleSerialization('session-1', async () => {
+      order.push('section:start');
+      await sectionGate;
+      order.push('section:end');
+    });
+    const createPromise = manager.create({ sessionId: 'session-1', workDir: '/workspace' } as never);
+    await drainMicrotasks();
+    expect(order).toEqual(['section:start']);
+    releaseSection();
+    await Promise.all([section, createPromise]);
+    expect(order).toEqual(['section:start', 'section:end', 'create']);
+    manager.dispose();
+  });
+
+  it('serializes archive with the per-session lifecycle chain', async () => {
+    const order: string[] = [];
+    const fake = controller();
+    (fake.service as unknown as { archive: () => Promise<void> }).archive = async () => {
+      order.push('archive');
+    };
+    const workspace = {
+      id: 'workspace-1',
+      program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
+    } as unknown as WorkspaceInstance;
+    const workspaces = {
+      getOrCreate: async () => workspace,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const index = {
+      get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
+    } as unknown as ISessionIndex;
+    const manager = new SessionManager(workspaces, index);
+
+    let releaseSection!: () => void;
+    const sectionGate = new Promise<void>((resolve) => {
+      releaseSection = resolve;
+    });
+    const section = manager.withLifecycleSerialization('session-1', async () => {
+      order.push('section:start');
+      await sectionGate;
+      order.push('section:end');
+    });
+    const archivePromise = manager.archive('session-1');
+    await drainMicrotasks();
+    expect(order).toEqual(['section:start']);
+    releaseSection();
+    await Promise.all([section, archivePromise]);
+    expect(order).toEqual(['section:start', 'section:end', 'archive']);
+    manager.dispose();
+  });
+
+  it('propagates a failed resume to the next settle until a fresh attempt supersedes', async () => {
+    let fail = true;
+    const fake = controller();
+    (fake.service as unknown as { resume: () => Promise<unknown> }).resume = async () => {
+      if (fail) throw new Error('boom');
+      return fake.handle;
+    };
+    const workspace = {
+      id: 'workspace-1',
+      program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
+    } as unknown as WorkspaceInstance;
+    const workspaces = {
+      getOrCreate: async () => workspace,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const index = {
+      get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
+    } as unknown as ISessionIndex;
+    const manager = new SessionManager(workspaces, index);
+
+    await expect(manager.resume('session-1')).rejects.toThrow('boom');
+    await expect(manager.whenResumeSettled('session-1')).rejects.toThrow('boom');
+
+    fail = false;
+    await manager.resume('session-1');
+    await expect(manager.whenResumeSettled('session-1')).resolves.toBeUndefined();
+    manager.dispose();
+  });
+
   it('owns one global live-session registry across workspace controllers', async () => {
     const fake = controller();
     const workspace = {

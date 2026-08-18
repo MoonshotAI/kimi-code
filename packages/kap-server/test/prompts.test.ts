@@ -7,6 +7,7 @@ import {
   IAgentTitlePromptSource,
   IAgentContextMemoryService,
   IAgentLifecycleService,
+  IAgentPermissionModeService,
   IAgentProfileService,
   IAgentToolPolicyService,
   IBootstrapService,
@@ -19,6 +20,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { projectPromptSnapshot, watchPromptSettlements } from '../src/routes/prompts';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
@@ -237,6 +239,66 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(Array.isArray(list.body.data.queued)).toBe(true);
   });
 
+  it('submits a bundled skill prompt through the skills field', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'Review this change.' }],
+      skills: [{ name: 'update-config' }, { name: 'check-kimi-code-docs' }],
+    });
+    expect(submitted.body.code).toBe(0);
+    expect(submitted.body.data.prompt_id).toMatch(/^msg_/);
+    expect(['running', 'queued']).toContain(submitted.body.data.status);
+    expect(submitted.body.data.content).toEqual([{ type: 'text', text: 'Review this change.' }]);
+
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const agent = session!.accessor.get(IAgentLifecycleService).get('main');
+    const history = agent!.accessor.get(IAgentContextMemoryService).get();
+    const bundled = history.find((message) => message.origin?.kind === 'user');
+    expect(bundled?.origin).toMatchObject({
+      kind: 'user',
+      skillActivations: [{ skillName: 'update-config' }, { skillName: 'check-kimi-code-docs' }],
+    });
+    const texts = bundled?.content
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text);
+    expect(texts?.[texts.length - 1]).toBe('Review this change.');
+
+    const projected = projectPromptSnapshot({
+      id: 'msg_1',
+      userMessageId: 'msg_1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      state: 'running',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'rendered skill block' },
+          { type: 'text', text: 'Review this change.' },
+        ],
+        toolCalls: [],
+        origin: {
+          kind: 'user',
+          skillActivations: [{ activationId: 'a1', skillName: 'update-config' }],
+        },
+      },
+    });
+    expect(projected.content).toEqual([{ type: 'text', text: 'Review this change.' }]);
+    const plain = projectPromptSnapshot({
+      id: 'msg_2',
+      userMessageId: 'msg_2',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      state: 'pending',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'plain question' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+    expect(plain.content).toEqual([{ type: 'text', text: 'plain question' }]);
+  });
+
   it('honors a client-chosen prompt_id on submit', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
@@ -248,6 +310,26 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).toBe(0);
     expect(submitted.body.data.prompt_id).toBe('submission-1');
     expect(submitted.body.data.user_message_id).toBe('submission-1');
+  });
+
+  it('updates session metadata for a bundled prompt routed to a non-main agent', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const session = getLiveSessionById(server!.core.accessor, id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const child = await session.accessor.get(IAgentLifecycleService).fork('main');
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'bundled side question' }],
+      agent_id: child.id,
+      skills: [{ name: 'update-config' }],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    expect((await session.accessor.get(ISessionMetadata).read()).lastPrompt).toBe(
+      'bundled side question',
+    );
   });
 
   it('rejects a reused prompt_id live and after cold resume without changing metadata', async () => {
@@ -279,6 +361,118 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(afterResume.body.code).toBe(40927);
     const resumed = getLiveSessionById(server!.core.accessor, id);
     expect((await resumed!.accessor.get(ISessionMetadata).read()).lastPrompt).toBe('first prompt');
+  });
+
+  it('rejects a bundled submission with an unknown skill and records nothing', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'Review this change.' }],
+      skills: [{ name: 'does-not-exist' }],
+    });
+    expect(submitted.body.code).toBe(40415);
+
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const agent = session!.accessor.get(IAgentLifecycleService).get('main');
+    const history = agent!.accessor.get(IAgentContextMemoryService).get();
+    expect(history.filter((message) => message.origin?.kind === 'user')).toHaveLength(0);
+  });
+
+  it('rejects an unknown bundled skill before any control override binds', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'Review this change.' }],
+      permission_mode: 'yolo',
+      skills: [{ name: 'does-not-exist' }],
+    });
+    expect(submitted.body.code).toBe(40415);
+
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const agent = session!.accessor.get(IAgentLifecycleService).get('main');
+    expect(agent!.accessor.get(IAgentPermissionModeService).mode).toBe('manual');
+    const history = agent!.accessor.get(IAgentContextMemoryService).get();
+    expect(history.filter((message) => message.origin?.kind === 'user')).toHaveLength(0);
+  });
+
+  it('rejects an unknown bundled skill without materializing the main agent', async () => {
+    const id = await createSession(home as string);
+
+    const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'Review this change.' }],
+      skills: [{ name: 'does-not-exist' }],
+    });
+    expect(submitted.body.code).toBe(40415);
+
+    const session = getLiveSessionById(server!.core.accessor, id);
+    expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
+  });
+
+  it('rejects a bundled prompt_id combination before any override or agent materialization', async () => {
+    const id = await createSession(home as string);
+
+    const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'Review this change.' }],
+      permission_mode: 'yolo',
+      prompt_id: 'submission-1',
+      skills: [{ name: 'update-config' }],
+    });
+    expect(submitted.body.code).toBe(40001);
+
+    const session = getLiveSessionById(server!.core.accessor, id);
+    expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
+  });
+
+  it('cleans bundled staging through the settlement tracker', async () => {
+    const handlers: Array<(event: { type: string; promptId?: string; promptIds?: string[]; activePromptId?: string }) => void> = [];
+    const events = {
+      subscribe(
+        handler: (event: { type: string; promptId?: string; promptIds?: string[]; activePromptId?: string }) => void,
+      ) {
+        handlers.push(handler);
+        return { dispose: vi.fn() };
+      },
+    };
+
+    const discard = vi.fn();
+    const tracker = watchPromptSettlements(events as never);
+    tracker.settle('msg_1', discard);
+    handlers[0]!({ type: 'prompt.completed', promptId: 'msg_other' });
+    handlers[0]!({ type: 'turn.started' });
+    expect(discard).not.toHaveBeenCalled();
+    handlers[0]!({ type: 'prompt.completed', promptId: 'msg_1' });
+    expect(discard).toHaveBeenCalledTimes(1);
+
+    const blockedDiscard = vi.fn();
+    const blockedTracker = watchPromptSettlements(events as never);
+    handlers[1]!({ type: 'prompt.completed', promptId: 'msg_blocked' });
+    blockedTracker.settle('msg_blocked', blockedDiscard);
+    expect(blockedDiscard).toHaveBeenCalledTimes(1);
+
+    const steered = vi.fn();
+    const steeredTracker = watchPromptSettlements(events as never);
+    steeredTracker.settle('msg_3', steered);
+    handlers[2]!({ type: 'prompt.steered', promptIds: ['msg_3'], activePromptId: 'msg_parent' });
+    expect(steered).not.toHaveBeenCalled();
+    handlers[2]!({ type: 'prompt.completed', promptId: 'msg_other' });
+    expect(steered).not.toHaveBeenCalled();
+    handlers[2]!({ type: 'prompt.completed', promptId: 'msg_parent' });
+    expect(steered).toHaveBeenCalledTimes(1);
+
+    const aborted = vi.fn();
+    const abortedTracker = watchPromptSettlements(events as never);
+    abortedTracker.settle('msg_4', aborted);
+    handlers[3]!({ type: 'prompt.aborted', promptId: 'msg_4' });
+    expect(aborted).toHaveBeenCalledTimes(1);
+
+    const rejected = vi.fn();
+    const rejectedTracker = watchPromptSettlements(events as never);
+    rejectedTracker.settle('msg_5', rejected);
+    rejectedTracker.dispose();
+    handlers[4]!({ type: 'prompt.completed', promptId: 'msg_5' });
+    expect(rejected).not.toHaveBeenCalled();
   });
 
   it('makes the first three REST prompts available to title generation', async () => {

@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -488,6 +488,136 @@ describe('server-v2 /api/v1 fs routes', () => {
 
   it('workspace fs:search rejects a missing workspace field with VALIDATION_FAILED', async () => {
     const body = await postWorkspaceSearch<null>({ query: 'x' });
+    expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
+  });
+
+  interface SuggestItemWire {
+    path: string;
+    name: string;
+    kind: string;
+    score: number;
+    match_positions: number[];
+  }
+
+  async function postWorkspaceSuggest<T>(body: unknown): Promise<Envelope<T>> {
+    const res = await fetch(`${base}/api/v1/workspace/fs:suggest`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ runtime_id: 'local', ...(body as object) }),
+    } as never);
+    return (await res.json()) as Envelope<T>;
+  }
+
+  it('workspace fs:suggest finds files by registered workspace id', async () => {
+    await writeFile(join(work!, 'epsilon.ts'), '');
+    const res = await fetch(`${base}/api/v1/workspaces`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ root: work }),
+    } as never);
+    const created = (await res.json()) as Envelope<{ id: string }>;
+    expect(created.code).toBe(0);
+
+    const body = await postWorkspaceSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
+      workspace: created.data.id,
+      query: 'epsilon',
+    });
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('epsilon.ts');
+  });
+
+  it('workspace fs:suggest finds files by absolute root path', async () => {
+    await writeFile(join(work!, 'zeta.ts'), '');
+    const body = await postWorkspaceSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
+      workspace: work,
+      query: 'zeta',
+    });
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('zeta.ts');
+  });
+
+  it('workspace fs:suggest lists top-level entries for an empty query', async () => {
+    await writeFile(join(work!, 'eta.ts'), '');
+    const body = await postWorkspaceSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
+      workspace: work,
+      query: '',
+    });
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('eta.ts');
+  });
+
+  it('workspace fs:suggest matches path segments and returns scored items', async () => {
+    await mkdir(join(work!, 'apps'));
+    await mkdir(join(work!, 'apps', 'desktop'));
+    await writeFile(join(work!, 'apps', 'desktop', 'package.json'), '{}');
+    const body = await postWorkspaceSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
+      workspace: work,
+      query: 'apps/de',
+    });
+    expect(body.code).toBe(0);
+    expect(body.data.items.length).toBeGreaterThan(0);
+    expect(body.data.items[0]?.path).toBe('apps/desktop');
+    expect(body.data.items[0]?.kind).toBe('directory');
+    expect(body.data.items.map((i) => i.path)).toContain('apps/desktop/package.json');
+    for (const item of body.data.items) {
+      expect(item.score).toBeGreaterThan(0);
+      expect(item.score).toBeLessThanOrEqual(1);
+      expect(Array.isArray(item.match_positions)).toBe(true);
+    }
+  });
+
+  it('workspace fs:suggest returns an empty list when a path-form query has no match', async () => {
+    const body = await postWorkspaceSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
+      workspace: work,
+      query: 'zzz/qqq',
+    });
+    expect(body.code).toBe(0);
+    expect(body.data.items).toEqual([]);
+    expect(body.data.truncated).toBe(false);
+  });
+
+  it('workspace fs:suggest hides dotfiles by default and shows them with show_hidden', async () => {
+    await writeFile(join(work!, '.theta.ts'), '');
+    const hidden = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
+      workspace: work,
+      query: 'theta',
+    });
+    expect(hidden.code).toBe(0);
+    expect(hidden.data.items.map((i) => i.path)).not.toContain('.theta.ts');
+
+    const shown = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
+      workspace: work,
+      query: 'theta',
+      show_hidden: true,
+    });
+    expect(shown.code).toBe(0);
+    expect(shown.data.items.map((i) => i.path)).toContain('.theta.ts');
+  });
+
+  it('workspace fs:suggest defaults to the local runtime when runtime_id is omitted', async () => {
+    await writeFile(join(work!, 'iota.ts'), '');
+    const res = await fetch(`${base}/api/v1/workspace/fs:suggest`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ workspace: work, query: 'iota' }),
+    } as never);
+    const body = (await res.json()) as Envelope<{ items: SuggestItemWire[]; truncated: boolean }>;
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('iota.ts');
+  });
+
+  it('workspace fs:suggest maps an unknown ref to WORKSPACE_NOT_FOUND', async () => {
+    const body = await postWorkspaceSuggest<null>({ workspace: 'does-not-exist', query: 'x' });
+    expect(body.code).toBe(ErrorCode.WORKSPACE_NOT_FOUND);
+  });
+
+  it('workspace fs:suggest rejects a missing workspace field with VALIDATION_FAILED', async () => {
+    const body = await postWorkspaceSuggest<null>({ query: 'x' });
+    expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
+  });
+
+  it('workspace fs:suggest rejects a missing query field with VALIDATION_FAILED', async () => {
+    const body = await postWorkspaceSuggest<null>({ workspace: work });
     expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
   });
 });

@@ -18,6 +18,11 @@ export interface CreateManagedSessionOptions extends CreateSessionOptions {
   readonly workspaceId?: string;
 }
 
+export interface UnguardedSessionLifecycle {
+  archive(): Promise<void>;
+  restore(): Promise<ISessionScopeHandle | undefined>;
+}
+
 export interface ISessionManager {
   readonly _serviceBrand: undefined;
   readonly onWillCreateSession?: Event<SessionWillCreateEvent>;
@@ -29,6 +34,11 @@ export interface ISessionManager {
   create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle>;
   resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;
   get(sessionId: string): ISessionScopeHandle | undefined;
+  whenResumeSettled(sessionId: string): Promise<void>;
+  withLifecycleSerialization<T>(
+    sessionId: string,
+    work: (unguarded: UnguardedSessionLifecycle) => Promise<T>,
+  ): Promise<T>;
   list(): readonly ISessionScopeHandle[];
   close(sessionId: string): Promise<void>;
   archive(sessionId: string): Promise<void>;

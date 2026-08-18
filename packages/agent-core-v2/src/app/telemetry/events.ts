@@ -327,6 +327,10 @@ export interface FsGrepNodeFallbackEvent {
   reason: 'rg_missing';
 }
 
+export interface FsSuggestNodeFallbackEvent {
+  reason: 'rg_missing' | 'rg_error';
+}
+
 export interface SubagentCreatedEvent {
   subagent_name: string;
   run_in_background: boolean;
@@ -808,6 +812,11 @@ export const telemetryEventDefinitions = {
   fs_grep_node_fallback: defineTelemetryEvent<FsGrepNodeFallbackEvent>({
     owner: 'kimi-code',
     comment: 'The fs grep path falls back to the node implementation.',
+    properties: { reason: 'Why the fallback was taken' },
+  }),
+  fs_suggest_node_fallback: defineTelemetryEvent<FsSuggestNodeFallbackEvent>({
+    owner: 'kimi-code',
+    comment: 'The fs suggest path falls back to the node implementation.',
     properties: { reason: 'Why the fallback was taken' },
   }),
   subagent_created: defineTelemetryEvent<SubagentCreatedEvent>({
