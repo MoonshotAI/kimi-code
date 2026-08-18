@@ -75,7 +75,7 @@ importers:
   apps/kimi-code:
     dependencies:
       ws:
-        specifier: ^8.20.0
+        specifier: ^8.18.0
         version: 8.20.0
     devDependencies:
       '@moonshot-ai/acp-adapter':
@@ -118,7 +118,7 @@ importers:
         specifier: ^7.7.0
         version: 7.7.1
       '@types/ws':
-        specifier: ^8.18.1
+        specifier: ^8.18.0
         version: 8.18.1
       '@types/yazl':
         specifier: ^2.4.6
