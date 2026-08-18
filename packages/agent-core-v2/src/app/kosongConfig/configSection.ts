@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   type ConfigStripEnv,
   envBindings,
+  stripEnvBoundFields,
 } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 import {
