@@ -268,7 +268,7 @@ describe('AgentFlowService', () => {
     ]);
   });
 
-  it('republishes the flow summary after a conversation undo', async () => {
+  it('republishes the flow summary after a conversation undo', () => {
     const seen: unknown[] = [];
     disposables.add(
       ix.get(IEventBus).subscribe((e) => {
@@ -277,12 +277,12 @@ describe('AgentFlowService', () => {
         }
       }),
     );
-    await ix.get(IEventBus).publish(new ContextUndone({ turns: 1 }));
+    ix.get(IEventBus).publish(new ContextUndone({ turns: 1 }));
     expect(seen).toEqual([null]);
 
     service.start(DEFINITION, 'fix #123');
     seen.length = 0;
-    await ix.get(IEventBus).publish(new ContextUndone({ turns: 1 }));
+    ix.get(IEventBus).publish(new ContextUndone({ turns: 1 }));
     expect(seen).toEqual([
       { flowId: 'issue-fix', stageId: 'triage', stageIndex: 0, stageTotal: 2, gate: 'human' },
     ]);
