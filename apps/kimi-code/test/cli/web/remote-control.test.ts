@@ -10,7 +10,7 @@ import {
   type TokenInfo,
 } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, describe, expect, it } from 'vitest';
-import { WebSocketServer, type WebSocket } from 'ws';
+import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 
 import {
   buildRemoteControlUrl,
@@ -256,7 +256,7 @@ describe('Remote Control tunnel', () => {
     managementServer.on('connection', (ws) => {
       managementConnections.push(ws);
       ws.on('message', (data) => {
-        const message = JSON.parse(data.toString()) as { type: string };
+        const message = JSON.parse(rawDataText(data)) as { type: string };
         managementMessages.push(message);
         if (message.type === 'register') {
           registrations.push(message);
@@ -362,6 +362,9 @@ describe('Remote Control tunnel', () => {
     localWs!.send('from-local');
     await expect(relayMessage).resolves.toBe('from-local');
 
+    streamConnections[0]!.terminate();
+    await waitFor(() => localWs?.readyState === 3);
+
     httpConnections[0]!.terminate();
     await waitFor(() => registrations.length === 2 && httpConnections.length === 2, 4000);
 
@@ -405,7 +408,7 @@ async function startAuthRelay(
   managementServer.on('connection', (ws) => {
     ws.on('error', () => {});
     ws.on('message', (data) => {
-      const message = JSON.parse(data.toString()) as { type?: string };
+      const message = JSON.parse(rawDataText(data)) as { type?: string };
       if (message.type === 'register') {
         ws.send(JSON.stringify({ type: 'register_ack', payload: { success: true } }));
       }
@@ -457,15 +460,20 @@ function closeServer(server: ReturnType<typeof createServer>): Promise<void> {
   });
 }
 
+function rawDataText(data: RawData): string {
+  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
+  return Buffer.from(data as ArrayBuffer).toString('utf8');
+}
+
 function nextJsonMessage(socket: WebSocket): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
-    socket.once('message', (data) => resolve(JSON.parse(data.toString()) as Record<string, unknown>));
+    socket.once('message', (data) => resolve(JSON.parse(rawDataText(data)) as Record<string, unknown>));
   });
 }
 
 function nextTextMessage(socket: WebSocket): Promise<string> {
   return new Promise((resolve) => {
-    socket.once('message', (data) => resolve(data.toString()));
+    socket.once('message', (data) => resolve(rawDataText(data)));
   });
 }
 

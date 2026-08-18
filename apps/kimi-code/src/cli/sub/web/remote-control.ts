@@ -773,6 +773,17 @@ function bridgeSockets(left: WebSocket, right: WebSocket, onClose: () => void): 
   right.once('error', () => closeBoth(1011));
 }
 
+function isValidCloseCode(code: number): boolean {
+  return (
+    code === 1000 ||
+    code === 1001 ||
+    code === 1002 ||
+    code === 1003 ||
+    (code >= 1007 && code <= 1014) ||
+    (code >= 3000 && code <= 4999)
+  );
+}
+
 function relayWebSocketUrl(origin: string, path: string): string {
   const url = new URL(origin);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
