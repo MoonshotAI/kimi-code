@@ -743,6 +743,52 @@ describe('reasoning-only assistant history projection', () => {
   });
 });
 
+describe('tool-call-only assistant history projection (issue #3017)', () => {
+  it('emits content: null for an assistant message carrying only tool_calls', async () => {
+    const provider = new OpenAILegacyChatProvider({
+      model: 'gpt-4.1',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [
+          { type: 'function', id: 'call_abc123', name: 'add', arguments: '{"a": 2, "b": 3}' },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: '5' }],
+        toolCallId: 'call_abc123',
+        toolCalls: [],
+      },
+    ];
+
+    const body = await captureOpenAIBody(provider, undefined, history);
+    const messages = body['messages'] as Array<Record<string, unknown>>;
+
+    expect(messages).toEqual([
+      { role: 'user', content: 'Add 2 and 3' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            type: 'function',
+            id: 'call_abc123',
+            function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+          },
+        ],
+      },
+      { role: 'tool', content: '5', tool_call_id: 'call_abc123' },
+    ]);
+  });
+});
+
 describe('quota-exhausted classification through the real composition (behavior probes)', () => {
   const MOONSHOT_QUOTA_BODY = {
     type: 'error',
