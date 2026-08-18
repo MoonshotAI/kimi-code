@@ -33,6 +33,7 @@ import {
 import { readUpdateInstallState, writeUpdateInstallState } from './install-state';
 import {
   hashFileSha256,
+  parseStagedNativeUpdate,
   readStagedNativeUpdate,
   stagedExePath,
   type StagedNativeUpdate,
@@ -79,6 +80,20 @@ function isAlreadyExists(error: unknown): boolean {
  * comfortably exceeds the slowest swap (smoke-check timeout included).
  */
 const SWAP_CLAIM_STALE_MS = 5 * 60 * 1000;
+
+/**
+ * The swap's executable-renaming critical section is a few filesystem ops
+ * (well under a second), so a swap mutex older than this is crash residue.
+ */
+const SWAP_MUTEX_STALE_MS = 60_000;
+
+/**
+ * A young unparseable `staged.json` may be an in-flight exclusive-create
+ * publish (observable mid-write on filesystems without hard links — see
+ * createFileIfAbsent), not corruption. The publish gap is microscopic, so
+ * only records younger than this get the benefit of the doubt.
+ */
+const STAGED_PUBLISH_GRACE_MS = 60_000;
 
 // First launch of a fresh ~150 MB unsigned exe can sit in an antivirus scan;
 // give Windows extra headroom so a slow scan is not misread as a broken binary.
@@ -172,11 +187,20 @@ interface ClaimedStaged {
  * the rename could act on metadata this swap never claimed.
  *
  * Returns null when there is nothing staged, the file disappeared under us,
- * or the claimed metadata failed consistency checks.
+ * or the claimed metadata failed consistency checks. A claimed record that is
+ * UNPARSEABLE but was young at claim time may be an in-flight
+ * exclusive-create publish (observable mid-write where hard links are
+ * unsupported): it is put back with the same inode so the writer completes
+ * it, never destroyed. Aged corrupt residue and well-formed records whose exe
+ * is gone/changed are deterministically dead and discarded.
  */
 async function claimStagedUpdate(exePath: string): Promise<ClaimedStaged | null> {
   const stateFile = getNativeStagedStateFile(exePath);
   const claimedPath = `${stateFile}.swap-${process.pid}`;
+  // Capture the record's age BEFORE the stamp below rewrites it.
+  const before = await stat(stateFile).catch(() => null);
+  const youngAtClaim =
+    before === null || Date.now() - before.mtimeMs <= STAGED_PUBLISH_GRACE_MS;
   try {
     // The metadata's mtime can be arbitrarily old — the download may have
     // finished hours before this launch. Stamp it BEFORE the rename so the
@@ -192,6 +216,17 @@ async function claimStagedUpdate(exePath: string): Promise<ClaimedStaged | null>
   // Parse exactly the metadata we claimed.
   const staged = await readStagedNativeUpdate(exePath, claimedPath);
   if (staged === null) {
+    const raw = await readFile(claimedPath, 'utf-8').catch(() => null);
+    const wellFormed = raw !== null && parseStagedNativeUpdate(raw) !== null;
+    if (!wellFormed && youngAtClaim) {
+      // Possible in-flight publish: put the SAME inode back so the writer's
+      // pending write completes it. rename can overwrite a concurrently
+      // published newer record — bounded to this parse-failure window, and
+      // the loser is a newer stage that simply re-downloads, never a corrupt
+      // install.
+      await rename(claimedPath, stateFile).catch(() => {});
+      return null;
+    }
     await unlink(claimedPath).catch(() => {});
     return null;
   }
@@ -245,6 +280,54 @@ async function rollback(bakPath: string, exePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export interface SwapMutexHandle {
+  release(): Promise<void>;
+}
+
+/**
+ * Serialize the swap's executable-renaming critical section across CLI
+ * processes. The fresh-claim sweep is only a directory SNAPSHOT: two
+ * processes can both pass it before either claims, then claim different
+ * stage generations and rename the same installed exe concurrently —
+ * deleting or replacing each other's `.bak` rollback source. The mutex is
+ * create-if-absent (via createFileIfAbsent); an aged holder is crash residue
+ * (the section lasts well under a second) and is swept, then retried once.
+ */
+async function acquireSwapMutex(stagingDir: string): Promise<SwapMutexHandle | null> {
+  const mutexPath = join(stagingDir, 'swap.lock');
+  const marker = `${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await createFileIfAbsent(mutexPath, marker);
+    } catch (error) {
+      if (!isAlreadyExists(error)) {
+        // Transient IO failure (ENOSPC, EACCES, …): defer the swap rather
+        // than abort it — the caller restores the claim for a later launch.
+        return null;
+      }
+      if (attempt === 1) return null;
+      // Held — or crash residue: only an AGED mutex may be swept.
+      const info = await stat(mutexPath).catch(() => null);
+      if (info !== null && Date.now() - info.mtimeMs <= SWAP_MUTEX_STALE_MS) return null;
+      await unlink(mutexPath).catch(() => {});
+      continue;
+    }
+    // The stale sweep races this publish; only the survivor proceeds (same
+    // irreducible residual as the install lock's takeover marker).
+    const published = await readFile(mutexPath, 'utf-8').catch(() => null);
+    if (published !== marker) return null;
+    return {
+      release: async (): Promise<void> => {
+        // Release only the mutex instance we own.
+        const current = await readFile(mutexPath, 'utf-8').catch(() => null);
+        if (current !== marker) return;
+        await unlink(mutexPath).catch(() => {});
+      },
+    };
+  }
+  return null;
 }
 
 /**
@@ -315,14 +398,24 @@ async function cleanupStaleSwapClaims(exePath: string): Promise<boolean> {
  * old process still holds its renamed image (`.bak`) on Windows — so later
  * launches sweep what the previous run could not.
  *
- * Returns true when another instance holds a fresh swap claim: every
- * artifact is then left alone and the caller must not start a second swap.
+ * Returns true when another instance holds a fresh swap claim or swap mutex:
+ * every artifact is then left alone and the caller must not start a second
+ * swap.
  */
 async function sweepStaleNativeUpdateArtifacts(exePath: string): Promise<boolean> {
   try {
     if (await cleanupStaleSwapClaims(exePath)) {
       // Another instance is mid-swap: leave every artifact alone — the `.bak`
       // next to the exe is its rollback source.
+      return true;
+    }
+    // A live swap critical section holds the mutex: same deference. (Only a
+    // snapshot, but the swap re-checks the mutex after claiming, so a
+    // freshly-started swap is never entered concurrently.)
+    const mutexInfo = await stat(join(getNativeStagingDir(exePath), 'swap.lock')).catch(
+      () => null,
+    );
+    if (mutexInfo !== null && Date.now() - mutexInfo.mtimeMs <= SWAP_MUTEX_STALE_MS) {
       return true;
     }
     await cleanupBackups(exePath);
@@ -461,64 +554,90 @@ export async function maybeRelaunchWithStagedNativeUpdate(
     return discard();
   }
 
-  // 2. Pick a backup slot and move the running exe aside (rename of a running
-  //    exe is legal on Windows and POSIX alike; overwriting is not).
-  //
-  //    Crash window: if the process dies between this rename and step 3, the
-  //    install path is left empty and no CLI code can run to self-heal. Each
-  //    rename is atomic, the window is two adjacent syscalls, and recovery is
-  //    `mv <exe>.bak <exe>` or re-running the install script.
-  let bakPath = `${deps.exePath}.bak`;
-  try {
-    await unlink(bakPath);
-  } catch (error) {
-    if (!isNotFound(error)) {
-      // The leftover `.bak` is locked by a still-running old instance (or
-      // undeletable for another reason) — take a unique backup name, the same
-      // fallback install.ps1 uses. It is best-effort cleaned up on later runs.
-      bakPath = `${deps.exePath}.${process.pid}.bak`;
-    }
-  }
-  try {
-    await rename(deps.exePath, bakPath);
-  } catch (error) {
-    // Nothing was moved: startup continues with the old exe. Restore the
-    // claimed metadata so a later launch retries the swap (transient locks
-    // clear on reboot) — but only into a still-free state-file path: a
-    // downloader may have published a NEWER stage while we smoke-checked,
-    // and an unconditional restore would silently replace it. The restore is
-    // create-if-absent, so it can never overwrite; when the path is taken,
-    // the newer stage wins and ours is discarded.
-    logSwap('failed to move exe aside', { exePath: deps.exePath, error: String(error) });
+  // The fresh-claim sweep at startup is only a directory snapshot — another
+  // instance may have begun its swap after our sweep ran. Take the swap
+  // mutex before touching the install path so two swaps never rename the
+  // same exe concurrently (each would delete the other's `.bak` rollback
+  // source). The staged payload is immutable (unique generation name), so
+  // nothing validated above can change while we contend here.
+  const swapMutex = await acquireSwapMutex(getNativeStagingDir(deps.exePath));
+  if (swapMutex === null) {
+    logSwap('another instance is in its swap critical section, deferring', {
+      exePath: deps.exePath,
+    });
     await restoreClaimedUpdate(deps.exePath, claimedPath);
     return false;
   }
-
-  // 3. Move the staged exe into place; roll back on failure.
-  if ((await rename(stagedExe, deps.exePath).catch(() => null)) === null) {
-    logSwap('failed to move staged exe into place, rolling back', { exePath: deps.exePath });
-    if (!(await rollback(bakPath, deps.exePath))) {
-      // Rollback failed too (transient file lock, AV, …): the install path is
-      // now absent and no next launch can start. Keep every artifact instead
-      // of discarding — the `.bak` IS the old exe and the staged payload is a
-      // second recovery copy, so `mv <exe>.bak <exe>` or re-running the
-      // installer still recovers.
-      logSwap('rollback failed, keeping recovery artifacts', {
-        exePath: deps.exePath,
-        bakPath,
-      });
-      await recordSwapFailure(staged.version);
+  try {
+    // 2. Pick a backup slot and move the running exe aside (rename of a running
+    //    exe is legal on Windows and POSIX alike; overwriting is not).
+    //
+    //    Crash window: if the process dies between this rename and step 3, the
+    //    install path is left empty and no CLI code can run to self-heal. Each
+    //    rename is atomic, the window is two adjacent syscalls, and recovery is
+    //    `mv <exe>.bak <exe>` or re-running the install script.
+    let bakPath = `${deps.exePath}.bak`;
+    try {
+      await unlink(bakPath);
+    } catch (error) {
+      if (!isNotFound(error)) {
+        // The leftover `.bak` is locked by a still-running old instance (or
+        // undeletable for another reason) — take a unique backup name, the same
+        // fallback install.ps1 uses. It is best-effort cleaned up on later runs.
+        bakPath = `${deps.exePath}.${process.pid}.bak`;
+      }
+    }
+    try {
+      await rename(deps.exePath, bakPath);
+    } catch (error) {
+      // Nothing was moved: startup continues with the old exe. Restore the
+      // claimed metadata so a later launch retries the swap (transient locks
+      // clear on reboot) — but only into a still-free state-file path: a
+      // downloader may have published a NEWER stage while we smoke-checked,
+      // and an unconditional restore would silently replace it. The restore is
+      // create-if-absent, so it can never overwrite; when the path is taken,
+      // the newer stage wins and ours is discarded.
+      logSwap('failed to move exe aside', { exePath: deps.exePath, error: String(error) });
+      await restoreClaimedUpdate(deps.exePath, claimedPath);
       return false;
     }
-    await recordSwapFailure(staged.version);
-    return discard();
-  }
 
-  // 4. Success: clean up and re-exec into the new binary.
-  await unlink(claimedPath).catch(() => {});
-  await unlink(bakPath).catch(() => {});
-  await cleanupBackups(deps.exePath, bakPath);
-  await rmdir(getNativeStagingDir(deps.exePath)).catch(() => {});
-  logSwap('swap succeeded, re-launching', { version: staged.version });
+    // 3. Move the staged exe into place; roll back on failure.
+    if ((await rename(stagedExe, deps.exePath).catch(() => null)) === null) {
+      logSwap('failed to move staged exe into place, rolling back', { exePath: deps.exePath });
+      if (!(await rollback(bakPath, deps.exePath))) {
+        // Rollback failed too (transient file lock, AV, …): the install path is
+        // now absent and no next launch can start. Keep every artifact instead
+        // of discarding — the `.bak` IS the old exe and the staged payload is a
+        // second recovery copy, so `mv <exe>.bak <exe>` or re-running the
+        // installer still recovers.
+        logSwap('rollback failed, keeping recovery artifacts', {
+          exePath: deps.exePath,
+          bakPath,
+        });
+        await recordSwapFailure(staged.version);
+        return false;
+      }
+      await recordSwapFailure(staged.version);
+      return await discard();
+    }
+
+    // The rollback-critical section ends here: the new exe is in place and
+    // the `.bak` is no longer needed. Release before the cosmetic cleanup so
+    // the (now deletable) staging dir does not linger behind the mutex.
+    await swapMutex.release();
+
+    // 4. Success: clean up and re-exec into the new binary.
+    await unlink(claimedPath).catch(() => {});
+    await unlink(bakPath).catch(() => {});
+    await cleanupBackups(deps.exePath, bakPath);
+    await rmdir(getNativeStagingDir(deps.exePath)).catch(() => {});
+    logSwap('swap succeeded, re-launching', { version: staged.version });
+  } finally {
+    await swapMutex.release();
+  }
+  // Re-exec OUTSIDE the critical section: the child runs the user session,
+  // so awaiting it inside the try would hold the mutex for its whole
+  // lifetime.
   return reexec({ ...deps, spawnImpl });
 }

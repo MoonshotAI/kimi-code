@@ -411,6 +411,64 @@ describe('maybeRelaunchWithStagedNativeUpdate', () => {
     expect(newExe.equals(Buffer.alloc(STAGED_EXE_SIZE, 1))).toBe(true);
   });
 
+  it('defers the swap while another instance holds the swap mutex', async () => {
+    await seedStagedUpdate(exePath, STAGED_VERSION);
+    // A fresh swap.lock = another instance in its rename critical section.
+    await writeFile(join(getNativeStagingDir(exePath), 'swap.lock'), 'other-instance');
+    const { calls, spawnImpl } = createSpawnMock({});
+    const relaunched = await maybeRelaunchWithStagedNativeUpdate(makeDeps(exePath, { spawnImpl }));
+
+    expect(relaunched).toBe(false);
+    expect(calls).toHaveLength(0);
+    // The stage is untouched for a later launch; the exe is untouched.
+    expect(await readStagedNativeUpdate(exePath)).toMatchObject({ version: STAGED_VERSION });
+    expect(await readFile(exePath, 'utf-8')).toBe('old-binary');
+  });
+
+  it('sweeps an aged swap mutex and proceeds with the swap', async () => {
+    await seedStagedUpdate(exePath, STAGED_VERSION);
+    const mutexPath = join(getNativeStagingDir(exePath), 'swap.lock');
+    await writeFile(mutexPath, 'crash-residue');
+    const old = new Date(Date.now() - 10 * 60 * 1000);
+    await utimes(mutexPath, old, old);
+    const { calls, spawnImpl } = createSpawnMock({});
+    const relaunched = await maybeRelaunchWithStagedNativeUpdate(makeDeps(exePath, { spawnImpl }));
+
+    expect(relaunched).toBe(true);
+    expect(calls).toHaveLength(2);
+    // The mutex was released after the swap.
+    await expect(stat(mutexPath)).rejects.toThrow();
+  });
+
+  it('puts a young unparseable staged record back instead of destroying it', async () => {
+    // An in-flight exclusive-create publish (filesystems without hard links)
+    // is observable mid-write; claiming and discarding it would orphan the
+    // staged exe while the writer still reports success.
+    const stagingDir = getNativeStagingDir(exePath);
+    await mkdir(stagingDir, { recursive: true });
+    const stateFile = getNativeStagedStateFile(exePath);
+    await writeFile(stateFile, '{', 'utf-8');
+    const { spawnImpl } = createSpawnMock({});
+    const relaunched = await maybeRelaunchWithStagedNativeUpdate(makeDeps(exePath, { spawnImpl }));
+
+    expect(relaunched).toBe(false);
+    expect(await readFile(stateFile, 'utf-8')).toBe('{');
+  });
+
+  it('discards an aged unparseable staged record as crash residue', async () => {
+    const stagingDir = getNativeStagingDir(exePath);
+    await mkdir(stagingDir, { recursive: true });
+    const stateFile = getNativeStagedStateFile(exePath);
+    await writeFile(stateFile, '{', 'utf-8');
+    const old = new Date(Date.now() - 10 * 60 * 1000);
+    await utimes(stateFile, old, old);
+    const { spawnImpl } = createSpawnMock({});
+    const relaunched = await maybeRelaunchWithStagedNativeUpdate(makeDeps(exePath, { spawnImpl }));
+
+    expect(relaunched).toBe(false);
+    await expect(stat(stateFile)).rejects.toThrow();
+  });
+
   it('falls back to a pid-named backup when the plain .bak cannot be removed', async () => {
     await seedStagedUpdate(exePath, STAGED_VERSION);
     // A directory at `${exePath}.bak` cannot be removed via unlink → pid fallback.

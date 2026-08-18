@@ -75,6 +75,18 @@ export function stagedExePath(exePath: string, staged: StagedNativeUpdate): stri
   return join(getNativeStagingDir(exePath), staged.exeFileName);
 }
 
+/** Parse staged-update metadata from raw text; null when malformed. */
+export function parseStagedNativeUpdate(raw: string): StagedNativeUpdate | null {
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const parsed = StagedNativeUpdateSchema.safeParse(json);
+  return parsed.success ? parsed.data : null;
+}
+
 /**
  * Read the staged-update metadata, returning null when anything is off:
  * missing/corrupt `staged.json`, or the staged exe went away / changed size.
@@ -90,15 +102,8 @@ export async function readStagedNativeUpdate(
   } catch {
     return null;
   }
-  let json: unknown;
-  try {
-    json = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  const parsed = StagedNativeUpdateSchema.safeParse(json);
-  if (!parsed.success) return null;
-  const staged = parsed.data;
+  const staged = parseStagedNativeUpdate(raw);
+  if (staged === null) return null;
   const info = await stat(stagedExePath(exePath, staged)).catch(() => null);
   if (info === null || info.size !== staged.exeSize) return null;
   return staged;
