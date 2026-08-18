@@ -517,6 +517,56 @@ export function usageUpdateNotification(
   };
 }
 
+export type KimiCodeBillingMode = 'coding_plan' | 'api_key';
+
+export interface KimiCodeUsageRow {
+  readonly name?: string;
+  readonly window?: {
+    readonly duration: number;
+    readonly unit: 'minute' | 'hour' | 'day' | 'week';
+  };
+  readonly used: number;
+  readonly limit: number;
+  readonly resetAt?: string;
+}
+
+export interface KimiCodeBoosterWallet {
+  readonly balanceCents: number;
+  readonly totalCents: number;
+  readonly currency: string;
+}
+
+export interface KimiCodeUsageMeta {
+  readonly billingMode: KimiCodeBillingMode;
+  readonly rateLimits?: {
+    readonly summary: KimiCodeUsageRow | null;
+    readonly limits: readonly KimiCodeUsageRow[];
+    readonly booster: KimiCodeBoosterWallet | null;
+  };
+}
+
+/**
+ * Build an ACP `usage_update` session notification with optional Kimi Code
+ * account metadata. When `kimiCode` is omitted the notification carries only
+ * the standard `used`/`size` context fields.
+ */
+export function usageReportToSessionUpdate(
+  sessionId: string,
+  used: number,
+  size: number,
+  kimiCode?: KimiCodeUsageMeta,
+): SessionNotification {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: 'usage_update',
+      used,
+      size,
+      ...(kimiCode === undefined ? {} : { _meta: { kimiCode } }),
+    },
+  };
+}
+
 /**
  * Build a `session_info_update` session notification for a title change.
  * `title: null` clears the title client-side.

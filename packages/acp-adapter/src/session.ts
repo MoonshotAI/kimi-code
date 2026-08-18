@@ -330,10 +330,11 @@ export class AcpSession {
       selectedModelId === undefined ? undefined : config.models?.[selectedModelId];
     const providerId = selectedModel?.provider ?? config.defaultProvider;
     const provider = providerId === undefined ? undefined : config.providers[providerId];
+    const resolvedApiKey = providerValue(provider?.apiKey, provider?.env, 'KIMI_API_KEY');
     const billingMode =
       providerId === 'managed:kimi-code' && provider?.oauth !== undefined
         ? 'coding_plan'
-        : typeof provider?.apiKey === 'string' && provider.apiKey.length > 0
+        : resolvedApiKey !== undefined
           ? 'api_key'
           : undefined;
     const cacheKey = `${selectedModelId ?? ''}:${providerId ?? ''}:${billingMode ?? ''}`;
@@ -1829,4 +1830,26 @@ function toolMessageContentToAcpToolCallContent(
     });
   }
   return result;
+}
+
+/**
+ * Resolve a provider credential that may be declared either as the configured
+ * field or indirectly through the provider's env table (`provider.env`).
+ *
+ * Mirrors the precedence used by `provider-manager.ts` so ACP usage reports
+ * classify API-key billing consistently with the actual request auth path.
+ * The resolved value is used only for presence checks — it is never serialized
+ * into notifications.
+ */
+function providerValue(
+  configured: string | undefined,
+  env: Record<string, string> | undefined,
+  envKey: string,
+): string | undefined {
+  return nonEmptyString(configured) ?? nonEmptyString(env?.[envKey]);
+}
+
+function nonEmptyString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
 }

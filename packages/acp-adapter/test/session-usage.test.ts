@@ -158,4 +158,51 @@ describe('AcpSession usage reporting', () => {
     });
     expect(JSON.stringify(sessionUpdate.mock.calls)).not.toContain('secret-api-key');
   });
+
+  it('reports API-key billing when the key is supplied through the provider env table', async () => {
+    const sessionUpdate = vi.fn(async () => undefined);
+    const getManagedUsage = vi.fn();
+    const harness = {
+      getConfig: async () => ({
+        providers: {
+          'moonshot-cn': {
+            type: 'kimi',
+            apiKey: '',
+            env: { KIMI_API_KEY: 'secret-env-key' },
+          },
+        },
+        defaultModel: 'kimi-k2',
+        models: {
+          'kimi-k2': {
+            provider: 'moonshot-cn',
+            model: 'kimi-k2',
+            maxContextSize: 262_144,
+          },
+        },
+      }),
+      auth: { getManagedUsage },
+    } as unknown as KimiHarness;
+    const acpSession = new AcpSession(
+      fakeConnection(sessionUpdate),
+      fakeSession(),
+      undefined,
+      undefined,
+      'kimi-k2',
+      harness,
+    );
+
+    await acpSession.emitUsageReport();
+
+    expect(getManagedUsage).not.toHaveBeenCalled();
+    expect(sessionUpdate).toHaveBeenCalledWith({
+      sessionId: 'session-usage',
+      update: {
+        sessionUpdate: 'usage_update',
+        used: 250,
+        size: 1_000,
+        _meta: { kimiCode: { billingMode: 'api_key' } },
+      },
+    });
+    expect(JSON.stringify(sessionUpdate.mock.calls)).not.toContain('secret-env-key');
+  });
 });

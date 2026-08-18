@@ -21,6 +21,7 @@ import {
   drainSessionMetadataWrites,
   getLiveSessionById,
   IAppendLogStore,
+  IOAuthToolkit,
   ISessionContext,
   ISessionIndexMirror,
   logSeed,
@@ -143,6 +144,7 @@ export async function runAcpServerWithStream(
     terminalAuthEnv: opts.terminalAuthEnv,
     terminalAuthLegacyCommand: opts.terminalAuthLegacyCommand,
     slashCommands: opts.slashCommands,
+    oauthToolkit: core.accessor.get(IOAuthToolkit),
     // Prompt-image compression persists originals into the session's own
     // media-originals dir (same resolution as kap-server's prompt route):
     // live session scope → `ISessionContext.sessionDir`. A session that is
