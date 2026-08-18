@@ -215,6 +215,23 @@ describe('Remote Control tunnel', () => {
     expect(handle.url).toContain('?rc=1&from=kimi_code_cli');
   }, 6000);
 
+  it('reconnects when management closes during the HTTP tunnel handshake', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const relay = await startAuthRelay({ closeManagementDuringFirstHttpHandshake: true });
+    let handle: RemoteControlHandle | undefined;
+    cleanups.push(async () => handle?.close());
+
+    handle = await startRemoteControl({
+      homeDir,
+      localOrigin: 'http://127.0.0.1:1',
+      localServerToken: 'local-server-token',
+      relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
+      stderr: { write: () => true },
+    });
+
+    expect(relay.requests.length).toBeGreaterThanOrEqual(4);
+  }, 6000);
+
   it('registers, forwards HTTP and WS with local auth, then reconnects the pair', async () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-'));
     cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
@@ -393,7 +410,11 @@ async function createRemoteControlHome(refreshToken: string): Promise<string> {
 }
 
 async function startAuthRelay(
-  options: { echoProtocol?: boolean; rejectUpgrades?: number } = {},
+  options: {
+    echoProtocol?: boolean;
+    rejectUpgrades?: number;
+    closeManagementDuringFirstHttpHandshake?: boolean;
+  } = {},
 ): Promise<{
   port: number;
   requests: Array<{ authorization?: string; protocol?: string }>;
@@ -404,6 +425,8 @@ async function startAuthRelay(
   const relayServer = createServer();
   const requests: Array<{ authorization?: string; protocol?: string }> = [];
   let remainingRejections = options.rejectUpgrades ?? 0;
+  let closeManagement = options.closeManagementDuringFirstHttpHandshake === true;
+  let delayHttpUpgrade = closeManagement;
 
   managementServer.on('connection', (ws) => {
     ws.on('error', () => {});
@@ -411,6 +434,10 @@ async function startAuthRelay(
       const message = JSON.parse(rawDataText(data)) as { type?: string };
       if (message.type === 'register') {
         ws.send(JSON.stringify({ type: 'register_ack', payload: { success: true } }));
+        if (closeManagement) {
+          closeManagement = false;
+          setTimeout(() => ws.close(), 10);
+        }
       }
     });
   });
@@ -433,7 +460,15 @@ async function startAuthRelay(
     const target = pathname.endsWith('/v1/remote/create')
       ? managementServer
       : httpTunnelServer;
-    target.handleUpgrade(request, socket, head, (ws) => target.emit('connection', ws, request));
+    const upgrade = (): void => {
+      target.handleUpgrade(request, socket, head, (ws) => target.emit('connection', ws, request));
+    };
+    if (target === httpTunnelServer && delayHttpUpgrade) {
+      delayHttpUpgrade = false;
+      setTimeout(upgrade, 50);
+      return;
+    }
+    upgrade();
   });
   const port = await listen(relayServer);
   cleanups.push(() => closeServer(relayServer));

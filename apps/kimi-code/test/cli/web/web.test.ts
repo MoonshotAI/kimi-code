@@ -404,6 +404,19 @@ describe('`kimi web` opens the browser', () => {
     }
   });
 
+  it('rejects Remote Control on a non-loopback host', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const { runner } = makeRunner();
+    const { stdout, stderr } = makeIo();
+
+    await expect(
+      handleWebCommand(
+        { remoteControl: true, host: '0.0.0.0', open: false },
+        { startServerForeground: runner, openUrl: vi.fn(), stdout, stderr },
+      ),
+    ).rejects.toThrow('--remote-control requires a loopback host.');
+  });
+
   it('opens only the public Remote Control URL without the local server token', async () => {
     const { handleWebCommand } = await import('#/cli/sub/web/run');
     const { runner } = makeRunner();
