@@ -1,11 +1,3 @@
-/**
- * Agent tool execution contract tests.
- *
- * The background-subagent-spawn scenario below uses pure in-memory stubs,
- * but this file's worker can be CPU-starved under parallel load in
- * resource-constrained containers, hence its extended timeout.
- */
-
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
