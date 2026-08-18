@@ -10,6 +10,7 @@ import {
   ISessionBtwService,
   ISessionContext,
   ISessionIndex,
+  ISessionIndexMirror,
   ISessionMetadata,
   ISessionLegacyService,
   ISessionTitleService,
@@ -21,6 +22,7 @@ import {
   getLiveSessionById,
   programForSession,
   resumeSessionById,
+  setSessionArchivedBatch,
   isError2,
   Error2,
   type ContextMessage,
@@ -732,15 +734,14 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           return;
         }
 
-        const archiveHandler = await programForSession(core.accessor, parsed.id);
-        const archived =
-          archiveHandler === undefined
-            ? undefined
-            : await core.accessor.get(ISessionManager).resume(parsed.id);
-        if (archived === undefined || archiveHandler === undefined) {
-          throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
+        const [archiveOutcome] = await setSessionArchivedBatch(core.accessor, [parsed.id], true);
+        if (archiveOutcome === undefined || !archiveOutcome.ok) {
+          if (archiveOutcome?.reason === 'not_found') {
+            throw new Error2(ErrorCodes.SESSION_NOT_FOUND, archiveOutcome.message);
+          }
+          throw new Error(archiveOutcome?.message ?? `failed to archive session ${parsed.id}`);
         }
-        await core.accessor.get(ISessionManager).archive(parsed.id);
+        await core.accessor.get(ISessionIndexMirror).drain();
         requestLog(req)?.info({ session_id: parsed.id, action: 'archive' }, 'session action completed');
         reply.send(okEnvelope({ archived: true }, req.id));
       } catch (error) {

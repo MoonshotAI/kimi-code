@@ -18,6 +18,7 @@ import {
   IAgentLifecycleService,
   IEventBus,
   IEventService,
+  IWorkspaceService,
   MAIN_AGENT_ID,
   closeSessionById,
   getLiveSessionById,
@@ -767,6 +768,25 @@ describe('server-v2 /api/v1/sessions', () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
+
+    const archived = await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
+    expect(archived.body.code).toBe(0);
+    expect(archived.body.data).toEqual({ archived: true });
+
+    const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
+    expect(got.body.code).toBe(0);
+    expect(got.body.data.archived).toBe(true);
+  });
+
+  it('archives a cold session via :archive after its workspace root was deleted', async () => {
+    const wsDir = await mkdtemp(join(tmpdir(), 'kimi-archive-ws-'));
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: wsDir } });
+    const id = created.body.data.id;
+    const workspaceId = created.body.data.workspace_id;
+
+    await closeSessionById((server as RunningServer).core.accessor, id);
+    await (server as RunningServer).core.accessor.get(IWorkspaceService).delete(workspaceId);
+    await rm(wsDir, { recursive: true, force: true });
 
     const archived = await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
     expect(archived.body.code).toBe(0);
