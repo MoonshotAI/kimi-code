@@ -67,6 +67,7 @@ import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/st
 import { stubFlag } from '../../app/flag/stubs';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
+import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { stubAgentSwarm } from './stubs';
@@ -2724,7 +2725,7 @@ describe('AgentGoalService WaitFor guidance gating', () => {
   it('shows the WaitFor guidance in the active-goal reminder when the flag is on', async () => {
     const ctx = createTestAgent();
     try {
-      ctx.configure({ tools: ['UpdateGoal'] });
+      ctx.configure();
       await ctx.rpc.createGoal({ objective: 'finish bounded work' });
 
       ctx.mockNextResponse({ type: 'text', text: 'slice done' });
@@ -2748,7 +2749,42 @@ describe('AgentGoalService WaitFor guidance gating', () => {
   it('hides WaitFor from the reminder, the continuation prompt, and the tools when the flag is off', async () => {
     const ctx = createTestAgent(appService(IFlagService, stubFlag(false)));
     try {
-      ctx.configure({ tools: ['UpdateGoal'] });
+      ctx.configure();
+      await ctx.rpc.createGoal({ objective: 'finish bounded work' });
+
+      ctx.mockNextResponse({ type: 'text', text: 'slice done' });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'ug_1',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
+
+      const allCalls = JSON.stringify(ctx.llmCalls);
+      expect(allCalls).not.toContain('re-invoked again and again');
+      for (const call of ctx.llmCalls) {
+        expect(call.tools.map((tool) => tool.name)).not.toContain('WaitFor');
+      }
+      expect((await ctx.rpc.getGoal({})).goal).toBeNull();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('hides WaitFor guidance when a tool policy disables WaitFor even though the flag is on', async () => {
+    const ctx = createTestAgent(
+      sessionService(ISessionToolPolicyGate, {
+        _serviceBrand: undefined,
+        disabledTools: ['WaitFor'],
+        onDidChange: Event.None as Event<void>,
+      }),
+    );
+    try {
+      ctx.configure();
       await ctx.rpc.createGoal({ objective: 'finish bounded work' });
 
       ctx.mockNextResponse({ type: 'text', text: 'slice done' });
@@ -2772,18 +2808,30 @@ describe('AgentGoalService WaitFor guidance gating', () => {
     }
   });
 
-  it('hides WaitFor guidance when a tool policy disables WaitFor even though the flag is on', async () => {
-    const ctx = createTestAgent(
-      sessionService(ISessionToolPolicyGate, {
-        _serviceBrand: undefined,
-        disabledTools: ['WaitFor'],
-        onDidChange: Event.None as Event<void>,
-      }),
-    );
+  it('hides WaitFor guidance once the session tool policy disables it mid-goal', async () => {
+    const ctx = createTestAgent();
     try {
-      ctx.configure({ tools: ['UpdateGoal'] });
+      ctx.configure({ tools: ['WaitFor', 'UpdateGoal'] });
+      const tasks = ctx.get(IAgentTaskService);
+      let settle!: (value: { result: string }) => void;
+      const completion = new Promise<{ result: string }>((resolve) => {
+        settle = resolve;
+      });
+      tasks.registerTask(
+        new SubagentTask(
+          { agentId: 'agent-child', profileName: 'coder', completion },
+          'bg work',
+          new AbortController(),
+        ),
+      );
       await ctx.rpc.createGoal({ objective: 'finish bounded work' });
 
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'wait_1',
+        name: 'WaitFor',
+        arguments: JSON.stringify({ timeout: 30 }),
+      });
       ctx.mockNextResponse({ type: 'text', text: 'slice done' });
       ctx.mockNextResponse({
         type: 'function',
@@ -2794,11 +2842,23 @@ describe('AgentGoalService WaitFor guidance gating', () => {
       ctx.mockNextResponse({ type: 'text', text: 'done' });
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
-      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(1));
+      expect(JSON.stringify(ctx.llmCalls[0])).toContain('re-invoked again and again');
 
-      const allCalls = JSON.stringify(ctx.llmCalls);
-      expect(allCalls).not.toContain('WaitFor');
-      expect(allCalls).not.toContain('re-invoked again and again');
+      await ctx.get(ISessionToolPolicy).setDisabledTools(['WaitFor']);
+      settle({ result: 'bg result' });
+
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(4));
+      const continuationCall = ctx.llmCalls[2]!;
+      const continuationPrompt = continuationCall.history.find((message) =>
+        JSON.stringify(message).includes('Continue working toward the active goal'),
+      );
+      expect(continuationPrompt).toBeDefined();
+      expect(JSON.stringify(continuationPrompt)).not.toContain('re-invoked again and again');
+      const freshReminder = continuationCall.history.at(-1);
+      expect(JSON.stringify(freshReminder)).toContain('active goal');
+      expect(JSON.stringify(freshReminder)).not.toContain('re-invoked again and again');
+      expect((await ctx.rpc.getGoal({})).goal).toBeNull();
       expect((await ctx.rpc.getGoal({})).goal).toBeNull();
     } finally {
       await ctx.dispose();

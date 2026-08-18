@@ -32,6 +32,7 @@ import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
 import { IAgentUsageService, type UsageRecordedContext } from '#/agent/usage/usage';
 import type { GoalBudgetProperties } from '#/app/telemetry/events';
@@ -267,6 +268,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IAgentUsageService usageService: IAgentUsageService,
@@ -904,7 +906,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   private isWaitForAvailable(): boolean {
     return (
       this.flags.enabled(WAIT_FOR_FLAG_ID) &&
-      this.toolRegistry.resolve('WaitFor') !== undefined
+      this.toolRegistry.resolve('WaitFor') !== undefined &&
+      this.toolPolicy.isToolActive('WaitFor')
     );
   }
 
