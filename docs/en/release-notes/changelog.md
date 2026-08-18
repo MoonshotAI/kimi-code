@@ -6,6 +6,12 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.37.1 (2026-08-18)
+
+### Bug Fixes
+
+- Fix pasted images and videos failing to reach the model.
+
 ## 0.37.0 (2026-08-18)
 
 ### Features
