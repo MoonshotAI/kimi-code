@@ -653,8 +653,6 @@ export * from '#/agent/media/kimiFileUrl';
 export * from '#/agent/media/videoUpload';
 export * from '#/agent/media/mediaResolver';
 export * from '#/agent/media/mediaResolverService';
-export * from '#/agent/media/videoResolver';
-export * from '#/agent/media/videoResolverService';
 import '#/agent/media/configSection';
 export * from '#/agent/media/imageConfigBridge';
 import '#/agent/permissionMode/configSection';
