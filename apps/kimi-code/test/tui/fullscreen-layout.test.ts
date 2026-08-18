@@ -72,9 +72,7 @@ async function mountFullscreen(): Promise<{
     initialAppState: fakeInitialAppState(),
     startup: { continueLast: false, yolo: false, auto: false, plan: false },
   };
-  vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
   const state = createTUIState(opts);
-  vi.unstubAllEnvs();
   const vt = new VirtualTerminal(WIDTH, HEIGHT);
   (state.ui as { terminal: Terminal }).terminal = vt;
 

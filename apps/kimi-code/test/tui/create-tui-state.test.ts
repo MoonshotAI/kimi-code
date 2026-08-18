@@ -1,7 +1,7 @@
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
-import { TuiAltScreen, TuiMainScreen } from '@moonshot-ai/pi-tui';
+import { TuiAltScreen } from '@moonshot-ai/pi-tui';
 
 import { createTUIState, type KimiTUIOptions } from '#/tui/kimi-tui';
 import type { AppState } from '#/tui/types';
@@ -88,7 +88,7 @@ describe('createTUIState', () => {
     expect(state.activitySpinner).toBeNull();
   });
 
-  it('uses the main-screen renderer by default', () => {
+  it('builds an alternate-screen renderer with a docked layout', () => {
     const state = createTUIState({
       initialAppState: fakeInitialAppState(),
       startup: {
@@ -98,24 +98,6 @@ describe('createTUIState', () => {
         plan: false,
       },
     });
-
-    expect(state.ui).toBeInstanceOf(TuiMainScreen);
-    expect(state.ui.mode).toBe('regular');
-    expect(state.dockContainer).toBeUndefined();
-  });
-
-  it('builds an alternate-screen renderer with a docked layout in fullscreen mode', () => {
-    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
-    const state = createTUIState({
-      initialAppState: fakeInitialAppState(),
-      startup: {
-        continueLast: false,
-        yolo: false,
-        auto: false,
-        plan: false,
-      },
-    });
-    vi.unstubAllEnvs();
 
     expect(state.ui).toBeInstanceOf(TuiAltScreen);
     expect(state.ui.mode).toBe('fullscreen');
