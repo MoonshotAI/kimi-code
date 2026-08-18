@@ -30,13 +30,12 @@ export function estimateTokens(text: string): number {
     } else if (code <= 32 || code === 127) {
       whitespaceCount += 1;
     } else if (
-      (code >= 65 && code <= 90) || // A-Z
-      (code >= 97 && code <= 122) || // a-z
-      code === 95 // _
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      code === 95
     ) {
       wordCount += 1;
     } else {
-      // digits and punctuation · tokenize denser than words
       denseCount += 1;
     }
   }

@@ -1,14 +1,3 @@
-/**
- * Resume / cross-restart persistence for SessionCronService.
- *
- * `addTask` / `removeTasks` / cursor advances persist through the
- * App-scoped `ICronTaskPersistence` (keyed by `workspaceId`), and
- * `loadFromStore()` re-populates the in-memory store on `kimi resume`.
- * The scheduler's `createdAt`-based baseline is what makes a reloaded
- * task fire correctly even when ideal fire times landed during
- * downtime — these tests pin down both sides of the contract.
- */
-
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
@@ -130,9 +119,6 @@ describe('SessionCronService — persistence and resume', () => {
       } finally {
         vi.unstubAllEnvs();
         vi.restoreAllMocks();
-        // Cron persistence can still be draining its final post-dispose write
-        // when cleanup starts (parallel load widens the window) — let rm ride
-        // out transient ENOTEMPTY instead of flaking the suite.
         await rm(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       }
     }

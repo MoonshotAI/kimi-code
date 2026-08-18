@@ -232,8 +232,6 @@ describe('AgentPlanService EnterPlanMode telemetry', () => {
           execEnvServices({
             hostFs: createFakeHostFs({
               mkdir: vi.fn().mockResolvedValue(undefined),
-              // enter() activates plan mode without creating the plan file,
-              // so the post-enter status() read misses it.
               readText: vi
                 .fn()
                 .mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })),

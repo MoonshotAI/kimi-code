@@ -71,20 +71,15 @@ describe('Spine projection fold', () => {
 
     expect(stored).toHaveLength(idx.after + 1);
     expect(folded).toHaveLength(6);
-    // The open startup node carries the structural landmark.
     expect(textOf(folded[0])).toBe(
       '<spine_node id="1.1" summary="startup" status="live" />',
     );
     expect(textOf(folded[1])).toContain('[U1]');
     expect(textOf(folded[1])).toContain('start');
     expect(textOf(folded[2])).toBe('<spine_memory node_id="1.1.1">\ndid A\n</spine_memory>');
-    // The close carrier and its receipt stay visible past the folded span.
     expect(textOf(folded[3])).toContain('calling spine_close');
     expect(textOf(folded[5])).toContain('[U2]');
     expect(textOf(folded[5])).toContain('after');
-    // The fold never synthesizes a status line: `<spine_tran_status>` is a
-    // persisted history item appended by the service after transition steps
-    // (unit-built histories have none).
     expect(folded.some((m) => textOf(m).includes('<spine_tran_status'))).toBe(false);
   });
 
@@ -96,8 +91,6 @@ describe('Spine projection fold', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
     await ctx.untilTurnEnd();
 
-    // The open step applied a transition: exactly one status landed in the
-    // STORED history (it is a persisted item, not a projection artifact).
     let statuses = tranStatuses(ctx);
     expect(statuses).toHaveLength(1);
     expect(statuses[0]).toContain('cursor="1.1.1"');
@@ -105,18 +98,13 @@ describe('Spine projection fold', () => {
     expect(statuses[0]).toContain('parent="1.1"');
     expect(statuses[0]).toContain('parent_summary="startup"');
     expect(statuses[0]).toMatch(/ raw_context="~\d/);
-    // The loop harness returns a usage record, so the projected whole-context
-    // number may be anchored (no estimate marker) or estimated.
     expect(statuses[0]).toMatch(/ projected_context="~?\d/);
 
-    // A step without a transition appends nothing (upstream: emission only
-    // follows a step whose sampling applied a transition).
     ctx.mockNextResponse({ type: 'text', text: 'still working' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
     await ctx.untilTurnEnd();
     expect(tranStatuses(ctx)).toHaveLength(1);
 
-    // The close step transitions again: a second status orients to the parent.
     ctx.mockNextResponse(toolCallPart('c_close', 'spine_close', { memory: 'mem A' }));
     ctx.mockNextResponse({ type: 'text', text: 'done' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'wrap' }] });
@@ -131,8 +119,6 @@ describe('Spine projection fold', () => {
   it('renders persisted statuses as ordinary live-range messages and folds them away with their span', async () => {
     const ctx = testAgent();
     await configureLoop(ctx);
-    // Four transition steps in one turn: open parent, open child, close
-    // child, close parent. Each appends its status right after its receipts.
     ctx.mockNextResponse(toolCallPart('c_open_p', 'spine_open', { summary: 'parent' }));
     ctx.mockNextResponse(toolCallPart('c_open_c', 'spine_open', { summary: 'child' }));
     ctx.mockNextResponse(toolCallPart('c_close_c', 'spine_close', { memory: 'mem child' }));
@@ -141,10 +127,7 @@ describe('Spine projection fold', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
     await ctx.untilTurnEnd();
 
-    // The stored history keeps all four persisted statuses...
     expect(tranStatuses(ctx)).toHaveLength(4);
-    // ...but the first three landed inside the parent's span and folded away
-    // with it; only the post-close orientation survives in the projection.
     const visible = fold(ctx).filter((m) => textOf(m).includes('<spine_tran_status'));
     expect(visible).toHaveLength(1);
     expect(textOf(visible[0])).toContain('cursor="1.1"');
@@ -174,14 +157,11 @@ describe('Spine projection fold', () => {
     await resumed.restorePersisted();
     await configureLoop(resumed);
 
-    // The restored history carries both persisted statuses; an ordinary turn
-    // applies no transition, so nothing new is appended.
     resumed.mockNextResponse({ type: 'text', text: 'back' });
     await resumed.rpc.prompt({ input: [{ type: 'text', text: 'resume' }] });
     await resumed.untilTurnEnd();
     expect(tranStatuses(resumed)).toHaveLength(2);
 
-    // The next transition on the resumed session appends exactly one more.
     resumed.mockNextResponse(toolCallPart('c_open2', 'spine_open', { summary: 'task B' }));
     resumed.mockNextResponse({ type: 'text', text: 'done' });
     await resumed.rpc.prompt({ input: [{ type: 'text', text: 'next' }] });
@@ -198,8 +178,6 @@ describe('Spine projection fold', () => {
     const folded = fold(ctx);
     const memoryMessages = folded.filter((m) => textOf(m).includes('<spine_memory'));
     expect(memoryMessages).toHaveLength(2);
-    // Each closed node contributes its own slot; nothing is inlined into the
-    // parent's memory.
     expect(textOf(memoryMessages[0])).toBe(
       '<spine_memory node_id="1.1.1.1">\nchild mem\n</spine_memory>',
     );
@@ -275,8 +253,6 @@ describe('Spine projection fold', () => {
   });
 
   it('omits the spine view for operation requests even when enabled', async () => {
-    // Compaction-style requests carry their own explicit message list and have
-    // no use for the tree protocol; the block would only burn tokens.
     const ctx = testAgent();
     await configureLoop(ctx);
     ctx.mockNextResponse({ type: 'text', text: 'summary' });
@@ -292,8 +268,6 @@ describe('Spine projection fold', () => {
   });
 
   it('omits the spine view when the request tools do not offer spine_open', async () => {
-    // Sub-agent whitelists (coder/explore) exclude the spine tools; showing
-    // the protocol there asks the model to use tools it does not have.
     const ctx = testAgent();
     await configureLoop(ctx);
     ctx.mockNextResponse({ type: 'text', text: 'done' });
@@ -362,9 +336,6 @@ describe('Spine projection fold', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hi' }] });
     await ctx.untilTurnEnd();
 
-    // The override load is awaited before the first step assembles its
-    // request: the default view must never leak into an early request (a
-    // mid-session system-prompt swap would invalidate the prefix cache).
     const systemPrompt = ctx.llmCalls[0]?.systemPrompt ?? '';
     expect(systemPrompt).toContain('CUSTOM SPINE PROTOCOL');
     expect(systemPrompt).not.toContain('Spine-managed');
@@ -372,7 +343,6 @@ describe('Spine projection fold', () => {
 
   it('reports cursor_context as the projected growth since the cursor opened', async () => {
     const ctx = testAgent();
-    // A sizable pre-open history the baseline must exclude from the delta.
     append(ctx, userMessage('start'));
     append(ctx, assistantText('earlier work '.repeat(40)));
     await configureLoop(ctx);
@@ -384,9 +354,6 @@ describe('Spine projection fold', () => {
     const statuses = tranStatuses(ctx);
     expect(statuses).toHaveLength(1);
     const cursorContext = Number(/cursor_context="~(\d+)"/.exec(statuses[0] ?? '')?.[1]);
-    // Only the carrier's receipt rode in since the open accept recorded the
-    // baseline; the pre-open history (~130 tokens) and the prompt must not
-    // leak into the budget signal.
     expect(cursorContext).toBeLessThan(60);
   });
 
@@ -399,9 +366,6 @@ describe('Spine projection fold', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'go' }] });
     await ctx.untilTurnEnd();
 
-    // The catalogued 256K window clamps to the observed 100K ceiling; the
-    // tiny harness history leaves (nearly) the full observed window as
-    // headroom instead of ~256K.
     const statuses = tranStatuses(ctx);
     expect(statuses).toHaveLength(1);
     expect(statuses[0]).toContain('context_left="~100K"');
@@ -418,13 +382,11 @@ describe('Spine projection fold', () => {
     } as unknown as IAgentTokenCountingService;
     const ctx = testAgent(agentService(IAgentTokenCountingService, fakeSize));
     await configureLoop(ctx);
-    // Turn 1: the open accept records the 10K baseline.
     ctx.mockNextResponse(toolCallPart('c_open', 'spine_open', { summary: 'task A' }));
     ctx.mockNextResponse({ type: 'text', text: 'opened' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
     await ctx.untilTurnEnd();
 
-    // Turn 2: the close accept records the 24K high-water mark.
     sizeNow = 24_000;
     ctx.mockNextResponse(toolCallPart('c_close', 'spine_close', { memory: 'mem A' }));
     ctx.mockNextResponse({ type: 'text', text: 'done' });
@@ -435,10 +397,6 @@ describe('Spine projection fold', () => {
   });
 
   it('replaces each sibling of a next-chain with its own memory', () => {
-    // `spine.next` opens the new sibling right after the closing span
-    // (`openedAt == closedAt + 1`) — the index the fold lands on right after
-    // firing the previous span. Regression: only the first sibling folded;
-    // every later sibling stayed raw and its memory was never injected.
     const ctx = testAgent();
     append(ctx, userMessage('start'));
     append(ctx, assistantToolCall('o1', 'spine_open', JSON.stringify({ summary: 'task A' })));
@@ -477,8 +435,6 @@ describe('Spine projection fold', () => {
   });
 
   it('flattens a closed subtree into per-node memory slots, children first', () => {
-    // Every closed node in the subtree contributes its own slot in span order;
-    // the parent's memory lands last and inlines nothing.
     const ctx = testAgent();
     append(ctx, userMessage('start'));
     append(ctx, assistantToolCall('po', 'spine_open', JSON.stringify({ summary: 'parent' })));
@@ -520,10 +476,6 @@ describe('Spine projection fold', () => {
   });
 
   it('skips nodes closed before the epoch boundary and still folds post-epoch nodes', () => {
-    // A node closed before the root compact belongs to the epoch summary: its
-    // memory must not resurface past the boundary, and its span must not pin
-    // the fold queue — the post-epoch node behind it must still fold. Both
-    // failed when spans only fired on an exact `openedAt` match.
     const ctx = testAgent();
     buildClosedNodeHistory(ctx);
     append(ctx, createCompactionSummaryMessage(buildCompactionSummaryText('epoch summary')));
@@ -556,8 +508,6 @@ describe('Spine projection fold', () => {
 
     const folded = fold(ctx);
     const texts = folded.map(textOf);
-    // The cursor itself is "live"; its open ancestor is "opened". Every
-    // landmark lands immediately before the carrier that opened the node.
     expect(texts.slice(0, 3)).toEqual([
       '<spine_node id="1.1" summary="startup" status="opened" />',
       '[U1] start',
@@ -591,8 +541,6 @@ describe('Spine projection fold', () => {
 
     const folded = fold(ctx);
     const surviving = folded.find((m) => m.content.some((part) => part.type === 'image_url'));
-    // The original parts ride through untouched (media included); only the
-    // first text part gains the [U#] tag.
     expect(surviving?.role).toBe('user');
     expect(surviving?.content).toEqual([
       { type: 'image_url', imageUrl: { url: 'https://example.com/pic.png' } },
@@ -644,8 +592,6 @@ describe('Spine tree view projection', () => {
           nodeView('1.1', 'startup', false, [
             nodeView('1.1.1', 'task A', true),
             nodeView('1.1.2', 'task B', true),
-            // The rejected close left the cursor open; the rejected open never
-            // landed at all (no 1.1.4).
             nodeView('1.1.3', 'task C', false),
           ]),
         ]),
@@ -678,7 +624,6 @@ describe('Spine tree view projection', () => {
     append(ctx, spineAcceptedReceipt('o2'));
     const state = ctx.get(IAgentSpineService).currentState();
 
-    // Without the live inputs the projection is structural only.
     const bare = spineTreeViewFromState(state);
     for (const id of ['1', '1.1', '1.1.1', '1.1.2']) {
       const node = findViewNode(bare, id);
@@ -698,17 +643,14 @@ describe('Spine tree view projection', () => {
         epoch || !closed ? undefined : `archive-${id}.md`,
     });
 
-    // A closed node prices as closing high-water mark minus open baseline.
     expect(findViewNode(view, '1.1.1')).toMatchObject({
       closed: true,
       tokenCost: 600,
       archivePath: 'archive-1.1.1.md',
     });
-    // An open node prices against the live gauge, clamped at zero.
     expect(findViewNode(view, '1.1.2')).toMatchObject({ closed: false, tokenCost: 0 });
     expect(findViewNode(view, '1.1.2')?.archivePath).toBeUndefined();
     expect(findViewNode(view, '1.1')?.tokenCost).toBe(900);
-    // No baseline recorded for the synthetic root epoch: no cost.
     expect(findViewNode(view, '1')?.tokenCost).toBeUndefined();
   });
 
@@ -751,9 +693,6 @@ describe('Spine logical session conformance', () => {
       { kind: 'user', text: '下一步' },
     ]);
 
-    // The close carrier and its receipt stay visible in the parent context;
-    // the open startup node keeps its boundary landmark; the closed node's
-    // span folds into its own memory slot.
     expect(canonicalProjection(fold(ctx))).toEqual([
       'user (spine_node): <spine_node id="1.1" summary="startup" status="live" />',
       'user: [U1] 调研 X',
@@ -813,9 +752,6 @@ describe('Spine logical session conformance', () => {
       { kind: 'user', text: 'tail' },
     ]);
 
-    // Pre-epoch requests still consume their ordinals, but the epoch summary
-    // is not a user request and consumes none — the surviving requests keep
-    // [U2]/[U3]. The epoch's open startup node carries the landmark.
     expect(canonicalProjection(fold(ctx))).toEqual([
       `user: ${buildCompactionSummaryText('epoch summary')}`,
       'user (spine_node): <spine_node id="2.1" summary="startup" status="live" />',
@@ -867,9 +803,6 @@ describe('Spine derivation from the message stream', () => {
   });
 
   it('applies only the spine call from a carrier batched with other tool calls', () => {
-    // A real assistant response can batch the spine carrier with unrelated
-    // tool calls; the derivation must pick the spine call by its accepted
-    // receipt and leave the rest alone.
     const state = deriveSpineState([
       userMessage('start'),
       {
@@ -912,12 +845,12 @@ describe('Spine derivation from the message stream', () => {
 
   it('derives undo truncation from the surviving messages alone', () => {
     const messages = [
-      userMessage('start'), // 0
-      assistantToolCall('c1', 'spine_open', JSON.stringify({ summary: 'task' })), // 1
-      toolReceipt('c1', ACCEPTED_OUTPUT), // 2
-      assistantText('working'), // 3
-      assistantToolCall('c2', 'spine_close', JSON.stringify({ memory: 'done' })), // 4
-      toolReceipt('c2', ACCEPTED_OUTPUT), // 5
+      userMessage('start'),
+      assistantToolCall('c1', 'spine_open', JSON.stringify({ summary: 'task' })),
+      toolReceipt('c1', ACCEPTED_OUTPUT),
+      assistantText('working'),
+      assistantToolCall('c2', 'spine_close', JSON.stringify({ memory: 'done' })),
+      toolReceipt('c2', ACCEPTED_OUTPUT),
     ];
     const full = deriveSpineState(messages);
     expect(full.nodes['1.1.1']?.closedAt).toBe(3);
@@ -1263,9 +1196,6 @@ describe('Spine legacy-op restore compat', () => {
       execEnvServices({ hostFs: recordingHostFs(new Map()) }),
       wireRecordPersistenceServices(persistence),
     );
-    // A two-epoch session with a close and a next: the transcript alone is
-    // the derivation input (open anchors at its carrier, close/next end the
-    // span right before the carrier).
     replaySession(ctx, [
       { kind: 'user', text: 'epoch-1 request' },
       { kind: 'spine_open', id: '1.1.1', summary: 'task A', parentId: '1.1' },
@@ -1296,8 +1226,6 @@ describe('Spine legacy-op restore compat', () => {
     );
     await resumed.restorePersisted();
 
-    // The message stream is the single source of truth: the tree derived
-    // after the restore matches the tree derived live.
     expect(resumed.get(IAgentSpineService).currentState()).toEqual(
       ctx.get(IAgentSpineService).currentState(),
     );
@@ -1352,8 +1280,6 @@ interface ClosedNodeIndices {
   readonly after: number;
 }
 
-// The history carries the transitions itself — real call arguments and the
-// accepted receipt — so the derivation rebuilds the node from the messages.
 function buildClosedNodeHistory(ctx: TestAgentContext): ClosedNodeIndices {
   append(ctx, userMessage('start'));
   const openCall = append(
@@ -1503,11 +1429,6 @@ function spawnResult(
     : { ordinal, outcome, memory_body, diagnostic };
 }
 
-/**
- * Open A → close A → open B → next C, then a rejected open and a rejected
- * close: the derivation must apply exactly the accepted chain (1.1.1 closed,
- * 1.1.2 closed, 1.1.3 open) and leave the cursor open at C.
- */
 function buildNextChainHistory(ctx: TestAgentContext): void {
   append(ctx, userMessage('start'));
   append(ctx, assistantToolCall('o1', 'spine_open', JSON.stringify({ summary: 'task A' })));
@@ -1571,27 +1492,12 @@ function textOf(message: { content?: readonly { type: string; text?: string }[] 
   );
 }
 
-/**
- * Text of every persisted `<spine_tran_status>` injection in the STORED
- * history, in stream order. The fold never synthesizes one: a status exists
- * only because the service appended it after a transition step.
- */
 function tranStatuses(ctx: TestAgentContext): string[] {
   return ctx.context
     .get()
     .map((message) => textOf(message))
     .filter((text) => text.includes('<spine_tran_status'));
 }
-
-// --- Logical session fixtures ----------------------------------------------
-//
-// A host-agnostic session script: plain data (JSON-serializable by
-// construction) describing the transcript and the spine transitions, so a
-// session can later be shared as a conformance vector across hosts. Replaying
-// uses the same context indices spineService commits — open anchors at its
-// carrier message, close/next end the span right before the carrier — and the
-// canonical projection pins the fold's end-to-end semantics so a reducer
-// rewrite must reproduce it exactly.
 
 type LogicalEvent =
   | { readonly kind: 'user'; readonly text: string }
@@ -1676,8 +1582,6 @@ function canonicalProjection(folded: readonly ContextMessage[]): string[] {
   });
 }
 
-// Token gauges vary with harness message sizes; the conformance assertion pins
-// the projection's shape and text, not its estimates.
 function normalizeTokenGauges(text: string): string {
   return text.replaceAll(
     /(cursor_context|context_left|raw_context|projected_context)="~?[\d.]+K?"/g,
@@ -1711,7 +1615,6 @@ describe('Spine trim projection', () => {
       `[TRIM_ID: trim_1]\n${oversized('BIG-BODY')}`,
     );
     expect(textOf(folded.find((m) => m.toolCallId === 'c_small'))).not.toContain('TRIM_ID');
-    // The stored history is never rewritten.
     expect(textOf(ctx.context.get().find((m) => m.toolCallId === 'c_big'))).toBe(
       oversized('BIG-BODY'),
     );
@@ -1743,7 +1646,6 @@ describe('Spine trim projection', () => {
     expect(textOf(folded.find((m) => m.toolCallId === 'c_big'))).toBe(
       SPINE_TRIM_SNIPPED_PLACEHOLDER,
     );
-    // The trim receipt itself is a control result and stays untagged.
     expect(textOf(folded.find((m) => m.toolCallId === 't1'))).toBe(TRIM_ACCEPTED_OUTPUT);
   });
 
@@ -1856,8 +1758,6 @@ describe('Spine trim projection', () => {
     append(ctx, assistantText('thinking out loud'));
 
     const spine = ctx.get(IAgentSpineService);
-    // Interleaved assistant text does not expire the window — and the accept
-    // itself records nothing (receipt-only, no side effect).
     expect(spine.acceptTrim('trim_1', { kind: 'snip' })).toEqual({ accepted: true });
 
     append(ctx, assistantToolCall('c_b', 'Bash'));
@@ -1938,8 +1838,6 @@ describe('Spine trim standalone (spine flag off)', () => {
     append(ctx, bigToolResult('c_big', oversized('BIG-BODY')));
     append(ctx, assistantText('done'));
 
-    // Upstream `materialize_trim_only_context`: every message is live range,
-    // so the projection is the plain history with trim labels rendered in.
     const folded = fold(ctx);
     expect(folded).toHaveLength(4);
     expect(textOf(folded.find((m) => m.toolCallId === 'c_big'))).toBe(
@@ -1978,8 +1876,6 @@ describe('Spine trim standalone (spine flag off)', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'go' }] });
     await ctx.untilTurnEnd();
 
-    // The tool registers on the trim flag alone and the accepted receipt
-    // lands in the stored history.
     const receipt = ctx.context.get().find((m) => m.toolCallId === 't1');
     expect(receipt?.isError).not.toBe(true);
     expect(textOf(receipt)).toBe(TRIM_ACCEPTED_OUTPUT);

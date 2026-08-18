@@ -1,20 +1,3 @@
-/**
- * `spine` domain (L4) — `spine_trim` tool.
- *
- * Receipt-only, but NOT a transition: no per-step budget and no pending
- * registration — the host validates the call against the derived eligibility
- * window (unknown / consumed / out-of-window / anchor-missing ids reject with
- * a do-not-retry reason), and the accepted receipt landing in history IS the
- * trim, re-derived by the projection on every read. A malformed slice shape
- * (not exactly one of head / tail / anchor) rejects here with a retryable
- * reason, before any receipt exists. Self-registers via
- * `registerAgentToolService` gated on the `KIMI_CODE_SPINE_TRIM` flag and
- * `agentId === 'main'` (main-agent-only, unlike the branch-available control
- * tools — see `./gate`) — the
- * spine flag is NOT required: trim runs standalone when the tree fold is off
- * (upstream `materialize_trim_only_context`). Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

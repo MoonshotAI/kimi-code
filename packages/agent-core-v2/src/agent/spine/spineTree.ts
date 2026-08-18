@@ -1,26 +1,3 @@
-/**
- * `spine` domain (L4) — pure NodeId path, memory-assembly and tree-rendering
- * helpers shared by the reducers, the service and the projection fold.
- *
- * Owns the spine node-id grammar (`<epoch>` for a root epoch,
- * `<epoch>.<n>[.<n>…]` for work nodes), the read-only `spine.tree`
- * rendering, and the pure `spineTreeViewFromState` projection that maps the
- * derived state onto `SpineTreeNodeView[]` — the single projection the
- * service's `spine_tree` rendering and external consumers (e.g. session
- * snapshots seeding an app-side task tree) both share. Node memory is the
- * model-written body verbatim — the folded
- * view's slot layout (surviving user requests in place, per-node
- * `<spine_memory node_id="...">` slots) is `spineFold`'s render-time concern.
- * Also owns `SPINE_VOID_OPENED_AT`, the sentinel `openedAt` for nodes that
- * must never produce a fold span: the synthetic root-epoch node (never
- * closable) and work nodes whose closed span a truncation repair voided. The
- * startup node does NOT use it — it opens at the real epoch boundary and
- * closes like any other work node. Holds no state and performs no IO;
- * consumed by `spineOps` (reducers), `spineDerive` (message-stream
- * derivation), `spineService` (commit orchestration) and `spineFold`
- * (projection).
- */
-
 import type { SpineNode, SpineState } from './spineOps';
 
 export const SPINE_VOID_OPENED_AT = -1;
@@ -175,12 +152,6 @@ export function epochRootIds(state: SpineState): readonly string[] {
     .toSorted((a, b) => Number(a) - Number(b));
 }
 
-// Net projected-context growth attributable to the node: the gauge delta
-// between its open baseline and its closing high-water mark (or the live
-// gauge while still open). Folds committed inside the node can make the net
-// negative — the tree view only needs the "no lasting cost" signal there, so
-// it clamps at zero. Nodes without a recorded baseline (root epochs, startup
-// nodes, sessions restored before the gauges were recorded) render no cost.
 function nodeTokenCost(node: SpineNode, input: SpineTreeViewInput): number | undefined {
   const baseline = input.baselines?.get(node.id);
   if (baseline === undefined) return undefined;

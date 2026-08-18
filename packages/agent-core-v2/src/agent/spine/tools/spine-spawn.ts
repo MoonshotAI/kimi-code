@@ -1,16 +1,3 @@
-/**
- * `spine` domain (L4) — `spine_spawn` control tool.
- *
- * Receipt-only, but NOT a transition in the ordinary sense: the accepted
- * structured receipt landing in history IS the join, from which the projection
- * synthesizes N closed child nodes. The service owns capacity admission and
- * per-step mutual exclusion with the other spine control tools. Self-registers
- * via `registerAgentToolService` gated on BOTH the `KIMI_CODE_SPINE` and
- * `KIMI_CODE_SPINE_SPAWN` flags and `agentId === 'main'` (main-agent-only,
- * like the other spine tools), and only when the configured capacity admits at
- * least two concurrent child agents. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';
@@ -67,8 +54,6 @@ export class SpineSpawnTool implements ISpineSpawnTool {
     @IAgentSpineService private readonly spine: IAgentSpineService,
     @IConfigService private readonly config: IConfigService,
   ) {
-    // Concrete task-count bounds go in the description text (host validation
-    // stays authoritative), matching the upstream contract.
     const maxBranches = maxSpawnBranchCount(
       resolveSpawnMaxThreads(this.config.get<SpineSpawnConfig>(SPINE_SPAWN_SECTION)),
     );

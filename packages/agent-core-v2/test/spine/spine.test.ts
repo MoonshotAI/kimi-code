@@ -132,10 +132,6 @@ describe('Spine control tools', () => {
   });
 
   it('default agent profile whitelists the spine tools', () => {
-    // The profile's active-tool whitelist gates what reaches the LLM request.
-    // If the spine tools are absent here, `profile.isToolActive` filters them
-    // out even though they are registered — the model would see `<spine_view>`
-    // with no tools to act on. Guards the whitelist entry in `profiles.ts`.
     const ctx = testAgent();
     const profile = ctx.get(ISessionAgentProfileCatalog).getDefault();
     expect(profile.tools).toEqual(
@@ -154,8 +150,6 @@ describe('Spine control tools', () => {
   });
 
   it('a whitelist omitting spine names filters them out of the request', () => {
-    // Reproduces the pre-fix defect: the tools stay in the registry but are
-    // inactive, so `llmRequester.defaultTools()` excludes them entirely.
     const ctx = testAgent();
     ctx.configure({ tools: ['Read'] });
     const spine = ctx.toolsData().filter((tool) => tool.name.startsWith('spine_'));
@@ -212,16 +206,12 @@ describe('Spine control tools', () => {
     const messages = ctx.get(IAgentContextMemoryService).get();
     const openResult = messages.find((m) => m.role === 'tool' && m.toolCallId === 'call_open');
     const spawnResult = messages.find((m) => m.role === 'tool' && m.toolCallId === 'call_spawn');
-    // The spawn is vetoed loudly at the executor before any branch work runs;
-    // the control still earns its accepted receipt...
     expect(spawnResult?.isError).toBe(true);
     expect(textOf(spawnResult)).toContain(
       'spine_spawn cannot be mixed with spine_open, spine_close, or spine_next',
     );
     expect(openResult?.isError).not.toBe(true);
     expect(textOf(openResult)).toBe(ACCEPTED_OUTPUT);
-    // ...but the derivation's carrier-group classification voids it: no
-    // transition, no spawn nodes.
     const state = readSpine(ctx);
     expect(state.openStack).toEqual(['1', '1.1']);
     expect(state.nodes['1.1.1']).toBeUndefined();
@@ -266,10 +256,6 @@ describe('Spine control tools', () => {
   });
 
   it('commits a spine transition after an undo shrank the history', async () => {
-    // The pre-fix defect dropped the post-undo transition because the evidence
-    // search started past the shrunk history. Derivation has no such cursor:
-    // the tree rebuilds from the surviving stream and the next transition
-    // nests under the surviving node.
     const ctx = loopContext();
     await configureLoop(ctx);
     for (let i = 0; i < 3; i++) ctx.appendExchange(i + 1, `seed u${i}`, `seed a${i}`, 100);
@@ -279,7 +265,6 @@ describe('Spine control tools', () => {
     await ctx.untilTurnEnd();
     expect(readSpine(ctx).nodes['1.1.1']?.summary).toBe('task A');
 
-    // A work turn inside the node, then undo it — the node itself survives.
     ctx.mockNextResponse({ type: 'text', text: 'work' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'work a bit' }] });
     await ctx.untilTurnEnd();
@@ -296,11 +281,6 @@ describe('Spine control tools', () => {
   });
 
   it('reopens a closed span when an undo truncates its close evidence', async () => {
-    // Derivation semantics: the tree is rebuilt from the surviving message
-    // stream, so an undo that cuts into a closed span removes the close
-    // transition with its carrier — the node reopens and its memory is gone.
-    // The fold must still show every surviving and post-undo message (the
-    // original defect swallowed everything appended after the undo).
     let lastRequestText = '';
     const generate: GenerateFn = async (_provider, _system, _tools, history) => {
       lastRequestText = historyText(history);
@@ -316,7 +296,6 @@ describe('Spine control tools', () => {
     ctx.context.append(spineReceipt('call_close'));
     for (let i = 4; i < 10; i++) ctx.appendExchange(i + 1, `u${String(i)}`, `a${String(i)}`, 100);
 
-    // Cut lands at index 8 — inside the (formerly) closed span [2, 9].
     await ctx.rpc.undoHistory({ count: 7 });
     expect(readSpine(ctx).nodes['1.1.1']?.closedAt).toBeUndefined();
 
@@ -329,10 +308,6 @@ describe('Spine control tools', () => {
   });
 
   it('keeps the rebuilt history visible after /clear', async () => {
-    // Derivation semantics: /clear empties the stored history, so the derived
-    // tree resets with it — no dangling epoch boundary, no stale nodes — and
-    // the fold shows everything rebuilt from then on. (The original defect:
-    // a boundary that outlived the history dropped every rebuilt message.)
     let lastRequestText = '';
     const generate: GenerateFn = async (_provider, _system, _tools, history) => {
       lastRequestText = historyText(history);
@@ -348,8 +323,6 @@ describe('Spine control tools', () => {
     expect(state.rootEpoch).toBe(1);
     expect(state.epochStartAt).toBe(0);
     expect(state.epochMemoryAt).toBeUndefined();
-    // The cleared history carries no epoch evidence, so the old epoch nodes
-    // are gone from the tree (their archives remain on disk).
     expect(state.nodes['2']).toBeUndefined();
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'AFTER-CLEAR-MARKER' }] });
@@ -375,8 +348,6 @@ describe('Spine control tools', () => {
     const projected = historyText(ctx.project());
     expect(projected).toContain('<spine_memory node_id="1.1">');
     expect(projected).toContain('STARTUP-MEMORY-MARKER');
-    // The closing span's user request survives in place, tagged — the memory
-    // body itself is the model-written text verbatim.
     expect(projected).toContain('[U1] STARTUP-PHASE-PROMPT');
     expect(projected).not.toContain('## User Message');
     expect(projected).toContain('AFTER-STARTUP-CLOSE');
@@ -401,8 +372,6 @@ describe('Spine control tools', () => {
     expect(memory).toBe('did A per [U2]');
 
     const projected = historyText(ctx.project());
-    // The mid-span request survives in place with its stable anchor; nothing
-    // is compiled into the memory body.
     expect(projected).toContain('[U2] MID-SPAN-REQUEST');
     expect(projected).toContain('<spine_memory node_id="1.1.1">\ndid A per [U2]\n</spine_memory>');
     expect(projected).not.toContain('## User Message');
@@ -433,7 +402,6 @@ describe('Spine control tools', () => {
     expect(lastRequestText).toContain('[U4] seed-u3');
     expect(lastRequestText).toContain('[U6] NUMBER-CHECK-PROMPT');
     expect(lastRequestText).toContain('old memory');
-    // The folded span's request survives in place with the same anchor.
     expect(lastRequestText).toContain('[U2] seed-u1');
     expect(lastRequestText).toContain('<spine_memory node_id="1.1.1">');
   });
@@ -457,11 +425,6 @@ describe('Spine control tools', () => {
   });
 
   it('keeps batched tool results visible and paired after a close', async () => {
-    // Reproduces the fold-boundary defect: the response batches an ordinary
-    // tool with spine_close, and the instant receipt lands before the
-    // ordinary result. Closing at the receipt index folded the carrier
-    // assistant message away, leaving the ordinary result an orphan the
-    // projector dropped (or an illegal wire when nothing else survived).
     const rec = recordingHostFs();
     const ctx = testAgent(
       execEnvServices({
@@ -485,22 +448,15 @@ describe('Spine control tools', () => {
       (m) => m.role === 'assistant' && m.toolCalls.some((call) => call.id === 'call_close'),
     );
     expect(carrierIndex).toBeGreaterThan(0);
-    // The span ends before the carrier, not at the receipt.
     expect(readSpine(ctx).nodes['1.1.1']?.closedAt).toBe(carrierIndex - 1);
 
-    // The carrier and both tool results survive the fold, and every tool
-    // result keeps its originating assistant message.
     const folded = ctx.get(IAgentSpineService).fold(history) as readonly ContextMessage[];
     expect(folded.some((m) => m.role === 'tool' && m.toolCallId === 'call_bash')).toBe(true);
     expect(folded.some((m) => m.role === 'tool' && m.toolCallId === 'call_close')).toBe(true);
     expect(toolPairingGaps(folded)).toEqual([]);
 
-    // And the batched result reaches the model instead of being dropped as
-    // an orphan.
     expect(historyText(ctx.project())).toContain('ORDINARY-RESULT-MARKER');
 
-    // The archive mirrors the folded span: no carrier, no receipt, no
-    // batched result.
     const archive = [...rec.writes.values()].join('\n');
     expect(archive).toContain('did A');
     expect(archive).not.toContain('call_bash');
@@ -532,12 +488,8 @@ describe('Spine control tools', () => {
     );
     const state = readSpine(ctx);
     expect(state.nodes['1.1.1']?.closedAt).toBe(carrierIndex - 1);
-    // The sibling opens at the carrier index: the carrier, its receipt, and
-    // the batched result belong to the sibling's span.
     expect(state.nodes['1.1.2']?.openedAt).toBe(carrierIndex);
 
-    // After the sibling closes, the whole next-chain folds away — the
-    // carrier, both receipts, and the batched result leave no orphans.
     const folded = ctx.get(IAgentSpineService).fold(history) as readonly ContextMessage[];
     expect(folded.some((m) => m.role === 'tool' && m.toolCallId === 'call_bash')).toBe(false);
     expect(toolPairingGaps(folded)).toEqual([]);
@@ -547,9 +499,6 @@ describe('Spine control tools', () => {
   });
 
   it('applies neither control when one response carries two (silent void)', async () => {
-    // Upstream reducer parity: two successful controls in one response group
-    // turn the whole group into an ordinary tool group — both calls return
-    // their accepted receipts and the tree does not move.
     const ctx = loopContext();
     await configureLoop(ctx);
     ctx.mockNextResponse(
@@ -579,10 +528,6 @@ describe('Spine control tools', () => {
   });
 
   it('accepts close memory that references an unknown [U#] anchor', async () => {
-    // Upstream parity: citations are not validated at accept time. User
-    // requests inside the closing span are compiled into the memory body at
-    // commit, and a reference to an anchor that exists nowhere stays
-    // tolerable rather than blocking the transition.
     const ctx = loopContext();
     await configureLoop(ctx);
     ctx.mockNextResponse(toolCallPart('call_open', 'spine_open', { summary: 'task A' }));
@@ -773,8 +718,6 @@ describe('spine control tool host gating', () => {
     const when = contribution?.options.when;
     expect(when, `${name} must gate on the spine flag + control-host identity`).toBeDefined();
     expect(when?.(accessorFor('main', { spine: true, trim: false, spawn: false }))).toBe(true);
-    // Spawned execution branches (forked with SPINE_BRANCH_LABEL) get the
-    // control tools; ordinary sub-agents do not.
     expect(when?.(accessorFor('sub-1', { spine: true, trim: false, spawn: false }))).toBe(false);
     expect(
       when?.(accessorFor('sub-1', { spine: true, trim: false, spawn: false }, undefined, branchLabels)),
@@ -793,13 +736,9 @@ describe('spine control tool host gating', () => {
     const needsTrim = name === 'spine_trim';
     expect(when?.(accessorFor('main', { spine: true, trim: needsTrim, spawn: needsSpawn }))).toBe(true);
     expect(when?.(accessorFor('sub-1', { spine: true, trim: needsTrim, spawn: needsSpawn }))).toBe(false);
-    // Spawned branches do NOT get these tools — nested spawn stays disabled.
     expect(
       when?.(accessorFor('sub-1', { spine: true, trim: needsTrim, spawn: needsSpawn }, undefined, branchLabels)),
     ).toBe(false);
-    // spine_trim runs STANDALONE (upstream `materialize_trim_only_context`):
-    // it needs only its own flag; every other spine tool requires the spine
-    // flag itself.
     expect(when?.(accessorFor('main', { spine: false, trim: needsTrim, spawn: needsSpawn }))).toBe(
       needsTrim,
     );
@@ -812,7 +751,6 @@ describe('spine control tool host gating', () => {
   });
 });
 
-// The live tree is derived from the message stream; read it through the service.
 function readSpine(ctx: TestAgentContext) {
   return ctx.get(IAgentSpineService).currentState();
 }
@@ -837,9 +775,6 @@ describe('Spine derivation basics', () => {
 
   it('rejects closing the root epoch', () => {
     const ctx = testAgent();
-    // Close the startup node first so the cursor lands on the root epoch;
-    // the transition commits through the message stream (carrier + accepted
-    // receipt), which the derivation reads.
     const spine = ctx.get(IAgentSpineService);
     expect(spine.acceptClose('startup done').accepted).toBe(true);
     ctx.context.append({
@@ -938,7 +873,6 @@ describe('Spine carrier-group classification', () => {
     vi.unstubAllEnvs();
   });
 
-  /** One assistant message carrying several spine calls — one tool-call group. */
   function assistantCarrier(
     calls: ReadonlyArray<readonly [string, string, Record<string, unknown>]>,
   ): ContextMessage {
@@ -1079,11 +1013,6 @@ function textOf(message: { content?: readonly { type: string; text?: string }[] 
   );
 }
 
-/**
- * Tool-call pairing invariant over a folded history: every tool result must
- * appear after the assistant message carrying its call. Returns the ids of
- * orphan results — the fold-boundary defect's signature.
- */
 function toolPairingGaps(messages: readonly ContextMessage[]): string[] {
   const gaps: string[] = [];
   const openCallIds = new Set<string>();
@@ -1127,11 +1056,6 @@ import type { AgentRunHandle } from '#/session/subagent/subagent';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 
-/**
- * Minimal working `IAgentLifecycleService.fork` for spawn tests: mints
- * `agent-N` ids in order so the paired `mockSubagentService` summaries line
- * up. The run side is faked separately, so no context copying is needed.
- */
 function mockLifecycleService(): IAgentLifecycleService {
   let minted = 0;
   const handles = new Map<string, IAgentScopeHandle>();
@@ -1208,10 +1132,6 @@ describe('spine_spawn service', () => {
   });
 
   it('accepts spawn after a control accept (mixing is vetoed at the executor, not the service)', async () => {
-    // Service-level contract change: the per-step transition budget is gone.
-    // A `spine_spawn` batched with a control call in one response is rejected
-    // by the executor's before-execute veto (which sees the whole response);
-    // direct sequential service calls never conflict.
     const ctx = testAgent(
       sessionService(IAgentLifecycleService, mockLifecycleService()),
       sessionService(ISessionSubagentService, mockSubagentService({})),
@@ -1303,7 +1223,6 @@ describe('spine_spawn service', () => {
     );
     const spine = ctx.get(IAgentSpineService);
 
-    // Start the first batch but do not let it complete so activeSpawnBranches stays at 2.
     const firstPromise = spine.executeSpawn(
       [
         { summary: 'branch A', prompt: 'do A' },
@@ -1313,9 +1232,6 @@ describe('spine_spawn service', () => {
     );
     await Promise.resolve();
 
-    // A second overlapping batch of two cannot fit under the limit of 2: no
-    // branch starts, but the call still succeeds with a full receipt whose
-    // per-task errored results carry the upstream diagnostic.
     const second = await spine.executeSpawn(
       [
         { summary: 'branch C', prompt: 'do C' },
@@ -1341,8 +1257,6 @@ describe('spine_spawn service', () => {
       expect(result.execution_ref).toBeUndefined();
     }
 
-    // The receipt is derivable: the rejected batch lands in the tree as
-    // errored branch nodes, so the model can see the rejection and retry.
     ctx.get(IAgentContextMemoryService).append(
       assistantSpineCall('call_spawn_cap', 'spine_spawn', {
         tasks: [
@@ -1365,7 +1279,6 @@ describe('spine_spawn service', () => {
     expect(state.nodes['1.1.2']?.spawn?.outcome).toBe('errored');
     expect(state.nodes['1.1.2']?.closedAt).toBeDefined();
 
-    // Unblock the first batch and drain it.
     completions.forEach((c) => c.resolve({ summary: 'done' }));
     await firstPromise;
   });
@@ -1397,7 +1310,6 @@ describe('spine_spawn service', () => {
     expect(receipt.results[0]).toMatchObject({ ordinal: 0, outcome: 'completed', memory_body: 'memory A', execution_ref: 'agent-0' });
     expect(receipt.results[1]).toMatchObject({ ordinal: 1, outcome: 'completed', memory_body: 'memory B', execution_ref: 'agent-1' });
 
-    // Simulate the receipt landing in contextMemory and assert derive picks it up.
     ctx.get(IAgentContextMemoryService).append(
       assistantSpineCall('call_spawn', 'spine_spawn', {
         tasks: [

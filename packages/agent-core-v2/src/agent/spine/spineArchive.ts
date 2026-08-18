@@ -1,23 +1,3 @@
-/**
- * `spine` domain (L4) — persists a closed node's full trajectory as a
- * model-readable markdown archive and renders its content.
- *
- * Folding a node out of the projected view must not mean losing its work: every
- * closed node is serialized to `<agentHomedir>/spine/<node-id>.md` through the
- * `hostFs` bridge — `agentHomedir` is bootstrap's per-agent session directory
- * (`<sessionDir>/agents/<id>`), so archives travel with session export and
- * never pollute the user's project — and the absolute path is published back
- * into the tree so the model can `Read` the original trace on demand (a read
- * outside `workDir` may prompt per-path approval). A root compaction gets the
- * same treatment at epoch granularity: the history the new epoch boundary
- * folds out of the projection is serialized to `<agentHomedir>/spine/<epoch>.md`
- * with the epoch summary on top, so details the summary dropped stay one
- * `Read` away. Writes go through the host filesystem bridge (no direct
- * `node:fs`); content rendering is a pure function; the only path arithmetic
- * is the `spine/` suffix under the bootstrap-issued homedir. Consumed by the
- * `spine` service's close / next commit path and its root-compact archive path.
- */
-
 import { dirname, resolve } from 'pathe';
 
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';

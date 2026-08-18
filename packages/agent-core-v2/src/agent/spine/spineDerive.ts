@@ -1,50 +1,3 @@
-/**
- * `spine` domain (L4) — derives the task tree purely from the stored
- * `contextMemory` message stream.
- *
- * The message stream is the single source of truth: a spine control-tool call
- * whose accepted receipt landed in history IS the transition — no parallel op
- * records, no commit protocol, and nothing to repair when the history shrinks
- * (an undo that removes a transition's messages removes the transition).
- * `deriveSpineState` scans the surviving messages, matches each `spine_open` /
- * `spine_close` / `spine_next` call to its accepted receipt — the exact
- * `ACCEPTED_OUTPUT` carrier text, or the legacy bare `accepted` left by older
- * sessions; persisted metadata can degrade, so the match is textual and a
- * near-miss does not count — and replays the transitions under the same
- * guards the legacy ops enforced (cursor position, non-empty bodies, root
- * epochs never close). Transition multiplicity resolves at CARRIER-group
- * granularity, mirroring the upstream reducer's `classify_control`: one
- * assistant response is one tool-call group — a group carrying exactly one
- * accepted control receipt applies it, a group carrying two or more applies
- * none (the calls still returned their success carriers; the tree simply
- * does not move), and a group mixing `spine_spawn` with any control call
- * applies nothing at all, spawn nodes included. A rejected or empty-body
- * control call does not count toward the group's multiplicity. A `spine_spawn` call whose structured JSON receipt lands
- * in history synthesizes N closed sibling nodes under the current cursor in
- * input order; every sibling shares the receipt message as a point span
- * (`openedAt === closedAt === receipt index`), so the first sibling's span
- * absorbs the receipt tool message and the carrier stays visible in the parent
- * context. Root-epoch boundaries come from the compaction summary message
- * itself (`origin.kind === 'compaction_summary'`, with the summary prefix text
- * as the fallback carrier when the origin metadata is absent). A closing node's
- * memory is the model-written body verbatim: the projection fold re-materializes
- * the span's surviving user requests and each closed child's own
- * `<spine_memory node_id="...">` slot from the surviving stream, so an undo
- * that rewrites the span rewrites the folded view with it — the memory itself
- * never needs patching. Consumed by `spineService`; the fold projection and
- * archive rendering read this state.
- *
- * Silence is the design, not an oversight: a call whose accepted receipt never
- * landed, a receipt whose call is missing, or a transition the guards reject
- * (a close under a stale cursor, an empty body) simply does not happen, with
- * no lost-commit audit and no repair op. The stream is the whole truth, so a
- * transition the stream does not fully witness is not a transition — the
- * legacy op world needed `reportLostCommits` precisely because it kept a
- * second record that could disagree with the receipts. `spine_spawn` receipts
- * are all-or-nothing in the same spirit: a malformed or partially-invalid
- * receipt is ignored entirely, synthesizing zero nodes.
- */
-
 import {
   COMPACTION_SUMMARY_PREFIX,
   isCompactionSummaryMessage,
@@ -63,10 +16,8 @@ import {
 } from './spineTree';
 import { ACCEPTED_OUTPUT } from './tools/controlResult';
 
-/** Receipt left by sessions predating the delayed-commit receipt wording. */
 const LEGACY_ACCEPTED_RECEIPT = 'accepted';
 
-/** Tool name for the parallel-branch spawn control call. */
 const SPINE_TOOL_SPAWN = 'spine_spawn';
 
 export function deriveSpineState(messages: readonly ContextMessage[]): SpineState {
@@ -117,8 +68,6 @@ export function deriveSpineState(messages: readonly ContextMessage[]): SpineStat
     if (node === undefined || node.closedAt !== undefined) return;
     const trimmed = memory.trim();
     if (trimmed.length === 0) return;
-    // The span ends BEFORE the assistant message carrying the transition call,
-    // so the carrier and its receipt stay visible in the parent context.
     const closedAt = Math.max(carrierAt - 1, node.openedAt);
     nodes[id] = { ...node, closedAt, memory: trimmed };
     openStack = openStack.slice(0, -1);
@@ -143,8 +92,6 @@ export function deriveSpineState(messages: readonly ContextMessage[]): SpineStat
       closedAt,
       memory: trimmedMemory,
     };
-    // The sibling opens right after the closing span — at the carrier's index —
-    // so the carrier and its receipt ride inside the new sibling's span.
     nodes[openedId] = {
       id: openedId,
       summary: trimmedSummary,
@@ -198,12 +145,6 @@ export function deriveSpineState(messages: readonly ContextMessage[]): SpineStat
       continue;
     }
     if (message.role !== 'assistant') continue;
-    // Carrier-group classification (the upstream reducer's rule): one
-    // assistant response is one tool-call group. A group mixing spine_spawn
-    // with any control call applies nothing; a group carrying two or more
-    // accepted control receipts applies none of them — the whole group
-    // becomes an ordinary tool group, silently. Only a lone accepted control
-    // receipt moves the tree.
     let hasSpawnCall = false;
     let hasControlCall = false;
     const spawns: SpawnReceiptInfo[] = [];
@@ -221,10 +162,6 @@ export function deriveSpineState(messages: readonly ContextMessage[]): SpineStat
       if (!accepted.has(call.id)) continue;
       const args = parseTransitionArgs(call.arguments);
       if (args === undefined) continue;
-      // The upstream classifier counts a control only when its body is
-      // non-empty, so an accepted-but-empty call neither applies nor vetoes
-      // a sibling. The host never accepts empty bodies; this guard keeps
-      // degraded / legacy streams aligned.
       if (!hasTransitionBody(call.name, args)) continue;
       transitions.push({ name: call.name, args });
     }
@@ -298,11 +235,6 @@ function isSpineTransitionTool(name: string): boolean {
   return name === SPINE_TOOL_OPEN || name === SPINE_TOOL_CLOSE || name === SPINE_TOOL_NEXT;
 }
 
-/**
- * The upstream classifier counts a control call toward a group's transition
- * only when its body is non-empty (an empty-body call is not a control at
- * all), so it neither applies nor voids a sibling control.
- */
 function hasTransitionBody(name: string, args: SpineTransitionArgs): boolean {
   if (name === SPINE_TOOL_OPEN) return args.summary.trim().length > 0;
   if (name === SPINE_TOOL_CLOSE) return args.memory.trim().length > 0;
@@ -445,8 +377,6 @@ function validateSpawnReceipt(
 function isEpochBoundary(message: ContextMessage): boolean {
   if (message.role !== 'user') return false;
   if (isCompactionSummaryMessage(message)) return true;
-  // Fallback carrier for degraded persistence: only when the origin metadata
-  // is absent — a message that still carries a non-summary origin is trusted.
   if (message.origin !== undefined) return false;
   return messageText(message).startsWith(COMPACTION_SUMMARY_PREFIX);
 }

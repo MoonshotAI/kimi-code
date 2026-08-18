@@ -41,7 +41,7 @@ import {
   ISessionExportService,
   ISessionIndex,
   ISessionInteractionService,
-  ISessionLifecycleService,
+  ISessionManager,
   ISessionMetadata,
   ISessionQuestionService,
   ISessionTodoService,
@@ -242,32 +242,42 @@ function makeFixture(options?: {
     };
   };
 
-  // App scope: lifecycle owns fake session handles; `resume` only knows the
-  // ids this fixture created (mirrors the persisted index).
+  // One fake session manager owns the session lifecycle: `resume` only
+  // knows the ids this fixture created (mirrors the persisted index), and
+  // `get` only the currently live ones (mirrors the live registry).
   const persisted = new Set<string>();
+  const live = new Map<string, unknown>();
   const lifecycle = {
     create: (opts: { sessionId: string; workDir: string }) => {
       (calls['lifecycle.create'] ??= []).push([opts]);
       order.push('lifecycle.create');
       persisted.add(opts.sessionId);
-      return Promise.resolve(makeSessionHandle(opts.sessionId, opts.workDir));
+      const handle = makeSessionHandle(opts.sessionId, opts.workDir);
+      live.set(opts.sessionId, handle);
+      return Promise.resolve(handle);
     },
     resume: (id: string, opts?: { additionalDirs?: readonly string[] }) => {
       (calls['lifecycle.resume'] ??= []).push([id, opts]);
       order.push('lifecycle.resume');
       if (!persisted.has(id)) return Promise.resolve(undefined);
-      return Promise.resolve(makeSessionHandle(id, '/work'));
+      const handle = makeSessionHandle(id, '/work');
+      live.set(id, handle);
+      return Promise.resolve(handle);
     },
     fork: (opts: { sourceSessionId: string; newSessionId?: string; title?: string }) => {
       (calls['lifecycle.fork'] ??= []).push([opts]);
       order.push('lifecycle.fork');
       const id = opts.newSessionId ?? 'fork-generated';
       persisted.add(id);
-      return Promise.resolve(makeSessionHandle(id, '/work'));
+      const handle = makeSessionHandle(id, '/work');
+      live.set(id, handle);
+      return Promise.resolve(handle);
     },
+    get: (id: string) => live.get(id),
     close: (id: string) => {
       (calls['lifecycle.close'] ??= []).push([id]);
       order.push('lifecycle.close');
+      live.delete(id);
       if (options?.closeSessionError !== undefined) return Promise.reject(options.closeSessionError);
       return Promise.resolve();
     },
@@ -330,8 +340,34 @@ function makeFixture(options?: {
           Promise.resolve({ id: 'ws-1', root: '/work', name: 'work', createdAt: 1, lastOpenedAt: 2 }),
         ),
       }],
-      [ISessionLifecycleService, lifecycle],
-      [ISessionIndex, { listRecent: recordReturning('index.list', Promise.resolve({ items: indexItems })) }],
+      [
+        ISessionManager,
+        {
+          create: (opts: { sessionId: string; workDir: string }) => lifecycle.create(opts),
+          resume: (id: string, opts?: { additionalDirs?: readonly string[] }) =>
+            lifecycle.resume(id, opts),
+          fork: (opts: { sourceSessionId: string; newSessionId?: string; title?: string }) =>
+            lifecycle.fork(opts),
+          get: (id: string) => lifecycle.get(id),
+          close: (id: string) => lifecycle.close(id),
+        },
+      ],
+      [
+        ISessionIndex,
+        {
+          listRecent: recordReturning('index.list', Promise.resolve({ items: indexItems })),
+          get: (id: string) => {
+            (calls['index.get'] ??= []).push([id]);
+            order.push('index.get');
+            const known = indexItems.find((item) => item.id === id);
+            if (known !== undefined) return Promise.resolve(known);
+            if (persisted.has(id)) {
+              return Promise.resolve({ id, workspaceId: 'ws-1', cwd: '/work' });
+            }
+            return Promise.resolve(undefined);
+          },
+        },
+      ],
       [IBootstrapService, { sessionsDir: '/sessions' }],
       [
         IConfigService,

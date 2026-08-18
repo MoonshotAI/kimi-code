@@ -63,8 +63,6 @@ describe('stepRetry plugin', () => {
     ctx = createTestAgent(
       llmGenerateServices(async () => {
         calls += 1;
-        // One full requester-layer round (3 attempts) must fail before the
-        // loop's stepRetry sees the error.
         if (calls <= 3) throw new APIConnectionError('terminated');
         return {
           id: 'retry-response',
@@ -123,8 +121,7 @@ describe('stepRetry plugin', () => {
     const result = await runTurn(1);
 
     expect(result.type).toBe('failed');
-    // Ten step-level attempts, each a full 3-attempt requester round.
-    expect(calls).toBe(30);
+    expect(calls).toBe(10);
     expect(rpcEvents('turn.step.retrying')).toHaveLength(9);
     expect(rpcEvents('turn.step.interrupted')).toEqual([
       expect.objectContaining({
@@ -138,9 +135,7 @@ describe('stepRetry plugin', () => {
     ctx = createTestAgent(
       llmGenerateServices(async () => {
         calls += 1;
-        // One full requester-layer round (3 attempts) must fail before the
-        // loop's stepRetry sees the error (and its retry-after hint).
-        if (calls <= 3) throw new APIProviderRateLimitError('slow down', null, 1);
+        if (calls === 1) throw new APIProviderRateLimitError('slow down', null, 1);
         return {
           id: 'retry-after-response',
           message: {
@@ -215,7 +210,6 @@ describe('stepRetry plugin', () => {
     const result = await runTurn(1);
 
     expect(result.type).toBe('failed');
-    // One step-level attempt = one 3-attempt requester round.
     expect(calls).toBe(3);
     expect(rpcEvents('turn.step.retrying')).toEqual([]);
   });

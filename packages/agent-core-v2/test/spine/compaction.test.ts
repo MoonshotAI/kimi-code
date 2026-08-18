@@ -61,8 +61,6 @@ describe('Spine / compaction interaction', () => {
     await completed;
 
     const recordTypes = (await ctx.wireHistory()).map((record) => record.type);
-    // The derivation reads the boundary from the summary message itself — no
-    // tree op is dispatched for a root compaction any more.
     expect(recordTypes).not.toContain('spine.root_compact');
     expect(recordTypes).not.toContain('context.apply_compaction');
 
@@ -96,8 +94,6 @@ describe('Spine / compaction interaction', () => {
     await ctx.rpc.beginCompaction({});
     await completed;
 
-    // The archive path is deterministic and published on the tree view; the
-    // epoch node itself carries no persisted path any more.
     const archivePath = [...writes.keys()].find((path) =>
       path.endsWith('/agents/main/spine/2.md'),
     );
@@ -136,8 +132,6 @@ describe('Spine / compaction interaction', () => {
     const recordTypes = (await ctx.wireHistory()).map((record) => record.type);
     expect(recordTypes).not.toContain('spine.root_compact');
     expect(recordTypes).toContain('full_compaction.complete');
-    // The failed epoch archive write is tracked, so the tree view publishes no
-    // path for the new epoch (instead of pointing at a missing file).
     const tree = ctx.get(IAgentSpineService).renderTree();
     expect(tree).toContain('2 [open]');
     expect(tree).not.toContain('2.md');
@@ -150,7 +144,6 @@ describe('Spine / compaction interaction', () => {
 
   it('keeps previous epochs and their archive paths reachable in the tree after a root compaction', () => {
     const ctx = testAgent();
-    // Epoch 1: a real open + close, then the epoch boundary lands.
     append(ctx, assistantToolCall('c_open', 'spine_open', JSON.stringify({ summary: 'task A' })));
     append(ctx, spineAcceptedReceipt('c_open'));
     append(ctx, assistantToolCall('c_close', 'spine_close', JSON.stringify({ memory: 'did A' })));
@@ -162,17 +155,12 @@ describe('Spine / compaction interaction', () => {
     expect(tree).toContain('1 [closed]');
     expect(tree).toContain('1.1.1');
     expect(tree).toContain('task A');
-    // The closed node's archive path is recomputed deterministically and
-    // published on the tree view.
     expect(tree).toContain('archive:');
     expect(tree).toContain('1-1-1.md');
     expect(tree).toContain('2 [open, archive:');
   });
 
   it('summarizes only the current epoch and chains the previous epoch summary', async () => {
-    // Reproduces the pre-fix defect: the summary request covered the
-    // append-only full history (every epoch since session start), spending
-    // the whole window on content that was already folded behind a summary.
     const summaryInputs: string[] = [];
     const generate: GenerateFn = async (_provider, _system, _tools, history) => {
       const text = history.map((message) => textOf(message)).join('\n');

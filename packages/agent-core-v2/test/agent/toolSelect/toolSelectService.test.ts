@@ -315,8 +315,6 @@ function registerSharedServices(
   reg.defineInstance(IEventBus, eventBus);
   reg.defineInstance(IAgentLoopService, loop);
   reg.defineInstance(IAgentContextMemoryService, contextMemory);
-  // The real projector is mounted for VIEW-fold coverage; it injects
-  // ITelemetryService, so strict mode needs a recording stub registered.
   reg.defineInstance(ITelemetryService, recordingTelemetry([]));
   reg.definePartialInstance(IAgentProfileService, {
     getModelCapabilities: () => capabilities,
@@ -613,8 +611,6 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
 
     const projected = h.projector.project(h.contextMemory.get());
 
-    // The default-order spy fold saw the schema message before toolSelect's
-    // VIEW fold stripped it; the canonical history is untouched either way.
     expect(collapseSawSchema).toBe(true);
     expect(projected.map((message) => message.role)).toEqual(['user']);
     expect(projected.every((message) => (message.tools?.length ?? 0) === 0)).toBe(true);

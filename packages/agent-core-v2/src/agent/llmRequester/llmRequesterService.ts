@@ -24,6 +24,7 @@ import {
   isImageFormatError,
   isRecoverableRequestStructureError,
   isRetryableGenerateError,
+  isTransportError,
 } from '#/kosong/contract/errors';
 import { isToolCall, type Message, type StreamedMessagePart } from '#/kosong/contract/message';
 import { type ThinkingEffort } from '#/kosong/contract/provider';
@@ -265,7 +266,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           maxAttempts,
         );
       } catch (error) {
-        if (attempt >= maxAttempts || !isRetryableGenerateError(error)) {
+        if (attempt >= maxAttempts || !isTransportError(unwrapErrorCause(error))) {
           this.logRequestFailure(error, overrides, signal, attempt, maxAttempts);
           trace.set(this.trackApiError(error, startedAt, signal, overrides.source, trace.traceId));
           throw error;

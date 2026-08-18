@@ -1,18 +1,3 @@
-/**
- * `spine` domain — `spineSpawn` config-section schema, env binding, and TOML
- * transforms.
- *
- * Owns the `[spine_spawn]` configuration section (the aggregate thread quota
- * for `spine_spawn` fissions). The quota also accepts an operational env
- * override (`KIMI_CODE_SPINE_SPAWN_MAX_THREADS`); `config` resolves the field
- * as `env > config.toml > default` and re-applies the env binding on every
- * read. Self-registered at module load via `registerConfigSection`.
- *
- * While the env var is set, `stripEnvBoundFields` restores its env-free raw
- * value before `set`/`replace` persists, so an env override echoed back
- * through a config write can never leak into `config.toml`.
- */
-
 import { z } from 'zod';
 
 import { type EnvBindings, envBindings, stripEnvBoundFields } from '#/app/config/config';

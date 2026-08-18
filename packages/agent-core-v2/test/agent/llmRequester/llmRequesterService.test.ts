@@ -29,8 +29,10 @@ import { IEventBus } from '#/app/event/eventBus';
 import {
   APIConnectionError,
   APIEmptyResponseError,
+  APIProviderOverloadedError,
   APIRequestTooLargeError,
   APIStatusError,
+  APITimeoutError,
 } from '#/kosong/contract/errors';
 import { emptyUsage, type TokenUsage } from '#/kosong/contract/usage';
 import {
@@ -779,6 +781,48 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
   });
 });
 
+describe('AgentLLMRequesterService transport retry', () => {
+  it('retries a transport error up to the bounded attempt count', async () => {
+    const calls = { value: 0 };
+    const failure = new APIConnectionError('socket hang up');
+    const { service } = createService(
+      createRequester(calls, failure, [failure, failure]),
+      undefined,
+    );
+
+    await expect(service.request()).rejects.toBe(failure);
+    expect(calls.value).toBe(3);
+  });
+
+  it('recovers within the bounded attempts after a transport error', async () => {
+    const calls = { value: 0 };
+    const { service } = createService(
+      createRequester(calls, new APITimeoutError('request timed out')),
+      undefined,
+    );
+
+    const result = await service.request();
+
+    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
+    expect(calls.value).toBe(2);
+  });
+
+  it('does not retry provider verdicts', async () => {
+    for (const error of [
+      new APIStatusError(429, 'rate limited'),
+      new APIStatusError(503, 'service unavailable'),
+      new APIProviderOverloadedError(529, 'overloaded'),
+      new APIEmptyResponseError('empty response'),
+    ]) {
+      const calls = { value: 0 };
+      const { service } = createService(createRequester(calls, error), undefined);
+
+      await expect(service.request()).rejects.toBe(error);
+      expect(calls.value).toBe(1);
+    }
+  });
+});
+
 describe('AgentLLMRequesterService trace id', () => {
   const passthroughProjector = {
     project: (messages: readonly ContextMessage[]) => messages,
@@ -921,9 +965,6 @@ describe('AgentLLMRequesterService trace id', () => {
       },
     });
     const { service, telemetryRecords } = createService(requester, passthroughProjector);
-    // Bound the error retry to a single loop attempt so the count pins the
-    // projection retry: physical request 1 (413) -> degraded resend 2 (socket
-    // hang up) -> terminal failure, no further error retries.
     const request = service.start({ retry: { maxAttempts: 1 } });
     await expect(request.result).rejects.toThrow('socket hang up');
 

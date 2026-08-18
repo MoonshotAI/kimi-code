@@ -18,6 +18,7 @@ import { Readable } from 'node:stream';
 
 import {
   bootstrap,
+  closeSessionById,
   ensureMainAgent,
   IAgentActivityView,
   IAgentPermissionModeService,
@@ -32,7 +33,7 @@ import {
   ISessionContext,
   ISessionExportService,
   ISessionIndex,
-  ISessionLifecycleService,
+  ISessionManager,
   ISessionMetadata,
   ISessionWorkspaceContext,
   IWorkspaceInstanceManager,
@@ -43,6 +44,7 @@ import {
   resolveKimiHome,
   resolveLoggingConfig,
   resolveThinkingEffortForModel,
+  resumeSessionById,
   summarizeSkill,
   type FileMeta,
   type GetPluginInfoInput,
@@ -281,11 +283,12 @@ export class CoreHarness {
     const id = options.id ?? randomUUID();
     const app = this.deps.app.accessor;
     // The workspace must be registered before the session is created —
-    // `ISessionLifecycleService.resume` refuses sessions whose workspace is
+    // `ISessionManager.resume` refuses sessions whose workspace is
     // unknown to the registry, so skipping this would make the session
     // impossible to resume later.
     await app.get(IWorkspaceService).createOrTouch(options.workDir);
-    const handle = await app.get(ISessionLifecycleService).create({
+    const manager = app.get(ISessionManager);
+    const handle = await manager.create({
       sessionId: id,
       workDir: options.workDir,
       additionalDirs: options.additionalDirs,
@@ -323,7 +326,7 @@ export class CoreHarness {
       if (registered !== undefined) {
         await registered.session.close().catch(() => {});
       } else {
-        await app.get(ISessionLifecycleService).close(id).catch(() => {});
+        await manager.close(id).catch(() => {});
       }
       this.activeSessions.delete(id);
       throw error;
@@ -371,8 +374,18 @@ export class CoreHarness {
 
   async forkSession(input: ForkSessionInput): Promise<CoreSession> {
     const sourceId = normalizeSessionId(input.id);
-    // v1 `forkId` maps onto the v2 `ForkSessionOptions.newSessionId`.
-    const handle = await this.deps.app.accessor.get(ISessionLifecycleService).fork({
+    // v1 `forkId` maps onto the v2 `ForkSessionOptions.newSessionId`. The
+    // manager throws `session.not_found` for an unknown source (mirroring
+    // kap-server's fork route); pre-check through the index to keep the
+    // CoreError contract.
+    const app = this.deps.app.accessor;
+    if ((await app.get(ISessionIndex).get(sourceId)) === undefined) {
+      throw new CoreError(
+        CoreErrorCodes.SESSION_NOT_FOUND,
+        `Session "${sourceId}" was not found.`,
+      );
+    }
+    const handle = await app.get(ISessionManager).fork({
       sourceSessionId: sourceId,
       newSessionId: input.forkId,
       title: input.title,
@@ -400,15 +413,15 @@ export class CoreHarness {
       return;
     }
     // Cold rename: load, retitle, and put the session back to rest.
-    const lifecycle = this.deps.app.accessor.get(ISessionLifecycleService);
-    const handle = await lifecycle.resume(id);
+    const app = this.deps.app.accessor;
+    const handle = await resumeSessionById(app, id);
     if (handle === undefined) {
       throw new CoreError(CoreErrorCodes.SESSION_NOT_FOUND, `Session "${id}" was not found.`);
     }
     try {
       await handle.accessor.get(ISessionMetadata).setTitle(input.title);
     } finally {
-      await lifecycle.close(id).catch(() => {});
+      await closeSessionById(app, id).catch(() => {});
     }
   }
 
@@ -617,7 +630,7 @@ export class CoreHarness {
     data: Uint8Array,
     options: { readonly name: string; readonly expiresInSec?: number },
   ): Promise<FileMeta> {
-    return await this.deps.app.accessor
+    return this.deps.app.accessor
       .get(IFileService)
       .save(Readable.from([data]), options.name, { expiresInSec: options.expiresInSec });
   }
@@ -724,7 +737,7 @@ export class CoreHarness {
     id: string,
     input: { additionalDirs?: readonly string[]; replayTurnLimit?: number },
   ): Promise<CoreSession> {
-    const handle = await this.deps.app.accessor.get(ISessionLifecycleService).resume(id, {
+    const handle = await resumeSessionById(this.deps.app.accessor, id, {
       additionalDirs: input.additionalDirs,
     });
     if (handle === undefined) {
@@ -760,7 +773,7 @@ export class CoreHarness {
       resumeState,
       onClose: async () => {
         this.activeSessions.delete(id);
-        await this.deps.app.accessor.get(ISessionLifecycleService).close(id);
+        await closeSessionById(this.deps.app.accessor, id);
       },
     });
     this.activeSessions.set(id, { session, handle });

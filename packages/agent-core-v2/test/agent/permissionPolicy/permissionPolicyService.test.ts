@@ -132,8 +132,6 @@ describe('AgentPermissionPolicyService chain', () => {
   });
 
   it('approves spine control tools in manual mode', async () => {
-    // The spine tools drive once per node boundary; falling through to
-    // fallback-ask would make the model-driven tree workflow unusable.
     for (const toolName of ['spine_open', 'spine_close', 'spine_next', 'spine_tree']) {
       await expect(evaluate({ toolName, args: {} })).resolves.toMatchObject({
         policyName: 'default-tool-approve',

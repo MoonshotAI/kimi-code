@@ -937,7 +937,6 @@ describe('spineSpawn config section', () => {
       maxConcurrentThreadsPerSession: 6,
     });
 
-    // Invalid env values are ignored and resolution falls back to config.toml.
     env[SPINE_SPAWN_MAX_THREADS_ENV] = 'abc';
     expect(config.get<SpineSpawnConfig>(SPINE_SPAWN_SECTION)).toEqual({
       maxConcurrentThreadsPerSession: 6,
@@ -947,7 +946,6 @@ describe('spineSpawn config section', () => {
       maxConcurrentThreadsPerSession: 6,
     });
 
-    // A valid env value wins over config.toml on every read.
     env[SPINE_SPAWN_MAX_THREADS_ENV] = '8';
     expect(config.get<SpineSpawnConfig>(SPINE_SPAWN_SECTION)).toEqual({
       maxConcurrentThreadsPerSession: 8,
@@ -975,14 +973,11 @@ describe('spineSpawn config section', () => {
     const config = ix.get(IConfigService);
     await config.ready;
 
-    // A client echoing the env-overlaid section back.
     await config.set(SPINE_SPAWN_SECTION, { maxConcurrentThreadsPerSession: 7 });
 
-    // Runtime resolution still lets the env win…
     expect(config.get<SpineSpawnConfig>(SPINE_SPAWN_SECTION)).toEqual({
       maxConcurrentThreadsPerSession: 7,
     });
-    // …but persistence keeps the raw value.
     expect(config.inspect<SpineSpawnConfig>(SPINE_SPAWN_SECTION).userValue).toEqual({
       maxConcurrentThreadsPerSession: 6,
     });

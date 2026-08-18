@@ -120,7 +120,6 @@ function buildFakes(tasks: readonly SpineSpawnTaskInput[]): {
       const controller = runCompletionControllers[index];
       if (controller === undefined) throw new Error(`no completion controller for ${agentId}`);
 
-      // Wire cancellation: when the provided signal aborts, cancel the turn.
       const onAbort = () => {
         agent.cancelled = true;
       };
@@ -265,7 +264,6 @@ describe('executeSpawnBranches', () => {
       TASKS,
       controller.signal,
     );
-    // Let both starts land, then abort before any branch completes.
     await Promise.resolve();
     controller.abort('turn cancelled');
     const results = await promise;
@@ -293,8 +291,6 @@ describe('executeSpawnBranches', () => {
     };
 
     const promise = executeSpawnBranches({ lifecycle, subagentService }, TASKS, makeSignal());
-    // The started branch's run is cancelled by the batch; simulate its turn
-    // settling as an abort, the way a cancelled turn's completion rejects.
     const abortError = new Error('turn cancelled');
     abortError.name = 'AbortError';
     runCompletionControllers[0]!.reject(abortError);
@@ -304,7 +300,6 @@ describe('executeSpawnBranches', () => {
     expect(results[0]?.diagnostic).toContain('a sibling branch failed to start');
     expect(results[1]?.outcome).toBe('errored');
     expect(results[1]?.diagnostic).toContain('fork denied');
-    // Only one fork succeeded, and that agent was released despite the failure.
     expect(agents).toHaveLength(1);
     expect(agents[0]?.removed).toBe(true);
   });

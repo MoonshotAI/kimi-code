@@ -1,34 +1,3 @@
-/**
- * `spine` domain (L4) — legacy log restore regression net: replay REAL
- * pre-derivation session wire logs and assert the derivation
- * (`deriveSpineState` over the restored `contextMemory` stream) reconstructs
- * a well-formed tree while the inert legacy `spine.*` op records are
- * skip-and-counted by the dispatcher's restore.
- *
- * Fixtures (`./fixtures/*.jsonl`) are sanitized real v2 wire logs from local
- * pre-derivation sessions (2026-07-31 sanitization, one-off script kept out of
- * tree): record count/order untouched, spine op payloads and message-side
- * spine_* args mapped through one global dictionary to deterministic
- * placeholders (so op-side == message-side exactly when the raw strings were
- * equal), accepted receipts kept verbatim, all other free text placeholdered,
- * blobref media neutralized to inline text parts. Sources:
- *   - legacy-open-close.jsonl   0feff1ef (2026-07-14 build, open/close chain)
- *   - legacy-next.jsonl         2fddef08 (2026-07-14 build, spine.next ×2, ends mid-session)
- *   - legacy-receipt-anchor.jsonl 01KX07W6 (2026-07-08 build, pre f0c56f31b)
- *   - legacy-undo-divergence.jsonl 2f793f68 (2026-07-16 build, undo ×7 +
- *     truncate_repair ×4 + spine.next; tail cut right after the last
- *     truncate_repair — a prefix cut never shifts message indices)
- *   - legacy-root-compact.jsonl mremv61a (2026-07-10 build, spine.root_compact
- *     ×1 → 2 root epochs). The only other real root_compact sample found
- *     (mre987c4, 5 epochs) was rejected: 34 MB and a pre-fix build. Further
- *     synthetic root_compact coverage lives in `compaction.test.ts`.
- *
- * Every fixture asserts: restore reports exactly the fixture's inert `spine.*`
- * op records as unknown-type skips and nothing else, all derived span indices
- * stay inside the restored message bounds, and the open stack is
- * self-consistent (ids exist, are open, and chain through `children`).
- */
-
 import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
@@ -87,11 +56,6 @@ async function restoreFixture(name: string): Promise<RestoredFixture> {
   }
 }
 
-/**
- * The skip-and-count acceptance: the inert records of removed domains (the
- * legacy `spine.*` ops and the deleted `context_size.*` gauges) — and nothing
- * else — are reported as unknown-type skips during restore.
- */
 function expectOnlyLegacySkips(unexpected: readonly unknown[], expectedCount: number): void {
   const messages = unexpected.map(String);
   expect(messages.length).toBe(expectedCount);
@@ -102,9 +66,6 @@ function expectOnlyLegacySkips(unexpected: readonly unknown[], expectedCount: nu
 
 function expectSpanInvariants(state: SpineState, messageCount: number): void {
   for (const node of Object.values(state.nodes)) {
-    // A voided span (openedAt === SPINE_VOID_OPENED_AT) is fold-excluded and
-    // kept for reference only: its stale closedAt may index messages a prefix
-    // truncation cut away, so bounds apply to live spans only.
     if (node.openedAt === SPINE_VOID_OPENED_AT) continue;
     expect(node.openedAt, `${node.id} openedAt`).toBeGreaterThanOrEqual(0);
     expect(node.openedAt, `${node.id} openedAt`).toBeLessThan(messageCount);
@@ -150,12 +111,6 @@ function parentOf(state: SpineState, id: string): string | null {
 }
 
 describe('Spine legacy wire replay (exact-match group)', () => {
-  /**
-   * Sessions written by the final op-based build (post-f0c56f31b anchors,
-   * verbatim memory) with no witness-removing undo: the derivation must
-   * reproduce the op-replayed tree field by field.
-   */
-
   it('legacy-open-close: a 5-node open/close chain restores and derives cleanly', async () => {
     const { derived, messages, unexpected } = await restoreFixture('legacy-open-close');
     expectOnlyLegacySkips(unexpected, 6);
@@ -169,7 +124,6 @@ describe('Spine legacy wire replay (exact-match group)', () => {
     expectOnlyLegacySkips(unexpected, 3);
     expect(messages.length).toBe(41);
     expect(Object.keys(derived.nodes).length).toBe(5);
-    // Mid-session snapshot: the cursor node is still open.
     expect(derived.openStack).toEqual(['1', '1.1', '1.1.3']);
     expect(derived.nodes['1.1.3']?.closedAt).toBeUndefined();
     expectSpanInvariants(derived, messages.length);
@@ -198,14 +152,11 @@ describe('Spine legacy wire replay (receipt-anchor group)', () => {
     expectOnlyLegacySkips(unexpected, 8);
     expect(messages.length).toBe(80);
 
-    // The root_compact acceptance: the derivation reconstructs the epoch
-    // boundary from the compaction-summary message.
     expect(derived.rootEpoch).toBe(2);
     expect(derived.epochStartAt).toBe(71);
     expect(derived.epochMemoryAt).toBe(70);
     expect(derived.openStack).toEqual(['2', '2.1']);
 
-    // Span table pinned exactly.
     expectSpans(derived, {
       1: { openedAt: SPINE_VOID_OPENED_AT },
       2: { openedAt: SPINE_VOID_OPENED_AT },
@@ -218,8 +169,6 @@ describe('Spine legacy wire replay (receipt-anchor group)', () => {
       '2.1': { openedAt: 71 },
     });
 
-    // The derivation keeps the surviving close call's memory body verbatim
-    // (the value is the sanitization dictionary's placeholder).
     expect(derived.nodes['1.1.1']?.memory).toBe('memory_87');
     for (const id of ['1.1.1.1', '1.1.1.2', '1.1.1.3', '1.1.1.4']) {
       expect(derived.nodes[id]?.memory?.length, `${id} memory`).toBeGreaterThan(0);
@@ -236,7 +185,6 @@ describe('Spine legacy wire replay (undo-divergence group)', () => {
     expect(messages.length).toBe(592);
     expectSpanInvariants(derived, messages.length);
 
-    // ---- The derivation over the surviving stream: exact topology. ----
     const DERIVED_TOPOLOGY: Readonly<Record<string, { parent: string | null } & Span>> = {
       1: { parent: null, openedAt: SPINE_VOID_OPENED_AT },
       '1.1': { parent: '1', openedAt: 0, closedAt: 181 },
@@ -279,10 +227,6 @@ describe('Spine legacy wire replay (undo-divergence group)', () => {
     expect(derived.epochStartAt).toBe(0);
     expect(derived.epochMemoryAt).toBeUndefined();
 
-    // ---- The derivation's undo semantics on a real log. ----
-    // Transitions whose witnesses an undo removed are not transitions: the
-    // unwitnessed ids never appear, and the derivation renumbers the redo
-    // chain (the whole 1.1.x series shifts under the surviving stream).
     expect(derived.nodes['1.1.9']).toBeUndefined();
     expect(derived.nodes['1.1.8.1']).toBeUndefined();
     expect(derived.nodes['1.1.27']).toBeUndefined();

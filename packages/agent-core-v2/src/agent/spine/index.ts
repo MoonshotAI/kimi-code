@@ -1,11 +1,3 @@
-/**
- * `spine` domain (L4) — public surface of the model-driven Spine task tree.
- *
- * Re-exporting each module executes its import-time registration
- * (`registerScopedService` for the service, `registerTool` for the four control
- * tools), so importing this index is what wires spine into an Agent scope.
- */
-
 export * from './configSection';
 export * from './flag';
 export * from './instructions';

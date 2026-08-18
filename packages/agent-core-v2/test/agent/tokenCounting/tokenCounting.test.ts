@@ -249,14 +249,6 @@ describe('Agent token counting', () => {
   });
 
   it('keeps the measured prefix aligned with settled storage across a streamed step', () => {
-    // The loop opens a partial assistant at `step.begin` and settles it with
-    // the response content after the request returns, so the live input array
-    // already includes the fold-opened assistant when `measured()` runs.
-    // Counting the folded output again would park the measured prefix one past
-    // the stored context: the whole-context read would fall off the exact
-    // measured aggregate onto a per-message estimate until the next append
-    // caught the length up, and the footer gauge would swing between estimate
-    // and request caliber at every turn boundary.
     ctx.appendUserMessage([{ type: 'text', text: 'hello world '.repeat(20) }]);
     context.appendLoopEvent({ type: 'step.begin', uuid: 'step-1' });
 
@@ -271,8 +263,6 @@ describe('Agent token counting', () => {
       content: [{ type: 'text', text: 'answer '.repeat(40) }],
       toolCalls: [],
     };
-    // Mirrors the llmRequester call site: `input` is the live request array
-    // (already holding the fold-opened assistant), `output` is informational.
     tokenCounting.measured(context.get(), [response], tokenUsage);
     context.appendLoopEvent({
       type: 'content.part',
@@ -281,14 +271,9 @@ describe('Agent token counting', () => {
     });
     context.appendLoopEvent({ type: 'step.end', uuid: 'step-1' });
 
-    // Settled storage = user + assistant, exactly covered by the measured
-    // prefix: the whole-context read is the LLM-reported total with no
-    // estimate tail.
     expect(context.get()).toHaveLength(2);
     expect(tokenCounting.get()).toEqual({ size: 20_500, measured: 20_500, estimated: 0 });
 
-    // The next user message lands on the measured aggregate as a small tail
-    // estimate instead of re-deriving the whole context from estimates.
     ctx.appendUserMessage([{ type: 'text', text: 'next question' }]);
     const after = tokenCounting.get();
     expect(after.measured).toBe(20_500);
@@ -300,7 +285,6 @@ describe('Agent token counting', () => {
     let projector: IAgentContextProjectorService;
     let raws: number[];
 
-    /** The unfolded-request cost the status line should show, computed independently. */
     const expectedRaw = (): number => {
       const history = context.get();
       const rawMessages = estimateTokensForMessages(history);
@@ -323,9 +307,6 @@ describe('Agent token counting', () => {
       ctx.appendUserMessage([{ type: 'text', text: 'hello world '.repeat(50) }]);
       expect(raws.at(-1)).toBe(expectedRaw());
 
-      // A streamed step folds content into the open assistant AFTER its
-      // request returned; the raw gauge must follow the context, not the
-      // measured cadence.
       context.append({
         role: 'assistant',
         content: [{ type: 'text', text: 'working on it '.repeat(40) }],

@@ -569,9 +569,6 @@ describe('Agent tool description', () => {
 
     const description = agentDescription();
 
-    // The default `agent` profile whitelists the spine tool names so the main
-    // agent's active-tool filter lets them through, but they must not be
-    // rendered as text — the tools register only for the main agent.
     expect(description).not.toContain('spine_');
   });
 

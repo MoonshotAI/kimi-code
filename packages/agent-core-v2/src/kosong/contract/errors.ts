@@ -231,6 +231,16 @@ export function isImageFormatError(error: unknown): boolean {
   return false;
 }
 
+/**
+ * Transport-class failure: the request never reached a provider verdict
+ * (network/connection drop, timeout). This is the only category the requester
+ * layer retries on its own — provider verdicts (status errors, empty
+ * responses) propagate to the caller's own retry policy.
+ */
+export function isTransportError(error: unknown): boolean {
+  return error instanceof APIConnectionError || error instanceof APITimeoutError;
+}
+
 export function isRetryableGenerateError(error: unknown): boolean {
   if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
     return true;

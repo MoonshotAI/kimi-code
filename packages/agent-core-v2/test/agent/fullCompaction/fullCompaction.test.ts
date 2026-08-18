@@ -679,9 +679,6 @@ describe('FullCompaction', () => {
     await compacted;
     await completed;
 
-    // The requester layer retries a retryable failure 3 times before it
-    // surfaces to the compaction loop, so one compaction-level retry is the
-    // fourth physical request.
     expect(attempts).toBe(4);
     expect(records).toContainEqual({
       event: 'compaction_finished',
@@ -855,9 +852,6 @@ describe('FullCompaction', () => {
     await compacted;
     await completed;
 
-    // The requester layer retries the empty (think-only) response 3 times
-    // before it surfaces to the compaction loop, which then shrinks the
-    // prefix: the fourth physical request carries the reduced history.
     expect(inputs).toHaveLength(4);
     expect(inputs[3]!.length).toBeLessThan(inputs[0]!.length);
     expect(ctx.compactHistory()).toEqual([
@@ -939,10 +933,8 @@ describe('FullCompaction', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await failed;
 
-    // Each loop iteration costs three physical requests (the requester layer
-    // retries the empty response twice before surfacing it): 8 iterations x 3.
-    expect(inputs).toHaveLength(24);
-    expect(inputs[3]!.length).toBeLessThan(inputs[0]!.length);
+    expect(inputs).toHaveLength(8);
+    expect(inputs[1]!.length).toBeLessThan(inputs[0]!.length);
     expect(records).toContainEqual({
       event: 'compaction_failed',
       properties: expect.objectContaining({
@@ -1017,14 +1009,9 @@ describe('FullCompaction', () => {
 
     await ctx.rpc.beginCompaction({});
     await firstAttemptFailed.promise;
-    // The requester layer retries the retryable 429 twice more (jittered
-    // backoff) before the failure surfaces to the compaction loop; only then
-    // does the failed request's trace id land on the active compaction and
-    // the loop enters its own backoff. Step fake time in slices well below
-    // that loop backoff so the assertion reliably lands inside it.
     const fullCompaction = ctx.get(IAgentFullCompactionService);
-    for (let i = 0; i < 100 && fullCompaction.compacting?.traceId === undefined; i += 1) {
-      await vi.advanceTimersByTimeAsync(100);
+    for (let i = 0; i < 10 && fullCompaction.compacting?.traceId === undefined; i += 1) {
+      await Promise.resolve();
     }
     expect(fullCompaction.compacting?.traceId).toBe('trace-compact-retry');
 
@@ -1032,7 +1019,7 @@ describe('FullCompaction', () => {
     await cancelled;
     await vi.advanceTimersByTimeAsync(10_000);
 
-    expect(attempts).toBe(3);
+    expect(attempts).toBe(1);
     expect(records).toContainEqual({
       event: 'cancel',
       properties: {
@@ -1302,8 +1289,6 @@ describe('FullCompaction', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await failed;
 
-    // Five compaction-level attempts, each costing three physical requests
-    // through the requester layer's own transport retry.
     expect(attempts).toBe(15);
     expect(records).toContainEqual({
       event: 'compaction_failed',

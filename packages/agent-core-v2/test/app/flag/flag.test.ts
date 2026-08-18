@@ -148,7 +148,6 @@ describe('FlagService', () => {
     const state = flags.explain('independent_flag');
     expect(state?.enabled).toBe(false);
     expect(state?.source).toBe('default');
-    // Config still applies when the master switch is ignored.
     await config.set(EXPERIMENTAL_SECTION, { independent_flag: true });
     expect(flags.explain('independent_flag')?.enabled).toBe(true);
     expect(flags.explain('independent_flag')?.source).toBe('config');

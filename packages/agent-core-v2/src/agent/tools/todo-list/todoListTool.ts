@@ -58,12 +58,6 @@ export class TodoListTool implements ITodoListTool {
   }
 }
 
-// While the spine experiment runs, the model manages task progress through the
-// spine tree instead, so the flat TodoList tool steps aside: two parallel
-// progress trackers (flat list + tree) would drift apart and confuse the
-// model. `when` is evaluated per Agent activation, which happens after the CLI
-// `main()` process env is settled, so `KIMI_CODE_SPINE` toggles take effect for
-// every new agent.
 registerAgentToolService(ITodoListTool, TodoListTool, {
   name: 'TodoList',
   domain: 'todo',

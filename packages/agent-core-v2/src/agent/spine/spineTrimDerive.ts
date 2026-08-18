@@ -1,31 +1,3 @@
-/**
- * `spine` domain (L4) — derives the tool-response trim projection purely from
- * the stored `contextMemory` message stream.
- *
- * The trim projection is a second, independent read of the same stream the
- * tree derivation reads: no persisted ops, no commit protocol — a `spine_trim`
- * call whose accepted receipt landed in history IS the trim, and an undo that
- * removes the call or the receipt removes the trim with it. Tagging is
- * automatic: every tool result larger than `SPINE_TRIM_THRESHOLD_BYTES` that
- * does not answer a `spine_*` control tool and carries text-only content gets
- * the next `trim_N` id in stream order, so the id a message carries stays
- * stable across projections for as long as the history before it does.
- * Trimming itself is model-driven and one-shot: the host validates a call
- * against the derived eligibility window, and the accepted receipt consumes
- * the id forever.
- *
- * Eligibility is deliberately NOT the projection. The `[TRIM_ID: trim_N]`
- * label renders byte-stable for as long as the result survives the tree fold
- * — an id that has left the window stays visible but loses its trimmability —
- * while the window is derived separately here: the tags of the most recent
- * COMPLETED tool-call batch (every call answered; an aborted batch never
- * shifts the window, and interleaved assistant text never expires it either).
- * Host validation (`AgentSpineService.acceptTrim`) reads this same
- * derivation, so rendering and validation share exactly one eligibility
- * source. Consumed by `spineTrimFold` (rendering) and `spineService`
- * (validation).
- */
-
 import type { ContextMessage } from '#/agent/contextMemory/types';
 
 import { SPINE_TOOL_TRIM } from './spine';
@@ -82,9 +54,6 @@ export function deriveSpineTrimProjection(
     const message = messages[i];
     if (message === undefined) continue;
     if (message.role === 'assistant' && message.toolCalls.length > 0) {
-      // A new batch starts: the previous one can no longer gain receipts, so
-      // it shifts the eligibility window only if it completed. An aborted
-      // batch (calls left unanswered) leaves the window where it was.
       if (pendingCalls.size === 0) eligible = new Set(batchTags);
       pendingCalls = new Set<string>();
       batchTags = [];
@@ -123,8 +92,6 @@ export function deriveSpineTrimProjection(
     tagIndex.set(tag, i);
     batchTags.push(tag);
   }
-  // A tail batch still waiting for receipts never shifts the window, so a
-  // trim call validates against the batch that precedes its own.
   if (pendingCalls.size === 0) eligible = new Set(batchTags);
 
   return { labels, tagIndex, masks, eligible, consumed };

@@ -53,16 +53,6 @@ describe('token estimates for media content parts', () => {
   });
 });
 
-/**
- * Calibration of `estimateTokens`' per-class divisors. Anchors measured with
- * cl100k_base on 2026-07-09 over representative tool-output / prose snippets
- * (a neutral BPE proxy — bands are wide on purpose, they pin the calibration
- * direction, not the proxy's exact counts):
- *   jsonToolOutput: 188 chars -> 78 tokens (legacy ascii/4 estimate: 47, 0.60x)
- *   toolLogLine:    136 chars -> 52 tokens (legacy: 34, 0.65x)
- *   englishProse:    82 chars -> 14 tokens (legacy: 21, 1.50x; over-estimating
- *                   prose is tolerated — it biases the budget clamp toward safe)
- */
 describe('estimateTokens character-class calibration', () => {
   const jsonToolOutput = `{
   "name": "kimi-code",

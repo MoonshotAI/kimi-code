@@ -368,7 +368,7 @@ describe('LLMRequester service migration coverage', () => {
       expect(JSON.stringify(entries)).not.toContain('stack');
     });
 
-    it('fails a retryable provider error after the bounded transport retry', async () => {
+    it('fails a transport error after the bounded transport retry', async () => {
       let calls = 0;
       ctx = createTestAgent(
         llmGenerateServices(async () => {
@@ -381,9 +381,23 @@ describe('LLMRequester service migration coverage', () => {
       await expect(llmRequester.request()).rejects.toMatchObject({
         name: 'APIConnectionError',
       });
-      // The requester owns a bounded transport retry (DEFAULT_MAX_RETRY_ATTEMPTS);
-      // the loop's stepRetry policy layers on top of an exhausted round.
       expect(calls).toBe(3);
+    });
+
+    it('fails a provider status error on the first attempt without transport retry', async () => {
+      let calls = 0;
+      ctx = createTestAgent(
+        llmGenerateServices(async () => {
+          calls += 1;
+          throw new APIStatusError(429, 'rate limited');
+        }),
+      );
+      const llmRequester = ctx.get(IAgentLLMRequesterService);
+
+      await expect(llmRequester.request()).rejects.toMatchObject({
+        name: 'APIStatusError',
+      });
+      expect(calls).toBe(1);
     });
 
     it('tracks api_error with the v1 wire shape (model id, alias, protocol, status code)', async () => {

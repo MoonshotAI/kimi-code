@@ -1,14 +1,3 @@
-/**
- * `spine` domain (L4) — `spine_tree` control tool.
- *
- * Read-only: renders the current Spine tree, cursor and per-node status through
- * `spine.renderTree()` so the model can re-orient; it never registers a
- * transition. Self-registers via `registerAgentToolService` gated on the
- * `KIMI_CODE_SPINE` flag and `agentId === 'main'` (main-agent-only, like the
- * goal tools); `AgentToolActivationService` activates it into the main agent's
- * tool registry only, never a sub-agent's. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

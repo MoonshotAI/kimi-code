@@ -34,9 +34,6 @@ import type { WireRecord } from '#/wire/record';
 
 import { stubWireJournal } from '../../wire/stubs';
 
-// Mirrors `FlagService` env resolution for the spine flag: the real service
-// reads the env through bootstrap on every `enabled` call, so stubbing the env
-// mid-test flips the gate exactly as in production.
 function makeFlagsStub(): IFlagService {
   const enabled = (id: FlagId) =>
     id === SPINE_FLAG_ID && parseBooleanEnv(process.env[SPINE_FLAG_ENV]) === true;
@@ -44,9 +41,7 @@ function makeFlagsStub(): IFlagService {
 }
 
 interface FakeAgentOptions {
-  /** What the tool policy stub answers for `isToolActive`. */
   readonly toolActive?: boolean;
-  /** History returned by the context memory stub. */
   readonly history?: readonly ContextMessage[];
 }
 
@@ -236,8 +231,6 @@ describe('SessionTodoService', () => {
   it('does not append to the wire when the main agent is absent', () => {
     const lifecycle = makeLifecycleStub();
     const service = new SessionTodoService(lifecycle.service, makeFlagsStub());
-    // Should not throw even without a main agent. With no main wire there is
-    // no source of truth to read from, so the list stays empty.
     expect(() => service.setTodos([{ title: 'x', status: 'pending' }])).not.toThrow();
     expect(service.getTodos()).toEqual([]);
   });
@@ -302,8 +295,6 @@ describe('SessionTodoService', () => {
   });
 
   it('silences the stale-todo reminder while spine is enabled', () => {
-    // Stale by the reminder's own rules: well over ten assistant turns since
-    // the last TodoList write and since the last reminder.
     const history = Array.from({ length: 12 }, () => ({
       role: 'assistant',
       content: [],
@@ -316,12 +307,9 @@ describe('SessionTodoService', () => {
     const reminder = main.reminderProviders.get(TODO_LIST_REMINDER_VARIANT);
     expect(reminder).toBeDefined();
 
-    // Baseline: with the flat list tool active, the nudge fires.
     vi.stubEnv(SPINE_FLAG_ENV, '0');
     expect(reminder!()).toBeDefined();
 
-    // With spine on the tool is gone, so the nudge must stay silent instead of
-    // prodding the model toward a tracker it can no longer see.
     vi.stubEnv(SPINE_FLAG_ENV, '1');
     expect(reminder!()).toBeUndefined();
   });

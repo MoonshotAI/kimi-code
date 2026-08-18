@@ -188,8 +188,6 @@ describe('TodoList tool registration', () => {
   });
 
   it('is not registered when spine is enabled', () => {
-    // The spine tree takes over progress tracking; two parallel trackers
-    // (flat list + tree) would drift apart, so the flat tool steps aside.
     vi.stubEnv(SPINE_ENV, '1');
     const ctx = testAgent();
     expect(ctx.toolsData().some((tool) => tool.name === TODO_LIST_TOOL_NAME)).toBe(false);

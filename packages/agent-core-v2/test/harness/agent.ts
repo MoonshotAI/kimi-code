@@ -1092,13 +1092,6 @@ export class AgentTestContext {
     const sessionId = 'test-session';
     const agentId = 'main';
     const persistence = options.persistence ?? new InMemoryWireRecordPersistence();
-    // The harness builds its main agent bypassing `AgentLifecycleService.create`,
-    // so nothing writes the wire metadata envelope the production restore path
-    // requires as the first record (its appendLog read ignores scope, so
-    // lifecycle-created subagents share this log). Seed the same synthesized
-    // record `withMetadata` prepends on read, keeping the shared log valid.
-    // Only for the default store: tests that pass their own persistence control
-    // its records deliberately (including metadata-less rejection cases).
     if (options.persistence === undefined && persistence.records[0]?.type !== 'metadata') {
       persistence.rewrite([
         {
@@ -1346,7 +1339,6 @@ export class AgentTestContext {
       onDidCreate: onDidCreateEmitter.event,
       onDidDispose: onDidDisposeEmitter.event,
       create: (opts = {}) => {
-        // Create-or-get for explicit ids, like the real service.
         if (opts.agentId !== undefined) {
           const existing = handles.get(opts.agentId);
           if (existing !== undefined) return Promise.resolve(existing);
@@ -1356,8 +1348,6 @@ export class AgentTestContext {
         createdScopes.set(agentId, scope);
         const handle = scope.toHandle() as IAgentScopeHandle;
         handles.set(agentId, handle);
-        // Mirror the real create's ordering: the handle is registered before
-        // onDidCreate fires, then per-agent services ignite.
         onDidCreateEmitter.fire(handle);
         this.initializeAgentScope(scope);
         return Promise.resolve(handle);
@@ -1575,10 +1565,6 @@ export class AgentTestContext {
     const permissionRules = scope.accessor.get(IAgentPermissionRulesService);
     const cron = scope.accessor.get(ISessionCronService);
     const plan = scope.accessor.get(IAgentPlanService);
-    // Activate the AgentTool contributions before any profile allowlist is
-    // applied by `configure()` — at this point `activeToolNames` is still
-    // undefined, so every contribution whose `when` holds lands in the
-    // registry, matching the harness's historical all-tools behavior.
     void scope.accessor.get(IAgentToolActivationService).activate();
     scope.accessor.get(IAgentToolDedupeService);
     scope.accessor.get(IAgentExternalHooksService);
@@ -2585,11 +2571,6 @@ function configStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot['config
 }
 
 function emptyConfig(): KimiConfig {
-  // Tests that bind the cron service to main (via `ctx.announceMain()`) read
-  // the `cron` section synchronously after `config.ready`, so the stub config
-  // must always carry it (production gets it from the section's registered
-  // `defaultValue`). The huge default poll interval keeps auto-tick inert in
-  // tests that do not stub `KIMI_CRON_POLL_INTERVAL_MS` themselves.
   return {
     ...configWithProvider({ providers: {} }, MOCK_PROVIDER, undefined),
     cron: { ...DEFAULT_CRON_CONFIG, pollIntervalMs: 3_600_000 },

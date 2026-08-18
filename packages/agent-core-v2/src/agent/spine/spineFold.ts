@@ -1,55 +1,3 @@
-/**
- * `spine` domain (L4) — the projection fold that turns the append-only
- * `contextMemory` history into the view sent to the model.
- *
- * `foldSpine` is a pure, tree-driven transform. It drops everything before the
- * current root epoch (keeping the epoch summary), then renders the epoch from
- * the derived tree:
- *
- * - An OPEN node keeps its span raw behind a `<spine_node id="..." summary="..."
- *   status="..." />` boundary landmark (status: `live` for the cursor itself,
- *   `opened` for an open ancestor), mirroring the upstream reducer's structural
- *   breadcrumb.
- * - A CLOSED node folds into a flattened slot list: the real user requests
- *   inside its span survive in place with their original message identity
- *   (text AND media parts preserved), each nested closed node contributes its
- *   own `<spine_memory node_id="...">` slot, and the node's own memory lands
- *   last — the same slot layout the upstream `assemble_memory` produces. Nodes
- *   synthesized from a `spine_spawn` receipt additionally render an evidence
- *   line `<spine_spawn_evidence node_id="..." summary="..." outcome="..." />`
- *   before their memory slot; the receipt tool message is absorbed by the
- *   point span and never reaches the projection.
- *
- * Real user requests carry stable `[U#]` anchors: every request in the stored
- * history consumes its ordinal even when an epoch boundary folds it away, so a
- * surviving request keeps the same anchor across projections and across the
- * close that folds its span. Tool messages in live ranges additionally pass
- * the trim projection (when given): oversized results keep their full body
- * behind a byte-stable `[TRIM_ID: trim_N]` label, and accepted trims render
- * as the cleared placeholder or a kept slice. The stored history is never
- * mutated. Consumed by `spineService.fold`.
- *
- * The `<spine_tran_status>` orientation line is NOT a projection artifact:
- * mirroring the upstream (`spine/status.rs` + `engine.rs`
- * `on_sampling_complete`), the spine service appends a PERSISTED injection to
- * the history after every step that applied a transition, so the line renders
- * as an ordinary message in live ranges, folds away with the span that closes
- * over it, and survives resume. `buildSpineTranStatusMessage` renders it; the
- * fold never synthesizes one.
- *
- * Span invariants (mirroring the upstream reducer): a closed span ends BEFORE
- * the assistant message carrying the close/next call, so the carrier, its
- * receipt, and any slower batched tool results stay visible and paired in the
- * parent context; a `spine.next` sibling opens at the carrier's index, so
- * next-chain spans are disjoint and contiguous. `spine_spawn` siblings share a
- * point span at the receipt message, so the first sibling absorbs the receipt
- * into its closed range and the carrier stays visible in the parent context.
- * A span closed entirely before the current epoch is owned by the epoch
- * summary and skipped silently — left queued, it would pin the level walk and
- * keep every post-epoch span raw forever. The synthetic root-epoch node and
- * truncation-voided nodes (`openedAt < 0`) never produce landmarks or spans.
- */
-
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ContentPart } from '#/kosong/contract/message';
 
@@ -96,18 +44,14 @@ export function foldSpine(
   };
   const out: ContextMessage[] = [];
 
-  // Pre-epoch history folds behind the epoch summary; nothing else survives.
   if (input.epochSummaryMessage !== undefined && state.epochMemoryAt !== undefined) {
     out.push(input.epochSummaryMessage);
   }
 
-  // The current epoch renders from the root's children: the synthetic root
-  // epoch node carries no landmark and no span of its own.
   const root = state.nodes[String(state.rootEpoch)];
   if (root !== undefined) {
     walkChildren(ctx, root.children, state.epochStartAt, messages.length - 1, out, pushRaw);
   } else {
-    // Degraded state without the current root node: keep the epoch raw.
     for (let i = state.epochStartAt; i < messages.length; i++) pushRaw(ctx, i, out);
   }
 
@@ -117,7 +61,6 @@ export function foldSpine(
 interface FoldContext {
   readonly messages: readonly ContextMessage[];
   readonly state: SpineState;
-  /** `[U#]` ordinal per message index (0 = not a real user request). */
   readonly anchors: readonly number[];
   readonly epochStartAt: number;
   readonly trim: SpineTrimProjection | undefined;
@@ -125,12 +68,6 @@ interface FoldContext {
 
 type SpanSink = (ctx: FoldContext, index: number, out: ContextMessage[]) => void;
 
-/**
- * Renders one structural level over [lo, hi]: messages outside child spans go
- * to `sink`; each child node with span evidence claims its range and renders
- * recursively. Children are stored in open order, so their spans arrive in
- * ascending `openedAt` order.
- */
 function walkChildren(
   ctx: FoldContext,
   childIds: readonly string[],
@@ -142,8 +79,6 @@ function walkChildren(
   let i = lo;
   for (const id of childIds) {
     const child = ctx.state.nodes[id];
-    // A voided node holds no surviving span; a child closed entirely before
-    // the epoch is owned by the epoch summary.
     if (child === undefined || child.openedAt < 0) continue;
     if (child.closedAt !== undefined && child.closedAt < ctx.epochStartAt) continue;
     const childLo = Math.max(child.openedAt, ctx.epochStartAt);
@@ -164,15 +99,10 @@ function renderNode(
   out: ContextMessage[],
 ): void {
   if (node.closedAt === undefined) {
-    // An open node keeps its span raw behind its boundary landmark.
     out.push(spineNodeMessage(node, ctx.state));
     walkChildren(ctx, node.children, lo, hi, out, pushRaw);
     return;
   }
-  // A closed node folds: real user requests inside the span survive in place
-  // (media included), nested closed nodes render their own slots, and the
-  // node's own memory lands last. Spawned nodes prefix their memory with an
-  // evidence line.
   if (node.spawn !== undefined) {
     out.push(spineSpawnEvidenceMessage(node, node.spawn));
   }
@@ -181,7 +111,6 @@ function renderNode(
   if (memoryMessage !== undefined) out.push(memoryMessage);
 }
 
-/** Live-range sink: every message survives; real user requests get tagged. */
 function pushRaw(ctx: FoldContext, index: number, out: ContextMessage[]): void {
   const message = ctx.messages[index];
   if (message === undefined) return;
@@ -190,7 +119,6 @@ function pushRaw(ctx: FoldContext, index: number, out: ContextMessage[]): void {
   out.push(ctx.trim === undefined ? surviving : applySpineTrim(ctx.trim, index, surviving));
 }
 
-/** Folded-range sink: only real user requests survive, tagged and original. */
 function pushSurvivingUserRequest(ctx: FoldContext, index: number, out: ContextMessage[]): void {
   const message = ctx.messages[index];
   if (message === undefined) return;
@@ -215,11 +143,6 @@ function userRequestAnchors(messages: readonly ContextMessage[]): readonly numbe
   return anchors;
 }
 
-/**
- * The structural landmark at an open node's boundary. Status mirrors the
- * upstream status semantics: the cursor itself is `live`; an open ancestor
- * carrying the descent is `opened`.
- */
 function spineNodeMessage(node: SpineNode, state: SpineState): ContextMessage {
   const status = state.openStack.at(-1) === node.id ? 'live' : 'opened';
   const text = `<spine_node id="${node.id}" summary="${escapeAttr(node.summary)}" status="${status}" />`;

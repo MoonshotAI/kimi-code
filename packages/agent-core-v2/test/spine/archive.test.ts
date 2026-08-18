@@ -54,10 +54,6 @@ describe('Spine archive + resume', () => {
     await ctx.untilTurnEnd();
 
     expect(readSpine(ctx).nodes['1.1.1']?.closedAt).toBeDefined();
-    // Archives live under the per-agent session homedir, not the project
-    // workDir: `<sessionDir>/agents/<id>/spine/<node-id>.md`. The path is
-    // deterministic and published on the tree view; the node itself carries
-    // no persisted path any more.
     const archivePath = [...writes.keys()].find((path) =>
       path.endsWith('/agents/main/spine/1-1-1.md'),
     );
@@ -83,9 +79,6 @@ describe('Spine archive + resume', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
     await ctx.untilTurnEnd();
 
-    // The wire persists through an async persistQueue (the blob dehydrate hop
-    // runs even without blobs) that only drains on the service's own flush, so
-    // cloning the persistence before an `IWireService` flush misses records.
     await ctx.wire.flush();
 
     const before = readSpine(ctx);
@@ -103,7 +96,6 @@ describe('Spine archive + resume', () => {
     expect(after.nodes['1.1.1']?.summary).toBe('task A');
     expect(after.nodes['1.1.1']?.closedAt).toBe(before.nodes['1.1.1']?.closedAt);
     expect(after.nodes['1.1.1']?.memory).toContain('did A');
-    // The archive path is recomputed deterministically on the tree view.
     expect(resumed.get(IAgentSpineService).renderTree()).toContain('1-1-1.md');
   });
 });

@@ -1,78 +1,3 @@
-/**
- * `spine` domain (L4) — `IAgentSpineService` implementation.
- *
- * The task tree is DERIVED, not stored: `deriveSpineState` replays the
- * `contextMemory` message stream and rebuilds the `SpineState` from the spine
- * control-tool calls and their accepted receipts, so the persisted history is
- * the single source of truth — a receipt that survived IS the transition, and
- * a truncation (undo / clear) truncates the tree by construction, with no
- * commit dance, no repair op, and no lost-commit audit. The read-only /
- * receipt-only control tools hand validated intent here (`acceptOpen` /
- * `acceptClose` / `acceptNext`); acceptance checks the derived cursor position
- * and records the node's provider-token baseline / closing high-water mark via
- * `tokenCounting` — surfaced as per-node cost in `spine_tree` and as the
- * projected-growth `cursor_context` delta in `<spine_tran_status>`. The status
- * line mirrors the upstream emission contract (`spine/status.rs` + `engine.rs
- * on_sampling_complete`): it is NOT a projection artifact appended to every
- * request — after a step in which the derivation reports an applied transition
- * (cursor-stack change), the service persists one `<spine_tran_status>`
- * injection into the history, so the line survives resume, renders as an
- * ordinary message in live ranges, and folds away with the span that closes
- * over it. Undo / restore / splice never re-emit: their handlers re-baseline
- * the transition signature, so the surviving history carries the correct
- * orientation, exactly like the upstream rollout. Transition
- * multiplicity is NOT rejected here: every individually valid call earns its
- * accepted receipt, and the derivation resolves one assistant response as one
- * tool-call group — exactly one accepted control receipt in the group applies,
- * two or more (or any mix with `spine_spawn`) apply NONE, matching the
- * upstream reducer's group classification, so a duplicated transition fails
- * silent instead of failing loud. The loud half of that contract lives in
- * `guardSpawnMixing`: an `onBeforeExecuteTool` veto (which sees the whole
- * response's call list) rejects a `spine_spawn` batched with control calls or
- * a second `spine_spawn` before any branch work starts. Plan mode rejects
- * every spine transition (`REJECT_PLAN_MODE`), trim included, mirroring the
- * upstream handler gate. A closing span ends before the
- * assistant message carrying the transition call, so the carrier, its receipt,
- * and any slower tool results batched in the same response stay visible and
- * paired in the parent context; `spine.next` hands the carrier to the new
- * sibling, whose span opens right after the closing one. The closing memory is
- * the model-written body verbatim: the projection fold re-materializes the
- * folded span's surviving user requests in place (with stable `[U#]` anchors
- * and their original media parts) and gives every closed descendant its own
- * `<spine_memory node_id="...">` slot, all derived from the surviving history
- * on every read — so an undo that removes a request removes it from the
- * folded view too. Side effects ride
- * the derivation delta: the `loop.afterStep` hook archives each newly closed
- * node's trajectory under the bootstrap-issued per-agent session homedir
- * (`<sessionDir>/agents/<id>/spine/`), and — for root compactions — the
- * full-compaction flow archives the history the new epoch boundary folds away
- * (`archiveEpochRoot`). Archive paths are deterministic (`f(homedir, nodeId)`),
- * so a restore re-derives them and the first post-restore sweep rewrites any
- * archive a crash lost. Persistence failures are never swallowed: a failed
- * archive write is reported through `onUnexpectedError`, and the node's memory
- * carries the failure note in the projection from then on. It also owns the
- * tool-response trim projection (gated on `KIMI_CODE_SPINE_TRIM`): the same
- * stream derives the oversized-result tags and replays the accepted
- * `spine_trim` receipts (`deriveSpineTrimProjection`), the fold renders them,
- * and `acceptTrim` validates calls against that same derivation — one
- * eligibility source for rendering and validation. Trim runs STANDALONE
- * (upstream `materialize_trim_only_context`): with the spine flag off and the
- * trim flag on, the projector fold renders the trim projection over the plain
- * history (no tree fold, no status line) and `spine_trim` stays available.
- * Renders the read-only
- * `spine_tree` view across every root epoch (current first by
- * numeric order), so a superseded epoch's closed-node archives stay
- * discoverable after a root compaction. Registers its history fold into
- * `contextProjector` and its `<spine_view>` prompt block into `llmRequester`
- * (spine → projector / llmRequester, never the reverse); the prompt
- * contribution self-gates per request, so only turn requests whose tool list
- * can act on the protocol (i.e. that offer `spine_open`) carry it — sub-agents
- * and operations such as compaction never see it. Self-checks the flags at
- * construction: with both spine and trim off the service never observes
- * history (no fold registration), and with trim alone on it observes history
- * only for the trim projection. Bound at Agent scope.
- */
-
 import { join } from 'pathe';
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -252,22 +177,12 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
   ) {
     super();
     if (this.enabled) {
-      // Awaited in the will-begin-step hook before the first request assembles
-      // its system prompt, so every request of this agent carries the same
-      // `<spine_view>` — a mid-session swap from the default to the override
-      // would invalidate the prompt prefix cache from position 0.
       this.spineViewReady = loadSpineViewOverride(this.hostFs, this.hostEnv.homeDir).then(
         (override) => {
           this.spineViewOverride = override;
         },
       );
     }
-    // Fold registration is the only thing the projector ever learns about
-    // spine; gated on the flags so a fully disabled surface never touches the
-    // projection. Trim runs STANDALONE (upstream
-    // `materialize_trim_only_context`): spine off + trim on still renders the
-    // trim projection over the plain history. Construction is Eager, so this
-    // lands before the first send.
     if (this.enabled || this.trimEnabled) {
       this._register(projector.registerContextFold('spine', (messages) => this.fold(messages)));
     }
@@ -279,13 +194,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
         return appendSpineView(prompt, this.spineViewOverride);
       }),
     );
-    // Loud spawn admission, mirroring the upstream `calls_in_response_group`
-    // contract: the veto sees the whole response's call list during the
-    // executor's sequential preparation pass, so a `spine_spawn` sharing its
-    // response with a control call (or a second `spine_spawn`) is rejected
-    // before any branch work starts. The silent half — a response carrying
-    // multiple control calls applies none of them — is the derivation's
-    // carrier-group classification, not a rejection here.
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => this.guardSpawnMixing(event)),
     );
@@ -304,11 +212,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     );
     this._register(
       this.dispatcher.hooks.onDidRestore.register('spine', async (_ctx, next) => {
-        // The restored history re-derives the tree on first read; the ephemeral
-        // gauges and archive ledger belong to the pre-restore session. Clearing
-        // the archive ledger makes the first post-restore sweep rewrite every
-        // closed node's archive — deterministic content, so a crash between a
-        // close and its sweep self-heals.
         this.cachedMessages = undefined;
         this.cachedState = undefined;
         this.cachedTrimMessages = undefined;
@@ -318,9 +221,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
         this.archivedIds.clear();
         this.failedArchiveIds.clear();
         this.activeSpawnBranches = 0;
-        // Re-baseline without emitting: the restored history already carries
-        // its persisted `<spine_tran_status>` items, so a resume must not
-        // append a fresh one (upstream: the rollout's items survive as-is).
         this.statusSignature = transitionSignature(this.derivedState());
         await next();
       }),
@@ -329,27 +229,11 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
       this.eventBus.subscribe(ContextSpliced, (event) => {
         if (!this.enabled) return;
         if (event.deleteCount === 0) return;
-        // A truncation (undo / clear) can make the derivation reuse a node id
-        // for a DIFFERENT span: a cleared tree restarts numbering at 1.1.1, and
-        // an undo that removes a close lets the same node close again with a new
-        // span. The archive ledger is keyed by id, so left alone it would skip
-        // the reused id and keep publishing the OLD node's archive path. Clear
-        // it so the next sweep rewrites surviving archives (deterministic
-        // content — a harmless no-op for unaffected nodes) and archives reused
-        // ids fresh.
         this.archivedIds.clear();
         this.failedArchiveIds.clear();
-        // A splice truncates persisted statuses along with everything else, so
-        // the surviving history already orients correctly: re-baseline the
-        // transition signature from the post-splice derivation (the event
-        // fires after the mutation) instead of emitting a fresh status.
         this.statusSignature = transitionSignature(this.derivedState());
       }),
     );
-    // Baseline the transition signature: a fresh scope derives the synthetic
-    // root epoch + startup node; a resumed session re-baselines in the
-    // restore hook above. Construction is Eager (OnScopeCreated), so this
-    // lands before any transition can be accepted.
     this.statusSignature = transitionSignature(this.derivedState());
   }
 
@@ -394,13 +278,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
       );
     }
 
-    // Aggregate capacity admission is all-or-nothing, reported upstream-style
-    // (`capacity_rejection_receipts`): an overlapping fission that cannot fit
-    // starts no branches, but the call still succeeds with a full receipt —
-    // every task is recorded errored so the rejected batch lands in the tree
-    // and the model can retry with fewer tasks. Mixing spawn with other spine
-    // calls in one response is rejected earlier, at the executor's
-    // before-execute veto (`guardSpawnMixing`).
     if (this.activeSpawnBranches + tasks.length > maxBranches) {
       return {
         accepted: true,
@@ -414,8 +291,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
       if (summary.length === 0 || task.prompt.trim().length === 0) {
         return reject('spine_spawn task summary and prompt must not be empty.');
       }
-      // Summaries are the branches' public identities (peer roster and
-      // collaboration-contract peer references), so they must be unique per call.
       if (seenSummaries.has(summary)) {
         return reject(`spine_spawn task ${String(ordinal)} has duplicate summary \`${summary}\`.`);
       }
@@ -485,8 +360,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
   }
 
   acceptTrim(trimId: string, op: SpineTrimOp): SpineTransitionResult {
-    // Trim runs standalone (upstream `materialize_trim_only_context`): the
-    // spine flag is deliberately NOT required here — only the trim flag.
     if (!this.trimEnabled) return REJECT_TRIM_DISABLED;
     if (this.planModeActive) return REJECT_PLAN_MODE;
     const projection = this.trimProjection();
@@ -523,9 +396,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
 
   fold(messages: readonly ContextMessage[]): readonly ContextMessage[] {
     if (!this.enabled) {
-      // Standalone trim (upstream `materialize_trim_only_context`): no tree
-      // fold and no status line — every message is live range, so the trim
-      // projection maps over the plain history as-is.
       if (!this.trimEnabled) return messages;
       const trim = this.trimProjection();
       return messages.map((message, index) => applySpineTrim(trim, index, message));
@@ -576,11 +446,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
       summary,
       parentId,
       parentSummary,
-      // Projected-growth caliber: the live gauge minus the node's open
-      // baseline. The stored-range reading this replaces counted folded-away
-      // child/sibling spans the model no longer sees, drifting the budget
-      // signal apart from the compaction trigger's caliber; a node whose
-      // folds reclaimed more than it added reads as zero.
       cursorContext: Math.max(0, used - (this.baselines.get(cursorId) ?? 0)),
       contextLeft,
       rawContext: estimateTokensForMessages(this.context.get()),
@@ -659,8 +524,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
 
   private derivedState(): SpineState {
     const messages = this.context.get();
-    // The wire hands back the same array reference until an op mutates it, so
-    // a reference hit means the derivation is still valid.
     if (this.cachedState !== undefined && this.cachedMessages === messages) {
       return this.cachedState;
     }
@@ -704,11 +567,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     };
   }
 
-  // The archive paths are deterministic, so the tree publishes them without
-  // persisting anything; a write that failed (this session) suppresses the
-  // path instead of pointing at a missing file. The epoch archive written
-  // when epoch N began (holding the prior epochs' folded history) is named
-  // for N, so epoch 1 predates all archiving and shows none.
   private nodeArchivePath(id: string, epoch: boolean, closed: boolean): string | undefined {
     if (this.failedArchiveIds.has(id)) return undefined;
     if (epoch) return Number(id) > 1 ? this.archivePath(id) : undefined;
@@ -798,9 +656,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     }
   }
 
-  // The per-agent homedir (`<sessionDir>/agents/<id>`) is derived the same way
-  // agentLifecycle issues it — bootstrap's homeDir plus the seeded agent scope;
-  // spine only appends its `spine/` suffix underneath.
   private archivePath(nodeId: string): string {
     return spineArchivePath(join(this.bootstrap.homeDir, this.agentScope.scope()), nodeId);
   }
@@ -814,11 +669,6 @@ function topOf(state: SpineState): string {
   return top;
 }
 
-/**
- * The cursor-position identity a `<spine_tran_status>` is emitted for: the
- * root epoch plus the open stack. Open / close / next change it; spawn joins,
- * trims, silent no-apply groups, and ordinary steps do not.
- */
 function transitionSignature(state: SpineState): string {
   return `${String(state.rootEpoch)}|${state.openStack.join('.')}`;
 }
@@ -827,9 +677,6 @@ function messageText(message: ContextMessage): string {
   return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
-// The boundary archive stores the raw summary; the summary message carries it
-// under the compaction prefix, so strip the carrier (and its separating
-// newline) when reconstructing the archive from the stream.
 function stripCompactionSummaryPrefix(text: string): string {
   if (!text.startsWith(COMPACTION_SUMMARY_PREFIX)) return text;
   return text.slice(COMPACTION_SUMMARY_PREFIX.length).replace(/^\n+/, '');
@@ -864,12 +711,6 @@ function buildSpawnReceipt(branches: readonly SpawnBranchResult[]): string {
   return JSON.stringify(receipt);
 }
 
-/**
- * Upstream `capacity_rejection_receipts` shape: when aggregate admission
- * cannot fit, no branch starts but every task still gets an errored result,
- * so the receipt is well-formed and the rejected batch is recorded in the
- * tree. `execution_ref` is absent — no child agent exists to reference.
- */
 function capacityRejectionResults(
   tasks: readonly SpineSpawnTaskInput[],
   maxBranches: number,

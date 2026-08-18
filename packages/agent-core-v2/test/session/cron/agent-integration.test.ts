@@ -1,8 +1,3 @@
-/**
- * Agent + cron wiring smoke: verifies `new Agent(...)` constructs and
- * starts a SessionCronService, registers the three cron tools, and that
- * `KIMI_DISABLE_CRON=1` short-circuits `CronCreate`.
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type CronCreateInput } from '#/agent/tools/cron/cron-create/cron-create';
@@ -42,8 +37,6 @@ describe('Agent + Cron integration (P1.7)', () => {
     });
 
     it('registers CronCreate / CronList / CronDelete in the tool manager', async () => {
-      // Tool registration rides the async main-agent bind chain
-      // (config.ready → registerCronTools), so wait for it to land.
       await vi.waitFor(() => {
         expect(ctx.toolsData().map((info) => info.name)).toContain('CronCreate');
       });
@@ -52,7 +45,6 @@ describe('Agent + Cron integration (P1.7)', () => {
       expect(toolNames).toContain('CronList');
       expect(toolNames).toContain('CronDelete');
 
-      // All three came in through the builtin barrel.
       for (const name of ['CronCreate', 'CronList', 'CronDelete'] as const) {
         const info = ctx.toolsData().find((i) => i.name === name);
         expect(info?.source).toBe('builtin');
@@ -96,16 +88,12 @@ describe('Agent + Cron integration (P1.7)', () => {
       };
       const result = tool!.resolveExecution(args);
 
-      // resolveExecution returns a `ToolExecution` — when it errors
-      // up-front the shape is `{ isError: true, output: string }` with no
-      // `execute` callback (see CronCreate's killswitch branch).
       expect(result).toMatchObject({ isError: true });
       expect('output' in result ? result.output : '').toMatch(/disabled/i);
       expect('execute' in result ? typeof result.execute : 'no-execute').toBe(
         'no-execute',
       );
 
-      // And no task slipped into the store.
       expect(cron.list()).toEqual([]);
     });
   });

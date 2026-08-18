@@ -1,17 +1,3 @@
-/**
- * `spine` domain (L4) — `spine_close` control tool.
- *
- * Receipt-only: validates the continuation memory and earns the accepted
- * receipt through `spine`; the receipt landing in `contextMemory` IS the close
- * (memory assembly and tree move) — unless the same assistant response carries
- * another accepted control (or any `spine_spawn` call), in which case the
- * derivation applies none of them. Self-registers via
- * `registerAgentToolService` gated on the `KIMI_CODE_SPINE` flag and the
- * spine-control host gate (the main agent and spawned spine branches — see
- * `./gate`); `AgentToolActivationService` activates it into those agents'
- * tool registries only. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

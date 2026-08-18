@@ -359,7 +359,6 @@ describe('Session legacy status (best-effort runtime state)', () => {
     expect(status).toMatchObject({
       max_context_tokens: 100_000,
       context_usage: 1,
-      // Spine's unfolded twin of context_tokens rides the same status line.
       raw_context_tokens: 120_000,
     });
   });
