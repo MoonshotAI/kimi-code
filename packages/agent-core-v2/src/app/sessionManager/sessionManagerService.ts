@@ -109,6 +109,16 @@ export class SessionManager implements ISessionManager {
     return run;
   }
 
+  private serializeLifecycleForKeys<T>(keys: readonly string[], work: () => Promise<T>): Promise<T> {
+    const [first, ...rest] = keys;
+    if (first === undefined) return work();
+    return this.serializeLifecycle(first, () => this.serializeLifecycleForKeys(rest, work));
+  }
+
+  private lifecycleKeys(...ids: (string | undefined)[]): string[] {
+    return [...new Set(ids.filter((id): id is string => id !== undefined))].sort();
+  }
+
   withLifecycleSerialization<T>(
     sessionId: string,
     work: (unguarded: UnguardedSessionLifecycle) => Promise<T>,
@@ -159,29 +169,35 @@ export class SessionManager implements ISessionManager {
   }
 
   async fork(options: ForkSessionOptions): Promise<ISessionScopeHandle> {
-    return this.serializeLifecycle(options.sourceSessionId, async () => {
-      const controller = await this.controllerForSession(options.sourceSessionId);
-      if (controller === undefined) {
-        throw new Error2(
-          ErrorCodes.SESSION_NOT_FOUND,
-          `session ${options.sourceSessionId} does not exist`,
-        );
-      }
-      return controller.fork(options);
-    });
+    return this.serializeLifecycleForKeys(
+      this.lifecycleKeys(options.sourceSessionId, options.newSessionId),
+      async () => {
+        const controller = await this.controllerForSession(options.sourceSessionId);
+        if (controller === undefined) {
+          throw new Error2(
+            ErrorCodes.SESSION_NOT_FOUND,
+            `session ${options.sourceSessionId} does not exist`,
+          );
+        }
+        return controller.fork(options);
+      },
+    );
   }
 
   async createChild(options: CreateChildSessionOptions): Promise<ISessionScopeHandle> {
-    return this.serializeLifecycle(options.sourceSessionId, async () => {
-      const controller = await this.controllerForSession(options.sourceSessionId);
-      if (controller === undefined) {
-        throw new Error2(
-          ErrorCodes.SESSION_NOT_FOUND,
-          `session ${options.sourceSessionId} does not exist`,
-        );
-      }
-      return controller.createChild(options);
-    });
+    return this.serializeLifecycleForKeys(
+      this.lifecycleKeys(options.sourceSessionId, options.newSessionId),
+      async () => {
+        const controller = await this.controllerForSession(options.sourceSessionId);
+        if (controller === undefined) {
+          throw new Error2(
+            ErrorCodes.SESSION_NOT_FOUND,
+            `session ${options.sourceSessionId} does not exist`,
+          );
+        }
+        return controller.createChild(options);
+      },
+    );
   }
 
   dispose(): void {
