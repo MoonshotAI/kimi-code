@@ -1,31 +1,18 @@
-/**
- * `toolSelect` domain — `IAgentToolSelectService` implementation.
- *
- * Shapes the provider-visible tool and history views for progressive tool
- * disclosure, loads dynamic schemas into `contextMemory`, and exposes
- * loadable-tools announcement text. The history view rides the context
- * projector as a VIEW-order fold (`shapeHistory`, self-gated by `enabled()`),
- * so index-anchored COLLAPSE folds such as spine see the untouched live
- * history first; llmRequester only shapes the tool list directly. Reads live
- * tools from `toolRegistry`, active-tool and capability state from `profile`,
- * gates through `flag`, hooks into `toolExecutor`, and listens to context
- * lifecycle events through `event`. The mutable load-tracking state
- * (`pendingLoaded`) is registered into `agentState` (`IAgentStateService`)
- * and read/written through it. Bound at Agent scope.
- */
-
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/state/state';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
 import type { Tool } from '#/kosong/contract/tool';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
   CONTEXT_FOLD_ORDER,
   IAgentContextProjectorService,
 } from '#/agent/contextProjector/contextProjector';
+import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -35,7 +22,6 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 
 import {
   collectLoadedDynamicToolNames,
-  DYNAMIC_TOOL_SCHEMA_VARIANT,
   foldAnnouncedToolNames,
   renderLoadableToolsAnnouncement,
   stripDynamicToolContext,
@@ -53,7 +39,7 @@ export const toolSelectPendingLoadedKey = defineState<Set<string>>(
   () => new Set(),
 );
 
-export class AgentToolSelectService extends Disposable implements IAgentToolSelectService {
+export class AgentToolSelectService extends Service implements IAgentToolSelectService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
@@ -68,7 +54,7 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(toolSelectPendingLoadedKey);
+    this.states.contributeState(toolSelectPendingLoadedKey);
     this._register(
       projector.registerContextFold('toolSelect', (messages) => this.shapeHistory(messages), {
         order: CONTEXT_FOLD_ORDER.VIEW,
@@ -81,13 +67,13 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
       toolExecutor.registerMissingToolDescriber((name) => this.describeMissingTool(name)),
     );
     this._register(
-      eventBus.subscribe('compaction.completed', () => {
+      eventBus.subscribe(CompactionCompleted, () => {
         this.pendingLoaded.clear();
       }),
     );
     this._register(
-      eventBus.subscribe('context.spliced', (splice) => {
-        if (splice.deleteCount === 0 || this.pendingLoaded.size === 0) return;
+      eventBus.subscribe(ContextSpliced, (splice) => {
+        if (splice.deleteCount === 0 || splice.messages.length > 0) return;
         this.dropPendingLoadedNotLanded();
       }),
     );
@@ -156,20 +142,22 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
       }
     }
     if (toLoad.length > 0) {
-      toLoad.sort((a, b) => a.localeCompare(b));
-      const tools = toLoad
-        .map((name) => this.schemaOf(name))
-        .filter((tool): tool is Tool => tool !== undefined);
-      this.context.append({
-        role: 'system',
-        content: [],
-        toolCalls: [],
-        tools,
-        origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
-      });
       for (const name of toLoad) this.pendingLoaded.add(name);
     }
     return { toLoad, alreadyAvailable, unknown };
+  }
+
+  drainPendingToolSchemas(): readonly Tool[] | undefined {
+    if (!this.enabled() || this.pendingLoaded.size === 0) return undefined;
+    const names = [...this.pendingLoaded].toSorted((a, b) => a.localeCompare(b));
+    const tools: Tool[] = [];
+    for (const name of names) {
+      const tool = this.schemaOf(name);
+      if (tool === undefined) continue;
+      this.pendingLoaded.delete(name);
+      tools.push(tool);
+    }
+    return tools.length === 0 ? undefined : tools;
   }
 
   loadableToolsAnnouncement(): string | undefined {

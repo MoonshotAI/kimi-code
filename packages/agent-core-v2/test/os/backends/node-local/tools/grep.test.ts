@@ -3,6 +3,7 @@ import { Readable, type Writable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
 import { createServices } from '#/_base/di/test';
 import type {
   ExecutableTool,
@@ -15,6 +16,7 @@ import { AgentToolActivationService } from '#/agent/toolActivation/toolActivatio
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import {
   _clearAgentToolContributionsForTests,
+  AgentToolContribution,
   getAgentToolContributions,
   registerAgentToolService,
 } from '#/agent/toolRegistry/toolContribution';
@@ -41,6 +43,8 @@ import {
   IGrepTool,
 } from '#/agent/tools/os/grep/grep';
 import { GrepTool as ProductionGrepTool } from '#/agent/tools/os/grep/grepTool';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import { recordingTelemetry, type TelemetryRecord } from '../../../../app/telemetry/stubs';
@@ -53,6 +57,15 @@ vi.mock('#/os/backends/node-local/tools/rgLocator', () => ({
 }));
 
 const signal = new AbortController().signal;
+
+class TestContributionAssembly extends Service {
+  constructor() {
+    super();
+    for (const record of getAgentToolContributions()) {
+      this.provide(AgentToolContribution, record);
+    }
+  }
+}
 const workspace: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: ['/extra'] };
 const MAX_COLUMNS_RG_ARGS = ['--max-columns', '500'] as const;
 const COMMON_RG_ARGS = [
@@ -164,10 +177,27 @@ class GrepTool extends ProductionGrepTool {
     workspaceConfig: WorkspaceConfig,
     telemetry: ITelemetryService = noopTelemetryService,
   ) {
+    const environment = createTestEnv(kaos);
+    const backend = Object.assign(
+      new FakeRuntime(
+        { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+        { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
+      ),
+      {
+        process: createTestProcessService(kaos),
+        fs: createTestFs(kaos),
+        environment,
+      },
+    );
+    const runtime: IAgentRuntimeService = {
+      _serviceBrand: undefined,
+      onDidChange: () => ({ dispose: () => {} }),
+      isAvailable: () => true,
+      inspect: () => backend,
+      acquire: () => ({ runtime: backend, track: (resource) => resource, dispose: () => {} }),
+    };
     super(
-      createTestProcessService(kaos),
-      createTestFs(kaos),
-      createTestEnv(kaos),
+      runtime,
       stubWorkspaceContext(workspaceConfig.workspaceDir, workspaceConfig.additionalDirs),
       telemetry,
     );
@@ -303,7 +333,24 @@ describe('GrepTool', () => {
           registerStateServices(reg);
           reg.defineInstance(IHostProcessService, createTestProcessService(kaos));
           reg.defineInstance(IHostFileSystem, createTestFs(kaos));
-          reg.defineInstance(IHostEnvironment, createTestEnv(kaos));
+          const environment = createTestEnv(kaos);
+          const processService = createTestProcessService(kaos);
+          const fs = createTestFs(kaos);
+          reg.defineInstance(IHostEnvironment, environment);
+          const runtime = Object.assign(
+            new FakeRuntime(
+              { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+              { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
+            ),
+            { process: processService, fs, environment },
+          );
+          reg.defineInstance(IAgentRuntimeService, {
+            _serviceBrand: undefined,
+            onDidChange: () => ({ dispose: () => {} }),
+            isAvailable: () => true,
+            inspect: () => runtime,
+            acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+          });
           reg.defineInstance(ISessionWorkspaceContext, stubWorkspaceContext('/workspace'));
           reg.defineInstance(ITelemetryService, noopTelemetryService);
           reg.defineInstance(ISessionSkillCatalog, {
@@ -327,6 +374,7 @@ describe('GrepTool', () => {
         },
       });
 
+      disposables.add(ix.createInstance(TestContributionAssembly));
       await ix.get(IAgentToolActivationService).activate();
       const tool = ix.get(IAgentToolRegistryService).resolve('Grep');
       const info = ix.get(IAgentToolRegistryService).list().find((entry) => entry.name === 'Grep');

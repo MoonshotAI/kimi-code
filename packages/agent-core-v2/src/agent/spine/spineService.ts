@@ -10,7 +10,7 @@
  * receipt-only control tools hand validated intent here (`acceptOpen` /
  * `acceptClose` / `acceptNext`); acceptance checks the derived cursor position
  * and records the node's provider-token baseline / closing high-water mark via
- * `contextSize` — surfaced as per-node cost in `spine_tree` and as the
+ * `tokenCounting` — surfaced as per-node cost in `spine_tree` and as the
  * projected-growth `cursor_context` delta in `<spine_tran_status>`. The status
  * line mirrors the upstream emission contract (`spine/status.rs` + `engine.rs
  * on_sampling_complete`): it is NOT a projection artifact appended to every
@@ -76,19 +76,21 @@
 import { join } from 'pathe';
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService, ScopeActivation } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { registerScopedService, ScopeActivation } from '#/_base/di/scope';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import { COMPACTION_SUMMARY_PREFIX } from '#/agent/contextMemory/compactionHandoff';
+import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { PlanModel } from '#/agent/plan/planOps';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
@@ -96,11 +98,12 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
+import { planKey } from '#/features/plan/planOps';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
-import { IWireService } from '#/wire/wire';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import {
   resolveSpawnMaxThreads,
@@ -188,15 +191,13 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
   private cachedTrimProjection: SpineTrimProjection | undefined;
   /**
    * Ephemeral per-node token gauges, recorded at accept time. Token baselines
-   * are not in the message stream, so pure derivation cannot recover them —
-   * and `context_size.measured` is live-only (`persist: false`, v1-compat), so
-   * the measurement history is gone on restore too. Within a session these
-   * maps are complete and request-caliber (better coverage than the FIFO-64
-   * snapshot chain); on restore they reset, so pre-restore nodes lose
-   * `tokenCost` and the cursor's `cursor_context` reads as the full size. That
-   * overstatement fails SAFE for a compaction-trigger gauge (premature close,
-   * never overflow). Persisting measurements would fix it but is
-   * contextSize-domain v1 work, out of spine's scope.
+   * are not in the message stream, so pure derivation cannot recover them.
+   * Within a session these maps are complete and request-caliber; on restore
+   * they reset, so pre-restore nodes lose `tokenCost` and the cursor's
+   * `cursor_context` reads as the full size. That overstatement fails SAFE for
+   * a compaction-trigger gauge (premature close, never overflow). Rebuilding
+   * per-node baselines from the persisted `tokenCounting` anchors is follow-up
+   * work, out of spine's scope.
    */
   private readonly baselines = new Map<string, number>();
   private readonly finals = new Map<string, number>();
@@ -231,7 +232,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentContextSizeService private readonly contextSize: IAgentContextSizeService,
+    @IAgentTokenCountingService private readonly tokenCounting: IAgentTokenCountingService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IHostEnvironment private readonly hostEnv: IHostEnvironment,
@@ -239,7 +240,8 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     @IConfigService private readonly config: IConfigService,
     @IFlagService private readonly flags: IFlagService,
     @IAgentScopeContext private readonly agentScope: IAgentScopeContext,
-    @IWireService private readonly wire: IWireService,
+    @IAgentStateService private readonly agentState: IAgentStateService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
     @ISessionSubagentService private readonly subagentService: ISessionSubagentService,
@@ -301,7 +303,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
       }),
     );
     this._register(
-      this.wire.hooks.onDidRestore.register('spine', async (_ctx, next) => {
+      this.dispatcher.hooks.onDidRestore.register('spine', async (_ctx, next) => {
         // The restored history re-derives the tree on first read; the ephemeral
         // gauges and archive ledger belong to the pre-restore session. Clearing
         // the archive ledger makes the first post-restore sweep rewrite every
@@ -324,7 +326,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
       }),
     );
     this._register(
-      this.eventBus.subscribe('context.spliced', (event) => {
+      this.eventBus.subscribe(ContextSpliced, (event) => {
         if (!this.enabled) return;
         if (event.deleteCount === 0) return;
         // A truncation (undo / clear) can make the derivation reuse a node id
@@ -445,7 +447,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     if (parent !== undefined) {
       this.baselines.set(
         childNodeId(parentId, nextChildIndex(parent.children)),
-        this.contextSize.get().size,
+        this.tokenCounting.get().size,
       );
     }
     return { accepted: true };
@@ -458,7 +460,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     if (trimmed.length === 0) return reject('close memory must not be empty.');
     const cursorId = this.cursorId();
     if (isRootEpoch(cursorId)) return REJECT_ROOT_EPOCH;
-    this.finals.set(cursorId, this.contextSize.get().size);
+    this.finals.set(cursorId, this.tokenCounting.get().size);
     return { accepted: true };
   }
 
@@ -474,7 +476,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     const state = this.derivedState();
     const parentId = parentNodeId(cursorId);
     const parent = parentId === null ? undefined : state.nodes[parentId];
-    const sizeNow = this.contextSize.get().size;
+    const sizeNow = this.tokenCounting.get().size;
     this.finals.set(cursorId, sizeNow);
     if (parentId !== null && parent !== undefined) {
       this.baselines.set(childNodeId(parentId, nextChildIndex(parent.children)), sizeNow);
@@ -564,7 +566,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     const parentId = parentNodeId(cursorId);
     const parentSummary = parentId === null ? null : (state.nodes[parentId]?.summary ?? null);
     const maxContextTokens = this.profile.getEffectiveMaxContextTokens();
-    const used = this.contextSize.get().size;
+    const used = this.tokenCounting.get().size;
     const contextLeft =
       maxContextTokens !== undefined && maxContextTokens > 0
         ? Math.max(0, maxContextTokens - used)
@@ -583,7 +585,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
       contextLeft,
       rawContext: estimateTokensForMessages(this.context.get()),
       projectedContext: used,
-      projectedMeasured: this.contextSize.latestMeasurement()?.kind === 'measured',
+      projectedMeasured: this.tokenCounting.latestMeasurement()?.measured === true,
     };
   }
 
@@ -596,11 +598,11 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
   /**
    * Plan mode rejects every spine transition, trim included, mirroring the
    * upstream handler gate (`Spine transitions are not allowed in Plan mode`).
-   * Read straight off the persisted plan Model so the gate follows undo /
-   * restore like every other wire-derived state.
+   * Read straight off the replayable plan state so the gate follows undo /
+   * restore like every other derived state.
    */
   private get planModeActive(): boolean {
-    return this.wire.getModel(PlanModel).current.active;
+    return this.agentState.get(planKey).active;
   }
 
   /**
@@ -695,7 +697,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
    */
   private treeViewInput(): SpineTreeViewInput {
     return {
-      currentUsed: this.contextSize.get().size,
+      currentUsed: this.tokenCounting.get().size,
       baselines: this.baselines,
       finals: this.finals,
       resolveArchivePath: (id, epoch, closed) => this.nodeArchivePath(id, epoch, closed),

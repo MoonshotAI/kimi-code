@@ -2,6 +2,7 @@ import {
   limitAgentReplayByTurns,
   type AgentReplayRecord,
   type AgentTaskInfo,
+  type AgentTaskStatus,
   type ContentPart,
   type ContextMessage,
   type PromptOrigin,
@@ -17,10 +18,21 @@ import type {
   TranscriptEntry,
 } from '#/tui/types';
 
+import { modelDisplayName } from '../components/dialogs/model-selector';
 import { mediaUrlPartToText } from './media-url';
 import { nextTranscriptId } from './transcript-id';
 
 export const REPLAY_TURN_LIMIT = 10;
+
+/**
+ * Resume fetches one extra turn of records: the SDK trims the replay to the
+ * requested limit before returning it, and a trim that lands between a
+ * bundled prompt and the hook results recorded immediately before it would
+ * make them unrecoverable. The extra margin lets the TUI-side limiter
+ * (session-replay's preserveBundleHookResults) do the final cut without
+ * losing them.
+ */
+export const REPLAY_FETCH_TURN_LIMIT = REPLAY_TURN_LIMIT + 1;
 
 export interface ReplayRenderContext {
   turnIndex: number;
@@ -42,6 +54,8 @@ export interface SkillActivationProjection {
   readonly skillName: string;
   readonly skillArgs?: string;
   readonly trigger: SkillActivationTrigger;
+  /** The activation rode a bundled prompt message, not a standalone one. */
+  readonly bundled?: boolean;
 }
 
 export interface PluginCommandProjection {
@@ -103,6 +117,7 @@ export function countActiveBackgroundTasks(tasks: ReadonlyMap<string, AgentTaskI
 
 export function replayBackgroundProjection(
   background: readonly AgentTaskInfo[],
+  availableModels?: AppState['availableModels'],
 ): ReplayBackgroundProjection {
   const backgroundAgentMetadata = new Map<string, BackgroundAgentMetadata>();
   for (const info of background) {
@@ -113,6 +128,20 @@ export function replayBackgroundProjection(
       agentId,
       parentToolCallId: info.taskId,
       description: info.description,
+      // The persisted task record carries the spawn-time model/effort (v2);
+      // keep them across a resume so the terminal transcript entry can show
+      // them. Model maps through the catalog like the live path; boolean
+      // effort states carry no level and are dropped.
+      model:
+        info.model === undefined
+          ? undefined
+          : modelDisplayName(info.model, availableModels?.[info.model]),
+      effort:
+        info.thinkingEffort === undefined ||
+        info.thinkingEffort === 'off' ||
+        info.thinkingEffort === 'on'
+          ? undefined
+          : info.thinkingEffort,
     });
   }
   return { backgroundAgentMetadata };
@@ -204,13 +233,41 @@ export function toolResultOutput(content: readonly ContentPart[]): string {
 }
 
 export function contentPartsToText(content: readonly ContentPart[]): string {
+  // A daemon-ref media part is self-contained and renders as a bare
+  // `[image]`/`[video]` placeholder downstream — neither the materialization
+  // path nor the internal `kimi-file://` url may surface as user text. A
+  // standalone `<media path>` tag is user text and stays verbatim.
   return content.map(contentPartToText).join('');
 }
 
+/**
+ * agent-core-v2's task domain persists the terminal notification under the
+ * 'task' spelling (v1 used 'background_task'); both reach replay verbatim.
+ */
+export interface TaskNotificationOrigin {
+  readonly kind: 'task';
+  readonly taskId: string;
+  readonly status: AgentTaskStatus;
+  readonly notificationId: string;
+}
+
+/** v1-persisted sessions carry the terminal notification under the 'background_task' spelling. */
+export interface LegacyTaskNotificationOrigin {
+  readonly kind: 'background_task';
+  readonly taskId: string;
+  readonly status: AgentTaskStatus;
+  readonly notificationId: string;
+}
+
+export type BackgroundTaskNotificationOrigin =
+  | TaskNotificationOrigin
+  | LegacyTaskNotificationOrigin;
+
 export function backgroundOrigin(
   message: ContextMessage,
-): Extract<PromptOrigin, { kind: 'task' }> | undefined {
-  return message.origin?.kind === 'task' ? message.origin : undefined;
+): BackgroundTaskNotificationOrigin | undefined {
+  const origin = message.origin as BackgroundTaskNotificationOrigin | undefined;
+  return origin?.kind === 'background_task' || origin?.kind === 'task' ? origin : undefined;
 }
 
 export function skillActivationFromOrigin(
@@ -223,6 +280,48 @@ export function skillActivationFromOrigin(
     skillArgs: origin.skillArgs,
     trigger: origin.trigger,
   };
+}
+
+/**
+ * The v2 engine bundles a prompt's inline skill activations into the prompt
+ * message itself: the rendered skill blocks precede the caller's parts in
+ * the content, and this origin field carries every activation's metadata so
+ * replay can rebuild the per-skill cards from the single message. The SDK's
+ * origin union is typed from the v1 engine, which never sets the field, so
+ * read it structurally here instead of widening the deprecated v1 package's
+ * types.
+ */
+export function bundledSkillsFromOrigin(
+  origin: PromptOrigin | undefined,
+): readonly SkillActivationProjection[] {
+  if (origin?.kind !== 'user') return [];
+  const activations = (
+    origin as {
+      readonly skillActivations?: readonly {
+        readonly activationId: string;
+        readonly skillName: string;
+        readonly skillArgs?: string;
+      }[];
+    }
+  ).skillActivations;
+  if (activations === undefined) return [];
+  return activations.map((activation) => ({
+    activationId: activation.activationId,
+    skillName: activation.skillName,
+    skillArgs: activation.skillArgs,
+    trigger: 'user-slash' as const,
+    bundled: true,
+  }));
+}
+
+/**
+ * Content parts the caller actually typed: the engine prepends one rendered
+ * text part per bundled skill, so the caller's own parts start right after
+ * them.
+ */
+export function stripBundledSkillParts(message: ContextMessage): readonly ContentPart[] {
+  const bundledCount = bundledSkillsFromOrigin(message.origin).length;
+  return bundledCount === 0 ? message.content : message.content.slice(bundledCount);
 }
 
 export function pluginCommandFromOrigin(

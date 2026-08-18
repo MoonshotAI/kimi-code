@@ -31,10 +31,12 @@ import type {
   FsBrowseResponse,
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
+import type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
 import type { ModelRecord } from '@moonshot-ai/agent-core-v2/kosong/model/model';
 import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 
+import type { McpServerConfig } from '../../contract/mcp.js';
 import type { AnonymousProviderInput, GenerateEvent, GenerateInput, GenerateParams, ProviderInput } from './kosong-types.js';
 import type {
   PluginCommandDef,
@@ -43,6 +45,7 @@ import type {
   PluginUpdateStatus,
   ReloadSummary,
 } from '@moonshot-ai/agent-core-v2/app/plugin/types';
+import type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
 
 /** Low-level caller the klient factory builds: routes + validates one service call. */
 export type Caller = (service: string, method: string, args: unknown[]) => Promise<unknown>;
@@ -102,11 +105,14 @@ export interface GlobalSessionsFacade {
    * Create a session rooted at `workDir` (the workspace is registered
    * implicitly), optionally titled. Returns the persisted metadata. No agent
    * is created — `session(id).agent('main')` materializes it on first use.
+   * `mcpServers` injects ephemeral per-session MCP servers: connected only
+   * for this session, never persisted.
    */
   create(input: {
     workDir: string;
     additionalDirs?: readonly string[];
     title?: string;
+    mcpServers?: Readonly<Record<string, McpServerConfig>>;
   }): Promise<SessionMeta>;
 }
 
@@ -166,6 +172,13 @@ export interface GlobalKosongFacade {
 export interface GlobalAuthFacade {
   status(provider?: string): Promise<AuthStatus>;
   summarize(): Promise<readonly AuthStatus[]>;
+  /**
+   * The engine's own auth-readiness probe for a model (the default model when
+   * omitted): resolves config-file apiKey / provider env-bag credentials or an
+   * OAuth token, throwing a typed auth error when nothing resolves. Actual
+   * model usage does not depend on the OAuth-only {@link summarize} view.
+   */
+  ensureReady(modelOverride?: string): Promise<void>;
   startLogin(provider?: string): Promise<OAuthFlowStart>;
   flow(provider?: string): Promise<OAuthFlowSnapshot | undefined>;
   cancelLogin(provider?: string): Promise<OAuthLoginCancelResponse>;
@@ -186,6 +199,12 @@ export interface GlobalFlagsFacade {
   snapshot(): Promise<Record<string, boolean>>;
 }
 
+export interface GlobalCapabilitiesFacade {
+  list(): Promise<readonly CapabilityStatus[]>;
+  get(id: string): Promise<CapabilityStatus>;
+  install(id: string): Promise<CapabilityStatus>;
+}
+
 export interface GlobalPluginsFacade {
   list(): Promise<readonly PluginSummary[]>;
   info(id: string): Promise<PluginInfo>;
@@ -201,6 +220,30 @@ export interface GlobalPluginsFacade {
 export interface GlobalHostFsFacade {
   browse(absPath?: string): Promise<FsBrowseResponse>;
   home(): Promise<FsHomeResponse>;
+}
+
+/** One downloaded upload: its metadata plus the buffered bytes. */
+export interface FileDownload {
+  readonly meta: FileMeta;
+  readonly data: Uint8Array;
+}
+
+export interface GlobalFilesFacade {
+  /**
+   * Upload buffered bytes to the daemon's file store. Bytes cross the wire
+   * base64-encoded (JSON cannot carry them), so very large uploads pay one
+   * encode here and one decode in the dispatcher.
+   */
+  save(input: {
+    data: Uint8Array;
+    filename: string;
+    name?: string;
+    mimeType?: string;
+    expiresInSec?: number;
+  }): Promise<FileMeta>;
+  /** Download one upload back into memory. */
+  get(fileId: string): Promise<FileDownload>;
+  delete(fileId: string): Promise<void>;
 }
 
 /** Aggregated host/environment snapshot (`bootstrapService` properties). */
@@ -227,7 +270,9 @@ export interface GlobalFacade {
   readonly auth: GlobalAuthFacade;
   readonly flags: GlobalFlagsFacade;
   readonly plugins: GlobalPluginsFacade;
+  readonly capabilities: GlobalCapabilitiesFacade;
   readonly hostFs: GlobalHostFsFacade;
+  readonly files: GlobalFilesFacade;
   env(): Promise<KlientEnvInfo>;
 }
 
@@ -276,18 +321,14 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
 
   return {
     sessions: {
-      list: (query) => call('sessionIndex', 'list', [query]) as Promise<Page<SessionSummary>>,
+      list: (query) =>
+        call('sessionIndex', 'listRecent', [query]) as Promise<Page<SessionSummary>>,
       get: (id) => call('sessionIndex', 'get', [id]) as Promise<SessionSummary | undefined>,
       countActive: (workspaceIds) =>
-        call('sessionIndex', 'countActive', [workspaceIds]) as Promise<number>,
-      create: async ({ workDir, additionalDirs, title }) => {
-        // The workspace handler owns session creation: materialize (or reuse)
-        // the handler for the root, then create under it.
-        const handler = (await scoped({}, 'workspaceLifecycleService', 'handlerFor', [
-          { root: workDir },
-        ])) as { id: string };
-        const handle = (await scoped({ workspaceId: handler.id }, 'sessionLifecycleService', 'create', [
-          { workDir, additionalDirs },
+        call('sessionIndex', 'count', [{ workspaceIds }]) as Promise<number>,
+      create: async ({ workDir, additionalDirs, title, mcpServers }) => {
+        const handle = (await scoped({}, 'sessionManager', 'create', [
+          { workDir, additionalDirs, mcpServers },
         ])) as { id: string };
         const scope = { sessionId: handle.id };
         if (title !== undefined) {
@@ -398,6 +439,8 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
     auth: {
       status: (provider) => call('oauthService', 'status', [provider]) as Promise<AuthStatus>,
       summarize: () => call('authSummaryService', 'summarize', []) as Promise<readonly AuthStatus[]>,
+      ensureReady: (modelOverride) =>
+        call('authSummaryService', 'ensureReady', [modelOverride]) as Promise<void>,
       startLogin: (provider) =>
         call('oauthService', 'startLogin', [provider]) as Promise<OAuthFlowStart>,
       flow: (provider) =>
@@ -435,10 +478,34 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
         call('pluginService', 'listPluginCommands', []) as Promise<readonly PluginCommandDef[]>,
     },
 
+    capabilities: {
+      list: () => call('capabilityService', 'listCapabilities', []) as Promise<readonly CapabilityStatus[]>,
+      get: (id) => call('capabilityService', 'getCapability', [id]) as Promise<CapabilityStatus>,
+      install: (id) =>
+        call('capabilityService', 'installCapability', [id]) as Promise<CapabilityStatus>,
+    },
+
     hostFs: {
       browse: (absPath) =>
         call('hostFolderBrowser', 'browse', [absPath]) as Promise<FsBrowseResponse>,
       home: () => call('hostFolderBrowser', 'home', []) as Promise<FsHomeResponse>,
+    },
+
+    files: {
+      save: ({ data, filename, name, mimeType, expiresInSec }) =>
+        call('fileService', 'save', [
+          Buffer.from(data).toString('base64'),
+          filename,
+          { name, mimeType, expiresInSec },
+        ]) as Promise<FileMeta>,
+      get: async (fileId) => {
+        const wire = (await call('fileService', 'get', [fileId])) as {
+          meta: FileMeta;
+          data: string;
+        };
+        return { meta: wire.meta, data: Buffer.from(wire.data, 'base64') };
+      },
+      delete: (fileId) => call('fileService', 'delete', [fileId]) as Promise<void>,
     },
 
     env,

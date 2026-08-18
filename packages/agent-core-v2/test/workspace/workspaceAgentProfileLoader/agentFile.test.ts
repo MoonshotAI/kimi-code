@@ -1,18 +1,9 @@
-/**
- * Scenario: agent-file parsing primitives — frontmatter validation, defaults,
- * and the AgentFileDefinition → AgentProfile factory (template substitution,
- * `${base_prompt}`, `${plugin_sections}`, tool pass-through, explicit override
- * intent).
- * Pure-function level, no IO.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/agentFileCatalog/agentFile.test.ts`.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { AgentFileParseError, parseAgentFileText } from '#/workspace/workspaceAgentProfileLoader/internal/agentFile';
 import { agentProfileFromFile } from '#/workspace/workspaceAgentProfileLoader/internal/agentProfileFromFile';
 import type { AgentFileDefinition } from '#/workspace/workspaceAgentProfileLoader/internal/types';
+import type { SystemPromptRenderResult } from '#/app/agentProfileCatalog/agentProfileCatalog';
 
 const FULL_FILE = `---
 name: code-reviewer
@@ -57,28 +48,11 @@ describe('parseAgentFileText', () => {
     const def = parse('---\nname: solo\ndescription: d\n---\n\nbody\n');
 
     expect(def.override).toBe(false);
-    expect(def.modelPreference).toBeUndefined();
     expect(def.tools).toBeUndefined();
     expect(def.disallowedTools).toBeUndefined();
     expect(def.subagents).toBeUndefined();
     expect(def.whenToUse).toBeUndefined();
     expect(def.prompt).toBe('body');
-  });
-
-  it('parses a symbolic model preference', () => {
-    const def = parse(
-      '---\nname: solo\ndescription: d\nmodel_preference: primary\n---\n\nbody\n',
-    );
-
-    expect(def.modelPreference).toBe('primary');
-  });
-
-  it('rejects an unsupported model preference', () => {
-    expect(() =>
-      parse(
-        '---\nname: solo\ndescription: d\nmodel_preference: provider/model\n---\n\nbody\n',
-      ),
-    ).toThrow(/"model_preference"/);
   });
 
   it('rejects missing frontmatter', () => {
@@ -207,7 +181,13 @@ describe('agentProfileFromFile', () => {
     path: '/tmp/agents/reviewer.md',
     source: 'user',
   };
-  const basePrompt = () => 'BASE_PROMPT';
+  const basePrompt = (): SystemPromptRenderResult => ({
+    text: 'BASE_PROMPT',
+    environment: {
+      cwd: '',
+      date: { disclosed: false },
+    },
+  });
 
   it('returns a plain body verbatim and injects no unreferenced context', () => {
     const profile = agentProfileFromFile(base, basePrompt);
@@ -264,6 +244,32 @@ describe('agentProfileFromFile', () => {
     expect(profile.systemPrompt({})).toBe('extra instructions\n\nBASE_PROMPT');
   });
 
+  it('forwards the base prompt environment disclosure through renderSystemPrompt', () => {
+    const profile = agentProfileFromFile(
+      { ...base, prompt: 'extra instructions\n\n${base_prompt}' },
+      (): SystemPromptRenderResult => ({
+        text: 'BASE_PROMPT',
+        environment: {
+          cwd: '/work',
+          date: {
+            disclosed: true,
+            value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
+          },
+        },
+      }),
+    );
+
+    const rendered = profile.renderSystemPrompt({ cwd: '/work' });
+    expect(rendered.text).toBe('extra instructions\n\nBASE_PROMPT');
+    expect(rendered.environment).toEqual({
+      cwd: '/work',
+      date: {
+        disclosed: true,
+        value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
+      },
+    });
+  });
+
   it('places plugin instructions where ${plugin_sections} is referenced', () => {
     const profile = agentProfileFromFile(
       { ...base, prompt: 'before\n${plugin_sections}after' },
@@ -292,12 +298,6 @@ describe('agentProfileFromFile', () => {
     const profile = agentProfileFromFile({ ...base, subagents: ['explore'] }, basePrompt);
 
     expect(profile.subagents).toEqual(['explore']);
-  });
-
-  it('passes the model preference through', () => {
-    const profile = agentProfileFromFile({ ...base, modelPreference: 'secondary' }, basePrompt);
-
-    expect(profile.modelPreference).toBe('secondary');
   });
 
   it('treats an explicit file as an override intent', () => {

@@ -1,13 +1,6 @@
-/**
- * `cron` domain — `ICronTaskPersistence` implementation.
- *
- * Persists cron tasks as atomic JSON documents under the `cron` persistence
- * scope (`bootstrap.scope('cron')`), laid out as `<workspaceId>/<id>.json`.
- * Pure CRUD — no scheduling logic. Bound at App scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 

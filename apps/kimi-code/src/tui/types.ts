@@ -31,6 +31,11 @@ export interface AppState {
   sessionId: string;
   permissionMode: PermissionMode;
   planMode: boolean;
+  /** Resolved profile name from --agent/--agent-file, carried to the
+   * lazy-created first session when the TUI starts session-less. */
+  agentProfile?: string;
+  /** Raw --agent-file paths, passed to session creation alongside `agentProfile`. */
+  agentFiles?: readonly string[];
   /** 'bash' when the editor is in `!` shell-command mode. */
   inputMode: 'prompt' | 'bash';
   swarmMode: boolean;
@@ -38,6 +43,20 @@ export interface AppState {
    * mirrors the runtime. The single source of truth for the thinking state in
    * the TUI. */
   thinkingEffort: ThinkingEffort;
+  /**
+   * The current `defaultPlanMode` value from config (false when absent),
+   * refreshed by `hydrateLazyConfigDefaults`. Used to tell a config-driven
+   * plan-mode entry apart from an explicit CLI `--plan` when lazy-creating
+   * the first session (the engine applies the config default itself).
+   */
+  configDefaultPlanMode?: boolean;
+  /**
+   * Session-only thinking effort chosen (e.g. via the model picker's Alt+S)
+   * while no session exists yet on the v2 engine. Applied to the first
+   * lazy-created session and cleared once it exists; the engine's config
+   * default is used instead when unset.
+   */
+  lazySessionThinking?: ThinkingEffort;
   contextUsage: number;
   contextTokens: number;
   /** Whole stored-history estimate before projection folds; 0 until measured. */
@@ -47,11 +66,17 @@ export interface AppState {
   isReplaying: boolean;
   streamingPhase: 'idle' | 'waiting' | 'thinking' | 'composing' | 'shell';
   streamingStartTime: number;
+  /** Pending step retry backoff (fed by `turn.step.retrying`); null when no retry is in flight. */
+  stepRetry: StepRetryState | null;
   theme: ThemeName;
   version: string;
   editorCommand: string | null;
   /** Mirrors the TUI config toggle; defaults to false when absent from older fixtures. */
   disablePasteBurst?: boolean;
+  /** LaTeX math rendering in Markdown; defaults to true when absent from older fixtures. */
+  renderLatex?: boolean;
+  /** Mirrors the TUI config toggle; defaults to true when absent from older fixtures. */
+  cacheExpiryHint?: boolean;
   notifications: NotificationsConfig;
   upgrade: UpgradePreferences;
   /** Footer status line customization from tui.toml; absent means the default layout. */
@@ -64,6 +89,24 @@ export interface AppState {
   mcpServersSummary: string | null;
   /** Optional banner shown below the welcome panel; null means no banner to render. */
   banner?: BannerState | null;
+}
+
+export interface StepRetryState {
+  /** Upcoming attempt number (1-based). */
+  nextAttempt: number;
+  maxAttempts: number;
+  /** Backoff wait before the next attempt, in milliseconds. */
+  delayMs: number;
+  errorName: string;
+  errorMessage: string;
+  /** HTTP status code for `APIStatusError`; undefined for network/timeout failures. */
+  statusCode?: number;
+  /**
+   * `backoff` while sleeping before the next attempt (label shows the
+   * countdown); `attempt` once the `delayMs` backoff has elapsed and the next
+   * attempt is running — the countdown has expired by then and is dropped.
+   */
+  phase: 'backoff' | 'attempt';
 }
 
 export interface ToolCallBlockData {
@@ -111,6 +154,10 @@ export interface BackgroundAgentMetadata {
   readonly parentToolCallId: string;
   readonly agentName?: string;
   readonly description?: string;
+  /** Display name of the model the agent is bound to (resolved at spawn). */
+  readonly model?: string;
+  /** Thinking effort, set only for concrete levels (boolean on/off hidden). */
+  readonly effort?: string;
 }
 
 export type BackgroundAgentStatusPhase = 'started' | 'completed' | 'failed';
@@ -191,6 +238,10 @@ export interface TranscriptEntry {
   skillName?: string;
   skillArgs?: string;
   skillTrigger?: SkillActivationTrigger;
+  /** Card belongs to the following prompt's bundled submission: undo removes them together. */
+  bundledWithPrompt?: boolean;
+  /** Entry renders a UserPromptSubmit hook result (sits inside its prompt's group window). */
+  hookResult?: boolean;
   pluginCommandData?: PluginCommandTranscriptData;
 }
 
@@ -207,14 +258,32 @@ export interface LivePaneState {
   pendingQuestion: PendingQuestion | null;
 }
 
+export interface InlineSkillActivation {
+  readonly skillName: string;
+  /**
+   * Skill arguments. Only set for a leading `/skill:<name> args` command that
+   * is combined with further inline skills; inline tokens carry no args.
+   */
+  readonly args?: string;
+}
+
 export interface QueuedMessage {
   readonly text: string;
   readonly agentId?: string;
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
+  readonly stagingPaths?: readonly string[];
   /** `bash` for a `!` shell command queued while another command is running;
+   *  `skill` for a slash-skill activation queued while the session is busy;
    *  undefined (=`prompt`) for a normal message. */
-  readonly mode?: 'prompt' | 'bash';
+  readonly mode?: 'prompt' | 'bash' | 'skill';
+  /** Set when mode === 'skill': the skill to activate when the item drains.
+   *  `text` then holds the display/recall string (`/name args`). */
+  readonly skillName?: string;
+  /** Set when mode === 'skill': the raw (media-rewritten) args to activate with. */
+  readonly skillArgs?: string;
+  /** Skills to activate together with this queued message's prompt. */
+  readonly inlineSkillActivations?: readonly InlineSkillActivation[];
 }
 
 /**
@@ -227,6 +296,7 @@ export interface SteerInputItem {
   readonly text: string;
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
+  readonly stagingPaths?: readonly string[];
 }
 
 export const INITIAL_LIVE_PANE: LivePaneState = {

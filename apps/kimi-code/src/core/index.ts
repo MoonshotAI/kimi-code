@@ -20,9 +20,12 @@ export * from './replay-turns';
 export * from './session';
 export * from './types';
 export {
+  buildDaemonFileUrl,
   buildImageCompressionCaption,
+  buildMediaPathTag,
   COMPACTION_SUMMARY_PREFIX,
   compressImageForModel,
   persistOriginalImage,
   sessionMediaOriginalsDir,
 } from '@moonshot-ai/agent-core-v2';
+export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';

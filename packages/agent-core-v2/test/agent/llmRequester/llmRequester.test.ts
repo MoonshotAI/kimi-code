@@ -141,8 +141,6 @@ describe('LLMRequester service migration coverage', () => {
       expect(requests).toHaveLength(2);
       expect(requests[0]?.args).toMatchObject({
         kind: 'loop',
-        // The durable record's `provider` field carries the wire protocol:
-        // Kimi is a vendor over the openai base, not a protocol.
         provider: 'openai',
         model: 'mock-model',
         modelAlias: 'mock-model',
@@ -302,9 +300,9 @@ describe('LLMRequester service migration coverage', () => {
       });
 
       expect(protocolEvents(ctx, 'tool.call.delta').map((event) => event.args)).toEqual([
-        { turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: undefined },
-        { turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: '{"query"' },
-        { turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: ':"moon"}' },
+        { time: expect.any(Number), turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: undefined },
+        { time: expect.any(Number), turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: '{"query"' },
+        { time: expect.any(Number), turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: ':"moon"}' },
       ]);
       expect(protocolEvents(ctx, 'toolCall').at(-1)?.args).toEqual({
         turnId: 0,
@@ -370,7 +368,7 @@ describe('LLMRequester service migration coverage', () => {
       expect(JSON.stringify(entries)).not.toContain('stack');
     });
 
-    it('fails a retryable provider error on the first attempt — retries are the loop\u2019s concern', async () => {
+    it('fails a retryable provider error after the bounded transport retry', async () => {
       let calls = 0;
       ctx = createTestAgent(
         llmGenerateServices(async () => {
@@ -383,7 +381,9 @@ describe('LLMRequester service migration coverage', () => {
       await expect(llmRequester.request()).rejects.toMatchObject({
         name: 'APIConnectionError',
       });
-      expect(calls).toBe(1);
+      // The requester owns a bounded transport retry (DEFAULT_MAX_RETRY_ATTEMPTS);
+      // the loop's stepRetry policy layers on top of an exhausted round.
+      expect(calls).toBe(3);
     });
 
     it('tracks api_error with the v1 wire shape (model id, alias, protocol, status code)', async () => {
@@ -407,8 +407,6 @@ describe('LLMRequester service migration coverage', () => {
           agent_id: 'main',
           model: 'mock-model',
           alias: 'mock-model',
-          // vendor and wire protocol are separate fields now: the mock
-          // provider is the kimi vendor over the openai base.
           provider_type: 'kimi',
           protocol: 'openai',
           retryable: expect.any(Boolean),
@@ -469,8 +467,6 @@ describe('LLMRequester service migration coverage', () => {
       logEntries = entries;
       ctx = createTestAgent(
         llmGenerateServices(async (_provider, _systemPrompt, _tools, _messages, callbacks, options) => {
-          // The per-turn completion budget arrives as a GenerateOptions
-          // intent (the morph-era baked `modelParameters.max_tokens` is gone).
           requestMaxTokens = options?.maxCompletionTokens;
           options?.onRequestStart?.();
           await callbacks?.onMessagePart?.({ type: 'text', text: 'timed' });
@@ -635,10 +631,6 @@ describe('LLMRequester service migration coverage', () => {
     });
 
     it('forwards the session id as the per-turn cache-key intent', async () => {
-      // The engine half of the cache-key probe: the same session's id reaches
-      // the composed provider as GenerateOptions.cacheKey. How each dialect
-      // encodes it (Kimi `prompt_cache_key`, Anthropic `metadata.user_id`) is
-      // asserted at the kosong/provider composition layer.
       await llmRequester.request();
 
       expect(capturedCacheKey).toBe('test-session');

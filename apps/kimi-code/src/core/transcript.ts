@@ -20,8 +20,9 @@
  * the restore. Replay is read exactly once per resume, so a one-shot reduce
  * loses nothing.
  *
- * Record → entry mapping (op types not exported by the v2 barrel are keyed by
- * their literal wire names; payloads are declared locally):
+ * Record → entry mapping (op types are keyed by their literal wire names —
+ * the v2 barrel no longer exports the op constants; payloads are declared
+ * locally):
  *   context.append_message      → message entry (deferred while a tool exchange is open)
  *   context.append_loop_event   → folds into assistant / tool entries
  *   context.apply_compaction    → compaction card entry (full history kept;
@@ -45,15 +46,7 @@
 
 import {
   COMPACTION_SUMMARY_PREFIX,
-  contextAppendLoopEvent,
-  contextAppendMessage,
-  contextApplyCompaction,
-  contextClear,
-  contextUndo,
   isRealUserInput,
-  planModeCancel,
-  planModeEnter,
-  planModeExit,
   readContextCompactionSummary,
   type ContentPart,
   type ContextMessage,
@@ -487,27 +480,29 @@ function snapshotFromGoalStateLike(goal: GoalStateLike): GoalSnapshot {
 type TranscriptReducer = (state: TranscriptModelState, payload: unknown) => TranscriptModelState;
 
 const transcriptReducers: Record<string, TranscriptReducer> = {
-    [contextAppendMessage.type]: (state, payload: unknown) =>
+    // The v2 op constants are gone (state-model refactor); the persisted wire
+    // names are stable and matched literally, same as the other unexported ops.
+    'context.append_message': (state, payload: unknown) =>
       applyAppendMessage(state, toMutableMessage((payload as { message: ContextMessageLike }).message)),
-    [contextAppendLoopEvent.type]: (state, payload: unknown) =>
+    'context.append_loop_event': (state, payload: unknown) =>
       applyLoopEvent(state, (payload as { event: LoopRecordedEvent }).event),
-    [contextApplyCompaction.type]: (state, payload: unknown) => applyCompactionEntry(state, payload),
-    [contextUndo.type]: (state, payload: unknown) =>
+    'context.apply_compaction': (state, payload: unknown) => applyCompactionEntry(state, payload),
+    'context.undo': (state, payload: unknown) =>
       applyTranscriptUndo(state, (payload as { count: number }).count),
-    [contextClear.type]: (state) => applyTranscriptClear(state),
+    'context.clear': (state) => applyTranscriptClear(state),
     'goal.create': (state, payload: unknown) => applyGoalCreate(state, payload as GoalCreateWirePayload),
     'goal.update': (state, payload: unknown) => applyGoalUpdate(state, payload as GoalUpdateWirePayload),
     'goal.clear': (state) => applyGoalClear(state),
     forked: (state) => applyGoalClear(state),
-    [planModeEnter.type]: (state) => ({
+    'plan_mode.enter': (state) => ({
       entries: [...state.entries, { type: 'plan_updated', enabled: true }],
       working: state.working,
     }),
-    [planModeExit.type]: (state) => ({
+    'plan_mode.exit': (state) => ({
       entries: [...state.entries, { type: 'plan_updated', enabled: false }],
       working: state.working,
     }),
-    [planModeCancel.type]: (state) => ({
+    'plan_mode.cancel': (state) => ({
       entries: [...state.entries, { type: 'plan_updated', enabled: false }],
       working: state.working,
     }),

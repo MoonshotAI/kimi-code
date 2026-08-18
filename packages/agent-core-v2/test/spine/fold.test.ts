@@ -15,17 +15,11 @@ import {
   WIRE_PROTOCOL_VERSION,
   appendSpineView,
   deriveSpineState,
-  IAgentContextSizeService,
   IAgentLLMRequesterService,
   IAgentProfileService,
   IAgentSpineService,
-  IWireService,
+  IAgentTokenCountingService,
   loadSpineViewOverride,
-  spineClose,
-  SpineModel,
-  spineNext,
-  spineOpen,
-  spineRootCompact,
   spineTreeViewFromState,
   type SpineTreeNodeView,
   type SpineTreeView,
@@ -421,8 +415,8 @@ describe('Spine projection fold', () => {
       rawSize: () => sizeNow,
       measured: () => {},
       latestMeasurement: () => undefined,
-    } as unknown as IAgentContextSizeService;
-    const ctx = testAgent(agentService(IAgentContextSizeService, fakeSize));
+    } as unknown as IAgentTokenCountingService;
+    const ctx = testAgent(agentService(IAgentTokenCountingService, fakeSize));
     await configureLoop(ctx);
     // Turn 1: the open accept records the 10K baseline.
     ctx.mockNextResponse(toolCallPart('c_open', 'spine_open', { summary: 'task A' }));
@@ -768,7 +762,6 @@ describe('Spine logical session conformance', () => {
       `tool: ${ACCEPTED_OUTPUT}`,
       'user: [U2] 下一步',
     ]);
-    expectDerivationMatchesOps(ctx);
   });
 
   it('projects a nested next-chain as flattened per-node memory slots', () => {
@@ -803,7 +796,6 @@ describe('Spine logical session conformance', () => {
       `tool: ${ACCEPTED_OUTPUT}`,
       'user: [U2] final',
     ]);
-    expectDerivationMatchesOps(ctx);
   });
 
   it('projects an epoch boundary with stable request anchors', () => {
@@ -833,7 +825,6 @@ describe('Spine logical session conformance', () => {
       `tool: ${ACCEPTED_OUTPUT}`,
       'user: [U3] tail',
     ]);
-    expectDerivationMatchesOps(ctx);
   });
 });
 
@@ -1266,15 +1257,15 @@ describe('Spine legacy-op restore compat', () => {
     vi.unstubAllEnvs();
   });
 
-  it('derives the same tree as the persisted legacy ops after a restore', async () => {
+  it('derives the same tree after a persistence round-trip', async () => {
     const persistence = new InMemoryWireRecordPersistence();
     const ctx = testAgent(
       execEnvServices({ hostFs: recordingHostFs(new Map()) }),
       wireRecordPersistenceServices(persistence),
     );
-    // An old-style session: the transcript plus the legacy spine ops the
-    // pre-derivation commit path persisted alongside it (open anchors at its
-    // carrier, close/next end the span right before the carrier).
+    // A two-epoch session with a close and a next: the transcript alone is
+    // the derivation input (open anchors at its carrier, close/next end the
+    // span right before the carrier).
     replaySession(ctx, [
       { kind: 'user', text: 'epoch-1 request' },
       { kind: 'spine_open', id: '1.1.1', summary: 'task A', parentId: '1.1' },
@@ -1305,11 +1296,10 @@ describe('Spine legacy-op restore compat', () => {
     );
     await resumed.restorePersisted();
 
-    // After the persistence round-trip the message stream alone still derives
-    // the same tree the persisted legacy ops replay into: the derivation is
-    // the single source of truth and the ops are now inert records.
+    // The message stream is the single source of truth: the tree derived
+    // after the restore matches the tree derived live.
     expect(resumed.get(IAgentSpineService).currentState()).toEqual(
-      resumed.get(IWireService).getModel(SpineModel),
+      ctx.get(IAgentSpineService).currentState(),
     );
   });
 });
@@ -1624,7 +1614,6 @@ type LogicalEvent =
   | { readonly kind: 'root_compact'; readonly epoch: number; readonly summary: string };
 
 function replaySession(ctx: TestAgentContext, events: readonly LogicalEvent[]): void {
-  const wire = ctx.get(IWireService);
   for (const event of events) {
     switch (event.kind) {
       case 'user':
@@ -1639,40 +1628,25 @@ function replaySession(ctx: TestAgentContext, events: readonly LogicalEvent[]): 
         break;
       case 'spine_open': {
         const callId = `open_${event.id}`;
-        const carrierAt = append(
+        append(
           ctx,
           assistantToolCall(callId, 'spine_open', JSON.stringify({ summary: event.summary })),
         );
         append(ctx, spineAcceptedReceipt(callId));
-        wire.dispatch(
-          spineOpen({
-            id: event.id,
-            summary: event.summary,
-            parentId: event.parentId,
-            openedAt: carrierAt,
-          }),
-        );
         break;
       }
       case 'spine_close': {
         const callId = `close_${event.id}`;
-        const carrierAt = append(
+        append(
           ctx,
           assistantToolCall(callId, 'spine_close', JSON.stringify({ memory: event.memory })),
         );
         append(ctx, spineAcceptedReceipt(callId));
-        wire.dispatch(
-          spineClose({
-            id: event.id,
-            closedAt: carrierAt - 1,
-            memory: event.memory,
-          }),
-        );
         break;
       }
       case 'spine_next': {
         const callId = `next_${event.closedId}`;
-        const carrierAt = append(
+        append(
           ctx,
           assistantToolCall(
             callId,
@@ -1681,28 +1655,12 @@ function replaySession(ctx: TestAgentContext, events: readonly LogicalEvent[]): 
           ),
         );
         append(ctx, spineAcceptedReceipt(callId));
-        wire.dispatch(
-          spineNext({
-            closedId: event.closedId,
-            closedAt: carrierAt - 1,
-            memory: event.memory,
-            openedId: event.openedId,
-            summary: event.summary,
-          }),
-        );
         break;
       }
       case 'root_compact': {
-        const summaryAt = append(
+        append(
           ctx,
           createCompactionSummaryMessage(buildCompactionSummaryText(event.summary)),
-        );
-        wire.dispatch(
-          spineRootCompact({
-            epoch: event.epoch,
-            epochStartAt: ctx.context.get().length,
-            epochMemoryAt: summaryAt,
-          }),
         );
         break;
       }
@@ -1710,14 +1668,6 @@ function replaySession(ctx: TestAgentContext, events: readonly LogicalEvent[]): 
   }
 }
 
-// The message stream alone must derive the same tree the ops recorded:
-// derivation is the candidate single source of truth, so every fixture pins
-// the equivalence the reducer rewrite must preserve.
-function expectDerivationMatchesOps(ctx: TestAgentContext): void {
-  expect(deriveSpineState(ctx.context.get())).toEqual(
-    ctx.get(IWireService).getModel(SpineModel),
-  );
-}
 
 function canonicalProjection(folded: readonly ContextMessage[]): string[] {
   return folded.map((message) => {

@@ -14,8 +14,11 @@ const tick = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(reso
 /** Records calls, replays scripted results, and captures listen subscriptions. */
 class FakeChannel implements KlientChannel {
   readonly calls: Array<{ scope: ScopeRef; service: string; method: string; args: unknown[] }> = [];
-  readonly subscriptions: Array<{ source: EventSourceRef; dispose: ReturnType<typeof vi.fn> }> =
-    [];
+  readonly subscriptions: Array<{
+    scope: ScopeRef;
+    source: EventSourceRef;
+    dispose: ReturnType<typeof vi.fn>;
+  }> = [];
   result: unknown;
   /** Keyed `${service}.${method}` result overrides. */
   readonly results = new Map<string, unknown>();
@@ -33,14 +36,14 @@ class FakeChannel implements KlientChannel {
     // stub — streaming is not exercised in facade tests
   }
 
-  listen(_scope: ScopeRef, source: EventSourceRef, handler: (data: unknown) => void): IDisposable {
+  listen(scope: ScopeRef, source: EventSourceRef, handler: (data: unknown) => void): IDisposable {
     const id = this.nextSub;
     this.nextSub += 1;
     this.handlers.set(id, handler);
     const dispose = vi.fn(() => {
       this.handlers.delete(id);
     });
-    this.subscriptions.push({ source, dispose });
+    this.subscriptions.push({ scope, source, dispose });
     return { dispose };
   }
 
@@ -92,6 +95,33 @@ describe('facade routing', () => {
     });
   });
 
+  it('routes capability calls through the registered app service contract', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const status = {
+      id: 'kimi-cu',
+      displayName: 'Kimi Computer Use',
+      description: 'Background GUI automation',
+      supported: true,
+      state: 'partial',
+      steps: [{ id: 'permissions', state: 'missing' }],
+      // The completed-install note survives the contract parse (not stripped).
+      install: { running: false, note: 'user-skill-migrated' },
+    };
+    channel.result = [status];
+
+    await expect(klient.global.capabilities.list()).resolves.toEqual([status]);
+    channel.result = status;
+    await expect(klient.global.capabilities.get('kimi-cu')).resolves.toEqual(status);
+    await expect(klient.global.capabilities.install('kimi-cu')).resolves.toEqual(status);
+
+    expect(channel.calls).toEqual([
+      { scope: {}, service: 'capabilityService', method: 'listCapabilities', args: [] },
+      { scope: {}, service: 'capabilityService', method: 'getCapability', args: ['kimi-cu'] },
+      { scope: {}, service: 'capabilityService', method: 'installCapability', args: ['kimi-cu'] },
+    ]);
+  });
+
   it('env() fans out property reads and merges them', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
@@ -124,6 +154,298 @@ describe('facade routing', () => {
     const again = await klient.global.env();
     expect(again.platform).toBe('v');
     expect(channel.calls).toHaveLength(12);
+  });
+});
+
+describe('agent profile routing', () => {
+  it('thinking calls route to agentProfileService with the agent scope', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+
+    channel.result = undefined; // void output
+    await agent.setThinking('on');
+    expect(channel.calls[0]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentProfileService',
+      method: 'setThinking',
+      args: ['on'],
+    });
+
+    channel.result = 'high';
+    await expect(agent.getThinking()).resolves.toBe('high');
+    expect(channel.calls[1]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentProfileService',
+      method: 'getEffectiveThinkingLevel',
+      args: [],
+    });
+  });
+});
+
+describe('agent skill routing', () => {
+  it('promptWithSkills routes to agentSkillService.promptWithSkills with the agent scope', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+
+    channel.result = {
+      turn_id: 7,
+      prompt_id: 'p1',
+      created_at: '2026-01-01T00:00:00.000Z',
+      state: 'running',
+    };
+    await expect(
+      agent.promptWithSkills({
+        input: [{ type: 'text', text: 'Review this change.' }],
+        skills: [{ name: 'review' }, { name: 'security', args: 'src/app.ts' }],
+      }),
+    ).resolves.toEqual({
+      turn_id: 7,
+      prompt_id: 'p1',
+      created_at: '2026-01-01T00:00:00.000Z',
+      state: 'running',
+    });
+    expect(channel.calls[0]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentSkillService',
+      method: 'promptWithSkills',
+      args: [
+        {
+          input: [{ type: 'text', text: 'Review this change.' }],
+          skills: [{ name: 'review' }, { name: 'security', args: 'src/app.ts' }],
+        },
+      ],
+    });
+  });
+});
+
+describe('session skills routing', () => {
+  it('skills.list routes to sessionSkillCatalog.list with the session scope', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+
+    const summaries = [
+      {
+        name: 'review',
+        description: 'review changes',
+        path: '/skills/review/SKILL.md',
+        source: 'project',
+      },
+    ];
+    channel.result = summaries;
+    await expect(klient.session('s1').skills.list()).resolves.toEqual(summaries);
+    expect(channel.calls[0]).toEqual({
+      scope: { sessionId: 's1' },
+      service: 'sessionSkillCatalog',
+      method: 'list',
+      args: [],
+    });
+  });
+
+  it('skills.changed maps to the sessionSkillCatalog emitter', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const seen: unknown[] = [];
+
+    klient.session('s1').events.on('skills.changed', (event) => seen.push(event));
+    expect(channel.subscriptions[0]?.source).toEqual({
+      kind: 'emitter',
+      service: 'sessionSkillCatalog',
+      event: 'onDidChange',
+    });
+
+    channel.emit(0, 'workspace');
+    await tick();
+    expect(seen).toEqual(['workspace']);
+  });
+
+  it('activateSkill routes to agentSkillService with the agent scope', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+
+    channel.result = { turn_id: 3 };
+    await expect(agent.activateSkill({ name: 'review', args: 'src/app.ts' })).resolves.toEqual({
+      turn_id: 3,
+    });
+    expect(channel.calls[0]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentSkillService',
+      method: 'activate',
+      args: [{ name: 'review', args: 'src/app.ts' }],
+    });
+  });
+
+  it('turn-driving calls route to their domain services with the agent scope', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+    const scope = { sessionId: 's1', agentId: 'main' };
+
+    channel.results.set('agentPromptService.submit', { turn_id: 1 });
+    channel.results.set('agentPromptService.submitSteer', { turn_id: 1 });
+    channel.results.set('agentCommandService.list', []);
+    await agent.prompt({ input: [{ type: 'text', text: 'hi' }] });
+    await agent.steer({ input: [{ type: 'text', text: 'steer' }] });
+    await agent.cancel({ turnId: 2 });
+    await agent.cancel();
+    await agent.setPermission('yolo');
+    await agent.listCommands();
+    await agent.runCommand({ name: 'cmd', args: 'a b' });
+    await agent.runCommand({ name: 'plain' });
+
+    expect(channel.calls).toEqual([
+      {
+        scope,
+        service: 'agentPromptService',
+        method: 'submit',
+        args: [{ input: [{ type: 'text', text: 'hi' }] }],
+      },
+      {
+        scope,
+        service: 'agentPromptService',
+        method: 'submitSteer',
+        args: [{ input: [{ type: 'text', text: 'steer' }] }],
+      },
+      { scope, service: 'agentLoopService', method: 'cancelFromUser', args: [2] },
+      { scope, service: 'agentLoopService', method: 'cancelFromUser', args: [] },
+      { scope, service: 'agentPermissionModeService', method: 'setModeAndBroadcast', args: ['yolo'] },
+      { scope, service: 'agentCommandService', method: 'list', args: [] },
+      { scope, service: 'agentCommandService', method: 'run', args: ['cmd', 'a b'] },
+      { scope, service: 'agentCommandService', method: 'run', args: ['plain'] },
+    ]);
+  });
+
+  it('getContext merges the contextMemory and tokenCounting reads', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+    const scope = { sessionId: 's1', agentId: 'main' };
+
+    channel.results.set('agentContextMemoryService.get', [{ role: 'user' }]);
+    channel.results.set('agentTokenCountingService.statusSize', 42);
+    await expect(agent.getContext()).resolves.toEqual({
+      history: [{ role: 'user' }],
+      tokenCount: 42,
+    });
+    expect(channel.calls).toEqual([
+      { scope, service: 'agentContextMemoryService', method: 'get', args: [] },
+      { scope, service: 'agentTokenCountingService', method: 'statusSize', args: [] },
+    ]);
+  });
+});
+
+describe('agent mcp / compaction routing', () => {
+  it('getMcpServers returns the live snapshot with the agent scope', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+
+    const entries = [
+      { name: 'mock', transport: 'stdio', status: 'pending', toolCount: 0 },
+    ];
+    channel.results.set('agentMcpService.list', entries);
+    await expect(agent.getMcpServers()).resolves.toEqual(entries);
+    expect(channel.calls[0]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentMcpService',
+      method: 'list',
+      args: [],
+    });
+    expect(channel.calls).toHaveLength(1);
+  });
+
+  it('compact issues a manual begin with the optional instruction', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+
+    channel.result = true;
+    await expect(agent.compact()).resolves.toBe(true);
+    expect(channel.calls[0]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentFullCompactionService',
+      method: 'begin',
+      args: [{ source: 'manual', instruction: undefined }],
+    });
+
+    channel.result = false;
+    await expect(agent.compact({ instruction: 'keep the plan' })).resolves.toBe(false);
+    expect(channel.calls[1]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentFullCompactionService',
+      method: 'begin',
+      args: [{ source: 'manual', instruction: 'keep the plan' }],
+    });
+  });
+});
+
+describe('session lifecycle routing', () => {
+  it('delete calls the App session manager', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    channel.results.set('sessionManager.delete', undefined);
+
+    await klient.session('s1').delete();
+
+    expect(channel.calls).toEqual([
+      { scope: {}, service: 'sessionManager', method: 'delete', args: ['s1'] },
+    ]);
+  });
+
+  it('restore forwards resume options to the App session manager', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    channel.results.set('sessionManager.restore', { id: 's1', kind: 'session' });
+
+    const opts = {
+      mcpServers: { example: { transport: 'stdio' as const, command: 'node' } },
+    };
+    await expect(klient.session('s1').restore(opts)).resolves.toBe(true);
+
+    expect(channel.calls[0]).toEqual({
+      scope: {},
+      service: 'sessionManager',
+      method: 'restore',
+      args: ['s1', opts],
+    });
+  });
+
+  it('sessions.create forwards mcpServers to the App session manager', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    channel.results.set('sessionManager.create', { id: 's1', kind: 'session' });
+    channel.results.set('sessionMetadata.read', {
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 2,
+      archived: false,
+    });
+
+    const mcpServers = {
+      example: { transport: 'stdio' as const, command: 'node', args: ['server.mjs'] },
+    };
+    await klient.global.sessions.create({ workDir: '/x', mcpServers });
+
+    expect(channel.calls[0]).toMatchObject({
+      scope: {},
+      service: 'sessionManager',
+      method: 'create',
+      args: [{ workDir: '/x', mcpServers }],
+    });
+  });
+
+  it('sessions.create rejects malformed mcpServers before the call leaves the client', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    await expect(
+      klient.global.sessions.create({
+        workDir: '/x',
+        mcpServers: { bad: { transport: 'http', url: 'not-a-url' } },
+      }),
+    ).rejects.toBeInstanceOf(KlientValidationError);
+    expect(channel.calls.some((call) => call.method === 'create')).toBe(false);
   });
 });
 
@@ -210,6 +532,37 @@ describe('event hub', () => {
     expect(channel.subscriptions[0]?.dispose).toHaveBeenCalledTimes(1);
   });
 
+  it('delivers session.metaUpdated when the patch carries no lastPrompt', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const seen: unknown[] = [];
+    const errors: Error[] = [];
+    klient.events.onError((error) => {
+      errors.push(error);
+    });
+
+    klient.events.on('session.metaUpdated', (event) => seen.push(event));
+    channel.emit(0, {
+      type: 'session.meta.updated',
+      payload: {
+        agentId: 'main',
+        sessionId: 's1',
+        title: 'generated title',
+        patch: { title: 'generated title', isCustomTitle: false },
+      },
+    });
+    await tick();
+    expect(seen).toEqual([
+      {
+        agentId: 'main',
+        sessionId: 's1',
+        title: 'generated title',
+        patch: { title: 'generated title', isCustomTitle: false },
+      },
+    ]);
+    expect(errors).toHaveLength(0);
+  });
+
   it('disposes the emitter subscription when the last listener detaches', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
@@ -220,5 +573,127 @@ describe('event hub', () => {
     expect(channel.subscriptions[0]?.dispose).not.toHaveBeenCalled();
     b.dispose();
     expect(channel.subscriptions[0]?.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards the newly registered agent stream events and validates payloads', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+    const seen = {
+      delta: [] as unknown[],
+      progress: [] as unknown[],
+      started: [] as unknown[],
+      blocked: [] as unknown[],
+      cancelled: [] as unknown[],
+      completed: [] as unknown[],
+    };
+    const errors: Error[] = [];
+    agent.events.onError((error) => {
+      errors.push(error);
+    });
+
+    agent.events.on('tool.call.delta', (event) => seen.delta.push(event));
+    agent.events.on('tool.progress', (event) => seen.progress.push(event));
+    agent.events.on('compaction.started', (event) => seen.started.push(event));
+    agent.events.on('compaction.blocked', (event) => seen.blocked.push(event));
+    agent.events.on('compaction.cancelled', (event) => seen.cancelled.push(event));
+    agent.events.on('compaction.completed', (event) => seen.completed.push(event));
+
+    // All six registrations share one `events` stream subscription bound to
+    // the agent scope.
+    expect(channel.subscriptions).toHaveLength(1);
+    expect(channel.subscriptions[0]?.scope).toEqual({ sessionId: 's1', agentId: 'main' });
+    expect(channel.subscriptions[0]?.source).toEqual({ kind: 'stream', name: 'events' });
+
+    const delta = { type: 'tool.call.delta', turnId: 1, toolCallId: 'tc1', name: 'Bash', argumentsPart: '{"command":' };
+    const progress = {
+      type: 'tool.progress',
+      turnId: 1,
+      toolCallId: 'tc1',
+      update: { kind: 'stdout', text: 'chunk' },
+    };
+    const started = { type: 'compaction.started', trigger: 'auto' };
+    const blocked = { type: 'compaction.blocked', turnId: 2 };
+    const cancelled = { type: 'compaction.cancelled' };
+    const completed = {
+      type: 'compaction.completed',
+      result: { summary: 's', compactedCount: 3, tokensBefore: 100, tokensAfter: 40 },
+    };
+    channel.emit(0, delta);
+    channel.emit(0, progress);
+    channel.emit(0, started);
+    channel.emit(0, blocked);
+    channel.emit(0, cancelled);
+    channel.emit(0, completed);
+    channel.emit(0, { type: 'tool.progress', turnId: 1, toolCallId: 'tc1' }); // missing update
+    channel.emit(0, { type: 'unregistered.type', turnId: 1 });
+    await tick();
+
+    expect(seen.delta).toEqual([delta]);
+    expect(seen.progress).toEqual([progress]);
+    expect(seen.started).toEqual([started]);
+    expect(seen.blocked).toEqual([blocked]);
+    expect(seen.cancelled).toEqual([cancelled]);
+    expect(seen.completed).toEqual([completed]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(KlientValidationError);
+  });
+});
+
+describe('files routing', () => {
+  const META = {
+    id: 'f_1',
+    name: 'a.png',
+    media_type: 'image/png',
+    size: 4,
+    created_at: '2026-01-01T00:00:00.000Z',
+  };
+
+  it('routes the files save/get/delete lifecycle through fileService', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+
+    channel.result = META;
+    const meta = await klient.global.files.save({
+      data: new Uint8Array([1, 2, 3, 4]),
+      filename: 'a.png',
+      mimeType: 'image/png',
+    });
+    expect(meta).toEqual(META);
+    expect(channel.calls[0]).toMatchObject({
+      scope: {},
+      service: 'fileService',
+      method: 'save',
+      args: ['AQIDBA==', 'a.png', { mimeType: 'image/png' }],
+    });
+
+    channel.result = { meta: META, data: 'AQIDBA==' };
+    const got = await klient.global.files.get('f_1');
+    expect(got.meta).toEqual(META);
+    expect([...got.data]).toEqual([1, 2, 3, 4]);
+    expect(channel.calls[1]).toMatchObject({
+      scope: {},
+      service: 'fileService',
+      method: 'get',
+      args: ['f_1'],
+    });
+
+    channel.result = undefined;
+    await expect(klient.global.files.delete('f_1')).resolves.toBeUndefined();
+    expect(channel.calls[2]).toMatchObject({
+      scope: {},
+      service: 'fileService',
+      method: 'delete',
+      args: ['f_1'],
+    });
+  });
+
+  it('files.save rejects invalid input before it hits the wire', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    await expect(
+      klient.global.files.save({ data: new Uint8Array(0), filename: '' }),
+    ).rejects.toBeInstanceOf(KlientValidationError);
+    expect(channel.calls).toHaveLength(0);
   });
 });

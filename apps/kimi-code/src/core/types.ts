@@ -18,7 +18,6 @@ import type {
   ContentPart,
   ContextMessage,
   CreateGoalInput,
-  DomainEvent,
   ExperimentalFeatureState,
   ExperimentalFlagMap,
   ExportSessionResult,
@@ -38,6 +37,7 @@ import type {
   PluginSummary,
   PromptOrigin,
   QuestionAnswers,
+  ReloadSummary,
   ResolvedConfig,
   SessionMeta,
   ShellEnvironment,
@@ -57,13 +57,60 @@ import type {
 // `Core*`/`ApprovalResponse` names are kept for TUI compatibility.
 import type {
   McpServerEntry,
-  McpServerInfo,
   QuestionAnswerMethod,
   QuestionRequest as CoreQuestionRequest,
   QuestionResult,
   SessionApprovalRequest as CoreApprovalRequest,
   SessionApprovalResponse as ApprovalResponse,
 } from '@moonshot-ai/agent-core-v2';
+// Event2 payload types for the session-stream union below. The v2 barrel does
+// not re-export most event modules; deep-import them the same way kap-server's
+// `services/transcript/coreEventMap.ts` does.
+import type { KimiErrorPayload } from '@moonshot-ai/agent-core-v2/_base/errors/serialize';
+import type { HookResultPayload } from '@moonshot-ai/agent-core-v2/agent/externalHooks/externalHooksService';
+import type {
+  CompactionBlockedPayload,
+  CompactionCompletedPayload,
+  CompactionStartedPayload,
+} from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
+import type { GoalUpdatedPayload } from '@moonshot-ai/agent-core-v2/agent/goal/goalOps';
+import type {
+  AssistantDeltaPayload,
+  ThinkingDeltaPayload,
+  ToolCallDeltaPayload,
+  TurnStartedPayload,
+  TurnStepCompletedPayload,
+  TurnStepInterruptedPayload,
+  TurnStepStartedPayload,
+} from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import type { TurnEndedPayload } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type {
+  McpServerStatusEventPayload,
+  ToolListUpdatedPayload,
+} from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
+import type { PluginCommandActivatedPayload } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
+import type { WarningIssuedPayload } from '@moonshot-ai/agent-core-v2/agent/profile/profileOps';
+import type {
+  ShellOutputPayload,
+  ShellStartedPayload,
+} from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommandService';
+import type { SkillActivatedPayload } from '@moonshot-ai/agent-core-v2/agent/skill/skillOps';
+import type { TurnStepRetryingPayload } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
+import type { TaskTerminatedNoticePayload } from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
+import type {
+  ToolCallStartedPayload,
+  ToolProgressPayload,
+  ToolResultEventPayload,
+} from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
+import type { AgentStatusUpdatedPayload } from '@moonshot-ai/agent-core-v2/agent/usage/usageEvents';
+import type { SubagentSuspendedPayload } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmService';
+import type { CronFiredPayload } from '@moonshot-ai/agent-core-v2/session/cron/cronOps';
+import type {
+  SubagentCompletedPayload,
+  SubagentFailedPayload,
+  SubagentSpawnedPayload,
+  SubagentStartedPayload,
+} from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
 
 // v1 config-file schema shapes the TUI reads. Sourced from the node-sdk (which
 // re-exports the agent-core v1 schema verbatim) instead of hand-copied here.
@@ -82,6 +129,51 @@ export type {
   QuestionAnswerMethod,
   QuestionResult,
 };
+
+/**
+ * Agent-bus events delivered on the session stream, as a discriminated union
+ * over the v2 `Event2` payloads. Successor of the pre-Event2 `DomainEvent`
+ * union (upstream removed the augmentable `DomainEventMap` with the RPC
+ * layer); mirrors the arms of kap-server's `ProjectorBusEvent`
+ * (`services/transcript/coreEventMap.ts`) plus the MCP/shell events the TUI
+ * consumes.
+ */
+export type DomainEvent =
+  | ({ readonly type: 'turn.started' } & TurnStartedPayload)
+  | ({ readonly type: 'turn.ended' } & TurnEndedPayload)
+  | ({ readonly type: 'turn.step.started' } & TurnStepStartedPayload)
+  | ({ readonly type: 'turn.step.completed' } & TurnStepCompletedPayload)
+  | ({ readonly type: 'turn.step.interrupted' } & TurnStepInterruptedPayload)
+  | ({ readonly type: 'turn.step.retrying' } & TurnStepRetryingPayload)
+  | ({ readonly type: 'assistant.delta' } & AssistantDeltaPayload)
+  | ({ readonly type: 'thinking.delta' } & ThinkingDeltaPayload)
+  | ({ readonly type: 'tool.call.started' } & ToolCallStartedPayload)
+  | ({ readonly type: 'tool.call.delta' } & ToolCallDeltaPayload)
+  | ({ readonly type: 'tool.progress' } & ToolProgressPayload)
+  | ({ readonly type: 'tool.result' } & ToolResultEventPayload)
+  | ({ readonly type: 'agent.status.updated' } & AgentStatusUpdatedPayload)
+  | ({ readonly type: 'goal.updated' } & GoalUpdatedPayload)
+  | ({ readonly type: 'skill.activated' } & SkillActivatedPayload)
+  | ({ readonly type: 'plugin_command.activated' } & PluginCommandActivatedPayload)
+  | ({ readonly type: 'error' } & KimiErrorPayload)
+  | ({ readonly type: 'warning' } & WarningIssuedPayload)
+  | ({ readonly type: 'hook.result' } & HookResultPayload)
+  | ({ readonly type: 'compaction.started' } & CompactionStartedPayload)
+  | ({ readonly type: 'compaction.completed' } & CompactionCompletedPayload)
+  | ({ readonly type: 'compaction.blocked' } & CompactionBlockedPayload)
+  | { readonly type: 'compaction.cancelled' }
+  | { readonly type: 'task.started'; readonly info: AgentTaskInfo }
+  | ({ readonly type: 'task.terminated' } & TaskTerminatedNoticePayload)
+  | ({ readonly type: 'cron.fired' } & CronFiredPayload)
+  | ({ readonly type: 'subagent.spawned' } & SubagentSpawnedPayload)
+  | ({ readonly type: 'subagent.started' } & SubagentStartedPayload)
+  | ({ readonly type: 'subagent.completed' } & SubagentCompletedPayload)
+  | ({ readonly type: 'subagent.failed' } & SubagentFailedPayload)
+  | ({ readonly type: 'subagent.suspended' } & SubagentSuspendedPayload)
+  | ({ readonly type: 'shell.started' } & ShellStartedPayload)
+  | ({ readonly type: 'shell.output' } & ShellOutputPayload)
+  | ({ readonly type: 'mcp.server.status' } & McpServerStatusEventPayload)
+  | ({ readonly type: 'tool.list.updated' } & ToolListUpdatedPayload);
 
 /**
  * App-bus `session.meta.updated` projection injected into the session stream
@@ -283,6 +375,8 @@ export type PromptPart =
   | { type: 'tool_result'; tool_call_id: string; output: unknown; is_error?: boolean }
   | { type: 'image'; source: PromptPartMediaSource }
   | { type: 'video'; source: PromptPartMediaSource }
+  | { type: 'image_url'; imageUrl: { url: string; id?: string } }
+  | { type: 'audio_url'; audioUrl: { url: string; id?: string } }
   | { type: 'video_url'; videoUrl: { url: string } }
   | { type: 'file'; file_id: string; name: string; media_type: string; size: number }
   | { type: 'thinking'; thinking: string; signature?: string };
@@ -312,7 +406,6 @@ export type {
   ContentPart,
   ContextMessage,
   CreateGoalInput,
-  DomainEvent,
   GoalChange,
   GoalSnapshot,
   GoalToolResult,
@@ -414,6 +507,23 @@ export interface ExportSessionInput {
   readonly shellEnv?: ShellEnvironment;
 }
 
+/** Safe description of one project-level MCP server that trusting would enable. */
+export interface WorkspaceTrustMcpServerInfo {
+  readonly name: string;
+  readonly transport: 'stdio' | 'http' | 'sse';
+  readonly command?: string;
+  readonly args?: readonly string[];
+  readonly cwd?: string;
+  readonly url?: string;
+}
+
+/** Workspace-trust state for the startup gate (mirrors the v1 SDK shape). */
+export interface WorkspaceTrustInfo {
+  readonly trusted: boolean;
+  /** Safe descriptions of project-level MCP servers that trusting would enable. */
+  readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
+}
+
 /** v2 names used in `CoreHarness` public signatures, re-exported for consumers. */
 export type {
   AgentTaskStatus,
@@ -423,15 +533,21 @@ export type {
   ExportSessionResult,
   FlagId,
   GoalStatus,
-  McpServerInfo,
   PluginCommandDef,
   PluginInfo,
   PluginMcpServerInfo,
   PluginSummary,
+  ReloadSummary,
   ResolvedConfig,
   ShellEnvironment,
   TokenUsage,
 };
+
+/**
+ * v1 wire name for the v2 `McpServerEntry` (the old name lived in the removed
+ * RPC `core-api.ts`). Note v2 widened `status` with a `'removed'` member.
+ */
+export type McpServerInfo = McpServerEntry;
 
 // ---------------------------------------------------------------------------
 // Types appended for the TUI switchover (Task 6). These fill v1 SDK names the

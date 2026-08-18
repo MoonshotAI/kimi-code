@@ -1,13 +1,3 @@
-/**
- * `kosong/contract` domain — character-based token-count estimates for
- * messages, tools, and content parts.
- *
- * Estimates are heuristic (ASCII ≈ 4 chars/token, non-ASCII ≈ 1 token/char,
- * media parts a flat `MEDIA_TOKEN_ESTIMATE`); they size context windows and
- * compaction budgets, never billing. Per-message results are memoized on the
- * message object via a WeakMap.
- */
-
 import type { ContentPart, Message } from './message';
 import type { Tool } from './tool';
 

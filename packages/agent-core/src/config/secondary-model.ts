@@ -37,15 +37,23 @@ function trimmed(value: string | undefined): string | undefined {
 }
 
 /**
- * The patch half of the recipe: every field except `model`. Returns
- * `undefined` when no patch field is set — the signal that subagents bind the
- * pointed entry directly and no derived entry is synthesized.
+ * The patch half of the recipe: every field except `model` and the v2 pool
+ * keys (`defaultModel` / `models` / `force`, which live in the same section
+ * but are not model overrides). Returns `undefined` when no patch field is
+ * set — the signal that subagents bind the pointed entry directly and no
+ * derived entry is synthesized.
  */
 export function secondaryModelPatch(
   secondary: SecondaryModelConfig | undefined,
 ): ModelAliasOverrides | undefined {
   if (secondary === undefined) return undefined;
-  const { model: _model, ...rawPatch } = secondary;
+  const {
+    model: _model,
+    defaultModel: _defaultModel,
+    models: _models,
+    force: _force,
+    ...rawPatch
+  } = secondary;
   const patch = Object.fromEntries(
     Object.entries(rawPatch).filter(([, value]) => value !== undefined),
   ) as ModelAliasOverrides;
@@ -101,7 +109,7 @@ export function applySecondaryModelConfig(config: KimiConfig, env: Env = process
  * the env-injected recipe fields (restored from raw when the value being
  * written still equals the env value, so a `getConfig` -> `setConfig`
  * round-trip cannot persist shell overrides, while a genuinely new selection
- * — e.g. a `/secondary_model` pick made under `KIMI_SECONDARY_MODEL` — does
+ * — e.g. a `/secondary-model` pick made under `KIMI_SECONDARY_MODEL` — does
  * reach the disk, mirroring the pointer check in `stripEnvModelConfig`).
  */
 export function stripSecondaryModelConfig(

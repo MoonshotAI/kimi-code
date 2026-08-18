@@ -299,6 +299,12 @@ export class QuestionDialogComponent extends Container implements Focusable {
     this.reviewMessage = undefined;
 
     if (this.isOtherOption(questionIdx, optionIdx)) {
+      if (question.multi_select && this.multiSelections[questionIdx]?.has(optionIdx)) {
+        this.multiSelections[questionIdx].delete(optionIdx);
+        this.lastAnswerMethod = method;
+        this.updateAnswer(questionIdx);
+        return;
+      }
       this.enterOtherInput(questionIdx);
       return;
     }

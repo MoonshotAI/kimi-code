@@ -1,12 +1,3 @@
-/**
- * `plugin` domain — App-scoped plugin management and consumption contract.
- *
- * Defines `IPluginService`, which manages installed plugins and exposes their
- * enabled commands, skills, session-start content, system-prompt sections,
- * MCP servers, and hooks. Successful reloads are announced through
- * `onDidReload`. Bound at App scope.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
 import type { HookDef } from '#/agent/externalHooks/types';
@@ -19,6 +10,7 @@ import type {
   PluginAgentRoot,
   PluginCommandDef,
   PluginInfo,
+  PluginMutationSummary,
   PluginSummary,
   PluginUpdateStatus,
   ReloadSummary,
@@ -65,7 +57,9 @@ export interface IPluginService {
   enabledSystemPrompts(): Promise<readonly EnabledPluginSystemPrompt[]>;
   enabledMcpServers(): Promise<Record<string, McpServerConfig>>;
   enabledHooks(): Promise<readonly HookDef[]>;
+  hasLoadedSnapshot(): boolean;
   readonly onDidReload: Event<ReloadSummary>;
+  readonly onDidMutate: Event<PluginMutationSummary>;
 }
 
 export const IPluginService: ServiceIdentifier<IPluginService> =

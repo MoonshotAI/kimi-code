@@ -57,7 +57,6 @@ describe('requestLogging', () => {
     expect(res.status).toBe(200);
     expect(((await res.json()) as { code: number }).code).toBe(0);
 
-    // Let the post-response `onResponse` hook flush its log line.
     await new Promise((resolve) => setImmediate(resolve));
 
     const completed = parseEntries(lines).filter((entry) => entry['msg'] === 'request completed');
@@ -65,7 +64,6 @@ describe('requestLogging', () => {
     const entry = completed[completed.length - 1];
     assert(entry !== undefined);
 
-    // The access line carries the envelope `code`, not the HTTP status code.
     expect(entry['code']).toBe(0);
     expect(entry).not.toHaveProperty('statusCode');
     expect(entry['res']).toBeUndefined();

@@ -1,31 +1,3 @@
-/**
- * MCP tool-call result → ExecutableTool output pipeline.
- *
- * Owns the full path from "MCP protocol content blocks" to "what the agent
- * loop feeds back to the model":
- *  1. Convert each {@link MCPContentBlock} to a kosong `ContentPart`
- *     (dropping unsupported shapes).
- *  2. Wrap media-only outputs in `<mcp_tool_result name="…">` tags so the
- *     model can attribute binary output when several tools return media.
- *  3. Apply the 100K text/think character budget to the tool's own text.
- *     This runs BEFORE captions exist, so a chatty tool (page text + a
- *     screenshot) can never evict or slice the compression caption — that
- *     would silently reintroduce the very degradation the caption reports.
- *  4. Compress oversized inline images, announcing each compression with a
- *     caption (original vs. sent size, readback path to the persisted
- *     original) so downsampling is never silent. The captions ride the
- *     result's `note` side channel — projected to the model at fold time, but
- *     kept out of `output` so UIs never render them.
- *  5. Apply the per-part 10 MB binary cap: oversized binary parts
- *     (image/audio/video URLs) collapse to a notice, so a single
- *     screenshot cannot evict every text part.
- *  6. Collapse a single-text-part result to a plain string output; otherwise
- *     emit the `ContentPart[]` as-is.
- *
- * `mcpResultToExecutableOutput` is the single entry point; the per-step
- * helpers stay private so callers cannot bypass the limits.
- */
-
 import type { ContentPart } from '#/kosong/contract/message';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
@@ -146,6 +118,26 @@ export async function mcpResultToExecutableOutput(
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
+  const structuredExtras: Record<string, unknown> = {};
+  if (result.structuredContent !== undefined) {
+    structuredExtras['structuredContent'] = result.structuredContent;
+  }
+  if (result._meta !== undefined) {
+    const meta = stripReservedMetaKeys(result._meta);
+    if (meta !== undefined) {
+      structuredExtras['_meta'] = meta;
+    }
+  }
+  if (Object.keys(structuredExtras).length > 0) {
+    const serialized = serializeStructuredExtras(structuredExtras);
+    if (serialized !== undefined) {
+      wrapped.push({
+        type: 'text',
+        text: `\n<mcp-structured-result>\n${serialized}\n</mcp-structured-result>`,
+      });
+    }
+  }
+
   const budgeted = applyTextBudget(wrapped);
   const compressed = await compressImageContentParts(budgeted.parts, {
     telemetry:
@@ -171,6 +163,36 @@ export async function mcpResultToExecutableOutput(
     note,
     truncated: truncated ? true : undefined,
   };
+}
+
+function serializeStructuredExtras(extras: Record<string, unknown>): string | undefined {
+  try {
+    return JSON.stringify(extras).replaceAll('</mcp-structured-result>', '');
+  } catch {
+    return undefined;
+  }
+}
+
+function stripReservedMetaKeys(
+  meta: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(meta)) {
+    if (!isReservedMetaKey(key)) {
+      out[key] = value;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function isReservedMetaKey(key: string): boolean {
+  const slash = key.indexOf('/');
+  if (slash <= 0) return false;
+  const labels = key.slice(0, slash).split('.');
+  return labels.some(
+    (label, i) =>
+      (label === 'modelcontextprotocol' || label === 'mcp') && i < labels.length - 1,
+  );
 }
 
 function wrapMediaOnly(parts: readonly ContentPart[], qualifiedToolName: string): ContentPart[] {

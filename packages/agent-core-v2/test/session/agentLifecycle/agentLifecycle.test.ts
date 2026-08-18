@@ -1,27 +1,36 @@
-/**
- * Scenario: session-owned agent creation, persistence, and MCP readiness.
- *
- * Exercises `AgentLifecycleService` through its DI contract with controlled
- * persistence and MCP boundaries, including completion ordering.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/session/agentLifecycle/agentLifecycle.test.ts`.
- */
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
-import { type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { type ISessionScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import '#/agent/profile/profileService';
+import { ProfileBind } from '#/agent/profile/profileOps';
+import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
+import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import '#/agent/permissionMode/permissionModeOps';
+import '#/agent/permissionMode/permissionModeService';
+import {
+  permissionModeConfiguredKey,
+  permissionModeKey,
+} from '#/agent/permissionMode/permissionModeOps';
+import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
+import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
+import { IModelCatalog } from '#/kosong/model/catalog';
+import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
+import { IHostClock } from '#/os/interface/hostClock';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
@@ -32,9 +41,20 @@ import { createMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import '#/agent/mcp/mcpService';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import '#/wire/wireService';
+import '#/state/eventDispatcherService';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
+import { SessionCronServiceImpl } from '#/session/cron/sessionCronServiceImpl';
+import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
+import { CRON_SECTION } from '#/app/cron/configSection';
+import { ISessionInteractionService } from '#/session/interaction/interaction';
+import { SessionInteractionService } from '#/session/interaction/interactionService';
+import { ISessionTodoService } from '#/session/todo/sessionTodo';
+import { SessionTodoService } from '#/session/todo/sessionTodoService';
+import { todoKey } from '#/session/todo/todoOps';
+import { interactionKey } from '#/session/interaction/interactionOps';
 import '#/agent/toolDedupe/toolDedupeService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -50,6 +70,7 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
@@ -64,6 +85,11 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import '#/agent/toolActivation/toolActivationService';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { FakeRuntime } from '#/runtime/fakeRuntime';
+import {
+  IRuntimeResolver,
+  IWorkspaceInstanceManager,
+} from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
@@ -138,7 +164,6 @@ function recordingAppendLog(initial: readonly WireRecord[] = []): {
   };
 }
 
-
 function stubBlobPassThrough(ix: TestInstantiationService): void {
   ix.stub(IAgentBlobService, {
     _serviceBrand: undefined,
@@ -159,6 +184,7 @@ describe('AgentLifecycleService', () => {
   let loopPendingTurnIds: number[];
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
   let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
+  let promptDrain: ReturnType<typeof vi.fn<IAgentPromptService['drain']>>;
   let beforeExecuteListeners: number;
   let didExecuteHookIds: string[];
 
@@ -166,7 +192,10 @@ describe('AgentLifecycleService', () => {
     _clearAgentToolContributionsForTests();
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
+    ix.set(ISessionStateService, new SessionStateService());
     ix.set(IAgentStateService, new AgentStateService());
+    ix.get(IAgentStateService).contributeState(permissionModeKey);
+    ix.get(IAgentStateService).contributeState(permissionModeConfiguredKey);
     ix.stub(IAppendLogStore, recordingAppendLog().store);
     stubBlobPassThrough(ix);
     registerAgent = vi.fn<ISessionMetadata['registerAgent']>().mockResolvedValue(undefined);
@@ -182,6 +211,20 @@ describe('AgentLifecycleService', () => {
           ? 'sessions/ws_test/sess_test'
           : `sessions/ws_test/sess_test/${subKey}`,
     } as unknown as ISessionContext);
+    ix.stub(IRuntimeResolver, {
+      _serviceBrand: undefined,
+      inspect: (binding) => new FakeRuntime({ ...binding, generation: `${binding.runtimeId}-one` }),
+      acquire: (binding) => ({
+        runtime: new FakeRuntime({ ...binding, generation: `${binding.runtimeId}-one` }),
+        track: (resource) => resource,
+        dispose: () => {},
+      }),
+    });
+    ix.stub(IWorkspaceInstanceManager, {
+      _serviceBrand: undefined,
+      onDidChange: () => ({ dispose: () => {} }),
+      get: () => undefined,
+    });
     ix.stub(ISessionMetadata, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -229,6 +272,7 @@ describe('AgentLifecycleService', () => {
     ix.stub(ILogService, noopLog);
     ix.stub(IAgentPluginService, {
       _serviceBrand: undefined,
+      refreshSessionStart: async () => {},
     });
     ix.stub(IAgentToolRegistryService, {
       _serviceBrand: undefined,
@@ -288,6 +332,11 @@ describe('AgentLifecycleService', () => {
       cancel: loopCancel,
       settled: loopSettled,
     } as unknown as IAgentLoopService);
+    promptDrain = vi.fn<IAgentPromptService['drain']>(async () => {});
+    ix.stub(IAgentPromptService, {
+      _serviceBrand: undefined,
+      drain: promptDrain,
+    } as unknown as IAgentPromptService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
       track2: () => {},
@@ -303,6 +352,22 @@ describe('AgentLifecycleService', () => {
     });
     ix.stub(IHostEnvironment, { _serviceBrand: undefined } as IHostEnvironment);
     ix.stub(IHostFileSystem, { _serviceBrand: undefined } as IHostFileSystem);
+    ix.stub(IHostClock, { _serviceBrand: undefined } as IHostClock);
+    ix.stub(IModelCatalog, { _serviceBrand: undefined } as IModelCatalog);
+    ix.stub(IProtocolAdapterRegistry, {
+      _serviceBrand: undefined,
+    } as IProtocolAdapterRegistry);
+    ix.stub(IBuiltinAgentProfileLoader, {
+      _serviceBrand: undefined,
+    } as IBuiltinAgentProfileLoader);
+    ix.stub(IAgentIdentity, { _serviceBrand: undefined } as IAgentIdentity);
+    ix.stub(IAgentAgentsMdReminderService, {
+      _serviceBrand: undefined,
+    } as IAgentAgentsMdReminderService);
+    ix.stub(IAgentContextInjectorService, {
+      _serviceBrand: undefined,
+      register: () => ({ dispose: () => {} }),
+    } as unknown as IAgentContextInjectorService);
     ix.stub(ISessionAgentProfileCatalog, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -347,12 +412,13 @@ describe('AgentLifecycleService', () => {
       ready: Promise.resolve(),
       agentsMd: undefined,
       agentsMdWarning: undefined,
+      agentsMdPaths: undefined,
       onDidChange: Event.None as Event<void>,
     } satisfies ISessionInstructionsProvider);
-    // The session's MCP readiness arrives through the seeded
-    // `ISessionMcpHandle`; the default handle carries an OAuth-wired manager
-    // over the test atomic document store so the agent mirror's OAuth
-    // surface stays exercisable.
+    ix.stub(IAgentAgentsMdReminderService, {
+      _serviceBrand: undefined,
+      seedInjected: () => {},
+    });
     ix.stub(ISessionMcpHandle, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -360,6 +426,7 @@ describe('AgentLifecycleService', () => {
         log: noopLog,
         oauthService: new McpOAuthService({ store: createMcpOAuthStore(atomicDocsStore) }),
       }),
+      isBaselineServer: () => true,
     } satisfies ISessionMcpHandle);
     stopAllOnExit = vi.fn(async () => []);
     ix.stub(IAgentTaskService, {
@@ -394,6 +461,35 @@ describe('AgentLifecycleService', () => {
     await svc.remove('main');
 
     expect(stopAllOnExit).toHaveBeenCalledWith('Session closed');
+    expect(promptDrain).toHaveBeenCalledOnce();
+  });
+
+  it('remove waits for prompt intake to drain before disposing the agent scope', async () => {
+    let releaseDrain!: () => void;
+    let markDrainStarted!: () => void;
+    const drainStarted = new Promise<void>((resolve) => {
+      markDrainStarted = resolve;
+    });
+    promptDrain.mockImplementationOnce(() => {
+      markDrainStarted();
+      return new Promise<void>((resolve) => {
+        releaseDrain = resolve;
+      });
+    });
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    const disposed: string[] = [];
+    disposables.add(svc.onDidDispose((agentId) => disposed.push(agentId)));
+
+    const removal = svc.remove('main');
+    await drainStarted;
+    await Promise.resolve();
+
+    expect(disposed).toEqual([]);
+
+    releaseDrain();
+    await removal;
+    expect(disposed).toEqual(['main']);
   });
 
   it('remove cancels queued turns before waiting for the active turn to settle', async () => {
@@ -573,10 +669,9 @@ describe('AgentLifecycleService', () => {
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
     } as unknown as IConfigService);
 
-    await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+    const main = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
 
-    expect(permissionModeSetMode).toHaveBeenCalledOnce();
-    expect(permissionModeSetMode).toHaveBeenCalledWith('auto');
+    expect(main.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('auto');
   });
 
   it('keeps the restored permission mode instead of overwriting it with the default', async () => {
@@ -595,25 +690,106 @@ describe('AgentLifecycleService', () => {
     expect(permissionModeSetMode).not.toHaveBeenCalled();
   });
 
+  it('restores the runtime binding without persisting a generation', async () => {
+    ix.stub(IAppendLogStore, recordingAppendLog([
+      createWireMetadataRecord(1),
+      { type: 'runtime.set_binding', workspaceId: 'ws_test', runtimeId: 'remote', time: 2 },
+    ]).store);
+
+    const agent = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+
+    expect(agent.accessor.get(IAgentRuntimeBindingService).current).toEqual({
+      workspaceId: 'ws_test',
+      runtimeId: 'remote',
+    });
+    expect(agent.accessor.get(IAgentRuntimeService).inspect().identity.generation).toBe('remote-one');
+  });
+
+  it('contributes session-domain replayable keys before restore and replays them', async () => {
+    ix.stub(IAppendLogStore, recordingAppendLog([
+      createWireMetadataRecord(1),
+      {
+        type: 'tools.update_store',
+        key: 'todo',
+        value: [{ title: 'bridged', status: 'pending' }],
+        time: 2,
+      },
+      { type: 'interaction.request', id: 'i1', kind: 'question', request: { q: 1 }, time: 3 },
+    ]).store);
+    ix.stub(ICronTaskPersistence, {
+      _serviceBrand: undefined,
+      get: async () => undefined,
+      list: async () => [],
+      save: async () => {},
+      delete: async () => {},
+    } as ICronTaskPersistence);
+    ix.stub(IConfigService, {
+      ready: Promise.resolve(),
+      get: ((section: unknown) =>
+        section === CRON_SECTION ? { disabled: true } : undefined) as IConfigService['get'],
+      onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+    } as unknown as IConfigService);
+    ix.set(ISessionTodoService, new SyncDescriptor(SessionTodoService));
+    ix.set(ISessionInteractionService, new SyncDescriptor(SessionInteractionService));
+    ix.set(ISessionCronService, new SyncDescriptor(SessionCronServiceImpl));
+    ix.get(ISessionTodoService);
+    ix.get(ISessionInteractionService);
+    ix.get(ISessionCronService);
+
+    const main = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+
+    const state = main.accessor.get(IAgentStateService);
+    expect(state.replayableKeys().map((key) => key.name)).toEqual(
+      expect.arrayContaining(['todo', 'cron', 'interaction']),
+    );
+    expect(state.get(todoKey)).toEqual([{ title: 'bridged', status: 'pending' }]);
+    expect(state.get(interactionKey).get('i1')).toMatchObject({
+      id: 'i1',
+      kind: 'question',
+      request: { q: 1 },
+      resolved: false,
+    });
+  });
+
   it('broadcastPermissionMode sets the mode on every live agent', async () => {
     const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'main' });
-    await svc.create({ agentId: 'child' });
+    const main = await svc.create({ agentId: 'main' });
+    const child = await svc.create({ agentId: 'child' });
 
     svc.broadcastPermissionMode('yolo');
 
-    expect(permissionModeSetMode.mock.calls).toEqual([['yolo'], ['yolo']]);
+    expect(main.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('yolo');
+    expect(child.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('yolo');
   });
 
   it('broadcastPermissionMode skips agents that have been removed', async () => {
     const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'main' });
+    const main = await svc.create({ agentId: 'main' });
     await svc.create({ agentId: 'child' });
     await svc.remove('child');
 
     svc.broadcastPermissionMode('auto');
 
-    expect(permissionModeSetMode.mock.calls).toEqual([['auto']]);
+    expect(main.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('auto');
+  });
+
+  it('broadcastPermissionMode leaves tower-worker agents pinned to their spawned mode', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const main = await svc.create({ agentId: 'main' });
+    const worker = await svc.create({ agentId: 'worker-1' });
+    void worker.accessor.get(IEventDispatcher).dispatch(
+      new ProfileBind({
+        profileName: TOWER_WORKER_PROFILE,
+        thinkingEffort: 'off',
+        systemPrompt: '',
+        disallowedTools: [],
+      }),
+    );
+
+    svc.broadcastPermissionMode('yolo');
+
+    expect(main.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('yolo');
+    expect(worker.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('manual');
   });
 
   it('wires MCP OAuth credentials through the session atomic document store', async () => {
@@ -637,12 +813,16 @@ describe('AgentLifecycleService', () => {
     expect(tokenEntries).toEqual([
       [
         expect.stringMatching(/^credentials\/mcp\/linear-[a-f0-9]{24}-tokens\.json$/),
-        { access_token: 'session-token', token_type: 'Bearer' },
+        {
+          access_token: 'session-token',
+          token_type: 'Bearer',
+          obtained_at: expect.any(Number),
+        },
       ],
     ]);
   });
 
-  it('waits for the MCP handle readiness before returning an agent', async () => {
+  it('returns an agent without waiting for the MCP handle readiness', async () => {
     let releaseReady!: () => void;
     const ready = new Promise<void>((resolve) => {
       releaseReady = resolve;
@@ -651,24 +831,14 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       ready,
       connectionManager: new McpConnectionManager({ log: noopLog }),
+      isBaselineServer: () => true,
     } satisfies ISessionMcpHandle);
 
     const svc = ix.get(IAgentLifecycleService);
-    let settled = false;
-    const create = svc.create({ agentId: 'main' }).then(() => {
-      settled = true;
-    });
-
-    // The wire seal + registerAgent complete first; the create call then
-    // parks on the seeded MCP readiness promise.
-    await vi.waitFor(() => {
-      expect(registerAgent).toHaveBeenCalled();
-    });
-    expect(settled).toBe(false);
+    const handle = await svc.create({ agentId: 'main' });
+    expect(handle.id).toBe('main');
 
     releaseReady();
-    await create;
-    expect(settled).toBe(true);
   });
 
   it('exposes the in-flight handle and joins it after bootstrap', async () => {
@@ -690,8 +860,6 @@ describe('AgentLifecycleService', () => {
     expect(early).toBeDefined();
 
     const joined = svc.create({ agentId: 'main' });
-    // doCreate awaits the wire-log seal before registerAgent, so the mock is
-    // invoked a few microtasks after create() — wait for the actual call.
     await registerCalled;
     releaseRegister();
     const handle = await joined;
@@ -755,6 +923,22 @@ describe('AgentLifecycleService', () => {
       disallowedTools: ['Bash'],
       subagents: ['explore'],
     });
+  });
+
+  it('fork snapshots the source runtime and remains independent', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const source = await svc.create({ agentId: 'main' });
+    const sourceRuntime = source.accessor.get(IAgentRuntimeBindingService);
+    sourceRuntime.switch('remote');
+
+    const child = await svc.fork('main', { agentId: 'forked-runtime' });
+    const childRuntime = child.accessor.get(IAgentRuntimeBindingService);
+    expect(childRuntime.current.runtimeId).toBe('remote');
+
+    sourceRuntime.switch('local');
+    expect(childRuntime.current.runtimeId).toBe('remote');
+    childRuntime.switch('local');
+    expect(sourceRuntime.current.runtimeId).toBe('local');
   });
 
   it('run throws when the agent does not exist', () => {

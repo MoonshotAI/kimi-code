@@ -1,11 +1,3 @@
-/**
- * Tests for `reduceContextTranscript` — the wire-transcript reducer used by the
- * snapshot and messages endpoints. Mirrors v1 `reduceWireRecords` expectations:
- * compaction keeps the prefix and appends a summary marker; undo removes the
- * tail but stops at compaction summaries / clear floors; clear keeps the
- * transcript but resets the folded view.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -139,7 +131,6 @@ describe('reduceContextTranscript', () => {
         time: 220,
       },
       { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 'st1' }, time: 230 },
-      // No record time → undefined (falls back to session createdAt + index).
       { type: 'context.append_message', message: userMessage('u2') },
     ]);
 

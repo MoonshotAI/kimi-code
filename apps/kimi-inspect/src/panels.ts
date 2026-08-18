@@ -17,16 +17,15 @@
  */
 
 import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
-import { IAgentContextSizeService } from '@moonshot-ai/agent-core-v2/agent/contextSize/contextSize';
 import { IAgentGoalService } from '@moonshot-ai/agent-core-v2/agent/goal/goal';
 import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
 import { IAgentPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/permissionRules';
-import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/agent/plan/plan';
+import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
-import { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
-import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/agent/swarm/swarm';
+import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
 import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
+import { IAgentTokenCountingService } from '@moonshot-ai/agent-core-v2/agent/tokenCounting/tokenCounting';
 import { IAgentToolRegistryService } from '@moonshot-ai/agent-core-v2/agent/toolRegistry/toolRegistry';
 import { IAgentUsageService } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import { IAuthSummaryService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
@@ -36,7 +35,7 @@ import { IProviderService } from '@moonshot-ai/agent-core-v2/kosong/provider/pro
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
 import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
-import { ISessionInitService } from '@moonshot-ai/agent-core-v2/session/sessionInit/sessionInit';
+import { ISessionInitService } from '@moonshot-ai/agent-core-v2/features/sessionInit/sessionInit';
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import { ISessionWorkspaceContext } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceContext';
 
@@ -179,8 +178,8 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     fetch: (svc) => call(svc, 'status'),
   },
   {
-    id: String(IAgentContextSizeService),
-    label: 'AgentContextSizeService',
+    id: String(IAgentTokenCountingService),
+    label: 'AgentTokenCountingService',
     scope: 'agent',
     fetch: (svc) => call(svc, 'get'),
   },
@@ -267,19 +266,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     actions: [
       { label: 'enter (manual)', run: (svc) => call(svc, 'enter', 'manual') },
       { label: 'exit', run: (svc) => call(svc, 'exit') },
-    ],
-  },
-  {
-    id: String(IAgentRPCService),
-    label: 'AgentRPCService',
-    scope: 'agent',
-    actions: [
-      { label: 'cancel turn', run: (svc) => call(svc, 'cancel', {}) },
-      {
-        label: 'undoHistory',
-        input: 'Steps',
-        run: (svc, n) => call(svc, 'undoHistory', { count: Number(n) }),
-      },
     ],
   },
 ];

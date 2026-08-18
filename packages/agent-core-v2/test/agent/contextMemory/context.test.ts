@@ -1,13 +1,20 @@
 import type { Message } from '#/kosong/contract/message';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { estimateTokensForMessages } from '#/kosong/contract/tokens';
+import { estimateTokens, estimateTokensForMessages } from '#/kosong/contract/tokens';
 import { buildImageCompressionCaption } from '#/agent/media/image-compress';
+import {
+  buildContextCompactionShape,
+  COMPACT_USER_MESSAGE_HEAD_TOKENS,
+  COMPACT_USER_MESSAGE_MAX_TOKENS,
+  selectCompactionUserMessages,
+  type TokenEstimate,
+} from '#/agent/contextMemory/compactionHandoff';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IWireService } from '#/wire/wire';
 import {
   IAgentContextMemoryService,
-  IAgentContextSizeService,
+  IAgentTokenCountingService,
   IAgentProfileService,
 } from '#/index';
 
@@ -16,14 +23,14 @@ import { createTestAgent, type TestAgentContext } from '../../harness';
 describe('Agent context', () => {
   let ctx: TestAgentContext;
   let context: IAgentContextMemoryService;
-  let contextSize: IAgentContextSizeService;
+  let tokenCounting: IAgentTokenCountingService;
   let profile: IAgentProfileService;
   let wire: IWireService;
 
   beforeEach(() => {
     ctx = createTestAgent();
     context = ctx.get(IAgentContextMemoryService);
-    contextSize = ctx.get(IAgentContextSizeService);
+    tokenCounting = ctx.get(IAgentTokenCountingService);
     profile = ctx.get(IAgentProfileService);
     wire = ctx.get(IWireService);
   });
@@ -462,13 +469,13 @@ describe('Agent context', () => {
 
   it('includes new user messages as pending until the next usage update', () => {
     ctx.appendAssistantTextWithUsage(1, 'previous answer', 1_000);
-    expect(contextSize.get().measured).toBe(1_000);
+    expect(tokenCounting.get().measured).toBe(1_000);
 
     ctx.appendUserMessage([{ type: 'text', text: 'next user prompt'.repeat(20) }]);
 
     const pendingMessages = context.get().slice(-1);
-    expect(contextSize.get().size).toBe(
-      contextSize.get().measured + estimateTokensForMessages(pendingMessages),
+    expect(tokenCounting.get().size).toBe(
+      tokenCounting.get().measured + estimateTokensForMessages(pendingMessages),
     );
   });
 
@@ -483,7 +490,7 @@ describe('Agent context', () => {
         ],
       },
     );
-    contextSize.measured(context.get(), [], {
+    tokenCounting.measured(context.get(), [], {
       inputCacheRead: 0,
       inputCacheCreation: 0,
       inputOther: 1_280,
@@ -499,27 +506,27 @@ describe('Agent context', () => {
     );
 
     const pendingMessages = context.get().slice(-1);
-    expect(contextSize.get().measured).toBe(1_280);
-    expect(contextSize.get().size).toBe(
+    expect(tokenCounting.get().measured).toBe(1_280);
+    expect(tokenCounting.get().size).toBe(
       1_280 + estimateTokensForMessages(pendingMessages),
     );
   });
 
   it('keeps zero-usage steps pending instead of zeroing tokenCount', () => {
     ctx.appendAssistantTextWithUsage(1, 'previous answer', 1_000);
-    expect(contextSize.get().measured).toBe(1_000);
+    expect(tokenCounting.get().measured).toBe(1_000);
 
     ctx.appendUserMessage([{ type: 'text', text: 'next prompt' }]);
 
-    expect(contextSize.get().measured).toBe(1_000);
-    expect(contextSize.get().size).toBeGreaterThanOrEqual(
-      contextSize.get().measured,
+    expect(tokenCounting.get().measured).toBe(1_000);
+    expect(tokenCounting.get().size).toBeGreaterThanOrEqual(
+      tokenCounting.get().measured,
     );
   });
 
   it('get(start, end) returns the size of a context-message range', () => {
     ctx.appendAssistantTextWithUsage(1, 'previous answer', 1_000);
-    expect(contextSize.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
+    expect(tokenCounting.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
 
     ctx.appendUserMessage([{ type: 'text', text: 'pending one'.repeat(20) }]);
     ctx.appendUserMessage([{ type: 'text', text: 'pending two'.repeat(20) }]);
@@ -527,81 +534,80 @@ describe('Agent context', () => {
     const messages = context.get();
     const tailEstimate = estimateTokensForMessages(messages.slice(2));
 
-    expect(contextSize.get()).toEqual({
+    expect(tokenCounting.get()).toEqual({
       size: 1_000 + tailEstimate,
       measured: 1_000,
       estimated: tailEstimate,
     });
 
     const firstPending = estimateTokensForMessages(messages.slice(2, 3));
-    expect(contextSize.get(2, 3)).toEqual({
+    expect(tokenCounting.get(2, 3)).toEqual({
       size: firstPending,
       measured: 0,
       estimated: firstPending,
     });
 
-    expect(contextSize.get(0, 2)).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
+    expect(tokenCounting.get(0, 2)).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
 
     const prefixHead = estimateTokensForMessages(messages.slice(0, 1));
-    expect(contextSize.get(0, 1)).toEqual({
+    expect(tokenCounting.get(0, 1)).toEqual({
       size: prefixHead,
       measured: prefixHead,
       estimated: 0,
     });
 
     const assistant = estimateTokensForMessages(messages.slice(1, 2));
-    expect(contextSize.get(1, 3)).toEqual({
+    expect(tokenCounting.get(1, 3)).toEqual({
       size: assistant + firstPending,
       measured: assistant,
       estimated: firstPending,
     });
 
-    expect(contextSize.get(-2)).toEqual({
+    expect(tokenCounting.get(-2)).toEqual({
       size: tailEstimate,
       measured: 0,
       estimated: tailEstimate,
     });
-    expect(contextSize.get(0, -2)).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
-    expect(contextSize.get(-3, -1)).toEqual({
+    expect(tokenCounting.get(0, -2)).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
+    expect(tokenCounting.get(-3, -1)).toEqual({
       size: assistant + firstPending,
       measured: assistant,
       estimated: firstPending,
     });
 
-    expect(contextSize.get(-1, -3)).toEqual({ size: 0, measured: 0, estimated: 0 });
+    expect(tokenCounting.get(-1, -3)).toEqual({ size: 0, measured: 0, estimated: 0 });
   });
 
   it('resets the measured context size when the context is cleared', () => {
     ctx.appendAssistantTextWithUsage(1, 'answer', 1_000);
-    expect(contextSize.get().measured).toBe(1_000);
+    expect(tokenCounting.get().measured).toBe(1_000);
 
     context.clear();
 
-    expect(contextSize.get()).toEqual({ size: 0, measured: 0, estimated: 0 });
+    expect(tokenCounting.get()).toEqual({ size: 0, measured: 0, estimated: 0 });
   });
 
-  it('rebases the measured prefix to an estimate when undo truncates it', async () => {
+  it('restores the real measured anchor when undo truncates the ledger', async () => {
     ctx.appendTurnExchange('u1', 'a1', 1_000);
     ctx.appendTurnExchange('u2', 'a2', 2_000);
-    expect(contextSize.get().measured).toBe(2_000);
+    expect(tokenCounting.get().measured).toBe(2_000);
 
     await ctx.undoHistory(1);
 
     const surviving = context.get();
     expect(surviving.map((m) => m.role)).toEqual(['user', 'assistant']);
-    const estimate = estimateTokensForMessages(surviving);
-    expect(contextSize.get()).toEqual({ size: estimate, measured: estimate, estimated: 0 });
+    expect(tokenCounting.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
   });
 
   it('keeps the measured prefix when undo removes only the unmeasured tail', async () => {
     ctx.appendTurnExchange('u1', 'a1', 1_000);
     ctx.appendTurnExchange('u2', 'a2');
-    expect(contextSize.get().measured).toBe(1_000);
+    expect(tokenCounting.get().measured).toBe(1_000);
 
     await ctx.undoHistory(1);
 
     expect(context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
-    expect(contextSize.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
+    expect(tokenCounting.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
   });
 
   it('undo only counts real user prompts, skipping task notifications', async () => {
@@ -664,7 +670,7 @@ describe('Agent context', () => {
     ]);
   });
 
-  it('removes a pre-anchor image compression reminder when undoing its prompt', async () => {
+  it('removes the prompt-owned image compression reminder when undoing its prompt', async () => {
     profile.update({ activeToolNames: [] });
     const caption = buildImageCompressionCaption({
       original: { width: 3264, height: 666, byteLength: 344 * 1024, mimeType: 'image/png' },
@@ -678,8 +684,14 @@ describe('Agent context', () => {
     await ctx.untilTurnEnd();
 
     expect(context.get()).toMatchObject([
-      { origin: { kind: 'injection', variant: 'image_compression' } },
-      { origin: { kind: 'user' } },
+      {
+        origin: {
+          kind: 'injection',
+          variant: 'image_compression',
+          ownerPromptId: expect.any(String),
+        },
+      },
+      { origin: { kind: 'user' }, id: expect.any(String) },
       { role: 'assistant' },
     ]);
 
@@ -737,76 +749,122 @@ describe('Agent context', () => {
     });
   });
 
-  it('sizes a sub-range between two measured snapshots by their difference', () => {
-    ctx.appendAssistantTextWithUsage(1, 'a1', 1_000);
-    ctx.appendAssistantTextWithUsage(2, 'a2', 2_400);
-    ctx.appendAssistantTextWithUsage(3, 'a3', 4_000);
+  describe('compaction handoff under a zero estimator', () => {
+    const zero: TokenEstimate = { text: () => 0, message: () => 0, messages: () => 0 };
 
-    // Both endpoints anchored exactly at usage snapshots: pure measurement
-    // math, no per-message estimate involved.
-    expect(contextSize.get(2, 4)).toEqual({ size: 1_400, measured: 1_400, estimated: 0 });
-    expect(contextSize.get(2, 6)).toEqual({ size: 3_000, measured: 3_000, estimated: 0 });
+    it('keeps every user message without elision', () => {
+      const messages = Array.from({ length: 300 }, (_, i) =>
+        userMessage(`user ${i} ${'x'.repeat(400)}`),
+      );
 
-    // With no snapshot at or before `start`, the sub-range stays estimated.
-    const estimatedSpan = estimateTokensForMessages(context.get().slice(1, 6));
-    expect(contextSize.get(1, 6)).toEqual({
-      size: estimatedSpan,
-      measured: estimatedSpan,
-      estimated: 0,
+      const zeroed = selectCompactionUserMessages(
+        messages,
+        COMPACT_USER_MESSAGE_MAX_TOKENS,
+        COMPACT_USER_MESSAGE_HEAD_TOKENS,
+        zero.message,
+      );
+      expect(zeroed.elided).toBe(false);
+      expect(zeroed.head).toHaveLength(0);
+      expect(zeroed.tail).toHaveLength(messages.length);
+
+      expect(selectCompactionUserMessages(messages).elided).toBe(true);
+    });
+
+    it('falls back to a zero tokensAfter', () => {
+      const history = [userMessage('u1'), {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'a1' }],
+        toolCalls: [],
+      } as ContextMessage];
+
+      const shape = buildContextCompactionShape(
+        history,
+        { summary: 'summary', compactedCount: 2, tokensBefore: 0 },
+        zero,
+      );
+
+      expect(shape.tokensAfter).toBe(0);
+      expect(shape.messages.map((m) => m.role)).toEqual(['user', 'user']);
+      expect(shape.messages[1]?.origin?.kind).toBe('compaction_summary');
+    });
+
+    it('prefers the measured summary output tokens over the text estimate', () => {
+      const history = [userMessage('u1'), {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'a1' }],
+        toolCalls: [],
+      } as ContextMessage];
+
+      const withMeasured = buildContextCompactionShape(history, {
+        summary: 'summary',
+        compactedCount: 2,
+        tokensBefore: 0,
+        summaryOutputTokens: 500,
+      });
+      const withEstimate = buildContextCompactionShape(history, {
+        summary: 'summary',
+        compactedCount: 2,
+        tokensBefore: 0,
+      });
+
+      expect(withMeasured.tokensAfter).toBeGreaterThan(500);
+      expect(withMeasured.tokensAfter - 500).toBe(
+        withEstimate.tokensAfter - estimateTokens('summary'),
+      );
+      expect(withMeasured.messages).toEqual(withEstimate.messages);
+    });
+
+    it('counts the request overhead into tokensAfter on the full-request basis', () => {
+      const history = [userMessage('u1'), {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'a1' }],
+        toolCalls: [],
+      } as ContextMessage];
+
+      const withOverhead = buildContextCompactionShape(history, {
+        summary: 'summary',
+        compactedCount: 2,
+        tokensBefore: 0,
+        summaryOutputTokens: 500,
+        requestOverheadTokens: 3_000,
+      });
+      const withoutOverhead = buildContextCompactionShape(history, {
+        summary: 'summary',
+        compactedCount: 2,
+        tokensBefore: 0,
+        summaryOutputTokens: 500,
+      });
+
+      expect(withOverhead.tokensAfter).toBe(withoutOverhead.tokensAfter + 3_000);
+      expect(withOverhead.messages).toEqual(withoutOverhead.messages);
     });
   });
 
-  it('clears the snapshot chain when undo rebases the prefix to an estimate', async () => {
-    ctx.appendAssistantTextWithUsage(1, 'a1', 1_000);
-    ctx.appendAssistantTextWithUsage(2, 'a2', 2_400);
+  describe('legacy compaction layout', () => {
+    it('keeps the verbatim summary followed by the uncompacted tail', () => {
+      const history = [userMessage('old'), userMessage('tail')];
+      const legacySummary: ContextMessage = {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'legacy summary' }],
+        toolCalls: [],
+        origin: { kind: 'compaction_summary' },
+      };
+      const input = {
+        summary: 'legacy summary',
+        legacySummaryMessage: legacySummary,
+        compactedCount: 1,
+        tokensBefore: 100,
+        tokensAfter: 20,
+        legacyTail: true,
+      };
 
-    await ctx.undoHistory(1);
-    ctx.appendAssistantTextWithUsage(3, 'a3', 1_500);
+      const shape = buildContextCompactionShape(history, input);
 
-    // The surviving prefix was rebased to an inline estimate, so the new
-    // measurement diffs against that estimate — not against the pre-undo
-    // snapshot at length 2 (whose 1_000 tokens described replaced content).
-    const surviving = context.get().slice(0, 2);
-    const rebased = 1_500 - estimateTokensForMessages(surviving);
-    expect(contextSize.get(2, 4)).toEqual({ size: rebased, measured: rebased, estimated: 0 });
-  });
-
-  it('drops snapshots beyond the 64-entry window', () => {
-    for (let index = 1; index <= 65; index += 1) {
-      ctx.appendAssistantTextWithUsage(index, `a${index}`, index * 100);
-    }
-
-    // Newest 64 snapshots survive (@130 down to @4); @2 is evicted, so a
-    // range that would need it falls back to the plain estimate…
-    const fallback = estimateTokensForMessages(context.get().slice(2, 4));
-    expect(contextSize.get(2, 4)).toEqual({
-      size: fallback,
-      measured: fallback,
-      estimated: 0,
-    });
-    // …while recent ranges still diff between retained snapshots
-    // (usage grows by 100 per exchange: 6_500 - 6_400).
-    expect(contextSize.get(128, 130)).toEqual({ size: 100, measured: 100, estimated: 0 });
-  });
-
-  it('reports the latest measurement basis for status display', async () => {
-    expect(contextSize.latestMeasurement()).toBeUndefined();
-
-    ctx.appendAssistantTextWithUsage(1, 'a1', 1_000);
-    expect(contextSize.latestMeasurement()).toEqual({
-      length: 2,
-      tokens: 1_000,
-      kind: 'measured',
-    });
-
-    await ctx.undoHistory(1);
-    expect(contextSize.latestMeasurement()).toEqual({
-      length: 0,
-      tokens: 0,
-      kind: 'estimate',
+      expect(shape.messages[0]).toBe(legacySummary);
+      expect(shape.messages[1]).toBe(history[1]);
+      expect(shape.messages.map(textOf)).toEqual(['legacy summary', 'tail']);
     });
   });
-
 });
 
 function userMessage(text: string, origin?: ContextMessage['origin']): ContextMessage {

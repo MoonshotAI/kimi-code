@@ -12,6 +12,7 @@ export type TurnEndedEvent = SessionEventOf<'turn.ended'>;
 export type TurnStepStartedEvent = SessionEventOf<'turn.step.started'>;
 export type TurnStepCompletedEvent = SessionEventOf<'turn.step.completed'>;
 export type TurnStepInterruptedEvent = SessionEventOf<'turn.step.interrupted'>;
+export type TurnStepRetryingEvent = SessionEventOf<'turn.step.retrying'>;
 export type AssistantDeltaEvent = SessionEventOf<'assistant.delta'>;
 export type ThinkingDeltaEvent = SessionEventOf<'thinking.delta'>;
 export type ToolCallStartedEvent = SessionEventOf<'tool.call.started'>;

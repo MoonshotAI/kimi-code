@@ -1,25 +1,3 @@
-/**
- * `kosong/model` domain — shared pure-data types no single contract owns.
- *
- * One home for the small data interfaces that would otherwise each sit in a
- * near-empty file:
- *   - `ModelOverrides` — the resolved `modelOverrides` effective config
- *     section (populated by the `KIMI_MODEL_*` env overlay). Consumers fold it
- *     into `ModelRequestParams`: `temperature`/`topP` into `sampling`,
- *     `thinkingKeep` into the thinking intent, `maxCompletionTokens` into the
- *     completion budget. Each wire dialect encodes (or drops) the resulting
- *     intent in its own hooks.
- *   - `CompletionBudgetConfig` / `CompletionBudgetParams` — the budget knobs
- *     resolved and folded by the domain's pure budget functions.
- *   - `ResolvedModelAuthMaterial` — the credential material resolved out of
- *     the Model → Provider precedence chain.
- *   - `ThinkingDefaults` / `ModelThinkingMetadata` — the inputs the effective
- *     thinking effort/keep is resolved from.
- *
- * Types only — the functions and services that produce or consume them stay
- * in their own files.
- */
-
 import type { ModelCapability } from '#/kosong/contract/capability';
 
 import type { OAuthRef } from '../provider/provider';

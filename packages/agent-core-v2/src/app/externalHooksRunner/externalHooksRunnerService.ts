@@ -1,19 +1,7 @@
-/**
- * `externalHooksRunner` domain — `IExternalHooksRunnerService` impl.
- *
- * Owns the configured-hook lifecycle: builds the event→hooks index from
- * `IConfigService` (`[[hooks]]`) + `IPluginService.enabledHooks()`, reloads it
- * on `plugin.onDidReload`, and dispatches each trigger through the pure
- * `runMatchedHooks`. The App-scope `IHostProcessService` is injected here and
- * threaded down to `runHook`, so hook commands spawn through the shared host
- * process service (cross-platform kill, hidden console on Windows) rather than
- * `node:child_process` directly. Per-call caller facts (`cwd` defaulting to
- * bootstrap cwd, `sessionId`, `signal`, payload) flow in through the args, so
- * this service keeps no per-scope state. Bound at App scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Emitter, type Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IPluginService } from '#/app/plugin/plugin';
@@ -33,6 +21,9 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
 
   private byEvent = new Map<string, HookDef[]>();
   readonly ready: Promise<void>;
+
+  private readonly _onDidReload = this._register(new Emitter<void>());
+  readonly onDidReload: Event<void> = this._onDidReload.event;
 
   constructor(
     @IConfigService private readonly config: IConfigService,
@@ -84,6 +75,10 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     }
   }
 
+  hasHooksFor(event: string): boolean {
+    return (this.byEvent.get(event)?.length ?? 0) > 0;
+  }
+
   private async triggerInner(
     event: string,
     args: ExternalHooksRunnerTriggerArgs,
@@ -96,6 +91,10 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
       {
         cwd: args.cwd ?? this.bootstrap.cwd,
         ...args,
+        inputData: {
+          clientType: this.bootstrap.clientIdentity.platform,
+          ...args.inputData,
+        },
       },
       this.callbacks,
     );
@@ -118,6 +117,7 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     const configured = this.config.get(HOOKS_SECTION) as readonly HookDefConfig[] | undefined;
     const pluginHooks = await this.plugins.enabledHooks();
     this.byEvent = indexHooks([...(configured ?? []), ...pluginHooks]);
+    this._onDidReload.fire();
   }
 }
 

@@ -1,21 +1,6 @@
-/**
- * `mcpCore` domain — `McpOAuthClientProvider`, the `OAuthClientProvider`
- * backed by the MCP OAuth credential store (`McpOAuthStore` over
- * `IAtomicDocumentStore`).
- *
- * One provider instance per server/resource identity. It persists OAuth
- * tokens, the registered DCR client info, and discovery state under
- * `<homeDir>/credentials/mcp/<key>-*.json` via the store; captures the
- * authorization URL when the SDK calls `redirectToAuthorization`; and keeps
- * the PKCE verifier and OAuth `state` in-memory. Persisted values are
- * mirrored into in-memory caches loaded eagerly on construction (`ready`) so
- * the SDK's synchronous `redirectUrl` / `clientMetadata` getters read without
- * blocking, while the data methods `await ready` before reading or writing.
- * The provider does not open browsers or run servers — it is the
- * persistence + flow-state shim.
- */
-
 import { randomBytes } from 'node:crypto';
+
+import { BugIndicatingError } from '#/errors';
 
 import type {
   OAuthClientProvider,
@@ -28,6 +13,7 @@ import type {
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js';
 
+import { KIMI_MCP_CLIENT_NAME } from '../client-shared';
 import { canonicalMcpOAuthResource, mcpOAuthStoreKey, type McpOAuthStore } from './store';
 
 const TOKENS_SUFFIX = '-tokens.json';
@@ -40,6 +26,11 @@ export interface McpOAuthProviderOptions {
   readonly serverUrl: string | URL;
   readonly store: McpOAuthStore;
   readonly clientLabel?: string;
+  readonly clientName?: string;
+}
+
+export interface StoredMcpOAuthTokens extends OAuthTokens {
+  readonly obtained_at?: number;
 }
 
 export class McpOAuthClientProvider implements OAuthClientProvider {
@@ -61,7 +52,9 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
     this.serverUrl = canonicalMcpOAuthResource(options.serverUrl);
     this.storeKey = mcpOAuthStoreKey(options.serverName, this.serverUrl);
     this.store = options.store;
-    this.clientLabel = options.clientLabel ?? `kimi-code (${options.serverName})`;
+    this.clientLabel =
+      options.clientLabel ??
+      `${options.clientName ?? KIMI_MCP_CLIENT_NAME} (${options.serverName})`;
     this.ready = this.load();
   }
 
@@ -132,8 +125,9 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
-    this.tokensCache = tokens;
-    await this.store.write(`${this.storeKey}${TOKENS_SUFFIX}`, tokens);
+    const stamped: StoredMcpOAuthTokens = { ...tokens, obtained_at: Date.now() };
+    this.tokensCache = stamped;
+    await this.store.write(`${this.storeKey}${TOKENS_SUFFIX}`, stamped);
   }
 
   redirectToAuthorization(url: URL): void {
@@ -146,7 +140,7 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
 
   codeVerifier(): string {
     if (this._codeVerifier === undefined) {
-      throw new Error('McpOAuthClientProvider: PKCE code verifier not initialized');
+      throw new BugIndicatingError('McpOAuthClientProvider: PKCE code verifier not initialized');
     }
     return this._codeVerifier;
   }
@@ -159,6 +153,17 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
     await this.ready;
     return this.discoveryCache;
+  }
+
+  async invalidateStaleRegistration(redirectUri: string): Promise<boolean> {
+    await this.ready;
+    const info = this.clientCache;
+    if (info === undefined || !('redirect_uris' in info)) return false;
+    const uris = info.redirect_uris;
+    if (!Array.isArray(uris) || uris.length === 0) return false;
+    if (uris.includes(redirectUri)) return false;
+    await this.invalidateCredentials('client');
+    return true;
   }
 
   async invalidateCredentials(

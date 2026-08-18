@@ -1,13 +1,3 @@
-/**
- * `kosong/protocol` errors — provider-error boundary translation.
- *
- * Locks the abort behavior fix: the `throwIfAbortError` guard runs FIRST in
- * `translateProviderError` and THROWS the standard abort DOMException for
- * every abort shape, so a user cancellation can never come back as a
- * retryable `provider.*` Error2. Also locks the status→code mapping, the
- * message sanitizer, and the domain's self-registration at import time.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { errorInfo, isErrorCode } from '#/_base/errors/codes';
@@ -28,8 +18,6 @@ import {
   translateProviderError,
 } from '#/kosong/protocol/errors';
 
-// Mirrors the OpenAI/Anthropic SDKs' abort class: recognized structurally by
-// constructor name, without importing any SDK.
 class APIUserAbortError extends Error {
   constructor(message = 'Request was aborted.') {
     super(message);
@@ -80,7 +68,7 @@ describe('translateProviderError — classification', () => {
     expect(translateProviderError(original)).toBe(original);
   });
 
-  it('maps status errors to their codes and preserves wire details', () => {
+  it('maps status errors to their codes at birth and preserves wire details', () => {
     const cases: ReadonlyArray<[APIStatusError, string]> = [
       [new APIStatusError(429, 'too many requests'), 'provider.rate_limit'],
       [new APIStatusError(529, 'overloaded'), 'provider.overloaded'],
@@ -92,8 +80,8 @@ describe('translateProviderError — classification', () => {
     ];
     for (const [error, code] of cases) {
       const translated = translateProviderError(error);
+      expect(translated).toBe(error);
       expect(translated.code).toBe(code);
-      expect(translated.cause).toBe(error);
       expect(translated.details?.['statusCode']).toBe(error.statusCode);
     }
   });

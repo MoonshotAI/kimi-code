@@ -12,15 +12,14 @@ import {
   IEventBus,
   IEventService,
   MAIN_AGENT_ID,
-  type DomainEvent,
-  type GlobalEvent,
+  type Event2,
   type IAgentScopeHandle,
   type IDisposable,
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 
-import type { SessionEvent } from './types';
+import type { DomainEvent, SessionEvent } from './types';
 
 /** Stamp routing context; payload stays verbatim (event types are not rewritten, D5). */
 export function toSessionEvent(event: DomainEvent, sessionId: string, agentId: string): SessionEvent {
@@ -29,9 +28,9 @@ export function toSessionEvent(event: DomainEvent, sessionId: string, agentId: s
 }
 
 /** `session.meta.updated` on the app bus → this session's SessionEvent; anything else → undefined. */
-export function projectSessionMetaEvent(event: GlobalEvent, sessionId: string): SessionEvent | undefined {
+export function projectSessionMetaEvent(event: Event2<any>, sessionId: string): SessionEvent | undefined {
   if (event.type !== 'session.meta.updated') return undefined;
-  const payload = event.payload;
+  const payload = (event as { readonly payload?: unknown }).payload;
   if (typeof payload !== 'object' || payload === null) return undefined;
   const candidate = payload as { sessionId?: unknown; agentId?: unknown; title?: unknown; patch?: unknown };
   if (candidate.sessionId !== sessionId) return undefined;
@@ -71,8 +70,10 @@ export function attachSessionEvents(args: {
   const subscribeAgent = (handle: IAgentScopeHandle): void => {
     if (agentSubscriptions.has(handle.id)) return;
     const bus = handle.accessor.get(IEventBus);
-    agentSubscriptions.set(handle.id, bus.subscribe((event: DomainEvent) => {
-      deliver(toSessionEvent(event, sessionId, handle.id));
+    agentSubscriptions.set(handle.id, bus.subscribe((event) => {
+      // Controlled boundary cast: the bus carries Event2 instances; the facade
+      // projects them onto the plain `DomainEvent` arms (same fields).
+      deliver(toSessionEvent(event as unknown as DomainEvent, sessionId, handle.id));
     }));
   };
   for (const handle of agents.list()) subscribeAgent(handle);

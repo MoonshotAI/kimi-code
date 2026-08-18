@@ -6,7 +6,6 @@ import { describe, expect, it } from 'vitest';
 import {
   IAgentBlobService,
   IAgentContextMemoryService,
-  IAgentContextSizeService,
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IAgentPlanService,
@@ -14,6 +13,7 @@ import {
   IAgentScopeContext,
   IAgentSwarmService,
   IAgentTaskService,
+  IAgentTokenCountingService,
   IAgentToolPolicyService,
   IAgentToolRegistryService,
   IAgentUsageService,
@@ -127,7 +127,7 @@ function makeFixture(metaOverrides?: Record<string, unknown>) {
     id: 'main',
     accessor: makeAccessor([
       [IAgentContextMemoryService, { get: () => history }],
-      [IAgentContextSizeService, { get: () => ({ size: 1234, measured: 1000, estimated: 234 }) }],
+      [IAgentTokenCountingService, { get: () => ({ size: 1234, measured: 1000, estimated: 234 }) }],
       [IAgentProfileService, { data: () => profileData }],
       [
         IAgentToolPolicyService,
@@ -350,7 +350,7 @@ describe('buildResumedSessionState', () => {
   });
 
   it('passes an explicit title and isCustomTitle through unchanged', async () => {
-    const fx = makeFixture({ title: 'My Session', isCustomTitle: true });
+    const fx = makeFixture({ title: 'My Session', titleKind: 'custom' });
     const state = await buildResumedSessionState(fx.session as never, fx.mainAgent as never);
 
     expect(state.sessionMetadata.title).toBe('My Session');

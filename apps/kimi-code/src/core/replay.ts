@@ -15,7 +15,6 @@
 import {
   IAgentBlobService,
   IAgentContextMemoryService,
-  IAgentContextSizeService,
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IAgentPlanService,
@@ -24,6 +23,7 @@ import {
   IAgentScopeContext,
   IAgentSwarmService,
   IAgentTaskService,
+  IAgentTokenCountingService,
   IAgentToolPolicyService,
   IAgentToolRegistryService,
   IAgentUsageService,
@@ -95,7 +95,7 @@ export async function buildResumedAgents(
       thinkingEffort: data.thinkingLevel,
       systemPrompt: data.systemPrompt,
     },
-    context: { history, tokenCount: accessor.get(IAgentContextSizeService).get().size },
+    context: { history, tokenCount: accessor.get(IAgentTokenCountingService).get().size },
     replay,
     permission: {
       mode: accessor.get(IAgentPermissionModeService).mode,
@@ -200,7 +200,7 @@ function projectSessionMetadata(meta: SessionMeta): ResumedSessionMetadata {
     createdAt: new Date(meta.createdAt).toISOString(),
     updatedAt: new Date(meta.updatedAt).toISOString(),
     title: meta.title ?? '',
-    isCustomTitle: meta.isCustomTitle ?? false,
+    isCustomTitle: meta.titleKind === 'custom',
     agents,
   };
 }

@@ -26,6 +26,7 @@ export interface AuthFlowHost {
   session: CoreSession | undefined;
   readonly harness: CoreHarness;
   readonly options: KimiTUIOptions;
+  readonly engineV2: boolean;
 
   setAppState(patch: Partial<AppState>): void;
   setStartupReady(): void;
@@ -34,6 +35,7 @@ export interface AuthFlowHost {
   syncRuntimeState(session?: CoreSession): Promise<void>;
   closeSession(reason: string): Promise<void>;
   appendStartupNotice(extra: string): void;
+  hydrateLazyConfigDefaults(): Promise<void>;
   readonly sessionEventHandler: SessionEventHandler;
   fetchSessions(): Promise<void>;
   updateTerminalTitle(): void;
@@ -86,7 +88,11 @@ export class AuthFlowController {
 
     const patch: Partial<AppState> = { model };
     if (effort !== undefined) {
+      // Also carry the effort as the lazy-created first session's thinking
+      // override, so a session-only choice (Alt+S) made before any session
+      // exists is still applied on creation.
       patch.thinkingEffort = effort;
+      patch.lazySessionThinking = effort;
     }
     const selected = host.state.appState.availableModels[model];
     if (selected !== undefined) {
@@ -116,11 +122,23 @@ export class AuthFlowController {
     const selected = defaultModel !== undefined ? availableModels[defaultModel] : undefined;
 
     if (defaultModel === undefined || selected === undefined) {
+      if (host.session === undefined && host.engineV2) {
+        // Session-less v2: hydrate permission/plan defaults even without a
+        // default model.
+        await host.hydrateLazyConfigDefaults();
+      }
       host.setAppState({ availableModels, availableProviders });
       return;
     }
 
     await this.activateModelSelection(defaultModel, thinkingEffortFromConfig(thinkingView(config)));
+    if (host.session === undefined && host.engineV2) {
+      // Session-less v2: also hydrate permission/plan defaults from the
+      // refreshed config, same as startup.
+      await host.hydrateLazyConfigDefaults();
+      host.setAppState({ availableModels, availableProviders });
+      return;
+    }
     const appStatePatch: Partial<AppState> = {
       availableModels,
       availableProviders,

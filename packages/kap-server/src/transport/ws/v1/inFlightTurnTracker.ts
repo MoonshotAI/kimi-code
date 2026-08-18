@@ -1,23 +1,3 @@
-/**
- * `InFlightTurnTracker` — accumulates the current turn's volatile stream state
- * per session so a reconnecting client can rebuild mid-turn UI from the session
- * snapshot instead of replaying deltas (which are not journaled).
- *
- * Ported from v1 (`packages/server/src/services/gateway/inFlightTurnTracker.ts`).
- * Owned by the `SessionEventBroadcaster` and updated inside its per-session
- * dispatch queue — keeping accumulated text, the journal watermark, and fan-out
- * order mutually consistent.
- *
- * Text accumulation is step-relative: `assistantText` / `thinkingText` reset at
- * every `turn.step.started` because completed steps already live in the snapshot
- * transcript; running tools are kept (a call without `tool.result` still needs
- * seeding). The stamped delta `offset` is thus the pre-append offset within the
- * current step, and clients reset their alignment counters at step boundaries.
- *
- * Only main-agent activity is tracked: subagent deltas share the session id but
- * describe a different stream and would corrupt the accumulation.
- */
-
 import type { Event } from './events';
 import type { InFlightToolCall, InFlightTurn } from '../../../protocol/rest-snapshot';
 
@@ -69,7 +49,6 @@ export class InFlightTurnTracker {
         return {};
       }
       case 'turn.step.started': {
-        // Prior steps' text is already in the transcript; keep running tools.
         const turn = this.bySession.get(sessionId);
         if (!turn || turn.turnId !== event.turnId) return {};
         turn.assistantText = '';

@@ -6,20 +6,24 @@
 // `getHandle('main')` returns the fake main handle.
 import { describe, expect, it } from 'vitest';
 import {
-  IAgentContextSizeService,
+  IAgentContextMemoryService,
+  IAgentConversationUndoService,
   IAgentFullCompactionService,
   IAgentGoalService,
   IAgentLifecycleService,
+  IAgentLoopService,
   IAgentMcpService,
   IAgentPermissionModeService,
   IAgentPlanService,
+  IAgentPluginCommandService,
   IAgentProfileService,
   IAgentPromptService,
-  IAgentRPCService,
   IAgentShellCommandService,
+  IAgentSkillService,
   IAgentSwarmService,
   IAgentSystemReminderService,
   IAgentTaskService,
+  IAgentTokenCountingService,
   IAgentUsageService,
   IBootstrapService,
   IEventBus,
@@ -126,20 +130,18 @@ function makeFixture(options?: {
       bus,
       entries: [
         [IEventBus, bus],
-        [IAgentPromptService, { enqueue: recordReturning(`${id}.enqueue`, Promise.resolve({ prompt_id: 'p1' })) }],
         [
-          IAgentRPCService,
+          IAgentPromptService,
           {
-            steer: record(`${id}.steer`),
-            cancel: record(`${id}.cancel`),
-            undoHistory: recordReturning(`${id}.undoHistory`, 2),
-            activateSkill: record(`${id}.activateSkill`),
-            activatePluginCommand: record(`${id}.activatePluginCommand`),
-            setPermission: record(`${id}.setPermission`),
-            cancelCompaction: record(`${id}.cancelCompaction`),
-            getContext: recordReturning(`${id}.getContext`, { history: [{ role: 'user', content: 'hi' }], tokenCount: 42 }),
+            enqueue: recordReturning(`${id}.enqueue`, Promise.resolve({ prompt_id: 'p1' })),
+            submitSteer: record(`${id}.steer`),
           },
         ],
+        [IAgentLoopService, { cancelFromUser: record(`${id}.cancel`) }],
+        [IAgentConversationUndoService, { undo: recordReturning(`${id}.undoHistory`, 2) }],
+        [IAgentSkillService, { activate: record(`${id}.activateSkill`) }],
+        [IAgentPluginCommandService, { activate: record(`${id}.activatePluginCommand`) }],
+        [IAgentContextMemoryService, { get: recordReturning(`${id}.getContext`, [{ role: 'user', content: 'hi' }]) }],
         [
           IAgentShellCommandService,
           {
@@ -171,7 +173,10 @@ function makeFixture(options?: {
           IAgentSwarmService,
           { enter: record(`${id}.swarm.enter`), exit: record(`${id}.swarm.exit`), isActive: false },
         ],
-        [IAgentFullCompactionService, { begin: recordReturning(`${id}.compaction.begin`, true) }],
+        [
+          IAgentFullCompactionService,
+          { begin: recordReturning(`${id}.compaction.begin`, true), cancel: record(`${id}.cancelCompaction`) },
+        ],
         [
           IAgentGoalService,
           {
@@ -183,8 +188,8 @@ function makeFixture(options?: {
           },
         ],
         [IAgentUsageService, { status: () => usage }],
-        [IAgentContextSizeService, { get: () => ({ size: 100 }), rawSize: () => 120 }],
-        [IAgentPermissionModeService, { mode: 'auto' }],
+        [IAgentTokenCountingService, { get: () => ({ size: 100 }), rawSize: () => 120 }],
+        [IAgentPermissionModeService, { mode: 'auto', setModeAndBroadcast: record(`${id}.setPermission`) }],
         [
           IAgentMcpService,
           { initialLoadDurationMs: () => 123, list: () => mcpServers },
@@ -354,7 +359,7 @@ describe('CoreSession conversation flow and agent routing', () => {
     expect((error as { code: string }).code).toBe(CoreErrorCodes.AGENT_NOT_FOUND);
   });
 
-  it('steer/cancel/undo/skill/plugin-command/permission/compaction-cancel forward to the RPC facade, shell to its own service', async () => {
+  it('steer/cancel/undo/skill/plugin-command/permission/compaction-cancel forward to their domain services, shell to its own service', async () => {
     const fx = makeFixture();
     await fx.core.steer(parts);
     await fx.core.cancel();
@@ -367,17 +372,17 @@ describe('CoreSession conversation flow and agent routing', () => {
     await fx.core.cancelCompaction();
 
     expect(fx.calls['main.steer']).toEqual([[{ input: parts }]]);
-    expect(fx.calls['main.cancel']).toEqual([[{}]]);
+    expect(fx.calls['main.cancel']).toEqual([[]]);
     expect(fx.calls['main.runShellCommand']).toEqual([[{ command: 'ls', commandId: 'c1' }]]);
     expect(shell).toEqual(fx.shellResult);
     // IAgentShellCommandService.cancel takes the bare commandId string.
     expect(fx.calls['main.cancelShellCommand']).toEqual([['c1']]);
-    expect(fx.calls['main.undoHistory']).toEqual([[{ count: 2 }]]);
+    expect(fx.calls['main.undoHistory']).toEqual([[2]]);
     expect(undone).toBe(2);
     expect(fx.calls['main.activateSkill']).toEqual([[{ name: 'write-tui', args: 'now' }]]);
     expect(fx.calls['main.activatePluginCommand']).toEqual([[{ pluginId: 'p1', commandName: 'cmd', args: 'a' }]]);
-    expect(fx.calls['main.setPermission']).toEqual([[{ mode: 'auto' }]]);
-    expect(fx.calls['main.cancelCompaction']).toEqual([[{}]]);
+    expect(fx.calls['main.setPermission']).toEqual([['auto']]);
+    expect(fx.calls['main.cancelCompaction']).toEqual([[]]);
   });
 });
 

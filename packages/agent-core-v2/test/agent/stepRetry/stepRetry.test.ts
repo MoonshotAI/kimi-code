@@ -10,10 +10,11 @@ import { IEventBus } from '#/app/event/eventBus';
 import { retryBackoffDelays } from '#/_base/utils/retry';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ContinuationStepRequest } from '#/agent/loop/stepRequest';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnStepRetrying } from '#/agent/stepRetry/stepRetryService';
 
 import { createTestAgent, llmGenerateServices, type TestAgentContext } from '../../harness';
 
-// Captured before any `vi.useFakeTimers()` call, so this is always the real clock.
 const realSetTimeout = globalThis.setTimeout;
 
 describe('stepRetry plugin', () => {
@@ -33,16 +34,10 @@ describe('stepRetry plugin', () => {
   }
 
   async function runTurn(turnId: number, signal?: AbortSignal) {
-    ctx.get(IEventBus).publish({ type: 'turn.started', turnId, origin: { kind: 'user' } });
+    void ctx.dispatcher.dispatch(new TurnStarted({ turnId, origin: { kind: 'user' } }));
     const loop = ctx.get(IAgentLoopService);
     loop.enqueue(new ContinuationStepRequest());
     const resultPromise = loop.run({ turnId, signal });
-    // Scope creation activates the registered OnScopeCreated services, which
-    // adds real-async hops to the step pipeline. `runAllTimersAsync` can then
-    // return while the retry chain is parked on such a hop — before the next
-    // backoff timer has been scheduled — leaving that timer unfired forever.
-    // Keep draining, with a real-time yield between passes so the chain can
-    // schedule the next timer, until the turn settles.
     let settled = false;
     void resultPromise.then(
       () => {
@@ -68,7 +63,9 @@ describe('stepRetry plugin', () => {
     ctx = createTestAgent(
       llmGenerateServices(async () => {
         calls += 1;
-        if (calls === 1) throw new APIConnectionError('terminated');
+        // One full requester-layer round (3 attempts) must fail before the
+        // loop's stepRetry sees the error.
+        if (calls <= 3) throw new APIConnectionError('terminated');
         return {
           id: 'retry-response',
           message: {
@@ -86,7 +83,7 @@ describe('stepRetry plugin', () => {
     const result = await runTurn(1);
 
     expect(result).toEqual({ type: 'completed', steps: 2, truncated: false });
-    expect(calls).toBe(2);
+    expect(calls).toBe(4);
     expect(rpcEvents('turn.step.retrying')).toEqual([
       expect.objectContaining({
         args: expect.objectContaining({
@@ -126,7 +123,8 @@ describe('stepRetry plugin', () => {
     const result = await runTurn(1);
 
     expect(result.type).toBe('failed');
-    expect(calls).toBe(10);
+    // Ten step-level attempts, each a full 3-attempt requester round.
+    expect(calls).toBe(30);
     expect(rpcEvents('turn.step.retrying')).toHaveLength(9);
     expect(rpcEvents('turn.step.interrupted')).toEqual([
       expect.objectContaining({
@@ -140,7 +138,9 @@ describe('stepRetry plugin', () => {
     ctx = createTestAgent(
       llmGenerateServices(async () => {
         calls += 1;
-        if (calls === 1) throw new APIProviderRateLimitError('slow down', null, 1);
+        // One full requester-layer round (3 attempts) must fail before the
+        // loop's stepRetry sees the error (and its retry-after hint).
+        if (calls <= 3) throw new APIProviderRateLimitError('slow down', null, 1);
         return {
           id: 'retry-after-response',
           message: {
@@ -155,7 +155,7 @@ describe('stepRetry plugin', () => {
       }),
     );
 
-    ctx.get(IEventBus).publish({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } });
+    void ctx.dispatcher.dispatch(new TurnStarted({ turnId: 1, origin: { kind: 'user' } }));
     const loop = ctx.get(IAgentLoopService);
     loop.enqueue(new ContinuationStepRequest());
     const result = await loop.run({ turnId: 1 });
@@ -193,7 +193,7 @@ describe('stepRetry plugin', () => {
         throw new APIConnectionError('terminated');
       }),
     );
-    ctx.get(IEventBus).subscribe('turn.step.retrying', () => {
+    ctx.get(IEventBus).subscribe(TurnStepRetrying, () => {
       controller.abort(new Error('stop'));
     });
 
@@ -202,20 +202,21 @@ describe('stepRetry plugin', () => {
     expect(result.type).toBe('cancelled');
   });
 
-  it('honors loop_control.max_retries_per_step', async () => {
+  it('honors loop_control.max_attempts_per_step', async () => {
     vi.useFakeTimers();
     let calls = 0;
     ctx = createTestAgent(llmGenerateServices(async () => {
       calls += 1;
       throw new APIConnectionError('terminated');
     }), {
-      initialConfig: { loopControl: { maxRetriesPerStep: 1 } },
+      initialConfig: { loopControl: { maxAttemptsPerStep: 1 } },
     });
 
     const result = await runTurn(1);
 
     expect(result.type).toBe('failed');
-    expect(calls).toBe(1);
+    // One step-level attempt = one 3-attempt requester round.
+    expect(calls).toBe(3);
     expect(rpcEvents('turn.step.retrying')).toEqual([]);
   });
 
@@ -245,7 +246,7 @@ describe('stepRetry plugin', () => {
 
     const first = await runTurn(1);
     expect(first.type).toBe('failed');
-    expect(calls).toBe(10);
+    expect(calls).toBe(30);
 
     failing = false;
     const second = await runTurn(2);

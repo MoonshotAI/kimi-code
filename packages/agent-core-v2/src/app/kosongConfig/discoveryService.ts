@@ -1,40 +1,3 @@
-/**
- * `kosongConfig` domain — `IProviderDiscoveryService` implementation.
- *
- * Owns the all-provider model refresh: delegates to the shared OAuth
- * orchestrator (managed OAuth + open platforms + custom registries), writes
- * the discovered providers/models into config through ONE atomic
- * `replaceSections` transition (the persistence bridge then syncs them into
- * kosong's in-memory registries), and publishes `event.model_catalog.changed`
- * on change. Bound at App scope.
- *
- * `modelSource: 'static'` short-circuits refresh: a provider whose effective
- * model source is `static` (config-declared, or declared by its vendor
- * definition) serves its models from the static `[models.*]` section, so
- * discovery must not touch it. A statically-sourced target of a scoped
- * refresh answers `unchanged` without any network I/O; for an unscoped
- * refresh the static entries are hidden from the orchestrator's config view
- * and merged back verbatim on every write, so the orchestrator can neither
- * refresh them nor drop them (or a default model pointing at them).
- *
- * Two write-path details preserve the legacy semantics exactly:
- *  - The orchestrator's two-phase host contract (removeProvider, then
- *    setConfig) is absorbed into a single atomic write: the removal is
- *    computed in memory only (`shapeWithoutProvider`), because the patch's
- *    full providers/models records already express it. The runtime
- *    registries therefore never pass through a halfway-removed state — that
- *    intermediate state was the source of the "provider/model not
- *    configured" startup race against profile binding.
- *  - The env-synthesized `__kimi_env__` slice is never written to config:
- *    it lives in the effective overlay, and the bridge's event-driven sync
- *    carries it into the registries on its own. `defaultModel` / `thinking`
- *    also go through config (like the OAuth flows), since the env overlay
- *    may pin the runtime default and only the config effective view knows.
- *
- * Credential detection goes through the provider-definition registry, not a
- * per-protocol env table.
- */
-
 import {
   refreshProviderModels,
   type ManagedKimiConfigShape,
@@ -42,11 +5,12 @@ import {
   type RefreshProviderHost,
   type RefreshResult,
 } from '@moonshot-ai/kimi-code-oauth';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import { IOAuthService } from '#/app/auth/auth';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { AuthErrors } from '#/app/auth/errors';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
 import { ModelCatalogErrors } from '#/kosong/model/errors';
@@ -66,7 +30,13 @@ import {
   THINKING_SECTION,
 } from './configSection';
 import {
+  SECONDARY_MODEL_SECTION,
+  cascadeSubagentModelPool,
+  type SecondaryModelConfig,
+} from '#/session/subagent/configSection';
+import {
   IProviderDiscoveryService,
+  ModelCatalogChanged,
   type RefreshProviderModelsOptions,
   type RefreshProviderModelsResponse,
 } from './discovery';
@@ -90,7 +60,7 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     @IConfigService private readonly config: IConfigService,
     @IOAuthService private readonly oauth: IOAuthService,
     @IEventService private readonly events: IEventService,
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {}
 
   refreshProviderModels(
@@ -122,13 +92,14 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     }
 
     const exclusion = this.computeStaticExclusion();
-    const result = await refreshProviderModels(this.buildRefreshHost(exclusion), {
+    const { outboundUserAgent } = await this.identity.resolved();
+    const result = await refreshProviderModels(this.buildRefreshHost(exclusion, outboundUserAgent), {
       scope: options.scope,
       providerId: options.providerId,
     });
     const response = mapRefreshResult(result);
     if (response.changed.length > 0) {
-      this.events.publish({ type: 'event.model_catalog.changed', payload: response });
+      this.events.publish(new ModelCatalogChanged({ payload: response }));
     }
     return response;
   }
@@ -175,13 +146,13 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     };
   }
 
-  private buildRefreshHost(exclusion: StaticExclusion): RefreshProviderHost {
+  private buildRefreshHost(exclusion: StaticExclusion, userAgent: string): RefreshProviderHost {
     return {
       getConfig: async () => this.readUserConfigShape(exclusion),
       removeProvider: (providerId) => this.shapeWithoutProvider(providerId),
       setConfig: (patch) => this.applyRefreshPatch(patch, exclusion),
       resolveOAuthToken: (providerName, oauthRef) => this.resolveOAuthToken(providerName, oauthRef),
-      userAgent: this.bootstrap.args.requestHeaders['User-Agent'],
+      userAgent,
     };
   }
 
@@ -248,6 +219,16 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     if ('thinking' in patch) {
       sections[THINKING_SECTION] = restoreDefault ? exclusion.thinking : patch.thinking;
     }
+    const nextModels = sections[MODELS_SECTION] as Record<string, ModelRecord> | undefined;
+    if (nextModels !== undefined) {
+      const cascadedPool = cascadeSubagentModelPool(
+        this.config.inspect<SecondaryModelConfig>(SECONDARY_MODEL_SECTION).userValue,
+        nextModels,
+      );
+      if (cascadedPool !== undefined) {
+        sections[SECONDARY_MODEL_SECTION] = cascadedPool ?? undefined;
+      }
+    }
     await this.config.replaceSections(sections);
     return {
       providers:
@@ -282,7 +263,9 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
       oauthRef as unknown as OAuthRef | undefined,
     );
     if (tokenProvider === undefined) {
-      throw new Error('OAuth token provider is not configured.');
+      throw new Error2(AuthErrors.codes.AUTH_TOKEN_MISSING, 'OAuth token provider is not configured.', {
+        details: { provider_id: providerName },
+      });
     }
     return tokenProvider.getAccessToken();
   }

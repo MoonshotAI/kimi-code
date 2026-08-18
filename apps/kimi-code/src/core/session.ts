@@ -13,19 +13,23 @@
 
 import {
   ensureMainAgent,
-  IAgentContextSizeService,
+  IAgentContextMemoryService,
+  IAgentConversationUndoService,
   IAgentFullCompactionService,
   IAgentGoalService,
   IAgentLifecycleService,
+  IAgentLoopService,
   IAgentMcpService,
   IAgentPermissionModeService,
   IAgentPlanService,
+  IAgentPluginCommandService,
   IAgentProfileService,
   IAgentPromptService,
-  IAgentRPCService,
   IAgentShellCommandService,
+  IAgentSkillService,
   IAgentSwarmService,
   IAgentTaskService,
+  IAgentTokenCountingService,
   IAgentUsageService,
   IConfigService,
   IModelCatalog,
@@ -36,8 +40,8 @@ import {
   ISessionInteractionService,
   ISessionMetadata,
   ISessionQuestionService,
-  ISessionSecondaryModelWarningService,
   ISessionSkillCatalog,
+  ISessionTodoService,
   IWorkspaceDirs,
   MAIN_AGENT_ID,
   summarizeSkill,
@@ -46,9 +50,13 @@ import {
   type IAgentScopeHandle,
   type Interaction,
   type ISessionScopeHandle,
+  type PromptSkillActivation,
   type Scope,
-  type SecondaryModelConfig,
+  type TodoItem,
 } from '@moonshot-ai/agent-core-v2';
+// Not barrel-exported (side-effect-only registration upstream); kap-server
+// deep-imports it the same way (`routes/modelCatalog.ts`).
+import type { SecondaryModelConfig } from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
 
 import { CoreError, CoreErrorCodes } from './errors';
 import { attachSessionEvents } from './events';
@@ -148,17 +156,22 @@ export class CoreSession {
 
   // `prompt` goes through the v2 prompt queue (`IAgentPromptService.enqueue`):
   // a prompt sent while a turn is running is queued and drained in order. The
-  // native `IAgentRPCService.prompt` returns `undefined` (does not queue) when
-  // the agent is busy or a hook blocks it, which would drop back-to-back input.
-  // Everything else that mutates a turn (`steer`/`cancel`/`runShellCommand`/
-  // `undoHistory`/`activateSkill`/`setPermission`/`getContext`/`cancelCompaction`)
-  // goes through the native `IAgentRPCService`. The split is intentional.
-  async prompt(parts: readonly PromptPart[], options?: { agentId?: string }): Promise<void> {
+  // native `IAgentPromptService.submit` returns `undefined` (does not queue)
+  // when the agent is busy or a hook blocks it, which would drop back-to-back
+  // input. Everything else that mutates a turn (`steer`/`cancel`/
+  // `runShellCommand`/`undoHistory`/`activateSkill`/`setPermission`/
+  // `getContext`/`cancelCompaction`) goes straight to the owning domain
+  // service. The split is intentional.
+  async prompt(
+    parts: readonly PromptPart[],
+    options?: { agentId?: string; promptId?: string },
+  ): Promise<void> {
     const agent = await this.agent(options?.agentId);
     // Same v1-wire → v2-native cast as `steer`: the public surface uses the
     // v1 protocol parts (identical `text` shape), media parts are not
     // converted here.
     await agent.accessor.get(IAgentPromptService).enqueue({
+      id: options?.promptId,
       message: {
         role: 'user',
         content: [...parts] as unknown as ContentPart[],
@@ -169,18 +182,18 @@ export class CoreSession {
 
   async steer(parts: readonly PromptPart[], options?: { agentId?: string }): Promise<void> {
     const agent = await this.agent(options?.agentId);
-    // The RPC facade takes v2-native `ContentPart`s while the public surface
+    // `submitSteer` takes v2-native `ContentPart`s while the public surface
     // uses the v1 protocol parts (same `text` shape the TUI steers with);
     // media parts would need the promptLegacy conversion, which v2 keeps
     // module-private.
     await agent.accessor
-      .get(IAgentRPCService)
-      .steer({ input: parts as unknown as readonly ContentPart[] });
+      .get(IAgentPromptService)
+      .submitSteer({ input: parts as unknown as readonly ContentPart[] });
   }
 
   async cancel(options?: { agentId?: string }): Promise<void> {
     const agent = await this.agent(options?.agentId);
-    await agent.accessor.get(IAgentRPCService).cancel({});
+    agent.accessor.get(IAgentLoopService).cancelFromUser();
   }
 
   async runShellCommand(
@@ -201,12 +214,30 @@ export class CoreSession {
   /** Returns the number of history entries actually undone. */
   async undoHistory(count: number, options?: { agentId?: string }): Promise<number> {
     const agent = await this.agent(options?.agentId);
-    return await agent.accessor.get(IAgentRPCService).undoHistory({ count });
+    return await agent.accessor.get(IAgentConversationUndoService).undo(count);
   }
 
   async activateSkill(input: { name: string; args?: string; agentId?: string }): Promise<void> {
     const agent = await this.agent(input.agentId);
-    await agent.accessor.get(IAgentRPCService).activateSkill({ name: input.name, args: input.args });
+    await agent.accessor.get(IAgentSkillService).activate({ name: input.name, args: input.args });
+  }
+
+  async promptWithSkills(input: {
+    parts: readonly PromptPart[];
+    skills: readonly PromptSkillActivation[];
+    agentId?: string;
+  }): Promise<void> {
+    const agent = await this.agent(input.agentId);
+    // Same v1-wire → v2-native cast as `prompt`/`steer`.
+    await agent.accessor.get(IAgentSkillService).promptWithSkills({
+      input: input.parts as unknown as ContentPart[],
+      skills: input.skills,
+    });
+  }
+
+  /** The session's todo list, read live from the session-scope todo service. */
+  async getTodos(): Promise<readonly TodoItem[]> {
+    return this.init.handle.accessor.get(ISessionTodoService).getTodos();
   }
 
   async activatePluginCommand(input: {
@@ -216,7 +247,7 @@ export class CoreSession {
     agentId?: string;
   }): Promise<void> {
     const agent = await this.agent(input.agentId);
-    await agent.accessor.get(IAgentRPCService).activatePluginCommand({
+    await agent.accessor.get(IAgentPluginCommandService).activate({
       pluginId: input.pluginId,
       commandName: input.commandName,
       args: input.args,
@@ -240,7 +271,7 @@ export class CoreSession {
 
   async setPermission(mode: PermissionMode, options?: { agentId?: string }): Promise<void> {
     const agent = await this.agent(options?.agentId);
-    await agent.accessor.get(IAgentRPCService).setPermission({ mode });
+    agent.accessor.get(IAgentPermissionModeService).setModeAndBroadcast(mode);
   }
 
   async setPlanMode(on: boolean, options?: { agentId?: string }): Promise<void> {
@@ -268,7 +299,7 @@ export class CoreSession {
 
   async cancelCompaction(): Promise<void> {
     const agent = await this.agent();
-    await agent.accessor.get(IAgentRPCService).cancelCompaction({});
+    agent.accessor.get(IAgentFullCompactionService).cancel();
   }
 
   async clearPlan(): Promise<void> {
@@ -288,7 +319,7 @@ export class CoreSession {
     const { accessor } = main;
     const profile = accessor.get(IAgentProfileService);
     const model = profile.getModel();
-    const contextTokens = accessor.get(IAgentContextSizeService).get().size;
+    const contextTokens = accessor.get(IAgentTokenCountingService).get().size;
     // Aggregate from the main agent's native services instead of the v1
     // `ISessionLegacyService` wire projection. Mirror v1's
     // `resolveDefaultModelContextTokens`: when no model is bound yet (fresh
@@ -314,7 +345,7 @@ export class CoreSession {
       planMode: (await accessor.get(IAgentPlanService).status()) !== null,
       swarmMode: accessor.get(IAgentSwarmService).isActive,
       contextTokens,
-      rawContextTokens: accessor.get(IAgentContextSizeService).rawSize(),
+      rawContextTokens: accessor.get(IAgentTokenCountingService).rawSize(),
       maxContextTokens,
       contextUsage: maxContextTokens > 0 ? contextTokens / maxContextTokens : 0,
       usage: accessor.get(IAgentUsageService).status(),
@@ -323,8 +354,7 @@ export class CoreSession {
 
   async getContext(options?: { agentId?: string }): Promise<readonly ContextMessage[]> {
     const agent = await this.agent(options?.agentId);
-    const data = await agent.accessor.get(IAgentRPCService).getContext({});
-    return data.history;
+    return agent.accessor.get(IAgentContextMemoryService).get();
   }
 
   async getUsage(options?: { agentId?: string }): Promise<UsageStatus> {
@@ -446,8 +476,8 @@ export class CoreSession {
    * Re-apply the persisted `[secondary_model]` recipe to this session. v2
    * resolves the subagent binding live against `IConfigService` at spawn time,
    * so a `setConfig` write already takes effect session-wide — what remains is
-   * the reload (the recipe may have been persisted through another channel),
-   * the loud validation, and the warning-cache refresh.
+   * the reload (the recipe may have been persisted through another channel)
+   * and the loud validation.
    */
   async applyPersistedSecondaryModel(): Promise<void> {
     const config = this.init.app.accessor.get(IConfigService);
@@ -460,9 +490,6 @@ export class CoreSession {
       );
     }
     this.init.app.accessor.get(IModelCatalog).get(secondary.model);
-    this.init.handle.accessor
-      .get(ISessionSecondaryModelWarningService)
-      .recheckSecondaryModelWarning();
   }
 
   async generateAgentsMd(): Promise<void> {

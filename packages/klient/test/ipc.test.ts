@@ -15,6 +15,7 @@ defineKlientConformance('ipc', async () => {
   const klient = createKlient({ socketPath });
   return {
     klient,
+    app,
     cleanup: async () => {
       await klient.close();
       await host.close();

@@ -1,12 +1,3 @@
-/**
- * Production auth wiring end-to-end (port of v1 `auth-wiring.e2e.test.ts`).
- *
- * Boots `startServer` with NO auth override so the REAL persistent-token auth
- * is built (`<homeDir>/server.token`, mode 0600). The token is read back from
- * disk — exactly what the CLI does — and exercised against a gated HTTP route
- * and the `/api/v1/ws` upgrade path.
- */
-
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -47,7 +38,6 @@ function expectRejected(url: string): Promise<void> {
       try {
         ws.terminate();
       } catch {
-        // ignore
       }
       if (err === undefined) resolve();
       else reject(err);
@@ -79,7 +69,6 @@ describe('production auth wiring', () => {
       try {
         ws.close();
       } catch {
-        // ignore
       }
     }
     if (server !== undefined) {
@@ -101,7 +90,6 @@ describe('production auth wiring', () => {
 
     await (server as RunningServer).close();
     server = undefined;
-    // Persistent token: the file survives shutdown so the next start reuses it.
     const after = await stat(p);
     expect(after.mode & 0o777).toBe(0o600);
   });

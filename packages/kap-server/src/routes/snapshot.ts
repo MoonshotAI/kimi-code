@@ -1,62 +1,53 @@
-/**
- * `GET /sessions/{session_id}/snapshot` — IM-style initial sync.
- *
- * **Reader strategy** (controlled by `KIMI_SNAPSHOT_READER`):
- *
- *   - `auto` (default) — delegate to `ISnapshotReader`, which reads
- *     `state.json` + `agents/main/wire.jsonl` directly from disk and bypasses
- *     the heavy session-resume chain (handler + DI scope materialization, MCP
- *     connect, full wire replay). Sub-200ms warm / sub-1s cold.
- *   - `legacy` — fall back to `resume` + live service assembly. Pure operator
- *     escape hatch; no silent per-request fallback.
- *
- * **Timeout**: the auto path races against a hard `KIMI_SNAPSHOT_TIMEOUT_MS`
- * ceiling (default 4000ms, under traefik's 5s cut-off). Timeout returns 50001
- * with a structured `snapshot.timeout` log line so the gateway never sees a 499.
- *
- * **Error mapping**: `SnapshotNotFoundError` → 40401; `SnapshotTimeoutError` →
- * 50001; everything else falls through to the global error handler (→ 50001).
- */
-
 import {
+  AGENT_WIRE_RECORD_KEY,
   IAgentContextMemoryService,
-  IAgentLifecycleService,
   IAgentPromptService,
-  ILogService,
-  ISessionInteractionService,
+  IAgentScopeContext,
+  IAppendLogStore,
   ISessionContext,
+  ISessionInteractionService,
   ISessionMetadata,
+  IWireService,
   IWorkspaceService,
+  createContextTranscriptReducer,
+  deriveSpineState,
+  ensureMainAgent,
+  epochStartupNodeId,
+  isRootEpoch,
   resumeSessionById,
-  toProtocolMessage,
+  spineTreeViewFromState,
+  type ContextMessage,
   type IAgentScopeHandle,
   type Scope,
+  type SpineTreeNodeView,
+  type WireRecord,
 } from '@moonshot-ai/agent-core-v2';
-import type { Message } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
+import { z } from 'zod';
+
+import { errEnvelope, okEnvelope } from '../envelope';
+import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   sessionSnapshotResponseSchema,
   type InFlightTurn,
   type SessionSnapshotResponse,
+  type SpineTreeNode,
+  type SpineTreeView,
 } from '../protocol/rest-snapshot';
-import { z } from 'zod';
-
-import { errEnvelope, okEnvelope } from '../envelope';
-import { defineRoute } from '../middleware/defineRoute';
-import {
-  SnapshotNotFoundError,
-  SnapshotTimeoutError,
-  deriveSpineTree,
-  loadSnapshotConfig,
-} from '../services/snapshot';
-import type { ISnapshotReader } from '../services/snapshot';
+import { loadMessageHistory } from '../services/messages/messageHistory';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
 import { toWireApproval } from './approvals';
 import { toWireQuestion } from './questions';
 import { resolveSessionFacts, toWireSession } from './sessions';
 
-/** Most-recent messages included in the snapshot page. */
 const SNAPSHOT_MESSAGE_PAGE_SIZE = 100;
+
+class SnapshotNotFoundError extends Error {
+  constructor(sessionId: string) {
+    super(`session ${sessionId} does not exist`);
+    this.name = 'SnapshotNotFoundError';
+  }
+}
 
 const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
@@ -76,13 +67,10 @@ interface SnapshotRouteHost {
 export interface SnapshotRouteDeps {
   readonly core: Scope;
   readonly broadcaster: SessionEventBroadcaster;
-  readonly reader: ISnapshotReader;
 }
 
 export function registerSnapshotRoutes(app: SnapshotRouteHost, deps: SnapshotRouteDeps): void {
-  const { core, broadcaster, reader } = deps;
-  const config = loadSnapshotConfig();
-  const useReader = config.mode !== 'legacy';
+  const { core, broadcaster } = deps;
 
   const route = defineRoute(
     {
@@ -101,20 +89,11 @@ export function registerSnapshotRoutes(app: SnapshotRouteHost, deps: SnapshotRou
     async (req, reply) => {
       const { session_id } = req.params;
       try {
-        const data = useReader
-          ? await readViaReader(reader, session_id, config.timeoutMs)
-          : await readViaLegacyAssembly(core, broadcaster, session_id);
+        const data = await assembleSnapshot(core, broadcaster, session_id);
         reply.send(okEnvelope(data, req.id));
       } catch (err) {
         if (err instanceof SnapshotNotFoundError) {
           reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, req.id, err.stack));
-          return;
-        }
-        if (err instanceof SnapshotTimeoutError) {
-          core.accessor
-            .get(ILogService)
-            .warn('snapshot.timeout', { sid: session_id, duration_ms: err.timeoutMs });
-          reply.send(errEnvelope(ErrorCode.INTERNAL_ERROR, err.message, req.id, err.stack));
           return;
         }
         throw err;
@@ -124,43 +103,18 @@ export function registerSnapshotRoutes(app: SnapshotRouteHost, deps: SnapshotRou
   app.get(route.path, route.options, route.handler as Parameters<SnapshotRouteHost['get']>[2]);
 }
 
-async function readViaReader(
-  reader: ISnapshotReader,
-  sid: string,
-  timeoutMs: number,
-): Promise<SessionSnapshotResponse> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeoutPromise = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new SnapshotTimeoutError(sid, timeoutMs)), timeoutMs);
-    timer.unref?.();
-  });
-  try {
-    return await Promise.race([reader.read(sid), timeoutPromise]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
-
-async function readViaLegacyAssembly(
+async function assembleSnapshot(
   core: Scope,
   broadcaster: SessionEventBroadcaster,
   sessionId: string,
 ): Promise<SessionSnapshotResponse> {
-  // Resolve the live handle, loading the session from disk when it is cold
-  // (created by a previous process or by v1). `resume` returns `undefined`
-  // only when the session is unknown or its workspace is gone → 404.
   const handle = await resumeSessionById(core.accessor, sessionId);
   if (handle === undefined) {
     throw new SnapshotNotFoundError(sessionId);
   }
 
-  // Watermark + in-flight turn (drains the dispatch queue for consistency).
   const snapState = await broadcaster.getSnapshotState(sessionId);
 
-  // Session wire shape (needs the workspace root for `metadata.cwd`).
-  // `ISessionMetadata` normalizes legacy v1 documents on load (absent
-  // `version` → ISO-string timestamps → epoch ms, id backfilled), so the
-  // metadata read here is always v2-shaped and safe to project.
   const workspaceId = handle.accessor.get(ISessionContext).workspaceId;
   const workspace = await core.accessor.get(IWorkspaceService).get(workspaceId);
   const cwd = workspace?.root ?? '';
@@ -171,25 +125,15 @@ async function readViaLegacyAssembly(
     resolveSessionFacts(core, sessionId),
   );
 
-  // Messages — most recent page of the main agent's live history.
-  const main = handle.accessor.get(IAgentLifecycleService).get('main');
-  const history = main !== undefined ? main.accessor.get(IAgentContextMemoryService).get() : [];
-  let items: Message[] = [];
-  let hasMore = false;
-  if (main !== undefined) {
-    hasMore = history.length > SNAPSHOT_MESSAGE_PAGE_SIZE;
-    const page = history.slice(-SNAPSHOT_MESSAGE_PAGE_SIZE);
-    const offset = history.length - page.length;
-    items = page.map((msg, i) => toProtocolMessage(sessionId, offset + i, msg, meta.createdAt));
-  }
-  // Derived on the FULL history, not the sliced page — early spine
-  // transitions are exactly what the client cannot replay itself.
-  const spineTree = deriveSpineTree(history, items);
-  const currentPromptId =
-    snapState.inFlightTurn === null ? undefined : readCurrentPromptId(main);
+  const main = await ensureMainAgent(handle);
+  const all = await loadMessageHistory(core, main, sessionId, meta.createdAt);
+  const hasMore = all.length > SNAPSHOT_MESSAGE_PAGE_SIZE;
+  const items = all.slice(-SNAPSHOT_MESSAGE_PAGE_SIZE);
+  const spineTree = deriveSpineTree(await loadContextHistory(core, main), items);
+
+  const currentPromptId = snapState.inFlightTurn === null ? undefined : readCurrentPromptId(main);
   const inFlightTurn = attachCurrentPromptIdToInFlight(snapState.inFlightTurn, currentPromptId);
 
-  // Pending approvals / questions.
   const interaction = handle.accessor.get(ISessionInteractionService);
   const pendingApprovals = interaction
     .listPending('approval')
@@ -216,7 +160,6 @@ function readCurrentPromptId(main: IAgentScopeHandle | undefined): string | unde
   try {
     return main.accessor.get(IAgentPromptService).list().active?.id;
   } catch {
-    // Auxiliary reconnect metadata must not make the whole snapshot fail.
     return undefined;
   }
 }
@@ -227,4 +170,71 @@ function attachCurrentPromptIdToInFlight(
 ): InFlightTurn | null {
   if (inFlightTurn === null || currentPromptId === undefined) return inFlightTurn;
   return { ...inFlightTurn, current_prompt_id: currentPromptId };
+}
+
+async function loadContextHistory(
+  core: Scope,
+  agent: IAgentScopeHandle,
+): Promise<readonly ContextMessage[]> {
+  await agent.accessor.get(IWireService).flush();
+  const scope = agent.accessor.get(IAgentScopeContext).scope();
+  const reducer = createContextTranscriptReducer();
+  for await (const record of core.accessor
+    .get(IAppendLogStore)
+    .read<WireRecord>(scope, AGENT_WIRE_RECORD_KEY)) {
+    reducer.add(record);
+  }
+  const transcript = reducer.result();
+  const live = agent.accessor.get(IAgentContextMemoryService).get();
+  if (live.length <= transcript.foldedLength) return transcript.entries;
+  return [...transcript.entries, ...live.slice(transcript.foldedLength)];
+}
+
+/**
+ * Spine task tree derived from the COMPLETE (pre-window) transcript, adapted
+ * from the engine's recursive camelCase view (`spineTreeViewFromState`) to
+ * the flat snake_case wire shape. Synthetic scaffolding (root-epoch nodes and
+ * each epoch's startup node) is flattened away, its real children re-attached
+ * to the nearest emitted ancestor, so a session without spine activity seeds
+ * an empty node list. Fail-open: a derivation failure returns `undefined`
+ * (the client falls back to replaying the messages window) instead of failing
+ * the snapshot. `covered_through_id` is the wire id of the LAST message in
+ * the sliced `items` page — never a full-transcript index, which would
+ * misalign the client's coverage watermark.
+ */
+export function deriveSpineTree(
+  messages: readonly ContextMessage[],
+  items: readonly { id: string }[],
+): SpineTreeView | undefined {
+  try {
+    const state = deriveSpineState(messages);
+    const view = spineTreeViewFromState(state);
+    const nodes: SpineTreeNode[] = [];
+    const walk = (views: readonly SpineTreeNodeView[], parentId: string | null): void => {
+      for (const node of views) {
+        if (isRootEpoch(node.id) || node.id === epochStartupNodeId(epochOf(node.id))) {
+          walk(node.children, parentId);
+          continue;
+        }
+        nodes.push({
+          id: node.id,
+          parent_id: parentId,
+          title: node.summary,
+          memory: state.nodes[node.id]?.memory ?? '',
+          token_cost: node.tokenCost ?? 0,
+          status: node.closed ? 'closed' : 'active',
+          error: null,
+        });
+        walk(node.children, node.id);
+      }
+    };
+    walk(view.nodes, null);
+    return { covered_through_id: items.at(-1)?.id ?? null, nodes };
+  } catch {
+    return undefined;
+  }
+}
+
+function epochOf(id: string): number {
+  return Number(id.split('.')[0]);
 }

@@ -14,6 +14,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { Readable } from 'node:stream';
 
 import {
   bootstrap,
@@ -23,6 +24,7 @@ import {
   IAgentProfileService,
   IBootstrapService,
   IConfigService,
+  IFileService,
   IFlagService,
   IModelCatalog,
   IPluginService,
@@ -33,6 +35,7 @@ import {
   ISessionLifecycleService,
   ISessionMetadata,
   ISessionWorkspaceContext,
+  IWorkspaceInstanceManager,
   IWorkspaceService,
   logSeed,
   MAIN_AGENT_ID,
@@ -40,6 +43,8 @@ import {
   resolveKimiHome,
   resolveLoggingConfig,
   resolveThinkingEffortForModel,
+  summarizeSkill,
+  type FileMeta,
   type GetPluginInfoInput,
   type InstallPluginInput,
   type ISessionScopeHandle,
@@ -52,9 +57,15 @@ import {
   type SetPluginEnabledInput,
   type SetPluginMcpServerEnabledInput,
   type Model,
+  type SkillSummary,
   type ThinkingDefaults,
 } from '@moonshot-ai/agent-core-v2';
 import { assertKimiHostIdentity, type KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
+import { ICapabilityService } from '@moonshot-ai/agent-core-v2/app/capability/capability';
+import type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
+import { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
+import type { McpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
+import { loadMcpServers } from '@moonshot-ai/agent-core-v2/workspace/workspaceMcpConfig/internal/config-loader';
 
 import { KimiAuthFacade, type OAuthRefreshHandler } from './auth';
 import { CoreError, CoreErrorCodes } from './errors';
@@ -69,11 +80,14 @@ import type {
   ExportSessionInput,
   ExportSessionResult,
   FlagExplanation,
+  McpServerEntry,
   PermissionMode,
   ResumedSessionState,
   TelemetryClient,
   TelemetryContextPatch,
   TelemetryProperties,
+  WorkspaceTrustInfo,
+  WorkspaceTrustMcpServerInfo,
 } from './types';
 
 /** Verbatim v1 stub written by `ensureConfigFile` (agent-core `config/toml.ts`). */
@@ -87,6 +101,23 @@ const DEFAULT_SESSION_STARTED_UI_MODE = 'shell';
 
 /** Telemetry sink used when the host does not supply a client. */
 export const noopTelemetry: TelemetryClient = { track: () => {} };
+
+/** Project one gated MCP server config into the safe display shape the trust prompt renders. */
+function describeWorkspaceMcpServer(
+  name: string,
+  config: McpServerConfig,
+): WorkspaceTrustMcpServerInfo {
+  if (config.transport === 'stdio') {
+    return {
+      name,
+      transport: config.transport,
+      command: config.command,
+      args: config.args,
+      cwd: config.cwd,
+    };
+  }
+  return { name, transport: config.transport, url: config.url };
+}
 
 export interface CoreHarnessOptions {
   readonly homeDir?: string;
@@ -397,7 +428,7 @@ export class CoreHarness {
 
   async listSessions(options: ListSessionsOptions = {}): Promise<readonly CoreSessionSummary[]> {
     const app = this.deps.app.accessor;
-    const page = await app.get(ISessionIndex).list({});
+    const page = await app.get(ISessionIndex).listRecent({});
     const bootstrapService = app.get(IBootstrapService);
     let items = page.items;
     if (options.sessionId !== undefined) {
@@ -418,6 +449,54 @@ export class CoreHarness {
       archived: summary.archived,
       metadata: summary.custom,
     }));
+  }
+
+  /**
+   * Keyset-paged variant of `listSessions` for the session picker. Entries
+   * dropped by the workDir filter shrink a page, so keep pulling pages until
+   * the requested size is filled — the picker never sees a short page that
+   * still carries a cursor.
+   */
+  async listSessionsPage(
+    options: ListSessionsOptions & { readonly limit?: number; readonly before?: string } = {},
+  ): Promise<{ items: readonly CoreSessionSummary[]; nextCursor: string | undefined }> {
+    const app = this.deps.app.accessor;
+    const index = app.get(ISessionIndex);
+    const bootstrapService = app.get(IBootstrapService);
+    const collected: CoreSessionSummary[] = [];
+    let before = options.before;
+    for (;;) {
+      const remaining = options.limit === undefined ? undefined : options.limit - collected.length;
+      if (remaining !== undefined && remaining <= 0) break;
+      const page = await index.listRecent({
+        sessionId: options.sessionId,
+        limit: remaining,
+        before,
+      });
+      if (page.items.length === 0) return { items: collected, nextCursor: undefined };
+      let items = page.items;
+      if (options.workDir !== undefined) {
+        items = items.filter((summary) => summary.cwd === options.workDir);
+      }
+      collected.push(
+        ...items.map((summary) => ({
+          id: summary.id,
+          title: summary.title,
+          lastPrompt: summary.lastPrompt,
+          // `cwd` is optional only for sessions persisted before v2 recorded it.
+          workDir: summary.cwd ?? '',
+          sessionDir: join(bootstrapService.sessionsDir, summary.workspaceId, summary.id),
+          createdAt: summary.createdAt,
+          updatedAt: summary.updatedAt,
+          archived: summary.archived,
+          metadata: summary.custom,
+        })),
+      );
+      if (page.nextCursor === undefined) return { items: collected, nextCursor: undefined };
+      before = page.nextCursor;
+      if (options.limit === undefined) return { items: collected, nextCursor: before };
+    }
+    return { items: collected, nextCursor: before };
   }
 
   getSession(id: string): CoreSession | undefined {
@@ -516,6 +595,103 @@ export class CoreHarness {
 
   async listPluginCommands(): Promise<readonly PluginCommandDef[]> {
     return this.deps.app.accessor.get(IPluginService).listPluginCommands();
+  }
+
+  // -- Capabilities (built-in product capabilities, v2-only domain) -------------------
+
+  async listCapabilities(): Promise<readonly CapabilityStatus[]> {
+    return this.deps.app.accessor.get(ICapabilityService).listCapabilities();
+  }
+
+  async getCapability(id: string): Promise<CapabilityStatus> {
+    return this.deps.app.accessor.get(ICapabilityService).getCapability(id);
+  }
+
+  async installCapability(id: string): Promise<CapabilityStatus> {
+    return this.deps.app.accessor.get(ICapabilityService).installCapability(id);
+  }
+
+  // -- Files (daemon file store) ---------------------------------------------------
+
+  async uploadFile(
+    data: Uint8Array,
+    options: { readonly name: string; readonly expiresInSec?: number },
+  ): Promise<FileMeta> {
+    return await this.deps.app.accessor
+      .get(IFileService)
+      .save(Readable.from([data]), options.name, { expiresInSec: options.expiresInSec });
+  }
+
+  async deleteFile(fileId: string): Promise<void> {
+    await this.deps.app.accessor.get(IFileService).delete(fileId);
+  }
+
+  // -- Workspace trust (startup gate) ------------------------------------------------
+
+  /**
+   * Trust state for the startup prompt: materializing the workspace handler is
+   * a no-op cost here (session creation does it anyway). The gated-server list
+   * is what the config loader sees with project files included vs skipped,
+   * computed best-effort: an unreadable/invalid project file degrades to an
+   * empty list rather than failing the caller.
+   */
+  async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
+    const handler = await this.deps.app.accessor
+      .get(IWorkspaceInstanceManager)
+      .getOrCreate({ root: workDir });
+    const trusted = await handler.program.trust.get();
+    if (trusted) return { trusted: true, gatedMcpServers: [] };
+    try {
+      const fs = this.deps.app.accessor.get(IHostFileSystem);
+      const [withProject, userOnly] = await Promise.all([
+        loadMcpServers({ fs, cwd: workDir, homeDir: this.homeDir, includeProject: true }),
+        loadMcpServers({ fs, cwd: workDir, homeDir: this.homeDir, includeProject: false }),
+      ]);
+      const gatedMcpServers = Object.entries(withProject)
+        .filter(([name]) => !(name in userOnly))
+        .map(([name, config]) => describeWorkspaceMcpServer(name, config))
+        .toSorted((a, b) => a.name.localeCompare(b.name));
+      return { trusted: false, gatedMcpServers };
+    } catch {
+      return { trusted: false, gatedMcpServers: [] };
+    }
+  }
+
+  /** Flipping trust fires the engine's change event, so project MCP servers connect live. */
+  async trustWorkspace(workDir: string): Promise<void> {
+    const handler = await this.deps.app.accessor
+      .get(IWorkspaceInstanceManager)
+      .getOrCreate({ root: workDir });
+    await handler.program.trust.trust();
+  }
+
+  /**
+   * The workspace handler's merged skill catalog (builtin / user / explicit /
+   * extra / workspace-root / plugin), available before any session exists —
+   * the same view a session would serve. `getOrCreate` is a no-op cost here:
+   * session creation materializes the handler anyway.
+   */
+  async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
+    const handler = await this.deps.app.accessor
+      .get(IWorkspaceInstanceManager)
+      .getOrCreate({ root: workDir });
+    const catalog = handler.program.skills;
+    await catalog.ready;
+    return catalog.catalog.listSkills().map(summarizeSkill);
+  }
+
+  /**
+   * `/mcp` is inspectable on a session-less startup before any session
+   * exists: the MCP connection set is workspace-scoped. Awaits `ready` so a
+   * fresh handler's initial connect settles before the list is read.
+   */
+  async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerEntry[]> {
+    const handler = await this.deps.app.accessor
+      .get(IWorkspaceInstanceManager)
+      .getOrCreate({ root: workDir });
+    const mcp = handler.program.mcp;
+    await mcp.ready;
+    return mcp.connectionManager().list();
   }
 
   // -- Telemetry / shutdown ----------------------------------------------------------

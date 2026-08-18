@@ -1,18 +1,3 @@
-/**
- * `kosong/provider` compositor probes (probe 5) — `composeOpenAIChatHooks`
- * and the construction-time aggregators in `openaiHooks.ts`:
- *
- *  - pipeline hooks chain in trait order, each stage receiving the previous
- *    stage's output; `convertMessage` returning `null` at any stage drops the
- *    message and short-circuits the rest of the chain;
- *  - single-value hooks overwrite in trait order — last declarer wins;
- *  - zero declared per-request hooks → `undefined` (even when construction
- *    declarations like `endpoint` / `defaultHeaders` are present);
- *  - `traitEndpoint` concatenates env chains in trait order with
- *    `defaultBaseUrl` last-declarer-wins, `undefined` when nothing declared;
- *  - `firstProcessEnv` / `traitProvides` follow the same ordering rules.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { Message } from '#/kosong/contract/message';

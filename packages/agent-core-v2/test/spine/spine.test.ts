@@ -25,16 +25,8 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
   IAgentSpineService,
-  IWireService,
-  planModeEnter,
-  planModeExit,
-  SPINE_VOID_OPENED_AT,
-  SpineModel,
-  spineClose,
-  spineNext,
-  spineOpen,
-  spineRootCompact,
-  spineTruncateRepair,
+  PlanModeEnter,
+  PlanModeExit,
 } from '#/index';
 import type { Message } from '#/kosong/contract/message';
 
@@ -89,175 +81,6 @@ function loopContext(): TestAgentContext {
   return testAgent(execEnvServices({ hostFs: recordingHostFs().fs }));
 }
 
-describe('Spine reducers (via wire)', () => {
-  beforeEach(() => {
-    vi.stubEnv(MASTER_ENV, '0');
-    vi.stubEnv(SPINE_ENV, '1');
-  });
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it('starts with an open root epoch and startup node', () => {
-    const ctx = testAgent();
-    const state = readOps(ctx);
-    expect(state.rootEpoch).toBe(1);
-    expect(state.openStack).toEqual(['1', '1.1']);
-    expect(state.nodes['1']?.children).toEqual(['1.1']);
-    expect(state.nodes['1.1']?.closedAt).toBeUndefined();
-  });
-
-  it('opens a child under the cursor and tracks parent linkage', () => {
-    const ctx = testAgent();
-    const wire = ctx.get(IWireService);
-
-    wire.dispatch(spineOpen({ id: '1.1.1', summary: 'task A', parentId: '1.1', openedAt: 0 }));
-
-    const state = readOps(ctx);
-    expect(state.openStack).toEqual(['1', '1.1', '1.1.1']);
-    expect(state.nodes['1.1']?.children).toEqual(['1.1.1']);
-    expect(state.nodes['1.1.1']?.summary).toBe('task A');
-    expect(state.nodes['1.1.1']?.openedAt).toBe(0);
-  });
-
-  it('closes the cursor and pops the open stack', () => {
-    const ctx = testAgent();
-    const wire = ctx.get(IWireService);
-    wire.dispatch(spineOpen({ id: '1.1.1', summary: 'task A', parentId: '1.1', openedAt: 0 }));
-
-    const before = readOps(ctx);
-    wire.dispatch(spineClose({ id: '1.1.1', closedAt: 5, memory: 'did A' }));
-
-    const state = readOps(ctx);
-    expect(state.openStack).toEqual(['1', '1.1']);
-    expect(state.nodes['1.1.1']?.closedAt).toBe(5);
-    expect(state.nodes['1.1.1']?.memory).toBe('did A');
-    expect(before).not.toBe(state);
-  });
-
-  it('closes the startup node like any work node', () => {
-    const ctx = testAgent();
-    const wire = ctx.get(IWireService);
-
-    wire.dispatch(spineClose({ id: '1.1', closedAt: 3, memory: 'startup done' }));
-
-    const state = readOps(ctx);
-    expect(state.openStack).toEqual(['1']);
-    expect(state.nodes['1.1']?.closedAt).toBe(3);
-    expect(state.nodes['1.1']?.memory).toBe('startup done');
-  });
-
-  it('repairs spans and the epoch boundary at a truncation cut', () => {
-    const ctx = testAgent();
-    const wire = ctx.get(IWireService);
-    wire.dispatch(spineOpen({ id: '1.1.1', summary: 'task A', parentId: '1.1', openedAt: 2 }));
-    wire.dispatch(spineClose({ id: '1.1.1', closedAt: 9, memory: 'did A' }));
-    wire.dispatch(spineOpen({ id: '1.1.2', summary: 'task B', parentId: '1.1', openedAt: 10 }));
-    wire.dispatch(spineClose({ id: '1.1.2', closedAt: 14, memory: 'did B' }));
-    wire.dispatch(spineOpen({ id: '1.1.3', summary: 'task C', parentId: '1.1', openedAt: 15 }));
-    wire.dispatch(spineRootCompact({ epoch: 2, epochStartAt: 20, epochMemoryAt: 19 }));
-
-    wire.dispatch(spineTruncateRepair({ cut: 8 }));
-
-    const state = readOps(ctx);
-    // Straddling span [2, 9]: fold only the surviving prefix.
-    expect(state.nodes['1.1.1']?.closedAt).toBe(7);
-    // Span fully inside the truncated range: voided (fold-excluded).
-    expect(state.nodes['1.1.2']?.openedAt).toBe(SPINE_VOID_OPENED_AT);
-    // Open span whose start was truncated: restarted at the cut.
-    expect(state.nodes['1.1.3']?.openedAt).toBe(8);
-    // The cut removed the epoch summary anchor: the boundary falls back to 0
-    // (no-loss) so the surviving history stays fully visible.
-    expect(state.epochStartAt).toBe(0);
-    expect(state.epochMemoryAt).toBeUndefined();
-  });
-
-  it('keeps the epoch boundary when the cut stays after it', () => {
-    const ctx = testAgent();
-    const wire = ctx.get(IWireService);
-    wire.dispatch(spineOpen({ id: '1.1.1', summary: 'task A', parentId: '1.1', openedAt: 22 }));
-    wire.dispatch(spineClose({ id: '1.1.1', closedAt: 30, memory: 'did A' }));
-    wire.dispatch(spineRootCompact({ epoch: 2, epochStartAt: 20, epochMemoryAt: 19 }));
-    const before = readOps(ctx);
-
-    wire.dispatch(spineTruncateRepair({ cut: 25 }));
-
-    const state = readOps(ctx);
-    expect(state.epochStartAt).toBe(20);
-    expect(state.epochMemoryAt).toBe(19);
-    // Only the straddling span is repaired; the boundary is untouched.
-    expect(state.nodes['1.1.1']?.closedAt).toBe(24);
-    expect(state).not.toBe(before);
-  });
-
-  it('keeps a same-shape state on a repair that changes nothing', () => {
-    const ctx = testAgent();
-    const wire = ctx.get(IWireService);
-    wire.dispatch(spineOpen({ id: '1.1.1', summary: 'task A', parentId: '1.1', openedAt: 2 }));
-    const before = readOps(ctx);
-
-    wire.dispatch(spineTruncateRepair({ cut: 8 }));
-
-    expect(readOps(ctx)).toBe(before);
-  });
-
-  it('rejects closing a root epoch (no-op, same reference)', () => {
-    const ctx = testAgent();
-    const wire = ctx.get(IWireService);
-    const before = readOps(ctx);
-
-    wire.dispatch(spineClose({ id: '1', closedAt: 5, memory: 'nope' }));
-
-    expect(readOps(ctx)).toBe(before);
-  });
-
-  it('rejects closing a node that is not the cursor', () => {
-    const ctx = testAgent();
-    const wire = ctx.get(IWireService);
-    wire.dispatch(spineOpen({ id: '1.1.1', summary: 'task A', parentId: '1.1', openedAt: 0 }));
-    const before = readOps(ctx);
-
-    wire.dispatch(spineClose({ id: '1.1', closedAt: 5, memory: 'nope' }));
-
-    expect(readOps(ctx)).toBe(before);
-  });
-
-  it('commits next atomically (close cursor, open sibling under the same parent)', () => {
-    const ctx = testAgent();
-    const wire = ctx.get(IWireService);
-    wire.dispatch(spineOpen({ id: '1.1.1', summary: 'task A', parentId: '1.1', openedAt: 0 }));
-
-    wire.dispatch(
-      spineNext({
-        closedId: '1.1.1',
-        closedAt: 5,
-        memory: 'did A',
-        openedId: '1.1.2',
-        summary: 'task B',
-      }),
-    );
-
-    const state = readOps(ctx);
-    expect(state.openStack).toEqual(['1', '1.1', '1.1.2']);
-    expect(state.nodes['1.1.1']?.closedAt).toBe(5);
-    expect(state.nodes['1.1.1']?.memory).toBe('did A');
-    expect(state.nodes['1.1.2']?.summary).toBe('task B');
-    // The sibling opens right after the closing span, at the transition
-    // carrier's index.
-    expect(state.nodes['1.1.2']?.openedAt).toBe(6);
-    expect(state.nodes['1.1']?.children).toEqual(['1.1.1', '1.1.2']);
-  });
-
-  it('rejects opening under a parent that is not the cursor', () => {
-    const ctx = testAgent();
-    const wire = ctx.get(IWireService);
-    const before = readOps(ctx);
-
-    wire.dispatch(spineOpen({ id: '1.2', summary: 'task X', parentId: '1', openedAt: 0 }));
-
-    expect(readOps(ctx)).toBe(before);
-  });
-});
 
 describe('Spine control tools', () => {
   beforeEach(() => {
@@ -994,6 +817,54 @@ function readSpine(ctx: TestAgentContext) {
   return ctx.get(IAgentSpineService).currentState();
 }
 
+describe('Spine derivation basics', () => {
+  beforeEach(() => {
+    vi.stubEnv(MASTER_ENV, '0');
+    vi.stubEnv(SPINE_ENV, '1');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('starts with an open root epoch and startup node', () => {
+    const ctx = testAgent();
+    const state = ctx.get(IAgentSpineService).currentState();
+    expect(state.rootEpoch).toBe(1);
+    expect(state.openStack).toEqual(['1', '1.1']);
+    expect(state.nodes['1']?.children).toEqual(['1.1']);
+    expect(state.nodes['1.1']?.closedAt).toBeUndefined();
+  });
+
+  it('rejects closing the root epoch', () => {
+    const ctx = testAgent();
+    // Close the startup node first so the cursor lands on the root epoch;
+    // the transition commits through the message stream (carrier + accepted
+    // receipt), which the derivation reads.
+    const spine = ctx.get(IAgentSpineService);
+    expect(spine.acceptClose('startup done').accepted).toBe(true);
+    ctx.context.append({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'calling spine_close' }],
+      toolCalls: [
+        {
+          type: 'function',
+          id: 'close_1.1',
+          name: 'spine_close',
+          arguments: JSON.stringify({ memory: 'startup done' }),
+        },
+      ],
+    });
+    ctx.context.append({
+      role: 'tool',
+      content: [{ type: 'text', text: ACCEPTED_OUTPUT }],
+      toolCalls: [],
+      toolCallId: 'close_1.1',
+    });
+    const rejected = spine.acceptClose('nope');
+    expect(rejected.accepted).toBe(false);
+  });
+});
+
 describe('Spine plan-mode gating', () => {
   beforeEach(() => {
     vi.stubEnv(MASTER_ENV, '0');
@@ -1003,10 +874,10 @@ describe('Spine plan-mode gating', () => {
     vi.unstubAllEnvs();
   });
 
-  it('rejects open / close / next in plan mode', () => {
+  it('rejects open / close / next in plan mode', async () => {
     const ctx = testAgent();
     const spine = ctx.get(IAgentSpineService);
-    ctx.get(IWireService).dispatch(planModeEnter({ id: 'plan-1' }));
+    await ctx.dispatcher.dispatch(new PlanModeEnter({ id: 'plan-1' }));
     for (const result of [
       spine.acceptOpen('task A'),
       spine.acceptClose('memory'),
@@ -1023,7 +894,7 @@ describe('Spine plan-mode gating', () => {
     vi.stubEnv('KIMI_CODE_SPINE_SPAWN', '1');
     const ctx = testAgent();
     const spine = ctx.get(IAgentSpineService);
-    ctx.get(IWireService).dispatch(planModeEnter({ id: 'plan-1' }));
+    await ctx.dispatcher.dispatch(new PlanModeEnter({ id: 'plan-1' }));
     const result = await spine.executeSpawn(
       [
         { summary: 'branch A', prompt: 'do A' },
@@ -1037,11 +908,11 @@ describe('Spine plan-mode gating', () => {
     }
   });
 
-  it('rejects trim in plan mode', () => {
+  it('rejects trim in plan mode', async () => {
     vi.stubEnv('KIMI_CODE_SPINE_TRIM', '1');
     const ctx = testAgent();
     const spine = ctx.get(IAgentSpineService);
-    ctx.get(IWireService).dispatch(planModeEnter({ id: 'plan-1' }));
+    await ctx.dispatcher.dispatch(new PlanModeEnter({ id: 'plan-1' }));
     const result = spine.acceptTrim('trim_1', { kind: 'snip' });
     expect(result.accepted).toBe(false);
     if (!result.accepted) {
@@ -1049,12 +920,11 @@ describe('Spine plan-mode gating', () => {
     }
   });
 
-  it('accepts transitions again after plan mode exits', () => {
+  it('accepts transitions again after plan mode exits', async () => {
     const ctx = testAgent();
     const spine = ctx.get(IAgentSpineService);
-    const wire = ctx.get(IWireService);
-    wire.dispatch(planModeEnter({ id: 'plan-1' }));
-    wire.dispatch(planModeExit({ id: 'plan-1' }));
+    await ctx.dispatcher.dispatch(new PlanModeEnter({ id: 'plan-1' }));
+    await ctx.dispatcher.dispatch(new PlanModeExit({ id: 'plan-1' }));
     expect(spine.acceptOpen('task A').accepted).toBe(true);
   });
 });
@@ -1162,11 +1032,6 @@ describe('Spine carrier-group classification', () => {
     expect(state.nodes['1.1.2']).toBeUndefined();
   });
 });
-
-// The legacy op reducers are exercised directly against the wire model.
-function readOps(ctx: TestAgentContext) {
-  return ctx.get(IWireService).getModel(SpineModel);
-}
 
 function spineToolNames(ctx: TestAgentContext): string[] {
   return ctx

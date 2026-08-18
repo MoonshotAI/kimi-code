@@ -1,11 +1,3 @@
-/**
- * `contextProjector` domain — Agent-scope context projection contract.
- *
- * Defines wire-safe history projections and an opaque snapshot of the media
- * identities that a provider rejected, allowing later steps to strip only
- * that content while preserving newly generated recovery media.
- */
-
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { Message } from '#/kosong/contract/message';
@@ -51,7 +43,15 @@ export interface ContextFoldOptions {
   readonly order?: ContextFoldOrder;
 }
 
-export interface ProjectOptions {
+declare const mediaStripSnapshotBrand: unique symbol;
+
+export interface MediaStripSnapshot {
+  readonly [mediaStripSnapshotBrand]: undefined;
+}
+
+export interface ProjectionPolicy {
+  readonly structure?: 'strict';
+  readonly media?: 'degraded' | { readonly strip: MediaStripSnapshot };
   /**
    * Whether to apply registered folds before projecting. Folds assume the
    * complete live stored history, so a projection over an explicit message
@@ -60,17 +60,13 @@ export interface ProjectOptions {
   readonly applyFolds?: boolean;
 }
 
-declare const mediaStripSnapshotBrand: unique symbol;
-
-export interface MediaStripSnapshot {
-  readonly [mediaStripSnapshotBrand]: undefined;
-}
-
 export interface IAgentContextProjectorService {
   readonly _serviceBrand: undefined;
 
-  project(messages: readonly ContextMessage[], options?: ProjectOptions): readonly Message[];
-  projectStrict(messages: readonly ContextMessage[], options?: ProjectOptions): readonly Message[];
+  project(
+    messages: readonly ContextMessage[],
+    policy?: ProjectionPolicy,
+  ): readonly Message[];
 
   /**
    * Token estimate of the projected view of `messages` — the caliber a real
@@ -87,19 +83,10 @@ export interface IAgentContextProjectorService {
    */
   registerContextFold(id: string, fold: ContextFold, options?: ContextFoldOptions): IDisposable;
 
-  projectMediaDegraded(
-    messages: readonly ContextMessage[],
-    options?: ProjectOptions,
-  ): readonly Message[];
   captureMediaStripSnapshot(
     messages: readonly ContextMessage[],
-    options?: ProjectOptions,
+    policy?: ProjectionPolicy,
   ): MediaStripSnapshot;
-  projectMediaStripped(
-    messages: readonly ContextMessage[],
-    snapshot?: MediaStripSnapshot,
-    options?: ProjectOptions,
-  ): readonly Message[];
 }
 
 export const IAgentContextProjectorService = createDecorator<IAgentContextProjectorService>(

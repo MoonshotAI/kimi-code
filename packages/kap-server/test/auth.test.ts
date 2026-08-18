@@ -131,7 +131,6 @@ describe('server-v2 GET /api/v1/auth', () => {
       name: 'managed:kimi-code',
       status: 'unauthenticated',
     });
-    // No default_model → still not ready, even though the provider exists.
     expect(summary.ready).toBe(false);
   });
 });
