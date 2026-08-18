@@ -357,11 +357,10 @@ describe("Editor component", () => {
 				editor.addToHistory("second");
 
 				editor.handleInput("\x1b[A"); // Up - shows "second"
-				editor.setText(""); // External clear
+				editor.setText(""); // External clear - also breaks the ↑ repeat stream
 
-				// Up should start fresh from most recent (spaced out so it reads
-				// as a discrete press, not a held-key repeat)
-				mock.timers.tick(200);
+				// Up should start fresh from most recent; no clock advance is
+				// needed because setText reset the repeat chain.
 				editor.handleInput("\x1b[A");
 				assert.strictEqual(editor.getText(), "second");
 			} finally {

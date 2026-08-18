@@ -525,6 +525,15 @@ export class Editor implements Component, Focusable {
 		return { now, gap, repeat };
 	}
 
+	/**
+	 * Break the held-↑ repeat stream: the next ↑ reads as a fresh press.
+	 * Called for non-↑ keys here, and by hosts for programmatic text changes
+	 * or subclass-intercepted shortcuts the base class never sees.
+	 */
+	resetUpArrowRepeatChain(): void {
+		this.lastUpArrowAt = 0;
+	}
+
 	private navigateHistory(direction: 1 | -1): void {
 		this.lastAction = null;
 		if (this.history.length === 0) return;
@@ -742,7 +751,7 @@ export class Editor implements Component, Focusable {
 		// A non-↑ key between two ↑ presses breaks the repeat stream — the
 		// next ↑ is a fresh press, not an autorepeat of the earlier one.
 		if (!kb.matches(data, "tui.editor.cursorUp")) {
-			this.lastUpArrowAt = 0;
+			this.resetUpArrowRepeatChain();
 		}
 
 		// Handle character jump mode (awaiting next character to jump to)
@@ -1219,6 +1228,7 @@ export class Editor implements Component, Focusable {
 		this.cancelAutocomplete();
 		this.lastAction = null;
 		this.exitHistoryBrowsing();
+		this.resetUpArrowRepeatChain();
 		const normalized = this.normalizeText(text);
 		// Push undo snapshot if content differs (makes programmatic changes undoable)
 		if (this.getText() !== normalized) {
