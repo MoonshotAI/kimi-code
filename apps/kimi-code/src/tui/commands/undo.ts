@@ -107,6 +107,7 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
     return false;
   }
   host.noteContextCut?.();
+  await refreshTodoPanel(host);
 
   const children = host.state.transcriptContainer.children;
   const lastUserComponentIndex = findUndoAnchorComponentIndex(children, count);
@@ -155,6 +156,16 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
 
   host.state.ui.requestRender();
   return true;
+}
+
+async function refreshTodoPanel(host: SlashCommandHost): Promise<void> {
+  const session = host.session;
+  if (session === undefined) return;
+  try {
+    host.streamingUI.setTodoList(await session.getTodos());
+  } catch {
+    return;
+  }
 }
 
 async function showUndoSelector(host: SlashCommandHost): Promise<void> {

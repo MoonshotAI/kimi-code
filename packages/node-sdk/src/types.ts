@@ -311,6 +311,13 @@ export interface PlanInfo {
 
 export type SessionPlan = PlanInfo | null;
 
+export type SessionTodoStatus = 'pending' | 'in_progress' | 'done';
+
+export interface SessionTodoItem {
+  readonly title: string;
+  readonly status: SessionTodoStatus;
+}
+
 export interface TokenUsage {
   readonly inputOther: number;
   readonly output: number;
