@@ -57,8 +57,18 @@ export class FlowGateReview {
     }
 
     const feedback = result.feedback ?? '';
-    const stage = this.recordHumanRejection(context, feedback);
-    const stageName = stage === undefined ? 'current' : `\`${stage}\``;
+    const rejection = this.recordHumanRejection(context, feedback);
+    if (rejection === undefined) {
+      return {
+        kind: 'result',
+        result: {
+          isError: true,
+          output:
+            'The gate rejection could not be recorded (the run state changed while the review was open). Check the run status and submit FlowAdvance again.',
+        },
+      };
+    }
+    const stageName = `\`${rejection}\``;
 
     if (feedback.length > 0) {
       return {
@@ -87,13 +97,13 @@ export class FlowGateReview {
     const parsed = FlowAdvanceInputSchema.safeParse(context.args);
     const stage = parsed.success ? parsed.data.stage : this.flow.currentStage()?.id;
     if (stage === undefined) return undefined;
-    this.flow.advance({
+    const outcome = this.flow.advance({
       stage,
       result: 'reject',
       decidedBy: 'human',
       criteria: parsed.success ? parsed.data.criteria : [],
       feedback: feedback.length > 0 ? feedback : undefined,
     });
-    return stage;
+    return outcome.recorded ? stage : undefined;
   }
 }

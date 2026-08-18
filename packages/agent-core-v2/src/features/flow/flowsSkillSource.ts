@@ -43,6 +43,7 @@ export class FlowsSkillSource extends Disposable implements IFlowsSkillSource {
   private readonly onDidChangeEmitter = this._register(new Emitter<void>());
   readonly onDidChange: Event<void> = this.onDidChangeEmitter.event;
   private readonly watchDebounce = this._register(new TimeoutTimer());
+  private readonly watchReady: Promise<void>;
 
   constructor(
     @IHostFileSystem private readonly fs: IHostFileSystem,
@@ -56,6 +57,10 @@ export class FlowsSkillSource extends Disposable implements IFlowsSkillSource {
     const handle = fsWatch.watch(root, {
       ignored: subtreeWatchFilter(root, [flowsDir]),
     });
+    this.watchReady = Promise.resolve(handle.ready).then(
+      () => undefined,
+      () => undefined,
+    );
     this._register(handle);
     this._register(
       handle.onDidChange(() => {
@@ -72,6 +77,7 @@ export class FlowsSkillSource extends Disposable implements IFlowsSkillSource {
 
   async load(): Promise<SkillContribution> {
     if (!this.flags.enabled(FLOW_FLAG_ID)) return { skills: [] };
+    await this.watchReady;
     return discoverFlowSkills(this.fs, this.workspace.cwd);
   }
 }

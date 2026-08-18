@@ -94,7 +94,7 @@ function extractStageNotes(body: string): Map<string, string> {
   };
   let fence: { marker: string; length: number } | undefined;
   for (const line of lines) {
-    const fenceMatch = /^\s*(`{3,}|~{3,})/.exec(line);
+    const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(line);
     if (fenceMatch !== undefined && fenceMatch !== null) {
       const marker = fenceMatch[1]![0]!;
       const length = fenceMatch[1]!.length;
@@ -102,7 +102,7 @@ function extractStageNotes(body: string): Map<string, string> {
       else if (
         fence.marker === marker &&
         length >= fence.length &&
-        /^\s*(`{3,}|~{3,})\s*$/.test(line)
+        /^ {0,3}(`{3,}|~{3,})\s*$/.test(line)
       ) {
         fence = undefined;
       }
