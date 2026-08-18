@@ -90,15 +90,15 @@ export interface BackgroundTaskDisplayBlock {
 export interface FlowGateDisplayBlock {
   type: 'flow_gate';
   flow_id: string;
-  task?: string | undefined;
+  task?: string;
   stage_id: string;
   stage_index: number;
   stage_total: number;
   objective: string;
   completion: string;
-  next_stage_id?: string | undefined;
+  next_stage_id?: string;
   criteria: { criterion: string; met: boolean; evidence: string }[];
-  note?: string | undefined;
+  note?: string;
 }
 
 export type DisplayBlock =

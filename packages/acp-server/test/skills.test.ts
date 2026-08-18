@@ -59,7 +59,7 @@ describe('buildAcpSkillSlashCommands', () => {
       skill('inline-one'),
     ]);
 
-    expect(commands.map((command) => command.name)).toEqual(['skill:flow-one', 'skill:inline-one']);
+    expect(commands.map((command) => command.name)).toEqual(['flow:flow-one', 'skill:inline-one']);
   });
 
   it('drops skills whose command name collides with an ACP builtin', () => {

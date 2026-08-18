@@ -67,8 +67,9 @@ export interface SkillSlashCommands {
 /**
  * Project the session skill summaries into slash commands. Mirrors the TUI's
  * `buildSkillSlashCommands` (apps/kimi-code/src/tui/commands/skills.ts):
- * user-activatable skills only, builtin-source skills and sub-skills get the
- * bare name, everything else the `skill:` prefix, builtin-source group first.
+ * user-activatable skills only: flow-typed skills get the `flow:` prefix,
+ * builtin-source skills and sub-skills the bare name, everything else the
+ * `skill:` prefix, builtin-source group first.
  * One ACP-specific deviation: a skill whose command name collides with an ACP
  * builtin is dropped — the locally-executed builtin must always win (the
  * intent check consults the skill map first).
@@ -87,9 +88,11 @@ export function buildAcpSkillSlashCommands(
   for (const skill of sorted) {
     if (!isUserActivatableSkillType(skill.type)) continue;
     const commandName =
-      skill.source === 'builtin' || skill.isSubSkill === true
-        ? skill.name
-        : `skill:${skill.name}`;
+      skill.type === 'flow'
+        ? `flow:${skill.name}`
+        : skill.source === 'builtin' || skill.isSubSkill === true
+          ? skill.name
+          : `skill:${skill.name}`;
     if (reservedNames.has(commandName)) continue;
     commandMap.set(commandName, skill.name);
     commands.push({ name: commandName, description: skill.description });

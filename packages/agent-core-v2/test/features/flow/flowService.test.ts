@@ -446,6 +446,22 @@ describe('AgentFlowService', () => {
     it('vetoes a flow call preceded by another flow call in the same batch', async () => {
       service.start(DEFINITION, 'task');
       const context = advanceContext(GATE_DISPLAY);
+      const abortCall: ToolCall = {
+        type: 'function',
+        id: 'call_abort_second',
+        name: 'FlowAbort',
+        arguments: '{}',
+      };
+      const abortAfterStart = {
+        ...advanceContext(undefined),
+        toolCall: abortCall,
+        toolCalls: [
+          { type: 'function', id: 'call_start_first', name: 'FlowStart', arguments: '{}' } as ToolCall,
+          abortCall,
+        ],
+      } as ResolvedToolExecutionHookContext;
+      const abortDecision = await executorEvents.fireBeforeExecute(abortAfterStart);
+      expect(abortDecision?.veto?.isError).toBe(true);
       for (const earlierName of ['FlowAdvance', 'FlowStart', 'FlowAbort']) {
         const earlier: ToolCall = {
           type: 'function',

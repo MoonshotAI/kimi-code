@@ -92,7 +92,17 @@ function extractStageNotes(body: string): Map<string, string> {
     const text = buffer.join('\n').trim();
     if (text.length > 0) notes.set(current, text);
   };
+  let inFence = false;
   for (const line of lines) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      if (current !== undefined) buffer.push(line);
+      continue;
+    }
+    if (inFence) {
+      if (current !== undefined) buffer.push(line);
+      continue;
+    }
     const heading = /^##\s+(.+?)\s*$/.exec(line);
     if (heading !== null) {
       flush();
