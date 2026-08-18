@@ -110,6 +110,13 @@ describe('parseFlowDefinition', () => {
     expect(definition.stages[0]!.notes).toContain('Done.');
   });
 
+  it('strips an optional closing hash sequence from a stage heading', () => {
+    const definition = parseFlowDefinition(
+      '---\nid: closing\nstages:\n  - id: triage\n    objective: x\n    completion: y\n---\n\n## triage ##\n\nClosed-style heading.\n',
+    );
+    expect(definition.stages[0]!.notes).toBe('Closed-style heading.');
+  });
+
   it('recognizes an ATX heading indented by up to three spaces', () => {
     const definition = parseFlowDefinition(
       '---\nid: indent\nstages:\n  - id: triage\n    objective: x\n    completion: y\n---\n\n   ## triage\n\nIndented but valid.\n',
