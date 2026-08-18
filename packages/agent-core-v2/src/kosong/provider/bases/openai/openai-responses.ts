@@ -1,23 +1,3 @@
-/**
- * `kosong/provider` domain — OpenAI Responses API wire base.
- *
- * Speaks the Responses wire format: `input` items, `instructions`,
- * `reasoning` blocks with encrypted content, and the native
- * `prompt_cache_key` field (a cache key is encoded directly — no hook
- * needed). Per-turn intents are encoded inline in the fixed contract order;
- * the base's only hook surface is the trait-composed `convertError` option,
- * consulted with each raw failure exactly once — the SDK error on HTTP
- * paths, the raw event on in-stream error paths — before the base's own
- * classification (already-converted errors crossing an outer catch pass
- * through without re-consulting). The developer-role model detection lives
- * here.
- *
- * The SDK client is built with `maxRetries: 0`: the SDK's internal backoff
- * sleep never observes the turn's AbortSignal, so rate-limit / server /
- * connection retry is owned by the engine's step-retry layer (observable and
- * cancellable), never by the SDK.
- */
-
 import OpenAI from 'openai';
 
 import { Error2 } from '#/_base/errors/errors';
@@ -1135,7 +1115,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     }
 
     const reasoningEffort = kwargs['reasoning_effort'] as string | undefined;
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
     delete kwargs['reasoning_effort'];
 
     if (reasoningEffort !== undefined) {
@@ -1148,7 +1127,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
 
     for (const key of Object.keys(kwargs)) {
       if (kwargs[key] === undefined) {
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete kwargs[key];
       }
     }
@@ -1220,7 +1198,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     return new OpenAI(clientOpts as ConstructorParameters<typeof OpenAI>[0]);
   }
 }
-
 
 export function getOpenAIResponsesModelCapability(modelName: string) {
   const normalized = modelName.toLowerCase();

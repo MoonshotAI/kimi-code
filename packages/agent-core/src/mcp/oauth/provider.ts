@@ -35,9 +35,27 @@ import { JsonFileStore, canonicalMcpOAuthResource, mcpOAuthStoreKey } from './st
 const TOKENS_SUFFIX = '-tokens.json';
 const CLIENT_SUFFIX = '-client.json';
 const DISCOVERY_SUFFIX = '-discovery.json';
+/** Sidecar `<key>-meta.json` suffix; the service scans these on startup. */
+export const META_SUFFIX = '-meta.json';
 // Used only when the SDK probes auth during normal transport startup and no
 // callback listener is active. Interactive login overrides it with a real URL.
 const PASSIVE_REDIRECT_URI = 'http://127.0.0.1:3118/callback';
+
+/**
+ * The tokens file gains an `obtained_at` epoch-ms stamp on every write so the
+ * OAuth service can compute the absolute expiry (`expires_in` alone is
+ * relative) for proactive refresh and accurate auth-state classification.
+ * The SDK only reads the standard fields; the extra key is inert.
+ */
+export interface StoredMcpOAuthTokens extends OAuthTokens {
+  readonly obtained_at?: number;
+}
+
+/** Sidecar `<key>-meta.json` record mapping a store key back to its server. */
+export interface McpOAuthStoreMeta {
+  readonly serverName: string;
+  readonly serverUrl: string;
+}
 
 export interface McpOAuthProviderOptions {
   /** Friendly name of the MCP server; used in DCR `client_name`. */
@@ -48,13 +66,22 @@ export interface McpOAuthProviderOptions {
   readonly store: JsonFileStore;
   /** Identifier embedded in DCR `client_name` ("kimi-code (server)"). */
   readonly clientLabel?: string;
+  /** Called after tokens are persisted (login, exchange, or refresh). */
+  readonly onTokensSaved?: (tokens: StoredMcpOAuthTokens) => void;
+  /** Called after any credential invalidation, including SDK-driven ones. */
+  readonly onCredentialsInvalidated?: (
+    scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery',
+  ) => void;
 }
 
 export class McpOAuthClientProvider implements OAuthClientProvider {
   readonly storeKey: string;
   readonly serverUrl: string;
+  private readonly serverName: string;
   private readonly store: JsonFileStore;
   private readonly clientLabel: string;
+  private readonly onTokensSaved: McpOAuthProviderOptions['onTokensSaved'];
+  private readonly onCredentialsInvalidated: McpOAuthProviderOptions['onCredentialsInvalidated'];
   private _redirectUrl: URL | undefined;
   private _codeVerifier: string | undefined;
   private _state: string | undefined;
@@ -64,6 +91,7 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
   constructor(options: McpOAuthProviderOptions) {
     this.serverUrl = canonicalMcpOAuthResource(options.serverUrl);
     this.storeKey = mcpOAuthStoreKey(options.serverName, this.serverUrl);
+    this.serverName = options.serverName;
     this.store = options.store;
     this.clientLabel = options.clientLabel ?? `kimi-code (${options.serverName})`;
     const tokensFile = `${this.storeKey}${TOKENS_SUFFIX}`;
@@ -71,13 +99,19 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
       key: this.storeKey,
       read: async () => this.store.read<OAuthTokens>(tokensFile),
       write: async (tokens) => {
-        this.store.write(tokensFile, tokens);
+        // Single choke point for every durable token write (explicit saves and
+        // refresh grants committed by the fetch interceptor alike): keep the
+        // incoming stamp when present, stamp otherwise.
+        const incoming = tokens as StoredMcpOAuthTokens;
+        this.store.write(tokensFile, { ...incoming, obtained_at: incoming.obtained_at ?? Date.now() });
       },
       remove: async () => {
         this.store.remove(tokensFile);
       },
       parse: (value) => OAuthTokensSchema.safeParse(value).data,
     });
+    this.onTokensSaved = options.onTokensSaved;
+    this.onCredentialsInvalidated = options.onCredentialsInvalidated;
   }
 
   // ── flow-scoped state, set by McpOAuthService before invoking auth() ────
@@ -139,7 +173,20 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
+    // Hand the SDK's token object to the transaction untouched: when the
+    // grant rode createOAuthFetch, the transaction already persisted and
+    // recorded exactly this payload, so a matching save consumes the
+    // recorded effect instead of writing again — re-writing here could
+    // resurrect credentials cleared between the fetch and this callback.
+    // The durable `obtained_at` stamp is applied by the write callback.
     await this.tokenTransaction.save(tokens);
+    const meta: McpOAuthStoreMeta = { serverName: this.serverName, serverUrl: this.serverUrl };
+    this.store.write(`${this.storeKey}${META_SUFFIX}`, meta);
+    const stamped: StoredMcpOAuthTokens = {
+      ...tokens,
+      obtained_at: (tokens as StoredMcpOAuthTokens).obtained_at ?? Date.now(),
+    };
+    this.onTokensSaved?.(stamped);
   }
 
   /**
@@ -207,13 +254,18 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
       await this.clearCredentials(scope);
       return;
     }
-    const shouldClearRelatedCredentials = await this.tokenTransaction.invalidateFromSdk(scope);
-    if (!shouldClearRelatedCredentials) return;
+    const tokensInvalidated = await this.tokenTransaction.invalidateFromSdk(scope);
+    if (!tokensInvalidated) return;
     if (scope === 'all') {
       await this.clearCredentials('client');
       await this.clearCredentials('discovery');
       this._codeVerifier = undefined;
     }
+    // The SDK-driven invalidation actually dropped the durable grant, so
+    // broadcast it like a user-driven reset: sessions sharing this credential
+    // flip to needs-auth now instead of keeping doomed connections until
+    // they each hit their own 401.
+    this.onCredentialsInvalidated?.(scope);
   }
 
   /** Explicit user-driven reset; unlike the SDK invalidation hook, never preserves tokens. */
@@ -222,10 +274,12 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
   ): Promise<void> {
     if (scope === 'verifier') {
       this._codeVerifier = undefined;
+      this.onCredentialsInvalidated?.(scope);
       return;
     }
     if (scope === 'tokens' || scope === 'all') {
       await this.tokenTransaction.clear();
+      this.store.remove(`${this.storeKey}${META_SUFFIX}`);
     }
     if (scope === 'client' || scope === 'all') {
       this.store.remove(`${this.storeKey}${CLIENT_SUFFIX}`);
@@ -236,6 +290,7 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
     if (scope === 'all') {
       this._codeVerifier = undefined;
     }
+    this.onCredentialsInvalidated?.(scope);
   }
 
   private effectiveRedirectUri(): string {

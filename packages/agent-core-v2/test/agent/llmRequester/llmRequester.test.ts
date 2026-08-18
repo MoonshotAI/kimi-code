@@ -300,9 +300,9 @@ describe('LLMRequester service migration coverage', () => {
       });
 
       expect(protocolEvents(ctx, 'tool.call.delta').map((event) => event.args)).toEqual([
-        { turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: undefined },
-        { turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: '{"query"' },
-        { turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: ':"moon"}' },
+        { time: expect.any(Number), turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: undefined },
+        { time: expect.any(Number), turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: '{"query"' },
+        { time: expect.any(Number), turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: ':"moon"}' },
       ]);
       expect(protocolEvents(ctx, 'toolCall').at(-1)?.args).toEqual({
         turnId: 0,

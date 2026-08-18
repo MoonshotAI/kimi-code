@@ -1,18 +1,3 @@
-/**
- * L4 view layer — framework-free renderer registry.
- *
- * The schema only says *what* something is; how it renders is decided here,
- * by key dispatch:
- *  - tool frames:       `frame.view ?? frame.name`   → toolRenderers
- *  - turn origins:      `origin.kind`                → inputRenderers
- *  - timeline markers:  `marker.marker`              → markerRenderers
- *  - task entities:     `task.kind` (+ `detached`)    → taskRenderers
- *
- * `C` is the host framework's component type (Vue component, React component,
- * ink renderer, …). This package never imports a UI framework; clients
- * instantiate `ViewRegistry<TheirComponent>` and register their own widgets.
- */
-
 import type { ToolCallFrame } from '../model/frame';
 import type { TranscriptTask } from '../model/task';
 import type { TurnOrigin } from '../model/turn';

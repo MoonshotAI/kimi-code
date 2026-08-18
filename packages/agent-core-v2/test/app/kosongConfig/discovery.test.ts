@@ -1,26 +1,3 @@
-/**
- * `app/kosongConfig` discovery tests — `IProviderDiscoveryService`:
- *
- *  - `refreshProviderModels` short-circuits `modelSource: 'static'`: a scoped
- *    refresh answers `unchanged` without any I/O, and an unscoped refresh
- *    hides the static entries from the orchestrator and merges them back
- *    verbatim — the static provider, its models, and a default model pointing
- *    at them all survive;
- *  - concurrent refreshes serialize (never overlap);
- *  - custom-registry fetches carry the host `User-Agent`;
- *  - provider/model patches land in config through ONE atomic
- *    `replaceSections` transition (the persistence bridge then syncs them
- *    into the registries), merging discovered aliases into user-owned
- *    provider records, while `defaultModel` / `thinking` ride the same
- *    transition — restoring a surviving default selection and CLEARing a
- *    default (plus its thinking) whose alias the upstream dropped, never a
- *    dangling `set`;
- *  - the two-phase orchestrator host contract (removeProvider, then
- *    setConfig) never exposes a halfway-removed catalog: the registries
- *    stay untouched until the single atomic write;
- *  - the `[modelCatalog]` config section self-registers and validates.
- */
-
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 

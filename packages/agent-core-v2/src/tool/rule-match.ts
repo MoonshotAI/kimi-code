@@ -1,15 +1,3 @@
-/**
- * `tool` domain — permission rule-subject matching.
- *
- * Owns the glob / path matching primitives (`globMatch` / `pathGlobMatch`)
- * and the rule-subject helpers (`literalRulePattern`,
- * `escapeRuleSubjectLiteral`, `matchesGlobRuleSubject`,
- * `matchesPathRuleSubject`) that tool implementations use to build their
- * `matchesRule` closures and canonical rule strings. Path matching compares
- * normalized path variants, so `./a`, `dir/../a`, and Windows separator or
- * case variants can match the same rule. Pure functions; no scoped service.
- */
-
 import { isAbsolute, join, parse } from 'pathe';
 
 import picomatch from 'picomatch';

@@ -1,12 +1,3 @@
-/**
- * Scenario: agent context injection position tracking and wire restoration.
- *
- * Exercises the real injector through its service contract with in-memory
- * context, loop, reminder, event-bus, and wire collaborators.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/agent/contextInjector/contextInjector.test.ts`.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -19,6 +10,7 @@ import {
 } from '#/agent/contextInjector/contextInjector';
 import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -103,12 +95,13 @@ describe('AgentContextInjectorService', () => {
   ): void {
     const backing = (context as StubContextMemory).messages as ContextMessage[];
     backing.splice(start, deleteCount, ...inserted);
-    ix.get(IEventBus).publish({
-      type: 'context.spliced',
-      start,
-      deleteCount,
-      messages: [...inserted],
-    });
+    ix.get(IEventBus).publish(
+      new ContextSpliced({
+        start,
+        deleteCount,
+        messages: [...inserted],
+      }),
+    );
   }
 
   it('registers providers and appends injection messages with the provider variant', async () => {

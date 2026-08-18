@@ -1,18 +1,7 @@
-/**
- * `sessionLog` domain — Session-scope `ILogService` implementation.
- *
- * Binds `sessionId` to every entry and writes to a rotating file under
- * `<sessionDir>/logs` (the `sessionId` key is omitted from each line since the
- * path already identifies the session). Registered to the single `ILogService`
- * token at Session scope. Flushes synchronously when the Session scope is
- * disposed. The plain-data state (`rootLevel`) is registered into
- * `sessionState` (`ISessionStateService`) and read/written through it.
- */
-
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
 
@@ -26,7 +15,7 @@ export const sessionLogRootLevelKey = defineState<LogLevelState>('sessionLog.roo
 }));
 
 function seedRootLevel(states: ISessionStateService, level: LogLevel): LogLevelState {
-  states.register(sessionLogRootLevelKey);
+  states.contributeState(sessionLogRootLevelKey);
   states.set(sessionLogRootLevelKey, { level });
   return states.get(sessionLogRootLevelKey);
 }

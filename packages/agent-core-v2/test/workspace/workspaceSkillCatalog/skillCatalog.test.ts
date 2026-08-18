@@ -1,13 +1,3 @@
-/**
- * Scenario: workspace skill-source discovery, merge, and plugin refresh.
- *
- * Exercises the real Workspace-scoped catalog and source services with
- * filesystem or in-memory discovery boundaries, including controlled
- * concurrent refreshes and fs-watch-driven single-source rescans.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/workspace/workspaceSkillCatalog/skillCatalog.test.ts`.
- */
-
 import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
@@ -15,6 +5,7 @@ import { join } from 'pathe';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
+import { createScopedChildHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import {
   _clearScopedRegistryForTests,
@@ -38,6 +29,7 @@ import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import {
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
@@ -63,6 +55,7 @@ import { ILogService } from '#/_base/log/log';
 import { HostFsWatchService } from '#/os/backends/node-local/hostFsWatchService';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 import { stubSkill } from '../../app/skillCatalog/stubs';
 import { stubProviderService } from '../../app/provider/stubs';
 import { stubLog } from '../../_base/log/stubs';
@@ -151,8 +144,6 @@ function workspaceContextStub(workDir: string): IWorkspaceContext {
     source: 'local',
     meta: { id: 'wd_test', root: workDir, name: 'test', createdAt: 0, lastOpenedAt: 0 },
     persistenceScope: `sessions/wd_test`,
-    osBackendId: 'local',
-    persistenceBackendId: 'local',
   };
 }
 
@@ -182,13 +173,21 @@ function makeHost(
   const config = configStub();
   const host = createScopedTestHost([
     stubPair(ISkillDiscovery, store),
+    stubPair(IFlagService, stubFlag(true)),
     stubPair(IBootstrapService, stubBootstrap('/home', {}, { skillDirs: explicitDirs })),
     stubPair(IConfigService, config),
     stubPair(IPluginService, pluginStub(pluginRoots, pluginReloadEmitter)),
     stubPair(IHostFsWatchService, fsWatchStub()),
   ]);
-  const workspace = host.child(LifecycleScope.Workspace, 'w1', [stubPair(IWorkspaceContext, ws)]);
-  return { host, workspace, config };
+  const workspaceHandle = createScopedChildHandle(host.app.instantiation, 'program', 'w1', {
+    seeds: [stubPair(IWorkspaceContext, ws)],
+  });
+  const disposeHost = host.dispose.bind(host);
+  host.dispose = () => {
+    workspaceHandle.dispose();
+    disposeHost();
+  };
+  return { host, workspace: workspaceHandle, config };
 }
 
 function waitForEvents(event: Event<unknown>, count: number): Promise<void> {
@@ -235,16 +234,16 @@ describe('WorkspaceSkillCatalogService', () => {
     registerScopedService(LifecycleScope.App, IUserFileSkillSource, UserFileSkillSource);
     registerScopedService(LifecycleScope.App, IPluginService, PluginService);
     registerScopedService(
-      LifecycleScope.Workspace,
+      'program',
       IWorkspaceSkillCatalog,
       WorkspaceSkillCatalogService,
     );
-    registerScopedService(LifecycleScope.Workspace, IExplicitFileSkillSource, ExplicitFileSkillSource);
-    registerScopedService(LifecycleScope.Workspace, IExtraFileSkillSource, ExtraFileSkillSource);
-    registerScopedService(LifecycleScope.Workspace, IWorkspaceRootSkillSource, WorkspaceRootSkillSource);
-    registerScopedService(LifecycleScope.Workspace, IPluginSkillSource, PluginSkillSource);
+    registerScopedService('program', IExplicitFileSkillSource, ExplicitFileSkillSource);
+    registerScopedService('program', IExtraFileSkillSource, ExtraFileSkillSource);
+    registerScopedService('program', IWorkspaceRootSkillSource, WorkspaceRootSkillSource);
+    registerScopedService('program', IPluginSkillSource, PluginSkillSource);
     registerScopedService(LifecycleScope.App, IAppStateService, AppStateService);
-    registerScopedService(LifecycleScope.Workspace, IWorkspaceStateService, WorkspaceStateService);
+    registerScopedService('program', IWorkspaceStateService, WorkspaceStateService);
   });
 
   it('merges global and project skills; project wins on name collision', async () => {
@@ -388,13 +387,14 @@ describe('WorkspaceSkillCatalogService', () => {
     store.setExtraSkills([stubSkill('extra-only', { description: 'from extra', source: 'extra' })]);
     const ws = workspaceContextStub('/work');
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(ISkillDiscovery, store),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, config),
       stubPair(IPluginService, pluginStub()),
       stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
-    const workspace = host.child(LifecycleScope.Workspace, 'w1', [stubPair(IWorkspaceContext, ws)]);
+    const workspace = host.child('program', 'w1', [stubPair(IWorkspaceContext, ws)]);
 
     const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
     let settled = false;
@@ -424,13 +424,14 @@ describe('WorkspaceSkillCatalogService', () => {
     const config = configStub();
     const ws = workspaceContextStub('/work');
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(ISkillDiscovery, store),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, config),
       stubPair(IPluginService, pluginStub()),
       stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
-    const workspace = host.child(LifecycleScope.Workspace, 'w1', [stubPair(IWorkspaceContext, ws)]);
+    const workspace = host.child('program', 'w1', [stubPair(IWorkspaceContext, ws)]);
 
     const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
     await catalog.load();
@@ -640,13 +641,14 @@ describe('WorkspaceSkillCatalogService', () => {
     };
     const ws = workspaceContextStub('/work');
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(ISkillDiscovery, new InMemorySkillDiscovery()),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
       stubPair(IPluginService, pluginStub()),
       stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
-    const workspace = host.child(LifecycleScope.Workspace, 'w1', [
+    const workspace = host.child('program', 'w1', [
       stubPair(IWorkspaceContext, ws),
       stubPair(IPluginSkillSource, pluginSource),
     ]);
@@ -697,13 +699,14 @@ describe('WorkspaceSkillCatalogService', () => {
     const pluginService = pluginStub([], reloadEmitter);
     const ws = workspaceContextStub('/work');
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(ISkillDiscovery, new InMemorySkillDiscovery()),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
       stubPair(IPluginService, pluginService),
       stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
-    const workspace = host.child(LifecycleScope.Workspace, 'w1', [
+    const workspace = host.child('program', 'w1', [
       stubPair(IWorkspaceContext, ws),
     ]);
 
@@ -753,6 +756,7 @@ describe('WorkspaceSkillCatalogService', () => {
       stubSkill('demo-skill', { source: 'extra', plugin: { id: 'demo' } }),
     ]);
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(ISkillDiscovery, store),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IConfigService, configStub()),
@@ -760,7 +764,7 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
     const ws = workspaceContextStub('/work');
-    const workspace = host.child(LifecycleScope.Workspace, 'w1', [
+    const workspace = host.child('program', 'w1', [
       stubPair(IWorkspaceContext, ws),
     ]);
 
@@ -859,17 +863,18 @@ describe('WorkspaceSkillCatalogService', () => {
 
     _clearScopedRegistryForTests();
     registerScopedService(
-      LifecycleScope.Workspace,
+      'program',
       IWorkspaceRootSkillSource,
       WorkspaceRootSkillSource,
     );
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(ISkillDiscovery, discovery),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
       stubPair(IHostFsWatchService, watchService),
     ]);
-    const workspace = host.child(LifecycleScope.Workspace, 'w1', [
+    const workspace = host.child('program', 'w1', [
       stubPair(IWorkspaceContext, workspaceContextStub(workDir)),
     ]);
 
@@ -900,6 +905,7 @@ describe('WorkspaceSkillCatalogService', () => {
   it('rescans the workspace-root source when a project skill file changes on disk', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-'));
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
       stubPair(IPluginService, pluginStub()),
@@ -907,7 +913,7 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(ISkillDiscovery, new FileSkillDiscovery(stubLog())),
       stubPair(IHostFsWatchService, new HostFsWatchService()),
     ]);
-    const workspace = host.child(LifecycleScope.Workspace, 'w1', [
+    const workspace = host.child('program', 'w1', [
       stubPair(IWorkspaceContext, workspaceContextStub(workDir)),
     ]);
 
@@ -955,6 +961,7 @@ describe('WorkspaceSkillCatalogService', () => {
     const watchedRuntimeFile = await realpath(runtimeFile);
     let ignored: ((path: string) => boolean) | undefined;
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
       stubPair(IPluginService, pluginStub()),
@@ -967,7 +974,7 @@ describe('WorkspaceSkillCatalogService', () => {
         }),
       ),
     ]);
-    const workspace = host.child(LifecycleScope.Workspace, 'w1', [
+    const workspace = host.child('program', 'w1', [
       stubPair(IWorkspaceContext, workspaceContextStub(workDir)),
     ]);
 
@@ -983,9 +990,74 @@ describe('WorkspaceSkillCatalogService', () => {
     }
   });
 
+  it('reloadSources re-pulls named sources and fires only their ids', async () => {
+    const store = new InMemorySkillDiscovery();
+    store.setUserSkills([stubSkill('user-skill', { description: 'v1' })]);
+    store.setExtraSkills([stubSkill('extra-skill', { description: 'v1', source: 'extra' })]);
+    store.setPluginSkills([
+      stubSkill('demo-skill', { source: 'extra', plugin: { id: 'demo' } }),
+    ]);
+    store.setProjectSkills([stubSkill('project-skill')]);
+    const pluginRoot: SkillRoot = {
+      path: '/plugins/demo/skills',
+      source: 'extra',
+      plugin: { id: 'demo' },
+    };
+    const ws = workspaceContextStub('/work');
+    const { host, workspace, config } = makeHost(store, ws, [pluginRoot], ['/explicit']);
+    config.setExtraSkillDirs(['/']);
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await catalog.load();
+      expect(catalog.catalog.getSkill('user-skill')?.description).toBe('v1');
+      expect(catalog.catalog.getSkill('extra-skill')?.description).toBe('v1');
+      expect(catalog.catalog.getPluginSkill('demo', 'demo-skill')).toBeDefined();
+      expect(catalog.catalog.getSkill('project-skill')).toBeDefined();
+
+      store.setUserSkills([stubSkill('user-skill', { description: 'v2' })]);
+      store.setExtraSkills([stubSkill('extra-skill', { description: 'v2', source: 'extra' })]);
+      store.setPluginSkills([]);
+
+      const fired: string[] = [];
+      const sub = catalog.onDidChange((id) => fired.push(id));
+      await catalog.reloadSources(['user', 'explicit', 'extra', 'plugin']);
+      sub.dispose();
+
+      expect([...fired].sort()).toEqual(['explicit', 'extra', 'plugin', 'user']);
+      expect(catalog.catalog.getSkill('user-skill')?.description).toBe('v2');
+      expect(catalog.catalog.getSkill('extra-skill')?.description).toBe('v2');
+      expect(catalog.catalog.getPluginSkill('demo', 'demo-skill')).toBeUndefined();
+      expect(catalog.catalog.getSkill('project-skill')).toBeDefined();
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('reloadSources ignores unknown source ids', async () => {
+    const store = new InMemorySkillDiscovery();
+    const ws = workspaceContextStub('/work');
+    const { host, workspace } = makeHost(store, ws);
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await catalog.load();
+
+      const fired: string[] = [];
+      const sub = catalog.onDidChange((id) => fired.push(id));
+      await catalog.reloadSources(['nope']);
+      sub.dispose();
+
+      expect(fired).toEqual([]);
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('rescans when a skill under a dot directory appears on disk', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-dot-'));
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
       stubPair(IPluginService, pluginStub()),
@@ -993,7 +1065,7 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(ISkillDiscovery, new FileSkillDiscovery(stubLog())),
       stubPair(IHostFsWatchService, new HostFsWatchService()),
     ]);
-    const workspace = host.child(LifecycleScope.Workspace, 'w1', [
+    const workspace = host.child('program', 'w1', [
       stubPair(IWorkspaceContext, workspaceContextStub(workDir)),
     ]);
 

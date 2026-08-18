@@ -1,10 +1,3 @@
-/**
- * `systemReminder` domain — `IAgentSystemReminderService` implementation.
- *
- * Appends model-facing reminder messages, wrapped by `wrapSystemReminder`,
- * into the conversation through `contextMemory`. Bound at Agent scope.
- */
-
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';

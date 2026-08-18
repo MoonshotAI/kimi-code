@@ -1,8 +1,3 @@
-/**
- * agent-core-v2 public surface — re-exports every domain barrel (grouped by
- * layer) so importing the package loads all scoped-registry registrations.
- */
-
 export * from '#/_base/di/descriptors';
 export * from '#/_base/di/errors';
 export * from '#/_base/di/graph';
@@ -38,6 +33,21 @@ export {
 } from '#/_base/di/fiber';
 export { Service } from '#/_base/di/service';
 export * from './errors';
+export * from '#/runtime/runtime';
+export * from '#/runtime/runtimeRegistry';
+export * from '#/runtime/runtimeWorkspaceView';
+export * from '#/runtime/runtimeProvider';
+export * from '#/runtime/runtimeUnitHost';
+export * from '#/runtime/localRuntime';
+export * from '#/program/program';
+export * from '#/workspace/workspaceInstance/workspaceInstance';
+export * from '#/workspace/workspaceInstance/workspaceInstanceManager';
+export * from '#/workspace/workspaceInstance/workspaceInstanceManagerService';
+export * from '#/agent/runtimeBinding/runtimeBinding';
+export * from '#/agent/runtimeBinding/runtimeBindingService';
+export * from '#/agent/runtimeBinding/agentRuntime';
+export * from '#/app/sessionManager/sessionManager';
+export * from '#/app/sessionManager/sessionManagerService';
 
 export * from '#/_base/log/log';
 export * from '#/_base/log/logConfig';
@@ -46,7 +56,6 @@ export * from '#/_base/log/fileLog';
 export * from '#/_base/log/logService';
 export * from '#/wire/wire';
 export * from '#/wire/wireService';
-export * from '#/wire/wireContribution';
 export * from '#/wire/record';
 export * from '#/wire/migration/migration';
 export * from '#/session/sessionLog/sessionLogService';
@@ -92,8 +101,15 @@ export { TaskService } from '#/app/task/taskService';
 import '#/app/event/eventBusService';
 import '#/app/event/eventService';
 import '#/app/event/fiberEventResolver';
-export { IEventBus, type DomainEvent } from '#/app/event/eventBus';
-export { IEventService, type DomainEvent as GlobalEvent } from '#/app/event/event';
+export { IEventBus } from '#/app/event/eventBus';
+export { IEventService } from '#/app/event/event';
+export * from '#/app/event/errors';
+export * from '#/app/event/event2';
+export * from '#/state/errors';
+export * from '#/state/state';
+export * from '#/state/stateContribution';
+export * from '#/state/eventDispatcher';
+import '#/state/eventDispatcherService';
 export * from '#/_base/state/stateRegistry';
 export * from '#/_base/contribution/registry';
 export * from '#/app/state/appState';
@@ -137,6 +153,7 @@ import '#/session/sessionTitle/flag';
 export * from '#/session/sessionToolPolicy/sessionToolPolicy';
 export * from '#/session/sessionToolPolicy/sessionToolPolicyService';
 export * from '#/app/config/config';
+export * from '#/app/config/configEvents';
 export * from '#/app/config/configService';
 export * from '#/app/config/configSectionContributions';
 import '#/app/kosongConfig/configSection';
@@ -238,9 +255,12 @@ export * from '#/app/plugin/source';
 export * from '#/app/plugin/github-resolver';
 export * from '#/app/plugin/archive';
 export * from '#/app/plugin/manager';
+export * from '#/app/plugin/marketplace';
 export * from '#/app/plugin/plugin';
+export * from '#/app/plugin/pluginEvents';
 export * from '#/app/plugin/pluginService';
 export * from '#/app/capability/capability';
+export * from '#/app/capability/capabilityEvents';
 export * from '#/app/capability/capabilityService';
 export * from '#/app/capability/errors';
 export * from '#/app/capability/types';
@@ -350,6 +370,23 @@ import '#/agent/goal/goalDeadlineSchedulerService';
 export * from '#/agent/goal/goal';
 export * from '#/agent/goal/goalService';
 export * from '#/agent/goal/types';
+export * from '#/features/tower/tower';
+export * from '#/features/tower/towerService';
+export * from '#/features/tower/towerRateLimit';
+export * from '#/features/tower/towerRateLimitService';
+export * from '#/features/tower/tools/init/init';
+export * from '#/features/tower/tools/plan/plan';
+export * from '#/features/tower/tools/spawn/spawn';
+export * from '#/features/tower/tools/merge/merge';
+export * from '#/features/tower/tools/teardown/teardown';
+export * from '#/features/tower/tools/send/send';
+export * from '#/features/tower/tools/inbox/inbox';
+export * from '#/features/tower/tools/finding/finding';
+export * from '#/features/tower/tools/review/review';
+export * from '#/features/tower/tools/mission/mission';
+export * from '#/features/tower/tools/status/status';
+export * from '#/features/tower/skill/skill';
+import '#/features/tower/towerFeature';
 export * from '#/agent/usage/usage';
 export * from '#/agent/usage/usageService';
 export * from '#/agent/toolDedupe/toolDedupe';
@@ -451,12 +488,12 @@ export {
 } from '#/session/visual/configSection';
 export * from '#/agent/tools/agent/agent';
 import '#/agent/tools/agent/agentTool';
-export * from '#/app/workspaceLifecycle/workspaceLifecycle';
-export * from '#/app/workspaceLifecycle/workspaceLifecycleService';
-export * from '#/app/workspaceLifecycle/sessionLookup';
+export * from '#/app/sessionManager/sessionLookup';
 export * from '#/workspace/workspaceContext/workspaceContext';
 export * from '#/workspace/sessionLifecycle/sessionLifecycle';
+export * from '#/workspace/sessionLifecycle/sessionLifecycleEvents';
 export * from '#/workspace/sessionLifecycle/sessionLifecycleService';
+export * from '#/workspace/sessionLifecycle/coldSessionArchive';
 export * from '#/workspace/sessionLifecycle/internal/addressing';
 export * from '#/session/externalHooks/externalHooks';
 export * from '#/session/externalHooks/externalHooksService';
@@ -503,9 +540,6 @@ import '#/app/workspaceSessions/workspaceSessionsService';
 import '#/app/git/gitService';
 export * from '#/app/bashParser/bashParser';
 import '#/app/bashParser/bashParserService';
-export * from '#/session/process/processRunner';
-export * from '#/session/process/processRunnerService';
-export * from '#/workspace/workspaceProcess/workspaceProcessRunnerService';
 export * from '#/workspace/workspaceFs/internal/errors';
 export * from '#/workspace/workspaceFs/fs';
 export * from '#/workspace/workspaceFs/fsService';
@@ -518,8 +552,6 @@ export * from '#/workspace/workspaceGit/workspaceGit';
 export * from '#/workspace/workspaceGit/workspaceGitService';
 export * from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 export * from '#/session/sessionToolPolicyGate/sessionToolPolicyGateService';
-export * from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
-export * from '#/workspace/workspaceToolPolicy/workspaceToolPolicyService';
 export * from '#/workspace/workspaceTrust/workspaceTrust';
 export * from '#/workspace/workspaceTrust/workspaceTrustService';
 export * from '#/app/hostFolderBrowser/hostFolderBrowser';
@@ -610,6 +642,7 @@ export * from '#/features/dateChange/dateChangeService';
 import '#/features/dateChange/dateChangeFeature';
 export * from '#/agent/contextProjector/contextProjector';
 export * from '#/agent/contextProjector/contextProjectorService';
+export * from '#/agent/contextProjector/mediaProjection';
 export * from '#/agent/tokenCounting/tokenCounting';
 export * from '#/agent/tokenCounting/tokenCountingOps';
 export * from '#/agent/tokenCounting/tokenCountingService';
@@ -647,8 +680,21 @@ export * from '#/mcpCore/config-schema';
 export * from '#/agent/media/mediaTools';
 export * from '#/agent/media/mediaToolsRegistrar';
 export * from '#/agent/media/registerMediaTools';
+export {
+  buildDaemonFileUrl,
+  buildMediaPathTag,
+  daemonFileRefFromPart,
+  mediaExtensionForMime,
+  matchSingleMediaPathTag,
+  parseDaemonFileUrl,
+} from '#/agent/media/mediaRef';
+export type { DaemonFileRef, MediaKind } from '#/agent/media/mediaRef';
+export * from '#/agent/media/sessionMediaStore';
+import '#/agent/media/sessionMediaStoreService';
 export * from '#/agent/media/kimiFileUrl';
 export * from '#/agent/media/videoUpload';
+export * from '#/agent/media/mediaResolver';
+export * from '#/agent/media/mediaResolverService';
 export * from '#/agent/media/videoResolver';
 export * from '#/agent/media/videoResolverService';
 import '#/agent/media/configSection';
@@ -669,12 +715,10 @@ export * from '#/agent/profile/profile';
 export * from '#/agent/profile/profileService';
 export * from '#/agent/profile/context';
 export * from '#/agent/prompt/prompt';
+export * from '#/agent/prompt/promptOps';
 export * from '#/agent/prompt/promptService';
 export * from '#/agent/prompt/promptMetadataText';
 export * from '#/agent/replayBuilder/types';
-// `replayBuilder/types` inlines its own `SessionSummary`; keep the barrel's
-// `SessionSummary` pinned to the session-index one (explicit re-export wins
-// over the ambiguous `export *` pair).
 export { type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 export * from '#/agent/undo/undo';
 export * from '#/agent/undo/undoService';

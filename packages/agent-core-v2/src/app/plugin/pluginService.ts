@@ -1,21 +1,3 @@
-/**
- * `plugin` domain — `IPluginService` implementation.
- *
- * Manages the App-wide plugin catalog through a filesystem-backed manager,
- * roots plugin storage at the bootstrap paths, counts plugin skills through
- * skill discovery, and resolves managed endpoint settings through the
- * provider service plus the startup snapshot. Exposes plugin contributions
- * through the hook, MCP, skill, and system-prompt contracts. Mutations
- * serialize through a queue and consumption reads wait on it; while no
- * snapshot has loaded, a consumption read resolves to its per-method
- * fallback instead of rejecting (`hasLoadedSnapshot` exposes the state).
- * Every mutation (install / enable / disable / remove) re-fires
- * `onDidReload` so workspace-scoped consumers refresh their contributions
- * immediately, and additionally fires `onDidMutate` so live-session
- * consumers can react to the plugin set changing under them (an explicit
- * `reloadPlugins()` raises only `onDidReload`). Bound at App scope.
- */
-
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 
 import { Service } from '#/_base/di/service';

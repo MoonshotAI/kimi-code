@@ -1,43 +1,3 @@
-/**
- * `task` domain — `AgentTaskService` implementation.
- *
- * Owns the agent's registry of running and restored tasks:
- * registers and drives tasks to completion, retains a bounded output ring,
- * persists task state and output through task persistence rooted at the
- * agent's own scope (v1's per-agent `<sessionDir>/agents/<id>/tasks/`
- * layout), lets only the main agent read through the previous v2
- * session-level task root without writing back to it, reads
- * limits through `config`, records lifecycle and broadcasts through `wire`
- * (persisted `task.started` / `task.terminated` Ops into `TaskModel`, the
- * terminated record carrying a bounded tail of the task's retained output as
- * `outputTail`, plus the matching signals), restores ghosts through a single
- * `wire.hooks.onDidRestore` hook
- * (wire replay -> disk load -> reconcile, in that order), delivers live
- * terminal notifications by enqueueing `TaskNotificationStepRequest`s onto
- * `loop` with `activeOrNewTurn` admission (mid-turn ones fold into the active turn's
- * following step; idle ones launch a fresh turn themselves, matching v1's
- * `turn.steer`, so the model consumes the notification without waiting for
- * the user), silently appends restored notifications through `contextMemory`,
- * re-surfaces active tasks through `contextInjector` after compaction, and
- * requests every owned task to stop on session close (`stopAllOnExit` — v1's
- * `stopBackgroundTasksOnExit`) with configurable SIGTERM grace and SIGKILL
- * escalation. `keepAliveOnExit` skips task-manager teardown so independently
- * living external work such as processes can continue; Session-scoped agents
- * remain governed by the Session lifecycle. Scope disposal paths that bypass
- * graceful close synchronously cancel/abort work and immediately attempt a
- * best-effort force-stop to reduce the risk of surviving child processes.
- * The plain-data task state (`ghosts`, `scheduledNotificationKeys`,
- * `deliveredNotificationKeys`, `activeTaskReminderPending`) is registered
- * into `agentState` (`IAgentStateService`) and read/written through it; the
- * live `tasks` registry stays a plain field because a `ManagedTask` holds
- * resources (promise chains, an `AbortController`, task handles) that must
- * not be snapshotted, as do the `persistence` construction-time helper and
- * the notification delivery machinery (`buildingNotificationKeys`,
- * `pendingNotificationRequests`, `notificationRestoreQueue`).
- * Notification delivery follows conversation undo through the checkpoint and
- * reconciliation contracts. Bound at Agent scope.
- */
-
 import { randomBytes } from 'node:crypto';
 import { join } from 'pathe';
 import { LifecycleScope } from '#/app/scopes';
@@ -47,7 +7,7 @@ import type { ContentPart } from '#/kosong/contract/message';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import {
   abortable,
   userCancellationReason,
@@ -56,8 +16,14 @@ import { setClampedTimeout } from '#/_base/utils/timer';
 import { escapeXml, escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IEventBus } from '#/app/event/eventBus';
 import { Error2, ErrorCodes } from '#/errors';
-import { defineCheckpointedModel } from '#/agent/contextMemory/conversationTime';
+import { z } from 'zod';
+import {
+  ContextAppendMessage,
+  ContextSpliced,
+} from '#/agent/contextMemory/contextEvents';
+import '#/agent/contextMemory/conversationTime';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -78,10 +44,8 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IWireService } from '#/wire/wire';
 import {
   IAgentTaskService,
-  type AgentTaskNotificationContext,
   type AgentTaskLoadOptions,
   type AgentTask,
   type AgentTaskInfo,
@@ -94,7 +58,7 @@ import {
 } from './task';
 import { resolveAgentTaskConfig } from './configSection';
 import { AgentTaskPersistence } from './persist';
-import { TaskModel, taskStarted, taskTerminated } from './taskOps';
+import { taskKey, TaskNotified, TaskStarted, TaskTerminated } from './taskOps';
 import { formatTaskList } from '#/agent/tools/task/task-list/taskListTool';
 import '#/agent/tools/task/task-output/taskOutputTool';
 import '#/agent/tools/task/task-stop/taskStopTool';
@@ -123,18 +87,20 @@ interface AgentTaskNotificationBuildContext {
   readonly notification: AgentTaskNotification;
 }
 
-const TaskNotificationDeliveryModel = defineCheckpointedModel(
+export const taskNotificationDeliveryKey = defineState(
   'task.notificationDelivery',
   (): readonly string[] => [],
-  {
-    onAppendMessage: (current, message) => {
-      const origin = taskOriginFromMessage(message);
-      if (origin === undefined) return current;
-      const key = notificationKey(origin);
-      return current.includes(key) ? current : [...current, key];
-    },
-  },
-);
+)
+  .replayable({ schema: z.custom<readonly string[]>() })
+  .undoable()
+  .on(ContextAppendMessage, (s, e) => {
+    const origin = taskOriginFromMessage(e.message);
+    if (origin === undefined) return;
+    const key = notificationKey(origin);
+    if (!s.includes(key)) {
+      s.push(key);
+    }
+  });
 
 interface ManagedTask {
   readonly taskId: string;
@@ -208,12 +174,6 @@ function coerceTimeoutSettlement(
   return settlement;
 }
 
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'task.notified': AgentTaskNotificationContext;
-  }
-}
-
 export class TaskNotificationStepRequest extends MessageStepRequest {
   constructor(
     message: ContextMessage,
@@ -249,7 +209,6 @@ export const taskActiveTaskReminderPendingKey = defineState<boolean>(
   () => false,
 );
 
-// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class AgentTaskService extends Disposable implements IAgentTaskService {
   declare readonly _serviceBrand: undefined;
 
@@ -268,8 +227,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @ISessionContext session: ISessionContext,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @ITaskService private readonly taskService: ITaskService,
-    @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentConversationUndoParticipantRegistry
@@ -278,10 +237,12 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(taskGhostsKey);
-    this.states.register(taskScheduledNotificationKeysKey);
-    this.states.register(taskDeliveredNotificationKeysKey);
-    this.states.register(taskActiveTaskReminderPendingKey);
+    this.states.contributeState(taskKey);
+    this.states.contributeState(taskNotificationDeliveryKey);
+    this.states.contributeState(taskGhostsKey);
+    this.states.contributeState(taskScheduledNotificationKeysKey);
+    this.states.contributeState(taskDeliveredNotificationKeysKey);
+    this.states.contributeState(taskActiveTaskReminderPendingKey);
     const fallbackRoot =
       scopeContext.agentId === 'main'
         ? { dir: session.sessionDir, scope: session.scope() }
@@ -300,8 +261,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       }),
     );
     this._register(
-      this.wire.hooks.onDidRestore.register('task', async (_ctx, next) => {
-        for (const key of this.wire.getModel(TaskNotificationDeliveryModel).current) {
+      this.dispatcher.hooks.onDidRestore.register('task', async (_ctx, next) => {
+        for (const key of this.states.get(taskNotificationDeliveryKey)) {
           this.deliveredNotificationKeys.add(key);
         }
         await this.restoreAfterReplay();
@@ -309,7 +270,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       }),
     );
     this._register(
-      this.eventBus.subscribe('context.spliced', (e) => {
+      this.eventBus.subscribe(ContextSpliced, (e) => {
         if (isCompactionSplice(e)) {
           this.activeTaskReminderPending = true;
         }
@@ -362,7 +323,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private restoreGhostsFromWire(): void {
-    for (const [taskId, info] of this.wire.getModel(TaskModel)) {
+    for (const [taskId, info] of this.states.get(taskKey)) {
       if (this.tasks.has(taskId)) continue;
       this.ghosts.set(taskId, info);
     }
@@ -545,7 +506,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private async reconcileNotificationDeliveryAfterUndo(): Promise<void> {
-    const restoredKeys = new Set(this.wire.getModel(TaskNotificationDeliveryModel).current);
+    const restoredKeys = new Set(this.states.get(taskNotificationDeliveryKey));
     for (const [key, request] of this.pendingNotificationRequests) {
       if (request.aborted) this.clearPendingNotification(key, request);
     }
@@ -873,9 +834,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
           entry.waiters.push(resolve);
         }),
         new Promise<void>((resolve) => {
-          // A clamped early return just makes callers (e.g. the print drain
-          // loop) re-poll — the task may still be running, which the caller
-          // observes from the returned info.
           timeout = setClampedTimeout(resolve, timeoutMs);
           timeout.unref?.();
         }),
@@ -1084,7 +1042,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private recordTaskStarted(info: AgentTaskInfo): void {
-    this.wire.dispatch(taskStarted({ info }));
+    void this.dispatcher.dispatch(new TaskStarted({ info }));
     this.telemetry.track2('background_task_created', {
       task_id: info.taskId,
       kind: info.kind === 'process' ? 'bash' : info.kind,
@@ -1092,7 +1050,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private recordTaskTerminated(info: AgentTaskInfo, outputTail?: string): void {
-    this.wire.dispatch(taskTerminated({ info, outputTail }));
+    void this.dispatcher.dispatch(new TaskTerminated({ info, outputTail }));
     this.telemetry.track2('background_task_completed', {
       task_id: info.taskId,
       kind: info.kind,
@@ -1218,15 +1176,16 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private fireNotificationHook(notification: AgentTaskNotification): void {
-    this.eventBus.publish({
-      type: 'task.notified',
-      notificationType: notification.type,
-      title: notification.title,
-      body: notification.body,
-      severity: notification.severity,
-      sourceKind: notification.source_kind,
-      sourceId: notification.source_id,
-    });
+    void this.dispatcher.dispatch(
+      new TaskNotified({
+        notificationType: notification.type,
+        title: notification.title,
+        body: notification.body,
+        severity: notification.severity,
+        sourceKind: notification.source_kind,
+        sourceId: notification.source_id,
+      }),
+    );
   }
 
   private isTerminalNotificationSuppressed(taskId: string): boolean {

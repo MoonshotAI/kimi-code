@@ -103,6 +103,7 @@ describe('kimi web', () => {
     expect(longs).toContain('--dangerous-bypass-auth');
     expect(longs).toContain('--log-level');
     expect(longs).toContain('--debug-endpoints');
+    expect(longs).toContain('--web-title');
     // web opens the browser by default → the option is the negative --no-open.
     expect(longs).toContain('--no-open');
     // The background/daemon era flags are gone: the server always runs in the
@@ -282,8 +283,8 @@ describe('ready banner reflects the bind class', () => {
         startServerForeground: runner,
         resolveToken: () => 'tok-xyz',
         networkAddresses: [
-          { address: '192.168.98.66', family: 'IPv4' },
-          { address: '10.8.12.216', family: 'IPv4' },
+          { address: '192.0.2.66', family: 'IPv4' },
+          { address: '198.51.100.216', family: 'IPv4' },
         ],
         openUrl: vi.fn(),
         stdout,
@@ -298,8 +299,8 @@ describe('ready banner reflects the bind class', () => {
     // Full token-bearing URLs are printed plainly (no box, no truncation) so
     // they are easy to copy.
     expect(raw).toContain('http://localhost:58627/#token=tok-xyz');
-    expect(raw).toContain('http://192.168.98.66:58627/#token=tok-xyz');
-    expect(raw).toContain('http://10.8.12.216:58627/#token=tok-xyz');
+    expect(raw).toContain('http://192.0.2.66:58627/#token=tok-xyz');
+    expect(raw).toContain('http://198.51.100.216:58627/#token=tok-xyz');
     expect(raw).toContain('Token:');
     expect(raw).toContain('tok-xyz');
     expect(raw).not.toContain('╭');
@@ -316,7 +317,7 @@ describe('ready banner reflects the bind class', () => {
         startServerForeground: runner,
         resolveToken: () => 'tok-loop',
         // Injected interface addresses must NOT leak into a loopback banner.
-        networkAddresses: [{ address: '192.168.98.66', family: 'IPv4' }],
+        networkAddresses: [{ address: '192.0.2.66', family: 'IPv4' }],
         openUrl: vi.fn(),
         stdout,
         stderr,
@@ -332,7 +333,7 @@ describe('ready banner reflects the bind class', () => {
     // No network URLs on a loopback bind — just the "off" hint.
     expect(raw).toContain('use --host to enable');
     expect(raw).not.toContain('Network:  http');
-    expect(raw).not.toContain('192.168.98.66');
+    expect(raw).not.toContain('192.0.2.66');
     expect(raw).not.toContain('╭');
   });
 });
@@ -468,6 +469,32 @@ describe('`kimi web` option threading', () => {
     );
 
     expect(calls.options).toMatchObject({ logLevel: 'debug' });
+  });
+
+  it('passes --web-title through to the runner', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const { runner, calls } = makeRunner();
+    const { stdout, stderr } = makeIo();
+
+    await handleWebCommand(
+      { port: '58627', webTitle: 'My Dev Box', open: false },
+      { startServerForeground: runner, openUrl: vi.fn(), stdout, stderr },
+    );
+
+    expect(calls.options).toMatchObject({ webTitle: 'My Dev Box' });
+  });
+
+  it('leaves webTitle undefined when --web-title is not passed', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const { runner, calls } = makeRunner();
+    const { stdout, stderr } = makeIo();
+
+    await handleWebCommand(
+      { port: '58627', open: false },
+      { startServerForeground: runner, openUrl: vi.fn(), stdout, stderr },
+    );
+
+    expect(calls.options?.webTitle).toBeUndefined();
   });
 
   it('rejects an invalid --log-level before calling the runner', async () => {

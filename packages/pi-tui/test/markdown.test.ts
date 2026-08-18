@@ -1603,6 +1603,98 @@ bar`,
 			);
 			assert.ok(!rawPlain.join("").includes("(https://example.com)"), "URL should not appear twice");
 		});
+
+		it("should not absorb CJK punctuation after bare URLs into the link", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown(
+				"PR 已开：https://example.com/app/pull/232（本地 main 已退回 origin/main 保持干净）。",
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80);
+			const joined = lines.join("");
+
+			// The hyperlink target must stop at the CJK boundary…
+			assert.ok(
+				joined.includes("\x1b]8;;https://example.com/app/pull/232\x1b\\"),
+				"OSC 8 target should end at the URL, before the full-width parenthesis",
+			);
+			// …and the CJK text must not be part of any hyperlink target.
+			assert.ok(!joined.includes("%EF%BC%88"), "OSC 8 target should not contain encoded CJK");
+			assert.ok(!/\x1b\]8;;[^\x1b]*（/.test(joined), "No hyperlink target should contain CJK characters");
+			// The full source text still renders visibly.
+			const rawPlain = lines.map((line) =>
+				line.replace(/\x1b\]8;;[^\x1b]*\x1b\\/g, "").replace(/\x1b\[[0-9;]*m/g, ""),
+			);
+			assert.ok(
+				rawPlain.join("").includes("https://example.com/app/pull/232（本地 main 已退回"),
+				"URL and following CJK text should both render",
+			);
+		});
+
+		it("should strip a trailing full-width parenthesis after a bare URL", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown("看这个（https://example.com/page）就知道", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80);
+			const joined = lines.join("");
+
+			assert.ok(
+				joined.includes("\x1b]8;;https://example.com/page\x1b\\"),
+				"OSC 8 target should exclude the wrapping full-width parenthesis",
+			);
+		});
+
+		it("should keep CJK characters inside the URL path", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown("见 https://example.com/wiki/测试页面 的说明", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80);
+			const joined = lines.join("");
+
+			assert.ok(
+				joined.includes("\x1b]8;;https://example.com/wiki/测试页面\x1b\\"),
+				"CJK path characters remain part of the hyperlink target",
+			);
+		});
+
+		it("should keep balanced full-width parentheses inside the URL path", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown(
+				"见 https://example.com/wiki/中华人民共和国（1949年） 的说明",
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80);
+			const joined = lines.join("");
+
+			assert.ok(
+				joined.includes("\x1b]8;;https://example.com/wiki/中华人民共和国（1949年）\x1b\\"),
+				"Balanced full-width parens remain part of the hyperlink target",
+			);
+		});
+
+		it("should keep CJK punctuation inside balanced full-width parentheses", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown(
+				"见 https://example.com/wiki/中华人民共和国（北京，1949年） 的说明",
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80);
+			const joined = lines.join("");
+
+			assert.ok(
+				joined.includes("\x1b]8;;https://example.com/wiki/中华人民共和国（北京，1949年）\x1b\\"),
+				"Punctuation inside balanced full-width parens remains part of the hyperlink target",
+			);
+		});
 	});
 
 	describe("HTML-like tags in text", () => {

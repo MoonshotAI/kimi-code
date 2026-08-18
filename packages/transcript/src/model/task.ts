@@ -1,11 +1,3 @@
-/**
- * Execution entities that frames reference by id (`taskId`).
- *
- * Tasks live (and are rendered) globally per agent transcript — they never
- * participate in turn pagination. Streaming output rides on the shared
- * `append` op with `target: 'task'`.
- */
-
 import type { AgentId, TaskId } from './ids';
 import type { StepUsage } from './turn';
 

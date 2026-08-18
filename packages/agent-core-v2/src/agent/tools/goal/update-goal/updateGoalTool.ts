@@ -1,15 +1,3 @@
-/**
- * `tools` domain — `IUpdateGoalTool` implementation.
- *
- * Updates the current goal's status through the goal service (`goal`); the
- * turn driver reads the status at each turn boundary and stops (`complete` /
- * `blocked`) or keeps going (`active`). Guards against the goal changing or
- * disappearing between resolution and execution, and ends the turn with the
- * completion-summary / blocked-reason prompts (`goal` outcome prompts) on
- * terminal statuses. Registered for the main agent only, mirroring v1's
- * `agent.type === 'main'` gate. Bound at Agent scope.
- */
-
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type ToolExecution } from '#/tool/toolContract';

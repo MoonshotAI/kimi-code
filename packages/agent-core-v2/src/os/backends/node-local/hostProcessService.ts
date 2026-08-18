@@ -1,12 +1,3 @@
-/**
- * `hostProcess` domain — `IHostProcessService` node-local implementation.
- *
- * Spawns child processes with `node:child_process.spawn`, wraps them in the
- * domain-facing `IHostProcess` handle, and provides cross-platform process-tree
- * termination. The service itself is stateless; each `spawn()` returns an
- * independent handle that owns its streams and exit promise. Bound at App scope.
- */
-
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
 

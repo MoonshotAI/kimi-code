@@ -1,12 +1,3 @@
-/**
- * Scenario: precise host watches and coarse native signal watches.
- * Responsibilities: event delivery, filtering, recovery, disposal, and the
- * macOS descriptor bound. Wiring: real temporary files for integration and an
- * injected native-watch boundary with a manual retry scheduler for recovery.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/os/backends/node-local/hostFsWatchService.test.ts`.
- */
-
 import { readdirSync } from 'node:fs';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

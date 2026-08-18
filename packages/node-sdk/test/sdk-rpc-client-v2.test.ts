@@ -1,9 +1,10 @@
 /**
- * Scenario: v2 wiring MVP — the harness talks to the in-process agent-core-v2
+ * Scenario: v2 wiring — the harness talks to the in-process agent-core-v2
  * engine (klient memory transport) instead of the v1 KimiCore RPC pair.
- * Responsibilities: `getExperimentalFeatures` is migrated end-to-end; every
- * not-yet-migrated method fails loudly with `not_implemented` instead of
- * silently hitting a v1 core.
+ * Responsibilities: v2-client behaviors the v1↔v2 parity gate does not
+ * compare (engine telemetry forwarding, host request headers, the Windows
+ * Git Bash probe, workspace trust, the config write cascade, deleteSession,
+ * foldAgentWireReplay).
  * Wiring: real v2 engine bootstrapped on a temp KIMI_CODE_HOME; remote provider calls are stubbed.
  * Run: pnpm exec vitest run test/sdk-rpc-client-v2.test.ts
  */
@@ -19,9 +20,10 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  buildDaemonFileUrl,
   createKimiHarnessV2,
   ErrorCodes,
-  KimiError,
+  isDaemonFileUrl,
   KimiHarness,
   removeProviderFromConfig,
   SDKRpcClientV2,
@@ -32,10 +34,12 @@ import { foldAgentWireReplay } from '#/v2/resume-replay';
 import {
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
+  getLiveSessionById,
   HostProcessError,
+  IAgentLifecycleService,
   IHostRequestHeaders,
-  ISessionLifecycleService,
-  IWorkspaceLifecycleService,
+  ISessionManager,
+  ISessionTodoService,
   OsProcessErrors,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -72,7 +76,7 @@ afterEach(async () => {
   await drainSessionIndexMirror();
   await drainQueryStoreDisposals();
   for (const dir of tempDirs.splice(0)) {
-    await rm(dir, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
 });
 
@@ -92,7 +96,42 @@ async function makeHarness(): Promise<{ harness: KimiHarness; homeDir: string }>
   return { harness: createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY }), homeDir };
 }
 
-describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
+/** Whether the persisted session directory exists under `<home>/sessions/<bucket>/<id>`. */
+async function sessionDirExists(homeDir: string, sessionId: string): Promise<boolean> {
+  let buckets: readonly string[];
+  try {
+    buckets = await readdir(join(homeDir, 'sessions'));
+  } catch {
+    return false;
+  }
+  for (const bucket of buckets) {
+    try {
+      await readdir(join(homeDir, 'sessions', bucket, sessionId));
+      return true;
+    } catch {
+      // Not under this bucket.
+    }
+  }
+  return false;
+}
+
+describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
+  it('exposes the validated runtime binding through Session', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const session = await harness.createSession({ id: 'ses_runtime', workDir });
+    try {
+      const binding = await session.getRuntime();
+      expect(binding.runtimeId).toBe('local');
+      expect(binding.workspaceId.length).toBeGreaterThan(0);
+      await expect(session.switchRuntime('missing-runtime')).rejects.toThrow(/missing-runtime/);
+      expect(await session.getRuntime()).toEqual(binding);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('reports global MCP authorization from the persisted v2 credential store', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
@@ -238,6 +277,32 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
         expect(typeof feature.enabled).toBe('boolean');
         expect(typeof feature.defaultEnabled).toBe('boolean');
       }
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('uploadFile stores bytes through the klient files facade', async () => {
+    const { harness } = await makeHarness();
+    try {
+      const bytes = new Uint8Array([137, 80, 78, 71]);
+      const meta = await harness.uploadFile(bytes, {
+        name: 'pixel.png',
+        mimeType: 'image/png',
+        expiresInSec: 60,
+      });
+      expect(meta.id.startsWith('f_')).toBe(true);
+      expect(meta.name).toBe('pixel.png');
+      expect(meta.media_type).toBe('image/png');
+      expect(meta.size).toBe(bytes.length);
+      expect(typeof meta.created_at).toBe('string');
+      expect(typeof meta.expires_at).toBe('string');
+
+      // Re-export smoke only — helper behavior is pinned by agent-core-v2's
+      // mediaRef tests.
+      expect(isDaemonFileUrl(buildDaemonFileUrl(meta.id))).toBe(true);
+      await harness.deleteFile(meta.id);
+      await expect(harness.deleteFile(meta.id)).rejects.toThrow(/file not found/);
     } finally {
       await harness.close();
     }
@@ -428,10 +493,8 @@ key = "${titleOAuthRef.key}"
       // lands while the close is still in flight.
       const titlePromise = client.generateSessionTitle({ id: 'ses_title_race' });
       await fetchStarted;
-      const handler = await client.engineAccessor
-        .get(IWorkspaceLifecycleService)
-        .handlerFor({ root: workDir });
-      const tempHandle = handler.accessor.get(ISessionLifecycleService).get('ses_title_race');
+      const sessionManager = client.engineAccessor.get(ISessionManager);
+      const tempHandle = sessionManager.get('ses_title_race');
       expect(tempHandle).toBeDefined();
       let markCloseStarted!: () => void;
       let openCloseGate!: () => void;
@@ -441,7 +504,7 @@ key = "${titleOAuthRef.key}"
       const closeGate = new Promise<void>((resolve) => {
         openCloseGate = resolve;
       });
-      handler.accessor.get(ISessionLifecycleService).onWillCloseSession((event) => {
+      sessionManager.onWillCloseSession!((event) => {
         if (event.sessionId !== 'ses_title_race') return;
         markCloseStarted();
         event.waitUntil(closeGate);
@@ -792,18 +855,57 @@ key = "${titleOAuthRef.key}"
     }
   });
 
-  it('fails loudly with not_implemented for methods not yet migrated', async () => {
-    const { harness } = await makeHarness();
+  it('deleteSession removes a session and rejects a missing id with session_not_found', async () => {
+    const { harness, homeDir } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
     try {
-      // `deleteSession` is the permanent case: the v2 engine has no
-      // session-deletion capability, so it stays not_implemented by design
-      // (tracked in `.tmp/v2-migration-tracker.md`).
-      await expect(harness.deleteSession('session_missing')).rejects.toThrowError(KimiError);
+      const session = await harness.createSession({ workDir });
+      await harness.deleteSession(session.id);
+      await expect(harness.resumeSession({ id: session.id })).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_NOT_FOUND,
+      });
+      expect(await sessionDirExists(homeDir, session.id)).toBe(false);
       await expect(harness.deleteSession('session_missing')).rejects.toMatchObject({
-        code: ErrorCodes.NOT_IMPLEMENTED,
+        code: ErrorCodes.SESSION_NOT_FOUND,
       });
     } finally {
       await harness.close();
+    }
+  });
+
+  it('serves getTodos from the live session todo state', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_todos', workDir });
+      expect(await client.getTodos({ sessionId: 'ses_todos' })).toEqual([]);
+
+      const handle = getLiveSessionById(client.engineAccessor, 'ses_todos');
+      expect(handle).toBeDefined();
+      await handle!.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+      handle!.accessor.get(ISessionTodoService).setTodos([
+        { title: 'write tests', status: 'in_progress' },
+        { title: 'ship it', status: 'pending' },
+      ]);
+
+      expect(await client.getTodos({ sessionId: 'ses_todos' })).toEqual([
+        { title: 'write tests', status: 'in_progress' },
+        { title: 'ship it', status: 'pending' },
+      ]);
+
+      const served = await client.getTodos({ sessionId: 'ses_todos' });
+      const stored = handle!.accessor.get(ISessionTodoService).getTodos();
+      expect(served).not.toBe(stored);
+      expect(served[0]).not.toBe(stored[0]);
+      await expect(client.getTodos({ sessionId: 'ses_missing' })).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_NOT_FOUND,
+      });
+    } finally {
+      await client.close();
     }
   });
 });

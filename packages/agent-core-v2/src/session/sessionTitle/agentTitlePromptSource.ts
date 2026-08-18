@@ -1,11 +1,3 @@
-/**
- * `sessionTitle` domain (L6) — title prompt projection contract.
- *
- * Defines the Agent-scoped `IAgentTitlePromptSource` used to read the first
- * active natural-language prompts from the live conversation context, plus
- * the turn excerpts behind the `first_turn` / `digest` title sources.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 /**

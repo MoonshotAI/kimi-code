@@ -1,16 +1,3 @@
-/**
- * `kosong/model` completion-budget tests — pure resolution and fold:
- *
- *  - `resolveCompletionBudget` precedence: explicit cap > maxOutputSize >
- *    reservedContextSize > the unknown-context fallback;
- *  - `computeCompletionBudgetCap`: hardCap wins, otherwise the capability
- *    context size, otherwise the fallback — floored at 1;
- *  - `completionBudgetParams` folds the budget into the requester params: the
- *    measured `usedContextTokens` rides along ONLY when the caller passes it
- *    (i.e. when the request did not override its messages — with explicit
- *    messages the budget is not tightened against the current context).
- */
-
 import { describe, expect, it } from 'vitest';
 
 import type { ModelCapability } from '#/kosong/contract/capability';

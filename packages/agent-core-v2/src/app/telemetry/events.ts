@@ -1,20 +1,3 @@
-/**
- * `telemetry` domain — telemetry event registry.
- *
- * Central registry of every business event emitted through
- * `ITelemetryService.track2`: each entry pairs the event's property type
- * (the compile-time contract enforced at call sites) with review metadata
- * (owner, purpose, per-property comment) whose keys must match the property
- * type exactly. Agent-scoped entries compose their payload with the centrally
- * declared Agent telemetry context, keeping ambient identity out of business
- * payloads while preserving the effective wire schema. Registered names are
- * the raw event names, before the transport's `kfc_` server prefix. Naming
- * conventions: events and properties are snake_case; durations/counts/sizes
- * carry a unit suffix (`_ms` / `_count` / `_bytes`); never register user
- * content or file paths as properties. App-scoped, self-contained — property
- * unions are declared locally instead of imported from business domains.
- */
-
 import type { TelemetryPrimitive } from './telemetry';
 
 export interface TelemetryEventMeta {
@@ -342,6 +325,10 @@ export interface GlobToolRgFallbackEvent {
 
 export interface FsGrepNodeFallbackEvent {
   reason: 'rg_missing';
+}
+
+export interface FsSuggestNodeFallbackEvent {
+  reason: 'rg_missing' | 'rg_error';
 }
 
 export interface SubagentCreatedEvent {
@@ -825,6 +812,11 @@ export const telemetryEventDefinitions = {
   fs_grep_node_fallback: defineTelemetryEvent<FsGrepNodeFallbackEvent>({
     owner: 'kimi-code',
     comment: 'The fs grep path falls back to the node implementation.',
+    properties: { reason: 'Why the fallback was taken' },
+  }),
+  fs_suggest_node_fallback: defineTelemetryEvent<FsSuggestNodeFallbackEvent>({
+    owner: 'kimi-code',
+    comment: 'The fs suggest path falls back to the node implementation.',
     properties: { reason: 'Why the fallback was taken' },
   }),
   subagent_created: defineTelemetryEvent<SubagentCreatedEvent>({

@@ -6,46 +6,64 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { AgentTaskInfo } from '#/agent/task/task';
-import { TaskModel, taskStarted, taskTerminated } from '#/agent/task/taskOps';
+import { taskKey, TaskStarted, TaskTerminated } from '#/agent/task/taskOps';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IWireService } from '#/wire/wire';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
-import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
+import {
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+  restoreTestEventDispatcher,
+  testWireScope,
+} from '../../wire/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'task-test';
 
 let disposables: DisposableStore;
-let wire: IWireService;
+let dispatcher: IEventDispatcher;
+let agentState: IAgentStateService;
 let log: IAppendLogStore;
+let eventBus: IEventBus;
 
-function buildHost(key: string): { wire: IWireService; log: IAppendLogStore; eventBus: IEventBus } {
+function buildHost(key: string): {
+  dispatcher: IEventDispatcher;
+  agentState: IAgentStateService;
+  log: IAppendLogStore;
+  eventBus: IEventBus;
+} {
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
-  const wire = registerTestAgentWire(ix, testWireScope(SCOPE, key), {
+  registerTestAgentWire(ix, testWireScope(SCOPE, key), {
     log: ix.get(IAppendLogStore),
     eventBus: ix.get(IEventBus),
   });
-  return { wire, log: ix.get(IAppendLogStore), eventBus: ix.get(IEventBus) };
+  const dispatcher = registerTestEventDispatcher(ix);
+  const agentState = ix.get(IAgentStateService);
+  agentState.contributeState(taskKey);
+  return { dispatcher, agentState, log: ix.get(IAppendLogStore), eventBus: ix.get(IEventBus) };
 }
 
 beforeEach(() => {
   disposables = new DisposableStore();
   const host = buildHost(KEY);
-  wire = host.wire;
+  dispatcher = host.dispatcher;
+  agentState = host.agentState;
   log = host.log;
+  eventBus = host.eventBus;
 });
 
 afterEach(() => disposables.dispose());
 
 async function readRecords(key = KEY): Promise<WireRecord[]> {
-  await wire.flush();
+  await dispatcher.flush();
   const out: WireRecord[] = [];
   for await (const record of log.read<WireRecord>(testWireScope(SCOPE, key), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
@@ -67,16 +85,16 @@ function info(taskId: string, status: AgentTaskInfo['status']): AgentTaskInfo {
 
 describe('task ops (wire-backed)', () => {
   it('started/terminated fold into the task map by id and persist to the journal', async () => {
-    expect(wire.getModel(TaskModel).size).toBe(0);
+    expect(agentState.get(taskKey).size).toBe(0);
 
-    wire.dispatch(taskStarted({ info: info('t1', 'running') }));
-    expect(wire.getModel(TaskModel).get('t1')?.status).toBe('running');
+    await dispatcher.dispatch(new TaskStarted({ info: info('t1', 'running') }));
+    expect(agentState.get(taskKey).get('t1')?.status).toBe('running');
 
-    wire.dispatch(taskTerminated({ info: info('t1', 'completed') }));
-    expect(wire.getModel(TaskModel).get('t1')?.status).toBe('completed');
+    await dispatcher.dispatch(new TaskTerminated({ info: info('t1', 'completed') }));
+    expect(agentState.get(taskKey).get('t1')?.status).toBe('completed');
 
-    wire.dispatch(taskStarted({ info: info('t2', 'running') }));
-    expect(wire.getModel(TaskModel).size).toBe(2);
+    await dispatcher.dispatch(new TaskStarted({ info: info('t2', 'running') }));
+    expect(agentState.get(taskKey).size).toBe(2);
 
     expect(await readRecords()).toEqual([
       { type: 'task.started', info: info('t1', 'running'), time: expect.any(Number) },
@@ -85,8 +103,16 @@ describe('task ops (wire-backed)', () => {
     ]);
   });
 
-  it('task.terminated persists the optional outputTail snapshot (fold-only, never in the model)', async () => {
-    wire.dispatch(taskTerminated({ info: info('t1', 'completed'), outputTail: 'last lines' }));
+  it('task.terminated persists the optional outputTail snapshot (record-only, never in the state or the bus)', async () => {
+    const published: Record<string, unknown>[] = [];
+    disposables.add(
+      eventBus.subscribe((e) => {
+        published.push(Object.assign({}, e) as unknown as Record<string, unknown>);
+      }),
+    );
+    await dispatcher.dispatch(
+      new TaskTerminated({ info: info('t1', 'completed'), outputTail: 'last lines' }),
+    );
 
     expect(await readRecords()).toEqual([
       {
@@ -96,13 +122,20 @@ describe('task ops (wire-backed)', () => {
         time: expect.any(Number),
       },
     ]);
-    expect(wire.getModel(TaskModel).get('t1')).toEqual(info('t1', 'completed'));
+    expect(agentState.get(taskKey).get('t1')).toEqual(info('t1', 'completed'));
+    expect(published).toEqual([
+      {
+        type: 'task.terminated',
+        info: info('t1', 'completed'),
+        time: expect.any(Number),
+      },
+    ]);
   });
 
-  it('apply returns a new Map on change (the model is the restore seed)', () => {
-    const before = wire.getModel(TaskModel);
-    wire.dispatch(taskStarted({ info: info('t1', 'running') }));
-    const after = wire.getModel(TaskModel);
+  it('apply returns a new Map on change (the model is the restore seed)', async () => {
+    const before = agentState.get(taskKey);
+    await dispatcher.dispatch(new TaskStarted({ info: info('t1', 'running') }));
+    const after = agentState.get(taskKey);
     expect(after).not.toBe(before);
     expect(after.get('t1')?.status).toBe('running');
   });
@@ -119,13 +152,13 @@ describe('task ops (wire-backed)', () => {
     host.eventBus.subscribe((e) => {
       emissions.push(e.type);
     });
-    await restoreTestAgentWire(
-      host.wire,
+    await restoreTestEventDispatcher(
+      host.dispatcher,
       host.log,
       testWireScope(SCOPE, 'task-replay'),
       records,
     );
-    const model = host.wire.getModel(TaskModel);
+    const model = host.agentState.get(taskKey);
     expect(model.size).toBe(2);
     expect(model.get('t1')?.status).toBe('completed');
     expect(model.get('t2')?.status).toBe('running');

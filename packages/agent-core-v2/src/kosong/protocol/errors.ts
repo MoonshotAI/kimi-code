@@ -1,21 +1,3 @@
-/**
- * `kosong/protocol` domain — wire API failure codes and the boundary
- * translation from raw contract errors to coded `Error2`s.
- *
- * The `ChatProviderError` family is born-coded (see `kosong/contract/errors`):
- * every instance already carries its wire code, so `translateProviderError`'s
- * `isError2` guard passes it through untouched. What remains here is the
- * abort guard and the fallback for errors foreign to the family (plain
- * `Error` / unknown thrown values → `internal`).
- *
- * `translateProviderError`'s FIRST guard is the contract's
- * `throwIfAbortError`: a user cancellation is thrown as the standard abort
- * DOMException and can never be misclassified as a retryable provider
- * failure. The guard throws rather than returns, by design.
- *
- * Side-effect module: importing registers the error domain.
- */
-
 import { CoreErrors, registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2, isError2 } from '#/_base/errors/errors';
 import {

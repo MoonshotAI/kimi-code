@@ -32,10 +32,6 @@ import {
 } from '../../src/search/worker/host';
 import type { SearchWorkerRequest } from '../../src/search/worker/protocol';
 
-// ---------------------------------------------------------------------------
-// fixtures & stubs
-// ---------------------------------------------------------------------------
-
 const WS = 'ws_test';
 
 const T1 = 1_700_000_000_000;
@@ -135,28 +131,18 @@ function makeFlags(workerEnabled: boolean): IFlagService {
   } as unknown as IFlagService;
 }
 
-/**
- * Worker-host service (the production default): the index core runs in a
- * dedicated worker thread. Most behavior tests run against this host.
- */
 function makeService(home: string, index: ISessionIndex): GlobalSearchService {
   const service = new GlobalSearchService(index, makeBootstrap(home), noopLog, makeFlags(true));
   service.syncDebounceMs = 0;
   return service;
 }
 
-/**
- * Inline-host service (the rollback host): the index core runs in-process so
- * tests can drive its internals (direct db writes, patched probes) — the
- * worker thread's core is not reachable from the test thread.
- */
 function makeInlineService(home: string, index: ISessionIndex): GlobalSearchService {
   const service = new GlobalSearchService(index, makeBootstrap(home), noopLog, makeFlags(false));
   service.syncDebounceMs = 0;
   return service;
 }
 
-/** Loose db handle shape for direct fixture writes (same as the pre-split suite). */
 interface TestDb {
   get(key: string): Record<string, unknown> | undefined;
   set(key: string, value: unknown): Promise<void>;
@@ -170,7 +156,6 @@ interface TestDb {
   close(): Promise<void>;
 }
 
-/** The inline backend's index core (test drive point; worker mode has none). */
 type TestableCore = {
   db: TestDb | null;
   doRefreshReadonly(): Promise<void>;
@@ -188,7 +173,6 @@ function coreOf(service: GlobalSearchService): TestableCore {
   return backend.core as unknown as TestableCore;
 }
 
-/** SessionSummary → the core's sync input (dir resolved like the service does). */
 function syncInput(homeDir: string, s: SessionSummary): SyncSessionInput {
   return {
     id: s.id,
@@ -199,27 +183,15 @@ function syncInput(homeDir: string, s: SessionSummary): SyncSessionInput {
   };
 }
 
-// ---------------------------------------------------------------------------
-// test-only drives for the background coordinator / private internals
-// ---------------------------------------------------------------------------
-
-/** Join or start a sync pass (single-flight, so this is exactly "sync now"). */
 function syncNow(service: GlobalSearchService): Promise<void> {
   return (service as unknown as { ensureSyncStarted(): Promise<void> }).ensureSyncStarted();
 }
 
-/**
- * Deterministic sync after a fixture mutation: searches KICK fire-and-forget
- * passes that may still be in flight (started before the mutation), so join
- * any in-flight pass first, then run one more that is guaranteed to start
- * after the mutation landed.
- */
 async function settleSync(service: GlobalSearchService): Promise<void> {
   await syncNow(service);
   await syncNow(service);
 }
 
-/** Drive the read-only refresh (fingerprint check + WAL catch-up / reopen). */
 function refreshNow(service: GlobalSearchService): Promise<void> {
   return (service as unknown as { refreshReadonly(): Promise<void> }).refreshReadonly();
 }
@@ -232,23 +204,12 @@ function internals(service: GlobalSearchService): ServiceInternals {
   return service as unknown as ServiceInternals;
 }
 
-/**
- * Let pending promise chains and fs I/O settle without awaiting anything
- * specific — backs the "still not drained" assertions: a drain that failed
- * to wait would have resolved within these rounds.
- */
 async function flush(rounds = 20): Promise<void> {
   for (let i = 0; i < rounds; i++) {
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
 }
 
-/**
- * Patch a private async method of the inline core to signal its first entry
- * and hold it until released — the deterministic "dispose lands mid-op"
- * interleaving for the lifecycle tests. Later calls pass through to the
- * original.
- */
 function blockFirstCall(
   core: TestableCore,
   method: 'deleteSessionDocs' | 'computeFingerprint',
@@ -275,7 +236,6 @@ function blockFirstCall(
   return { entered, release: () => releaseResolve() };
 }
 
-/** An ILogService that records warn calls (message + serialized meta). */
 function recordingLog(): { log: ILogService; warnings: string[] } {
   const warnings: string[] = [];
   const log = {
@@ -286,10 +246,6 @@ function recordingLog(): { log: ILogService; warnings: string[] } {
   } as unknown as ILogService;
   return { log, warnings };
 }
-
-// ---------------------------------------------------------------------------
-// suite
-// ---------------------------------------------------------------------------
 
 describe('GlobalSearchService', () => {
   let home: string | undefined;
@@ -338,7 +294,6 @@ describe('GlobalSearchService', () => {
     const en = await service.search({ query: 'apple' });
     expect(en.items.some((h) => h.role === 'assistant')).toBe(true);
 
-    // The injection-origin user message must NOT be indexed.
     const injected = await service.search({ query: '忽略我' });
     expect(injected.items).toEqual([]);
   });
@@ -443,11 +398,9 @@ describe('GlobalSearchService', () => {
     const times = [...page1.items, ...page2.items].map((h) => h.time);
     expect(new Set(times).size).toBe(3);
 
-    // Same token with a changed query condition → parameter error.
     await expect(
       service.search({ query: '香蕉', sort: 'time_asc', pageToken: page1.pageToken }),
     ).rejects.toMatchObject({ reason: 'invalid_page_token' });
-    // Malformed token.
     await expect(service.search({ query: '苹果', pageToken: '!!!' })).rejects.toBeInstanceOf(
       GlobalSearchError,
     );
@@ -460,7 +413,6 @@ describe('GlobalSearchService', () => {
     await service.reindex();
 
     await appendFile(file, `${userLine('苹果 appended', T2)}\n`, 'utf8');
-    // Searches no longer await a sync — drive the coordinator explicitly.
     await settleSync(service);
     const page = await service.search({ query: '苹果' });
     expect(page.items.length).toBe(2);
@@ -471,8 +423,6 @@ describe('GlobalSearchService', () => {
     const s1 = summary('s1', 'state', T1);
     await writeWire(home!, 's1', 'main', [userLine('苹果 state', T1)]);
 
-    // Block the session enumeration until released, so the constructor's
-    // background sync cannot finish before the first search.
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -493,7 +443,7 @@ describe('GlobalSearchService', () => {
     expect(ready.indexState.state).toBe('ready');
     expect(ready.indexState.indexedSessions).toBe(1);
     expect(ready.indexState.totalSessions).toBe(1);
-    expect(ready.indexState.documents).toBe(2); // 1 message + 1 title doc
+    expect(ready.indexState.documents).toBe(2);
   });
 
   it('drops docs of sessions that disappear between syncs', async () => {
@@ -509,7 +459,7 @@ describe('GlobalSearchService', () => {
     await service.reindex();
     expect((await service.search({ query: '苹果' })).items.length).toBe(1);
 
-    sessions.length = 0; // session directory vanished from the index
+    sessions.length = 0;
     await settleSync(service);
     const page = await service.search({ query: '苹果' });
     expect(page.items).toEqual([]);
@@ -526,8 +476,6 @@ describe('GlobalSearchService', () => {
     await service.reindex();
     expect((await service.search({ query: '苹果' })).items.length).toBe(3);
 
-    // Rewrite with a shorter file: stale docs must be dropped and the new
-    // content rescanned from offset 0.
     await writeFile(file, `${userLine('香蕉 fresh', T1)}\n`, 'utf8');
     await settleSync(service);
     const stale = await service.search({ query: '苹果' });
@@ -543,12 +491,10 @@ describe('GlobalSearchService', () => {
     const service = track(makeService(home!, staticIndex([s1])));
     await service.reindex();
 
-    // A partial line (no trailing newline) must not be indexed nor consumed.
     await appendFile(file, userLine('苹果 partial', T2), 'utf8');
     await settleSync(service);
     expect((await service.search({ query: 'partial' })).items).toEqual([]);
 
-    // Once the line is completed, the next pass picks it up.
     await appendFile(file, '\n', 'utf8');
     await settleSync(service);
     const page = await service.search({ query: 'partial' });
@@ -558,7 +504,6 @@ describe('GlobalSearchService', () => {
 
   it('indexes legacy root and v2 agents layouts of one session without key collisions', async () => {
     const s1 = summary('s1', 'dual layout', T1);
-    // Legacy v1 layout: <sessionDir>/wire.jsonl; v2 layout: agents/main/wire.jsonl.
     await writeWire(home!, 's1', 'main', [userLine('苹果 from agents', T2)]);
     await writeFile(
       join(home!, 'sessions', WS, 's1', 'wire.jsonl'),
@@ -613,19 +558,14 @@ describe('GlobalSearchService', () => {
     const writer = track(makeInlineService(home!, index));
     await writer.reindex();
 
-    // Same process, same homeDir: the lock is held by `writer`, so this
-    // instance must downgrade to read-only instead of rebuilding.
     const reader = track(makeInlineService(home!, index));
     const status = await reader.status();
-    expect(status.documents).toBe(2); // replayed at open: message + title
+    expect(status.documents).toBe(2);
 
     const first = await reader.search({ query: '苹果' });
     expect(first.indexState.state).toBe('readonly');
     expect(first.items.length).toBe(1);
 
-    // The writer indexes a new line. The reader's search must NOT wait for
-    // the refresh: it serves the stale view (flagged) and refreshes in the
-    // background; the catchUpFromWal replay lands for the next search.
     await appendFile(file, `${userLine('苹果 delta', T2)}\n`, 'utf8');
     await settleSync(writer);
     const stalePage = await reader.search({ query: '苹果' });
@@ -637,8 +577,6 @@ describe('GlobalSearchService', () => {
     expect(caughtUp.items.some((h) => h.snippet.includes('delta'))).toBe(true);
     expect(caughtUp.indexState.stale).toBeUndefined();
 
-    // WAL rotation on the writer forces the reader's reopen path (open the
-    // replacement, then swap); results stay correct afterwards.
     const writerDb = coreOf(writer).db;
     await writerDb?.compact();
     await refreshNow(reader);
@@ -657,17 +595,12 @@ describe('GlobalSearchService', () => {
     await expect(reader.reindex()).rejects.toMatchObject({ reason: 'readonly_index' });
   });
 
-  // -- base-building contract (deferred open-time build) ----------------------
-
   it('serves the building page while the index base is rebuilding, real hits after commit', async () => {
     const s1 = summary('s1', 'shared', T1);
     await writeWire(home!, 's1', 'main', [userLine('苹果 base', T1)]);
     const service = track(makeInlineService(home!, staticIndex([s1])));
     await service.reindex();
 
-    // Force the base-building state on the served handle (the deferred
-    // open-time build sets exactly this): searches must return the building
-    // page — never throw, never silently serve partial results.
     const db = coreOf(service).db as unknown as { textIndexBuilding(name: string): boolean };
     const original = db.textIndexBuilding.bind(db);
     db.textIndexBuilding = () => true;
@@ -677,7 +610,6 @@ describe('GlobalSearchService', () => {
       expect(building.indexState.stale).toBe(true);
       expect(building.items).toEqual([]);
       expect(building.pageToken).toBeUndefined();
-      // Literal mode (the tri index) takes the same building path.
       const buildingLiteral = await service.search({ query: '苹果', mode: 'literal' });
       expect(buildingLiteral.indexState.state).toBe('building');
       expect(buildingLiteral.items).toEqual([]);
@@ -685,7 +617,6 @@ describe('GlobalSearchService', () => {
       db.textIndexBuilding = original;
     }
 
-    // The build "committed": the same queries serve real hits again.
     const ready = await service.search({ query: '苹果' });
     expect(ready.items.length).toBe(1);
     expect(ready.indexState.state).toBe('ready');
@@ -698,7 +629,7 @@ describe('GlobalSearchService', () => {
     const writer = track(makeInlineService(home!, index));
     await writer.reindex();
     const reader = track(makeInlineService(home!, index));
-    await reader.status(); // forces the read-only open
+    await reader.status();
 
     const db = coreOf(reader).db as unknown as { textIndexBuilding(name: string): boolean };
     const original = db.textIndexBuilding.bind(db);
@@ -714,8 +645,6 @@ describe('GlobalSearchService', () => {
     expect(ready.items.length).toBe(1);
     expect(ready.indexState.state).toBe('readonly');
   });
-
-  // -- turn ordinals ------------------------------------------------------------
 
   it('assigns 0-based turn ordinals to user and assistant hits', async () => {
     const s1 = summary('s1', 'turns', T1);
@@ -737,23 +666,18 @@ describe('GlobalSearchService', () => {
   it('counts turns independently of indexing (text-less prompts, hidden & marker origins)', async () => {
     const s1 = summary('s1', 'counting', T1);
     await writeWire(home!, 's1', 'main', [
-      // Pure-image user prompt: not indexed, but opens turn 0.
       rawRecord({
         type: 'context.append_message',
         time: T1,
         message: { role: 'user', content: [{ type: 'image', source: { kind: 'url', url: 'x' } }] },
       }),
-      // Injection: no turn.
       userLine('苹果 injected', T1 + 100, { kind: 'injection', variant: 'reminder' }),
-      // Turn-opening system trigger: opens turn 2 (promptless), not indexed.
       userLine('苹果 continuation', T1 + 200, {
         kind: 'system_trigger',
         name: 'goal_continuation',
       }),
-      // Marker without user-slash: no turn.
       userLine('苹果 skill noise', T1 + 300, { kind: 'skill_activation', trigger: 'model-tool' }),
       userLine('苹果 typed', T2, { kind: 'user' }),
-      // user-slash skill: indexed AND opens turn 4.
       userLine('/commit 苹果 ship it', T3, { kind: 'skill_activation', trigger: 'user-slash' }),
     ]);
     const service = track(makeService(home!, staticIndex([s1])));
@@ -762,10 +686,10 @@ describe('GlobalSearchService', () => {
     const page = await service.search({ query: '苹果', sort: 'time_asc' });
     const bySnippet = (needle: string) =>
       page.items.find((h) => h.snippet.includes(needle) && h.role === 'user');
-    expect(bySnippet('injected')).toBeUndefined(); // filtered out of the index
+    expect(bySnippet('injected')).toBeUndefined();
     expect(bySnippet('continuation')).toBeUndefined();
     expect(bySnippet('skill noise')).toBeUndefined();
-    expect(bySnippet('typed')?.turn).toBe(2); // image=0, injection=–, trigger=1
+    expect(bySnippet('typed')?.turn).toBe(2);
     expect(bySnippet('ship it')?.turn).toBe(3);
   });
 
@@ -845,8 +769,6 @@ describe('GlobalSearchService', () => {
     const page = await service.search({ query: '苹果', sort: 'time_asc' });
     const bySnippet = (needle: string) => page.items.find((h) => h.snippet.includes(needle));
     expect(bySnippet('before')?.turn).toBe(0);
-    // The undone turn's docs keep their pre-undo ordinal (transcript no longer
-    // shows them — accepted deviation), and the redo reuses ordinal 1.
     expect(bySnippet('undone reply')?.turn).toBe(1);
     expect(bySnippet('redone')?.turn).toBe(1);
   });
@@ -856,9 +778,6 @@ describe('GlobalSearchService', () => {
     await writeWire(home!, 's1', 'main', [
       userLine('苹果 before compaction', T1),
       assistantLine('苹果 old reply', T2),
-      // The transcript's cold replay keeps full history (the compaction becomes
-      // a `compaction_summary` marker message) and groupTurns numbers it
-      // continuously — so the indexer must NOT reset its counter either.
       rawRecord({
         type: 'context.apply_compaction',
         time: T3,
@@ -866,8 +785,6 @@ describe('GlobalSearchService', () => {
         compactedCount: 2,
       }),
       userLine('summary', T3 + 1000, { kind: 'compaction_summary' }),
-      // Assistant content right after the compaction marker still attaches to
-      // the pre-compaction turn (the marker does not open one).
       assistantLine('苹果 post-compaction reply', T3 + 1500),
       userLine('苹果 after compaction', T3 + 2000),
     ]);
@@ -882,16 +799,12 @@ describe('GlobalSearchService', () => {
     expect(bySnippet('after compaction')?.turn).toBe(1);
   });
 
-  // -- step ids ---------------------------------------------------------------
-
   it('assigns transcript step ids to assistant hits; user and title hits carry none', async () => {
     const s1 = summary('s1', '苹果 steps', T1);
     await writeWire(home!, 's1', 'main', [
       userLine('苹果 question', T1),
       stepBeginLine('u1', 1, T1 + 100),
       assistantStepLine('苹果 first draft', 'u1', T1 + 200),
-      // A vacuous step: begins but owns no text — no document, and the next
-      // step keeps the wire's original ordinal (live numbering, gaps allowed).
       stepBeginLine('u2', 2, T1 + 300),
       stepBeginLine('u3', 3, T1 + 400),
       assistantStepLine('苹果 second draft', 'u3', T1 + 500),
@@ -915,9 +828,7 @@ describe('GlobalSearchService', () => {
     const s1 = summary('s1', 'orphans', T1);
     await writeWire(home!, 's1', 'main', [
       userLine('苹果 question', T1),
-      // A stepUuid the tracker never saw a begin for…
       assistantStepLine('苹果 orphan', 'unknown-uuid', T2),
-      // …and a legacy record with no stepUuid at all.
       assistantLine('苹果 legacy', T3),
     ]);
     const service = track(makeService(home!, staticIndex([s1])));
@@ -948,8 +859,6 @@ describe('GlobalSearchService', () => {
     await service.reindex();
 
     const page = await service.search({ query: '苹果', role: 'assistant', sort: 'time_asc' });
-    // The undone step keeps its pre-undo id (same deviation as turns); the
-    // redo renumbers from a fresh tracker.
     expect(page.items.map((h) => h.stepId)).toEqual(['t0.1', 't1.1', 't1.1']);
   });
 
@@ -973,9 +882,6 @@ describe('GlobalSearchService', () => {
 
   it('keeps step attribution across incremental sync passes', async () => {
     const s1 = summary('s1', 'resume steps', T1);
-    // The first pass indexes the turn boundary and the step.begin only; the
-    // text arrives later — the uuid → ordinal mapping must survive in the
-    // persisted stepState for the next pass to attribute the doc.
     const file = await writeWire(home!, 's1', 'main', [
       userLine('苹果 question', T1),
       stepBeginLine('u1', 1, T1 + 100),
@@ -999,8 +905,6 @@ describe('GlobalSearchService', () => {
     const service = track(makeInlineService(home!, staticIndex([s1])));
     await service.reindex();
 
-    // Simulate a file meta written before step tracking existed by stripping
-    // stepState from the persisted meta.
     const db = coreOf(service).db;
     expect(db).not.toBeNull();
     const metaRows = db!.query({ key: { prefix: '\0meta\\file\\' } });
@@ -1010,18 +914,13 @@ describe('GlobalSearchService', () => {
       await db!.set(row.key, rest);
     }
 
-    // Appending triggers a sync; the legacy meta must force a full rescan of
-    // the file, so every doc — old and new — ends up with a stepId.
     await appendFile(file, `${assistantStepLine('苹果 reply two', 'u1', T2)}\n`, 'utf8');
     await settleSync(service);
     const page = await service.search({ query: '苹果', role: 'assistant', sort: 'time_asc' });
     expect(page.items.map((h) => h.stepId)).toEqual(['t0.1', 't0.1']);
   });
 
-  // -- literal mode -------------------------------------------------------------
-
   describe('literal mode', () => {
-    /** Symbol/CJK/emoji-heavy session the terms tokenizer cannot serve. */
     async function literalFixture(): Promise<GlobalSearchService> {
       const s1 = summary('s1', 'literal 会话', T1);
       await writeWire(home!, 's1', 'main', [
@@ -1044,10 +943,9 @@ describe('GlobalSearchService', () => {
       const cpp = await service.search({ query: 'C++', mode: 'literal' });
       expect(cpp.items.length).toBe(1);
       expect(cpp.items[0]?.snippet).toContain('C++');
-      expect(cpp.items[0]?.score).toBe(0); // literal hits are unscored
+      expect(cpp.items[0]?.score).toBe(0);
       expect(cpp.incomplete).toBeUndefined();
 
-      // 'foo-bar' must not match the 'foo bar' doc, and vice versa.
       const dashed = await service.search({ query: 'foo-bar', mode: 'literal' });
       expect(dashed.items.length).toBe(1);
       expect(dashed.items[0]?.snippet).toContain('foo-bar');
@@ -1074,7 +972,6 @@ describe('GlobalSearchService', () => {
       expect(page.items.length).toBe(1);
       expect(page.items[0]?.snippet).toContain('C++');
 
-      // Multiple hits: time desc even when sort is left at its default.
       const foo = await service.search({ query: 'foo', mode: 'literal' });
       expect(foo.items.map((h) => h.time)).toEqual([T1 + 200, T1 + 100]);
     });
@@ -1098,10 +995,8 @@ describe('GlobalSearchService', () => {
       await expect(service.search({ query: 'c', mode: 'literal' })).rejects.toThrow(
         /literal queries need at least 2 characters/,
       );
-      // NFKC can LEGALIZE a 1-character query: the ligature 'ﬀ' folds to 'ff'.
       const ligature = await service.search({ query: 'ﬀ', mode: 'literal' });
       expect(ligature.items).toEqual([]);
-      // An untrimmed 2-space query is a legal literal query too.
       const spaces = await service.search({ query: '  ', mode: 'literal' });
       expect(spaces.items).toEqual([]);
     });
@@ -1121,10 +1016,8 @@ describe('GlobalSearchService', () => {
       const page = await service.search({ query: 'cap-target', mode: 'literal' });
       expect(page.items.length).toBe(2);
       expect(page.incomplete).toBe('candidate_cap');
-      // Every returned item is still a confirmed substring hit.
       expect(page.items.every((h) => h.snippet.includes('cap-target'))).toBe(true);
 
-      // terms mode never reports incompleteness.
       const terms = await service.search({ query: 'cap-target' });
       expect(terms.incomplete).toBeUndefined();
     });
@@ -1153,11 +1046,9 @@ describe('GlobalSearchService', () => {
       const times = [...page1.items, ...page2.items].map((h) => h.time);
       expect(new Set(times).size).toBe(3);
 
-      // The token fingerprints the mode: a literal token fails under terms…
       await expect(
         service.search({ query: 'page-target', pageToken: page1.pageToken }),
       ).rejects.toMatchObject({ reason: 'invalid_page_token' });
-      // …and a terms token fails under literal.
       const termsPage = await service.search({ query: 'page-target', pageSize: 2 });
       await expect(
         service.search({ query: 'page-target', mode: 'literal', pageToken: termsPage.pageToken }),
@@ -1166,14 +1057,11 @@ describe('GlobalSearchService', () => {
 
     it('keeps terms mode untouched when the query contains symbols', async () => {
       const service = await literalFixture();
-      // Default mode tokenizes 'C++' to the word 'c' — behavior unchanged.
       const terms = await service.search({ query: 'C++' });
       expect(terms.items.length).toBeGreaterThan(0);
       expect(terms.incomplete).toBeUndefined();
     });
   });
-
-  // -- stage 4: bounded lifecycle ---------------------------------------------
 
   describe('stage-4 bounded lifecycle', () => {
     it('serves the published generation without waiting for a blocked background sync', async () => {
@@ -1191,14 +1079,8 @@ describe('GlobalSearchService', () => {
       const service = track(makeService(home!, index));
       await service.reindex();
       expect((await service.search({ query: '苹果' })).items.length).toBe(1);
-      // The search above kicked a fire-and-forget background pass whose
-      // session enumeration already ran with block=false: drain it before the
-      // append, or a CI-slow pass reads the delta below and publishes it early.
       await settleSync(service);
 
-      // New bytes arrive, then the next background pass is blocked inside the
-      // session enumeration. The search must return promptly with the OLD
-      // generation instead of waiting for the pass.
       await appendFile(file, `${userLine('苹果 delta', T2)}\n`, 'utf8');
       block = true;
       const page = await Promise.race([
@@ -1207,8 +1089,8 @@ describe('GlobalSearchService', () => {
           setTimeout(() => reject(new Error('search waited for the blocked sync')), 2_000),
         ),
       ]);
-      expect(page.items.length).toBe(1); // the published generation, not the delta
-      expect(page.indexState.stale).toBe(true); // a pass is in flight
+      expect(page.items.length).toBe(1);
+      expect(page.indexState.stale).toBe(true);
 
       release();
       await settleSync(service);
@@ -1222,8 +1104,6 @@ describe('GlobalSearchService', () => {
       const service = track(makeInlineService(home!, staticIndex([s1])));
       await service.reindex();
 
-      // Seed 10k foreign sessions × 3 file-meta rows directly (no wire files
-      // on disk), simulating a large pre-existing index.
       const db = coreOf(service).db!;
       for (let from = 0; from < 10_000; from += 2_500) {
         const ops: { op: 'set'; key: string; value: unknown }[] = [];
@@ -1248,8 +1128,6 @@ describe('GlobalSearchService', () => {
         await db.batch(ops);
       }
 
-      // Count the file-meta rows one session sync scans: it must be bounded
-      // by THIS session's files, not by the global 30k metas.
       let metaRowsScanned = 0;
       const origQuery = db.query.bind(db);
       db.query = (criteria) => {
@@ -1258,7 +1136,7 @@ describe('GlobalSearchService', () => {
         return rows;
       };
       await coreOf(service).syncSession(db, syncInput(home!, s1));
-      expect(metaRowsScanned).toBeLessThanOrEqual(5); // s1 has exactly 1 meta
+      expect(metaRowsScanned).toBeLessThanOrEqual(5);
     });
 
     it('migrates legacy hash-only file-meta keys to the session-scoped format', async () => {
@@ -1269,8 +1147,6 @@ describe('GlobalSearchService', () => {
       await first.reindex();
       expect((await first.search({ query: '苹果' })).items.length).toBe(2);
 
-      // Rewrite every file meta under its pre-v2 hash-only key (same value),
-      // simulating an index written before the key migration.
       const db = coreOf(first).db!;
       const metas = db.query({ key: { prefix: '\0meta\\file\\' } });
       expect(metas.length).toBe(2);
@@ -1283,17 +1159,15 @@ describe('GlobalSearchService', () => {
         await db.del(row.key);
         await db.set(legacyKey, row.value);
       }
-      first.dispose(); // releases the write lock for the next instance
+      first.dispose();
       await drainGlobalSearchDisposals();
 
-      // A fresh instance migrates on its first background pass.
       const second = track(makeInlineService(home!, staticIndex([s1])));
       await settleSync(second);
       const db2 = coreOf(second).db!;
       const after = db2.query({ key: { prefix: '\0meta\\file\\' } });
       expect(after.length).toBe(2);
       for (const row of after) {
-        // Every key is session-scoped now, and the watermark survived.
         expect(row.key.slice('\0meta\\file\\'.length)).toContain('\\');
         const path = row.value['path'] as string;
         const legacyKey =
@@ -1301,8 +1175,6 @@ describe('GlobalSearchService', () => {
         expect(row.value['offset']).toBe(legacyOffsets.get(legacyKey));
       }
 
-      // The index keeps serving the migrated metas' docs, and an incremental
-      // append resumes from the migrated watermark.
       expect((await second.search({ query: '苹果' })).items.length).toBe(2);
       await appendFile(main, `${userLine('苹果 resumed', T3)}\n`, 'utf8');
       await settleSync(second);
@@ -1322,19 +1194,14 @@ describe('GlobalSearchService', () => {
       const page1 = await service.search({ query: '苹果', sort: 'time_asc', pageSize: 10 });
       expect(page1.items.length).toBe(10);
       expect(page1.hasMore).toBe(true);
-      // v2 keyset token: version + generation + boundary.
       const decoded = JSON.parse(
         Buffer.from(page1.pageToken!, 'base64url').toString('utf8'),
       ) as Record<string, unknown>;
       expect(decoded['v']).toBe(2);
-      // The pinned generation is `<bootSalt>:<counter>` — the salt makes
-      // tokens fail validation across a worker/process restart.
       expect(typeof decoded['g']).toBe('string');
       expect(decoded['g']).toMatch(/:\d+$/);
       expect(Array.isArray(decoded['b'])).toBe(true);
 
-      // Additive writes land mid-pagination: they do NOT change the
-      // generation, and pages stay exact (new docs sort past the cursor).
       const more: string[] = [];
       for (let i = 25; i < 30; i++) more.push(`${userLine(`苹果 doc ${i}`, T1 + i)}\n`);
       await appendFile(file, more.join(''), 'utf8');
@@ -1367,7 +1234,6 @@ describe('GlobalSearchService', () => {
       const service = track(makeService(home!, staticIndex([s1])));
       await service.reindex();
 
-      // A shrink rescan REPLACES indexed documents → generation bump.
       const page1 = await service.search({ query: '苹果', sort: 'time_asc', pageSize: 10 });
       await writeFile(
         file,
@@ -1382,7 +1248,6 @@ describe('GlobalSearchService', () => {
         service.search({ query: '苹果', sort: 'time_asc', pageToken: page1.pageToken }),
       ).rejects.toThrow(/older index generation/);
 
-      // A reindex swaps the base → generation bump too.
       const page2 = await service.search({ query: '苹果', sort: 'time_asc', pageSize: 10 });
       await service.reindex();
       await expect(
@@ -1398,13 +1263,10 @@ describe('GlobalSearchService', () => {
       const service = track(makeService(home!, staticIndex([s1])));
       await service.reindex();
 
-      // Full budget: the page is complete.
       const full = await service.search({ query: '的汉', mode: 'literal' });
       expect(full.incomplete).toBeUndefined();
       expect(full.items.length).toBe(20);
 
-      // A tiny postings budget stops the index-side candidate scan early and
-      // says so — every returned hit is still confirmed, never a false hit.
       service.postingsVisitBudget = 50;
       const page = await service.search({ query: '的汉', mode: 'literal' });
       expect(page.incomplete).toBe('postings_budget');
@@ -1429,17 +1291,14 @@ describe('GlobalSearchService', () => {
       await appendFile(file, `${userLine('苹果 delta', T2)}\n`, 'utf8');
       await settleSync(writer);
 
-      // The search still serves the stale view; the refresh failure is
-      // recorded instead of swallowed.
       const stale = await reader.search({ query: '苹果' });
       expect(stale.items.length).toBe(1);
       await refreshNow(reader);
       const degraded = await reader.search({ query: '苹果' });
       expect(degraded.indexState.state).toBe('readonly');
       expect(degraded.indexState.degraded).toBe('refresh boom');
-      expect(degraded.items.length).toBe(1); // still the stale generation
+      expect(degraded.items.length).toBe(1);
 
-      // Restoring the refresh path self-heals the flag.
       coreOf(reader).doRefreshReadonly = original;
       await refreshNow(reader);
       const healed = await reader.search({ query: '苹果' });
@@ -1461,8 +1320,6 @@ describe('GlobalSearchService', () => {
       ) as { v: number; f: string };
       expect(v2.v).toBe(2);
 
-      // Fabricate a pre-versioning offset token with the same fingerprint:
-      // it is answered with offset semantics and upgraded on the way out.
       const legacyToken = Buffer.from(JSON.stringify({ f: v2.f, s: 10 })).toString('base64url');
       const page2 = await service.search({
         query: '苹果',
@@ -1494,7 +1351,6 @@ describe('GlobalSearchService', () => {
     it('paginates score sort by (score, time, key) without duplicates', async () => {
       const s1 = summary('s1', 'score pages', T1);
       const lines: string[] = [];
-      // Varying term frequency per doc produces several score bands.
       for (let i = 0; i < 30; i++) {
         lines.push(userLine(`${'苹果 '.repeat((i % 5) + 1)}doc ${i}`, T1 + i));
       }
@@ -1517,7 +1373,6 @@ describe('GlobalSearchService', () => {
           expect(seen.has(hit.time)).toBe(false);
           seen.add(hit.time);
         }
-        // Scores are non-increasing within and across pages.
         for (let i = 1; i < page.items.length; i++) {
           expect(page.items[i]!.score).toBeLessThanOrEqual(page.items[i - 1]!.score);
         }
@@ -1536,8 +1391,6 @@ describe('GlobalSearchService', () => {
       await writeWire(home!, 's1', 'main', [userLine('苹果 heal', T1)]);
       const service = track(makeInlineService(home!, staticIndex([s1])));
 
-      // The db open fails transiently (e.g. a read-only open racing a
-      // writer's compaction).
       const core = coreOf(service);
       const origOpen = core.openSearchDb;
       let failOpen = true;
@@ -1546,26 +1399,21 @@ describe('GlobalSearchService', () => {
         return origOpen.call(core);
       };
 
-      // First search: building semantics while the (doomed) pass runs.
       const building = await service.search({ query: '苹果' });
       expect(building.indexState.state).toBe('building');
-      await internals(service).syncPromise?.catch(() => {}); // the failing pass
+      await internals(service).syncPromise?.catch(() => {});
 
-      // While the failure persists, searches surface it — and each kicks a
-      // background retry instead of freezing the service.
       await expect(service.search({ query: '苹果' })).rejects.toMatchObject({
         reason: 'index_unavailable',
       });
       await expect(service.search({ query: '苹果' })).rejects.toThrow(/failed to open: open boom/);
-      await internals(service).syncPromise?.catch(() => {}); // the kicked retry also fails for now
+      await internals(service).syncPromise?.catch(() => {});
 
-      // The transient cause goes away. NO explicit sync is driven here: the
-      // next search itself must kick the pass that heals the open.
       failOpen = false;
       await expect(service.search({ query: '苹果' })).rejects.toMatchObject({
         reason: 'index_unavailable',
       });
-      await internals(service).syncPromise; // the search-kicked pass: succeeds
+      await internals(service).syncPromise;
 
       const page = await service.search({ query: '苹果' });
       expect(page.items.length).toBe(1);
@@ -1582,13 +1430,8 @@ describe('GlobalSearchService', () => {
       await reader.status();
       expect((await reader.search({ query: '苹果' })).items.length).toBe(1);
 
-      // Rotate the writer's WAL so the reader's refresh must take the reopen
-      // path (which swaps the handle and closes the previous one).
       await coreOf(writer).db!.compact();
 
-      // Park the search's fingerprint probe at a gate; while it is parked, a
-      // background refresh completes the reopen and closes the handle the
-      // search captured.
       const ri = coreOf(reader);
       const origFp = ri.computeFingerprint.bind(ri);
       let fpCalls = 0;
@@ -1598,7 +1441,7 @@ describe('GlobalSearchService', () => {
       });
       ri.computeFingerprint = async () => {
         fpCalls++;
-        if (fpCalls === 1) await probeGate; // the search's probe; the refresh's own probe passes
+        if (fpCalls === 1) await probeGate;
         return origFp();
       };
 
@@ -1606,12 +1449,11 @@ describe('GlobalSearchService', () => {
       for (let i = 0; i < 1_000 && fpCalls === 0; i++) {
         await new Promise((resolve) => setImmediate(resolve));
       }
-      expect(fpCalls).toBe(1); // the search is parked inside the probe
+      expect(fpCalls).toBe(1);
 
-      await refreshNow(reader); // reopen + swap + close the captured handle
+      await refreshNow(reader);
       releaseProbe();
 
-      // Must re-pin to the swapped handle instead of dying on the closed one.
       const page = await searchPromise;
       expect(page.items.length).toBe(1);
       expect(page.indexState.state).toBe('readonly');
@@ -1628,7 +1470,6 @@ describe('GlobalSearchService', () => {
         reason: 'invalid_query',
       });
       await expect(service.search({ query: 'aa bb cc dd' })).rejects.toThrow(/too many terms/);
-      // Duplicate terms collapse before the count.
       expect((await service.search({ query: 'aa aa bb cc' })).items).toEqual([]);
 
       const oversized = 'x'.repeat(1_025);
@@ -1648,7 +1489,6 @@ describe('GlobalSearchService', () => {
       const service = track(makeService(home!, staticIndex([s1])));
       await service.reindex();
 
-      // An already-expired deadline stops the match loop immediately.
       service.queryDeadlineMs = -1;
       const stopped = await service.search({ query: '苹果' });
       expect(stopped.incomplete).toBe('deadline');
@@ -1658,8 +1498,6 @@ describe('GlobalSearchService', () => {
       expect(complete.incomplete).toBeUndefined();
       expect(complete.items.length).toBe(20);
 
-      // Literal confirmation charges each candidate's text against the
-      // volume budget: two 40-char docs fit a budget of 50, the third stops.
       service.queryTextBudgetChars = 50;
       const textStopped = await service.search({ query: '苹果', mode: 'literal' });
       expect(textStopped.incomplete).toBe('deadline');
@@ -1670,10 +1508,7 @@ describe('GlobalSearchService', () => {
     });
   });
 
-  // -- live route (in-memory transcript scan) ------------------------------------
-
   describe('live route', () => {
-    /** Session-index stub whose `get` resolves the fixture summaries. */
     function gettableIndex(summaries: SessionSummary[]): ISessionIndex {
       const byId = new Map(summaries.map((s) => [s.id, s]));
       return {
@@ -1707,12 +1542,6 @@ describe('GlobalSearchService', () => {
       };
     }
 
-    /**
-     * A real TranscriptStore mirroring the wire fixture of the parity test:
-     * turn 0 with a user prompt at T1 and one assistant text frame in step
-     * `t0.1` at T2, plus a thinking frame and a tool frame that must NOT be
-     * searchable.
-     */
     function makeLiveStore(sessionId: string): TranscriptStore {
       const store = new TranscriptStore(sessionId);
       store.ensureAgent('main', { agentId: 'main', type: 'main' });
@@ -1774,11 +1603,6 @@ describe('GlobalSearchService', () => {
       return store;
     }
 
-    /**
-     * Generic turn builder for the terms-mode and edge-case tests: one turn
-     * (optional prompt, optional state) whose steps carry only assistant text
-     * frames.
-     */
     function addLiveTurn(
       store: TranscriptStore,
       agentId: string,
@@ -1856,14 +1680,12 @@ describe('GlobalSearchService', () => {
         container: { sessionId: 's1' },
       });
       expect(page.source).toBe('live');
-      // 1 user doc + 1 assistant doc + 1 title doc were scanned.
       expect(page.indexState).toEqual({
         state: 'ready',
         indexedSessions: 1,
         totalSessions: 1,
         documents: 3,
       });
-      // Backfill gates ran for the session and its whole roster.
       expect(calls.whenReady).toEqual(['s1']);
       expect(calls.ensureAgentHistory).toEqual([['s1', 'main']]);
 
@@ -1888,7 +1710,6 @@ describe('GlobalSearchService', () => {
       expect(title).toBeDefined();
       expect(title!.snippet).toBe('苹果标题');
 
-      // Thinking and tool frames are not searchable.
       const thinking = await service.search({
         query: '不可见',
         mode: 'literal',
@@ -1898,8 +1719,6 @@ describe('GlobalSearchService', () => {
     });
 
     it('accepts single-character literal queries on the live route', async () => {
-      // The <2-character gate is an n-gram index constraint; the live route's
-      // in-memory scan has no such limit.
       const s1 = summary('s1', '苹果标题', T1);
       const service = track(makeService(home!, gettableIndex([s1])));
       service.setLiveTranscriptSource(fakeLiveSource(new Map([['s1', makeLiveStore('s1')]])));
@@ -1910,11 +1729,9 @@ describe('GlobalSearchService', () => {
         container: { sessionId: 's1' },
       });
       expect(page.source).toBe('live');
-      // user prompt + assistant frame + title all contain '苹'.
       expect(page.items.length).toBe(3);
       expect(page.items.map((h) => h.role).sort()).toEqual(['assistant', 'title', 'user']);
 
-      // The index route keeps rejecting the same 1-character query.
       await expect(service.search({ query: '苹', mode: 'literal' })).rejects.toMatchObject({
         reason: 'invalid_query',
       });
@@ -1926,7 +1743,6 @@ describe('GlobalSearchService', () => {
       const service = track(makeService(home!, gettableIndex([s1])));
       await service.reindex();
 
-      // No source wired at all → always the index route.
       const unwired = await service.search({
         query: '苹果',
         mode: 'literal',
@@ -1935,7 +1751,6 @@ describe('GlobalSearchService', () => {
       expect(unwired.source).toBe('index');
       expect(unwired.items.length).toBe(1);
 
-      // Source wired but the session is not in memory → still the index route.
       service.setLiveTranscriptSource(fakeLiveSource(new Map()));
       const notLive = await service.search({
         query: '苹果',
@@ -1958,13 +1773,11 @@ describe('GlobalSearchService', () => {
       const page = await service.search({ query: '苹果', container: { sessionId: 's1' } });
       expect(page.source).toBe('live');
       expect(page.items.length).toBe(2);
-      // The doc repeating the term scores higher (Σ log(1 + tf)).
       expect(page.items[0]!.time).toBe(T2);
       expect(page.items[1]!.time).toBe(T1);
       expect(page.items[0]!.score).toBeGreaterThan(page.items[1]!.score);
       expect(page.items[1]!.score).toBeGreaterThan(0);
 
-      // Duplicate query terms collapse to one (same as `TextIndex.search`).
       const dup = await service.search({ query: '苹果 苹果', container: { sessionId: 's1' } });
       expect(dup.items.map((h) => h.time)).toEqual(page.items.map((h) => h.time));
     });
@@ -1986,14 +1799,11 @@ describe('GlobalSearchService', () => {
       expect(live.source).toBe('live');
       expect(live.items.length).toBe(2);
 
-      stores.delete('s1'); // the same query now falls to the index route
+      stores.delete('s1');
       const index = await service.search(query);
       expect(index.source).toBe('index');
       expect(index.items.length).toBe(2);
 
-      // Scores are not comparable across routes (the live route has no
-      // corpus-wide IDF); compare hit identity, plus each route's own
-      // score-ordering property.
       const identity = (page: typeof live) =>
         page.items
           .map((h) => ({
@@ -2088,7 +1898,6 @@ describe('GlobalSearchService', () => {
         container: { sessionId: 's1', agentId: 'sub' },
       });
       expect(page.source).toBe('live');
-      // Backfill ran for the requested agent only, and only its docs scanned.
       expect(calls.whenReady).toEqual(['s1']);
       expect(calls.ensureAgentHistory).toEqual([['s1', 'sub']]);
       expect(page.indexState.documents).toBe(1);
@@ -2103,7 +1912,6 @@ describe('GlobalSearchService', () => {
       const stores = new Map([['s1', new TranscriptStore('s1')]]);
       service.setLiveTranscriptSource(fakeLiveSource(stores, calls));
 
-      // Empty roster: no agents at all — nothing to backfill or scan.
       const empty = await service.search({ query: '苹果', container: { sessionId: 's1' } });
       expect(empty.source).toBe('live');
       expect(empty.items).toEqual([]);
@@ -2111,8 +1919,6 @@ describe('GlobalSearchService', () => {
       expect(calls.whenReady).toEqual(['s1']);
       expect(calls.ensureAgentHistory).toEqual([]);
 
-      // A turn without a prompt and steps with empty/whitespace-only text
-      // frames produce no documents and do not break the scan.
       const store = new TranscriptStore('s1');
       store.ensureAgent('main', { agentId: 'main', type: 'main' });
       addLiveTurn(store, 'main', {
@@ -2143,8 +1949,6 @@ describe('GlobalSearchService', () => {
         ensureAgentHistory: async () => {},
       });
 
-      // The index has a hit for this query, but a live-route failure is a
-      // real error and must surface instead of falling back.
       await expect(
         service.search({ query: '苹果', container: { sessionId: 's1' } }),
       ).rejects.toThrow('backfill boom');
@@ -2196,7 +2000,6 @@ describe('GlobalSearchService', () => {
       await service.reindex();
       service.setLiveTranscriptSource(fakeLiveSource(stores));
 
-      // Live route, page 1 of 2 (title 'flip' does not contain the query).
       const query = {
         query: '苹果',
         mode: 'literal' as const,
@@ -2207,14 +2010,11 @@ describe('GlobalSearchService', () => {
       expect(livePage.source).toBe('live');
       expect(livePage.hasMore).toBe(true);
 
-      // The session closes mid-pagination: the same query now takes the index
-      // route and must reject the live-issued token.
       stores.delete('s1');
       await expect(
         service.search({ ...query, pageToken: livePage.pageToken }),
       ).rejects.toMatchObject({ reason: 'invalid_page_token' });
 
-      // And the reverse: an index-issued token fails once the session is live.
       const indexPage = await service.search(query);
       expect(indexPage.source).toBe('index');
       expect(indexPage.hasMore).toBe(true);
@@ -2240,7 +2040,7 @@ describe('GlobalSearchService', () => {
       const live = await service.search(query);
       expect(live.source).toBe('live');
 
-      stores.delete('s1'); // the same query now falls to the index route
+      stores.delete('s1');
       const index = await service.search(query);
       expect(index.source).toBe('index');
 
@@ -2267,21 +2067,14 @@ describe('GlobalSearchService', () => {
       await writeWire(home!, 's1', 'main', [userLine('苹果 recovery', T1)]);
       const service = track(makeInlineService(home!, staticIndex([s1])));
 
-      // Inject a failure into the writer-side text-index creation that runs
-      // after MiniDb.open has handed out the handle.
       const spy = vi
         .spyOn(MiniDb.prototype, 'createTextIndex')
         .mockRejectedValueOnce(new Error('injected createTextIndex failure'));
       await expect(service.reindex()).rejects.toThrow('injected createTextIndex failure');
       spy.mockRestore();
 
-      // The failed open must not have published the handle, and the handle
-      // must be closed — otherwise the leaked writer keeps the lock for the
-      // rest of the process lifetime and every later open degrades to
-      // read-only (the review #19 self-lock).
       expect(coreOf(service).db).toBeNull();
 
-      // The very next open takes the write lock again (same process).
       await service.reindex();
       const db = coreOf(service).db;
       expect(db).not.toBeNull();
@@ -2304,11 +2097,8 @@ describe('GlobalSearchService', () => {
       track(service);
       await service.reindex();
       expect((await service.search({ query: '苹果' })).items.length).toBe(1);
-      // The search kicked a fire-and-forget pass: settle it, or the syncNow
-      // below would single-flight JOIN it instead of starting a gated pass.
       await settleSync(service);
 
-      // Record trailing writes; the gated pass must skip its STATS_KEY write.
       const db = coreOf(service).db!;
       const setKeys: string[] = [];
       const origSet = db.set.bind(db);
@@ -2317,8 +2107,6 @@ describe('GlobalSearchService', () => {
         return origSet(key, value);
       };
 
-      // The next pass deletes the disappeared session; block it inside the
-      // deleteSessionDocs window, then dispose mid-pass.
       sessions.length = 0;
       const blocked = blockFirstCall(coreOf(service), 'deleteSessionDocs');
       const sync = syncNow(service);
@@ -2330,15 +2118,13 @@ describe('GlobalSearchService', () => {
         drained = true;
       });
       await flush();
-      expect(drained).toBe(false); // the drain waits for the in-flight pass
+      expect(drained).toBe(false);
 
       blocked.release();
       await sync;
       await drain;
       expect(drained).toBe(true);
       expect(coreOf(service).db).toBeNull();
-      // The gate closed before the trailing stats write: it was skipped, and
-      // no background write ever hit the closed handle.
       expect(setKeys).not.toContain('\0meta\\stats');
       expect(warnings.filter((w) => w.includes('closed'))).toEqual([]);
     });
@@ -2349,16 +2135,13 @@ describe('GlobalSearchService', () => {
       const writer = track(makeInlineService(home!, staticIndex([s1])));
       await writer.reindex();
 
-      // A second instance on the same home opens read-only (the writer holds
-      // the lock) and catches up by refreshing from the writer's commits.
       const { log, warnings } = recordingLog();
       const reader = new GlobalSearchService(staticIndex([s1]), makeBootstrap(home!), log, makeFlags(false));
       reader.syncDebounceMs = 0;
       track(reader);
-      await syncNow(reader); // join the constructor-kicked pass: opens the read-only handle
+      await syncNow(reader);
       expect((coreOf(reader).db as unknown as { readOnly: boolean } | null)?.readOnly).toBe(true);
 
-      // Block the next refresh inside its fingerprint probe, then dispose.
       const blocked = blockFirstCall(coreOf(reader), 'computeFingerprint');
       const refresh = refreshNow(reader);
       await blocked.entered;
@@ -2369,7 +2152,7 @@ describe('GlobalSearchService', () => {
         drained = true;
       });
       await flush();
-      expect(drained).toBe(false); // the drain waits for the in-flight refresh
+      expect(drained).toBe(false);
 
       blocked.release();
       await refresh;
@@ -2380,8 +2163,6 @@ describe('GlobalSearchService', () => {
     });
 
     it('drainGlobalSearchDisposals also waits for disposals registered while it was draining (review #21)', async () => {
-      // One service per home, each with an in-flight pass blocked inside the
-      // deleteSessionDocs window.
       const setupBlockedService = async (root: string) => {
         const s1 = summary('s1', 'drain fixpoint', T1);
         await writeWire(root, 's1', 'main', [userLine('苹果 fixpoint', T1)]);
@@ -2412,19 +2193,14 @@ describe('GlobalSearchService', () => {
       await flush();
       expect(drained).toBe(false);
 
-      // A second disposal registers WHILE the drain is awaiting the first.
       const homeB = await mkdtemp(join(tmpdir(), 'kimi-kap-search-drain-'));
       try {
         const b = await setupBlockedService(homeB);
         b.service.dispose();
 
-        // Let the first service finish: a snapshot-only drain (Promise.all
-        // over the set at call time) would return here, leaving b behind.
         const aDb = coreOf(a.service).db!;
         a.blocked.release();
         await a.sync;
-        // Join A's in-pending close (close is idempotent and shared) so its
-        // disposal has fully settled — only promise microtasks remain below.
         await aDb.close();
         await flush();
         expect(drained).toBe(false);
@@ -2442,19 +2218,7 @@ describe('GlobalSearchService', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// stage-4: search worker host lifecycle
-// ---------------------------------------------------------------------------
-// The worker-mode service runs the index core in a dedicated worker thread.
-// These tests cover the host's lifecycle contracts: crash restart with the
-// token-guarded lock reap, corruption rebuild inside the worker, cross-worker
-// lock contention, read-only reopen after WAL/snapshot replacement, in-flight
-// request convergence, dispose backstop, and the main-thread latency probe.
-
 describe('search worker host (stage 4)', () => {
-  // These tests spawn real worker threads (≈200ms each, several per test);
-  // the explicit 30s timeouts keep them load-proof under a saturated
-  // full-suite CI run (vitest's 5s default is meant for in-process work).
   let home: string | undefined;
   const services: GlobalSearchService[] = [];
   const hosts: SearchWorkerHost[] = [];
@@ -2501,24 +2265,17 @@ describe('search worker host (stage 4)', () => {
     await service.reindex();
     expect((await service.search({ query: '苹果' })).items.length).toBe(1);
 
-    // The worker holds the write lock with THIS process's pid (worker threads
-    // share it) — the stale-by-pid rule alone could never reclaim it here.
     const lockRaw = JSON.parse(await readFile(lockPath(), 'utf8')) as { pid: number };
     expect(lockRaw.pid).toBe(process.pid);
 
     await hostOf(service).killWorkerForTest();
-    // The dead worker's lock line is reaped (guarded by its token).
     await waitForGone(lockPath());
 
-    // Inside the backoff window the search reports a recognizable degraded
-    // page instead of hanging or silently serving nothing.
     const degraded = await service.search({ query: '苹果' });
     expect(degraded.items).toEqual([]);
     expect(degraded.indexState.state).toBe('building');
     expect(degraded.indexState.degraded).toContain('worker');
 
-    // After the backoff the coordinator's retry respawns the worker, reopens
-    // the index and serves real hits again.
     await new Promise((resolve) => setTimeout(resolve, 700));
     await settleSync(service);
     const page = await service.search({ query: '苹果' });
@@ -2527,10 +2284,6 @@ describe('search worker host (stage 4)', () => {
   });
 
   it('reports the lock token at acquire time; a mid-open kill leaves a reapable lock', { timeout: 30_000 }, async () => {
-    // Seed a corpus with an inline writer so the worker's first open has a
-    // real WAL/generation to chew — the kill lands while the open RPC is
-    // still in flight, so the token could only have arrived via the early
-    // `lockToken` event (no response had a chance to carry it).
     const summaries: SessionSummary[] = [];
     for (let i = 0; i < 300; i++) {
       const s = summary(`midopen-${i}`, `midopen 会话 ${i}`, T1 + i);
@@ -2562,16 +2315,12 @@ describe('search worker host (stage 4)', () => {
       },
       { interval: 5, timeout: 10_000 },
     );
-    // The token event fired at lock-acquire time, long before the replay
-    // finishes — this is the property the mid-open reap depends on.
     expect(openSettled).toBe(false);
 
     await host.killWorkerForTest();
-    await opening; // settled (rejected as crashed) — captured above
+    await opening;
     await waitForGone(lockPath());
 
-    // After the backoff the replacement worker reopens as the WRITER — never
-    // a silent permanent read-only.
     await new Promise((resolve) => setTimeout(resolve, 700));
     const reopened = await host.ensureOpen();
     expect(reopened.readOnly).toBe(false);
@@ -2580,8 +2329,6 @@ describe('search worker host (stage 4)', () => {
   it('recovers a read-only open caused by an orphaned same-pid lock', { timeout: 30_000 }, async () => {
     const dir = join(home!, 'search-index');
     await mkdir(dir, { recursive: true });
-    // An orphan lock line as a crashed worker would leave it: this process's
-    // (alive) pid, but a token no live worker can claim.
     await writeFile(
       join(dir, 'db.lock'),
       JSON.stringify({ pid: process.pid, ts: Date.now(), token: 'orphan-token' }),
@@ -2590,10 +2337,8 @@ describe('search worker host (stage 4)', () => {
     const host = new SearchWorkerHost({ dir, log: noopLog });
     hosts.push(host);
     const first = await host.ensureOpen();
-    expect(first.readOnly).toBe(true); // the planted lock looks alive (same pid)
+    expect(first.readOnly).toBe(true);
 
-    // The orphan detector reaps it (the token belongs to no live worker) and
-    // restarts the worker, which reopens as the writer.
     await vi.waitFor(
       async () => {
         const status = await host.status();
@@ -2604,9 +2349,6 @@ describe('search worker host (stage 4)', () => {
   });
 
   it('beginClose abandons an in-flight worker sync and dispose stays bounded', { timeout: 30_000 }, async () => {
-    // 200 sessions × 30 lines: the first full pass takes hundreds of ms in
-    // the worker — long enough that beginClose lands before the pass can
-    // complete, with orders of magnitude of margin.
     const summaries: SessionSummary[] = [];
     for (let i = 0; i < 200; i++) {
       const s = summary(`drain-${i}`, `drain 会话 ${i}`, T1 + i);
@@ -2619,12 +2361,10 @@ describe('search worker host (stage 4)', () => {
     const host = new SearchWorkerHost({ dir: join(home!, 'search-index'), log: noopLog });
     hosts.push(host);
 
-    await host.ensureOpen(); // worker up first, so the sync posts before beginClose
-    const sync = host.sync(inputs); // first full pass (open + index)
+    await host.ensureOpen();
+    const sync = host.sync(inputs);
     await new Promise((resolve) => setTimeout(resolve, 20));
     host.beginClose();
-    // The pass saw the closing gate and returned early as a no-op instead of
-    // running to completion.
     const outcome = await sync;
     expect(outcome.noop).toBe(true);
 
@@ -2636,8 +2376,6 @@ describe('search worker host (stage 4)', () => {
 
   it('times out a wedged request and terminates the worker (watchdog)', { timeout: 30_000 }, async () => {
     const dir = join(home!, 'search-index');
-    // Swallow `status` while the gate is up: the request is never delivered,
-    // so only the watchdog can settle it. The respawned worker is ungated.
     let gate = true;
     const host = new SearchWorkerHost({
       dir,
@@ -2661,8 +2399,6 @@ describe('search worker host (stage 4)', () => {
     await expect(wedged).rejects.toMatchObject({ code: 'crashed' });
     await expect(wedged).rejects.toThrow(/timed out/);
 
-    // The wedged worker was terminated; after the backoff the next call
-    // respawns a healthy (ungated) one.
     gate = false;
     await new Promise((resolve) => setTimeout(resolve, 700));
     const status = await host.status();
@@ -2677,8 +2413,6 @@ describe('search worker host (stage 4)', () => {
       workerFactory: ({ url, data, execArgv }) => {
         const worker = new Worker(url, { workerData: data, execArgv });
         const original = worker.postMessage.bind(worker);
-        // Park `sync` in the channel; `close` flows through normally, so the
-        // worker drains and exits while the sync is still host-side pending.
         worker.postMessage = ((message: unknown, ...rest: unknown[]) => {
           if ((message as { type?: string } | null)?.type === 'sync') return true;
           return original(message as Parameters<Worker['postMessage']>[0], ...(rest as never[]));
@@ -2692,7 +2426,6 @@ describe('search worker host (stage 4)', () => {
     const sync = host.sync([]);
     sync.catch(() => {});
     await host.dispose();
-    // A clean close rejects the racing request as 'disposed', not 'crashed'.
     await expect(sync).rejects.toMatchObject({ code: 'disposed' });
   });
 
@@ -2703,8 +2436,6 @@ describe('search worker host (stage 4)', () => {
     await service.reindex();
 
     service.dispose();
-    // Same fail-fast contract as the inline host: a typed index_unavailable,
-    // never a bare channel error.
     await expect(service.search({ query: '苹果' })).rejects.toMatchObject({
       reason: 'index_unavailable',
       message: 'search service is disposed',
@@ -2724,11 +2455,8 @@ describe('search worker host (stage 4)', () => {
 
     await hostOf(service).killWorkerForTest();
     await new Promise((resolve) => setTimeout(resolve, 700));
-    await settleSync(service); // respawn + reopen + resync
+    await settleSync(service);
 
-    // The respawned worker's local generation counter restarted from 0; the
-    // boot salt makes the dead worker's token fail validation instead of
-    // colliding with the fresh counter.
     await expect(
       service.search({ query: '苹果', sort: 'time_asc', pageSize: 10, pageToken: page1.pageToken }),
     ).rejects.toMatchObject({ reason: 'invalid_page_token' });
@@ -2745,8 +2473,6 @@ describe('search worker host (stage 4)', () => {
     first.dispose();
     await drainGlobalSearchDisposals();
 
-    // Corrupt the snapshot: the worker's open must detect it and rebuild
-    // (the index is derived data — never repaired, only rebuilt).
     await writeFile(join(home!, 'search-index', 'db.snapshot'), 'not a snapshot {{{', 'utf8');
 
     const second = track(makeService(home!, staticIndex([s1])));
@@ -2769,14 +2495,11 @@ describe('search worker host (stage 4)', () => {
     expect(ro.indexState.state).toBe('readonly');
     expect(ro.items.length).toBe(1);
 
-    // WAL catch-up across two workers of one process.
     await appendFile(file, `${userLine('苹果 delta', T2)}\n`, 'utf8');
     await settleSync(writer);
     await refreshNow(reader);
     expect((await reader.search({ query: '苹果' })).items.length).toBe(2);
 
-    // The writer's worker dies; its lock is reaped. A fresh instance's worker
-    // then acquires the write lock (the election) and can reindex.
     await hostOf(writer).killWorkerForTest();
     await waitForGone(lockPath());
     writer.dispose();
@@ -2787,7 +2510,7 @@ describe('search worker host (stage 4)', () => {
     const ready = await third.search({ query: '苹果' });
     expect(ready.indexState.state).toBe('ready');
     expect(ready.items.length).toBe(2);
-    await third.reindex(); // would throw readonly_index without the write lock
+    await third.reindex();
     expect((await third.search({ query: '苹果' })).items.length).toBe(2);
   });
 
@@ -2802,8 +2525,6 @@ describe('search worker host (stage 4)', () => {
     await reader.status();
     expect((await reader.search({ query: '苹果' })).items.length).toBe(1);
 
-    // Reindex wipes and rebuilds the whole directory: the reader's watermark
-    // no longer aligns, so its refresh takes the reopen-and-swap path.
     await appendFile(file, `${userLine('苹果 rotated', T2)}\n`, 'utf8');
     await writer.reindex();
     await refreshNow(reader);
@@ -2823,8 +2544,6 @@ describe('search worker host (stage 4)', () => {
       workerFactory: ({ url, data, execArgv }) => {
         const worker = new Worker(url, { workerData: data, execArgv });
         const original = worker.postMessage.bind(worker);
-        // Park `sync` requests in the channel: never delivered to the worker,
-        // so the request is guaranteed in-flight when the worker dies.
         worker.postMessage = ((message: unknown, ...rest: unknown[]) => {
           if (gateSync && (message as { type?: string } | null)?.type === 'sync') {
             held.push(message as SearchWorkerRequest);
@@ -2840,7 +2559,7 @@ describe('search worker host (stage 4)', () => {
 
     gateSync = true;
     const sync = host.sync([]);
-    sync.catch(() => {}); // settle handling below
+    sync.catch(() => {});
     await vi.waitFor(() => {
       expect(held.length).toBe(1);
     });
@@ -2860,8 +2579,6 @@ describe('search worker host (stage 4)', () => {
       workerFactory: ({ url, data, execArgv }) => {
         const worker = new Worker(url, { workerData: data, execArgv });
         const original = worker.postMessage.bind(worker);
-        // Swallow `close`: the drain can never complete, so the host's
-        // terminate() backstop must end the worker within the timeout.
         worker.postMessage = ((message: unknown, ...rest: unknown[]) => {
           if ((message as { type?: string } | null)?.type === 'close') return true;
           return original(message as Parameters<Worker['postMessage']>[0], ...(rest as never[]));
@@ -2881,8 +2598,6 @@ describe('search worker host (stage 4)', () => {
   });
 
   it('keeps the main thread responsive while the worker opens and syncs a corpus', { timeout: 30_000 }, async () => {
-    // 120 sessions × 30 lines — enough for the worker's open + first full
-    // sync to take measurable time, small enough for CI.
     const summaries: SessionSummary[] = [];
     for (let i = 0; i < 120; i++) {
       const s = summary(`probe-${i}`, `probe 会话 ${i}`, T1 + i);
@@ -2906,8 +2621,6 @@ describe('search worker host (stage 4)', () => {
     eld.enable();
 
     const service = track(makeService(home!, staticIndex(summaries)));
-    // A search issued while the worker boots/opens/syncs answers with
-    // building semantics instead of waiting for the heavy work.
     const early = await service.search({ query: '检索词' });
     expect(early.indexState.state).toBe('building');
     await settleSync(service);
@@ -2917,9 +2630,6 @@ describe('search worker host (stage 4)', () => {
     eld.disable();
     const p99Ms = eld.percentile(99) / 1e6;
     const maxMs = eld.max / 1e6;
-    // Logged for phase-to-phase comparison; asserted against CI-safe
-    // ceilings that still catch a main-thread stall regression — the point
-    // is "no main-thread stall", not speed.
     console.log('[stage-4 worker probe]', JSON.stringify({ p99Ms, maxMs, ticks }));
     expect(ticks).toBeGreaterThan(0);
     expect(p99Ms).toBeLessThan(20);
@@ -2931,10 +2641,6 @@ describe('search worker host (stage 4)', () => {
   });
 
   it('keeps the main thread responsive while the worker rebuilds and swaps the generation (reindex)', { timeout: 30_000 }, async () => {
-    // Same corpus scale as the open/sync probe. The measured reindex reruns
-    // the full build inside the worker and atomically swaps the published
-    // generation (the reader-reopen path); the main thread only passes RPC
-    // messages, so its event loop must stay live throughout.
     const summaries: SessionSummary[] = [];
     for (let i = 0; i < 120; i++) {
       const s = summary(`reindex-${i}`, `reindex 会话 ${i}`, T1 + i);
@@ -2968,8 +2674,6 @@ describe('search worker host (stage 4)', () => {
     eld.disable();
     const p99Ms = eld.percentile(99) / 1e6;
     const maxMs = eld.max / 1e6;
-    // Same CI-safe ceilings as the open/sync probe: the point is "no
-    // main-thread stall", not speed.
     console.log('[stage-4 reindex probe]', JSON.stringify({ p99Ms, maxMs, ticks }));
     expect(ticks).toBeGreaterThan(0);
     expect(p99Ms).toBeLessThan(20);
@@ -2980,16 +2684,6 @@ describe('search worker host (stage 4)', () => {
     expect(page.indexState.state).toBe('ready');
   });
 });
-
-// ---------------------------------------------------------------------------
-// stage-5: aggregate lifecycle diagnostics
-// ---------------------------------------------------------------------------
-// The search side's explicit state machine (stopped → opening → ready →
-// building/degraded → closing) and the rules around it: status() keeps its
-// historical kick/await semantics and never throws, lifecycleReport() is the
-// non-intrusive local read, a corrupt rebuild is logged as its own outcome,
-// concurrent first calls spawn/open exactly once, a clean dispose releases
-// the lock, and a spawn failure never falls back to the inline host.
 
 describe('search lifecycle diagnostics (stage 5)', () => {
   let home: string | undefined;
@@ -3032,20 +2726,15 @@ describe('search lifecycle diagnostics (stage 5)', () => {
   }
 
   it('walks stopped → ready → closing → stopped and never throws (inline)', async () => {
-    // No sessions and no index dir: the constructor's sync no-ops before
-    // touching the backend, so nothing has opened — and nothing gets created.
     const service = track(makeInlineService(home!, staticIndex([])));
     expect(service.lifecycleReport()).toEqual({ state: 'stopped' });
     await expect(stat(join(home!, 'search-index'))).rejects.toThrow();
 
-    // status() keeps its historical semantics: it may kick the open, then
-    // reports the exact post-open lifecycle with real (zero) stats.
     const status = await service.status();
     expect(status).toMatchObject({ sessions: 0, documents: 0, lifecycle: { state: 'ready' } });
     expect(service.lifecycleReport()).toEqual({ state: 'ready' });
 
     service.dispose();
-    // DI disposal is synchronous; the async drain is still settling.
     expect(service.lifecycleReport()).toEqual({ state: 'closing' });
     await expect(service.status()).resolves.toMatchObject({ lifecycle: { state: 'closing' } });
     await drainGlobalSearchDisposals();
@@ -3057,14 +2746,11 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     const s1 = summary('s1', 'open 失败', T1);
     await writeWire(home!, 's1', 'main', [userLine('苹果 open-failure', T1)]);
     const service = track(makeInlineService(home!, staticIndex([s1])));
-    // Patch before the constructor-kicked sync reaches the open (the patch
-    // lands synchronously, the sync only reaches openSearchDb after awaits).
     const core = coreOf(service) as unknown as { openSearchDb(): Promise<unknown> };
     core.openSearchDb = async () => {
       throw new Error('disk gone');
     };
 
-    // The constructor-kicked pass and the explicit retries all fail the open.
     await settleSync(service).catch(() => {});
     await expect(service.search({ query: '苹果' })).rejects.toMatchObject({
       reason: 'index_unavailable',
@@ -3084,12 +2770,6 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     first.dispose();
     await drainGlobalSearchDisposals();
 
-    // Corrupt the text-index definitions sidecar: its JSON.parse failure is a
-    // rebuildable corruption (SyntaxError), so the open throws, the probe
-    // confirms the lock is free, and the derived index is rebuilt from
-    // scratch — with the warn line this test asserts. (A corrupt db.snapshot
-    // would NOT exercise this path: resync-mode recovery skips bad frames and
-    // the intact WAL heals the open.)
     await writeFile(join(home!, 'search-index', 'db.textindexes.json'), 'not json {{{', 'utf8');
 
     const { log, warnings } = recordingLog();
@@ -3104,15 +2784,10 @@ describe('search lifecycle diagnostics (stage 5)', () => {
   });
 
   it('a failing session index degrades search only — construction, search and status keep answering', async () => {
-    // The dependency direction pin (stage 5 work item 2): global search READS
-    // the session index, so a session-index failure surfaces inside search as
-    // a degraded note — it never propagates into construction or the answers.
     const failing = makeSessionIndex(async () => {
       throw new Error('metadata store down');
     });
     const service = track(makeInlineService(home!, failing));
-    // Every sync pass fails on listRecent — the failure is recorded, never
-    // propagated into construction or the request paths.
     await settleSync(service).catch(() => {});
     const page = await service.search({ query: 'anything' });
     expect(page.items).toEqual([]);
@@ -3126,9 +2801,6 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     await writeWire(home!, 's1', 'main', [userLine('苹果 generation-reuse', T1)]);
     const first = track(makeInlineService(home!, staticIndex([s1])));
     await first.reindex();
-    // Publish a persistent generation deterministically: the close-time
-    // best-effort publish is gated on a 4 MiB WAL-staleness rule that a tiny
-    // test corpus never crosses.
     const firstCore = coreOf(first) as unknown as {
       db: { buildGeneration(trigger: 'manual'): Promise<void> } | null;
     };
@@ -3140,8 +2812,6 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     await settleSync(second);
     const page = await second.search({ query: '苹果' });
     expect(page.items.length).toBe(1);
-    // The open attached the published generation (and replayed at most the
-    // WAL delta past its checkpoint) — no full recovery ran.
     const core = coreOf(second) as unknown as {
       db: { lifecycleStatus(): { path: string[] } } | null;
     };
@@ -3162,8 +2832,6 @@ describe('search lifecycle diagnostics (stage 5)', () => {
       return originalOpen();
     };
 
-    // Cold searches answer building pages and kick the coordinator; the
-    // single-flight open underneath must run exactly once.
     const pages = await Promise.all([
       service.search({ query: '苹果' }),
       service.search({ query: '苹果' }),
@@ -3195,9 +2863,6 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     const s1 = summary('s1', '生命周期', T1);
     await writeWire(home!, 's1', 'main', [userLine('苹果 lifecycle', T1)]);
     const service = track(makeService(home!, staticIndex([s1])));
-    // Let the constructor-kicked sync reach the worker spawn (a worker boot
-    // takes ~200ms, far longer than these flush rounds), then the local
-    // report must show the transitional state WITHOUT any RPC.
     await flush();
     expect(service.lifecycleReport().state).toBe('opening');
     await settleSync(service);
@@ -3207,14 +2872,12 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     expect(status.sessions).toBe(1);
 
     await hostOf(service).killWorkerForTest();
-    // Inside the backoff window the local report names the crash — no RPC
-    // needed, so the state is observable while the worker is down.
     const down = service.lifecycleReport();
     expect(down.state).toBe('degraded');
     expect(down.detail).toContain('worker');
 
     await new Promise((resolve) => setTimeout(resolve, 700));
-    await settleSync(service); // respawn after the backoff
+    await settleSync(service);
     expect(service.lifecycleReport().state).toBe('ready');
     expect((await service.search({ query: '苹果' })).items.length).toBe(1);
   });
@@ -3227,13 +2890,8 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     expect(service.lifecycleReport().state).toBe('ready');
 
     await hostOf(service).killWorkerForTest();
-    await new Promise((resolve) => setTimeout(resolve, 700)); // out of backoff
+    await new Promise((resolve) => setTimeout(resolve, 700));
 
-    // Drive a respawn, then pin the window between the handshake completing
-    // and the first RPC response landing: the new worker's core has not even
-    // opened the db yet, so the snapshot must report 'opening' — never the
-    // dead worker's cached 'ready'. The assertion runs synchronously right
-    // after the poll, so the response message cannot have been processed yet.
     const host = hostOf(service);
     const respawn = syncNow(service);
     respawn.catch(() => {});
@@ -3263,13 +2921,9 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     expect(host.lifecycleSnapshot().state).toBe('closing');
     service.dispose();
     await drainGlobalSearchDisposals();
-    // The worker drained, closed the db (releasing the lock) and exited
-    // before the disposal promise resolved.
     await waitForGone(lockPath());
     expect(service.lifecycleReport()).toEqual({ state: 'stopped' });
 
-    // A fresh instance can take the write lock immediately — no stale-lock
-    // window after a clean shutdown.
     const next = track(makeService(home!, staticIndex([s1])));
     await next.reindex();
     expect((await next.search({ query: '苹果' })).items.length).toBe(1);
@@ -3277,9 +2931,6 @@ describe('search lifecycle diagnostics (stage 5)', () => {
 
   it('a spawn failure never falls back to the inline host and reports degraded', { timeout: 30_000 }, async () => {
     const service = track(makeService(home!, staticIndex([])));
-    // Swap in a host whose worker cannot spawn (no worker runtime in this
-    // environment): the search must degrade recognizably, never restore the
-    // index work onto the main thread.
     const failingHost = new SearchWorkerHost({
       dir: join(home!, 'search-index'),
       log: noopLog,
@@ -3295,22 +2946,14 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     expect(page.source).toBe('index');
     expect(page.indexState.state).toBe('building');
     expect(page.indexState.degraded).toContain('threads unavailable');
-    // No inline db materialized: the index directory was never created.
     await expect(stat(join(home!, 'search-index'))).rejects.toThrow();
 
     expect(service.lifecycleReport().state).toBe('degraded');
-    // A second call inside the backoff window fails fast; status() still
-    // answers (never throws) with the degraded lifecycle.
     const status = await service.status();
     expect(status.lifecycle.state).toBe('degraded');
     expect(status.degraded).toContain('worker');
   });
 });
-
-
-// Numbers are logged as JSON for phase-to-phase comparison; only a loose
-// complexity budget is asserted (no tight absolute millisecond thresholds in
-// shared CI), so an accidental quadratic regression trips the test anywhere.
 
 describe('baseline: synthetic corpus', () => {
   let home: string | undefined;
@@ -3358,8 +3001,6 @@ describe('baseline: synthetic corpus', () => {
   }
 
   it('indexing and search latency scale within a linear budget from 100 to 400 sessions', async () => {
-    // The stub holds the array by reference, so the second reindex sees the
-    // sessions appended after the first measurement.
     const all: SessionSummary[] = [];
     const service = makeService(home!, staticIndex(all));
     services.push(service);
@@ -3378,7 +3019,6 @@ describe('baseline: synthetic corpus', () => {
     const terms400 = await medianMs(() => service.search({ query: 'compaction' }));
     const literal400 = await medianMs(() => service.search({ query: 'message 3 about', mode: 'literal' }));
 
-    // Sanity: the corpus really grew and both modes still hit.
     const hits = await service.search({ query: 'compaction' });
     expect(hits.items.length).toBeGreaterThan(0);
     expect((await service.search({ query: 'message 3 about', mode: 'literal' })).items.length).toBeGreaterThan(0);
@@ -3391,7 +3031,6 @@ describe('baseline: synthetic corpus', () => {
         literalMedianMs: [literal100, literal400],
       })}`,
     );
-    // 4x the data must cost well under 10x the time at each step.
     expect(index400).toBeLessThan(index100 * 10 + 2000);
     expect(terms400).toBeLessThan(terms100 * 10 + 100);
     expect(literal400).toBeLessThan(literal100 * 10 + 100);
@@ -3407,9 +3046,6 @@ describe('baseline: synthetic corpus', () => {
     const eld: IntervalHistogram = monitorEventLoopDelay();
     eld.enable();
     try {
-      // 'message' hits every user doc (400 sessions × 8 = 3200 docs). Walk
-      // 10 pages of 20 via keyset tokens, then re-measure the first and the
-      // tenth page with the same tokens (static corpus → tokens stay valid).
       const tokens: (string | undefined)[] = [undefined];
       let page = await service.search({ query: 'message', sort: 'time_desc', pageSize: 20 });
       for (let p = 1; p < 10; p++) {
@@ -3444,12 +3080,7 @@ describe('baseline: synthetic corpus', () => {
           eventLoopDelayMs: { p99: eldP99Ms, max: eldMaxMs },
         })}`,
       );
-      // Page 10 re-runs the same bounded candidate scan but skips the full
-      // re-sort + offset slice of the old implementation: its cost tracks
-      // the first page's, not the match count × page depth.
       expect(page10Ms).toBeLessThan(page1Ms * 5 + 50);
-      // The whole measurement never hard-blocks the loop for long (the
-      // query path is synchronous but bounded; syncs run in the background).
       expect(eldMaxMs).toBeLessThan(500);
     } finally {
       eld.disable();

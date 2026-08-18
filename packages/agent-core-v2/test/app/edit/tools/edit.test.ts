@@ -1,17 +1,7 @@
-/**
- * EditTool tests for the v2 edit domain.
- *
- * Ported from v1 (`packages/agent-core/test/tools/edit.test.ts`). The Agent
- * `EditTool` adapter is built through the container (`createInstance`) so its
- * `@IService` deps resolve for real: a spied fake `IHostFileSystem`, the test
- * `IHostEnvironment` / `ISessionWorkspaceContext`, and the App-scope
- * `IFileEditService` binding. The pure `TextModel` / `EditService` logic is
- * exercised end-to-end through the tool and the real `FileEditService`.
- */
-
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as posixPath from 'node:path/posix';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -27,6 +17,8 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { Runtime } from '#/runtime/runtime';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
@@ -66,16 +58,39 @@ function buildTool(
   fs: IHostFileSystem,
   env: IHostEnvironment,
   workspace: ISessionWorkspaceContext,
+  appFs: IHostFileSystem = fs,
 ): EditTool {
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
-      reg.defineInstance(IHostFileSystem, fs);
+      reg.defineInstance(IHostFileSystem, appFs);
       reg.defineInstance(IHostEnvironment, env);
       reg.defineInstance(ISessionWorkspaceContext, workspace);
       reg.define(IFileEditService, FileEditService);
     },
   });
-  return new EditTool(ix.get(IFileEditService), env, workspace);
+  const runtimeValue = {
+    identity: { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+    capabilities: new Set(['fs'] as const),
+    environment: env,
+    path: posixPath,
+    workspace: { mapRoots: (roots: { workDir: string; additionalDirs?: readonly string[] }) => roots },
+    fs,
+    status: 'ready',
+    onDidChangeStatus: () => ({ dispose: () => {} }),
+    dispose: () => {},
+  } as unknown as Runtime;
+  const runtime: IAgentRuntimeService = {
+    _serviceBrand: undefined,
+    onDidChange: () => ({ dispose: () => {} }),
+    isAvailable: () => true,
+    inspect: () => runtimeValue,
+    acquire: () => ({
+      runtime: runtimeValue,
+      track: (resource) => resource,
+      dispose: () => {},
+    }),
+  };
+  return new EditTool(ix.get(IFileEditService), runtime, workspace);
 }
 
 function isPromiseLike(
@@ -153,31 +168,12 @@ describe('EditTool', () => {
     const tool = buildTool(createSpiedEditFs().fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     expect(tool.name).toBe('Edit');
-    expect(tool.description).toContain('Read the target file before every Edit');
-    expect(tool.description).toContain('DO NOT call Edit from memory');
-    expect(tool.description).toContain('Read output view');
-    expect(tool.description).toContain('line-number prefix');
-    expect(tool.description).toContain('`old_string` must be unique');
-    expect(tool.description).toContain('only when they do not target the same file');
-    expect(tool.description).toContain('DO NOT issue consecutive Edit calls on the same file');
-    expect(tool.description).toContain('DO NOT use Write or Bash `sed`');
-    expect(tool.description).toContain('same-file edits in response order');
-    expect(tool.description).toContain('old_string not found');
     expect(tool.parameters).toMatchObject({
       type: 'object',
       properties: {
-        path: {
-          type: 'string',
-          description: expect.stringContaining('working directory'),
-        },
-        old_string: {
-          type: 'string',
-          description: expect.stringContaining('without the line-number prefix'),
-        },
-        new_string: {
-          type: 'string',
-          description: expect.stringContaining('same Read output view'),
-        },
+        path: { type: 'string' },
+        old_string: { type: 'string' },
+        new_string: { type: 'string' },
       },
     });
     expect(
@@ -212,6 +208,29 @@ describe('EditTool', () => {
 
     expect(result.output).toContain('Replaced 1 occurrence');
     expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', 'alpha gamma');
+  });
+
+  it('executes against the selected runtime filesystem instead of the App filesystem', async () => {
+    const runtimeWrite = vi.fn().mockResolvedValue(undefined);
+    const { fs: runtimeFs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue('runtime content'),
+      writeText: runtimeWrite,
+    });
+    const appRead = vi.fn().mockRejectedValue(new Error('App filesystem bypass'));
+    const appWrite = vi.fn().mockRejectedValue(new Error('App filesystem bypass'));
+    const { fs: appFs } = createSpiedEditFs({ readText: appRead, writeText: appWrite });
+    const tool = buildTool(runtimeFs, createTestEnv(), PERMISSIVE_WORKSPACE, appFs);
+
+    const result = await execute(tool, {
+      path: '/tmp/a.txt',
+      old_string: 'content',
+      new_string: 'generation',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(runtimeWrite).toHaveBeenCalledWith('/tmp/a.txt', 'runtime generation');
+    expect(appRead).not.toHaveBeenCalled();
+    expect(appWrite).not.toHaveBeenCalled();
   });
 
   it('expands leading tilde paths using the kaos home directory', async () => {

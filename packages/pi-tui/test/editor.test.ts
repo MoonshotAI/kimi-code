@@ -3127,6 +3127,189 @@ describe("Editor component", () => {
 		});
 	});
 
+	describe("Inline slash trigger", () => {
+		const inlineProvider: AutocompleteProvider = {
+			getSuggestions: async (lines, cursorLine, cursorCol) => {
+				const beforeCursor = (lines[cursorLine] || "").slice(0, cursorCol);
+				if (!beforeCursor.endsWith("/")) return null;
+				return {
+					items: [{ value: "skill:review", label: "skill:review" }],
+					prefix: "/",
+				};
+			},
+			applyCompletion,
+		};
+
+		it("does not trigger for `/` after whitespace mid-input by default", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.setAutocompleteProvider(inlineProvider);
+
+			for (const ch of "hello ") editor.handleInput(ch);
+			editor.handleInput("/");
+			await flushAutocomplete();
+
+			assert.strictEqual(editor.isShowingAutocomplete(), false);
+		});
+
+		it("triggers for `/` after whitespace mid-input when inlineSlashTrigger is on", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			editor.setAutocompleteProvider(inlineProvider);
+
+			for (const ch of "hello ") editor.handleInput(ch);
+			editor.handleInput("/");
+			await flushAutocomplete();
+
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
+		it("retriggers inline completion as token characters arrive with the slash's request in flight", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			editor.setAutocompleteProvider({
+				getSuggestions: async (lines, cursorLine, cursorCol) => {
+					const beforeCursor = (lines[cursorLine] || "").slice(0, cursorCol);
+					const match = /\/skill:\w*$/.exec(beforeCursor);
+					if (match === null) return null;
+					return {
+						items: [{ value: "skill:review", label: "skill:review" }],
+						prefix: match[0],
+					};
+				},
+				applyCompletion,
+			});
+
+			// The slash and its first letters land back-to-back, the way one
+			// stdin chunk delivers them: the slash's request is still in flight
+			// while the letters arrive with no autocomplete state yet.
+			for (const ch of "hello /skill:r") editor.handleInput(ch);
+			await flushAutocomplete();
+
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
+		it("retriggers inline completion on later lines as the token grows", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			editor.setAutocompleteProvider({
+				getSuggestions: async (lines, cursorLine, cursorCol) => {
+					const beforeCursor = (lines[cursorLine] || "").slice(0, cursorCol);
+					const match = /\/skill:\w*$/.exec(beforeCursor);
+					if (match === null) return null;
+					return {
+						items: [{ value: "skill:review", label: "skill:review" }],
+						prefix: match[0],
+					};
+				},
+				applyCompletion,
+			});
+
+			for (const ch of "hello\n/skill:r") editor.handleInput(ch);
+			await flushAutocomplete();
+
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
+		it("retriggers inline completion when a colon follows the token name", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			let calls = 0;
+			editor.setAutocompleteProvider({
+				getSuggestions: async (lines, cursorLine, cursorCol) => {
+					calls += 1;
+					const beforeCursor = (lines[cursorLine] || "").slice(0, cursorCol);
+					const match = /\/skill:\w*$/.exec(beforeCursor);
+					if (match === null) return null;
+					return {
+						items: [{ value: "skill:review", label: "skill:review" }],
+						prefix: match[0],
+					};
+				},
+				applyCompletion,
+			});
+
+			for (const ch of "hello /skill") editor.handleInput(ch);
+			await flushAutocomplete();
+			const beforeColon = calls;
+			editor.handleInput(":");
+			await flushAutocomplete();
+			assert.ok(calls > beforeColon, "expected the colon to retrigger completion");
+			editor.handleInput("r");
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
+		it("triggers for `/` at the start of a later line when inlineSlashTrigger is on", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			editor.setAutocompleteProvider(inlineProvider);
+
+			for (const ch of "first") editor.handleInput(ch);
+			editor.handleInput("\n");
+			editor.handleInput("/");
+			await flushAutocomplete();
+
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
+		it("does not trigger for `/` inside a word even when inlineSlashTrigger is on", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			editor.setAutocompleteProvider(inlineProvider);
+
+			for (const ch of "and/") editor.handleInput(ch);
+			await flushAutocomplete();
+
+			assert.strictEqual(editor.isShowingAutocomplete(), false);
+		});
+
+		function inlineProviderWith(item: { value: string; label: string; data?: Record<string, unknown> }): AutocompleteProvider {
+			return {
+				getSuggestions: async (lines, cursorLine, cursorCol) => {
+					const beforeCursor = (lines[cursorLine] || "").slice(0, cursorCol);
+					if (!beforeCursor.endsWith("/")) return null;
+					return { items: [item], prefix: "/" };
+				},
+				applyCompletion,
+			};
+		}
+
+		it("does not submit when confirming an inline-marked completion with Enter", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			let submitted: string | undefined;
+			editor.onSubmit = (text) => {
+				submitted = text;
+			};
+			editor.setAutocompleteProvider(
+				inlineProviderWith({ value: "skill:review", label: "skill:review", data: { inlineSkill: true } }),
+			);
+
+			for (const ch of "hello ") editor.handleInput(ch);
+			editor.handleInput("/");
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+
+			editor.handleInput("\r");
+			await flushAutocomplete();
+
+			assert.strictEqual(submitted, undefined);
+			assert.strictEqual(editor.getText(), "hello skill:review");
+		});
+
+		it("still submits when confirming an unmarked slash completion with Enter", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			let submitted: string | undefined;
+			editor.onSubmit = (text) => {
+				submitted = text;
+			};
+			editor.setAutocompleteProvider(inlineProviderWith({ value: "help", label: "help" }));
+
+			for (const ch of "hello ") editor.handleInput(ch);
+			editor.handleInput("/");
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+
+			editor.handleInput("\r");
+			await flushAutocomplete();
+
+			assert.strictEqual(submitted, "hello help");
+		});
+	});
+
 	describe("Character jump (Ctrl+])", () => {
 		it("jumps forward to first occurrence of character on same line", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);

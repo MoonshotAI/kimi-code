@@ -1,10 +1,3 @@
-/**
- * `/api/v1/meta` tests — the static server-self fields are covered by
- * `boot.test.ts`; these focus on `experimental_flags`, the effective
- * experimental-flag map resolved per request from every flag source (env,
- * master env, the `[experimental]` config section, defaults).
- */
-
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,11 +18,6 @@ describe('/api/v1/meta experimental_flags', () => {
   let home: string | undefined;
 
   beforeEach(() => {
-    // Neutralize flag env vars leaking from the developer shell (e.g. a
-    // globally exported KIMI_CODE_EXPERIMENTAL_FLAG=1) so each test starts
-    // from the default-off baseline. The master env can be pinned to '0' (it
-    // only forces ON), but the per-flag env must be fully ABSENT — an
-    // explicit '0' is an env override that outranks the config section.
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOOL_SELECT', undefined);
   });
@@ -41,8 +29,6 @@ describe('/api/v1/meta experimental_flags', () => {
       server = undefined;
     }
     if (home !== undefined) {
-      // The query-store cache can still be flushing while we clean up; retry
-      // instead of flaking on ENOTEMPTY.
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       home = undefined;
     }
@@ -79,10 +65,6 @@ describe('/api/v1/meta experimental_flags', () => {
   });
 
   it('reports a config-enabled flag from the very first response', async () => {
-    // Regression for the startup race: FlagService reads the `[experimental]`
-    // section from a config that loads asynchronously, so the handler awaits
-    // IConfigService.ready before snapshotting — a persisted flag must be
-    // visible even to the earliest request.
     const base = await boot('[experimental]\ntool-select = true\n');
     const flags = await getMetaFlags(base);
     expect(flags['tool-select']).toBe(true);
@@ -120,7 +102,52 @@ describe('/api/v1/meta experimental_flags', () => {
     });
     expect(res.status).toBe(200);
 
-    // Env outranks the config section in FlagService resolution.
     expect((await getMetaFlags(base))['tool-select']).toBe(true);
+  });
+});
+
+describe('/api/v1/meta web_title', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+
+  afterEach(async () => {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      home = undefined;
+    }
+  });
+
+  async function bootWithWebTitle(
+    webTitle?: string,
+  ): Promise<{ base: string; body: { data: { web_title?: string } } }> {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-meta-title-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      webTitle,
+    });
+    const base = `http://127.0.0.1:${server.port}`;
+    const res = await authedFetch(server, base, '/api/v1/meta');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { code: number; data: { web_title?: string } };
+    expect(body.code).toBe(0);
+    return { base, body };
+  }
+
+  it('surfaces the boot-time webTitle as web_title', async () => {
+    const { body } = await bootWithWebTitle('My Dev Box');
+    expect(body.data.web_title).toBe('My Dev Box');
+  });
+
+  it('omits web_title when no webTitle was passed', async () => {
+    const { body } = await bootWithWebTitle();
+    expect(body.data.web_title).toBeUndefined();
   });
 });

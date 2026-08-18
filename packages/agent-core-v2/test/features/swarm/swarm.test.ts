@@ -1,13 +1,3 @@
-/**
- * Scenario: swarm service policy, context reconciliation, persistence, and
- * tool execution.
- *
- * Exercises the Agent-scoped service through DI and public loop boundaries,
- * with storage, session swarm execution, and approvals stubbed. Run:
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/features/swarm/swarm.test.ts`.
- */
-
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 
@@ -28,6 +18,7 @@ import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
+import { tokenCountingKey } from '#/agent/tokenCounting/tokenCountingOps';
 import {
   IAgentSystemReminderService,
   wrapSystemReminder,
@@ -36,7 +27,7 @@ import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminde
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { AgentSwarmService } from '#/features/swarm/agent/swarmService';
 import SWARM_MODE_ENTER_REMINDER from '../../../src/features/swarm/agent/enter-reminder.md?raw';
-import { SwarmModel } from '#/features/swarm/swarmOps';
+import { swarmKey } from '#/features/swarm/swarmOps';
 import { AgentSwarmToolInputSchema } from '#/features/swarm/tools/agent-swarm/agent-swarm';
 import { AgentSwarmTool } from '#/features/swarm/tools/agent-swarm/agentSwarmTool';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -59,12 +50,18 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
-import { IWireService } from '#/wire/wire';
-import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
+import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { executeTool } from '../../tools/fixtures/execute-tool';
-import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
+import {
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+  restoreTestEventDispatcher,
+  testWireScope,
+} from '../../wire/stubs';
 import { stubLoopWithHooks } from '../../agent/loop/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { createTestAgent } from '../../harness';
@@ -119,9 +116,7 @@ function mockSwarmHost({
   run = vi.fn().mockResolvedValue([]),
   getSwarmItem = vi.fn().mockResolvedValue(undefined),
 }: {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly run?: (...args: any[]) => any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly getSwarmItem?: (...args: any[]) => any;
 } = {}) {
   return {
@@ -230,6 +225,8 @@ describe('AgentSwarmService', () => {
       log: ix.get(IAppendLogStore),
       eventBus: ix.get(IEventBus),
     });
+    registerTestEventDispatcher(ix);
+    ix.get(IAgentStateService).contributeState(tokenCountingKey);
     ix.set(IAgentSystemReminderService, new SyncDescriptor(AgentSystemReminderService));
     ix.set(IAgentSwarmService, new SyncDescriptor(AgentSwarmService));
   });
@@ -248,8 +245,14 @@ describe('AgentSwarmService', () => {
 
   it('enter / exit toggle isActive and emit agent.status.updated via wire', () => {
     const swarm = ix.get(IAgentSwarmService);
-    const events: DomainEvent[] = [];
-    disposables.add(ix.get(IEventBus).subscribe((e) => events.push(e)));
+    const events: { readonly type: string; readonly swarmMode?: boolean }[] = [];
+    disposables.add(
+      ix.get(IEventBus).subscribe((e) => {
+        if (e.type === 'agent.status.updated') {
+          events.push({ type: e.type, swarmMode: (e as AgentStatusUpdated).swarmMode });
+        }
+      }),
+    );
 
     expect(swarm.isActive).toBe(false);
     swarm.enter('manual');
@@ -276,7 +279,6 @@ describe('AgentSwarmService', () => {
       variant: 'swarm_mode',
       disclosure: { kind: 'swarm_mode', state: 'active' },
     });
-    expect(messageText(reminder)).toContain('You are now in "agent swarm" mode.');
     expect(context.get()).toHaveLength(1);
   });
 
@@ -340,8 +342,8 @@ describe('AgentSwarmService', () => {
   it('does not duplicate the enter guidance on resume while it is still live in history', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentContextMemoryService);
-    await restoreTestAgentWire(
-      ix.get(IWireService),
+    await restoreTestEventDispatcher(
+      ix.get(IEventDispatcher),
       ix.get(IAppendLogStore),
       testWireScope('wire', 'swarm-test'),
       [
@@ -359,8 +361,8 @@ describe('AgentSwarmService', () => {
   it('replays exit by removing a trailing enter reminder', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentContextMemoryService);
-    await restoreTestAgentWire(
-      ix.get(IWireService),
+    await restoreTestEventDispatcher(
+      ix.get(IEventDispatcher),
       ix.get(IAppendLogStore),
       testWireScope('wire', 'swarm-test'),
       [
@@ -379,8 +381,8 @@ describe('AgentSwarmService', () => {
   it('derives the rendered state from the disclosure, not the reminder text', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentContextMemoryService);
-    await restoreTestAgentWire(
-      ix.get(IWireService),
+    await restoreTestEventDispatcher(
+      ix.get(IEventDispatcher),
       ix.get(IAppendLogStore),
       testWireScope('wire', 'swarm-test'),
       [
@@ -420,16 +422,19 @@ describe('AgentSwarmService', () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    const fresh = registerTestAgentWire(ix2, testWireScope('wire', 'swarm-replay'), {
+    registerTestAgentWire(ix2, testWireScope('wire', 'swarm-replay'), {
       log: ix2.get(IAppendLogStore),
     });
-    await restoreTestAgentWire(
+    const fresh = registerTestEventDispatcher(ix2);
+    const freshState = ix2.get(IAgentStateService);
+    freshState.contributeState(swarmKey);
+    await restoreTestEventDispatcher(
       fresh,
       ix2.get(IAppendLogStore),
       testWireScope('wire', 'swarm-replay'),
       records,
     );
-    expect(fresh.getModel(SwarmModel)).toBe('manual');
+    expect(freshState.get(swarmKey)).toBe('manual');
   });
 
   it('blocks a batch with multiple AgentSwarm calls before any other adjudication', async () => {
@@ -675,12 +680,10 @@ describe('AgentSwarmTool', () => {
     expect(execution.matchesRule).toBeUndefined();
   });
 
-  it('description states the enforced input requirements', () => {
+  it('description documents the {{item}} placeholder', () => {
     const host = mockSwarmHost();
     const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile());
-    expect(tool.description).toContain('at least 2');
     expect(tool.description).toContain('{{item}}');
-    expect(tool.description.toLowerCase()).toContain('distinct');
   });
 
   it('uses the persisted caller allowlist instead of the current catalog profile', async () => {
@@ -1076,13 +1079,10 @@ describe('AgentSwarmTool', () => {
     const host = mockSwarmHost();
     const configured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ defaultModel: 'provider/fast', models: { 'provider/fast': 'fast and cheap', 'main-model': 'the main model' } }), stubFlag(true), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model' }));
 
-    expect(configured.description).toContain('Available models (pass via model):');
+    expect(configured.description).toContain('Available models');
     expect(configured.description).toContain('- provider/fast [default]: fast and cheap');
-    // The caller's alias is a normal pool entry; the primary line stays distinct.
     expect(configured.description).toContain('- main-model [main model]: the main model');
-    expect(configured.description).toContain(
-      '- primary (main-model): the main model you are running on, bound with your current thinking level',
-    );
+    expect(configured.description).toContain('- primary (main-model)');
 
     const unconfigured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model' }));
 

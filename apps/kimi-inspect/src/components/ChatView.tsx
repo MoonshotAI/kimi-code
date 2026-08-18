@@ -61,7 +61,12 @@ import {
 import { AuditTrail } from '../audit/trail';
 import { useConnection } from '../connection';
 import type { SearchHit } from '../search/api';
-import { fetchTranscriptOps, fetchTranscriptPage, TRANSCRIPT_PAGE_SIZE } from '../transcript/api';
+import {
+  fetchTranscriptAttachment,
+  fetchTranscriptOps,
+  fetchTranscriptPage,
+  TRANSCRIPT_PAGE_SIZE,
+} from '../transcript/api';
 import {
   createCoalescedRunner,
   hasTurnId,
@@ -945,7 +950,6 @@ function AttachmentChips({
       {ids.map((id) => {
         const attachment = attachments.get(id);
         const label = attachment?.name ?? attachment?.mediaType ?? id;
-        const href = attachment?.source?.kind === 'url' ? attachment.source.url : undefined;
         return (
           <span
             key={id}
@@ -953,17 +957,68 @@ function AttachmentChips({
             title={attachment?.mediaType}
           >
             📎{' '}
-            {href !== undefined ? (
-              <a href={href} className="underline">
-                {label}
-              </a>
-            ) : (
-              label
-            )}
+            <AttachmentLink attachment={attachment} label={label} />
           </span>
         );
       })}
     </div>
+  );
+}
+
+function AttachmentLink({
+  attachment,
+  label,
+}: {
+  attachment: TranscriptAttachment | undefined;
+  label: string;
+}) {
+  const sessionId = useContext(SessionContext);
+  const { baseUrl, config } = useConnection();
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const source = attachment?.source;
+  if (source === undefined) return label;
+  if (source.kind === 'url') {
+    return (
+      <a href={source.url} target="_blank" rel="noreferrer" className="underline">
+        {label}
+      </a>
+    );
+  }
+  const download = async (): Promise<void> => {
+    setDownloading(true);
+    setError(null);
+    try {
+      const blob = await fetchTranscriptAttachment({
+        baseUrl,
+        token: config.token.trim() || undefined,
+        sessionId,
+        source,
+      });
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = href;
+      link.download = attachment?.name ?? source.fileId;
+      link.click();
+      setTimeout(() => {
+        URL.revokeObjectURL(href);
+      }, 0);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDownloading(false);
+    }
+  };
+  return (
+    <button
+      type="button"
+      className="underline disabled:cursor-wait disabled:opacity-60"
+      disabled={downloading}
+      title={error ?? undefined}
+      onClick={() => void download()}
+    >
+      {downloading ? 'Downloading…' : label}
+    </button>
   );
 }
 

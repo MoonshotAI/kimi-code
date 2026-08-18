@@ -1,12 +1,3 @@
-/**
- * Scenario: the title excerpts read through the REAL context memory — loop
- * events fold into assistant messages, tool calls and thinking stay out of
- * the excerpt, and the turn's final text wins. Wiring: harness agent (real
- * contextMemory + prompt queue) with the real AgentTitlePromptSourceService.
- * Run: pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/session/sessionTitle/titleExcerpt.integration.test.ts
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -90,5 +81,32 @@ describe('title excerpts over the real context memory', () => {
       user: '刚发的问题',
       assistant: undefined,
     });
+  });
+
+  it('excludes bundled skill blocks from the excerpt of a bundled prompt', async () => {
+    const context = ctx.get(IAgentContextMemoryService);
+    context.append({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'User activated the skill "review". Follow the loaded skill instructions.' },
+        { type: 'text', text: 'User activated the skill "security". Follow the loaded skill instructions.' },
+        { type: 'text', text: '检查这次改动的正确性' },
+      ],
+      toolCalls: [],
+      origin: {
+        kind: 'user',
+        skillActivations: [
+          { activationId: 'act-1', skillName: 'review' },
+          { activationId: 'act-2', skillName: 'security' },
+        ],
+      },
+    });
+
+    const source = ctx.get(IAgentTitlePromptSource);
+    await expect(source.firstTurnExcerpt()).resolves.toEqual({
+      user: '检查这次改动的正确性',
+      assistant: undefined,
+    });
+    await expect(source.firstUserPrompts(5)).resolves.toEqual(['检查这次改动的正确性']);
   });
 });

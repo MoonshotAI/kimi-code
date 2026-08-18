@@ -5,15 +5,21 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentPermissionRulesService, type PermissionApprovalResultRecord, type PermissionRule } from '#/agent/permissionRules/permissionRules';
 import { AgentPermissionRulesService } from '#/agent/permissionRules/permissionRulesService';
-import { PermissionRulesModel } from '#/agent/permissionRules/permissionRulesOps';
+import { permissionRulesKey } from '#/agent/permissionRules/permissionRulesOps';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IWireService } from '#/wire/wire';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
-import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
+import {
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+  restoreTestEventDispatcher,
+  testWireScope,
+} from '../../wire/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'permission-rules-test';
@@ -35,6 +41,7 @@ function sessionApproval(pattern: string): PermissionApprovalResultRecord {
 let disposables: DisposableStore;
 let ix: TestInstantiationService;
 let log: IAppendLogStore;
+let dispatcher: IEventDispatcher;
 let svc: IAgentPermissionRulesService;
 
 beforeEach(() => {
@@ -45,13 +52,14 @@ beforeEach(() => {
   ix.set(IAgentPermissionRulesService, new SyncDescriptor(AgentPermissionRulesService));
   log = ix.get(IAppendLogStore);
   registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log });
+  dispatcher = registerTestEventDispatcher(ix);
   svc = ix.get(IAgentPermissionRulesService);
 });
 
 afterEach(() => disposables.dispose());
 
 async function readRecords(): Promise<WireRecord[]> {
-  await ix.get(IWireService).flush();
+  await dispatcher.flush();
   const out: WireRecord[] = [];
   for await (const record of log.read<WireRecord>(testWireScope(SCOPE, KEY), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
@@ -123,18 +131,21 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     const log2 = ix2.get(IAppendLogStore);
-    const fresh = registerTestAgentWire(ix2, testWireScope(SCOPE, 'permission-rules-replay'), {
+    registerTestAgentWire(ix2, testWireScope(SCOPE, 'permission-rules-replay'), {
       log: log2,
     });
+    const fresh = registerTestEventDispatcher(ix2);
+    const freshState = ix2.get(IAgentStateService);
+    freshState.contributeState(permissionRulesKey);
 
-    await restoreTestAgentWire(
+    await restoreTestEventDispatcher(
       fresh,
       log2,
       testWireScope(SCOPE, 'permission-rules-replay'),
       records,
     );
 
-    expect(fresh.getModel(PermissionRulesModel)).toEqual({
+    expect(freshState.get(permissionRulesKey)).toEqual({
       rules: [],
       sessionApprovalRulePatterns: ['Bash(rm *)'],
     });

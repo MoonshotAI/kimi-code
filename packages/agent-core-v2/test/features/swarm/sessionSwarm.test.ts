@@ -1,5 +1,5 @@
 import { createControlledPromise } from '@antfu/utils';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
@@ -12,7 +12,8 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
+import { IEventBus } from '#/app/event/eventBus';
+import type { Event2 } from '#/app/event/event2';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -36,8 +37,11 @@ import {
   type AgentMeta,
   type SessionMetadataChangedEvent,
 } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionProcessRunner } from '#/session/process/processRunner';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ILogService } from '#/_base/log/log';
+import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import {
   AgentRunBatch,
   resolveSwarmMaxConcurrency,
@@ -621,8 +625,6 @@ describe('AgentRunBatch scheduling contract', () => {
 
       await vi.advanceTimersByTimeAsync(0);
       attempts[0]!.markReady();
-      // Print mode fills the subagent timeout with 0 = unbounded; it must not
-      // arm an immediate abort.
       await vi.advanceTimersByTimeAsync(60_000);
 
       attempts[0]!.outcome.resolve({
@@ -880,6 +882,7 @@ describe('SessionSwarmService metadata compatibility', () => {
   let createAgent: ReturnType<typeof vi.fn>;
   let runAgent: ReturnType<typeof vi.fn>;
   let eventBus: IEventBus;
+  let resolverAcquire: Mock<(binding: unknown, required: unknown) => void>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -933,10 +936,20 @@ describe('SessionSwarmService metadata compatibility', () => {
         agents[agentId] = meta;
       },
     });
-    ix.stub(ISessionProcessRunner, {
+    resolverAcquire = vi.fn();
+    ix.stub(IRuntimeResolver, {
       _serviceBrand: undefined,
-      exec: async () => {
-        throw new Error('unexpected process exec');
+      acquire: (binding: unknown, required: unknown) => {
+        resolverAcquire(binding, required);
+        const runtime = new FakeRuntime({ workspaceId: 'w1', runtimeId: 'local', generation: 'g1' });
+        Object.assign(runtime, {
+          process: { spawn: async () => { throw new Error('unexpected process exec'); } },
+        });
+        return {
+          runtime,
+          track: <T,>(resource: T): T => resource,
+          dispose: () => {},
+        };
       },
     });
     ix.stub(ILogService, stubLog());
@@ -1052,6 +1065,34 @@ describe('SessionSwarmService metadata compatibility', () => {
         },
         labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
       }),
+    );
+  });
+
+  it('inherits the caller runtime binding on spawned children', async () => {
+    handles.set(
+      'main',
+      agentHandle('main', lifecycle, eventBus, {}, new Map([
+        [IAgentRuntimeBindingService, {
+          _serviceBrand: undefined,
+          current: { workspaceId: 'w1', runtimeId: 'acp:s1' },
+          switch: () => {},
+          onDidChange: Event.None,
+        }],
+      ])),
+    );
+    const service = ix.get(ISessionSwarmService);
+
+    await service.run({
+      callerAgentId: 'main',
+      tasks: [spawnSessionTask('src/a.ts')],
+    });
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ runtimeId: 'acp:s1' }),
+    );
+    expect(resolverAcquire).toHaveBeenCalledWith(
+      { workspaceId: 'w1', runtimeId: 'acp:s1' },
+      ['process'],
     );
   });
 
@@ -1215,8 +1256,8 @@ describe('SessionSwarmService metadata compatibility', () => {
       handles.set('agent-blocker', agentHandle('agent-blocker', lifecycle, eventBus));
       const rateLimited = createControlledPromise<{ summary: string }>();
       const blocker = createControlledPromise<{ summary: string }>();
-      const published: DomainEvent[] = [];
-      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: DomainEvent) => {
+      const published: Event2[] = [];
+      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
         published.push(event);
       });
       let retryRuns = 0;
@@ -1251,7 +1292,7 @@ describe('SessionSwarmService metadata compatibility', () => {
       expect(
         published
           .filter((event) => event.type === 'subagent.spawned')
-          .map((event) => event.subagentId),
+          .map((event) => (event as Event2 & { readonly subagentId: string }).subagentId),
       ).toEqual(['agent-retry', 'agent-blocker']);
       expect(
         runAgent.mock.calls
@@ -1398,6 +1439,12 @@ function agentHandle(
     setModeAndBroadcast: () => {},
     onDidChangeMode: Event.None,
   } as IAgentPermissionModeService;
+  const dispatcher = {
+    _serviceBrand: undefined,
+    dispatch: async (event: Event2) => {
+      eventBus.publish(event);
+    },
+  } as unknown as IEventDispatcher;
   return {
     id,
     kind: LifecycleScope.Agent,
@@ -1406,6 +1453,14 @@ function agentHandle(
         const service = services.get(serviceId);
         if (service !== undefined) return service;
         if (serviceId === IAgentProfileService) return profile;
+        if (serviceId === IAgentRuntimeBindingService) {
+          return {
+            _serviceBrand: undefined,
+            current: { workspaceId: 'w1', runtimeId: 'local' },
+            switch: () => {},
+            onDidChange: Event.None,
+          } as unknown as IAgentRuntimeBindingService;
+        }
         if (serviceId === IAgentPermissionModeService) return permissionMode;
         if (serviceId === IAgentLoopService) {
           return {
@@ -1415,6 +1470,7 @@ function agentHandle(
         }
         if (serviceId === IAgentUserToolService) return userToolServiceStub();
         if (serviceId === IEventBus) return eventBus;
+        if (serviceId === IEventDispatcher) return dispatcher;
         if (serviceId === ITelemetryService) return noopTelemetryService;
         if (serviceId === IAgentLifecycleService) return lifecycle;
         return undefined;
@@ -1450,7 +1506,7 @@ function userToolServiceStub(): IAgentUserToolService {
 function eventBusStub(): IEventBus {
   return {
     _serviceBrand: undefined,
-    publish: vi.fn((_: DomainEvent) => {}),
+    publish: vi.fn((_: Event2) => {}),
     subscribe: vi.fn(() => ({ dispose: () => {} })) as IEventBus['subscribe'],
   };
 }

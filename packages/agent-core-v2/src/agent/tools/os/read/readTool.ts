@@ -1,29 +1,6 @@
-/**
- * `tools` domain — `ReadTool` implementation.
- *
- * Streams the file through `IHostFileSystem.readLines`, enforces the
- * line/byte budgets from the contract, normalizes line endings for display
- * (pure CRLF shown as LF, mixed or lone carriage returns made visible as
- * `\r`), refuses binary / media files up front, and composes the `<system>`
- * finish note on the `note` side channel. UTF-16 LE/BE text (with a BOM or
- * the zero-byte parity heuristic) is decoded whole via `readBytes` and
- * transcoded to UTF-8, bounded by `TRANSCODE_MAX_BYTES`.
- *
- * Path safety goes through the shared path access resolver used by
- * Read/Write/Edit. Read access flows through the os `hostFs` domain
- * (`IHostFileSystem`); path semantics (home expansion, path class) come from
- * the `hostEnvironment` domain; the workspace and skill roots come from
- * `ISessionWorkspaceContext` / `ISessionSkillCatalog`.
- *
- * Ported from v1. The
- * optional `scanTextFile` / `readLineRange` / `readTailLines` fast-paths are
- * intentionally dropped: `IHostFileSystem` streams through `readLines` only.
- * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module
- * load.
- */
-
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -34,7 +11,6 @@ import {
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {
-  extendWorkspaceWithSkillRoots,
   resolvePathAccessPath,
   type WorkspaceConfig,
 } from '#/tool/path-access';
@@ -232,27 +208,26 @@ export class ReadTool implements IReadTool {
   readonly description = READ_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
   constructor(
-    @IHostFileSystem private readonly fs: IHostFileSystem,
-    @IHostEnvironment private readonly env: IHostEnvironment,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
-    @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
+    @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
   ) {}
 
-  private get workspaceConfig(): WorkspaceConfig {
-    return extendWorkspaceWithSkillRoots(
-      {
-        workspaceDir: this.workspaceCtx.workDir,
-        additionalDirs: this.workspaceCtx.additionalDirs,
-      },
-      this.skillCatalog?.catalog.getSkillRoots() ?? [],
-      this.env.pathClass,
-    );
+  private workspaceConfig(view: RuntimeWorkspaceView): WorkspaceConfig {
+    return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
   resolveExecution(args: ReadInput): ToolExecution {
+    const inspected = inspectAgentRuntime(this.runtime);
+    const view = new RuntimeWorkspaceView(inspected, {
+      workDir: this.workspaceCtx.workDir,
+      additionalDirs: [...this.workspaceCtx.additionalDirs, ...this.skillCatalog.catalog.getSkillRoots()],
+    });
+    const env = { _serviceBrand: undefined, ...inspected.environment, ready: Promise.resolve() };
+    const workspace = this.workspaceConfig(view);
     const path = resolvePathAccessPath(args.path, {
-      env: this.env,
-      workspace: this.workspaceConfig,
+      env,
+      workspace,
       operation: 'read',
     });
     return {
@@ -262,19 +237,29 @@ export class ReadTool implements IReadTool {
       approvalRule: literalRulePattern(this.name, path),
       matchesRule: (ruleArgs) =>
         matchesPathRuleSubject(ruleArgs, path, {
-          cwd: this.workspaceConfig.workspaceDir,
-          pathClass: this.env.pathClass,
-          homeDir: this.env.homeDir,
+          cwd: workspace.workspaceDir,
+          pathClass: env.pathClass,
+          homeDir: env.homeDir,
         }),
-      execute: () => this.execution(args, path),
+      execute: async () => {
+        const lease = this.runtime.acquire(['fs']);
+        try {
+          if (lease.runtime.identity.generation !== inspected.identity.generation) {
+            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+          }
+          return await this.execution(lease.runtime.fs!, args, path);
+        } finally {
+          lease.dispose();
+        }
+      },
     };
   }
 
-  private async execution(args: ReadInput, safePath: string): Promise<ExecutableToolResult> {
+  private async execution(fs: IHostFileSystem, args: ReadInput, safePath: string): Promise<ExecutableToolResult> {
     try {
       let stat: Awaited<ReturnType<IHostFileSystem['stat']>>;
       try {
-        stat = await this.fs.stat(safePath);
+        stat = await fs.stat(safePath);
       } catch (error) {
         if (isFileNotFoundError(error)) {
           return { isError: true, output: `"${args.path}" does not exist.` };
@@ -285,7 +270,7 @@ export class ReadTool implements IReadTool {
         return { isError: true, output: `"${args.path}" is not a file.` };
       }
 
-      const header = await this.fs.readBytes(safePath, MEDIA_SNIFF_BYTES);
+      const header = await fs.readBytes(safePath, MEDIA_SNIFF_BYTES);
       const fileType = detectFileType(safePath, header);
       if (fileType.kind === 'image' || fileType.kind === 'video') {
         return {
@@ -294,15 +279,10 @@ export class ReadTool implements IReadTool {
         };
       }
 
-      // A BOM marks UTF-16 even when the header carries no NUL bytes (e.g.
-      // CJK-only content reads as printable ASCII), so detect the encoding
-      // before falling through to the strict UTF-8 text path.
       const detection = detectTextEncoding(header);
       let lines: AsyncIterable<string>;
       let detectedEncoding: UtfTextEncoding | undefined;
       if (!detection.seemsBinary && detection.encoding !== 'utf-8') {
-        // UTF-16 LE/BE text (BOM or zero-byte parity heuristic): decode the
-        // whole file and transcode to UTF-8 for display.
         if (stat.size > TRANSCODE_MAX_BYTES) {
           return {
             isError: true,
@@ -312,7 +292,7 @@ export class ReadTool implements IReadTool {
               'Convert it to UTF-8 first (e.g. `iconv` via Bash).',
           };
         }
-        const decoded = decodeUtfText(await this.fs.readBytes(safePath), detection.encoding);
+        const decoded = decodeUtfText(await fs.readBytes(safePath), detection.encoding);
         detectedEncoding = detection.encoding;
         lines = decodedLines(splitLinesKeepingTerminator(decoded));
       } else if (fileType.kind === 'unknown') {
@@ -321,7 +301,7 @@ export class ReadTool implements IReadTool {
           output: notReadableFileOutput(args.path),
         };
       } else {
-        lines = this.fs.readLines(safePath, { errors: 'strict' });
+        lines = fs.readLines(safePath, { errors: 'strict' });
       }
 
       const lineOffset = args.line_offset ?? 1;
@@ -552,4 +532,8 @@ export class ReadTool implements IReadTool {
   }
 }
 
-registerAgentToolService(IReadTool, ReadTool, { name: 'Read', domain: 'os/backends' });
+registerAgentToolService(IReadTool, ReadTool, {
+  name: 'Read',
+  domain: 'os/backends',
+  requiredRuntimeCapabilities: ['fs'],
+});

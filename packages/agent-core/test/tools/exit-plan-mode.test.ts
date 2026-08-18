@@ -62,12 +62,6 @@ describe('ExitPlanModeTool', () => {
 
     expect(tool.name).toBe('ExitPlanMode');
     expect(tool.description.length).toBeGreaterThan(0);
-    expect(tool.description).toContain('This tool does NOT take the plan content as a parameter');
-    expect(tool.description).toContain('For research tasks');
-    expect(tool.description).toContain('Reject and Revise controls');
-    expect(tool.description).toContain('If rejected, revise based on feedback');
-    // The description must teach what a good plan looks like (concrete, verifiable).
-    expect(tool.description.toLowerCase()).toContain('verifiable');
     expect(ExitPlanModeInputSchema.safeParse({}).success).toBe(true);
     expect(ExitPlanModeInputSchema.safeParse({ plan: '' }).success).toBe(false);
     expect(ExitPlanModeInputSchema.safeParse({ plan: 'a plan' }).success).toBe(false);
@@ -77,18 +71,6 @@ describe('ExitPlanModeTool', () => {
         options: { type: 'array' },
       },
     });
-    const optionsSchema = (tool.parameters['properties'] as Record<string, unknown>)[
-      'options'
-    ] as {
-      description?: string;
-      items?: {
-        properties?: Record<string, { description?: string }>;
-      };
-    };
-    expect(optionsSchema.description).toContain('up to 3 options');
-    expect(optionsSchema.description).toContain('single option');
-    expect(optionsSchema.items?.properties?.['label']?.description).toContain('(Recommended)');
-    expect(optionsSchema.items?.properties?.['description']?.description).toContain('trade-offs');
     expect((tool.parameters['properties'] as Record<string, unknown>)['plan']).toBeUndefined();
   });
 

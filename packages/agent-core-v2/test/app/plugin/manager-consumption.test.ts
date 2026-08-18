@@ -1,12 +1,3 @@
-/**
- * Scenario: plugin installation and consumption metadata through `PluginManager`.
- *
- * Verifies persisted plugin capabilities and skill counts against the real
- * filesystem discovery path. Network download boundaries are stubbed locally.
- * Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/plugin/manager-consumption.test.ts`.
- */
-
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
@@ -267,7 +258,6 @@ describe('PluginManager consumption plane', () => {
       '---\nname: root-skill\ndescription: at root\n---\nbody',
       'utf8',
     );
-    // Sibling docs at the plugin root are not skills.
     await writeFile(path.join(root, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
     const manager = new PluginManager({ kimiHomeDir: home });
     await manager.load();

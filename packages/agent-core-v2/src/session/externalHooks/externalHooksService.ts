@@ -1,33 +1,9 @@
-/**
- * `externalHooks` domain — Session-scope adapter for external hook
- * commands.
- *
- * Registers with the per-session `sessionLifecycleHooks` slots (seeded by
- * the Workspace-scope `sessionLifecycle`, which runs them around
- * create/close) to run `SessionStart` and `SessionEnd` external commands
- * for the current `sessionContext`, and
- * observes the requester-side agent-run hook slot (`onWillStartAgentTask`) and
- * stop event (`onDidStopAgentTask`) hosted on the `subagent` domain's
- * `ISessionSubagentService` to translate them into the `SubagentStart` /
- * `SubagentStop` external commands. It also owns the periodic
- * `SessionHeartbeat` command (one timer per session, ticking only when the
- * event is configured), enriches every payload it sends with the cached
- * session title (seeded from and kept fresh by `ISessionMetadata`), and
- * resolves the SessionStart model/profile facts from `IModelService` /
- * `ISessionAgentProfileCatalog`. The slot/event host lives on the service
- * that owns the run; this adapter only registers its
- * own listeners here, so the runner owns the slots it runs — the same pattern
- * the Agent-scope adapter follows against the agent behavior services. The
- * actual hook execution is delegated to the shared App-scope
- * `IExternalHooksRunnerService`; all config/plugin loading and engine lifecycle
- * live in the runner. Bound at Session scope.
- */
-
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IntervalTimer } from '#/_base/utils/timer';
 import { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IModelService } from '#/kosong/model/model';
 import {
   ISessionAgentProfileCatalog,
@@ -40,7 +16,6 @@ import {
   ISessionSubagentService,
 } from '#/session/subagent/subagent';
 import {
-  ISessionLifecycleService,
   type SessionCloseReason,
   type SessionCreateSource,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
@@ -62,7 +37,7 @@ export class SessionExternalHooksService
 
   constructor(
     @ISessionContext private readonly context: ISessionContext,
-    @ISessionLifecycleService lifecycle: ISessionLifecycleService,
+    @ISessionManager lifecycle: ISessionManager,
     @ISessionSubagentService subagents: ISessionSubagentService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionAgentProfileCatalog private readonly profiles: ISessionAgentProfileCatalog,
@@ -87,20 +62,26 @@ export class SessionExternalHooksService
           .catch(() => undefined);
       }),
     );
-    this._register(
-      lifecycle.onDidCreateSession((event) => {
-        if (event.sessionId !== this.context.sessionId) return;
-        if (event.source !== 'fork') {
-          event.waitUntil(this.triggerSessionStart(event.source));
-        }
-      }),
-    );
-    this._register(
-      lifecycle.onWillCloseSession((event) => {
-        if (event.sessionId !== this.context.sessionId) return;
-        event.waitUntil(this.triggerSessionEnd(event.reason));
-      }),
-    );
+    const onDidCreate = lifecycle.onDidCreateSession;
+    if (onDidCreate !== undefined) {
+      this._register(
+        onDidCreate((event) => {
+          if (event.sessionId !== this.context.sessionId) return;
+          if (event.source !== 'fork') {
+            event.waitUntil(this.triggerSessionStart(event.source));
+          }
+        }),
+      );
+    }
+    const onWillClose = lifecycle.onWillCloseSession;
+    if (onWillClose !== undefined) {
+      this._register(
+        onWillClose((event) => {
+          if (event.sessionId !== this.context.sessionId) return;
+          event.waitUntil(this.triggerSessionEnd(event.reason));
+        }),
+      );
+    }
     this._register(
       subagents.hooks.onWillStartAgentTask.register('externalHooks', async (ctx, next) => {
         await this.runSubagentStart(ctx);
@@ -109,11 +90,6 @@ export class SessionExternalHooksService
     );
     this._register(subagents.onDidStopAgentTask((ctx) => this.notifySubagentStop(ctx)));
 
-    // Arm the heartbeat only once the configured-hook index has loaded and
-    // only when the event has hooks at all, so sessions without a
-    // SessionHeartbeat hook never hold a recurring timer. Re-sync on every
-    // hook-index reload (plugin reload) so late-registered heartbeat hooks
-    // still arm, and removed ones disarm.
     void this.runner.ready
       .then(() => this.syncHeartbeat())
       .catch(() => undefined);

@@ -1,7 +1,3 @@
-/**
- * Global HTTP bearer-auth hook.
- */
-
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { errEnvelope } from '../envelope';
@@ -29,15 +25,6 @@ export interface AuthHookOptions {
   readonly validateCredential?: CredentialValidator;
 }
 
-/**
- * Decode the request path the same way the router does before matching.
- *
- * `req.url` is the raw, still percent-encoded URL, while find-my-way matches
- * routes against the decoded path — so a raw `/%61pi/…` reaches the `/api/…`
- * handlers. Checking the decoded path keeps the auth decision aligned with
- * routing. Returns `null` when the path cannot be decoded, in which case the
- * caller must fail closed.
- */
 function decodeRequestPath(rawUrl: string): string | null {
   const path = rawUrl.split('?', 1)[0] ?? rawUrl;
   try {
@@ -47,27 +34,12 @@ function decodeRequestPath(rawUrl: string): string | null {
   }
 }
 
-/**
- * Default bypass policy — the security boundary.
- *
- * Bypassed (no token required):
- *   - every `OPTIONS` request (CORS preflight);
- *   - `GET /api/v1/healthz` (liveness probe for supervisors / load balancers);
- *   - static web assets, defined as any path that does NOT start with `/api/`
- *     AND is not one of the meta documents `/openapi.json` / `/asyncapi.json`.
- *
- * NOT bypassed (token required): every `/api/…` route — including the
- * `/api/v1/debug` RPC surface — plus `/openapi.json` and `/asyncapi.json` (the meta
- * documents leak the API shape, so they stay gated). One persistent bearer
- * token protects them all.
- */
 function defaultIsBypassed(req: FastifyRequest): boolean {
   if (req.method === 'OPTIONS') {
     return true;
   }
   const path = decodeRequestPath(req.url);
   if (path === null) {
-    // Fail closed: an undecodable path must never skip authentication.
     return false;
   }
   if (req.method === 'GET' && path === '/api/v1/healthz') {
