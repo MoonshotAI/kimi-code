@@ -14,6 +14,7 @@ interface FlowStageInjectionDisclosure {
   readonly kind: 'flow_stage';
   readonly flowId: string;
   readonly stageIndex: number;
+  readonly fingerprint?: string;
 }
 
 export interface IFlowInjection {
@@ -45,10 +46,6 @@ export class FlowInjection extends Disposable implements IFlowInjection {
     const stage = this.flow.currentStage();
     if (stage === undefined || run.flowId === undefined) return undefined;
     const stageIndex = run.currentStageIndex ?? 0;
-    const last = ctx.lastDisclosure;
-    if (last !== undefined && last.flowId === run.flowId && last.stageIndex === stageIndex) {
-      return undefined;
-    }
     const total = run.stages?.length ?? 0;
     const notes =
       stage.notes === undefined ? '' : `\nStage notes: ${escapeUntrustedText(stage.notes)}`;
@@ -62,13 +59,32 @@ export class FlowInjection extends Disposable implements IFlowInjection {
       `Completion: ${escapeUntrustedText(stage.completion)}${notes}`,
       'You are the supervisor of this run: dispatch the stage work to a worker subagent instead of doing it yourself; when the worker reports, verify every completion criterion against objective evidence (artifacts, diffs, execution output — not the worker summary), then submit your verdict with FlowAdvance.',
     ].join('\n');
+    const fingerprint = fingerprintOf(content);
+    const last = ctx.lastDisclosure;
+    if (
+      last !== undefined &&
+      last.flowId === run.flowId &&
+      last.stageIndex === stageIndex &&
+      last.fingerprint === fingerprint
+    ) {
+      return undefined;
+    }
     return {
       content,
-      disclosure: { kind: 'flow_stage', flowId: run.flowId, stageIndex },
+      disclosure: { kind: 'flow_stage', flowId: run.flowId, stageIndex, fingerprint },
     };
   }
 }
 
 function escapeUntrustedText(text: string): string {
   return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
+
+function fingerprintOf(text: string): string {
+  let hash = 5381;
+  for (const ch of text) {
+    // oxlint-disable-next-line unicorn/prefer-math-trunc -- `>>> 0` wraps to uint32; Math.trunc would let the hash grow past integer precision.
+    hash = (Math.imul(hash, 33) + (ch.codePointAt(0) ?? 0)) >>> 0;
+  }
+  return hash.toString(16);
 }

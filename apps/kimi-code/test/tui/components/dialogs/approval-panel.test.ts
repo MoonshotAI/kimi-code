@@ -103,6 +103,8 @@ describe('ApprovalPanelComponent', () => {
             stage_id: 'review',
             stage_index: 3,
             stage_total: 5,
+            objective: 'Independent review',
+            completion: 'No substantive issue remains',
             next_stage_id: 'report',
             criteria: [
               { criterion: 'review clean', met: true, evidence: 'round 2 surfaced nothing' },
@@ -121,6 +123,8 @@ describe('ApprovalPanelComponent', () => {
     const out = strip(new ApprovalPanelComponent(pending, () => {}).render(80).join('\n'));
     expect(out).toContain('Pass this stage gate?');
     expect(out).toContain('flow issue-fix · stage review (4/5) · next stage: report');
+    expect(out).toContain('objective: Independent review');
+    expect(out).toContain('completion: No substantive issue remains');
     expect(out).toContain('✓ review clean');
     expect(out).toContain('round 2 surfaced nothing');
     expect(out).toContain('✗ suite green');
@@ -143,6 +147,8 @@ describe('ApprovalPanelComponent', () => {
             stage_id: 'report',
             stage_index: 4,
             stage_total: 5,
+            objective: 'Deliver the report',
+            completion: 'Report delivered',
             criteria: [{ criterion: 'report delivered', met: true, evidence: 'posted' }],
           },
         ],

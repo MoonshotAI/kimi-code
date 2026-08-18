@@ -93,6 +93,8 @@ export interface FlowGateDisplayBlock {
   stage_id: string;
   stage_index: number;
   stage_total: number;
+  objective: string;
+  completion: string;
   next_stage_id?: string | undefined;
   criteria: { criterion: string; met: boolean; evidence: string }[];
   note?: string | undefined;

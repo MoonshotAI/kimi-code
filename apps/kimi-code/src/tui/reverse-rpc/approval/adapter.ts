@@ -340,6 +340,8 @@ function adaptDisplay(display: ToolInputDisplay): DisplayBlock[] {
           stage_id: display.stage_id,
           stage_index: display.stage_index,
           stage_total: display.stage_total,
+          objective: display.objective,
+          completion: display.completion,
           next_stage_id: display.next_stage_id,
           criteria: display.criteria.map((criterion) => ({ ...criterion })),
           note: display.note,

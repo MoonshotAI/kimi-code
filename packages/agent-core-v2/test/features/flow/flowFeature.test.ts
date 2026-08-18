@@ -23,7 +23,7 @@ import {
 } from '#/features/featureRegistry';
 import { FLOW_FLAG_ID, FLOW_REVIEWER_PROFILE } from '#/features/flow/flow';
 import { FlowFeature } from '#/features/flow/flowFeature';
-import { IFlowInjection } from '#/features/flow/injection/flowInjection';
+import { FlowInjection, IFlowInjection } from '#/features/flow/injection/flowInjection';
 
 import { stubFlag } from '../../app/flag/stubs';
 
@@ -85,5 +85,54 @@ describe('FlowFeature — experimental flag gating', () => {
     );
     expect(tools.toSorted()).toEqual(['FlowAbort', 'FlowAdvance', 'FlowStart']);
     host.dispose();
+  });
+});
+
+describe('FlowInjection reminder', () => {
+  function makeInjection(runTask: () => string) {
+    let handler:
+      | ((ctx: { lastDisclosure?: unknown; injectedPositions: number[]; lastInjectedAt: null; isNewTurn: boolean }) => unknown)
+      | undefined;
+    const injector = {
+      register: (_variant: string, h: typeof handler) => {
+        handler = h;
+        return { dispose: () => {} };
+      },
+    };
+    const flow = {
+      run: () => ({
+        active: true,
+        flowId: 'issue-fix',
+        task: runTask(),
+        stages: [{ id: 'triage', objective: 'find it', completion: 'found', gate: 'human' as const }],
+        currentStageIndex: 0,
+      }),
+      currentStage: () => ({ id: 'triage', objective: 'find it', completion: 'found', gate: 'human' as const }),
+    };
+    const injection = new FlowInjection(injector as never, flow as never);
+    expect(injection).toBeDefined();
+    const invoke = (lastDisclosure?: unknown) =>
+      handler!({ lastDisclosure, injectedPositions: [], lastInjectedAt: null, isNewTurn: true }) as
+        | { content: string; disclosure: { flowId: string; stageIndex: number; fingerprint?: string } }
+        | undefined;
+    return invoke;
+  }
+
+  it('suppresses a repeat reminder for the same run and stage, but not a restarted run with a new task', () => {
+    let task = 'fix #1';
+    const invoke = makeInjection(() => task);
+    const first = invoke(undefined);
+    expect(first?.content).toContain('fix #1');
+    expect(invoke(first?.disclosure)).toBeUndefined();
+
+    task = 'fix #2';
+    const second = invoke(first?.disclosure);
+    expect(second?.content).toContain('fix #2');
+    expect(second?.disclosure.fingerprint).not.toBe(first?.disclosure.fingerprint);
+  });
+
+  it('re-discloses when the prior disclosure carries no fingerprint (pre-upgrade sessions)', () => {
+    const invoke = makeInjection(() => 'fix #1');
+    expect(invoke({ kind: 'flow_stage', flowId: 'issue-fix', stageIndex: 0 })).toBeDefined();
   });
 });

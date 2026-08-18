@@ -118,6 +118,8 @@ function renderFlowGateDisplayBlock(
   lines.push(
     `${s.accent(`flow ${block.flow_id}`)} ${s.strong(`· stage ${block.stage_id} (${position})`)} ${s.dim(`· ${outcome}`)}`,
   );
+  appendWrappedLine(lines, s.dim('objective: '), '  ', s.dim(block.objective), width);
+  appendWrappedLine(lines, s.dim('completion: '), '  ', s.dim(block.completion), width);
   for (const criterion of block.criteria) {
     const mark = criterion.met ? s.ok('✓') : s.bad('✗');
     appendWrappedLine(lines, `${mark} `, '  ', s.strong(criterion.criterion), width);

@@ -330,6 +330,8 @@ describe('approval adapter', () => {
         stage_id: 'review',
         stage_index: 3,
         stage_total: 5,
+        objective: 'Independent review',
+        completion: 'No substantive issue remains',
         next_stage_id: 'report',
         criteria: [{ criterion: 'review clean', met: true, evidence: 'round 2 surfaced nothing' }],
         note: 'reviewer passed',

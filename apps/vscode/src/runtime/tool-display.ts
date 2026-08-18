@@ -63,6 +63,25 @@ export function toLegacyDisplay(display: ToolInputDisplay): DisplayBlock[] {
           status: item.status === "done" || item.status === "in_progress" ? item.status : "pending",
         })),
       }];
+    case "flow_gate_review": {
+      const lines = [
+        describeToolDisplay(display),
+        `flow ${display.flow_id}${display.task ? ` — ${display.task}` : ""}`,
+        `objective: ${display.objective}`,
+        `completion: ${display.completion}`,
+        ...display.criteria.map(
+          (criterion) =>
+            `${criterion.met ? "✓" : "✗"} ${criterion.criterion}${criterion.evidence ? ` — ${criterion.evidence}` : ""}`,
+        ),
+      ];
+      if (display.note) lines.push(`note: ${display.note}`);
+      lines.push(
+        display.next_stage_id === undefined
+          ? "passing finishes the run"
+          : `passing advances to stage ${display.next_stage_id}`,
+      );
+      return [{ type: "brief", text: lines.join("\n") }];
+    }
     case "search":
     case "url_fetch":
     case "agent_call":
@@ -70,7 +89,6 @@ export function toLegacyDisplay(display: ToolInputDisplay): DisplayBlock[] {
     case "task":
     case "task_stop":
     case "plan_review":
-    case "flow_gate_review":
     case "goal_start":
     case "generic":
       return [{ type: "brief", text: describeToolDisplay(display) }];
