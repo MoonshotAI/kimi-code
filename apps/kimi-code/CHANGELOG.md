@@ -1,5 +1,13 @@
 # @moonshot-ai/kimi-code
 
+## 0.37.2
+
+### Patch Changes
+
+- [#3061](https://github.com/MoonshotAI/kimi-code/pull/3061) [`5c661f4`](https://github.com/MoonshotAI/kimi-code/commit/5c661f4610f36481dbf2f9598aa63f49004e4980) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: the subagent detail panel now keeps the working process fully expanded and drops the end-of-turn timestamp footer.
+
+- [#3061](https://github.com/MoonshotAI/kimi-code/pull/3061) [`5c661f4`](https://github.com/MoonshotAI/kimi-code/commit/5c661f4610f36481dbf2f9598aa63f49004e4980) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Settings gains a Lab tab with a multi-tab sidebar toggle (off by default); when enabled, the sidebar shows the Open / Done / Workspaces tabs.
+
 ## 0.37.1
 
 ### Patch Changes
