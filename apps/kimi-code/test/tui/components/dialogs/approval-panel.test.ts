@@ -100,6 +100,7 @@ describe('ApprovalPanelComponent', () => {
           {
             type: 'flow_gate',
             flow_id: 'issue-fix',
+            task: 'fix issue #3017',
             stage_id: 'review',
             stage_index: 3,
             stage_total: 5,
@@ -123,6 +124,7 @@ describe('ApprovalPanelComponent', () => {
     const out = strip(new ApprovalPanelComponent(pending, () => {}).render(80).join('\n'));
     expect(out).toContain('Pass this stage gate?');
     expect(out).toContain('flow issue-fix · stage review (4/5) · next stage: report');
+    expect(out).toContain('task: fix issue #3017');
     expect(out).toContain('objective: Independent review');
     expect(out).toContain('completion: No substantive issue remains');
     expect(out).toContain('✓ review clean');

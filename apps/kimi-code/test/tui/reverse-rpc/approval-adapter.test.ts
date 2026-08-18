@@ -310,6 +310,7 @@ describe('approval adapter', () => {
       display: {
         kind: 'flow_gate_review',
         flow_id: 'issue-fix',
+        task: 'fix issue #3017',
         stage_id: 'review',
         stage_index: 3,
         stage_total: 5,
@@ -327,6 +328,7 @@ describe('approval adapter', () => {
       {
         type: 'flow_gate',
         flow_id: 'issue-fix',
+        task: 'fix issue #3017',
         stage_id: 'review',
         stage_index: 3,
         stage_total: 5,

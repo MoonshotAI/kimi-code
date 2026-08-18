@@ -90,6 +90,7 @@ export interface BackgroundTaskDisplayBlock {
 export interface FlowGateDisplayBlock {
   type: 'flow_gate';
   flow_id: string;
+  task?: string | undefined;
   stage_id: string;
   stage_index: number;
   stage_total: number;

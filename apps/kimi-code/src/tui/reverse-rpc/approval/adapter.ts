@@ -337,6 +337,7 @@ function adaptDisplay(display: ToolInputDisplay): DisplayBlock[] {
         {
           type: 'flow_gate',
           flow_id: display.flow_id,
+          task: display.task,
           stage_id: display.stage_id,
           stage_index: display.stage_index,
           stage_total: display.stage_total,
