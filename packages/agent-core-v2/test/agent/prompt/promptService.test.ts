@@ -33,8 +33,9 @@ import { IFileService } from '#/app/file/fileService';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 
 import { stubContextMemory } from '../contextMemory/stubs';
-import { stubLoopWithHooks, stubToolExecutor, stubWire } from '../loop/stubs';
+import { stubLoopWithHooks, stubToolExecutor, stubWire, type StubLoopOptions } from '../loop/stubs';
 import { registerStateServices } from '../../state/stubs';
+import { SteerStepRequest } from '#/agent/prompt/promptStepRequests';
 
 function message(text: string): ContextMessage {
   return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
@@ -56,11 +57,11 @@ const noopBlob: IAgentBlobService = {
   isBlobRef: () => false,
 };
 
-function harness() {
+function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
   const disposables = new DisposableStore();
   onTestFinished(() => disposables.dispose());
   const context = stubContextMemory();
-  const loop = stubLoopWithHooks({ pendingTurnResult: true });
+  const loop = stubLoopWithHooks(loopOptions);
   const fullCompaction = {
     _serviceBrand: undefined,
     compacting: null,
@@ -376,5 +377,62 @@ describe('AgentPromptService', () => {
 
     await expect(steerPromise).rejects.toMatchObject({ code: 'prompt.not_found' });
     expect(prompt.list().pending.map((item) => item.id)).toEqual(['b']);
+  });
+
+  it('keeps bundled skill blocks at the merged message prefix when steering', async () => {
+    const { prompt, context, loop } = harness();
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const one = await prompt.enqueue({ message: bundledMessage('review', 'user A') });
+    const two = await prompt.enqueue({ message: bundledMessage('security', 'user B') });
+
+    await prompt.steer([one.id, two.id]);
+    loop.drainNextBatch(context);
+
+    const merged = context
+      .get()
+      .find(
+        (entry) => entry.origin?.kind === 'user' && entry.origin.skillActivations !== undefined,
+      );
+    expect(merged?.content).toEqual([
+      { type: 'text', text: '<skill>review</skill>' },
+      { type: 'text', text: '<skill>security</skill>' },
+      { type: 'text', text: 'user A' },
+      { type: 'text', text: 'user B' },
+    ]);
+  });
+
+  it('restarts the queue after restoring a steer raced by the active turn settling', async () => {
+    const { prompt, loop } = harness({ manualTurnResult: true });
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const queued = await prompt.enqueue({ id: 'queued', message: message('queued') });
+    let steerEnqueued!: () => void;
+    const enqueued = new Promise<void>((resolve) => {
+      steerEnqueued = resolve;
+    });
+    let rejectSteer!: (reason?: unknown) => void;
+    const original = loop.enqueue.bind(loop);
+    vi.spyOn(loop, 'enqueue').mockImplementation((request, options) => {
+      if (request instanceof SteerStepRequest) {
+        return {
+          assigned: new Promise<never>((_, reject) => {
+            rejectSteer = reject;
+            steerEnqueued();
+          }),
+          abort: () => true,
+        };
+      }
+      return original(request, options);
+    });
+
+    const steerPromise = prompt.steer([queued.id]);
+    await enqueued;
+    loop.settleActive();
+    rejectSteer(new Error('held'));
+
+    await expect(steerPromise).rejects.toMatchObject({ code: 'prompt.not_found' });
+    await expect(queued.launched).resolves.toBeDefined();
+    expect(prompt.list().active?.id).toBe('queued');
   });
 });

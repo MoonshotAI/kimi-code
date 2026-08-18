@@ -109,21 +109,27 @@ interface Record extends PromptSnapshot {
   handle: PromptHandle;
 }
 
+function bundledSkillBlockCount(message: ContextMessage): number {
+  return message.origin?.kind === 'user' ? (message.origin.skillActivations?.length ?? 0) : 0;
+}
+
+function stripBundledSkillBlocks(message: ContextMessage): ContentPart[] {
+  return message.content.slice(bundledSkillBlockCount(message));
+}
+
 function mergeSteerMessages(records: readonly Record[]): ContextMessage {
   const skillActivations = records.flatMap((item) =>
     item.message.origin?.kind === 'user' ? (item.message.origin.skillActivations ?? []) : [],
   );
   return {
     role: 'user',
-    content: records.flatMap((item) => item.message.content),
+    content: [
+      ...records.flatMap((item) => item.message.content.slice(0, bundledSkillBlockCount(item.message))),
+      ...records.flatMap((item) => stripBundledSkillBlocks(item.message)),
+    ],
     toolCalls: [],
     origin: skillActivations.length === 0 ? USER_PROMPT_ORIGIN : { kind: 'user', skillActivations },
   };
-}
-
-function stripBundledSkillBlocks(message: ContextMessage): ContentPart[] {
-  const bundled = message.origin?.kind === 'user' ? (message.origin.skillActivations?.length ?? 0) : 0;
-  return bundled === 0 ? message.content : message.content.slice(bundled);
 }
 
 export const promptLaunchingKey = defineState<boolean>('prompt.launching', () => false);
@@ -326,6 +332,7 @@ export class AgentPromptService implements IAgentPromptService {
     }
     if (turn === undefined || this.active !== activeAtEntry) {
       for (const { item, index } of removed.reverse()) this.pending.splice(index, 0, item);
+      if (this.active === undefined) void this.startNext();
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
     }
     for (const item of selected) { item.state = 'steered'; item.launchedDeferred.resolve(turn); }
