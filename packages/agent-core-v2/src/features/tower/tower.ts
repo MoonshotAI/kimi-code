@@ -21,6 +21,8 @@ export const TOWER_TOOL_NAMES = [
  */
 export const TOWER_WORKER_PROFILE = 'tower-worker';
 
+export const TOWER_FLAG_ID = 'tower';
+
 export interface IAgentTowerService {
   readonly _serviceBrand: undefined;
 
