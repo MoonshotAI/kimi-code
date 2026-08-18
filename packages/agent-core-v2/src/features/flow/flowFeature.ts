@@ -51,7 +51,7 @@ export class FlowFeature extends Feature {
       return;
     }
     this.handles = [
-      this.contributeAgentService(IFlowInjection, FlowInjection, {
+      ...this.contributeAgentService(IFlowInjection, FlowInjection, {
         activation: ScopeActivation.OnScopeCreated,
       }),
       ...this.contributeTool(IFlowStartTool, FlowStartTool, {

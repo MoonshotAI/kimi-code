@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { Event } from '#/_base/event';
+import type { IConfigService } from '#/app/config/config';
 import type { IFlagService } from '#/app/flag/flag';
 import { FLOW_FLAG_ID } from '#/features/flow/flow';
 import { FlowsSkillSource } from '#/features/flow/flowsSkillSource';
@@ -45,7 +46,11 @@ describe('FlowsSkillSource', () => {
     } as unknown as IHostFsWatchService;
     const workspace = { cwd: '/ws' } as unknown as IWorkspaceContext;
     const flags = stubFlag((id) => flowFlagOn && id === FLOW_FLAG_ID) as IFlagService;
-    source = new FlowsSkillSource(fs, fsWatch, workspace, flags);
+    const config = {
+      get: () => undefined,
+      onDidChangeConfiguration: () => ({ dispose: () => {} }),
+    } as unknown as IConfigService;
+    source = new FlowsSkillSource(fs, fsWatch, workspace, flags, config);
   });
 
   it('projects a flow definition into a user-activatable flow skill', async () => {

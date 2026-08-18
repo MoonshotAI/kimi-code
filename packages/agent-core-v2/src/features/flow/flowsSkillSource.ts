@@ -3,6 +3,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
 import { TimeoutTimer } from '#/_base/utils/timer';
+import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import {
   SKILL_SOURCE_PRIORITY,
@@ -62,8 +63,18 @@ export class FlowsSkillSource extends Disposable implements IFlowsSkillSource {
     @IHostFsWatchService fsWatch: IHostFsWatchService,
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IFlagService private readonly flags: IFlagService,
+    @IConfigService config: IConfigService,
   ) {
     super();
+    let flagWas = this.flags.enabled(FLOW_FLAG_ID);
+    this._register(
+      config.onDidChangeConfiguration(() => {
+        const flagNow = this.flags.enabled(FLOW_FLAG_ID);
+        if (flagNow === flagWas) return;
+        flagWas = flagNow;
+        this.onDidChangeEmitter.fire();
+      }),
+    );
     const root = this.workspace.cwd;
     const flowsDir = this.flowsDir();
     const handle = fsWatch.watch(root, {

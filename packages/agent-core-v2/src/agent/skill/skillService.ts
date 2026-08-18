@@ -138,9 +138,6 @@ export class AgentSkillService extends Service implements IAgentSkillService {
         promptMetadataTextFromContentParts(input.input),
       );
     }
-    for (const activation of prepared) {
-      void this.recordActivation(activation.origin);
-    }
     const reservation = reservePrompt(this.prompt);
     try {
       const handle = await reservation.submit({
@@ -151,6 +148,12 @@ export class AgentSkillService extends Service implements IAgentSkillService {
           kind: 'user',
           skillActivations: prepared.map((activation) => activation.entry),
         },
+      });
+      void handle.launched.then((turn) => {
+        if (turn === undefined) return;
+        for (const activation of prepared) {
+          void this.recordActivation(activation.origin);
+        }
       });
       if (handle.state === 'pending') {
         return { prompt_id: handle.id, created_at: handle.createdAt, state: 'queued' };
@@ -230,20 +233,25 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     origin: SkillActivationOrigin,
     input?: readonly ContentPart[],
   ): Promise<Turn | undefined> {
-    await this.dispatcher.dispatch(new SkillActivate({ origin }));
-    this.publishActivation(origin);
-
-    if (input === undefined) return undefined;
+    if (input === undefined) {
+      await this.dispatcher.dispatch(new SkillActivate({ origin }));
+      this.publishActivation(origin);
+      return undefined;
+    }
     const message: ContextMessage = {
       role: 'user',
       content: [...input],
       toolCalls: [],
       origin,
     };
-    if (this.loop.status().state === 'running') {
-      return this.prompt.inject(message);
-    }
-    return (await this.prompt.enqueue({ message })).launched;
+    const turn =
+      this.loop.status().state === 'running'
+        ? await this.prompt.inject(message)
+        : await (await this.prompt.enqueue({ message })).launched;
+    if (turn === undefined) return undefined;
+    await this.dispatcher.dispatch(new SkillActivate({ origin }));
+    this.publishActivation(origin);
+    return turn;
   }
 
   private renderSkillPrompt(skill: SkillDefinition, rawArgs: string): string {

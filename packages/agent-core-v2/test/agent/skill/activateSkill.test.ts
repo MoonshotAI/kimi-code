@@ -102,16 +102,16 @@ describe('promptWithSkills', () => {
         (event.event === 'skill.activated' || event.event === 'turn.started'),
     );
     expect(events.map((event) => event.event)).toEqual([
-      'skill.activated',
-      'skill.activated',
       'turn.started',
+      'skill.activated',
+      'skill.activated',
     ]);
     expect(
       events
-        .slice(0, 2)
+        .slice(1)
         .map((event) => (event.args as { readonly skillName?: string }).skillName),
     ).toEqual(['review', 'security']);
-    const started = events[2]?.args as { readonly prompt?: string };
+    const started = events[0]?.args as { readonly prompt?: string };
     expect(started.prompt).toBe('Review this change.');
   });
 

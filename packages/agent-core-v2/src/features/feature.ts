@@ -51,21 +51,23 @@ export abstract class Feature extends Service {
     id: ServiceIdentifier<T>,
     ctor: ServiceClassRecipe,
     opts?: FiberProvideOptions,
-  ): FiberHandle {
-    this.provide(FeatureServiceContribution, { scope, id });
-    return this.provide(ScopeUnits(scope), {
-      name: `${this.name}:${String(id)}`,
-      apply(fiber: Fiber): void {
-        fiber.provide(id, ctor, opts);
-      },
-    });
+  ): FiberHandle[] {
+    return [
+      this.provide(FeatureServiceContribution, { scope, id }),
+      this.provide(ScopeUnits(scope), {
+        name: `${this.name}:${String(id)}`,
+        apply(fiber: Fiber): void {
+          fiber.provide(id, ctor, opts);
+        },
+      }),
+    ];
   }
 
   contributeAgentService<T>(
     id: ServiceIdentifier<T>,
     ctor: ServiceClassRecipe,
     opts?: FiberProvideOptions,
-  ): FiberHandle {
+  ): FiberHandle[] {
     return this.contributeService(LifecycleScope.Agent, id, ctor, opts);
   }
 
@@ -75,7 +77,7 @@ export abstract class Feature extends Service {
     options: AgentToolContributionOptions,
   ): FiberHandle[] {
     return [
-      this.contributeService(LifecycleScope.Agent, id, ctor, {
+      ...this.contributeService(LifecycleScope.Agent, id, ctor, {
         activation: ScopeActivation.OnDemand,
       }),
       this.provide(AgentToolContribution, { id, ctor, options }),

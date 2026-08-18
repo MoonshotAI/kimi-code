@@ -14,6 +14,7 @@ import type {
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentUserToolService, type UserToolRegistration } from './userTool';
@@ -41,6 +42,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly agentState: IAgentStateService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
     super();
     this.agentState.contributeState(userToolKey);
@@ -127,6 +129,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
         args,
       },
       origin: {
+        agentId: this.scopeContext.agentId,
         turnId: context.turnId,
       },
     });
