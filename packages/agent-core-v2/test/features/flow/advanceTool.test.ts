@@ -110,6 +110,18 @@ describe('FlowAdvanceTool', () => {
     expect(advance).not.toHaveBeenCalled();
   });
 
+  it('rejects a reject verdict whose criteria are all met', async () => {
+    const args: FlowAdvanceInput = {
+      stage: 'triage',
+      verdict: 'reject',
+      criteria: [{ criterion: 'found', met: true, evidence: 'src/x.ts:12' }],
+    };
+    const result = await runnable(tool.resolveExecution(args)).execute(CTX);
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('at least one unmet criterion');
+    expect(advance).not.toHaveBeenCalled();
+  });
+
   it('the input schema rejects blank criterion text and blank evidence', () => {
     const blankEvidence = FlowAdvanceInputSchema.safeParse({
       stage: 'triage',

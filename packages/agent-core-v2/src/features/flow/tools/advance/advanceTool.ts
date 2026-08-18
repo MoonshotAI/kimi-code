@@ -74,6 +74,13 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
     }
 
     if (args.verdict === 'reject') {
+      if (!args.criteria.some((criterion) => !criterion.met)) {
+        return {
+          isError: true,
+          output:
+            'A reject verdict requires at least one unmet criterion naming what to rework. Mark the failing criteria met: false with evidence, or submit verdict: "pass" if every criterion is actually met.',
+        };
+      }
       this.flow.advance({
         stage: args.stage,
         result: 'reject',
