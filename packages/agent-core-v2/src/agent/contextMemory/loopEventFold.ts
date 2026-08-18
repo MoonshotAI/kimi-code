@@ -77,6 +77,7 @@ export interface LoopEventFoldSink {
 export interface LoopEventFold {
   appendMessage(message: ContextMessage, time?: number): void;
   loopEvent(event: LoopRecordedEvent, time?: number): void;
+  settle(time?: number): void;
   reset(): void;
 }
 
@@ -194,6 +195,10 @@ function createLoopEventFoldWithState(
           return;
         }
       }
+    },
+    settle(time) {
+      settleOpen(time);
+      flushDeferred();
     },
     reset() {
       openStepUuid = undefined;

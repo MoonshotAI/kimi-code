@@ -125,6 +125,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
         break;
       }
       case 'context.apply_compaction': {
+        fold.settle(record.time);
         transcript.push({
           message: {
             role: 'user',
@@ -135,7 +136,6 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
           time: record.time,
         });
         foldedLength = recoverFoldedLength(record, transcript, clearFloor, foldedLength);
-        resetOpenState();
         break;
       }
       case 'context.undo':

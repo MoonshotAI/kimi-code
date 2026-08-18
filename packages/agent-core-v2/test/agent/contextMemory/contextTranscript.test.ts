@@ -393,6 +393,43 @@ describe('live fold parity', () => {
     expect(live[2]!.origin).toEqual({ kind: 'compaction_summary' });
   });
 
+  it('settles a frame left open by a failed attempt when compaction lands mid-fold', () => {
+    const records: WireRecord[] = [
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      loopEvent({ type: 'step.begin', uuid: 's2' }),
+      compaction('SUM', 3, 1),
+      ...assistantStep('s3', 'a3'),
+    ];
+    const live = foldLive(records);
+    const transcript = reduceContextTranscript(records);
+    expect(live.map((m) => m.role)).toEqual(['user', 'user', 'assistant']);
+    expect(texts(transcript)).toEqual(['u1', 'a1', 'SUM', 'a3']);
+    expect(transcript.foldedLength).toBe(live.length);
+  });
+
+  it('closes a pending tool exchange when compaction lands mid-fold', () => {
+    const records: WireRecord[] = [
+      appendMessage(userMessage('u1')),
+      loopEvent({ type: 'step.begin', uuid: 's2' }),
+      loopEvent({ type: 'tool.call', stepUuid: 's2', toolCallId: 'c1', name: 'Bash' }),
+      compaction('SUM', 2, 1),
+      ...assistantStep('s3', 'a3'),
+    ];
+    const live = foldLive(records);
+    const transcript = reduceContextTranscript(records);
+    expect(transcript.entries.map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'user',
+      'assistant',
+    ]);
+    expect(transcript.entries[2]!.toolCallId).toBe('c1');
+    expect(transcript.entries[2]!.isError).toBe(true);
+    expect(transcript.foldedLength).toBe(live.length);
+  });
+
   it('tracks the live context length across clear and undo', () => {
     const records: WireRecord[] = [
       appendMessage(userMessage('u1')),
