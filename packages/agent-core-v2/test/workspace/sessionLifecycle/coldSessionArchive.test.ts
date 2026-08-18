@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventService } from '#/app/event/event';
-import { ISessionManager } from '#/app/sessionManager/sessionManager';
+import { ISessionManager, type UnguardedSessionLifecycle } from '#/app/sessionManager/sessionManager';
 import {
   ISessionIndex,
   ISessionIndexMirror,
@@ -60,7 +60,10 @@ function coldPathAccessor(options: ColdPathOptions): ServicesAccessor {
     [
       ISessionManager,
       {
-        withLifecycleSerialization: (_id: string, work: () => Promise<unknown>) => work(),
+        withLifecycleSerialization: <T>(
+          _id: string,
+          work: (unguarded: UnguardedSessionLifecycle) => Promise<T>,
+        ): Promise<T> => work({ archive: async () => {}, restore: async () => undefined }),
         whenResumeSettled: async () => {},
         get: () => undefined,
       },

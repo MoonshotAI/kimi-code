@@ -4,9 +4,10 @@
  *
  * `setSessionArchivedBatch` answers a batch of ids in input order: each
  * id's classify + mutate runs inside `sessionManager`'s per-session
- * lifecycle serialization (resume / restore / close queue on the same
- * chain), so no resume can materialize stale state over a cold write and no
- * close can slip between the live check and the archive call. Live sessions
+ * lifecycle serialization (every lifecycle transition queues on the same
+ * chain; the section's own archive/restore ride the unguarded view), so
+ * no resume can materialize stale state over a cold write and no close
+ * can slip between the live check and the archive call. Live sessions
  * go through the full `sessionManager` lifecycle chain (never resumed),
  * and cold sessions are patched straight into the persisted metadata
  * document through `persistence` (existence reads from `sessionIndex`),
@@ -23,7 +24,6 @@ import { getLiveSessionById } from '#/app/sessionManager/sessionLookup';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { normalizeSessionMeta, encodeSessionMeta } from '#/session/sessionMetadata/sessionMetadataService';
 
@@ -100,15 +100,14 @@ export async function setSessionArchivedBatch(
   const applyOne = async (id: string): Promise<SessionArchiveBatchItemOutcome> => {
     try {
       const manager = accessor.get(ISessionManager);
-      return await manager.withLifecycleSerialization(id, async () => {
+      return await manager.withLifecycleSerialization(id, async (unguarded) => {
         await manager.whenResumeSettled(id);
         const live = getLiveSessionById(accessor, id);
         if (live !== undefined) {
-          // Restore on a live session is a plain metadata flip — the handle
-          // is already materialized, and manager.restore would reenter the
-          // serialization this critical section holds.
-          if (archived) await manager.archive(id);
-          else await live.accessor.get(ISessionMetadata).setArchived(false);
+          // The section holds the chain — the lifecycle calls go through the
+          // unguarded view so they can't self-deadlock it.
+          if (archived) await unguarded.archive();
+          else await unguarded.restore();
           return { id, ok: true };
         }
         const outcome = await setColdSessionArchived(accessor, id, archived);

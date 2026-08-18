@@ -30,7 +30,11 @@ import {
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
-import { ISessionManager, type CreateManagedSessionOptions } from './sessionManager';
+import {
+  ISessionManager,
+  type CreateManagedSessionOptions,
+  type UnguardedSessionLifecycle,
+} from './sessionManager';
 
 interface SessionControllerEntry {
   readonly generation: string;
@@ -107,8 +111,16 @@ export class SessionManager implements ISessionManager {
     return run;
   }
 
-  withLifecycleSerialization<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
-    return this.serializeLifecycle(sessionId, work);
+  withLifecycleSerialization<T>(
+    sessionId: string,
+    work: (unguarded: UnguardedSessionLifecycle) => Promise<T>,
+  ): Promise<T> {
+    return this.serializeLifecycle(sessionId, () =>
+      work({
+        archive: () => this.archiveInner(sessionId),
+        restore: () => this.restoreInner(sessionId),
+      }),
+    );
   }
 
   list(): readonly ISessionScopeHandle[] {
@@ -119,14 +131,23 @@ export class SessionManager implements ISessionManager {
     await this.serializeLifecycle(sessionId, async () => this.owners.get(sessionId)?.close(sessionId));
   }
 
-  async archive(sessionId: string): Promise<void> {
+  private async archiveInner(sessionId: string): Promise<void> {
     await (await this.controllerForSession(sessionId))?.archive(sessionId);
   }
 
+  async archive(sessionId: string): Promise<void> {
+    await this.serializeLifecycle(sessionId, () => this.archiveInner(sessionId));
+  }
+
+  private async restoreInner(
+    sessionId: string,
+    options?: ResumeSessionOptions,
+  ): Promise<ISessionScopeHandle | undefined> {
+    return (await this.controllerForSession(sessionId))?.restore(sessionId, options);
+  }
+
   async restore(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
-    return this.serializeLifecycle(sessionId, async () =>
-      (await this.controllerForSession(sessionId))?.restore(sessionId, options),
-    );
+    return this.serializeLifecycle(sessionId, () => this.restoreInner(sessionId, options));
   }
 
   async delete(sessionId: string): Promise<void> {

@@ -892,15 +892,10 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         if (archived === undefined || archiveHandler === undefined) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
         }
-        // Serialize the archive against the batch endpoints' per-session
-        // critical sections: two concurrent archive calls would otherwise
-        // both pass the live check and double-fire the lifecycle (duplicate
-        // events, the controller's session count decremented twice). The
-        // batch's own archive call stays UNSERIALIZED — it already runs
-        // inside the chain, and chaining it would self-deadlock.
-        await core.accessor.get(ISessionManager).withLifecycleSerialization(parsed.id, () =>
-          core.accessor.get(ISessionManager).archive(parsed.id),
-        );
+        // archive() enters the session's lifecycle chain itself — serialized
+        // against the batch endpoints' critical sections and every other
+        // transition with no caller-side wrapping.
+        await core.accessor.get(ISessionManager).archive(parsed.id);
         requestLog(req)?.info({ session_id: parsed.id, action: 'archive' }, 'session action completed');
         reply.send(okEnvelope({ archived: true }, req.id));
       } catch (error) {
