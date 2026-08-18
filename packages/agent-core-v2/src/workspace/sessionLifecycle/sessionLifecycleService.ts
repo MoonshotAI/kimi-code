@@ -238,6 +238,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private readonly _onDidForkSession = this._register(new Emitter<SessionForkedEvent>());
   readonly onDidForkSession: Event<SessionForkedEvent> = this._onDidForkSession.event;
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
+  private readonly resumeFailures = new Map<string, unknown>();
 
   constructor(
     private readonly instantiation: IInstantiationService,
@@ -416,6 +417,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (inflight !== undefined) return inflight;
     const live = this.sessions.get(sessionId);
     if (live !== undefined) return Promise.resolve(live);
+    // A fresh attempt supersedes any earlier failure record.
+    this.resumeFailures.delete(sessionId);
     const promise = this.doResume(sessionId, opts)
       .catch((error: unknown) => {
         this.telemetry
@@ -423,6 +426,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           .track2('session_load_failed', {
             reason: isError2(error) ? error.code : error instanceof Error ? error.name : 'unknown',
           });
+        // Keep the rejection observable past the registry cleanup — a later
+        // settle must see the failure rather than treat the session as cold.
+        this.resumeFailures.set(sessionId, error);
         throw error;
       })
       .finally(() => this.resuming.delete(sessionId));
@@ -431,7 +437,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   async whenResumeSettled(sessionId: string): Promise<void> {
-    await this.resuming.get(sessionId)?.catch(() => undefined);
+    await this.resuming.get(sessionId);
+    const failure = this.resumeFailures.get(sessionId);
+    if (failure !== undefined) throw failure;
   }
 
   private async doResume(

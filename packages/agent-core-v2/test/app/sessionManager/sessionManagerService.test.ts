@@ -271,6 +271,35 @@ describe('SessionManager', () => {
     manager.dispose();
   });
 
+  it('propagates a failed resume to the next settle until a fresh attempt supersedes', async () => {
+    let fail = true;
+    const fake = controller();
+    (fake.service as unknown as { resume: () => Promise<unknown> }).resume = async () => {
+      if (fail) throw new Error('boom');
+      return fake.handle;
+    };
+    const workspace = {
+      id: 'workspace-1',
+      program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
+    } as unknown as WorkspaceInstance;
+    const workspaces = {
+      getOrCreate: async () => workspace,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const index = {
+      get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
+    } as unknown as ISessionIndex;
+    const manager = new SessionManager(workspaces, index);
+
+    await expect(manager.resume('session-1')).rejects.toThrow('boom');
+    await expect(manager.whenResumeSettled('session-1')).rejects.toThrow('boom');
+
+    fail = false;
+    await manager.resume('session-1');
+    await expect(manager.whenResumeSettled('session-1')).resolves.toBeUndefined();
+    manager.dispose();
+  });
+
   it('owns one global live-session registry across workspace controllers', async () => {
     const fake = controller();
     const workspace = {

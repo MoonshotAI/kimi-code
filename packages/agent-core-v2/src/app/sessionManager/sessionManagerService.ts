@@ -48,6 +48,7 @@ export class SessionManager implements ISessionManager {
   private readonly sessions = new Map<string, ISessionScopeHandle>();
   private readonly owners = new Map<string, SessionLifecycleService>();
   private readonly pendingResumes = new Map<string, Promise<ISessionScopeHandle | undefined>>();
+  private readonly resumeFailures = new Map<string, unknown>();
   private readonly lifecycleChains = new Map<string, Promise<void>>();
   private readonly controllers = new Map<string, SessionControllerEntry>();
   private readonly controllerEntries = new Set<SessionControllerEntry>();
@@ -81,10 +82,18 @@ export class SessionManager implements ISessionManager {
   async resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
     const inflight = this.pendingResumes.get(sessionId);
     if (inflight !== undefined) return inflight;
+    // A fresh attempt supersedes any earlier failure record.
+    this.resumeFailures.delete(sessionId);
     const promise = this.serializeLifecycle(sessionId, async () =>
       (await this.controllerForSession(sessionId))?.resume(sessionId, options),
     ).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
+    // Keep the rejection observable past the registry cleanup: a resume that
+    // fails mid-materialization leaves no trace in the live registry, and a
+    // later settle must still see it instead of treating the session as cold.
+    void promise.catch((error: unknown) => {
+      this.resumeFailures.set(sessionId, error);
+    });
     return promise;
   }
 
@@ -93,7 +102,9 @@ export class SessionManager implements ISessionManager {
   }
 
   async whenResumeSettled(sessionId: string): Promise<void> {
-    await this.pendingResumes.get(sessionId)?.catch(() => undefined);
+    await this.pendingResumes.get(sessionId);
+    const failure = this.resumeFailures.get(sessionId);
+    if (failure !== undefined) throw failure;
     await this.owners.get(sessionId)?.whenResumeSettled(sessionId);
   }
 

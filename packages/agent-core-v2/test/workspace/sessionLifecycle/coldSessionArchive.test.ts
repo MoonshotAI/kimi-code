@@ -53,6 +53,7 @@ interface ColdPathOptions {
   readonly indexSummary?: SessionSummary;
   readonly onMirrorRecord?: (recorded: SessionSummary) => void;
   readonly onStoreSet?: (value: unknown) => void;
+  readonly resumeError?: unknown;
 }
 
 function coldPathAccessor(options: ColdPathOptions): ServicesAccessor {
@@ -64,7 +65,9 @@ function coldPathAccessor(options: ColdPathOptions): ServicesAccessor {
           _id: string,
           work: (unguarded: UnguardedSessionLifecycle) => Promise<T>,
         ): Promise<T> => work({ archive: async () => {}, restore: async () => undefined }),
-        whenResumeSettled: async () => {},
+        whenResumeSettled: async () => {
+          if (options.resumeError !== undefined) throw options.resumeError;
+        },
         get: () => undefined,
       },
     ],
@@ -174,5 +177,21 @@ describe('setSessionArchivedBatch', () => {
     expect(persisted['customTitle']).toBeUndefined();
     // The v1-reader compatibility field rides the write (custom title).
     expect(persisted['isCustomTitle']).toBe(true);
+  });
+
+  it('fails the item when a concurrent resume failed instead of cold-classifying', async () => {
+    const outcomes = await setSessionArchivedBatch(
+      coldPathAccessor({
+        storeGet: async () => {
+          throw new Error('unreachable — the settle throws first');
+        },
+        resumeError: new Error('resume boom'),
+      }),
+      ['s1'],
+      true,
+    );
+    expect(outcomes).toEqual([
+      { id: 's1', ok: false, reason: 'error', message: 'resume boom' },
+    ]);
   });
 });
