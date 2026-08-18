@@ -1,0 +1,76 @@
+# Fork-native release: builds the kimi binary (with fork changes) on every
+# push to development and publishes it as a GitHub Release.
+#
+# This gives us a ready-to-download binary without building locally.
+# The release tag is always "nightly" — updated on every run.
+
+name: Fork Native Release
+
+on:
+  push:
+    branches:
+      - development
+  workflow_dispatch:
+  schedule:
+    # Daily re-release so the binary always tracks the latest upstream sync
+    - cron: "41 6 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  native-artifacts:
+    name: Build native binaries
+    uses: ./.github/workflows/_native-build.yml
+    with:
+      upload-artifact-prefix: kimi-code-fork
+      retention-days: 3
+      sign-macos: false
+
+  publish:
+    name: Publish release
+    needs: native-artifacts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Determine version
+        id: version
+        run: |
+          VER=$(node -p "require('./apps/kimi-code/package.json').version")
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Download native artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: kimi-code-fork-*
+          path: dist-native-release
+          merge-multiple: true
+
+      - name: Delete old nightly release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create nightly \
+            dist-native-release/* \
+            --title "kimi-code fork nightly (${{ steps.version.outputs.version }})" \
+            --notes "Built from the development branch with fork changes (visual-model command).
+
+- Platform: darwin-x64, darwin-arm64, linux-x64, linux-arm64, win32-x64, win32-arm64
+- Source version: ${{ github.sha }}
+
+Install (macOS Intel):
+\`\`\`bash
+unzip -o kimi-code-darwin-x64.zip -d ~/.kimi-code/bin
+\`\`\`
+"
