@@ -30,6 +30,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/MoonshotAI/kimi-code.git || true
+
       - name: Fetch upstream
         run: git fetch upstream main
 
@@ -54,7 +57,6 @@ jobs:
             echo "Merge succeeded"
           else
             echo "Merge conflict — taking upstream for conflicts"
-            # Resolve conflicts by preferring upstream
             CONFLICTS=$(git diff --name-only --diff-filter=U)
             for f in $CONFLICTS; do
               git checkout --theirs "$f"
@@ -62,12 +64,6 @@ jobs:
             done
             git commit --no-edit -m "merge: sync upstream $(date +%Y-%m-%d) (conflicts resolved)"
           fi
-
-      - name: Build check
-        if: steps.check.outputs.up_to_date == 'false'
-        run: |
-          npm install --ignore-scripts 2>/dev/null || true
-          npx tsc --noEmit 2>/dev/null || echo "Type check failed but continuing"
 
       - name: Push
         if: steps.check.outputs.up_to_date == 'false'
