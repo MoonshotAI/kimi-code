@@ -4,15 +4,20 @@ import type { SkillDefinition } from '#/app/skillCatalog/types';
 
 import { FLOW_FLAG_ID } from '../flow';
 
-import FLOW_BODY from './flow.md?raw';
+import FLOW_CONTRACT from './contract.md?raw';
+import FLOW_ENTRY from './flow.md?raw';
 
 const PSEUDO_PATH = 'builtin://flow';
+
+/** The shared supervisor contract — the body both the generic /flow entry and
+ *  every per-flow skill (see flowsSkillSource) are assembled from. */
+export const FLOW_SUPERVISOR_CONTRACT: string = FLOW_CONTRACT.trim();
 
 const parsed = parseSkillText({
   skillMdPath: '/builtin/skills/flow.md',
   skillDirName: 'flow',
   source: 'builtin',
-  text: FLOW_BODY,
+  text: FLOW_ENTRY.replace('$CONTRACT', FLOW_SUPERVISOR_CONTRACT),
 });
 
 export const FLOW_SKILL: SkillDefinition = {

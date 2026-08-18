@@ -5,6 +5,7 @@ import type { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/built
 import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { IConfigService } from '#/app/config/config';
+import type { IFlagService } from '#/app/flag/flag';
 import type { IGitService } from '#/app/git/git';
 import type { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
 import type { IPluginService } from '#/app/plugin/plugin';
@@ -45,6 +46,7 @@ export interface ProgramDependencies {
   readonly appState: IAppStateService;
   readonly bootstrap: IBootstrapService;
   readonly config: IConfigService;
+  readonly flags: IFlagService;
   readonly git: LiveRef<IGitService>;
   readonly identity: IAgentIdentity;
   readonly log: ILogService;

@@ -39,12 +39,12 @@ describe('skill slash commands', () => {
     ]);
 
     expect(built.commands.map((command) => command.name)).toEqual([
-      'skill:commit',
+      'flow:commit',
       'skill:nested-review',
       'skill:review',
     ]);
     expect(built.commands[0]).toMatchObject({
-      name: 'skill:commit',
+      name: 'flow:commit',
       aliases: [],
       description: 'commit skill',
     });
@@ -54,7 +54,7 @@ describe('skill slash commands', () => {
       description: 'Nested review skill',
     });
     expect([...built.commandMap.entries()]).toEqual([
-      ['skill:commit', 'commit'],
+      ['flow:commit', 'commit'],
       ['skill:nested-review', 'nested-review'],
       ['skill:review', 'review'],
     ]);

@@ -6,6 +6,7 @@ import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import type { ISkillSource, SkillContribution } from '#/app/skillCatalog/skillSource';
 import type { SkillCatalog } from '#/app/skillCatalog/types';
 import { IUserFileSkillSource } from '#/app/skillCatalog/userFileSkillSource';
+import { IFlowsSkillSource } from '#/features/flow/flowsSkillSource';
 import type { ISessionSkillCatalogData } from '#/session/sessionSkillCatalog/skillCatalogData';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 
@@ -39,12 +40,13 @@ export class WorkspaceSkillCatalogService extends Disposable implements IWorkspa
     @IExtraFileSkillSource extra: IExtraFileSkillSource,
     @IWorkspaceRootSkillSource workspace: IWorkspaceRootSkillSource,
     @IPluginSkillSource plugin: IPluginSkillSource,
+    @IFlowsSkillSource flows: IFlowsSkillSource,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
   ) {
     super();
     this.states.contributeState(workspaceSkillCatalogContributionsKey);
     this.states.contributeState(workspaceSkillCatalogMergedKey);
-    this.sources = [builtin, user, explicit, extra, workspace, plugin].toSorted(
+    this.sources = [builtin, user, explicit, extra, workspace, plugin, flows].toSorted(
       (a, b) => a.priority - b.priority,
     );
     for (const s of this.sources) {

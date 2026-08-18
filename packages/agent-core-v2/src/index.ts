@@ -371,6 +371,7 @@ export * from '#/features/flow/tools/start/start';
 export * from '#/features/flow/tools/advance/advance';
 export * from '#/features/flow/tools/abort/abort';
 export * from '#/features/flow/skill/skill';
+export * from '#/features/flow/flowsSkillSource';
 import '#/features/flow/flowFeature';
 export * from '#/agent/usage/usage';
 export * from '#/agent/usage/usageService';
