@@ -292,7 +292,7 @@ function isSessionTitleKind(value: unknown): value is SessionTitleKind {
 
 type PersistedSessionMeta = SessionMeta & { readonly isCustomTitle: boolean };
 
-function encodeSessionMeta(meta: SessionMeta): PersistedSessionMeta {
+export function encodeSessionMeta(meta: SessionMeta): PersistedSessionMeta {
   return { ...meta, isCustomTitle: meta.titleKind === 'custom' };
 }
 
