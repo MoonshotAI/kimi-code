@@ -905,9 +905,6 @@ export class AgentTranscriptProjector {
       outputTail: prev?.outputTail ?? '',
       startedAt: prev?.startedAt ?? epochMsToIso(info.startedAt),
       endedAt: info.endedAt === null ? prev?.endedAt : epochMsToIso(info.endedAt),
-      // task.upsert replaces the row wholesale: a subagent.completed/failed
-      // folded into this row earlier (background Agent run, see
-      // onSubagentSpawned) would otherwise lose its result details here.
       resultSummary: prev?.resultSummary,
       usage: prev?.usage,
       error: prev?.error,
@@ -915,9 +912,6 @@ export class AgentTranscriptProjector {
     }));
     const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
     if (event.type === 'task.started') {
-      // A mid-run attach backfills this event without the transient spawned:
-      // seed the agent → task association from it so later subagent lifecycle
-      // events fold into this row instead of surfacing an agent-id duplicate.
       if (info.kind === 'agent' && typeof info.agentId === 'string' && info.agentId.length > 0) {
         this.subagentTaskIds.set(info.agentId, info.taskId);
       }
@@ -1053,18 +1047,10 @@ export class AgentTranscriptProjector {
     runInBackground: boolean;
     taskId?: string;
   }): TranscriptOperation[] {
-    // An Agent-tool spawned carries the run's task registration: key the row
-    // by that task id (not the agent id) so `/tasks/{id}` cancel/status
-    // actions resolve, and fold the later `task.started` upsert into it
-    // instead of surfacing a second row.
     const taskKey = event.taskId ?? event.subagentId;
     if (event.taskId !== undefined) {
       this.subagentTaskIds.set(event.subagentId, event.taskId);
     } else {
-      // A taskless (re)spawn — e.g. the same child resumed through AgentSwarm —
-      // must not route its lifecycle into a stale Agent-task row from a
-      // previous registration: drop the old mapping so this run keys by agent
-      // id end to end.
       this.subagentTaskIds.delete(event.subagentId);
     }
     const task = this.upsertTask(taskKey, (prev) => ({
@@ -1110,9 +1096,6 @@ export class AgentTranscriptProjector {
         : event.type === 'subagent.failed'
           ? 'failed'
           : 'running';
-    // Fold into the task-id-keyed row when the spawn registered one (see
-    // onSubagentSpawned) — the agent-id-keyed fallback is for spawns without
-    // a task registration (swarm/session-init/tower).
     const taskKey = this.subagentTaskIds.get(event.subagentId) ?? event.subagentId;
     const task = this.upsertTask(taskKey, (prev) => ({
       taskId: taskKey,

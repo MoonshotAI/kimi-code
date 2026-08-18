@@ -104,10 +104,6 @@ export function bindSessionTranscript(
         },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
       });
-      // Tasks registered on THIS agent before the attach (foreground Agent
-      // runs emit no task.started at all) would otherwise route their
-      // subagent lifecycle to an uncancellable agent-id row — and stay
-      // invisible until the terminal event.
       for (const agent of agents.list()) {
         if (agent.id !== agentId) continue;
         const tasks = agent.accessor.get(IAgentTaskService)?.list() ?? [];

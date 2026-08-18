@@ -1068,7 +1068,6 @@ describe('AgentTranscriptProjector', () => {
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
-    // Attached after the transient spawned: only its task lifecycle replays.
     feed(
       ev({
         type: 'task.started',
@@ -2055,7 +2054,6 @@ describe('bindSessionTranscript', () => {
       fakeSession(new SessionInteractionService(new TestSessionStateService()), agents),
     );
 
-    // The seeded row is actionable immediately — foreground metadata intact.
     expect(store.getAgent('main')?.getTask('task-9')).toMatchObject({
       kind: 'subagent',
       state: 'running',
@@ -2064,9 +2062,6 @@ describe('bindSessionTranscript', () => {
       agentId: 'agent-1',
     });
 
-    // Bound after the transient spawned of a FOREGROUND run (no task.started
-    // is ever emitted for it): the completion must still fold into the
-    // registered task row, not an uncancellable agent-id row.
     agents.get('main')!.bus.emit(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
 
     expect(store.getAgent('main')?.getTask('task-9')).toMatchObject({
