@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, writeFileSync } from 'node:fs';
-import { mkdtemp, mkdir, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -371,6 +371,44 @@ describe('maybeRelaunchWithStagedNativeUpdate', () => {
     expect(relaunched).toBe(false);
     const restored = await readStagedNativeUpdate(exePath);
     expect(restored).toMatchObject({ version: STAGED_VERSION });
+  });
+
+  it('retains the claim when the restore hits a transient error', async () => {
+    await seedStagedUpdate(exePath, STAGED_VERSION);
+    // rename(exe → bak) fails when the in-service exe is gone.
+    await rm(exePath);
+    // ENOSPC is not a hard-link-support error: the restore's create-if-absent
+    // publish fails transiently, and the claim must be RETAINED for a later
+    // launch's sweep — dropping it would orphan the staged exe with no newer
+    // stage to show for it.
+    fsMocks.linkError = 'ENOSPC';
+    const { spawnImpl } = createSpawnMock({});
+    const relaunched = await maybeRelaunchWithStagedNativeUpdate(makeDeps(exePath, { spawnImpl }));
+
+    expect(relaunched).toBe(false);
+    // The state file was not published, and the claim is still there.
+    expect(await readStagedNativeUpdate(exePath)).toBeNull();
+    const names = await readdir(getNativeStagingDir(exePath));
+    expect(names.some((name) => name.startsWith('staged.json.swap-'))).toBe(true);
+  });
+
+  it('restores an aged orphaned claim and swaps it on that very launch', async () => {
+    await seedStagedUpdate(exePath, STAGED_VERSION);
+    // Simulate a claim left by a dead swap: the record renamed aside and aged
+    // past the claim-stale threshold.
+    const claimPath = join(getNativeStagingDir(exePath), 'staged.json.swap-99999');
+    await rename(getNativeStagedStateFile(exePath), claimPath);
+    const old = new Date(Date.now() - 10 * 60 * 1000);
+    await utimes(claimPath, old, old);
+
+    const { calls, spawnImpl } = createSpawnMock({});
+    const relaunched = await maybeRelaunchWithStagedNativeUpdate(makeDeps(exePath, { spawnImpl }));
+
+    // The sweep restored the claim, and this launch swapped the update in.
+    expect(relaunched).toBe(true);
+    expect(calls).toHaveLength(2);
+    const newExe = await readFile(exePath);
+    expect(newExe.equals(Buffer.alloc(STAGED_EXE_SIZE, 1))).toBe(true);
   });
 
   it('falls back to a pid-named backup when the plain .bak cannot be removed', async () => {

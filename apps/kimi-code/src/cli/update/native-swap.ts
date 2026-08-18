@@ -67,6 +67,12 @@ function isNotFound(error: unknown): boolean {
   );
 }
 
+function isAlreadyExists(error: unknown): boolean {
+  return (
+    typeof error === 'object' && error !== null && (error as { code?: string }).code === 'EEXIST'
+  );
+}
+
 /**
  * A `staged.json.swap-<pid>` claim file younger than this marks a swap in
  * progress in another instance; older ones are crash residue. The bound
@@ -197,13 +203,26 @@ async function claimStagedUpdate(exePath: string): Promise<ClaimedStaged | null>
  * into a still-free state-file path: a downloader may have published a NEWER
  * stage meanwhile, and an unconditional restore would silently replace it.
  * The publish is create-if-absent (hard link, or an exclusive create on
- * filesystems without hard-link support), so the restore never overwrites;
- * when the path is taken, the newer stage wins and ours is discarded.
+ * filesystems without hard-link support), so the restore never overwrites.
+ *
+ * The claim file is removed only when the restore landed or the path was
+ * taken by a newer stage (ours is superseded either way). A transient
+ * failure (ENOSPC, EACCES, …) RETAINS the claim: discarding it would orphan
+ * the staged exe with no newer stage to show for it, and the stale-claim
+ * sweep retries the restore on a later launch.
  */
 async function restoreClaimedUpdate(exePath: string, claimedPath: string): Promise<void> {
   const content = await readFile(claimedPath, 'utf-8').catch(() => null);
-  if (content !== null) {
-    await createFileIfAbsent(getNativeStagedStateFile(exePath), content).catch(() => {});
+  if (content === null) {
+    // Nothing readable to restore — drop the residue.
+    await unlink(claimedPath).catch(() => {});
+    return;
+  }
+  try {
+    await createFileIfAbsent(getNativeStagedStateFile(exePath), content);
+  } catch (error) {
+    if (!isAlreadyExists(error)) return;
+    // EEXIST: a concurrently published newer stage won the path.
   }
   await unlink(claimedPath).catch(() => {});
 }
@@ -256,13 +275,16 @@ async function cleanupBackups(exePath: string, keepPath?: string): Promise<void>
 }
 
 /**
- * Prune `staged.json.swap-<pid>` claim files left by instances that died
- * mid-swap. Only the claim files themselves are removed: their referenced
- * exes may belong to a freshly published stage (a downloader can republish
- * the same version while we sweep, and the metadata snapshot is stale the
- * moment it is read), and genuinely unreferenced exes are reaped by the
- * downloader's own orphan cleanup before its next stage. Returns true when a
- * FRESH claim file was seen — i.e. another instance is swapping right now.
+ * Recover `staged.json.swap-<pid>` claim files left by instances that died
+ * mid-swap (or kept by a restore that hit a transient error). An AGED claim
+ * is restored back onto the state-file path — create-if-absent, so a newer
+ * published stage is never overwritten — and this very launch can then claim
+ * and retry the swap; the claim file is dropped once the record is restored
+ * or superseded, and retained on transient errors. The referenced exes are
+ * never touched here: they may belong to a freshly published stage, and
+ * genuinely unreferenced ones are reaped by the downloader's own orphan
+ * cleanup before its next stage. Returns true when a FRESH claim file was
+ * seen — i.e. another instance is swapping right now.
  */
 async function cleanupStaleSwapClaims(exePath: string): Promise<boolean> {
   const stagingDir = getNativeStagingDir(exePath);
@@ -282,7 +304,7 @@ async function cleanupStaleSwapClaims(exePath: string): Promise<boolean> {
       swapInProgress = true;
       continue;
     }
-    await unlink(full).catch(() => {});
+    await restoreClaimedUpdate(exePath, full);
   }
   return swapInProgress;
 }

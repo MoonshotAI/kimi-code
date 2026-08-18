@@ -54,6 +54,23 @@ export function stagedExeFileName(version: string, platform: NodeJS.Platform): s
   return platform === 'win32' ? `kimi-${version}.exe` : `kimi-${version}`;
 }
 
+/** Uniquifies the published staged-exe name across concurrent in-process workers. */
+let stageTempCounter = 0;
+
+/**
+ * The name a stage is published under: the base name plus a unique per-worker
+ * infix (`kimi-<version>.<pid>.<epoch-ms>.<n>[.exe]`). Once published, a
+ * staged executable is NEVER replaced — a same-version re-download publishes
+ * a new generation and the atomic metadata write retargets the pointer — so
+ * the pathname a swap validates at claim time is stable: no concurrent
+ * publisher can exchange the bytes between validation and install.
+ */
+function uniqueStagedExeFileName(version: string, platform: NodeJS.Platform): string {
+  const infix = `.${process.pid}.${Date.now()}.${stageTempCounter}`;
+  stageTempCounter += 1;
+  return platform === 'win32' ? `kimi-${version}${infix}.exe` : `kimi-${version}${infix}`;
+}
+
 export function stagedExePath(exePath: string, staged: StagedNativeUpdate): string {
   return join(getNativeStagingDir(exePath), staged.exeFileName);
 }
@@ -163,26 +180,26 @@ export async function hashFileSha256(filePath: string): Promise<string | null> {
 
 /**
  * Whether a `.staging/` entry is an updater-owned artifact: a staged
- * executable (`kimi-<version>[.exe]`) or a download intermediate
- * (`kimi-<version>[.exe][.<pid>.<n>].part`). Ownership derives from the
+ * executable (`kimi-<version>[.<pid>.<epoch-ms>.<n>][.exe]`) or a download
+ * intermediate (the same plus `.part`). Ownership derives from the
  * semver/file-name contract (prerelease and build metadata included), so
  * foreign files in the directory are never matched.
  */
 function isUpdaterOwnedStagingFile(entry: string): boolean {
   if (!entry.startsWith('kimi-')) return false;
   let name = entry.slice('kimi-'.length);
-  const isPart = name.endsWith('.part');
-  if (isPart) name = name.slice(0, -'.part'.length);
-  const candidates = isPart
-    ? // New-style intermediates carry a unique worker infix (.<pid>.<n>)
-      // after any .exe — try with and without stripping it (the infix is
-      // itself dot-numeric, which is ambiguous with prerelease suffixes).
-      [name, name.replace(/\.\d+\.\d+$/, '')]
-    : [name];
-  return candidates.some((candidate) => {
-    const base = candidate.endsWith('.exe') ? candidate.slice(0, -'.exe'.length) : candidate;
-    return valid(base) !== null;
-  });
+  if (name.endsWith('.part')) name = name.slice(0, -'.part'.length);
+  if (name.endsWith('.exe')) name = name.slice(0, -'.exe'.length);
+  // Published artifacts may carry a unique per-worker infix after the
+  // version (.<pid>.<epoch-ms>.<n>, or the older .<pid>.<n>) — try with and
+  // without stripping it (the infix is dot-numeric, which is ambiguous with
+  // prerelease suffixes, so every candidate is checked).
+  const candidates = [
+    name,
+    name.replace(/\.\d+\.\d+$/, ''),
+    name.replace(/\.\d+\.\d+\.\d+$/, ''),
+  ];
+  return candidates.some((candidate) => valid(candidate) !== null);
 }
 
 /**
@@ -278,9 +295,6 @@ export interface StageNativeUpdateResult {
  */
 const DOWNLOAD_IDLE_TIMEOUT_MS = 30_000;
 
-/** Uniquifies the .part path across concurrent in-process workers. */
-let stageTempCounter = 0;
-
 async function downloadAndHash(
   url: string,
   partPath: string,
@@ -367,7 +381,10 @@ export async function stageNativeUpdate(
   }
   const fetchImpl = options.fetchImpl ?? fetch;
   const target = `${platform}-${arch}`;
-  const exeFileName = stagedExeFileName(options.version, platform);
+  // Unique per-worker publish name — see uniqueStagedExeFileName: a staged
+  // exe is never replaced once published, so the pathname a swap validates
+  // at claim time cannot be exchanged by a concurrent publisher.
+  const exeFileName = uniqueStagedExeFileName(options.version, platform);
 
   const existing = await readStagedNativeUpdate(options.exePath);
   if (existing !== null && existing.version === options.version) {
@@ -376,8 +393,8 @@ export async function stageNativeUpdate(
     // would still be adopted here and reported as success, only for the
     // startup swap's claim-time re-verify to reject and discard it. Compare
     // the actual digest before adopting; a mismatch falls through and
-    // re-stages from the CDN (the publishing rename replaces the damaged
-    // exe atomically).
+    // re-stages from the CDN (published under a new generation name — the
+    // damaged exe is left for the age-gated orphan cleanup).
     const digest = await hashFileSha256(stagedExePath(options.exePath, existing));
     if (digest === existing.sha256) {
       // An explicit upgrade adopts an auto-staged payload — but only report
@@ -417,16 +434,10 @@ export async function stageNativeUpdate(
     manual: options.manual === true ? true : undefined,
   };
 
-  // Unique .part name per worker: a same-version downloader may overlap a
-  // swap claim (and, in the irreducible residual of pathname-level locking, a
-  // second lock holder) — a shared .part path would interleave writes into
-  // garbage that fails verification, with each side's cleanup deleting the
-  // other's payload.
-  const partPath = join(
-    stagingDir,
-    `${exeFileName}.${process.pid}.${stageTempCounter}.part`,
-  );
-  stageTempCounter += 1;
+  // The .part intermediate is just the publish name plus the suffix — the
+  // name already carries this worker's unique infix, so concurrent workers
+  // never interleave writes into a shared path.
+  const partPath = join(stagingDir, `${exeFileName}.part`);
   try {
     const manifest = await fetchNativeReleaseManifest(options.version, fetchImpl);
     const entry = selectPlatformEntry(manifest, platform, arch);
@@ -457,11 +468,10 @@ export async function stageNativeUpdate(
     return { status: 'staged', staged };
   } catch (error) {
     // Remove only what THIS attempt privately owns: its unique .part file.
-    // The shared staged-exe path is never deleted on failure — every
-    // reference check is a snapshot, and a concurrent worker may have just
-    // renamed its verified payload onto that path (payloads publish before
-    // their metadata). An unreferenced exe is reaped by the age-gated
-    // orphan cleanup.
+    // If the failure landed after the publishing rename, this attempt's exe
+    // is already at its unique name with no metadata pointing at it — left
+    // in place (a just-published exe may belong to a concurrent metadata
+    // write) and reaped by the age-gated orphan cleanup.
     await rm(partPath, { force: true }).catch(() => {});
     // Best effort: drop the staging dir itself when empty (a concurrent
     // worker's files keep it around — rmdir only removes empty dirs).

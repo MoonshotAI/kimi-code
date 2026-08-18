@@ -153,10 +153,13 @@ describe('stageNativeUpdate', () => {
     expect(result.staged).toMatchObject({
       version: VERSION,
       target: 'linux-x64',
-      exeFileName: `kimi-${VERSION}`,
       sha256: sha256Hex(PAYLOAD),
       exeSize: PAYLOAD.length,
     });
+    // The published exe name carries a unique per-worker infix: a staged
+    // executable is never replaced once published, so the pathname a swap
+    // validates at claim time is stable.
+    expect(result.staged.exeFileName).toMatch(/^kimi-0\.7\.0\.\d+\.\d+\.\d+$/);
 
     const stagedOnDisk = await readStagedNativeUpdate(exePath);
     expect(stagedOnDisk).toEqual(result.staged);
@@ -355,9 +358,11 @@ describe('stageNativeUpdate', () => {
     });
 
     // …but adoption re-verifies the digest, so the payload is re-downloaded
-    // and the damaged exe is replaced.
+    // and published under a NEW generation name (a published exe is never
+    // replaced — the damaged one is left for the orphan cleanup).
     expect(second.status).toBe('staged');
     expect(secondFetch).toHaveBeenCalled();
+    expect(second.staged.exeFileName).not.toBe(first.staged.exeFileName);
     const repaired = await readFile(stagedExePath(exePath, second.staged));
     expect(repaired.equals(PAYLOAD)).toBe(true);
   });
@@ -456,7 +461,7 @@ describe('stageNativeUpdate', () => {
   });
 
   it('supersedes a staged older version', async () => {
-    await stageNativeUpdate({
+    const first = await stageNativeUpdate({
       version: '0.6.0',
       exePath,
       platform: 'linux',
@@ -477,7 +482,7 @@ describe('stageNativeUpdate', () => {
     // The older stage's exe is left in place (it may be claim-held by a live
     // swap); an unreferenced one is reaped by a later orphan cleanup.
     await expect(
-      stat(join(getNativeStagingDir(exePath), 'kimi-0.6.0')),
+      stat(join(getNativeStagingDir(exePath), first.staged.exeFileName)),
     ).resolves.toBeDefined();
   });
 
@@ -593,6 +598,8 @@ describe('stageNativeUpdate', () => {
     await agedOrphan(join(stagingDir, 'kimi-1.2.3-rc.1'), Buffer.from('orphan'));
     await agedOrphan(join(stagingDir, 'kimi-1.2.3+build.5.exe'), Buffer.from('orphan'));
     await agedOrphan(join(stagingDir, 'kimi-1.2.3-rc.1.123.0.part'), Buffer.from('partial'));
+    // New-style published name with the unique per-worker infix.
+    await agedOrphan(join(stagingDir, 'kimi-4.5.6.1234.1700000000000.0'), Buffer.from('orphan'));
 
     const result = await stageNativeUpdate({
       version: VERSION,
@@ -606,6 +613,7 @@ describe('stageNativeUpdate', () => {
     await expect(stat(join(stagingDir, 'kimi-1.2.3-rc.1'))).rejects.toThrow();
     await expect(stat(join(stagingDir, 'kimi-1.2.3+build.5.exe'))).rejects.toThrow();
     await expect(stat(join(stagingDir, 'kimi-1.2.3-rc.1.123.0.part'))).rejects.toThrow();
+    await expect(stat(join(stagingDir, 'kimi-4.5.6.1234.1700000000000.0'))).rejects.toThrow();
   });
 
   it("preserves another worker's staged result when this attempt fails", async () => {
