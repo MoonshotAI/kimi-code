@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code-sdk": minor
 ---
 
-Add `uploadFile` for uploading media to the engine's file store and referencing it from prompts, plus an optional `promptId` on prompt submissions for correlating them with turn-started events. Both require the v2 harness.
+Add `uploadFile` for uploading media and referencing it from prompts, and an optional `promptId` on prompt submissions. Both require the v2 harness.
