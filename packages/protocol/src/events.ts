@@ -532,6 +532,16 @@ export type AgentPhase =
       readonly at: number;
     };
 
+/** Live flow-run summary riding `agent.status.updated`: which stage the run
+ *  is at and who owns its gate. `null` when a run just ended. */
+export interface AgentFlowRunStatus {
+  readonly flowId: string;
+  readonly stageId: string;
+  readonly stageIndex: number;
+  readonly stageTotal: number;
+  readonly gate: string;
+}
+
 export interface AgentStatusUpdatedEvent {
   readonly type: 'agent.status.updated';
   readonly model?: string;
@@ -544,6 +554,7 @@ export interface AgentStatusUpdatedEvent {
   readonly permission?: PermissionMode;
   readonly usage?: UsageStatus;
   readonly phase?: AgentPhase;
+  readonly flowRun?: AgentFlowRunStatus | null;
 }
 
 export interface SessionMetaUpdatedEvent {
@@ -1520,6 +1531,14 @@ export const agentPhaseSchema = z.discriminatedUnion('kind', [
   }),
 ]) satisfies z.ZodType<AgentPhase>;
 
+export const agentFlowRunStatusSchema = z.object({
+  flowId: z.string(),
+  stageId: z.string(),
+  stageIndex: z.number(),
+  stageTotal: z.number(),
+  gate: z.string(),
+}) satisfies z.ZodType<AgentFlowRunStatus>;
+
 export const agentStatusUpdatedEventSchema = z.object({
   type: z.literal('agent.status.updated'),
   model: z.string().optional(),
@@ -1532,6 +1551,7 @@ export const agentStatusUpdatedEventSchema = z.object({
   permission: permissionModeSchema.optional(),
   usage: usageStatusSchema.optional(),
   phase: agentPhaseSchema.optional(),
+  flowRun: agentFlowRunStatusSchema.nullable().optional(),
 }) satisfies z.ZodType<AgentStatusUpdatedEvent>;
 
 export const sessionMetaUpdatedEventSchema = z.object({

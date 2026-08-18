@@ -34,6 +34,8 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 
 import { FlowRunEnded, FlowRunStarted, FlowVerdict, flowGatesKey, flowKey } from './flowOps';
 
+const FLOW_TOOL_NAMES: ReadonlySet<string> = new Set(['FlowStart', 'FlowAdvance', 'FlowAbort']);
+
 export class AgentFlowService extends Disposable implements IAgentFlowService {
   declare readonly _serviceBrand: undefined;
 
@@ -59,6 +61,15 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
       toolExecutor.onBeforeExecuteTool((event) => {
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
         if (event.toolCall.name !== FLOW_ADVANCE_TOOL_NAME) return;
+        const firstFlowCall = event.toolCalls.find((call) => FLOW_TOOL_NAMES.has(call.name));
+        if (firstFlowCall !== undefined && firstFlowCall !== event.toolCall) {
+          event.veto(
+            denyToolExecution(
+              'Another flow call precedes this one in the same response, so this verdict was prepared against a stale run state. Submit flow calls one response at a time.',
+            ),
+          );
+          return;
+        }
         if (this.modeService.mode === 'auto') return;
         if (event.execution.display?.kind !== 'flow_gate_review') return;
         event.waitUntil(() => this.review.requestApproval(event));

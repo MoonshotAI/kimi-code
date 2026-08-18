@@ -421,22 +421,24 @@ describe('AgentFlowService', () => {
       expect(requestToolApproval).toHaveBeenCalledTimes(1);
     });
 
-    it('vetoes a gate call that is not the first FlowAdvance in its batch', async () => {
+    it('vetoes a flow call preceded by another flow call in the same batch', async () => {
       service.start(DEFINITION, 'task');
       const context = advanceContext(GATE_DISPLAY);
-      const earlier: ToolCall = {
-        type: 'function',
-        id: 'call_advance_first',
-        name: 'FlowAdvance',
-        arguments: '{}',
-      };
-      const batched = {
-        ...context,
-        toolCalls: [earlier, context.toolCall],
-      } as ResolvedToolExecutionHookContext;
-      const decision = await executorEvents.fireBeforeExecute(batched);
-      expect(decision?.veto?.isError).toBe(true);
-      expect(decision?.veto?.output).toContain('one call at a time');
+      for (const earlierName of ['FlowAdvance', 'FlowStart', 'FlowAbort']) {
+        const earlier: ToolCall = {
+          type: 'function',
+          id: `call_${earlierName}_first`,
+          name: earlierName,
+          arguments: '{}',
+        };
+        const batched = {
+          ...context,
+          toolCalls: [earlier, context.toolCall],
+        } as ResolvedToolExecutionHookContext;
+        const decision = await executorEvents.fireBeforeExecute(batched);
+        expect(decision?.veto?.isError).toBe(true);
+        expect(decision?.veto?.output).toContain('one response at a time');
+      }
       expect(requestToolApproval).not.toHaveBeenCalled();
     });
 

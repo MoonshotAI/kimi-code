@@ -3,13 +3,12 @@ import type {
   PermissionPolicyResolution,
 } from '#/agent/permissionPolicy/types';
 import type { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 
-import { FLOW_ADVANCE_TOOL_NAME, type IAgentFlowService } from './flow';
+import type { IAgentFlowService } from './flow';
 import { FlowAdvanceInputSchema } from './tools/advance/advance';
 
 export class FlowGateReview {
@@ -23,14 +22,6 @@ export class FlowGateReview {
   ): Promise<BeforeExecuteDecision | undefined> {
     const display = context.execution.display;
     if (display?.kind !== 'flow_gate_review') return undefined;
-    const firstAdvance = context.toolCalls.find((call) => call.name === FLOW_ADVANCE_TOOL_NAME);
-    if (firstAdvance !== undefined && firstAdvance !== context.toolCall) {
-      return {
-        veto: denyToolExecution(
-          'Multiple FlowAdvance calls in one response: every preparation would ask the user to review the same pre-execution stage. Submit gate verdicts one call at a time.',
-        ),
-      };
-    }
     const stage = this.flow.currentStage();
     if (!this.flow.run().active || stage === undefined || stage.id !== display.stage_id) {
       return undefined;
