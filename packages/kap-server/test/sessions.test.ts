@@ -1,9 +1,3 @@
-/**
- * Scenario: v1-compatible session routes, including blocked-goal Web resume.
- * Responsibilities: verify HTTP envelopes, persisted reads, and session actions.
- * Wiring: real kap-server; route errors stub the agent service contract.
- * Run: `pnpm --filter @moonshot-ai/kap-server exec vitest run test/sessions.test.ts`.
- */
 import { randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -161,10 +155,6 @@ describe('server-v2 /api/v1/sessions', () => {
       JSON.stringify({ event: 'prompt.submitted', time: 2 }),
     ].join('\n');
 
-    // `connection: close` keeps the streamed download on a short-lived socket
-    // so undici never pools a keep-alive connection that would hold
-    // `server.close()` open in afterEach (fastify's default keepAliveTimeout
-    // is 72s, far beyond the hook timeout).
     const res = await fetch(`${base}/api/v1/sessions/${id}/export`, {
       method: 'POST',
       headers: authHeaders(server as RunningServer, {
@@ -196,8 +186,6 @@ describe('server-v2 /api/v1/sessions', () => {
       kimiCodeVersion: TEST_HOST_IDENTITY.version,
       webLogPath: 'logs/kimi-web.jsonl',
     });
-    // The engine version never enters the manifest, and a non-desktop export
-    // carries no `desktopVersion`.
     expect(manifest.desktopVersion).toBeUndefined();
     await expect.poll(() => listExportTempDirs(id)).toEqual([]);
   });
@@ -371,7 +359,6 @@ describe('server-v2 /api/v1/sessions', () => {
     const { body } = await postJson<null>('/api/v1/sessions', { metadata: { cwd: missing } });
     expect(body.code).toBe(40409);
 
-    // The failed create leaves no phantom workspace or session behind.
     const workspaces = await getJson<{ items: unknown[] }>('/api/v1/workspaces');
     expect(workspaces.body.data.items).toEqual([]);
     const sessions = await getJson<PageWire>('/api/v1/sessions');
@@ -439,10 +426,9 @@ describe('server-v2 /api/v1/sessions', () => {
       const { body } = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
       expect(body.code).toBe(0);
       ids.push(body.data.id);
-      await sleep(5); // keep updatedAt strictly increasing so recency order is deterministic
+      await sleep(5);
     }
 
-    // Recency order: most-recently-created first → page 1 holds ids[6,5,4].
     const page1 = await getJson<PageWire>('/api/v1/sessions?page_size=3');
     expect(page1.body.code).toBe(0);
     expect(page1.body.data.items.map((s) => s.id)).toEqual(ids.slice(4).reverse());
@@ -462,7 +448,6 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(page3.body.data.items.map((s) => s.id)).toEqual([ids[0]]);
     expect(page3.body.data.has_more).toBe(false);
 
-    // No overlap across pages, and together they cover every session exactly once.
     const seen = [
       ...page1.body.data.items,
       ...page2.body.data.items,
@@ -471,8 +456,6 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(new Set(seen).size).toBe(7);
     expect(new Set(seen)).toEqual(new Set(ids));
 
-    // Paging past the oldest session yields an empty, terminal page — the client
-    // must stop here instead of looping (regression for the boot request storm).
     const last = await getJson<PageWire>(
       `/api/v1/sessions?page_size=3&before_id=${encodeURIComponent(ids[0]!)}`,
     );
@@ -637,17 +620,14 @@ describe('server-v2 /api/v1/sessions', () => {
     const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
     expect(got.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
 
-    // A second non-force call refuses: the title is already generated.
     const again = await postJson<null>(`/api/v1/sessions/${id}/title/generate`);
     expect(again.body.code).toBe(40923);
 
-    // `force: true` regenerates an already-generated title …
     const forced = await postJson<{ title: string }>(`/api/v1/sessions/${id}/title/generate`, {
       force: true,
     });
     expect(forced.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
 
-    // … and overwrites a user-customized title.
     await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, { title: 'custom title' });
     const forcedCustom = await postJson<{ title: string }>(
       `/api/v1/sessions/${id}/title/generate`,
@@ -657,8 +637,6 @@ describe('server-v2 /api/v1/sessions', () => {
     const afterCustom = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
     expect(afterCustom.body.data.title).toBe('generated from REST');
 
-    // `source: 'digest'` composes the head+tail user segments server-side
-    // (this session's turns produced no assistant reply to draw from).
     const digested = await postJson<{ title: string }>(`/api/v1/sessions/${id}/title/generate`, {
       force: true,
       source: 'digest',
@@ -826,19 +804,11 @@ describe('server-v2 /api/v1/sessions', () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
 
-    // Drop the live handle so the session is persisted-but-cold (index + disk
-    // only) — the state right after opening a session in the web UI before any
-    // prompt has been sent. Before the fix, `:undo` resolved the main agent via
-    // `lifecycle.get` (memory only) and reported 40401 "session does not exist".
     await closeSessionById((server as RunningServer).core.accessor, id);
 
     const res = await postJson<{ messages: unknown }>(`/api/v1/sessions/${id}:undo`, { count: 1 });
-    // Cold-loaded successfully: the empty history yields "nothing to undo"
-    // (40911), not the pre-fix "session does not exist" (40401).
     expect(res.body.code).toBe(40911);
     expect(res.body.msg).toMatch(/nothing to undo/i);
-    // The thrown Error2's stack is surfaced so operators can locate the
-    // source — the precheck/throw now lives in the undo service.
     expect(res.body.stack).toEqual(expect.stringContaining('undoService'));
   });
 
@@ -890,7 +860,6 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(child.body.data.title).toBe('child-title');
     expect(child.body.data.metadata['parent_session_id']).toBe(parentId);
     expect(child.body.data.metadata['child_session_kind']).toBe('child');
-    // caller-supplied metadata is preserved alongside the markers, and cwd wins.
     expect(child.body.data.metadata['branch']).toBe('direct-child');
     expect(child.body.data.metadata.cwd).toBe(cwd);
   });
@@ -963,8 +932,6 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(status).toBe(200);
     expect(body.code).toBe(0);
     expect(body.data).toEqual({ warnings: [] });
-    // Lock the wire shape to the shared protocol schema (schema-fidelity rule):
-    // a mirror route must keep the v1 envelope byte-compatible.
     expect(sessionWarningsResponseSchema.parse(body.data)).toEqual({ warnings: [] });
   });
 
@@ -987,18 +954,15 @@ describe('server-v2 /api/v1/sessions', () => {
     );
     expect(archived.body.code).toBe(0);
 
-    // Default list hides archived sessions.
     const normal = await getJson<PageWire>('/api/v1/sessions');
     expect(normal.body.data.items.some((s) => s.id === liveId)).toBe(true);
     expect(normal.body.data.items.some((s) => s.id === archivedId)).toBe(false);
 
-    // archived_only shows only the archived one.
     const onlyArchived = await getJson<PageWire>('/api/v1/sessions?archived_only=true');
     expect(onlyArchived.body.code).toBe(0);
     expect(onlyArchived.body.data.items.some((s) => s.id === archivedId)).toBe(true);
     expect(onlyArchived.body.data.items.some((s) => s.id === liveId)).toBe(false);
 
-    // include_archive shows both.
     const all = await getJson<PageWire>('/api/v1/sessions?include_archive=true');
     expect(all.body.data.items.some((s) => s.id === liveId)).toBe(true);
     expect(all.body.data.items.some((s) => s.id === archivedId)).toBe(true);
@@ -1044,8 +1008,6 @@ describe('server-v2 /api/v1/sessions', () => {
     const cwd = home as string;
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-    // Oldest → newest: an archived cursor session, a stretch of live
-    // (filtered-out) sessions, then one archived hit.
     const archivedOlder = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     await postJson<{ archived: boolean }>(`/api/v1/sessions/${archivedOlder.body.data.id}:archive`);
     await sleep(5);
@@ -1057,9 +1019,6 @@ describe('server-v2 /api/v1/sessions', () => {
     const archivedNewer = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     await postJson<{ archived: boolean }>(`/api/v1/sessions/${archivedNewer.body.data.id}:archive`);
 
-    // archived_only drops the whole live stretch, so the drain must page past
-    // it for more candidates — and must not slide below the after_id cursor
-    // while doing so (the cursor session itself is NOT strictly newer).
     const page = await getJson<PageWire>(
       `/api/v1/sessions?archived_only=true&page_size=2&after_id=${archivedOlder.body.data.id}`,
     );
@@ -1101,8 +1060,6 @@ describe('server-v2 /api/v1/sessions', () => {
   });
 
   it('lists the union of legacy split buckets for one workspace, in recency order', async () => {
-    // Legacy pre-fold data: one physical directory registered under two
-    // spelling variants, with sessions bucketed per minted id.
     const typedRoot = 'C:\\Users\\Foo\\Proj';
     const lowerRoot = 'c:\\users\\foo\\proj';
     const typedId = encodeWorkDirKey(typedRoot);
@@ -1140,8 +1097,6 @@ describe('server-v2 /api/v1/sessions', () => {
     await seedBucket(typedId, 's-typed', 50);
     await seedBucket(lowerId, 's-lower', 60);
 
-    // The registry merges the two entries; whichever id survives is the
-    // representative the client lists by.
     const workspaces = await getJson<{ items: { id: string }[] }>('/api/v1/workspaces');
     const rep = workspaces.body.data.items[0]?.id as string;
     expect([typedId, lowerId]).toContain(rep);
@@ -1152,7 +1107,6 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(listed.body.code).toBe(0);
     expect(listed.body.data.items.map((s) => s.id)).toEqual(['s-lower', 's-typed']);
 
-    // Id-cursor pagination spans the bucket boundary without repeats.
     const page1 = await getJson<PageWire>(
       `/api/v1/sessions?workspace_id=${encodeURIComponent(rep)}&page_size=1`,
     );
@@ -1169,8 +1123,6 @@ describe('server-v2 /api/v1/sessions', () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
-    // A freshly-created session has no work, so it is not busy — the wire
-    // fact is the resolved drain-registry read, not a constant placeholder.
     expect(created.body.data.busy).toBe(false);
 
     const idle = await getJson<PageWire>('/api/v1/sessions?busy=false');
@@ -1209,9 +1161,6 @@ describe('server-v2 /api/v1/sessions', () => {
     const id = created.body.data.id;
     const workspaceId = created.body.data.workspace_id;
 
-    // Unregister the workspace without removing on-disk content. The session
-    // persists its frozen cwd, so it must remain listable / gettable with the
-    // original cwd instead of being filtered (list) or 404 (get/profile).
     const del = await deleteJson<{ deleted: boolean }>(`/api/v1/workspaces/${workspaceId}`);
     expect(del.body.code).toBe(0);
 
@@ -1257,8 +1206,6 @@ describe('server-v2 /api/v1/sessions', () => {
       metadata: { baz: 1 },
     });
     expect(second.body.code).toBe(0);
-    // v1 writes the patch straight into `custom` (replace, not deep-merge): the
-    // first key is gone, the new key is present, and cwd still wins.
     expect(second.body.data.metadata['foo']).toBeUndefined();
     expect(second.body.data.metadata['baz']).toBe(1);
     expect(second.body.data.metadata.cwd).toBe(cwd);
@@ -1274,7 +1221,6 @@ describe('server-v2 /api/v1/sessions', () => {
     });
     expect(first.body.code).toBe(0);
 
-    // Re-applying the same mode must not error (the setter is idempotent).
     const again = await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, {
       agent_config: { permission_mode: 'yolo' },
     });
@@ -1291,8 +1237,6 @@ describe('server-v2 /api/v1/sessions', () => {
     });
     expect(first.body.code).toBe(0);
 
-    // Without the diff-guard this second enter would throw 'Already in plan mode'
-    // and surface as a non-zero code.
     const again = await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, {
       agent_config: { plan_mode: true },
     });
@@ -1504,9 +1448,6 @@ describe('server-v2 /api/v1/sessions status context window', () => {
       context_usage: number;
     }>(`/api/v1/sessions/${created.body.data.id}/status`);
     expect(body.code).toBe(0);
-    // No model is bound to the lazily-created main agent yet, but the status
-    // line should still show the configured default model's context window
-    // instead of 0 (mirrors v1, which binds the default model at creation).
     expect(body.data.max_context_tokens).toBe(131072);
     expect(body.data.context_tokens).toBe(0);
     expect(body.data.context_usage).toBe(0);
@@ -1518,8 +1459,6 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
   let home: string | undefined;
   let base: string;
 
-  // The suite-level setup pins the read-model flag OFF (env outranks the
-  // `[experimental]` config section), so this describe re-enables it per test.
   const READ_MODEL_ENV = 'KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL';
 
   const READ_MODEL_CONFIG = [
@@ -1595,13 +1534,6 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
     expect(status.body.code).toBe(0);
     expect(status.body.data.state).toBe('ready');
 
-    // A freshly created session lists, counts, and pages without waiting for
-    // the read model — the mutation path never awaited the read model, the
-    // read path folds the mirror queue back in. That fold is best-effort
-    // while a mirror flush is in flight: the flush's batch is only per-shard
-    // atomic and its pending-queue cleanup is not linearized with reads, so a
-    // read landing exactly inside that window can transiently miss (or
-    // double-count) the session — poll instead of sampling once.
     const created = await postJson<SessionWire>('/api/v1/sessions', {
       metadata: { cwd: home as string },
     });
@@ -1624,15 +1556,10 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
       { timeout: 10_000 },
     );
 
-    // Archiving drains the mirror queue before responding, and the restart's
-    // boot prepare re-projects (or reuses) a fully settled generation — both
-    // of these reads are deterministic again.
     await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
     const archivedOnly = await getJson<PageWire>('/api/v1/sessions?archived_only=true');
     expect(archivedOnly.body.data.items.map((s) => s.id)).toEqual([id]);
 
-    // A restart re-projects from the authoritative documents (the persisted
-    // read model may also be reused; either way the listing is complete).
     await (server as RunningServer).close();
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -1648,16 +1575,11 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
   });
 
   it('serves session routes from the authoritative store when the read model cannot open', async () => {
-    // Break the read model at its root: a plain FILE where the query-store
-    // directory must be. Boot-time prepare fails; every later access retries
-    // and fails the same way for the whole server lifetime.
     await (server as RunningServer).close();
     server = undefined;
     await rm(join(home as string, 'cache', 'query-store'), { recursive: true, force: true });
     await writeFile(join(home as string, 'cache', 'query-store'), 'sabotage', 'utf8');
 
-    // The boot itself must survive the read-model failure (prepare's failure
-    // is logged, never propagated).
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -1668,15 +1590,12 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
     });
     base = `http://127.0.0.1:${server.port}`;
 
-    // The degradation is diagnosable through the debug surface.
     const status = await getJson<{ state: string; reason?: string; degradedCount: number }>(
       '/api/v1/debug/sessionIndex/status',
     );
     expect(status.body.data.state).toBe('degraded');
     expect(status.body.data.degradedCount).toBeGreaterThan(0);
 
-    // Session lifecycle is untouched: create, list, point-lookup all answer
-    // from the authoritative metadata.
     const created = await postJson<SessionWire>('/api/v1/sessions', {
       metadata: { cwd: home as string },
     });

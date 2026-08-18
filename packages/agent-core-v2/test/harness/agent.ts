@@ -61,9 +61,6 @@ import type { ActivatePluginCommandPayload } from '#/agent/pluginCommand/pluginC
 import { IAgentPluginCommandService } from '#/agent/pluginCommand/pluginCommand';
 import type { ToolInfo } from '#/tool/toolContract';
 
-// Test-facing wire vocabulary, formerly imported from the deleted RPC
-// aggregation layer; payloads with an owner-domain type are aliased above,
-// the rest are local to the harness.
 type EmptyPayload = {};
 type CreateGoalPayload = CreateGoalInput;
 type RegisterToolPayload = UserToolRegistration;
@@ -438,7 +435,6 @@ export interface TestAgentOptions {
 
 type MutableScopeSeed = Array<readonly [ServiceIdentifier<unknown>, unknown]>;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyCtor<T> = new (...args: any[]) => T;
 type TestAgentServiceScope = 'app' | 'session' | 'agent';
 
@@ -917,11 +913,6 @@ function collectScopeSeed(
   return seed;
 }
 
-// Feature contributions (`ScopeUnits` fold) provide into a scope through the
-// cascade and would replace a same-token seed instance installed at creation;
-// re-asserting overrides of feature-contributed tokens through the live
-// container right after scope creation keeps test stubs winning, as they did
-// over static registrations (which `provideScopeServices` skips when seeded).
 function reassertServiceOverrides(
   overrides: readonly TestAgentScopedServiceOverride[],
   scope: TestAgentServiceScope,
@@ -1116,10 +1107,6 @@ export class AgentTestContext {
             IConfigService,
             configService(() => this.kimiConfig),
           );
-          // The harness is a config-already-loaded world, so the identity is
-          // handed out pre-frozen (no custom identity, matching the empty
-          // bootstrap headers above); the freeze ordering itself is covered
-          // by the agentIdentity suite. Suites override via `appService`.
           reg.defineInstance(IAgentIdentity, stubAgentIdentity());
           reg.defineInstance(
             IAppendLogStore,

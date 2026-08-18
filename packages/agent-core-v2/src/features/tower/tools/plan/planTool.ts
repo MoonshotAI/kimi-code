@@ -1,12 +1,3 @@
-/**
- * `tools` domain — `TowerPlanTool` implementation (the `TowerPlan` tool).
- *
- * Splits the tower goal into missions through the protocol `TowerStore`
- * rooted at the session cwd (`sessionContext`), refusing to run while tower
- * mode (`tower`) is inactive. Registered for the main agent only. Bound at
- * Agent scope.
- */
-
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';

@@ -1,10 +1,3 @@
-/**
- * Scenario: session-shared Todo state, including undo restoration.
- * Responsibility: SessionTodoService exposes the main wire state and emits observable changes.
- * Wiring: lightweight lifecycle/agent fakes with real event-bus behavior.
- * Run: pnpm --filter @moonshot-ai/agent-core-v2 test -- test/session/todo/sessionTodo.test.ts
- */
-
 import { describe, expect, it } from 'vitest';
 
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';

@@ -10,7 +10,7 @@ Four `LifecycleScope` tiers — `App` / `Workspace` / `Session` / `Agent` (strin
 
 The DI kernel (`src/_base/di/`) owns the unit layer on top of the scoped registry:
 
-- `service.ts` — `Service`: the unit base class (extends `Disposable`). Capabilities live on `this` (`provide` / `effect` / `on` / `get` / `ref`, plus `name` / `state` / `config`). Two-phase construction: inside the ctor `provide`/`on`/`effect` buffer (writes only — `get`/`ref` throw, dependencies are constructor parameters); the kernel binds the runtime after `Reflect.construct` and flushes in writing order; a manually `new`ed instance throws on every capability call. Services whose own members collide with the `Service` vocabulary keep `extends Disposable` with a NOTE comment — still full DI units (cascade/ledger do not require `Service`).
+- `service.ts` — `Service`: the unit base class (extends `Disposable`). Capabilities live on `this` (`provide` / `effect` / `on` / `get` / `ref`, plus `name` / `state` / `config`). Two-phase construction: inside the ctor `provide`/`on`/`effect` buffer (writes only — `get`/`ref` throw, dependencies are constructor parameters); the kernel binds the runtime after `Reflect.construct` and flushes in writing order; a manually `new`ed instance throws on every capability call. Services whose own members collide with the `Service` vocabulary keep `extends Disposable` — still full DI units (cascade/ledger do not require `Service`).
 - `fiber.ts` — the `Fiber` capability interface (not a DI token), `FiberHandle` (thenable / `state` / `uid` / `update` / `dispose`), `ServiceRecipe` (class / arrow function / `{apply}`), the `FiberState` five-state machine, and `ScopeUnits(kind)` — the materialization collection token, one per scope kind.
 - `collection.ts` — `collection<T>(name)` contribution tokens. Contribute with `this.provide(token, value)`; a fold declares the token as a constructor parameter and receives a `CollectionView<T>` (`items` / `records` / incremental `onDidChange`). Records are visible to the provider's ancestors and descendants (never sibling subtrees); provider death withdraws. Collection edges enter the graph for introspection but never join a cascade contagion set.
 - `scopeUnits.ts` — the kernel fold: every scope-creation point (`createScopedChildHandle` / `Scope.createApp` / `Scope.createChild`) runs `watchScopeUnits(container, kind)` before eager activation, materializing each visible `ScopeUnits(kind)` record's recipe as a unit inside the new scope (disposal hangs on the record provider's book — provider death tears the materialized units down across the tree). `ScopeOptions.configureContainer` runs at the same point (the session seed adapters use it).
@@ -35,25 +35,8 @@ Domain-slice scenarios that used to live in `examples/<name>.example.ts` are now
 
 ## Comment conventions
 
-- **Header only, external role only.** Comments live solely in the top-of-file `/** */` block — never beside functions, methods, or statements. Say what the module exposes and the responsibility it owns; the code is the source of truth for how it works, so do not narrate implementation steps, enumerate every export, or note porting / skeleton status.
-- **Identity line first.** Start with `` `<domain>` domain — <one-line role>. `` Keep an existing `(cross-cutting)` label as-is. Write the role as a responsibility ("drives the turn lifecycle"), not a symbol list ("turn driver + context + loop runner").
-- **Impl files add collaborators + scope; contract files add the public contract + scope.** For impls, list every imported cross-domain collaborator as a role ("persists records through `records`") — declared dependencies count even if not yet wired in this WIP port; infrastructure imports (`_base/**`) are not collaborators. Read scope from `registerScopedService(LifecycleScope.X, …)`.
-
-### Examples
-
-Impl (`src/session/sessionMetadata/sessionMetadataService.ts`):
-
-```ts
-/**
- * `sessionMetadata` domain — `ISessionMetadata` implementation.
- *
- * Persists the session metadata document (`state.json`) through the `storage`
- * access-pattern store (`IAtomicDocumentStore`), rooted at the `metaScope`
- * namespace from `sessionContext`. Loads the existing document on
- * construction (creating it on first run), and logs through `log`. Bound at
- * Session scope.
- */
-```
+- **No comments.** The code is the source of truth; do not write file headers, section banners, or implementation narration. The one exception is JSDoc attached to exported symbols (it flows into the generated `.d.ts` and the consumers' IDE hover); keep it focused on the public contract.
+- **Lint-suppression directives are the tooling exception.** `oxlint-disable` / `eslint-disable` comments are allowed where they suppress an active rule for a deliberate pattern (e.g. the Event2 class+payload-interface merging idiom). `@ts-expect-error`, `@ts-ignore`, and `ts-nocheck` stay banned — fix the underlying type problem instead; negative type-safety cases go into compiler-asserted fixtures.
 
 ## Telemetry
 

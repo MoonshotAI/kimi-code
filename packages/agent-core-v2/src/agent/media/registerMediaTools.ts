@@ -1,15 +1,3 @@
-/**
- * Media tool registration.
- *
- * `ReadMediaFile` is only useful when the active model can consume image or
- * video input, so registration is capability-gated here instead of inside the
- * tool (v1 threw a `SkipThisTool` sentinel from the constructor).
- *
- * `createVideoUploader` is a thin binder over a `ModelRequester`'s optional
- * `uploadVideo`. Auth is already resolved via the requester's auth-provider
- * closure; media tooling doesn't need to know about tokens.
- */
-
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ModelRequester } from '#/kosong/model/modelRequester';
 import type { VideoUploadEvent } from '#/app/telemetry/events';

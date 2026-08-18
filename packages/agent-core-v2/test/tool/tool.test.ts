@@ -111,11 +111,6 @@ function agentSwarmSchemaProperties<T = unknown>(): Record<string, T> {
 const BACKGROUND_AGENT_NEXT_STEP =
   'next_step: The completion arrives automatically in a later turn — do NOT wait, poll, or call TaskOutput on it; continue with other work or hand back to the user. (If you have nothing to do until it finishes, run such tasks in the foreground next time.)';
 
-/**
- * Model entries backing the `[secondary_model.models]` pools used below: the harness
- * creates a real session scope, so the startup pool validation resolves every
- * pool alias through the real catalog unless a stub catalog is injected.
- */
 const POOL_MODEL_ENTRIES = {
   'provider/fast': { provider: 'test-provider', model: 'fast-model', maxContextSize: 262_144 },
   'provider/smart': { provider: 'test-provider', model: 'smart-model', maxContextSize: 262_144 },
@@ -213,7 +208,6 @@ interface AgentLifecycleStub extends IAgentLifecycleService, ISessionSubagentSer
   readonly create: ReturnType<typeof vi.fn<IAgentLifecycleService['create']>>;
   readonly run: ReturnType<typeof vi.fn<ISessionSubagentService['run']>>;
   readonly get: ReturnType<typeof vi.fn<IAgentLifecycleService['get']>>;
-  /** Domain events published through any handle's event-bus stub. */
   readonly publishedEvents: Event2[];
   addHandle(
     agentId: string,
@@ -588,10 +582,6 @@ describe('Agent tool description', () => {
   });
 
   it('lists contributed tools the caller profile does not activate', () => {
-    // The caller binds a profile without AgentSwarm, so the runtime registry
-    // never holds it; a global restriction forces the explicit enumeration
-    // branch. The listing must still draw from the full contribution
-    // collection — spawned `agent` profiles can use AgentSwarm.
     const callerData = {
       profileName: 'orchestrator',
       activeToolNames: ['Agent', 'Bash', 'Read'],
@@ -761,8 +751,6 @@ describe('Agent tool description', () => {
       reload: async () => {},
     };
     ctx = createTestAgent(sessionService(ISessionAgentProfileCatalog, catalog));
-    // Prime the tool, then let catalog.ready settle: from the next read on,
-    // the description freezes the catalog list.
     expect(agentDescription()).toContain('- coder: Coder');
     await Promise.resolve();
 
@@ -863,7 +851,6 @@ describe('Agent tool description', () => {
     const description = agentDescription();
 
     expect(description).toContain('Available models (pass via model):');
-    // The caller's own model is not in the pool: generic primary hint last.
     const defaultIndex = description.indexOf('- provider/fast [default]: fast and cheap');
     const smartIndex = description.indexOf('- provider/smart: hard tasks');
     const primaryIndex = description.indexOf(
@@ -892,11 +879,7 @@ describe('Agent tool description', () => {
     const description = agentDescription();
 
     expect(description).toContain('- provider/fast [default]: fast and cheap');
-    // The caller's own alias is a normal pool entry: a pool binding carries no
-    // thinking, while the `primary` line below binds the same model WITH the
-    // caller's thinking level — both choices stay visible.
     expect(description).toContain('- mock-model [main model]: the main model, great at hard things');
-    // An empty-string description renders a bare alias line.
     expect(description).toContain('- provider/smart\n');
     expect(description).toContain(
       '- primary (mock-model): the main model you are running on, bound with your current thinking level; use it for hard, quality-sensitive subagent tasks',
@@ -919,8 +902,6 @@ describe('Agent tool description', () => {
 
     const description = agentDescription();
 
-    // The caller IS the default: the marker pair sits on its pool line, which
-    // still leads the list.
     const defaultIndex = description.indexOf(
       '- mock-model [default] [main model]: the main model, great at hard things',
     );
@@ -1255,8 +1236,6 @@ describe('Agent tool execution contract', () => {
       description: 'Find cause',
     });
 
-    // Pool bindings carry no explicit thinking: the subagent resolves thinking
-    // naturally instead of inheriting the caller's level.
     expect(lifecycle.create).toHaveBeenCalledWith(
       expect.objectContaining({
         binding: expect.objectContaining({
@@ -1314,8 +1293,6 @@ describe('Agent tool execution contract', () => {
       },
     });
 
-    // Same model, two bindings: the pool alias resolves thinking naturally,
-    // "primary" inherits the caller's level.
     await executeAgentTool(context, {
       prompt: 'Investigate',
       description: 'Find cause',
@@ -1419,8 +1396,6 @@ describe('Agent tool execution contract', () => {
       },
     });
 
-    // The model parameter is not advertised under force; a stray choice is
-    // rejected instead of binding anything.
     const rejected = await executeAgentTool(context, {
       prompt: 'Investigate',
       description: 'Find cause',
@@ -1451,7 +1426,6 @@ describe('Agent tool execution contract', () => {
         },
       },
     });
-    // The startup validation already passed; now the pool breaks at runtime.
     await (context.get(IConfigService) as StubConfigService).replace(SECONDARY_MODEL_SECTION, {
       defaultModel: 'primary',
       models: { primary: 'reserved word' },
@@ -1468,8 +1442,6 @@ describe('Agent tool execution contract', () => {
   });
 
   it('points at the [secondary_model.models] config when the bound alias stops resolving', async () => {
-    // The pool validates at session creation, but a later config edit (or a
-    // catalog refresh) can still leave the bound alias dangling at spawn time.
     const lifecycle = createAgentLifecycleStub({
       createError: new Error2(
         ErrorCodes.CONFIG_INVALID,

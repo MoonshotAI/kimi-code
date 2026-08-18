@@ -86,8 +86,6 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
       server = undefined;
     }
     if (home !== undefined) {
-      // maxRetries: the async query-store shard writer can still be flushing
-      // after close (ENOTEMPTY on macOS) — same retry pattern as fs.test.ts.
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       home = undefined;
     }
@@ -166,7 +164,6 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
       },
     ]);
     expect(Number.isNaN(Date.parse(item.created_at))).toBe(false);
-    // v1 parity: the question wire shape carries no synthetic expiry.
     expect(item).not.toHaveProperty('expires_at');
   });
 
@@ -194,12 +191,9 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
       answers: {
         q_0: { kind: 'multi', option_ids: ['opt_0_0', 'opt_0_1'] },
       },
-      method: 'click', // protocol-only method; dropped on the in-process side
+      method: 'click',
     });
 
-    // Wire ids are translated back to question text / option labels so the
-    // record the model sees is self-explanatory (v1 parity: multi joins with
-    // ', ' to match the TUI reverse-RPC path).
     await expect(resultPromise).resolves.toEqual({
       answers: { 'Pick one': 'Yes, No' },
     });
@@ -264,11 +258,8 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
 
     await postJson<ResolveWire>(`/api/v1/sessions/${sid}/questions/q-t3`, {
       answers: {
-        // opt_0_9 does not exist; q_9 is an unknown question id.
         q_0: { kind: 'single', option_id: 'opt_0_9' },
         q_9: { kind: 'single', option_id: 'opt_9_0' },
-        // opt_0_0 belongs to question 0 — never offered for question 1, so it
-        // must NOT be resolved to 'Cat'.
         q_1: { kind: 'multi', option_ids: ['opt_1_0', 'opt_0_0'] },
       },
     });
@@ -338,9 +329,6 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
 
   it('resolves a question whose id contains a colon', async () => {
     const sid = await createSession();
-    // Colon-bearing interaction ids still arrive from explicit-id callers
-    // (older engines parked the provider tool_call id, shaped
-    // `{function_name}:{index}`); the action-suffix parse must not reject them.
     const resultPromise: Promise<QuestionResult> = questionService(sid).request({
       id: 'AskUserQuestion:0',
       toolCallId: 'AskUserQuestion:0',

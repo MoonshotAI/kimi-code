@@ -1,24 +1,3 @@
-/**
- * `mcpCore` domain — `McpConnectionManager`, the workspace-shared MCP
- * server connection orchestrator.
- *
- * Owns the configured MCP servers and their runtime clients: connects
- * (stdio / SSE / HTTP), discovers and registers tools, attaches the OAuth
- * provider when tokens are present, flips failing servers into `needs-auth`
- * on 401, and reconnects after authentication. Applies per-server settings
- * over the configured defaults and emits status changes to subscribers.
- *
- * `resolveClientName` supplies the name announced to servers during initialize
- * (and the OAuth dynamic-registration label), consulted per connection so an
- * identity configured after construction still applies; omitted, or resolving
- * to `undefined`, keeps the built-in name.
- *
- * A server whose config disappears is tombstoned (`markRemoved`): the
- * client is closed but the entry stays with status `removed` so consumers
- * holding its tools can fail calls with a clear notice, until a same-named
- * `connect` replaces it or `shutdown` clears everything.
- */
-
 import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerConfig } from './config-schema';
 import type { ILogger as Logger } from '#/_base/log/log';
@@ -206,12 +185,6 @@ export class McpConnectionManager implements McpConnectionView {
   async connect(name: string, config: McpServerConfig): Promise<void> {
     const previous = this.entries.get(name);
     if (previous !== undefined) {
-      // A connect carrying the config the entry already runs (or is already
-      // starting) is a no-op. Both the config-domain reconciler and explicit
-      // SDK callers can issue it; without this guard the second writer tears
-      // down the first writer's live handshake mid-flight. Disabled entries
-      // hold no client, so they fall through and re-emit as before; failed
-      // entries are excluded so an explicit connect still retries.
       if (
         (previous.status === 'pending' || previous.status === 'connected') &&
         mcpServerConfigsEqual(previous.config, config)
@@ -588,10 +561,6 @@ function stderrTail(client: RuntimeMcpClient | undefined): string | undefined {
   return snapshot.trimEnd();
 }
 
-/**
- * Structural equality for effective configs, backing the idempotent-connect
- * guard (config reconcilers and explicit callers may issue the same upsert).
- */
 function mcpServerConfigsEqual(a: McpServerConfig, b: McpServerConfig): boolean {
   return stableConfigJson(a) === stableConfigJson(b);
 }

@@ -1,11 +1,3 @@
-/**
- * Zod schema half of the v1 event catalog (`packages/protocol/src/events.ts`),
- * ported verbatim for byte-level AsyncAPI/JSON-Schema compatibility. Interface
- * declarations and the deprecated volatile-event helpers are intentionally not
- * ported; `satisfies z.ZodType<T>` clauses are kept only where `T` is
- * importable from an agent-core-v2 leaf path and dropped elsewhere (dropped
- * clauses do not affect the emitted JSON Schema).
- */
 import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
@@ -708,6 +700,7 @@ export const turnStartedEventSchema = z.object({
 
 export const turnEndedEventSchema = z.object({
   type: z.literal('turn.ended'),
+  time: z.number().optional(),
   turnId: z.number(),
   reason: turnEndReasonSchema,
   error: kimiErrorPayloadSchema.optional(),

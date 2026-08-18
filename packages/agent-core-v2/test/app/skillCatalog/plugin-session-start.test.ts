@@ -1,12 +1,3 @@
-/**
- * Scenario: plugin session-start rendering and restored-history deduplication.
- *
- * Exercises the real agent injection and wire replay path through the shared
- * test-agent harness, with plugin contributions supplied in memory.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/skillCatalog/plugin-session-start.test.ts`.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';

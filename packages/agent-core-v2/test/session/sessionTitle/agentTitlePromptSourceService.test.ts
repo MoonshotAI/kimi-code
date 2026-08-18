@@ -1,9 +1,3 @@
-/**
- * Scenario: the Agent-scoped title prompt projection reads the live context
- * window and includes prompts still waiting in the live prompt queue. Wiring:
- * the real source with contract-level fakes for context and prompt queue.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';

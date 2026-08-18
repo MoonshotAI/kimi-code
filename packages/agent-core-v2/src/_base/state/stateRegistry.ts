@@ -1,39 +1,3 @@
-/**
- * `state` domain — scope-agnostic keyed state container primitives.
- *
- * Owns the typed `StateKey<T>` descriptor (manufactured by `defineState` in
- * the top-level `state` domain), the `IStateRegistry` base interface shared
- * by the per-scope state services, and the `StateRegistry` implementation
- * backing them: a `Map`-backed store
- * where keys are declared
- * up front (`register`), read and replaced (`get` / `set`), and observed
- * (`onDidChange(key)` per key, `onDidChangeAny` globally). Two exports serve
- * debugging: `entries()` returns the live key/value references for in-process
- * readers, and `snapshot()` returns a JSON-safe deep copy for RPC / inspector
- * export: Maps become plain objects or entry arrays, Sets become arrays,
- * functions are dropped, circular references become `'(circular)'`, and
- * instances with a custom prototype (service references, tools, Promises)
- * collapse to a `'(ClassName)'` marker — plain data is recursed, resource
- * graphs are not, so a value that reaches into the DI object graph cannot
- * fan the copy out until the heap is exhausted. A key flagged
- * `snapshotExcluded` (replayable event-sourced state, whose authoritative
- * copy is the wire journal) is skipped by `snapshot()` so the debug export
- * never deep-copies it. Misuse (duplicate registration, reading or writing an
- * unregistered key) is a caller bug and raises `BugIndicatingError`.
- *
- * Cascading inspection: each scope's state service keeps a reference to the
- * parent scope's registry (`inspectParent`, assigned from the injected
- * parent-tier state service; App is the root) and declares its tier name
- * (`inspectScope`). `inspect()` folds that chain into a `StateInspection`
- * tree — this scope's `snapshot()` plus the ancestors' — so one RPC call
- * from any scope tier exports the whole App → … → current-scope state path.
- *
- * Values are stored as-is — the container does not freeze or clone, so
- * replacing the whole value via `set` is the recommended update style;
- * mutating a held `Map` / `Set` in place bypasses change notification.
- * Persistence and replay are out of scope here. Scope-agnostic.
- */
-
 import { Disposable, type IDisposable, toDisposable } from '../di/lifecycle';
 import { BugIndicatingError } from '../errors/errors';
 import { Emitter, type Event } from '../event';
@@ -67,7 +31,6 @@ export interface IStateRegistry {
   inspect(): StateInspection;
 }
 
-// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class StateRegistry extends Disposable implements IStateRegistry {
   private readonly values = new Map<string, unknown>();
   private readonly registrations = new Map<string, object>();

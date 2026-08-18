@@ -1,37 +1,3 @@
-/**
- * `kosong/provider` domain — OpenAI Chat Completions wire base.
- *
- * The base that actually speaks the Chat Completions wire format — and the
- * vendor host with the widest hook surface. It knows NOTHING about vendors:
- * every vendor deviation arrives as a composed `OpenAIChatCompletionsHooks`
- * set baked into `options.hooks` at construction. The hook consumption style
- * is uniform — "hook first, `undefined` falls back to the base default".
- *
- * Per-turn intent assembly (`_resolveRequestKwargs`) applies overlays in the
- * fixed contract order: cacheKey → sampling → thinking → maxCompletionTokens.
- * The context-window clamp on the completion budget (floor 1) runs BEFORE any
- * hook and cannot be skipped; the 128k ceiling clamp can be taken over by the
- * `withMaxCompletionTokens` hook.
- *
- * Two load-bearing behaviors:
- *
- *  - When `hooks.withThinking` EXISTS, the history-scanning auto-enable of
- *    `reasoning_effort` (issue #1616) is disabled entirely — once a trait
- *    takes over thinking encoding the base must not interfere.
- *  - When `hooks.convertMessage` EXISTS ("trait mode"), the base's
- *    tool-result `extract_text` fallback and tool-declaration-only skip are
- *    handed over to the trait wholesale: every history message is
- *    base-converted, post-processed by the hook, and dropped on `null`.
- *  - A reasoning-only assistant is projected with explicit empty `content`.
- *    The reasoning field remains intact while strict Chat Completions
- *    gateways still see the required `content` or `tool_calls` shape.
- *
- * The SDK client is built with `maxRetries: 0`: the SDK's internal backoff
- * sleep never observes the turn's AbortSignal, so rate-limit / server /
- * connection retry is owned by the engine's step-retry layer (observable and
- * cancellable), never by the SDK.
- */
-
 import OpenAI from 'openai';
 
 import { parseTraceId, type ChatProviderError } from '#/kosong/contract/errors';
@@ -87,7 +53,6 @@ import {
   resolveAuthBackedClient,
 } from '../request-auth';
 import { normalizeToolCallIdsForProvider, sanitizeToolCallId } from '../tool-call-id';
-
 
 const CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING = 128 * 1024;
 
@@ -747,7 +712,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
 
     for (const key of Object.keys(kwargs)) {
       if (kwargs[key] === undefined) {
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete kwargs[key];
       }
     }
@@ -780,7 +744,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     return new OpenAI(clientOpts as ConstructorParameters<typeof OpenAI>[0]);
   }
 }
-
 
 export function getOpenAILegacyModelCapability(modelName: string) {
   const normalized = modelName.toLowerCase();

@@ -1,11 +1,3 @@
-/**
- * `tools` domain — shared helpers for the tower tool set: store construction
- * anchored at the session's working directory, caller identity resolution
- * against the roster, and uniform error mapping. The tower workspace always
- * anchors at the main checkout — workers whose cwd was overridden to their
- * worktree still talk to the same `.tower/` tree.
- */
-
 import {
   GitError,
   TowerProtocolError,

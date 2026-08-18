@@ -1,11 +1,3 @@
-/**
- * Scenario: GitHub plugin source resolution without the GitHub REST API.
- *
- * Verifies release, branch, tag, SHA, timeout, and commit-feed behavior at the
- * network boundary; `fetch` is stubbed and no real requests are made.
- * Run: pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/app/plugin/github-resolver.test.ts
- */
-
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { resolveGithubCommitSha, resolveGithubSource } from '#/app/plugin/github-resolver';

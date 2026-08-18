@@ -596,8 +596,6 @@ describe('Agent context', () => {
 
     const surviving = context.get();
     expect(surviving.map((m) => m.role)).toEqual(['user', 'assistant']);
-    // The first exchange's anchor survives the cut, so the prefix reads its
-    // REAL measured size instead of a re-estimate.
     expect(tokenCounting.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
   });
 
@@ -769,7 +767,6 @@ describe('Agent context', () => {
       expect(zeroed.head).toHaveLength(0);
       expect(zeroed.tail).toHaveLength(messages.length);
 
-      // Sanity: the default estimator elides this much user text.
       expect(selectCompactionUserMessages(messages).elided).toBe(true);
     });
 
@@ -811,8 +808,6 @@ describe('Agent context', () => {
       });
 
       expect(withMeasured.tokensAfter).toBeGreaterThan(500);
-      // Same kept messages; only the summary component differs — the
-      // measured 500 replaces the summary-text estimate.
       expect(withMeasured.tokensAfter - 500).toBe(
         withEstimate.tokensAfter - estimateTokens('summary'),
       );

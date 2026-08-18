@@ -1,17 +1,4 @@
-/**
- * `tower` domain — wire Model (`TowerModel`) and the `tower_mode.enter` /
- * `tower_mode.exit` Ops (`towerEnter` / `towerExit`) for the agent's tower
- * mode.
- *
- * Declares tower mode as a boolean wire Model plus the two Ops that set and
- * clear it — v1's `tower_mode.*` records carry no payload, so replaying a
- * legacy session restores the flag through these Ops with no dedicated
- * restore path. Each Op's `toEvent` publishes the `towerMode` slice of
- * `agent.status.updated` on the live path.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { z } from 'zod';
 
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';

@@ -1,19 +1,3 @@
-/**
- * Cron fire steer-turn context e2e: when a scheduled cron task fires and
- * steers a NEW turn on the idle main agent, the provider request must carry
- * the full conversation context — in particular the earlier CronCreate tool
- * result (which holds the `id: <ULID>` line the model was told about).
- *
- * Wiring: testAgent harness with a scripted provider. The harness builds the
- * Session scope with a stub `IAgentLifecycleService` (no `create`), so this
- * test overrides it with a registry stub that resolves `main` to the harness
- * agent and fires `onDidCreate` the way production does — that is what binds
- * `SessionCronServiceImpl` to the main agent (cron tools + wire restore
- * hook). The cron clock is file-driven (`clock: file:...`) and ticking is
- * manual (`manualTick: true`) so the fire is deterministic.
- *
- * Run: ../../node_modules/.bin/vitest run test/session/cron/cron-fire-steer.e2e.test.ts
- */
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

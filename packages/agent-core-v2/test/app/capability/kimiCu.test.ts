@@ -1,9 +1,3 @@
-/**
- * `kimi-cu` capability entry — macOS and Windows platform selection,
- * layered detection, and install orchestration. Host effects are faked
- * (temp app bundle, scripted host processes, fake plugins).
- */
-
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -64,7 +58,6 @@ function fakeHostProcess(
           }),
           stdout: Readable.from(['']),
           stderr: Readable.from(['']),
-          // Never settles — the caller's own timeout must fire.
           wait: () => new Promise<number>(() => {}),
           kill: () => Promise.resolve(),
           dispose: () => undefined,
@@ -123,8 +116,6 @@ function fakePlugins(
       installs.push(input.source);
       await onInstall?.();
       const id = input.source.includes('computer-use-windows') ? 'kimi-cu-win' : 'kimi-cu';
-      // Upsert semantics of the real manager: a new id installs enabled, an
-      // existing record keeps its (possibly disabled) enabled flag.
       const existing = installed.find((p) => p.id === id);
       if (existing === undefined) {
         installed.push({ id, enabled: true, state: 'ok' });
@@ -199,8 +190,6 @@ describe('windowsPowerShellPath', () => {
 
 describe('elevatedDittoScript', () => {
   it('shell-quotes both paths so spaces and metacharacters stay literal', () => {
-    // The elevated path runs the string through /bin/sh with administrator
-    // privileges: every path must be exactly one literal argument.
     expect(elevatedDittoScript('/tmp/kimi cu/app', '/Applications/KimiCU.app')).toBe(
       "/usr/bin/ditto '/tmp/kimi cu/app' '/Applications/KimiCU.app'",
     );
@@ -251,7 +240,6 @@ describe('kimi-cu entry', () => {
     await mkdir(macosDir, { recursive: true });
     const appBin = path.join(macosDir, 'kimi-cu');
     await writeFile(appBin, '#!/bin/sh\n');
-    // Real bundles are executable; anything less reads as a broken install.
     await chmod(appBin, 0o755);
     await writeFile(
       path.join(applicationsDir, 'KimiCU.app', 'Contents', 'Info.plist'),
@@ -912,9 +900,6 @@ describe('kimi-cu entry', () => {
       detail: expect.stringContaining('timed out'),
     });
 
-    // The install path uses the same detect — it must still repair the
-    // wiring layer instead of dying on the wedged probes. The service
-    // itself legitimately stays broken and reports the clean error.
     await expect(entry.install(() => {})).rejects.toThrow(/not running after install/);
     expect(plugins.installs).toHaveLength(1);
   });
@@ -930,8 +915,6 @@ describe('kimi-cu entry', () => {
       makeCtx({ applicationsDir, plugins: plugins.service, hostProcess: host.service }),
     );
 
-    // Everything else ready, only the disabled wiring blocks readiness —
-    // setup must not strand the capability at partial by leaving it off.
     await entry.install(() => {});
     expect(plugins.enabledCalls).toEqual([{ id: 'kimi-cu', enabled: true }]);
   });
@@ -964,9 +947,6 @@ describe('kimi-cu entry', () => {
     const applicationsDir = await fakeAppBundle();
     const plugins = fakePlugins([{ id: 'kimi-cu', enabled: true, state: 'ok', version: '0.5.4' }]);
     const host = fakeHostProcess([
-      // The wedged old binary makes `kimi-cu uninstall` hang — cleanup must
-      // swallow the timeout (`|| true` semantics) instead of killing the
-      // reinstall before ditto can replace the app.
       { match: 'uninstall', code: 0, hang: true },
       { match: 'service-status', code: 0, stdout: 'SMAppService status=1' },
       { match: 'xpc-ping', code: 0, stdout: 'permissionStatus: accessibility=true screenRecording=true' },
@@ -978,9 +958,6 @@ describe('kimi-cu entry', () => {
           headers: { 'content-length': '3' },
         }),
       )) as never;
-    // The fake ditto must materialize the copied binary: moveAppIntoPlace
-    // rm's the old bundle first, and the post-install service check probes
-    // the new one.
     const appBin = path.join(applicationsDir, 'KimiCU.app', 'Contents', 'MacOS', 'kimi-cu');
     const hostProcess = {
       spawn: async (command: string, args: readonly string[] = []) => {
@@ -1003,7 +980,6 @@ describe('kimi-cu entry', () => {
       }),
     );
 
-    // Fully ready → explicit reinstall exercises the cleanup path.
     await entry.install(() => {});
     expect(host.calls.some((call) => call.includes('ditto'))).toBe(true);
     expect(host.calls.some((call) => call.includes('pkill') && call.includes('+mcp'))).toBe(false);
@@ -1014,8 +990,6 @@ describe('kimi-cu entry', () => {
     const plugins = fakePlugins([{ id: 'kimi-cu', enabled: true, state: 'ok', version: '0.5.4', enabledMcp: 0 }]);
     const entry = createKimiCuEntry(makeCtx({ plugins: plugins.service }));
 
-    // The plugin toggle is on but the stdio MCP wrapper is off: readiness
-    // must not claim ready — new sessions would get no Computer Use tools.
     const detected = await entry.detect();
     expect(detected.steps.find((s) => s.id === 'plugin')).toEqual({
       id: 'plugin',
@@ -1035,8 +1009,6 @@ describe('kimi-cu entry', () => {
       makeCtx({ applicationsDir, plugins: plugins.service, hostProcess: host.service }),
     );
 
-    // Upsert preserves the per-server disabled state, so setup repairs it
-    // explicitly — the plugin toggle alone is not enough.
     await entry.install(() => {});
     expect(plugins.mcpEnabledCalls).toEqual([{ id: 'kimi-cu', server: 'mac', enabled: true }]);
   });
@@ -1062,8 +1034,6 @@ describe('kimi-cu entry', () => {
       }),
     );
 
-    // A corrupt archive must fail before any teardown — a failed update
-    // never breaks a previously working setup.
     await expect(entry.install(() => {})).rejects.toThrow(/Failed to unzip/);
     expect(host.calls.some((call) => call.includes('uninstall'))).toBe(false);
     expect(host.calls.some((call) => call.includes('bootout'))).toBe(false);
@@ -1072,7 +1042,6 @@ describe('kimi-cu entry', () => {
 
   it('reads a bundle missing its Info.plist as a broken install', async () => {
     const applicationsDir = await fakeAppBundle();
-    // Executable binary but the bundle metadata is gone (partial copy).
     await rm(path.join(applicationsDir, 'KimiCU.app', 'Contents', 'Info.plist'));
     const entry = createKimiCuEntry(makeCtx({ applicationsDir }));
 
@@ -1082,7 +1051,6 @@ describe('kimi-cu entry', () => {
 
   it('reads a non-executable leftover app binary as a broken install', async () => {
     const applicationsDir = await fakeAppBundle();
-    // An interrupted ditto leaves the binary present but not executable.
     await chmod(path.join(applicationsDir, 'KimiCU.app', 'Contents', 'MacOS', 'kimi-cu'), 0o644);
     const entry = createKimiCuEntry(makeCtx({ applicationsDir }));
 

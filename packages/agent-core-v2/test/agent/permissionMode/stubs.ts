@@ -1,12 +1,3 @@
-/**
- * `permissionMode` test stubs — shared doubles for
- * `IAgentPermissionModeService`.
- *
- * Lives under `test/` (not `src/`) so test-support code stays out of the
- * production tree. Import from a relative path (`./stubs` or
- * `../permissionMode/stubs`).
- */
-
 import { Event } from '#/_base/event';
 import type {
   IAgentPermissionModeService,

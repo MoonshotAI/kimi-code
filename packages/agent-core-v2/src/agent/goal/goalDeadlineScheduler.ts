@@ -1,10 +1,3 @@
-/**
- * `goal` domain — wall-clock deadline scheduling contract.
- *
- * Defines the App-scoped `IGoalDeadlineScheduler` for measuring active time
- * and arming hard wall-clock budget deadlines.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 

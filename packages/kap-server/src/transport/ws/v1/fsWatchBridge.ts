@@ -1,31 +1,3 @@
-/**
- * `FsWatchBridge` — volatile `/api/v1/ws` delivery for filesystem changes.
- *
- * Turns the core `IWorkspaceFsWatchService` feed into `event.fs.changed`
- * frames on the v1 WebSocket, byte-compatible with the v1 server
- * (`packages/server/.../fsWatcherService.ts`):
- *
- *   client → `{type:'watch_fs_add',    id, payload:{session_id, paths}}`
- *   client → `{type:'watch_fs_remove', id, payload:{session_id, paths}}`
- *   server → `{type:'ack', id, code, payload:{watched_paths, current_count}}`
- *   server → `{type:'event.fs.changed', seq, session_id, timestamp, payload}`
- *
- * The bridge is transport state (like {@link ConnectionRegistry} /
- * {@link SessionEventBroadcaster}); it is **not** DI-registered and carries no
- * `_serviceBrand`. It owns the per-`(connection, session)` subscription sets,
- * fans the core feed out to each connection filtered by that connection's
- * paths, and assigns a per-session monotonic `seq`. Frames are sent straight
- * to the socket — they never enter the broadcaster / journal (fs changes are
- * volatile: on overflow the client sees `truncated` and re-syncs).
- *
- * The core watch service is Workspace-scoped: one os watcher per handler,
- * shared by every session of the workspace. The bridge holds ONE
- * `IWorkspaceFsWatchSubscription` per session (driven with the union of every
- * connection's paths for that session) and re-filters per connection on the
- * way out — two sessions of one workspace fan out from the same handler
- * watch instead of hanging a second os watcher.
- */
-
 import {
   type IDisposable,
   type ISessionScopeHandle,
@@ -250,8 +222,6 @@ export class FsWatchBridge {
         workspaceId: sessionContext.workspaceId,
         generation: lease.runtime.identity.generation,
         session,
-        // One subscription per session, held on the handler-shared Workspace
-        // watch service (resolved through the session's parent scope).
         runtime: lease.runtime,
         view,
         handle,

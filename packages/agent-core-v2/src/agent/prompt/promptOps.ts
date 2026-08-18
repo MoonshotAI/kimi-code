@@ -1,5 +1,4 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace */
-
 import { z } from 'zod';
 
 import { Event2 } from '#/app/event/event2';

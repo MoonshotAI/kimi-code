@@ -1,22 +1,4 @@
-/**
- * `swarm` domain — the `swarmKey` state and the durable `swarm_mode.enter`
- * (`SwarmModeEnter`) / `swarm_mode.exit` (`SwarmModeExit`) events for the
- * agent's swarm mode.
- *
- * The state holds `SwarmModeTrigger | null` (initial `null`; the trigger is
- * retained, not collapsed to a boolean, so `shouldAutoExit` can still
- * distinguish `task` / `tool`). The durable classes are the wire-protocol
- * record vocabulary: their `serialize()` output is the on-disk record (flat
- * payload, epoch-ms `time`), byte-compatible with the retired op encoding.
- * Each fold emits the `AgentStatusUpdated` swarm-mode slice after the state
- * commits, live only. The trailing enter-reminder pop on `swarm_mode.exit` is
- * a fold the swarm feature registers onto the core `contextMemoryKey`
- * (`popSwarmModeReminder` returns the same reference on a no-op, and
- * returning the draft keeps the immer base).
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { z } from 'zod';
 
 import { contextMemoryKey, popSwarmModeReminder } from '#/agent/contextMemory/contextOps';

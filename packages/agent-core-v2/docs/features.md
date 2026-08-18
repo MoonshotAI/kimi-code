@@ -93,7 +93,7 @@ keep their static registrations; the service and the two tools go through the Fe
 
 ## Adding a new feature
 
-1. `src/features/<name>/` — domain files follow the usual conventions (header comments,
+1. `src/features/<name>/` — domain files follow the usual conventions (no comments,
    one service per file pair, `.md?raw` assets move with the feature).
 2. `<name>Feature.ts` — the Feature subclass + `registerFeature(...)`.
 3. `src/index.ts` — precise leaf imports/exports; no barrel.

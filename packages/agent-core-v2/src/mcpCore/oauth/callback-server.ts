@@ -1,14 +1,3 @@
-/**
- * `mcpCore` domain — one-shot localhost OAuth callback listener.
- *
- * `startCallbackServer()` binds 127.0.0.1 on a random free port and returns a
- * handle exposing the resulting `redirect_uri` and an awaitable
- * `waitForCode()` that resolves with `{ code, state }` from the first
- * `/callback` request. Any subsequent requests get a generic 404 and a
- * non-callback path is ignored. The server is closed automatically once a
- * code has been delivered (or `close()` is called explicitly).
- */
-
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 

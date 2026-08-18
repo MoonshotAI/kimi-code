@@ -1,10 +1,3 @@
-/**
- * `hostFs` domain — `IHostFileSystem` implementation.
- *
- * Reads and writes files on the real local disk through `node:fs/promises`.
- * Bound at App scope.
- */
-
 import {
   appendFile,
   lstat,

@@ -1,16 +1,3 @@
-/**
- *   GET    /v1/models
- *   GET    /v1/providers
- *   GET    /v1/providers/{provider_id}
- *   POST   /v1/providers
- *   PUT    /v1/providers/{provider_id}
- *   DELETE /v1/providers/{provider_id}
- *
- * The catalog item shapes are owned by the engine
- * (`kosong/model/catalog`); these are only the REST list/get wrappers
- * around them, plus the manual create/replace/delete write surface.
- */
-
 import { z } from 'zod';
 
 import { PROVIDER_ID_PATTERN } from '@moonshot-ai/agent-core-v2';
@@ -29,17 +16,10 @@ export const listProvidersResponseSchema = z.object({
 });
 export type ListProvidersResponse = z.infer<typeof listProvidersResponseSchema>;
 
-// The single-provider GET additionally reveals the stored `api_key` so the
-// local desktop client can prefill its edit form (the loopback transport is
-// already bearer-guarded; the list route and /config stay redacted).
 export const getProviderResponseSchema = providerCatalogItemSchema.extend({
   api_key: z.string().optional(),
 });
 export type GetProviderResponse = z.infer<typeof getProviderResponseSchema>;
-
-// ---------------------------------------------------------------------------
-// POST /v1/providers — manual provider creation
-// ---------------------------------------------------------------------------
 
 /**
  * The six wire protocols the core config schema accepts as a provider `type`.
@@ -66,12 +46,6 @@ export const createProviderModelSchema = z.object({
 });
 export type CreateProviderModel = z.infer<typeof createProviderModelSchema>;
 
-/**
- * Shared superRefine checks for the create/replace bodies: the base URL must
- * be trimmed and must not contain an env placeholder the config cannot
- * express (mirrors resolveCatalogImport), and models must not repeat a model
- * id (the alias build would silently keep only the last one).
- */
 function refineProviderForm(
   value: { base_url?: string | undefined; models: Array<{ model: string }> },
   ctx: z.RefinementCtx,
@@ -132,10 +106,6 @@ export type CreateProviderRequest = z.infer<typeof createProviderRequestSchema>;
 export const createProviderResponseSchema = providerCatalogItemSchema;
 export type CreateProviderResponse = z.infer<typeof createProviderResponseSchema>;
 
-// ---------------------------------------------------------------------------
-// PUT /v1/providers/{provider_id} — replace-style provider edit
-// ---------------------------------------------------------------------------
-
 /**
  * The desktop "edit & save" payload: the whole provider form. `new_id`
  * renames the provider (the id in the path is the current identity) — the
@@ -172,10 +142,6 @@ export const replaceProviderResponseSchema = z.object({
   provider: providerCatalogItemSchema,
 });
 export type ReplaceProviderResponse = z.infer<typeof replaceProviderResponseSchema>;
-
-// ---------------------------------------------------------------------------
-// GET /v1/catalog/providers[{catalog_id}] — models.dev directory (proxied)
-// ---------------------------------------------------------------------------
 
 /** Pruned catalog model shape — enough for the import preview, nothing more. */
 export const catalogModelItemSchema = z.object({
@@ -240,10 +206,6 @@ export const importCatalogProviderResponseSchema = z.object({
   models_imported: z.number().int().min(0),
 });
 export type ImportCatalogProviderResponse = z.infer<typeof importCatalogProviderResponseSchema>;
-
-// ---------------------------------------------------------------------------
-// POST /v1/providers:import_registry — import a custom registry (api.json)
-// ---------------------------------------------------------------------------
 
 /**
  * Import a models.dev-shaped private registry (api.json URL + optional Bearer

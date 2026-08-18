@@ -1,31 +1,3 @@
-/**
- * `/api/v1` session filesystem routes — server-v2 port.
- *
- * Mirrors `packages/server/src/routes/fs.ts` path-for-path and schema-for-schema
- * so existing v1 clients keep working against server-v2. Backed by the v2
- * Workspace-scoped `IWorkspaceFsService` (`agent-core-v2/src/workspace/workspaceFs`):
- * the route resolves the session from the URL, then dispatches `fs:<action>`
- * to the matching `IWorkspaceFsService` method — the session's accessor
- * resolves it from its parent Workspace scope (the handler), which is the
- * "session → handler → workspace fs" chain (chdir is gone, so the handler
- * root is the one fixed fs root). The wire schema comes from the engine's own
- * `workspaceFs` domain contract (`agent-core-v2`).
- *
- * Draft-session fallback: a client composing the first prompt of a new
- * session (e.g. kimi-web's new-session draft) has no session id yet, so it
- * passes the workspace reference — registered workspace id or absolute root —
- * in the `{session_id}` slot. Only `fs:search` serves those (the `@` file
- * mention must work before the session exists): the route resolves the
- * workspace's handler directly and uses the same Workspace-scope fs service a
- * real session would resolve to. URL and wire schema are unchanged.
- *
- * First-class workspace search: `POST /workspace/fs:search` carries the same
- * workspace reference in the body (`workspace`), so a session-less client
- * searches without borrowing the `{session_id}` slot. kimi-web's `@` mention
- * uses this route; the session-route fallback above predates it and stays for
- * wire compatibility.
- */
-
 import { isAbsolute } from 'node:path';
 import { Readable } from 'node:stream';
 
@@ -118,11 +90,6 @@ const fsDownloadQuerySchema = z.object({
   runtime_id: z.string().min(1).optional(),
 });
 
-/**
- * Body for `POST /workspace/fs:search`: the engine's fs-search request plus
- * the workspace reference (registered workspace id or absolute root) the
- * session route would otherwise carry in its `{session_id}` slot.
- */
 const workspaceFsSearchBodySchema = fsSearchRequestSchema.extend({
   workspace: z.string().min(1),
   runtime_id: z.string().min(1).optional(),
@@ -245,12 +212,6 @@ function acquireSessionFs(
   return createRuntimeFs(core, context.workspaceId, workspace, runtimeId, required);
 }
 
-/**
- * Workspace fallback for `fs:search` (see the file header): resolve a
- * workspace reference — registered id, or an absolute root registered on the
- * spot — to its handler's `IWorkspaceFsService`. `undefined` when the ref is
- * neither a known workspace nor an existing absolute directory.
- */
 async function resolveWorkspaceFs(
   core: Scope,
   ref: string,
@@ -316,10 +277,6 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       }
       const fsAction = action as FsAction;
 
-      // Cold-load a persisted-but-not-live session so fs actions (which only
-      // need the work dir) do not 404 on a freshly-opened session. Matches v1,
-      // which reads the persisted cwd. `resume` returns undefined only when the
-      // session is unknown or its workspace is gone.
       const session = await resumeSessionById(core.accessor, session_id);
       let runtimeFs: RuntimeFsScope | undefined;
       try {
@@ -335,8 +292,6 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         if (fsAction === 'search' || fsAction === 'grep' || fsAction === 'git_status' || fsAction === 'diff') {
           required.push('process');
         }
-        // Draft-session fallback (file header): no session yet, but the client
-        // addressed a workspace — `fs:search` resolves it directly.
         runtimeFs = session === undefined && fsAction === 'search'
           ? await resolveWorkspaceFs(core, session_id, runtimeId, required)
           : session === undefined
@@ -405,11 +360,6 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     fsActionRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
   );
 
-  // Session-less workspace file search (file header): the `@` file mention of
-  // a not-yet-created session addresses the workspace directly instead of
-  // borrowing the session route's `{session_id}` slot. Declared with a double
-  // colon so find-my-way serves it on the wire as `/workspace/fs:search`
-  // (same convention as `/fs::browse` in `workspaceFs.ts`).
   const workspaceSearchRoute = defineRoute(
     {
       method: 'POST',
@@ -491,8 +441,6 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         return;
       }
 
-      // Cold-load so a freshly-opened (persisted but not live) session can still
-      // serve downloads; `resume` only returns undefined for unknown / workspace-gone.
       const session = await resumeSessionById(core.accessor, session_id);
       if (session === undefined) {
         reply.send(
@@ -545,7 +493,6 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
           try {
             stream.destroy();
           } catch {
-            // best-effort
           }
         });
         return r.send(stream) as unknown as void;
@@ -561,7 +508,6 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         try {
           stream.destroy();
         } catch {
-          // best-effort
         }
       });
       return r.send(stream) as unknown as void;
@@ -604,10 +550,6 @@ function createRuntimeReadStream(
   stream.once('close', release);
   return stream;
 }
-
-// ---------------------------------------------------------------------------
-// Action handlers — thin adapters: parse body, call IWorkspaceFsService, wrap result.
-// ---------------------------------------------------------------------------
 
 type Req = { id: string; body: unknown };
 type Reply = { send(payload: unknown): unknown };
@@ -766,10 +708,6 @@ async function handleOpenIn(fs: IWorkspaceFsService, sessionId: string, req: Req
   reply.send(okEnvelope({ opened: true as const }, req.id));
 }
 
-// ---------------------------------------------------------------------------
-// Error mapping — domain Error2 codes → protocol wire codes.
-// ---------------------------------------------------------------------------
-
 function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void {
   const requestId = req.id;
   const log = requestLog(req);
@@ -805,9 +743,6 @@ function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void 
       case ErrorCodes.SESSION_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
         return;
-      // hostFs errors that escaped the workspaceFs layer keep their `os.fs.*`
-      // code; map them onto the closest v1 wire code (ENOTDIR collapses into
-      // path-not-found, matching `mapFsError`).
       case ErrorCodes.OS_FS_NOT_FOUND:
       case ErrorCodes.OS_FS_NOT_DIRECTORY:
         reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, err.message, requestId, err.stack));

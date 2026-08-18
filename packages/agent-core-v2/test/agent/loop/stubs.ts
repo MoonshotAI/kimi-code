@@ -1,6 +1,3 @@
-/**
- * `loop` test stubs — shared loop and wire doubles for unit tests.
- */
 import { toDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
 import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, Step, Turn } from '#/agent/loop/loop';

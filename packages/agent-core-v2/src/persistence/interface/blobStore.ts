@@ -1,14 +1,3 @@
-/**
- * `persistence/interface` — `IBlobStore` contract.
- *
- * The blob access-pattern Store: write-once, key-addressed, potentially large
- * objects. Sits alongside `IAppendLogStore` and `IAtomicDocumentStore` as the
- * third generic access-pattern Store in the three-layer persistence model.
- *
- * Business services that need blob storage
- * depend on this interface rather than on the raw `IFileSystemStorageService`.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export interface IBlobStore {

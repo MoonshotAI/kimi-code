@@ -1,19 +1,3 @@
-/**
- * `skill` domain — `IAgentSkillService` implementation.
- *
- * Resolves skills from the session catalog, renders the activation prompt,
- * records the activation as a transient `SkillActivate` fact through
- * `dispatcher.dispatch` (the `skillKey` placeholder fold emits the
- * observable `SkillActivated`), drives user-slash activations into a new turn via
- * `prompt` (attachment parts from the caller ride the same user message after
- * the rendered prompt), settles `{turn_id}` for the caller, persists the
- * derived title/lastPrompt through `sessionMetadata` for the main agent only
- * (publishing the live update through `event`), and reports `skill_invoked` /
- * `flow_invoked` through `telemetry`. Replay drops the fold's emit, so neither
- * the event nor telemetry fires on resume (matching the
- * former `restoring` guard). Bound at Agent scope.
- */
-
 import { randomUUID } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -240,10 +224,6 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       toolCalls: [],
       origin,
     };
-    // Plain-input equivalence, no opt-in: an activation that arrives while a
-    // turn is running steers into it at the next step boundary (the
-    // skill_activation origin rides the `turn.steer` record); with no running
-    // turn it queues as a fresh prompt turn exactly like normal input.
     if (this.loop.status().state === 'running') {
       return this.prompt.inject(message);
     }

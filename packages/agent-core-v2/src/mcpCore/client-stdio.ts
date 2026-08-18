@@ -1,7 +1,3 @@
-/**
- * `mcpCore` domain — stdio transport MCP client.
- */
-
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { ReadBuffer, serializeMessage } from '@modelcontextprotocol/sdk/shared/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';

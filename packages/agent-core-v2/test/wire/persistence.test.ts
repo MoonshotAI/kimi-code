@@ -1,12 +1,3 @@
-/**
- * Scenario: append-log file persistence and agent wire migration rewrites.
- *
- * Resolves real append-log and Agent wire services by interface over file or
- * in-memory storage. Controlled storage promises expose rewrite durability
- * without wall-clock waits. Run with `pnpm --filter @moonshot-ai/agent-core-v2
- * exec vitest run test/wire/persistence.test.ts`.
- */
-
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

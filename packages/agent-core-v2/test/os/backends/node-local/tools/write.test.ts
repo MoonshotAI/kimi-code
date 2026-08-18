@@ -1,16 +1,3 @@
-/**
- * WriteTool tests for the v2 fileTools domain.
- *
- * Ported from v1 (`packages/agent-core/test/tools/write.test.ts`) and adapted
- * to the v2 constructor `(fs, env, workspace)`. Self-contained: builds a
- * minimal fake `IHostFileSystem` inline so the tool can be exercised without
- * the composition root.
- *
- * Append is routed through `IHostFileSystem.appendText` (a native append), so
- * the tool no longer reads the existing file. The append-call assertions below
- * reflect that single-call mechanic.
- */
-
 import { describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';

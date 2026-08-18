@@ -1,29 +1,3 @@
-/**
- * `skillCatalog` domain — skill config sections.
- *
- * Registers the v1-compatible top-level config domains `extraSkillDirs` and
- * `mergeAllAvailableSkills`, plus `builtinProductSkills`. Values stay camelCase
- * in memory; TOML uses the snake_case keys `extra_skill_dirs`,
- * `merge_all_available_skills`, and `builtin_product_skills`.
- *
- * `builtinProductSkills` decides whether the builtin skills documenting this
- * CLI itself — its `config.toml` / `tui.toml` settings, custom themes, MCP
- * setup, the official docs lookup, and the Claude Code / Codex import — are
- * offered to the model. On by default; turning it off trims their names and
- * descriptions from the system prompt, where they otherwise sit on every turn,
- * at the cost of the guided flows for those tasks. Useful for unattended runs,
- * or deployments where nobody reconfigures the CLI mid-task.
- *
- * That section is a whole-section scalar rather than an object of fields, so
- * the env binding covers it directly and it needs its own strip:
- * `stripEnvBoundFields` only walks object fields, so an env override would
- * otherwise be written back into `config.toml`. The strip restores the
- * env-free file value while the env var resolves, and drops the field when the
- * file held anything but a boolean. `builtinProductSkillsEnabled` reads the
- * resolved switch; only an explicit opt-out disables, so a missing or
- * not-yet-registered section behaves like the shipped default.
- */
-
 import { z } from 'zod';
 
 import { parseBooleanEnv } from '#/_base/utils/env';

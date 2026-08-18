@@ -1,13 +1,3 @@
-/**
- * `GET /api/v1/sessions/{sid}/transcript` — live store reads, interaction
- * frames, turn pagination, cold wire rebuild, and query validation.
- *
- * Boots a real server (`startServer`) on a temp home so the live path runs
- * through the real core binding (event bus → projector → store); the cold
- * path re-boots the server on the same home so the session drops out of
- * memory and the route falls back to the wire-records rebuild.
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -127,8 +117,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-transcript-'));
-    // Seed a stub IModelCatalog so the agent scope can instantiate if a
-    // transitive service needs it; the transcript route itself does not.
     const modelCatalog: IModelCatalog = {
       _serviceBrand: undefined,
       get: () => {
@@ -175,10 +163,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       server = undefined;
     }
     if (home !== undefined) {
-      // maxRetries: the engine's file log writers flush synchronously on scope
-      // dispose but their trailing async close can still be creating a file
-      // under home after server.close() resolves (ENOTEMPTY on a loaded CI
-      // runner) — same retry pattern as questions.test.ts / fs.test.ts.
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       home = undefined;
     }
@@ -202,7 +186,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     return body.data.id;
   }
 
-  /** Ensure the main agent exists (server-v2 does not create it with the session). */
   async function ensureMainAgent(sessionId: string): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
@@ -231,7 +214,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const id = await createSession();
     await ensureMainAgent(id);
 
-    // First read binds the transcript (empty).
     const empty = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     expect(empty.body.code).toBe(0);
     expect(empty.body.data.items).toEqual([]);
@@ -277,7 +259,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         output: 'a.txt',
       }),
     );
-    // Roster descriptor for the main agent is present.
     await vi.waitFor(async () => {
       const again = await getJson<TranscriptContract>(
         `/api/v1/sessions/${id}/transcript?agent_id=main`,
@@ -289,7 +270,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   it('surfaces approval interactions as global entities with pending ids', async () => {
     const id = await createSession();
     await ensureMainAgent(id);
-    // Bind first so the interaction listeners are attached.
     await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
 
     const bus = mainAgentBus(id);
@@ -365,7 +345,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     expect(older.body.data.items.map((item) => (item as TurnContract).turnId)).toEqual(['t1', 't2']);
     expect(older.body.data.has_more).toBe(false);
 
-    // Unknown agent id on a live session pages empty instead of 404ing.
     const unknown = await getJson<TranscriptContract>(
       `/api/v1/sessions/${id}/transcript?agent_id=nope`,
     );
@@ -391,7 +370,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       },
     ]);
 
-    // Reboot on the same home — the session drops out of memory.
     await server!.close();
     server = undefined;
     await boot();
@@ -421,7 +399,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       }),
     );
 
-    // Cold reads of an agent without any records page empty.
     const sub = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=sub-1`);
     expect(sub.body.code).toBe(0);
     expect(sub.body.data.items).toEqual([]);
@@ -436,9 +413,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'running' }], toolCalls: [] },
     ]);
 
-    // Reboot on the same home, then RESUME the session: it is live again, so
-    // the route answers from the live store — which must first backfill the
-    // persisted history (0-based ordinals, matching the engine's numbering).
     await server!.close();
     server = undefined;
     await boot();
@@ -455,7 +429,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     expect(turn!.state).toBe('completed');
     expect(turn!.prompt).toBe('hi');
 
-    // A subsequent live turn continues the ordinal sequence without collision.
     const bus = mainAgentBus(id);
     bus.publish(serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     bus.publish(serverEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
@@ -478,7 +451,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       );
     await sub.accessor.get(IWireService).flush();
 
-    // Reboot on the same home — the session drops out of memory.
     await server!.close();
     server = undefined;
     await boot();
@@ -492,7 +464,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     );
     expect(turn).toBeDefined();
     expect(turn!.prompt).toBe('scan the repo');
-    // An agent without any records still pages empty.
     const none = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=nope`);
     expect(none.body.code).toBe(0);
     expect(none.body.data.items).toEqual([]);
@@ -511,9 +482,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       );
     await sub.accessor.get(IWireService).flush();
 
-    // Reboot + resume: the subagent is not materialized again, but its
-    // transcript must come back established from the persisted records, and
-    // the roster must list it.
     await server!.close();
     server = undefined;
     await boot();
@@ -550,9 +518,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       );
     await sub.accessor.get(IWireService).flush();
 
-    // The roster seeds from session metadata when the transcript binds; the
-    // subsequent on-demand backfill for the subagent must not downgrade the
-    // descriptor back to `{ agentId, type }`.
     await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     const { body } = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=sub-1`);
     expect(body.code).toBe(0);
@@ -564,8 +529,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   it('announces a pre-existing pending approval against the backfilled tool frame', async () => {
     const id = await createSession();
     await ensureMainAgent(id);
-    // Persist a tool call (assistant message with toolCalls) before anything
-    // binds — the persisted frame is the placement/back-link target.
     await seedMainAgentMessages(id, [
       { role: 'user', content: [{ type: 'text', text: 'run ls' }], toolCalls: [] },
       {
@@ -575,7 +538,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       },
     ]);
 
-    // The approval is already pending when the transcript binds.
     const session = getLiveSessionById(server!.core.accessor, id);
     session!.accessor.get(ISessionInteractionService).enqueue({
       id: 'apr-1',
@@ -584,8 +546,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       origin: { agentId: 'main', turnId: 0 },
     });
 
-    // Binding defers the announce until after the backfill, so the entity
-    // anchors at the backfilled tool call and resolve can back-link it.
     const { body } = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     expect(body.data.pending_interactions).toEqual(['apr-1']);
     expect(body.data.interactions).toContainEqual(
@@ -611,12 +571,10 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const id = await createSession();
     await ensureMainAgent(id);
 
-    // Probing a nonexistent agent pages empty (no wire records)…
     const none = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=nope`);
     expect(none.body.code).toBe(0);
     expect(none.body.data.items).toEqual([]);
 
-    // …but must not conjure a ghost roster entry.
     const main = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     expect(main.body.data.agents.map((a) => a.agentId)).not.toContain('nope');
   });
@@ -638,7 +596,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       );
     await sub.accessor.get(IWireService).flush();
 
-    // The subagent's question is pending BEFORE the transcript binds.
     const questions = session!.accessor.get(ISessionQuestionService);
     const pending = questions.request(
       {
@@ -650,8 +607,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       { agentId: 'sub-1' },
     );
 
-    // Binding seeds only main-owned pendings after the main backfill — the
-    // subagent's question waits for its own history.
     const mainBody = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     expect(mainBody.body.data.pending_interactions).toEqual([]);
 
@@ -678,7 +633,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
     ]);
 
-    // Reboot on the same home — the session drops out of memory (cold path).
     await server!.close();
     server = undefined;
     await boot();
@@ -686,8 +640,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const none = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=nope`);
     expect(none.body.code).toBe(0);
     expect(none.body.data.items).toEqual([]);
-    // No ghost entry for the probe — and the roster still comes from the
-    // persisted session metadata.
     expect(none.body.data.agents.map((a) => a.agentId)).not.toContain('nope');
     expect(none.body.data.agents).toContainEqual({ agentId: 'main', type: 'main' });
   });
@@ -705,12 +657,9 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'hello there' }], toolCalls: [] },
     ]);
 
-    // Bind the live store; the backfill serves the persisted turn.
     const bound = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     expect(bound.body.data.items).toHaveLength(1);
 
-    // A live-only turn (never persisted) distinguishes the stale store from
-    // the cold rebuild: served live it would show up, from disk it cannot.
     const bus = mainAgentBus(id);
     bus.publish(serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     bus.publish(serverEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
@@ -731,8 +680,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const id = await createSession();
     await ensureMainAgent(id);
 
-    // A turn is already streaming, but none of the step content is persisted
-    // yet (the engine flushes response content when the request completes).
     const bus = mainAgentBus(id);
     bus.publish(
       serverEvent({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'hi' }),
@@ -743,9 +690,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
     ]);
 
-    // The transcript attaches now: the backfill sees only the user message
-    // and the projector missed the early deltas, so the live frame ends up
-    // suffix-only.
     await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     bus.publish(serverEvent({ type: 'assistant.delta', turnId: 0, delta: 'world' }));
     const suffix = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
@@ -756,15 +700,12 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       expect.objectContaining({ kind: 'text', text: 'world' }),
     );
 
-    // The request completes: the full text lands on disk, then the turn ends.
     await seedMainAgentMessages(id, [
       { role: 'assistant', content: [{ type: 'text', text: 'Hello world' }], toolCalls: [] },
     ]);
     bus.publish(serverEvent({ type: 'turn.step.completed', turnId: 0, step: 1 }));
     bus.publish(serverEvent({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
 
-    // The debounced post-turn heal re-reads the persisted turn and merges it
-    // back: the prefix is restored and the header recovers origin/prompt.
     await vi.waitFor(
       async () => {
         const { body } = await getJson<TranscriptContract>(
@@ -790,7 +731,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     const sub = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
 
-    // Bind the transcript (main + any agent appearing later).
     await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
 
     const subBus = sub.accessor.get(IEventBus);
@@ -808,8 +748,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       }),
     );
 
-    // The question carries its owning agent on the interaction origin (see
-    // ISessionQuestionService.request's agentId option).
     const questions = session!.accessor.get(ISessionQuestionService);
     const pending = questions.request(
       {
@@ -875,7 +813,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const id = await createSession();
     await ensureMainAgent(id);
 
-    // Bind the transcript and read the baseline watermark.
     const bound = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     const base = bound.body.data.seq!;
 
@@ -890,20 +827,17 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     expect(catchup.body.data.complete).toBe(true);
     expect(catchup.body.data.latest_seq).toBeGreaterThan(base);
     const seqs = catchup.body.data.batches.map((batch) => batch.seq);
-    // Ascending, consecutive, and strictly past the cursor.
     expect(seqs.every((seq) => seq > base)).toBe(true);
     expect(seqs).toEqual(seqs.map((_, i) => seqs[0]! + i));
     expect(
       catchup.body.data.batches.some((batch) => batch.ops.some((op) => op.op === 'turn.upsert')),
     ).toBe(true);
 
-    // An up-to-date cursor replays nothing but is still complete.
     const current = await getJson<OpsCatchupContract>(
       `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=${catchup.body.data.latest_seq}`,
     );
     expect(current.body.data).toMatchObject({ batches: [], complete: true });
 
-    // A cursor ahead of the watermark cannot be covered.
     const stale = await getJson<OpsCatchupContract>(
       `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=99999`,
     );
@@ -917,7 +851,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
     ]);
 
-    // Reboot on the same home — the session drops out of memory (no journal).
     await server!.close();
     server = undefined;
     await boot();
@@ -949,7 +882,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   it('serves every prompted turn for one agent on the user-messages route (live)', async () => {
     const id = await createSession();
     await ensureMainAgent(id);
-    // Bind the transcript before publishing live turns.
     await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
 
     const bus = mainAgentBus(id);
@@ -957,7 +889,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'first' }),
     );
     bus.publish(serverEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
-    // A turn without a prompt (non-displayable origin) is projected out.
     bus.publish(
       serverEvent({ type: 'turn.started', turnId: 2, origin: { kind: 'task', taskId: 'task-1' } }),
     );
@@ -993,13 +924,9 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       .append({ role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage);
     await sub.accessor.get(IWireService).flush();
 
-    // Bind the transcript BEFORE publishing live turns (an unbound store
-    // cannot project bus events, and live-only turns never reach the disk).
     const bound = await getJson<UserMessagesContract>(`/api/v1/sessions/${id}/transcript/user-messages`);
     const boundByAgent = new Map(bound.body.data.agents.map((a) => [a.agent_id, a]));
     expect(boundByAgent.get('main')!.messages).toEqual([]);
-    // The agent_id-less read backfills sub-1 on demand: its persisted run
-    // prompt is that agent's own user message.
     expect(boundByAgent.get('sub-1')!.messages.map((m) => m.prompt)).toEqual(['scan the repo']);
 
     const bus = mainAgentBus(id);
@@ -1023,14 +950,12 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     await seedMainAgentMessages(id, [
       { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
       { role: 'assistant', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
-      // Folded away entirely (mid-turn context, opens no turn).
       {
         role: 'user',
         content: [{ type: 'text', text: 'injected reminder' }],
         toolCalls: [],
         origin: { kind: 'injection', variant: 'reminder' },
       } as ContextMessage,
-      // Opens a promptless engine turn — projected out by the missing prompt.
       {
         role: 'user',
         content: [{ type: 'text', text: 'subagent run prompt' }],
@@ -1053,7 +978,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       .append({ role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage);
     await sub.accessor.get(IWireService).flush();
 
-    // Reboot on the same home — the session drops out of memory (cold path).
     await server!.close();
     server = undefined;
     await boot();
@@ -1069,7 +993,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       ['t0', 'hi'],
       ['t2', 'second question'],
     ]);
-    // The image part became an attachment entity referenced by the turn.
     expect(main.messages[1]!.attachment_ids).toEqual(['att_1']);
     expect(main.attachments).toEqual([
       expect.objectContaining({
@@ -1081,7 +1004,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
 
     expect(byAgent.get('sub-1')!.messages.map((m) => m.prompt)).toEqual(['scan the repo']);
 
-    // Narrowed to one agent, only that agent comes back.
     const single = await getJson<UserMessagesContract>(
       `/api/v1/sessions/${id}/transcript/user-messages?agent_id=main`,
     );
@@ -1091,12 +1013,8 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   it('lists an attachment-only prompt as an empty-string user message (live)', async () => {
     const id = await createSession();
     await ensureMainAgent(id);
-    // Bind the transcript before publishing live turns.
     await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
 
-    // An upload-only prompt folds to no text: the live turn carries no
-    // `prompt`, only its attachments. The route normalizes the prompt to ""
-    // (the cold rebuild's shape) instead of dropping the message.
     const bus = mainAgentBus(id);
     bus.publish(
       serverEvent({
@@ -1127,9 +1045,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   it('lists an attachment-only prompt as an empty-string user message (cold)', async () => {
     const id = await createSession();
     await ensureMainAgent(id);
-    // The persisted shape of an upload-only prompt: a single self-contained
-    // daemon-ref media part. The cold projection maps it to one attachment
-    // and an empty prompt text.
     await seedMainAgentMessages(id, [
       {
         role: 'user',
@@ -1141,7 +1056,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
     ]);
 
-    // Reboot on the same home — the session drops out of memory (cold path).
     await server!.close();
     server = undefined;
     await boot();
@@ -1176,7 +1090,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   it('serves plan info for an ExitPlanMode call from its approval interaction (live)', async () => {
     const id = await createSession();
     await ensureMainAgent(id);
-    // Bind the transcript before publishing live events.
     await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
 
     const bus = mainAgentBus(id);
@@ -1293,7 +1206,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       },
     ]);
 
-    // Reboot on the same home — the session drops out of memory (cold path).
     await server!.close();
     server = undefined;
     await boot();
@@ -1331,8 +1243,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       },
     ]);
 
-    // A Revise outcome: the tool result carries no plan content — only the
-    // persisted interaction does.
     const session = getLiveSessionById(server!.core.accessor, id);
     const interactions = session!.accessor.get(ISessionInteractionService);
     interactions.enqueue({
@@ -1354,7 +1264,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const agent = session!.accessor.get(IAgentLifecycleService).get('main');
     await agent!.accessor.get(IWireService).flush();
 
-    // Reboot on the same home — the session drops out of memory (cold path).
     await server!.close();
     server = undefined;
     await boot();
@@ -1390,19 +1299,16 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     );
     bus.publish(serverEvent({ type: 'tool.result', turnId: 1, toolCallId: 'call_bash', output: 'ok' }));
 
-    // Unknown tool call.
     const unknown = await getJson<null>(
       `/api/v1/sessions/${id}/transcript/plan?agent_id=main&tool_call_id=call_nope`,
     );
     expect(unknown.body.code).toBe(40416);
 
-    // A real tool call that is not ExitPlanMode has no plan.
     const notPlan = await getJson<null>(
       `/api/v1/sessions/${id}/transcript/plan?agent_id=main&tool_call_id=call_bash`,
     );
     expect(notPlan.body.code).toBe(40416);
 
-    // Hostile agent id fails validation.
     const hostile = await getJson<null>(
       `/api/v1/sessions/${id}/transcript/plan?agent_id=${encodeURIComponent('../main')}&tool_call_id=call_plan`,
     );
@@ -1415,8 +1321,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
 
     const bus = mainAgentBus(id);
-    // Two separate ExitPlanMode calls (a Revise → resubmit pair), plus an
-    // unrelated tool call that must not appear.
     bus.publish(serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     bus.publish(serverEvent({ type: 'turn.step.started', turnId: 1, step: 1 }));
     bus.publish(
@@ -1470,7 +1374,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       ['call_draft', '# Draft'],
       ['call_final', '# Final'],
     ]);
-    // The draft has no interaction; the final carries its review outcome.
     expect(body.data.plans[0]!.review).toBeUndefined();
     expect(body.data.plans[1]!.review).toMatchObject({ state: 'approved' });
   });

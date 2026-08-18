@@ -1,18 +1,3 @@
-/**
- * `kosong/provider` domain — side-effect module: registers the OpenAI
- * Chat Completions base (`id: 'openai'`).
- *
- * The factory is the base side's only contact with the registry world: it
- * aggregates the construction-time trait declarations (endpoint, headers,
- * `provides`), composes the hook set, and bakes both into the base's options.
- *
- * Load-bearing detail: when a trait declared an endpoint but neither config
- * nor the env chain produced an apiKey, the factory passes `''` — NOT
- * `undefined` — so the base constructor's own `OPENAI_API_KEY` environment
- * fallback is suppressed. Composing a vendor over this transport can never
- * silently pick up an unrelated OpenAI key.
- */
-
 import { registerProtocolBase } from '#/kosong/protocol/protocolBase';
 import { traitDefaultHeaders } from '#/kosong/protocol/protocolTrait';
 

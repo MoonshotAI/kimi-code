@@ -1,26 +1,4 @@
-/**
- * `loop` domain — the `turnKey` state and the durable `turn.prompt`
- * (`TurnPrompt`) / `turn.steer` (`TurnSteer`) / `turn.cancel` (`TurnCancel`) /
- * `turn.ended` (`TurnEnded`) events behind monotonically increasing turn
- * identity.
- *
- * The state owns the next available turn id, including cancelled queued
- * reservations and legacy loop-event observations (the
- * `ContextAppendLoopEvent` fold), plus the terminal `lastEnded` outcome
- * (reason / error / durationMs) so downstream history rebuilds and
- * cold-resumed read models (e.g. the activity view) can recover how the last
- * turn ended. The durable classes are the wire-protocol record vocabulary:
- * their `serialize()` output is the on-disk record (flat payload, epoch-ms
- * `time`), byte-compatible with the retired op encoding. `TurnEnded` merges
- * the retired op with the same-named bus fact: it is durable AND observable,
- * and carries the bus-only `interruptReason` alongside the persisted fields —
- * its `serialize()` override emits exactly the op's record shape, so the
- * journal stays byte-identical and replay never republishes. Consumed by the
- * Agent-scope `loopService`.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { z } from 'zod';
 
 import type { KimiErrorPayload } from '#/_base/errors/serialize';

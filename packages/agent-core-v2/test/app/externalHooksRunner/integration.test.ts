@@ -1396,17 +1396,14 @@ describe('IExternalHooksRunnerService integration', () => {
       ix.set(ISessionExternalHooksService, new SyncDescriptor(SessionExternalHooksService));
       ix.get(ISessionExternalHooksService);
 
-      // No heartbeat hook at startup: nothing fires.
       await vi.advanceTimersByTimeAsync(120_000);
       expect(fired).toEqual([]);
 
-      // A plugin reload contributes a SessionHeartbeat hook: the timer arms.
       heartbeatEnabled = true;
       reloadEmitter.fire();
       await vi.advanceTimersByTimeAsync(60_000);
       expect(fired).toEqual(['SessionHeartbeat']);
 
-      // A later reload drops it again: the timer disarms.
       heartbeatEnabled = false;
       reloadEmitter.fire();
       await vi.advanceTimersByTimeAsync(120_000);

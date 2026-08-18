@@ -1,12 +1,3 @@
-/**
- * Scenario: on-demand managed chat_title generation through the session-scoped
- * service, including OAuth failures, title-state transitions, request headers,
- * and races.
- * Wiring: the real title service with contract fakes; only fetch crosses the
- * external boundary. Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec
- * vitest run test/session/sessionTitle/sessionTitleService.test.ts`.
- */
-
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { OAuthConnectionError, OAuthUnauthorizedError } from '@moonshot-ai/kimi-code-oauth';

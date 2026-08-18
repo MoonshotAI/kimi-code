@@ -1,8 +1,3 @@
-/**
- * `/api/v1/debug` transport error handling — map internal errors onto the project
- * envelope, guard serialization, time-box calls, and gate access.
- */
-
 import { ErrorCodes, Error2 } from '@moonshot-ai/agent-core-v2';
 
 import { errEnvelope } from '../protocol/envelope';
@@ -31,7 +26,6 @@ export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.SESSION_NOT_FOUND]: ErrorCode.SESSION_NOT_FOUND,
-  // v1 maps a missing agent onto the session-not-found envelope; keep parity.
   [ErrorCodes.AGENT_NOT_FOUND]: ErrorCode.SESSION_NOT_FOUND,
   [ErrorCodes.SESSION_UNDO_UNAVAILABLE]: ErrorCode.SESSION_UNDO_UNAVAILABLE,
   [ErrorCodes.REQUEST_INVALID]: ErrorCode.VALIDATION_FAILED,
@@ -49,8 +43,6 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.GOAL_OBJECTIVE_EMPTY]: ErrorCode.GOAL_OBJECTIVE_EMPTY,
   [ErrorCodes.GOAL_OBJECTIVE_TOO_LONG]: ErrorCode.GOAL_OBJECTIVE_TOO_LONG,
   [ErrorCodes.GOAL_UNSUPPORTED_AGENT]: ErrorCode.GOAL_UNSUPPORTED_AGENT,
-  // hostFs / storage codes → closest v1 wire equivalent (ENOTDIR collapses
-  // into path-not-found); codes without an equivalent fall back to 50001.
   [ErrorCodes.OS_FS_NOT_FOUND]: ErrorCode.FS_PATH_NOT_FOUND,
   [ErrorCodes.OS_FS_NOT_DIRECTORY]: ErrorCode.FS_PATH_NOT_FOUND,
   [ErrorCodes.OS_FS_IS_DIRECTORY]: ErrorCode.FS_IS_DIRECTORY,

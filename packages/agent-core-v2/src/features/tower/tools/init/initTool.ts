@@ -1,18 +1,3 @@
-/**
- * `tools` domain — `TowerInitTool` implementation (the `TowerInit` tool).
- *
- * Creates the `.tower/` workspace through the protocol `TowerStore` rooted at
- * the session cwd (`sessionContext`), enters tower mode via `tower`, and
- * activates the tower tool set through `profile`. Idempotent within a
- * session: re-running against an existing workspace reports `created: false`
- * and keeps all state (e.g. after a session resume). Re-running from a
- * *different* session adopts the workspace: roster entries the previous
- * session spawned are retired (their engine agent ids are session-scoped and
- * cannot be resumed here), missions and worktrees are preserved, and the
- * output tells the tower which names were retired so it can respawn.
- * Registered for the main agent only. Bound at Agent scope.
- */
-
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentTowerService, TOWER_TOOL_NAMES } from '#/features/tower/tower';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';

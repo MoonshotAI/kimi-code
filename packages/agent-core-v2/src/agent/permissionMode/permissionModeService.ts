@@ -1,19 +1,3 @@
-/**
- * `permissionMode` domain — `IAgentPermissionModeService` implementation.
- *
- * Holds the agent's permission mode (`manual` / `yolo` / `auto`) in the
- * `permissionModeKey` state, mutating it only through the durable
- * `PermissionSetMode` event
- * (`dispatcher.dispatch(new PermissionSetMode({ mode }))`) and reading it
- * through `dispatcher.getState`.
- * `setMode` emits `onDidChangeMode` after an actual change, and mode-aware
- * reminders are registered through the permission-mode injection helper.
- * `setModeAndBroadcast` is the user-facing entry: on top of `setMode` it
- * broadcasts the mode to every agent of the session through `agentLifecycle`
- * (main agent only) and tracks the `yolo_toggle` / `afk_toggle` transitions
- * through `telemetry`. Bound at Agent scope.
- */
-
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';

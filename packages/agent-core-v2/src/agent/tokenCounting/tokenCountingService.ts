@@ -1,24 +1,3 @@
-/**
- * `tokenCounting` domain — `IAgentTokenCountingService` implementation.
- *
- * Folds the `tokenCountingKey` anchor ledger with strategy-gated estimates.
- * `get(start?, end?)` resolves the range like `Array.prototype.slice`: the
- * latest anchor valid for the live context (anchors beyond it are stale — a
- * rewrite that did not cascade — and skipped) supplies the REAL prefix
- * count, and the not-yet-anchored tail is estimated per message; sub-ranges
- * of the anchored prefix fall back to per-message estimates (the exact
- * aggregate is only known at anchor boundaries). Both tracks always feed
- * internal logic; the `[token_counting]` strategy only selects the externally
- * reported reading (`statusSize`) — `measured` reports anchors alone,
- * `estimated` reports a pure estimate, the default floors the live size by
- * the last measured total.
- * `measured(input, output, usage)` writes the exchange anchor by dispatching
- * `TokenCountingMeasured` after each measured LLM exchange. The context is
- * read from the `contextMemoryKey` state directly (not
- * via `IAgentContextMemoryService`) so `contextMemory` can depend on this
- * service without a constructor cycle. Bound at Agent scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -65,8 +44,6 @@ export class AgentTokenCountingService extends Disposable implements IAgentToken
   }
 
   get strategy(): TokenCountingStrategy {
-    // `?? default`: unregistered / stubbed config reads (test harnesses) keep
-    // the default; the registered section default is 'measured+estimated'.
     return (
       this.config.get<TokenCountingConfig>(TOKEN_COUNTING_SECTION)?.strategy ??
       'measured+estimated'
@@ -107,12 +84,6 @@ export class AgentTokenCountingService extends Disposable implements IAgentToken
   statusSize(): number {
     if (this.strategy === 'measured') return this.latestMeasured();
     if (this.strategy === 'estimated') return this.estimateMessages(this.context());
-    // The live size can transiently dip below the last measured total while a
-    // post-step fold/rewrite leaves the context shorter than the measured
-    // prefix (the estimate then excludes the system prompt); the measured
-    // total is the better reading there. Every REAL shrink (undo / clear /
-    // compaction) rebases the measured model first, so the max only wins in
-    // that window.
     return Math.max(this.get().size, this.latestMeasured());
   }
 

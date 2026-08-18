@@ -1,10 +1,3 @@
-/**
- * `tower` domain (protocol) — git plumbing for tower. Engine-internal
- * operations (worktree add/remove, merge, diff) run through `execFile` with a
- * hard timeout — these are not agent-invoked shell commands, so they do not
- * go through the Bash tool.
- */
-
 import { execFile } from 'node:child_process';
 
 const GIT_TIMEOUT_MS = 60_000;

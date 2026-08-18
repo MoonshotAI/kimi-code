@@ -1,20 +1,3 @@
-/**
- * `tower` domain — `TowerFeature`: multi-agent tower orchestration assembled
- * as one App-scope Feature unit.
- *
- * Contributes the App-scope `ITowerRateLimitService` (provider-concurrency
- * governor), the eleven `Tower*` agent tools, and the `tower-worker` agent
- * profile through the `features` base-class seams; retracting the unit
- * withdraws all of them across the scope tree. `TowerInit`/`TowerPlan`/
- * `TowerSpawn`/`TowerMerge`/`TowerTeardown` are gated to the main agent (the
- * tower itself); the rest serve workers and reviewers. The `tower` wire
- * vocabulary (`features/tower/towerOps`) and `IAgentTowerService` (the
- * tower-mode write guard must be live from agent-scope creation) stay on
- * their static import=register channels — wire records must remain
- * replayable even when the feature unit is retracted. Registered into the
- * feature table at import.
- */
-
 import { ScopeActivation } from '#/_base/di/instantiation';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -52,15 +35,9 @@ import { ITowerTeardownTool } from './tools/teardown/teardown';
 import { TowerTeardownTool } from './tools/teardown/teardownTool';
 import { TOWER_WORKER_PROFILE_DEF } from './workerProfile';
 
-/** Tower-orchestration tools exist only on the main agent (the tower). */
 const towerOnly = (accessor: ServicesAccessor): boolean =>
   accessor.get(IAgentScopeContext).agentId === 'main';
 
-/**
- * The tower tool registration contract — name, implementation, and the
- * main-agent gate, as data so tests can assert the gating without assembling
- * the feature unit.
- */
 interface TowerToolContribution {
   readonly id: ServiceIdentifier<AnyAgentTool>;
   readonly ctor: AgentToolCtor;

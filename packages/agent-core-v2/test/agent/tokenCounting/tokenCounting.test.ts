@@ -50,11 +50,6 @@ describe('Agent token counting', () => {
     expect(exchangeTotal).toBeGreaterThan(0);
     expect(context.get()).toHaveLength(2);
 
-    // The assistant message is folded into the context before the exchange
-    // finishes, so the measured anchor must match the live history — an
-    // inflated length silently knocks `get()` off the measured path onto the
-    // per-message estimate branch (found as `tokenCount` reading ~50 while
-    // the provider reported ~29k for a system-prompt-heavy "hi").
     expect(ctx.agentState.get(tokenCountingKey)).toEqual({
       anchors: [{ length: context.get().length, tokens: exchangeTotal, measured: true }],
       tokens: exchangeTotal,
@@ -104,8 +99,6 @@ describe('Agent token counting', () => {
   it('ignores a stored anchor that overshoots the live context', async () => {
     ctx.appendUserMessage([{ type: 'text', text: 'only one message' }]);
 
-    // A corrupt/overshooting anchor is stale: reads must not trust it and
-    // fall back to the per-message estimate of the live context instead.
     await ctx.dispatcher.dispatch(new TokenCountingMeasured({ length: 5, tokens: 1234 }));
     const size = tokenCounting.get();
     expect(size.measured).toBe(0);
@@ -120,8 +113,6 @@ describe('Agent token counting', () => {
     await ctx.undoHistory(1);
 
     expect(context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
-    // The first exchange's anchor survives the cut, so the measured value is
-    // the real LLM-reported count — not a re-estimate.
     expect(tokenCounting.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
     expect(tokenCounting.latestMeasured()).toBe(1_000);
   });
@@ -162,8 +153,6 @@ describe('Agent token counting', () => {
     try {
       const counting = measured.get(IAgentTokenCountingService);
       expect(counting.strategy).toBe('measured');
-      // Internal estimates are never gated: triggers, budgets, and overflow
-      // backoff always see the raw heuristics.
       expect(counting.estimateText('abcd')).toBeGreaterThan(0);
 
       measured.appendUserMessage([{ type: 'text', text: 'hello world, not measured yet' }]);
@@ -189,8 +178,6 @@ describe('Agent token counting', () => {
       expect(counting.strategy).toBe('estimated');
 
       estimated.appendTurnExchange('u1', 'a1', 1_000);
-      // Internal reads always trust the measured anchor; only the externally
-      // reported `statusSize` ignores it.
       expect(counting.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
     } finally {
       void estimated.dispose();
@@ -227,8 +214,6 @@ describe('Agent token counting', () => {
   });
 
   it('statusSize reports the strategy-selected reading', () => {
-    // `measured`: only the provider-reported anchor is reported, even with an
-    // unmeasured tail.
     const measured = createTestAgent({ initialConfig: { tokenCounting: { strategy: 'measured' } } });
     try {
       const counting = measured.get(IAgentTokenCountingService);
@@ -241,7 +226,6 @@ describe('Agent token counting', () => {
       void measured.dispose();
     }
 
-    // `estimated`: a bogus inflated anchor never leaks into the reported size.
     const estimated = createTestAgent({
       initialConfig: { tokenCounting: { strategy: 'estimated' } },
     });
@@ -255,7 +239,6 @@ describe('Agent token counting', () => {
       void estimated.dispose();
     }
 
-    // Default: the live size floored by the last measured total.
     ctx.appendTurnExchange('u1', 'a1', 1_000);
     expect(tokenCounting.statusSize()).toBe(
       Math.max(tokenCounting.get().size, tokenCounting.latestMeasured()),

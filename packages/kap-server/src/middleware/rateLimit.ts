@@ -1,18 +1,3 @@
-/**
- * Auth-failure rate limiter (ROADMAP M6.4).
- *
- * A per-`remoteAddress` failure counter that temporarily bans a source after
- * too many failed authentication attempts. Wired into `createAuthHook` only on
- * non-loopback binds (`start.ts`), so the loopback default keeps its existing
- * "no rate limit" behavior while a public/LAN bind slows brute-force attempts.
- *
- * Policy: a source is banned when it accumulates `maxFailures` failures within
- * a sliding `windowMs` window; the ban lasts `banMs`. Once banned, every
- * request from that source is rejected with `429` until the ban expires — even
- * a request carrying a valid token — so a banned attacker cannot keep probing.
- */
-
-/** Reserved daemon code for rate-limited auth (not in the protocol enum). */
 export const AUTH_RATE_LIMIT_CODE = 42901;
 export const AUTH_RATE_LIMIT_MSG = 'Too many failed auth attempts';
 
@@ -38,11 +23,8 @@ export interface AuthFailureLimiter {
 }
 
 interface Entry {
-  /** Failures recorded since {@link windowStart}. */
   count: number;
-  /** Start (ms epoch) of the current failure window. */
   windowStart: number;
-  /** ms epoch until which the source is banned; `0` when not banned. */
   bannedUntil: number;
 }
 

@@ -1,15 +1,3 @@
-/**
- * `workspace` domain — alias-folding pure helpers.
- *
- * One physical folder can arrive under several id spellings (Windows
- * drive-letter casing, slash direction, typed-vs-realpath variants, legacy
- * `encodeWorkDirKey` outputs). These helpers enumerate or collapse those
- * spellings without owning any state: `collectAliasIds` expands one root to
- * every id that addresses it, `dedupeByRoot` collapses a catalog to one
- * representative per directory, and the session-index readers parse the
- * legacy v1 `session_index.jsonl`.
- */
-
 import { isAbsolute } from 'pathe';
 
 import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';

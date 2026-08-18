@@ -1,14 +1,3 @@
-/**
- * `workspaceSkillCatalog` domain — workspace-root `ISkillSource`
- * producer.
- *
- * Discovers project skills from the handler's workspace root
- * (`workspaceContext.cwd`) through `ISkillDiscovery`, contributing them at
- * priority 30. Watches project skill-root candidates through `hostFsWatch`
- * and emits debounced invalidations for source reloads. Bound at Workspace
- * scope so every session of the handler shares one scan.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
@@ -41,7 +30,6 @@ export interface IWorkspaceRootSkillSource extends ISkillSource {
 export const IWorkspaceRootSkillSource: ServiceIdentifier<IWorkspaceRootSkillSource> =
   createDecorator<IWorkspaceRootSkillSource>('workspaceRootSkillSource');
 
-// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRootSkillSource {
   declare readonly _serviceBrand: undefined;
 

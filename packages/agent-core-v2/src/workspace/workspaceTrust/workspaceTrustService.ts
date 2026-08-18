@@ -1,21 +1,3 @@
-/**
- * `workspaceTrust` domain — `IWorkspaceTrust` implementation.
- *
- * Persists the trust marker through the `persistence` domain's
- * `IAtomicDocumentStore` under the `workspace-trust` scope, one document per
- * workspace keyed by `encodeWorkDirKey(root)`, with the raw root kept in the
- * value for inspection. The document's presence IS the trusted state: `trust()`
- * writes it, `untrust()` deletes it. The record lives under the kimi home,
- * never inside the workspace, so a checked-out tree cannot pre-trust
- * itself. The flag is read once through `ready` and every later mutation
- * goes through this service, so the view is in-process: another process
- * flipping the same record is picked up only on restart (a `docs.watch`
- * sync can join when a second writer exists). A read failure resolves to
- * untrusted. The plain-data state (`trusted`) is registered into
- * `workspaceState` (`IWorkspaceStateService`) and read/written through it.
- * Bound at Workspace scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
 import { defineState } from '#/state/state';
@@ -38,7 +20,6 @@ export const workspaceTrustTrustedKey = defineState<boolean>(
   () => false,
 );
 
-// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust {
   declare readonly _serviceBrand: undefined;
 

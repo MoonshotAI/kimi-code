@@ -1,9 +1,3 @@
-/**
- * Scenario: wire-backed goal lifecycle persistence and replay.
- * Responsibilities: verify goal events, live observables, and replay normalization through the service contract.
- * Wiring: real goal/wire/event/dispatcher/deadline services with non-persistence collaborators stubbed.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/agent/goal/goalOps.test.ts`.
- */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';

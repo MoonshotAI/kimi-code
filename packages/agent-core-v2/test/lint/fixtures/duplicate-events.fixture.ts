@@ -1,11 +1,3 @@
-/**
- * Test fixture for the event-uniqueness scanner: intentionally declares the
- * same durable event type twice. This file is read as TEXT by
- * `event-uniqueness.test.ts` (it is never imported or executed), so the
- * duplicate declaration does not throw here — it exists purely to prove the
- * scanner flags a planted duplicate.
- */
-
 import { z } from 'zod';
 
 import { Event2 } from '#/app/event/event2';

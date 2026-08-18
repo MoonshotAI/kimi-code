@@ -1,12 +1,3 @@
-/**
- * Scenario: context projection rebuilds stored history into provider-valid messages.
- *
- * Responsibilities: validates tool-exchange repair, strict projection, and
- * degraded/full-strip media projections through the public projector contract.
- * Wiring: real AgentContextProjectorService with captured log and telemetry
- * boundaries. Run: pnpm test -- test/agent/contextProjector/projector-tool-exchanges.test.ts
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -54,7 +45,6 @@ function repairPayloads(warnings: WarningCall[]): Record<string, unknown>[] {
     .filter((call) => call.message === REPAIR_WARNING)
     .map((call) => call.payload as Record<string, unknown>);
 }
-
 
 const INTERRUPTED = 'Tool result is not available in the current context';
 

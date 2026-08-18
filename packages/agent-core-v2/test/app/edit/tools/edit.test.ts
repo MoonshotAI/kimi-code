@@ -1,14 +1,3 @@
-/**
- * EditTool tests for the v2 edit domain.
- *
- * Ported from v1 (`packages/agent-core/test/tools/edit.test.ts`). The Agent
- * `EditTool` adapter is built through the container (`createInstance`) so its
- * `@IService` deps resolve for real: a spied fake `IHostFileSystem`, the test
- * `IHostEnvironment` / `ISessionWorkspaceContext`, and the App-scope
- * `IFileEditService` binding. The pure `TextModel` / `EditService` logic is
- * exercised end-to-end through the tool and the real `FileEditService`.
- */
-
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

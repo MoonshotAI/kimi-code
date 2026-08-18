@@ -25,10 +25,7 @@ export const taskSchema = z.object({
   completed_at: isoDateTimeSchema.optional(),
   output_preview: z.string().optional(),
   output_bytes: z.number().int().nonnegative().optional(),
-  /** Subagent tasks only: the display-normalized model alias the child agent
-   *  is bound to. */
   model: z.string().optional(),
-  /** Subagent tasks only: the child's effective thinking effort at spawn. */
   thinking_effort: z.string().optional(),
   agent_id: z.string().optional(),
   subagent_type: z.string().optional(),

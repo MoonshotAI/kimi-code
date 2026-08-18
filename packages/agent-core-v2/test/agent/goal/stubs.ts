@@ -1,7 +1,3 @@
-/**
- * Shared stubs for goal tests.
- */
-
 import type { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 
 export function stubAgentSwarm(): IAgentSwarmService {

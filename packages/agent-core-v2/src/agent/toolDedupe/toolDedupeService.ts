@@ -1,20 +1,3 @@
-/**
- * `toolDedupe` domain — `IAgentToolDedupeService` implementation.
- *
- * Self-wiring plugin: its constructor registers `loop` onWillBeginStep/onDidFinishStep
- * hooks, an `onBeforeExecuteTool` veto listener (same-step duplicates are
- * vetoed with a placeholder synthetic result), and an `onDidExecuteTool`
- * hook to drive same-step suppression and cross-step repeat reminders, and
- * reports repeat telemetry through `telemetry`. The mutable dedupe state
- * (`stepCalls`, `originalCallIndex`, `syntheticCallIds`, `callKeyByCallId`,
- * `consecutiveKey`, `consecutiveCount`, `activeTurnId`, `activeStep`) is
- * registered into `agentState` (`IAgentStateService`) and read/written
- * through it; the `stepDeferreds` promise locks stay plain fields.
- * Constructed eagerly at
- * Agent scope so the hooks are installed without any other service
- * injecting it.
- */
-
 import { createHash } from 'node:crypto';
 
 import { Service } from '#/_base/di/service';

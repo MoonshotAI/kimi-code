@@ -1,19 +1,3 @@
-/**
- * `agentProfileCatalog` domain — `IAgentProfileRegistry` impl: the fold of
- * the agent-profile contribution point.
- *
- * App-scope singleton projecting the live `AgentProfileContribution`
- * collection view: storage keys encode the (sourceId, workspaceKey) pair so a
- * workspace-local source id (`workspace`, `extra`, `explicit`) coexists
- * across handlers, while global sources (`builtin`) appear once; a later
- * record for the same pair shadows the earlier one (the old
- * re-register-replaces semantics). The fold is pure storage — merging, name
- * dedup, and override rules live in the Session-scope catalog projection.
- * Change events reproduce the old registry's exactly: a pair fires only when
- * its winning record actually changes, so a reload's record swap fires once
- * while a shadowed record's withdrawal stays silent.
- */
-
 import { type CollectionChange, type CollectionView } from '#/_base/di/collection';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
