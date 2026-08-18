@@ -40,10 +40,16 @@ export interface FlowRunState {
 }
 
 export const FlowCriterionVerdictSchema = z.object({
-  criterion: z.string().describe('One completion criterion of the current stage, quoted or tightly paraphrased.'),
+  criterion: z
+    .string()
+    .trim()
+    .min(1)
+    .describe('One completion criterion of the current stage, quoted or tightly paraphrased.'),
   met: z.boolean().describe('Whether the evidence shows this criterion is satisfied.'),
   evidence: z
     .string()
+    .trim()
+    .min(1)
     .describe(
       'Objective evidence backing the verdict: file paths, test output excerpts, produced artifacts. Never the worker summary alone.',
     ),

@@ -49,6 +49,19 @@ describe('parseFlowDefinition', () => {
     ).toThrow(FlowDefinitionParseError);
   });
 
+  it('rejects whitespace-only objectives and completions', () => {
+    expect(() =>
+      parseFlowDefinition(
+        '---\nid: blank\nstages:\n  - id: a\n    objective: "   "\n    completion: y\n---\n',
+      ),
+    ).toThrow(FlowDefinitionParseError);
+    expect(() =>
+      parseFlowDefinition(
+        '---\nid: blank\nstages:\n  - id: a\n    objective: x\n    completion: "   "\n---\n',
+      ),
+    ).toThrow(FlowDefinitionParseError);
+  });
+
   it('rejects unknown keys so a misspelled gate cannot silently weaken the workflow', () => {
     expect(() =>
       parseFlowDefinition(

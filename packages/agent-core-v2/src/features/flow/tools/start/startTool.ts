@@ -76,6 +76,13 @@ export class FlowStartTool implements IFlowStartTool {
       throw error;
     }
 
+    if (definition.id !== args.flow) {
+      return {
+        isError: true,
+        output: `The definition at ${path} declares id \`${definition.id}\`, which does not match the requested flow \`${args.flow}\`. Fix the file's id or request the flow by its declared id.`,
+      };
+    }
+
     if (!this.flow.start(definition, args.task)) {
       return {
         isError: true,

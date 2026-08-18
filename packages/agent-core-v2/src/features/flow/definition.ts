@@ -20,8 +20,8 @@ const FLOW_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const FlowStageFrontmatterSchema = z
   .object({
     id: z.string().regex(FLOW_ID_PATTERN, 'stage id must be kebab-case'),
-    objective: z.string().min(1),
-    completion: z.string().min(1),
+    objective: z.string().trim().min(1),
+    completion: z.string().trim().min(1),
     gate: FlowGateKindSchema.default('ai'),
   })
   .strict();

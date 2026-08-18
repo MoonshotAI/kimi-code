@@ -8,7 +8,7 @@ import {
   type FlowStageDefinition,
 } from '#/features/flow/flow';
 import { FlowAdvanceTool } from '#/features/flow/tools/advance/advanceTool';
-import type { FlowAdvanceInput } from '#/features/flow/tools/advance/advance';
+import { FlowAdvanceInputSchema, type FlowAdvanceInput } from '#/features/flow/tools/advance/advance';
 import type { RunnableToolExecution, ToolExecution } from '#/tool/toolContract';
 
 function runnable(execution: ToolExecution): RunnableToolExecution {
@@ -108,6 +108,21 @@ describe('FlowAdvanceTool', () => {
     expect(result.isError).toBe(true);
     expect(result.output).toContain('every criterion to be met');
     expect(advance).not.toHaveBeenCalled();
+  });
+
+  it('the input schema rejects blank criterion text and blank evidence', () => {
+    const blankEvidence = FlowAdvanceInputSchema.safeParse({
+      stage: 'triage',
+      verdict: 'pass',
+      criteria: [{ criterion: 'found', met: true, evidence: '   ' }],
+    });
+    expect(blankEvidence.success).toBe(false);
+    const blankCriterion = FlowAdvanceInputSchema.safeParse({
+      stage: 'triage',
+      verdict: 'pass',
+      criteria: [{ criterion: '', met: true, evidence: 'src/x.ts:12' }],
+    });
+    expect(blankCriterion.success).toBe(false);
   });
 
   it('records an ai-gated pass without review', async () => {
