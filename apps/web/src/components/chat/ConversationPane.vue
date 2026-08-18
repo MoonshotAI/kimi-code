@@ -137,7 +137,7 @@ const emit = defineEmits<{
   cancelTask: [taskId: string];
   answer: [questionId: string, response: QuestionResponse];
   dismiss: [questionId: string];
-  command: [payload: { cmd: string; attachments: PromptAttachment[] }];
+  command: [payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string }];
   interrupt: [];
   unqueue: [index: number];
   editQueued: [index: number];
@@ -267,6 +267,14 @@ function loadComposerForEdit(
   if (ok === false) return false;
   composer.loadAttachmentsForEdit(attachments ?? []);
   return true;
+}
+
+/** Whether the active composer has no text and no attachments — a late
+    restore (a failed async send returning out of band) may only land when
+    nothing newer was typed in the meantime. */
+function isComposerEmpty(): boolean {
+  const composer = dockedComposerRef.value ?? emptyComposerRef.value;
+  return composer ? (composer.isEmpty?.() ?? true) : true;
 }
 
 function handleCopyConversationCopied(): void {
@@ -2130,7 +2138,7 @@ function onAbortOutcome(aborted: boolean): void {
   maybeFireAutoUndo();
 }
 
-defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome, selectAllRegion, focusGoal });
+defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone, onAbortOutcome, selectAllRegion, focusGoal });
 </script>
 
 <template>

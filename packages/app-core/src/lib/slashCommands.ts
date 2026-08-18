@@ -74,11 +74,13 @@ export const SKILL_COMMAND_PREFIX = 'skill:';
 
 /**
  * Strip the `skill:` prefix from a slash-command name (with or without the
- * leading `/`), returning the bare skill name. Non-prefixed input is returned
- * unchanged.
+ * leading `/`), returning the bare skill name. The slash menu builds skill
+ * items as `/skill:<name>` (or `/<name>` for builtin-sourced skills), so the
+ * leading `/` goes first; a `skill:`-less remainder is returned as-is.
  */
 export function stripSkillPrefix(name: string): string {
-  return name.startsWith(SKILL_COMMAND_PREFIX) ? name.slice(SKILL_COMMAND_PREFIX.length) : name;
+  const bare = name.startsWith('/') ? name.slice(1) : name;
+  return bare.startsWith(SKILL_COMMAND_PREFIX) ? bare.slice(SKILL_COMMAND_PREFIX.length) : bare;
 }
 
 /**

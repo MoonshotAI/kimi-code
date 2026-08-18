@@ -114,8 +114,11 @@ const emit = defineEmits<{
       into the RUNNING turn — TUI ctrl+s. */
   steer: [payload: { text: string; attachments: PromptAttachment[] }];
   /** Slash command. Only skill commands carry the composer's attachments;
-      built-in commands leave the chips untouched (attachments stay pending). */
-  command: [payload: { cmd: string; attachments: PromptAttachment[] }];
+      built-in commands leave the chips untouched (attachments stay pending).
+      `restoreText` is the original composer text a synthesized command was
+      built from — gate-failure restores load it back instead of the
+      synthesized command line. */
+  command: [payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string }];
   interrupt: [];
   setPermission: [mode: PermissionMode];
   setThinking: [level: ThinkingLevel];
@@ -303,10 +306,9 @@ const menuAriaControls = computed(() => {
 });
 const menuAriaActiveDescendant = computed(() => {
   if (slashOpen.value && slashItems.value.length > 0) return `composer-slash-option-${slashActive.value}`;
-  // While a new search loads, the menu shows its loading branch with every
-  // role="option" node unmounted — pointing aria-activedescendant at the
-  // stale row would reference an element that isn't there.
-  if (mentionOpen.value && !mentionLoading.value && mentionItems.value.length > 0) return `composer-mention-option-${mentionActive.value}`;
+  // The rows stay mounted while a new search loads (only the EMPTY menu swaps
+  // to its full-area loading branch), so the active row keeps a valid target.
+  if (mentionOpen.value && mentionItems.value.length > 0) return `composer-mention-option-${mentionActive.value}`;
   return undefined;
 });
 
@@ -320,6 +322,7 @@ const {
   items: mentionItems,
   active: mentionActive,
   loading: mentionLoading,
+  fileStale: mentionFileStale,
   update: updateMentionMenu,
   close: closeMentionMenu,
   select: selectMentionItem,
@@ -785,10 +788,12 @@ function handleKeydown(e: KeyboardEvent): void {
     }
   }
 
-  // Mention menu navigation. With no items (the bare-@ hint or no-match
-  // state) only Escape is handled — Enter/Tab/arrows keep their normal
-  // composer behavior so the menu never blocks sending.
-  if (mentionOpen.value && !mentionLoading.value) {
+  // Mention menu navigation. Escape closes whenever the menu is open — even
+  // mid-search; the rows stay visible and clickable while a search loads, so
+  // arrows/Enter/Tab keep working too, gated only on there being any items.
+  // With no items (the bare-@ hint or no-match state) Enter/Tab/arrows keep
+  // their normal composer behavior so the menu never blocks sending.
+  if (mentionOpen.value) {
     if (e.key === 'Escape') {
       e.preventDefault();
       closeMentionMenu();
@@ -1008,8 +1013,10 @@ function toggleAddMenu(): void {
     permDropdownOpen.value = false;
     // Popups are exclusive in both directions — an open slash/mention list
     // would overlap the add menu at the same spot with stale aria-controls.
+    // close() (not a bare open=false) so a pending mention search can't
+    // reopen its menu over the add menu.
     slashOpen.value = false;
-    mentionOpen.value = false;
+    closeMentionMenu();
     document.addEventListener('click', onDocClick, true);
     // A real menu takes DOM focus on open (the textarea's combobox ARIA never
     // points at it); Escape and selection hand focus back to the textarea.
@@ -1511,6 +1518,7 @@ function selectModel(modelId: string): void {
           :items="mentionItems"
           :active-index="mentionActive"
           :loading="mentionLoading"
+          :stale="mentionFileStale"
           @select="selectMentionItem"
           @hover="mentionActive = $event"
         />
@@ -2136,7 +2144,8 @@ function selectModel(modelId: string): void {
 
 /* Add menu — a composer-wide action list above the composer (the
    autocomplete menus' spot), sharing the dock panel's frosted material and
-   the composer card's own corner geometry. */
+   a plain 12px corner (no superellipse — the composer card keeps its own
+   geometry). */
 .add-menu {
   position: absolute;
   bottom: calc(100% + var(--space-2));
@@ -2147,8 +2156,7 @@ function selectModel(modelId: string): void {
   -webkit-backdrop-filter: var(--p-menu-backdrop);
   backdrop-filter: var(--p-menu-backdrop);
   border: 0.5px solid var(--color-line);
-  border-radius: var(--radius-composer);
-  corner-shape: var(--corner-shape-composer);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
   padding: var(--space-1-5) var(--space-3);
   display: flex;
@@ -2200,16 +2208,13 @@ function selectModel(modelId: string): void {
      lets the flex algorithm fold BOTH margins into the cross size, so the
      row hugs 6px from each edge — same as the slash/mention rows. Box hugs
      6px from the menu edge while the content lands on the composer's 16px
-     text column; radius = composer radius − 6 stays concentric with the menu
-     frame. The 0.5px transparent border is a workaround: without a border,
-     Chromium paints the corner-shaped background as a plain rect and the
-     menu frame's corner shears the row's ends off. Padding is narrowed by
-     the border width so neither the text column nor the row height moves. */
+     text column; --radius-menu-row keeps the row caps concentric with the
+     12px menu frame (12px − 6px hug). */
   margin: 0 calc(-1 * var(--menu-row-hug));
   padding: var(--menu-row-padding-block) var(--menu-row-padding-inline);
-  border: 0.5px solid transparent;
+  /* A <button> — without this the UA default border shows through. */
+  border: none;
   border-radius: var(--radius-menu-row);
-  corner-shape: superellipse(1.5);
   background: none;
   cursor: pointer;
   font-size: var(--ui-font-size);

@@ -1072,6 +1072,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return (data.skills ?? []).map((s) => ({
       name: s.name,
       description: s.description,
+      path: s.path,
       source: s.source,
     }));
   }
@@ -1083,6 +1084,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return (data.skills ?? []).map((s) => ({
       name: s.name,
       description: s.description,
+      path: s.path,
       source: s.source,
     }));
   }

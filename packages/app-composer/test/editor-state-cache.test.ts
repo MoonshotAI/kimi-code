@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { EditorState } from 'prosemirror-state';
-import { clearStashedEditorStates, stashEditorState, takeEditorState } from '../src/lib/editorStateCache';
+import { clearStashedEditorStates, stashEditorState, takeEditorState } from '../src/editorStateCache';
 
 // The cache only stores/returns identities, so plain objects stand in for
 // real EditorStates.

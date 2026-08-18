@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { nextTick, ref, type Ref } from 'vue';
 import type { AppSkill } from '@moonshot-ai/app-core/api';
 import { useSlashMenu } from '../src/composables';
-import type { TextFieldLike } from '../src/lib/textField';
+import type { TextFieldLike } from '@moonshot-ai/app-composer';
 
 // Public slash-menu contract: matching built-ins and dispatching selected
 // commands without coupling tests to component internals.

@@ -5,7 +5,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } f
 import { useI18n } from 'vue-i18n';
 import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
-import { buildSlashItems, parseSlash, SKILL_COMMAND_PREFIX } from '@moonshot-ai/app-core/lib';
+import { buildSlashItems, parseSlash, SKILL_COMMAND_PREFIX, stripSkillPrefix } from '@moonshot-ai/app-core/lib';
 import { formatTokens } from '@moonshot-ai/app-core/lib';
 import type { IconName } from '@moonshot-ai/app-client/icons';
 import type { FileItem } from './MentionMenu.vue';
@@ -27,7 +27,8 @@ import { useAttachmentUpload, type Attachment } from '@moonshot-ai/app-client/co
 import { toPromptAttachment } from '@moonshot-ai/app-client/client';
 import { matchBinding } from '../../lib/keymap';
 import { resolvedBinding } from '../../composables/useShortcuts';
-import { openFileAttachment, createComposerEditor, type ComposerEditorApi } from '@moonshot-ai/app-client/lib';
+import { openFileAttachment } from '@moonshot-ai/app-client/lib';
+import { createComposerEditor, startMentionSelectionSync, type ComposerEditorApi } from '@moonshot-ai/app-composer';
 import { getKimiWebApi } from '../../api';
 import { openUpgrade } from '@moonshot-ai/app-core/lib';
 import type { ManagedMembership, PromptAttachment } from '@moonshot-ai/app-client/client';
@@ -82,6 +83,10 @@ const props = withDefaults(defineProps<{
   starredIds?: string[];
   /** Session skills shown in the `/` menu (after the built-in commands). */
   skills?: AppSkill[];
+  /** Whether the session skill list finished loading. Only once loaded can a
+      revived pill's name be verified — see the submit path's stale-skill
+      degradation. */
+  skillsLoaded?: boolean;
   /** Hide the context-usage indicator (used on the empty-session landing page). */
   hideContext?: boolean;
 }>(), {
@@ -94,6 +99,7 @@ const props = withDefaults(defineProps<{
   models: () => [],
   starredIds: () => [],
   skills: () => [],
+  skillsLoaded: false,
 });
 
 const placeholder = computed(() =>
@@ -116,8 +122,11 @@ const emit = defineEmits<{
       into the RUNNING turn — TUI ctrl+s. */
   steer: [payload: { text: string; attachments: PromptAttachment[] }];
   /** Slash command. Only skill commands carry the composer's attachments;
-      built-in commands leave the chips untouched (attachments stay pending). */
-  command: [payload: { cmd: string; attachments: PromptAttachment[] }];
+      built-in commands leave the chips untouched (attachments stay pending).
+      `restoreText` is the original composer text a synthesized command was
+      built from (the single-skill-pill activation) — gate-failure restores
+      load it back instead of the synthesized command line. */
+  command: [payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string }];
   interrupt: [];
   setPermission: [mode: PermissionMode];
   setThinking: [level: ThinkingLevel];
@@ -152,6 +161,7 @@ const { text, editorRef, loadForEdit, clearDraft } = useComposerDraft({
 // ---------------------------------------------------------------------------
 const editorHostRef = ref<HTMLElement | null>(null);
 let editor: ComposerEditorApi | null = null;
+let stopMentionSelectionSync: (() => void) | null = null;
 
 onMounted(() => {
   const host = editorHostRef.value;
@@ -169,6 +179,9 @@ onMounted(() => {
   });
   editor.setEditable(!props.starting);
   editorRef.value = editor;
+  // Browsers don't selection-paint an inline svg glyph — mark covered pills
+  // with a class instead (see mentionSelectionSync).
+  stopMentionSelectionSync = startMentionSelectionSync(() => editorHostRef.value);
 
   // Restore the session's stashed state, falling back to the persisted
   // draft. If the two ever diverge (e.g. localStorage lost the draft
@@ -252,6 +265,7 @@ onUnmounted(() => {
     if (text.value !== editor.getText()) editor.setText(text.value);
     editor.stashState(props.sessionId);
   }
+  stopMentionSelectionSync?.();
   editor?.destroy();
   editor = null;
   editorRef.value = null;
@@ -398,10 +412,9 @@ const menuAriaControls = computed(() => {
 });
 const menuAriaActiveDescendant = computed(() => {
   if (slashOpen.value && slashItems.value.length > 0) return `composer-slash-option-${slashActive.value}`;
-  // While a new search loads, the menu shows its loading branch with every
-  // role="option" node unmounted — pointing aria-activedescendant at the
-  // stale row would reference an element that isn't there.
-  if (mentionOpen.value && !mentionLoading.value && mentionItems.value.length > 0) return `composer-mention-option-${mentionActive.value}`;
+  // The rows stay mounted while a new search loads (only the EMPTY menu swaps
+  // to its full-area loading branch), so the active row keeps a valid target.
+  if (mentionOpen.value && mentionItems.value.length > 0) return `composer-mention-option-${mentionActive.value}`;
   return undefined;
 });
 
@@ -415,6 +428,7 @@ const {
   items: mentionItems,
   active: mentionActive,
   loading: mentionLoading,
+  fileStale: mentionFileStale,
   update: updateMentionMenu,
   close: closeMentionMenu,
   select: selectMentionItem,
@@ -422,6 +436,17 @@ const {
   text,
   editorRef,
   searchFiles: () => props.searchFiles,
+  skills: () => props.skills,
+  // Pill insertion — replaces the @token with a mention atom (the plain-text
+  // splice fallback in the composable is the web textarea's path).
+  insertMention: (entry, range) => {
+    editor?.insertMention(
+      entry.kind === 'skill'
+        ? { kind: 'skill', name: entry.name, path: '' }
+        : { kind: entry.kind, name: entry.name, path: entry.path },
+      range,
+    );
+  },
 });
 
 // The component instance is reused across session switches (it is not keyed by
@@ -483,13 +508,22 @@ function insertFolderPaths(paths: string[]): void {
   // The draft changed without typing — leave history-browsing mode like
   // handleInput does, or the next ↑ would replace it with a history entry.
   history.resetBrowsing();
-  text.value = val.slice(0, pos) + prefix + insertion + suffix + val.slice(pos);
-  void nextTick(() => {
-    if (!ed) return;
-    const caret = pos + prefix.length + insertion.length;
-    ed.setSelectionRange(caret, caret);
+  if (ed) {
+    // One undoable transaction at the caret offset — a text.value splice
+    // would make the text watcher rebuild the whole document via setText(),
+    // resetting the undo stack. The caret lands after the inserted paths.
+    // reviveMentions: false — a dropped path is LITERAL text; a dirname that
+    // merely looks like a mention link ('[archive](old)') must not become a
+    // pill pointing somewhere else.
+    // The drop is not typing, so close any popup the onChange-derived menu
+    // update may have opened (an absolute dropped path reads as a `/token`).
+    ed.insertTextAt(pos, prefix + insertion + suffix, { reviveMentions: false });
+    slashOpen.value = false;
+    closeMentionMenu();
     ed.focus();
-  });
+    return;
+  }
+  text.value = val.slice(0, pos) + prefix + insertion + suffix + val.slice(pos);
 }
 
 // ---------------------------------------------------------------------------
@@ -704,16 +738,74 @@ function handleSubmit(): void {
   // commands such as `/model`. A hand-typed bare skill name (`/deploy`) also
   // resolves to its prefixed menu entry (`/skill:deploy`), mirroring the TUI.
   //
+  // A message carrying exactly ONE skill pill takes the same activation path:
+  // the pill stands for `/skill:<name>` and the WHOLE text becomes the args —
+  // the pill travels in its serialized mention-link form, so the sent bubble
+  // shows the original message verbatim (the link revives into a pill there).
+  // With TWO or more skill pills the message stays a plain prompt with link
+  // references — each activation is its own turn, so multi-activation from
+  // one message would be a mess. And while the session is BUSY the command
+  // path would lose the message to a busy refusal, so the branch is skipped
+  // and the normal submit queues the text like any other send.
+  //
   // Skill commands take the composer's attachments along (the daemon appends
   // them to the activation's user message); built-in commands don't consume
   // attachments, so the chips stay pending for the next send.
   if (trimmed) {
+    // An explicit known slash command always wins over the single-skill-pill
+    // auto-activation: '/compact [deploy](kimi-code://skill/deploy)' must run
+    // compact (the pill is a plain reference in its args), not hijack into a
+    // skill activation. Resolve the command FIRST.
     const parsed = parseSlash(trimmed);
     const matched = parsed
       ? buildSlashItems(props.skills).find(
           (item) => item.name === parsed.cmd || item.name === `/${SKILL_COMMAND_PREFIX}${parsed.cmd.slice(1)}`,
         )
       : undefined;
+    const skillMentions = editor?.getSkillMentions() ?? [];
+    // A pill revived from a draft/history/edit-resend may name a skill GONE
+    // from the workspace: the daemon would refuse the activation, the failure
+    // restore would load the same text back, and every retry would loop the
+    // same refusal — the message could never go out as a plain prompt. Once
+    // the list is loaded, an unresolvable name degrades to a plain reference
+    // (the same rule as multi-pill messages); while it is still loading the
+    // name can't be verified, so the old attempt path stays.
+    const staleSkillPill =
+      skillMentions.length === 1 && props.skillsLoaded && !props.skills.some((s) => s.name === skillMentions[0]!.name);
+    // Only activate when the session is FULLY idle with an empty queue.
+    // A busy session makes the command path fire activateSkill immediately
+    // into a running turn — and the composer has already cleared by the time
+    // a busy refusal comes back, losing the message and its attachments. A
+    // non-empty queue would let the later skill jump the FIFO order the
+    // normal submit path preserves (sendPrompt enqueues + flushes), and a
+    // running-but-not-working state (approval/question pending) is the same
+    // bypass. An armed GOAL intent also vetoes the shortcut: its objective
+    // IS this message's text, and only the normal submit path writes
+    // goalObjective and cashes the intent — activating here would drop the
+    // goal entirely and leave the intent armed for the next message. Let
+    // the normal submit path run instead: it queues the full serialized
+    // text like any other busy send; on replay it goes out as a plain
+    // prompt, matching the multi-pill degradation.
+    if (skillMentions.length === 1 && !staleSkillPill && !props.working && !props.running && props.queued.length === 0 && !matched && !props.goalMode) {
+      const mention = skillMentions[0]!;
+      const cmd = `/${SKILL_COMMAND_PREFIX}${mention.name} ${trimmed}`;
+      text.value = '';
+      clearDraft();
+      slashOpen.value = false;
+      collapseAndRefit();
+      // The chips leave with the command — same as the slash-menu skill path.
+      previewAttachment.value = null;
+      previewThumbImg.value = null;
+      clearAfterSubmit();
+      closeMentionMenu();
+      // restoreText: the gate-failure restore loads the ORIGINAL message back
+      // (pill intact) — restoring the synthesized cmd would prefix another
+      // `/skill:<name>` on every gate retry. skillName rides structured: a
+      // name with SPACES can't survive the space-delimited cmd string.
+      emit('command', { cmd, attachments: readyAttachments.map((a) => toPromptAttachment(a)), restoreText: trimmed, skillName: mention.name });
+      return;
+    }
+
     if (parsed && matched) {
       const cmd = parsed.arg ? `${parsed.cmd} ${parsed.arg}` : parsed.cmd;
       const isSkill = matched.isSkill === true;
@@ -728,7 +820,7 @@ function handleSubmit(): void {
         previewThumbImg.value = null;
         clearAfterSubmit();
         closeMentionMenu();
-        emit('command', { cmd, attachments: readyAttachments.map((a) => toPromptAttachment(a)) });
+        emit('command', { cmd, attachments: readyAttachments.map((a) => toPromptAttachment(a)), skillName: stripSkillPrefix(matched.name) });
       } else {
         emit('command', { cmd, attachments: [] });
       }
@@ -881,10 +973,12 @@ function handleKeydown(e: KeyboardEvent): boolean {
     }
   }
 
-  // Mention menu navigation. With no items (the bare-@ hint or no-match
-  // state) only Escape is handled — Enter/Tab/arrows keep their normal
-  // composer behavior so the menu never blocks sending.
-  if (mentionOpen.value && !mentionLoading.value) {
+  // Mention menu navigation. Escape closes whenever the menu is open — even
+  // mid-search; the rows stay visible and clickable while a search loads, so
+  // arrows/Enter/Tab keep working too, gated only on there being any items.
+  // With no items (the bare-@ hint or no-match state) Enter/Tab/arrows keep
+  // their normal composer behavior so the menu never blocks sending.
+  if (mentionOpen.value) {
     if (e.key === 'Escape') {
       e.preventDefault();
       closeMentionMenu();
@@ -1146,8 +1240,10 @@ function toggleAddMenu(): void {
     permDropdownOpen.value = false;
     // Popups are exclusive in both directions — an open slash/mention list
     // would overlap the add menu at the same spot with stale aria-controls.
+    // close() (not a bare open=false) so a pending mention search can't
+    // reopen its menu over the add menu.
     slashOpen.value = false;
-    mentionOpen.value = false;
+    closeMentionMenu();
     document.addEventListener('click', onDocClick, true);
     // A real menu takes DOM focus on open (the textarea's combobox ARIA never
     // points at it); Escape and selection hand focus back to the textarea.
@@ -1649,6 +1745,7 @@ function selectModel(modelId: string): void {
           :items="mentionItems"
           :active-index="mentionActive"
           :loading="mentionLoading"
+          :stale="mentionFileStale"
           @select="selectMentionItem"
           @hover="mentionActive = $event"
         />
@@ -2253,6 +2350,22 @@ function selectModel(modelId: string): void {
   margin: 0;
 }
 
+/* PM appends a trailing <br> when a paragraph ends with an inline atom (a
+   caret target after the pill). Rendered, it reads as an unwanted extra
+   line after the pill — hide it, except when it is the paragraph's only
+   content (the empty-paragraph placeholder line needs it). */
+.ph :deep(.ProseMirror-trailingBreak:not(:only-child)) {
+  display: none;
+}
+
+/* Mention pills (file/folder/skill atoms): the visual vocabulary is global
+   (app-ui/style.css, shared with rendered messages). Editor-only: when the
+   atom is node-selected (first Backspace selects, second deletes), the ink
+   deepens to full text color to mark the pending deletion. */
+.ph :deep(.mention-pill.ProseMirror-selectednode) {
+  color: var(--color-text);
+}
+
 /* The mode pill's room: only the FIRST paragraph's first line indents (the
    pill floats over it) — text-indent inherits, so target first-of-type
    explicitly or every paragraph's first line would shift. */
@@ -2296,7 +2409,8 @@ function selectModel(modelId: string): void {
 
 /* Add menu — a composer-wide action list above the composer (the
    autocomplete menus' spot), sharing the dock panel's frosted material and
-   the composer card's own corner geometry. */
+   a plain 12px corner (no superellipse — the composer card keeps its own
+   geometry). */
 .add-menu {
   position: absolute;
   bottom: calc(100% + var(--space-2));
@@ -2307,8 +2421,7 @@ function selectModel(modelId: string): void {
   -webkit-backdrop-filter: var(--p-menu-backdrop);
   backdrop-filter: var(--p-menu-backdrop);
   border: 0.5px solid var(--color-line);
-  border-radius: var(--radius-composer);
-  corner-shape: var(--corner-shape-composer);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
   padding: var(--space-1-5) var(--space-3);
   display: flex;
@@ -2360,16 +2473,13 @@ function selectModel(modelId: string): void {
      lets the flex algorithm fold BOTH margins into the cross size, so the
      row hugs 6px from each edge — same as the slash/mention rows. Box hugs
      6px from the menu edge while the content lands on the composer's 16px
-     text column; radius = composer radius − 6 stays concentric with the menu
-     frame. The 0.5px transparent border is a workaround: without a border,
-     Chromium paints the corner-shaped background as a plain rect and the
-     menu frame's corner shears the row's ends off. Padding is narrowed by
-     the border width so neither the text column nor the row height moves. */
+     text column; --radius-menu-row keeps the row caps concentric with the
+     12px menu frame (12px − 6px hug). */
   margin: 0 calc(-1 * var(--menu-row-hug));
   padding: var(--menu-row-padding-block) var(--menu-row-padding-inline);
-  border: 0.5px solid transparent;
+  /* A <button> — without this the UA default border shows through. */
+  border: none;
   border-radius: var(--radius-menu-row);
-  corner-shape: superellipse(1.5);
   background: none;
   cursor: pointer;
   font-size: var(--ui-font-size);

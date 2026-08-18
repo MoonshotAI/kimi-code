@@ -278,7 +278,8 @@ html[data-color-scheme="dark"] {
   --corner-shape-composer: superellipse(1.5);
   /* Menu rows inset 6px inside a composer-radius frame: the diagonal-exact
      concentric radius for superellipse(1.5) nesting (32 − 6.7). */
-  --radius-menu-row: 25.3px;
+  /* Menu rows: concentric with the menu frame (--radius-lg minus the 6px hug). */
+  --radius-menu-row: var(--radius-sm);
   /* Menu frame and its rows share one curve — single-sourced from the
      composer's superellipse so they never drift apart. */
   --corner-shape-menu: var(--corner-shape-composer);
@@ -305,9 +306,11 @@ html[data-color-scheme="dark"] {
   --menu-row-hug: var(--space-1-5); /* row box hugs this far from the frame edge */
   --menu-rows-seam: 1px; /* stacked-row seam */
   --menu-row-gap-icon: 7px; /* row icon ↔ label */
-  --menu-row-padding-block: calc(var(--menu-row-hug) - var(--p-hairline)); /* 5.5px */
-  /* 9.5px = text column (--space-4) − frame padding (--space-3) + hug − border. */
-  --menu-row-padding-inline: calc(var(--space-4) - var(--space-3) + var(--menu-row-hug) - var(--p-hairline));
+  /* 2px — densest menu rows: the menus cap how many rows are visible, and
+     row height, not the cap, is what limits density. */
+  --menu-row-padding-block: var(--space-05);
+  /* 10px = text column (--space-4) − frame padding (--space-3) + hug. */
+  --menu-row-padding-inline: calc(var(--space-4) - var(--space-3) + var(--menu-row-hug));
   --menu-row-touch-padding-block: 11px; /* pads the row to the 44px touch hit height */
   /* Overlay scroll thumb (slash / mention / add menus): floats at the frame's
      right edge with its OUTER side on the rows' hug line — never in the
@@ -318,7 +321,7 @@ html[data-color-scheme="dark"] {
   /* Thumb's right offset: hug + frame hairline − width = outer side on the
      hug line (6.5px from the frame's outer edge). */
   --menu-scrollbar-edge: calc(var(--menu-row-hug) + var(--p-hairline) - var(--menu-scrollbar-width));
-  --menu-scrollbar-track-inset: calc(var(--radius-composer) - var(--space-1-5));
+  --menu-scrollbar-track-inset: calc(var(--radius-lg) - var(--space-1-5));
   /* Overlay thumb's minimum height (short lists would shrink it below a
      readable nub otherwise) — read from JS via getComputedStyle. */
   --menu-scrollbar-thumb-min: 24px;
@@ -382,6 +385,10 @@ html[data-color-scheme="dark"] {
   --duration-base: 160ms;
   --duration-slow: 260ms;
   --duration-hover-intent: 250ms;
+  /* Tooltip show delay (mention-tip; mirrors TooltipBubble's hover gate). */
+  --duration-tooltip: 150ms;
+  /* Spinner rotation period (the mention-tip probe spinner). */
+  --duration-spin: 700ms;
   /* Attention flashes: one-shot accent washes that linger then fade (search
      locate, provider-row added). Long by design — way past the show/hide
      ramp, closer to a highlight timeout than a transition. */
@@ -544,7 +551,19 @@ html[data-color-scheme="dark"] {
   --p-subagent-card-min: 180px;
   /* Slash / mention menu scrollport caps. */
   --p-slash-menu-h: 228px;
-  --p-mention-menu-h: 208px;
+  --p-mention-menu-h: 296px;
+  /* Mention tooltip (hover card) width cap. */
+  --p-mention-tip-w: 320px;
+  /* The fixed-position mention tooltip's minimum distance from the viewport
+     edge — single-sourced: position() reads it via tokenPx, and the width
+     cap below folds it in. */
+  --p-mention-tip-vmargin: var(--space-3);
+  /* The probe spinner's optical baseline lift inside the path text — em-based
+     so it tracks the tooltip's font size instead of a frozen pixel. */
+  --p-mention-tip-spinner-lift: -0.1em;
+  /* Dim level for stale candidates (mention menu rows kept from the previous
+     query while its re-search is pending). */
+  --opacity-stale: 0.55;
   /* Add menu's scrollport cap — shared with the slash menu's (above this
      its rows scroll with the overlay thumb, same as the slash/mention menus). */
   --p-add-menu-h: var(--p-slash-menu-h);
@@ -779,4 +798,255 @@ html[data-color-scheme="dark"] {
 }
 ::highlight(kimi-transcript-search-current) {
   background-color: var(--color-search-match-current);
+}
+
+/* ---------------------------------------------------------------------------
+   Mention pill — one vocabulary shared by the desktop composer's ProseMirror
+   atom and rendered Markdown messages (app-markdown decorates local links
+   with the same classes). NOT a filled chip: no background — just a heavier
+   weight on a lighter ink so the baseline stays flush with the surrounding
+   body text, plus a 2px horizontal inset (padding-inline below): CJK
+   autospacing can't cross element boundaries, and the hair of air also sets
+   the pill apart from plain text. Kind glyph + name label; files open the
+   preview, skills open their SKILL.md, folders are inert for now. Hover
+   deepens the ink toward --color-text; the full path / skill card lives on
+   the mentionTooltip singleton's bubble (.mention-tip below). */
+.mention-pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-05);
+  color: var(--color-text-muted);
+  font-weight: var(--weight-ui-strong);
+  white-space: nowrap;
+  text-decoration: none;
+  vertical-align: baseline;
+  /* A hair of air around every pill: CJK autospacing can't cross element
+     boundaries, and the separation also sets the pill apart from the
+     surrounding text. */
+  padding-inline: var(--space-05);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+.mention-pill:hover {
+  color: var(--color-text);
+}
+.mention-pill:hover .mention-pill-icon {
+  color: inherit;
+}
+/* Message-surface affordances: file and skill pills open on click. The
+   composer overrides both back to editing semantics (click places the
+   caret, the I-beam stays). Folder pills have no target yet — inert. */
+.mention-pill.mention-file,
+.mention-pill.mention-skill {
+  cursor: pointer;
+}
+.mention-pill.mention-file:hover,
+.mention-pill.mention-skill:hover {
+  text-decoration: underline;
+}
+/* Message-side file pills carry tabindex + role="button" (see ChatPane's
+   pillify pass); the ring is the design-system §08 focus visibility rule.
+   Composer pills are text atoms, never focusable, so no override is needed
+   below. */
+.mention-pill:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+  border-radius: var(--radius-sm);
+}
+.ProseMirror .mention-pill,
+.ProseMirror .mention-pill:hover {
+  cursor: text;
+  text-decoration: none;
+}
+a.mention-folder {
+  cursor: default;
+}
+/* A skill pill that resolved to nothing (skill uninstalled, or the host
+   can't open files) is display-only — stripped of its button affordance
+   (mentionTooltip degrades the tabindex/role alongside). */
+.mention-pill.mention-skill.mention-inert,
+.mention-pill.mention-skill.mention-inert:hover {
+  cursor: default;
+  text-decoration: none;
+}
+
+/* The 32-grapheme truncation counts CHARACTERS, not width — a CJK/full-width
+   name can still outgrow a narrow bubble (the pill is nowrap), so the label
+   also caps by inline size and ellipsizes instead of stretching the message
+   column. The full name stays in the data attributes and the tooltip. */
+.mention-pill-name {
+  max-width: 24em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mention-pill-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--p-ic-sm);
+  height: var(--p-ic-sm);
+  color: var(--muted);
+  align-self: center;
+  flex-shrink: 0;
+}
+.mention-pill-icon svg {
+  width: var(--p-ic-sm);
+  height: var(--p-ic-sm);
+  display: block;
+  /* The registry glyphs are fill-based; a hairline stroke in the same ink
+     reads as real weight at this size. */
+  stroke: currentColor;
+  stroke-width: var(--p-hairline);
+}
+/* A text selection crossing the pill must paint the glyph too, or it looks
+   like the icon escaped the selection. Browsers don't selection-paint inline
+   <svg>, so the covered pill is marked with a class instead (see
+   mentionSelectionSync.ts). */
+.mention-pill.pill-in-selection {
+  background: var(--p-selection);
+  border-radius: var(--radius-sm);
+}
+
+/* ---------------------------------------------------------------------------
+   Mention tooltip — the mentionTooltip singleton's single shared bubble. Same
+   dark skin as the design-system tooltip (TooltipBubble), but INTERACTIVE:
+   the skill card hosts an open button and the path tooltip a copy button, so
+   the bubble keeps pointer events (while hidden it must never intercept
+   them). File/folder content is the full path, wrapping anywhere within the
+   max width: separators muted, the basename bold. */
+.mention-tip {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  /* Width cap with the narrow-viewport clamp folded in — position() only
+     reads the resulting box. */
+  max-width: min(var(--p-mention-tip-w), calc(100vw - 2 * var(--p-mention-tip-vmargin)));
+  /* Same inset as the design-system TooltipBubble (4px × 8px). */
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-text);
+  color: var(--color-bg);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  /* Mirror the .text-ui-c1 utility's integer-px line height (token, never a
+     unitless ratio). */
+  line-height: round(calc(var(--text-xs) * 1.5), 1px);
+  overflow-wrap: anywhere;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.mention-tip:not(.positioned) {
+  pointer-events: none;
+}
+.mention-tip.positioned {
+  opacity: 1;
+}
+/* Path tooltip row: the wrapping path text on the left, the copy-path
+   button pinned top-right. */
+.mention-tip-path {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.mention-tip-path-text {
+  min-width: 0;
+}
+.mention-tip-sep {
+  color: color-mix(in srgb, currentColor 45%, transparent);
+}
+.mention-tip-base {
+  font-weight: var(--weight-semibold);
+}
+.mention-tip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.mention-tip-name {
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+.mention-tip-open,
+.mention-tip-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: var(--space-05);
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: color-mix(in srgb, currentColor 65%, transparent);
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+.mention-tip-open:hover,
+.mention-tip-copy:hover {
+  color: var(--color-bg);
+  background: color-mix(in srgb, var(--color-bg) 14%, transparent);
+}
+/* The bubble is raw DOM (its anchors live in ProseMirror NodeViews and
+   pillified spans a Vue component can't wrap), so these buttons re-implements
+   the Button primitive's contract by hand — the focus ring included. */
+.mention-tip-open:focus-visible,
+.mention-tip-copy:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+}
+.mention-tip-open svg,
+.mention-tip-copy svg {
+  width: var(--p-ic-sm);
+  height: var(--p-ic-sm);
+  display: block;
+}
+/* Path-tooltip copy button: pull it up and right so the glyph sits the same
+   --space-1 from the top border as from the right border (the bubble's
+   padding-block is --space-1 but padding-inline is --space-2). */
+.mention-tip-copy {
+  margin-top: calc(0px - var(--space-05));
+  margin-right: calc(var(--space-05) - var(--space-2));
+}
+.mention-tip-desc {
+  margin-top: var(--space-05);
+  color: color-mix(in srgb, currentColor 78%, transparent);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+/* Inline probe indicator at the tail of a path tooltip. */
+.mention-tip-spinner {
+  display: inline-block;
+  /* 10px via tokens (8 + 2); the baseline lift rides its own token (em so it
+     tracks the tooltip's font size); the stroke rides the ring family's
+     shared token (todo pending ring, xs Spinner). */
+  width: calc(var(--space-2) + var(--space-05));
+  height: calc(var(--space-2) + var(--space-05));
+  margin-left: var(--space-1);
+  vertical-align: var(--p-mention-tip-spinner-lift);
+  border-radius: 50%;
+  border: var(--p-ring-stroke) solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  animation: mention-tip-spin var(--duration-spin) linear infinite;
+}
+@keyframes mention-tip-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* A mention whose target no longer exists (the tooltip probe returned a
+   definitive not-found): faded ink + strike-through. Placed last so the
+   strike survives both the message hover underline and the composer's
+   editing-semantics overrides — clicks stay enabled regardless. */
+.mention-pill.mention-missing,
+.mention-pill.mention-missing:hover {
+  color: color-mix(in srgb, var(--color-text-muted) 55%, transparent);
+  text-decoration: line-through;
+}
+.mention-pill.mention-missing .mention-pill-icon {
+  color: inherit;
 }

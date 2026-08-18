@@ -1,6 +1,6 @@
 // packages/app-core/test/slashCommands.test.ts
 import { describe, expect, it } from 'vitest';
-import { buildSlashItems, filterCommandMatches, filterCommands, matchRanges, type SlashCommand } from '../src/lib/slashCommands';
+import { buildSlashItems, filterCommandMatches, filterCommands, matchRanges, stripSkillPrefix, type SlashCommand } from '../src/lib/slashCommands';
 
 const passThrough = (item: SlashCommand): string => item.desc;
 
@@ -134,5 +134,23 @@ describe('filterCommandMatches', () => {
     const items: SlashCommand[] = [{ name: '/swarm', desc: '切换 swarm 模式' }];
     const matches = filterCommandMatches('war', items, passThrough);
     expect(matches[0]?.ranges.desc).toEqual([[4, 7]]);
+  });
+});
+
+describe('stripSkillPrefix', () => {
+  it('strips the skill: prefix with or without the leading slash', () => {
+    // The slash menu builds skill items as '/skill:<name>' — sending that
+    // verbatim as the structured skillName would activate '/skill:deploy'
+    // and earn a skill.not_found from the daemon.
+    expect(stripSkillPrefix('/skill:deploy')).toBe('deploy');
+    expect(stripSkillPrefix('skill:deploy')).toBe('deploy');
+  });
+
+  it('strips the bare slash of builtin-sourced skill names', () => {
+    expect(stripSkillPrefix('/lark-task')).toBe('lark-task');
+  });
+
+  it('returns skill:-less, slash-less input unchanged', () => {
+    expect(stripSkillPrefix('deploy')).toBe('deploy');
   });
 });

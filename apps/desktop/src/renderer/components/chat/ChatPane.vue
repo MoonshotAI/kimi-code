@@ -22,6 +22,7 @@ import { Icon, Kbd, Spinner, Button, Tooltip } from '@moonshot-ai/app-ui';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { copyTextToClipboard, formatMessageTime } from '@moonshot-ai/app-core/lib';
 import { openFileAttachment } from '@moonshot-ai/app-client/lib';
+import { startMentionSelectionSync, mentionIconSvg, parseMentionLinks, ComposerText } from '@moonshot-ai/app-composer';
 import { getKimiWebApi } from '../../api';
 import {
   formatTokens,
@@ -38,6 +39,10 @@ import {
 import type { AssistantFold, TurnFileChange } from '../chatTurnRendering';
 
 const { t } = useI18n();
+
+// Skill glyph for the legacy activation card's skill pill (shared registry
+// mapping — shown when a slash-typed activation has no pill in its args).
+const skillMentionIcon = mentionIconSvg('skill', '', '');
 const { confirm } = useConfirmDialog();
 
 onUnmounted(() => {
@@ -206,6 +211,19 @@ onMounted(observeTopSentinel);
 onUnmounted(() => {
   topSentinelObserver?.disconnect();
   topSentinelObserver = null;
+});
+
+// Selection paint for mention pills (user bubbles + assistant Markdown):
+// browsers don't selection-paint an inline svg glyph, so covered pills get a
+// class and the stylesheet paints the wash (see mentionSelectionSync).
+const chatRootRef = ref<HTMLElement | null>(null);
+let stopMentionSelectionSync: (() => void) | null = null;
+onMounted(() => {
+  stopMentionSelectionSync = startMentionSelectionSync(() => chatRootRef.value);
+});
+onUnmounted(() => {
+  stopMentionSelectionSync?.();
+  stopMentionSelectionSync = null;
 });
 watch(
   () => [props.hasMoreMessages, props.loadingMore, props.loadingMoreError],
@@ -399,16 +417,33 @@ const lastUserTurnId = computed<string | null>(() => {
 });
 
 /** Whether to offer "edit & resend" on this turn: the latest user message, only
-    while the conversation has nothing unfinished and it isn't a slash activation. */
+    while the conversation has nothing unfinished and it isn't a plugin command.
+    A pill-composed skill activation edits fine: its args are the full original
+    text, so the composer revives the skill pill and resending re-activates it.
+    A SLASH-typed activation's args carry no pill — editing those would resend
+    bare text as a plain prompt, so they stay non-editable. */
 function canEditTurn(turn: ChatTurn): boolean {
   return (
     !props.readOnly &&
     turn.role === 'user' &&
     turn.id === lastUserTurnId.value &&
     !props.working &&
-    !turn.skillActivation &&
-    !turn.pluginCommand
+    !turn.pluginCommand &&
+    !(turn.skillActivation && !skillActivationHasPill(turn))
   );
+}
+
+/** True when the activation's args carry EXACTLY ONE revivable skill mention
+    and it is the activated skill (the mention-composed send path). Slash-typed
+    activations have bare args with no pill — and args carrying EXTRA skill
+    links would revive into multiple pills, whose resend downgrades to a plain
+    prompt and silently drops the activation — so both keep the identity card
+    and stay non-editable. */
+function skillActivationHasPill(turn: ChatTurn): boolean {
+  const act = turn.skillActivation;
+  if (!act) return false;
+  const skills = parseMentionLinks(act.args ?? '').filter((m) => m.attrs.kind === 'skill');
+  return skills.length === 1 && skills[0]!.attrs.name === act.name;
 }
 
 /** Divider label: "Context compacted"/"auto-compacted" + optional token stats. */
@@ -683,8 +718,9 @@ watch(
   },
 );
 
-// Clampable bubble text: skill/plugin args when a command card replaced the
-// raw input, otherwise the user's verbatim text.
+// Clampable bubble text: a skill activation's args (the full original text —
+// the pill's link form revives in place), a plugin command's args (the card
+// above replaced the raw input), otherwise the user's verbatim text.
 function userTextContent(turn: ChatTurn): string | null {
   if (turn.skillActivation) return turn.skillActivation.args || null;
   if (turn.pluginCommand) return turn.pluginCommand.args || null;
@@ -692,7 +728,11 @@ function userTextContent(turn: ChatTurn): string | null {
 }
 
 function isCommandArgs(turn: ChatTurn): boolean {
-  return turn.skillActivation !== undefined || turn.pluginCommand !== undefined;
+  // A pill-composed skill activation's args ARE the user's message (the pill
+  // revives inline in it) — they take the plain bubble styling; a
+  // slash-typed activation keeps the command-args styling under its identity
+  // card, same as a plugin command's.
+  return turn.pluginCommand !== undefined || (turn.skillActivation !== undefined && !skillActivationHasPill(turn));
 }
 
 function isUserTextClamped(turnId: string): boolean {
@@ -824,7 +864,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   <!-- Chat bubbles: user turns are right-aligned soft-blue bubbles; assistant
        turns are left-aligned plain text with no role/name label, in order:
        thinking → message text → tool cards. -->
-  <div class="chat">
+  <div class="chat" ref="chatRootRef">
     <div v-if="sessionLoading" class="chat-loading">
       <Spinner size="sm" />
       <span class="chat-loading-text">{{ t('conversation.loading') }}</span>
@@ -886,23 +926,31 @@ function streamingTailIndex(turn: ChatTurn): number | null {
                 @activate="onAttachmentClick(att)"
               />
             </div>
-            <!-- Skill activation card (replaces raw XML) -->
-            <div v-if="turn.skillActivation" class="skill-act">
+            <!-- Skill activation identity card — only when the args DON'T
+                 carry the skill as a pill (legacy slash-typed activations);
+                 pill-composed ones show the revived pill in the text itself. -->
+            <div v-if="turn.skillActivation && !skillActivationHasPill(turn)" class="skill-act">
               <div class="skill-act-head">
                 <span class="skill-act-arrow">▶</span>
-                <span>{{ t('conversation.activatedSkill', { name: turn.skillActivation.name }) }}</span>
+                <i18n-t keypath="conversation.activatedSkill" tag="span">
+                  <template #name>
+                    <span class="mention-pill mention-skill" data-mention-kind="skill" :data-mention-name="turn.skillActivation.name" tabindex="0" role="button"><span class="mention-pill-icon" aria-hidden="true" v-html="skillMentionIcon" /><span class="mention-pill-name">{{ turn.skillActivation.name }}</span></span>
+                  </template>
+                </i18n-t>
               </div>
             </div>
             <!-- Plugin command card (replaces expanded body) -->
-            <div v-else-if="turn.pluginCommand" class="skill-act">
+            <div v-if="turn.pluginCommand" class="skill-act">
               <div class="skill-act-head">
                 <span class="skill-act-arrow">▶</span>
                 <span>/{{ turn.pluginCommand.pluginId }}:{{ turn.pluginCommand.commandName }}</span>
               </div>
             </div>
-            <!-- User text — or skill/plugin args when a command card replaced
-                 the raw input — verbatim (pre-wrap), never Markdown; skipped
-                 when empty. Overlong content clamps with a fade + toggle. -->
+            <!-- User text verbatim (pre-wrap), never Markdown; a skill
+                 activation's args ARE the original text (the pill's link form
+                 revives in place), a plugin command's args follow its card;
+                 skipped when empty. Overlong content clamps with a fade +
+                 toggle. -->
             <div
               v-if="userTextContent(turn) !== null"
               class="u-text-wrap"
@@ -911,7 +959,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               <div
                 :class="isCommandArgs(turn) ? 'skill-act-args' : 'u-text'"
                 :ref="(el) => registerUserTextEl(turn.id, el)"
-              >{{ userTextContent(turn) }}</div>
+              ><ComposerText :text="userTextContent(turn) ?? ''" :open-file="onOpenFile" /></div>
               <button
                 v-if="clampableUserTurns.has(turn.id)"
                 type="button"
@@ -1137,7 +1185,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               :ref="(el) => registerUserTextEl(queueClampId(item), el)"
               @click="onQueueEdit(qi)"
             >
-              <span v-if="item.text" class="u-text q-text">{{ item.text }}</span>
+              <span v-if="item.text" class="u-text q-text"><ComposerText :text="item.text" :interactive="false" /></span>
               <span v-else class="q-text q-text-placeholder">
                 <Icon name="file" size="sm" />
                 {{ t('composer.queuedAttachments', { n: item.attachments?.length ?? 0 }) }}
@@ -1795,7 +1843,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   padding: 10px 0;
 }
 
-/* Skill activation card (replaces raw <kimi-skill-loaded> XML) */
+/* Skill activation identity card (slash-typed activations only) & plugin
+   command card */
 .skill-act {
   display: flex;
   flex-direction: column;

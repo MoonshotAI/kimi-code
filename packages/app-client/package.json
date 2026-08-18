@@ -14,17 +14,12 @@
     "./package.json": "./package.json"
   },
   "dependencies": {
+    "@moonshot-ai/app-composer": "workspace:^",
     "@moonshot-ai/app-core": "workspace:^",
     "@moonshot-ai/app-i18n": "workspace:^",
     "@moonshot-ai/app-ui": "workspace:^",
     "photoswipe": "^5.4.4",
-    "pinia": "4.0.3",
-    "prosemirror-commands": "^1.7.2",
-    "prosemirror-history": "^1.5.0",
-    "prosemirror-keymap": "^1.2.3",
-    "prosemirror-model": "^1.25.11",
-    "prosemirror-state": "^1.4.4",
-    "prosemirror-view": "^1.42.2"
+    "pinia": "4.0.3"
   },
   "peerDependencies": {
     "vue": "^3.5.35"

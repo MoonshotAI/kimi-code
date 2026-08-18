@@ -1085,6 +1085,9 @@ export interface AppConfig {
 export interface AppSkill {
   name: string;
   description: string;
+  /** Absolute path to the skill's SKILL.md — used by the mention pill's
+   *  "open" affordance (sidebar preview). */
+  path: string;
   /** Skill source (e.g. 'builtin' | 'project' | 'plugin') for grouping/labels. */
   source: string;
 }

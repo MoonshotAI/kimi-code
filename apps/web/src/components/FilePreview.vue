@@ -5,40 +5,17 @@ import { computed, inject, nextTick, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Markdown } from '@moonshot-ai/app-markdown';
 import type { FileData, FilePreviewRequest } from '../types';
-import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { copyTextToClipboard, pathDirname, resolveRelativePath } from '@moonshot-ai/app-core/lib';
 import { MAX_HIGHLIGHT_CHARS } from '@moonshot-ai/app-core/client';
 import { Button, Icon, IconButton, PanelHeader, SegmentedControl, Tooltip } from '@moonshot-ai/app-ui';
 import HighlightedCode from './HighlightedCode.vue';
 
 const { t } = useI18n();
 
-// Resolve a relative path (from inside a Markdown file) against that file's
-// directory. Handles "./foo", "../foo", and bare "foo" segments. An absolute
-// (POSIX-rooted) base keeps its root — an out-of-workspace Markdown like
-// /tmp/notes/a.md resolves ./b.md to /tmp/notes/b.md, not the
-// workspace-relative tmp/notes/b.md.
-function resolveRelativePath(src: string, base: string): string {
-  const rooted = base.startsWith('/');
-  const result = base.split('/').filter(Boolean);
-  for (const part of src.split('/')) {
-    if (part === '' || part === '.') continue;
-    if (part === '..') {
-      result.pop();
-    } else {
-      result.push(part);
-    }
-  }
-  return (rooted ? '/' : '') + result.join('/');
-}
-
 // Wrap the app-level image resolver so that relative image paths inside a
 // Markdown file are resolved against that file's directory.
 const parentResolveImage = inject<(src: string) => Promise<string>>('resolveImage', async (src: string) => src);
-const markdownBaseDir = computed(() => {
-  const path = props.file?.path ?? '';
-  const lastSlash = path.lastIndexOf('/');
-  return lastSlash > 0 ? path.slice(0, lastSlash) : '';
-});
+const markdownBaseDir = computed(() => pathDirname(props.file?.path ?? ''));
 function resolveImageSrc(src: string): string {
   if (/^(https?:|data:|blob:)/i.test(src)) return src;
   // Absolute paths pass through: POSIX, Windows drive, UNC.
@@ -54,27 +31,33 @@ async function resolveMarkdownImage(src: string): Promise<string> {
 }
 provide('resolveImage', resolveMarkdownImage);
 
-// Resolve a Markdown `[link](./foo.md)` target against the current file's
-// directory before forwarding it to the app's file opener. Absolute paths and
-// URLs/anchors are passed through unchanged (Markdown.vue skips those itself).
-// `?query` and `#fragment` are stripped so they don't become part of the path.
+// Resolve a Markdown `[link](./foo.md)` path against the current file's
+// directory. Two consumers, ONE resolution — the display form (Markdown's
+// resolve-mention-path prop, feeding the tooltip probe/copy from the
+// workspace root) and the action form (open-file forwarding below) both get
+// it. There is NO `?query`/`#fragment` stripping here: the paths are already
+// decoded/normalized upstream (Markdown.vue strips fragments on the RAW href
+// before decoding), so a literal '#'-filename must be kept as-is. The input
+// is always an already-classified mention path — real external URLs, anchors
+// and queries never classify as mentions upstream — so only genuine absolute
+// filesystem paths pass through unchanged; a decoded filename that merely
+// LOOKS like a URL or anchor ('#notes.md', 'http:notes.md') still resolves
+// against the base dir.
+function resolveMarkdownLinkDir(href: string): string {
+  // Absolute filesystem targets pass through unchanged: POSIX root, Windows
+  // drive, backslash UNC.
+  if (href.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(href) || href.startsWith('\\\\')) {
+    return href;
+  }
+  return resolveRelativePath(href, markdownBaseDir.value);
+}
+
+// Forward a Markdown link click to the app's file opener with the target
+// resolved against the current file's directory (no re-strip — the path is
+// already the decoded action path from Markdown.vue).
 function resolveMarkdownFileTarget(target: { path: string; line?: number }): FilePreviewRequest {
-  let href = target.path;
-  // Absolute targets pass through unchanged: POSIX, Windows drive, UNC.
-  if (
-    /^(https?:|mailto:|tel:|data:|blob:|#)/i.test(href) ||
-    href.startsWith('/') ||
-    /^[a-zA-Z]:[\\/]/.test(href) ||
-    href.startsWith('\\\\')
-  ) {
-    return target;
-  }
-  for (const sep of ['#', '?']) {
-    const idx = href.indexOf(sep);
-    if (idx !== -1) href = href.slice(0, idx);
-  }
-  const base = markdownBaseDir.value;
-  return { ...target, path: resolveRelativePath(href, base) };
+  const path = resolveMarkdownLinkDir(target.path);
+  return path === target.path ? target : { ...target, path };
 }
 
 const props = defineProps<{
@@ -502,10 +485,16 @@ function truncatePath(path: string, maxLen = 55): string {
 
       <!-- Body: Markdown -->
       <div v-if="contentKind === 'markdown'" class="fp-body" :class="{ 'fp-markdown': markdownMode === 'preview' }">
+        <!-- Keyed by the file path: a switch to a DIFFERENT file with
+             identical content leaves :text unchanged, and without the remount
+             the decoration pass would keep mention paths resolved against the
+             OLD file's directory. -->
         <Markdown
           v-if="markdownMode === 'preview'"
+          :key="file?.path"
           :text="decodedContent"
           :open-file="props.openFile ? handleMarkdownOpenFile : undefined"
+          :resolve-mention-path="resolveMarkdownLinkDir"
         />
         <div v-else class="fp-code">
           <HighlightedCode :code="lines" :path="highlightPath" :line-numbers="lineNumberList" :framed="false" :line-class="lineClass" />

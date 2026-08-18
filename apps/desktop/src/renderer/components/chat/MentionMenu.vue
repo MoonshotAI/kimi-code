@@ -1,9 +1,13 @@
 <!-- apps/web/src/components/chat/MentionMenu.vue -->
-<!-- Popup list of file paths shown when user types @ in the Composer textarea. -->
+<!-- Popup list shown when the user types @ in the Composer: file/folder
+     matches from the daemon search (top section) plus session skills (bottom
+     section, when the host editor offers them). -->
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { iconSvg } from '@moonshot-ai/app-client/icons';
+import { Spinner } from '@moonshot-ai/app-ui';
+import { fileMentionIconSvg, mentionIconSvg } from '@moonshot-ai/app-composer';
+import type { MentionItem } from '@moonshot-ai/app-client/composables';
 import type { FileItem } from '../../types';
 
 // Re-exported for the .vue consumers (Composer / ChatDock / ConversationPane)
@@ -11,17 +15,40 @@ import type { FileItem } from '../../types';
 export type { FileItem };
 
 const props = defineProps<{
-  items: FileItem[];
+  /** Flat row list — files/folders first, then skills. */
+  items: MentionItem[];
   activeIndex: number;
   loading: boolean;
+  /** The file rows belong to an older query (a new search is pending) —
+   *  they stay visible but dimmed rather than flashing an empty state. */
+  stale?: boolean;
 }>();
 
 const emit = defineEmits<{
-  select: [item: FileItem];
+  select: [item: MentionItem];
   hover: [index: number];
 }>();
 
 const { t } = useI18n();
+
+// Section split: skills always trail the flat list. The section headers only
+// appear when BOTH groups are present — a single group reads fine bare.
+const fileRows = computed(() => props.items.filter((item): item is Extract<MentionItem, { kind: 'file' | 'folder' }> => item.kind !== 'skill'));
+const skillRows = computed(() => props.items.filter((item): item is Extract<MentionItem, { kind: 'skill' }> => item.kind === 'skill'));
+
+function rowIcon(item: MentionItem): string {
+  if (item.kind === 'skill') return mentionIconSvg('skill', '', item.skill.name);
+  return fileMentionIconSvg(item.file.path, item.file.name, item.kind === 'folder');
+}
+
+/** The meta text after a file/folder name: its containing directory only —
+ *  the full path is noise once the name carries the basename. A root-level
+ *  entry shows nothing. */
+function rowDir(path: string): string {
+  const trimmed = path.endsWith('/') ? path.slice(0, -1) : path;
+  const idx = trimmed.lastIndexOf('/');
+  return idx === -1 ? '' : trimmed.slice(0, idx);
+}
 
 // Scroll-linked edge fades (the dock work panel's alpha-mask vocabulary):
 // dissolve toward an edge only while more content exists beyond it.
@@ -163,78 +190,70 @@ watch(
     });
   },
 );
-
-// ---------------------------------------------------------------------------
-// File-type glyphs: small line-SVG icons (viewBox 0 0 16 16) keyed off the
-// extension. Categories: folder, code, doc/markdown, image, generic.
-// Subtle + muted; never an emoji.
-// ---------------------------------------------------------------------------
-
-const ICON_FOLDER = iconSvg('folder', 'sm');
-const ICON_CODE = iconSvg('code', 'sm');
-const ICON_DOC = iconSvg('file-text', 'sm');
-const ICON_IMAGE = iconSvg('image', 'sm');
-const ICON_GENERIC = iconSvg('file', 'sm');
-
-const CODE_EXT = new Set([
-  'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'vue', 'json', 'py', 'go', 'rs',
-  'java', 'kt', 'c', 'h', 'cpp', 'cc', 'hpp', 'cs', 'rb', 'php', 'swift',
-  'sh', 'bash', 'zsh', 'css', 'scss', 'less', 'html', 'htm', 'xml', 'sql',
-  'yaml', 'yml', 'toml', 'lua', 'dart', 'scala', 'clj', 'ex', 'exs',
-]);
-const DOC_EXT = new Set(['md', 'markdown', 'mdx', 'txt', 'rst', 'adoc', 'pdf', 'doc', 'docx']);
-const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico', 'avif']);
-
-function fileIcon(item: FileItem): string {
-  const path = item.path;
-  // Trailing slash → folder.
-  if (path.endsWith('/')) return ICON_FOLDER;
-  const base = item.name || path.split('/').pop() || path;
-  const dot = base.lastIndexOf('.');
-  const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
-  if (!ext) return ICON_GENERIC;
-  if (CODE_EXT.has(ext)) return ICON_CODE;
-  if (DOC_EXT.has(ext)) return ICON_DOC;
-  if (IMAGE_EXT.has(ext)) return ICON_IMAGE;
-  return ICON_GENERIC;
-}
 </script>
 
 <template>
   <div class="mention-menu" data-menu-frame>
-    <!-- Loading / no-match notes are live status regions, not listbox items. -->
-    <div v-if="props.loading" class="mention-state dim" role="status">{{ t('mention.searching') }}</div>
+    <!-- The full-area loading note only appears when there is nothing to
+         show; with rows visible, searching gets a corner spinner instead and
+         the current candidates stay on screen. -->
+    <div v-if="props.loading && props.items.length === 0" class="mention-state dim" role="status">{{ t('mention.searching') }}</div>
     <div v-else-if="props.items.length === 0" class="mention-state dim" role="status">{{ t('mention.noMatch') }}</div>
+    <Spinner v-if="props.loading && props.items.length > 0" class="mention-spin" size="xs" />
     <div
       id="composer-mention-menu"
-      v-show="!props.loading && props.items.length > 0"
+      v-show="props.items.length > 0"
       ref="scrollEl"
       class="mention-scroll"
       role="listbox"
       :style="{ maskImage }"
       @scroll="onScroll"
     >
-      <!-- File items -->
-      <div
-        v-for="(item, i) in props.items"
-        :key="item.path"
-        :id="`composer-mention-option-${i}`"
-        class="mention-item"
-        :class="{ active: i === props.activeIndex }"
-        role="option"
-        :aria-selected="i === props.activeIndex"
-        @mouseenter="emit('hover', i)"
-        @mousedown.prevent="emit('select', item)"
-      >
-        <!-- file-type glyph (line-SVG) -->
-        <!-- eslint-disable-next-line vue/no-v-html -->
-        <span class="mention-icon" v-html="fileIcon(item)" aria-hidden="true" />
-        <span class="mention-name">{{ item.name }}</span>
-        <span class="mention-path">{{ item.path }}</span>
-      </div>
+      <!-- Files / folders (flat indices 0..fileRows.length-1) -->
+      <template v-if="fileRows.length > 0">
+        <div v-if="skillRows.length > 0" class="mention-section">{{ t('mention.files') }}</div>
+        <div
+          v-for="(row, i) in fileRows"
+          :key="row.file.path"
+          :id="`composer-mention-option-${i}`"
+          class="mention-item"
+          :class="{ active: i === props.activeIndex, stale: props.stale }"
+          role="option"
+          :aria-selected="i === props.activeIndex"
+          @mouseenter="emit('hover', i)"
+          @mousedown.prevent="emit('select', row)"
+        >
+          <!-- file-type glyph (line-SVG) -->
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <span class="mention-icon" v-html="rowIcon(row)" aria-hidden="true" />
+          <span class="mention-name">{{ row.file.name }}</span>
+          <span v-if="rowDir(row.file.path)" class="mention-meta">{{ rowDir(row.file.path) }}</span>
+        </div>
+      </template>
+
+      <!-- Skills (flat indices fileRows.length..) -->
+      <template v-if="skillRows.length > 0">
+        <div v-if="fileRows.length > 0" class="mention-section">{{ t('mention.skills') }}</div>
+        <div
+          v-for="(row, j) in skillRows"
+          :key="row.skill.name"
+          :id="`composer-mention-option-${fileRows.length + j}`"
+          class="mention-item"
+          :class="{ active: fileRows.length + j === props.activeIndex }"
+          role="option"
+          :aria-selected="fileRows.length + j === props.activeIndex"
+          @mouseenter="emit('hover', fileRows.length + j)"
+          @mousedown.prevent="emit('select', row)"
+        >
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <span class="mention-icon" v-html="rowIcon(row)" aria-hidden="true" />
+          <span class="mention-name">{{ row.skill.name }}</span>
+          <span class="mention-meta">{{ row.skill.description }}</span>
+        </div>
+      </template>
     </div>
     <!-- Overlay scroll indicator (the native bar is hidden — it ate row width) -->
-    <div v-if="thumb && !props.loading && props.items.length > 0" class="scroll-thumb" @pointerdown="onThumbPointerDown" :style="{ top: `${thumb.top}px`, height: `${thumb.height}px` }" />
+    <div v-if="thumb && props.items.length > 0" class="scroll-thumb" @pointerdown="onThumbPointerDown" :style="{ top: `${thumb.top}px`, height: `${thumb.height}px` }" />
   </div>
 </template>
 
@@ -243,10 +262,9 @@ function fileIcon(item: FileItem): string {
    surface + shadow win over any global menu styles (the listbox role and
    the controlled id now live on the inner scroll container). Chrome shared
    with the add menu:
-   the dock panel's frosted material and the composer card's corner geometry.
-   No overflow clip on the frame — the scroll container below clips rows
-   exactly at their own edge, and their corner-shaped caps sit ~4px inside
-   the frame's corner curve on their own. */
+   the dock panel's frosted material and a plain 12px corner (no
+   superellipse). No overflow clip on the frame — the scroll container below
+   clips rows exactly at their own edge. */
 .mention-menu[data-menu-frame] {
   position: absolute;
   bottom: calc(100% + var(--space-2));
@@ -257,8 +275,7 @@ function fileIcon(item: FileItem): string {
   -webkit-backdrop-filter: var(--p-menu-backdrop);
   backdrop-filter: var(--p-menu-backdrop);
   border: 0.5px solid var(--color-line);
-  border-radius: var(--radius-composer);
-  corner-shape: var(--corner-shape-composer);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
   z-index: var(--z-dropdown);
 }
@@ -266,10 +283,10 @@ function fileIcon(item: FileItem): string {
 /* The real scroll container. overflow-y: auto forces overflow-x: auto, so
    the scrollport clips horizontally at its padding box: stretch the box 6px
    outward (margin −6, padding 6) so that clip lands exactly on the rows'
-   outer edge instead of shearing their caps 12px in. The native scrollbar is
-   hidden entirely — a layout scrollbar eats 6px of row width (and shows a
-   track gutter even when short) and skewed the rows' right inset; the
-   overlay thumb floating over the menu (see .scroll-thumb) is the scroll
+   outer edge instead of shearing their caps in. The native scrollbar is
+   hidden entirely — a layout scrollbar eats row width (and shows a track
+   gutter even when short) and skews the rows' right inset; the overlay
+   thumb floating over the menu (see .scroll-thumb) is the scroll
    affordance instead. */
 .mention-scroll {
   max-height: var(--p-mention-menu-h);
@@ -309,12 +326,31 @@ function fileIcon(item: FileItem): string {
   right: 0;
 }
 
-/* Same 16px text column as the rows (scroll container's content box starts
+/* The 16px text column as the rows (scroll container's content box starts
    at 12px). */
 .mention-state {
   padding: var(--space-2) var(--space-1);
   font-family: var(--font-ui);
   font-size: var(--ui-b2);
+}
+
+/* Group caption between the two sections — quiet, same text column. */
+.mention-section {
+  padding: var(--space-1) var(--space-1) var(--space-05);
+  color: var(--color-text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-section-label);
+}
+
+/* The searching indicator while candidates stay visible: pinned to the
+   frame's top-right corner so the list never shifts. */
+.mention-spin {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-3);
+  color: var(--color-text-muted);
+  z-index: var(--z-raised);
 }
 
 .dim {
@@ -325,37 +361,35 @@ function fileIcon(item: FileItem): string {
   display: flex;
   align-items: center;
   gap: var(--menu-row-gap-icon);
-  /* Box hugs 6px from the menu edge while the content lands on the
-     composer's 16px text column; radius = composer radius − 6 stays
-     concentric with the menu frame. The 0.5px transparent border is a
-     workaround: without a border, Chromium paints the corner-shaped
-     background as a plain rect and the menu frame's corner shears the
-     row's ends off. Padding is narrowed by the border width so neither
-     the text column nor the row height moves. */
+  /* Row caps hug the frame's padding edge with a −hug outreach (the frame
+     pads 10px inline, so the caps land 4px inside the edge); the
+     --radius-menu-row caps stay concentric with the 12px frame. */
   margin: 0 calc(-1 * var(--menu-row-hug));
-  padding: var(--menu-row-padding-block) var(--menu-row-padding-inline);
-  border: var(--p-hairline) solid transparent;
+  /* Dense rows: 8px inline padding (down from the shared 10px token — the
+     mention menu no longer pins to the composer's 16px text column) and one
+     --text-sm (13px rung) for both name and meta (name keeps weight 500 +
+     full ink, meta keeps muted ink — size never differs). */
+  padding: var(--menu-row-padding-block) var(--space-2);
   cursor: pointer;
   font-family: var(--font-ui);
-  font-size: var(--ui-b2);
+  font-size: var(--text-sm);
   border-radius: var(--radius-menu-row);
-  corner-shape: var(--corner-shape-menu);
 }
 
 .mention-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
+  width: var(--p-ic-sm);
+  height: var(--p-ic-sm);
   color: var(--muted);
   flex-shrink: 0;
 }
 
-/* Pin every glyph to the same 14px box so rows line up regardless of icon kind. */
+/* Pin every glyph to the same box so rows line up regardless of icon kind. */
 .mention-icon :deep(svg) {
-  width: 13px;
-  height: 13px;
+  width: var(--p-ic-sm);
+  height: var(--p-ic-sm);
   display: block;
 }
 
@@ -380,6 +414,16 @@ function fileIcon(item: FileItem): string {
 .mention-item + .mention-item {
   margin-top: var(--menu-rows-seam);
 }
+/* Stale rows: candidates from the previous query, kept visible (dimmed)
+   while the new search is pending so the menu never flashes empty. */
+.mention-item {
+  /* Slow the stale fade way down (260ms): a fast whole-menu dim reads as a
+     jarring flash when it is really just the re-search settling. */
+  transition: opacity var(--duration-slow) var(--ease-out);
+}
+.mention-item.stale {
+  opacity: var(--opacity-stale);
+}
 
 /* Touch: menu rows meet the 44px minimum hit height — a direct min-height,
    since fixed padding alone falls short at the Small font size. */
@@ -394,13 +438,15 @@ function fileIcon(item: FileItem): string {
 .mention-name {
   color: var(--color-text);
   font-weight: 500;
-  min-width: 80px;
+  /* Hug the content: the name → meta gap is the row's fixed flex gap, not a
+     column position (the old 80px min-width made it vary with name length). */
   flex-shrink: 0;
 }
 
-.mention-path {
+.mention-meta {
   color: var(--color-text-muted);
-  font-size: var(--text-xs);
+  /* Same size as the name (13px) — only ink and weight differ. */
+  font-size: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

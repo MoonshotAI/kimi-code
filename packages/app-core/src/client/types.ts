@@ -18,6 +18,9 @@ export interface FileData {
 export interface FileItem {
   path: string;
   name: string;
+  /** The daemon's entry kind, when the search pipeline preserved it (drives
+   *  the folder icon/pill; older callers may omit it). */
+  kind?: 'file' | 'directory' | 'symlink';
 }
 
 export interface Session {

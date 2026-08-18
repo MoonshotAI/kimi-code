@@ -2445,6 +2445,19 @@ const skills = computed<AppSkill[]>(() => {
   return wid ? (modelProvider.skillsByWorkspace.value[wid] ?? []) : [];
 });
 
+/** Whether the current scope's skill fetch has FINISHED (success or failure —
+ *  the fetched marker lives apart from the data map so a failed fetch can
+ *  still be retried on the next scope switch). The mention tooltip uses this
+ *  to tell "skill not in the list" (degrade the pill) from "list still
+ *  loading" (leave the pill focusable so a keyboard user can return once it
+ *  arrives). */
+const skillsLoaded = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  if (sid) return modelProvider.skillsFetchedBySession.value[sid] === true;
+  const wid = activeWorkspaceId.value;
+  return wid ? modelProvider.skillsFetchedByWorkspace.value[wid] === true : false;
+});
+
 const inFlight = computed<boolean>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return false;
@@ -3918,6 +3931,7 @@ export function useKimiWebClient() {
     listDir: workspaceState.listDir,
     readFileContent: filesStore().readFileContent,
     readHostFileContent: workspaceState.readHostFileContent,
+    probeWorkspacePath: workspaceState.probeWorkspacePath,
     getFileDownloadUrl: workspaceState.getFileDownloadUrl,
     openWorkspaceFile: workspaceState.openWorkspaceFile,
     openInApp: workspaceState.openInApp,
@@ -3928,6 +3942,7 @@ export function useKimiWebClient() {
     loadModels: modelProvider.loadModels,
     loadProviders: modelProvider.loadProviders,
     skills,
+    skillsLoaded,
     activateSkill: modelProvider.activateSkill,
     setModel: modelProvider.setModel,
     toggleStarModel: modelProvider.toggleStarModel,

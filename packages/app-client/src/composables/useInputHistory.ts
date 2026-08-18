@@ -19,7 +19,7 @@
 
 import { computed, nextTick, ref, watch, type Ref } from 'vue';
 import { STORAGE_KEYS, safeGetJson, safeSetJson } from '@moonshot-ai/app-core/lib';
-import type { TextFieldLike } from '../lib/textField';
+import type { TextFieldLike } from '@moonshot-ai/app-composer';
 
 /** Cap each session's persisted history so storage can't grow without bound. */
 const MAX_HISTORY = 100;

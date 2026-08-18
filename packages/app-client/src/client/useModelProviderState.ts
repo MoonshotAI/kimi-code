@@ -684,6 +684,8 @@ export function useModelProviderState(
     draftModel: computed(() => store.draftModel),
     skillsBySession: computed(() => store.skillsBySession),
     skillsByWorkspace: computed(() => store.skillsByWorkspace),
+    skillsFetchedBySession: computed(() => store.skillsFetchedBySession),
+    skillsFetchedByWorkspace: computed(() => store.skillsFetchedByWorkspace),
     // actions
     loadSkillsForSession: store.loadSkillsForSession,
     loadSkillsForWorkspace: store.loadSkillsForWorkspace,

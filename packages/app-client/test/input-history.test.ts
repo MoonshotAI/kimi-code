@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ref, type Ref } from 'vue';
 import { useInputHistory } from '../src/composables';
 import { STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
-import type { TextFieldLike } from '../src/lib/textField';
+import type { TextFieldLike } from '@moonshot-ai/app-composer';
 
 interface MockEditor {
   value: string;

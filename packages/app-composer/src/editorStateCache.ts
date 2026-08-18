@@ -1,4 +1,4 @@
-// packages/app-client/src/lib/editorStateCache.ts
+// packages/app-composer/src/editorStateCache.ts
 // Per-session stash for composer ProseMirror EditorStates. An EditorState is
 // self-contained (doc + selection + the history plugin's undo/redo stacks),
 // so keeping one per session id gives each session its own undo history when

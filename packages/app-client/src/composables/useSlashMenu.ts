@@ -2,7 +2,7 @@
 import { nextTick, ref, type Ref } from 'vue';
 import type { AppSkill } from '@moonshot-ai/app-core/api';
 import { buildSlashItems, filterCommandMatches, type SlashCommand, type SlashMatchRanges } from '@moonshot-ai/app-core/lib';
-import type { TextFieldLike } from '../lib/textField';
+import type { TextFieldLike } from '@moonshot-ai/app-composer';
 
 export interface SlashMenuDeps {
   /** The live composer text — drives filtering and is rewritten on select. */

@@ -8,7 +8,9 @@
     "./lib/filePathLinks": "./src/lib/filePathLinks.ts"
   },
   "dependencies": {
+    "@moonshot-ai/app-composer": "workspace:^",
     "@moonshot-ai/app-core": "workspace:*",
+    "@moonshot-ai/app-client": "workspace:*",
     "@moonshot-ai/app-i18n": "workspace:*",
     "@moonshot-ai/app-ui": "workspace:*",
     "katex": "^0.17.0",

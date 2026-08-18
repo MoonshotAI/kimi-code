@@ -90,11 +90,12 @@ onUnmounted(() => {
           <a href="#tokens"><span class="num">02</span>Design Tokens</a>
           <a href="#primitives"><span class="num">03</span>Primitives</a>
           <a href="#chat"><span class="num">04</span>Chat Interface</a>
-          <a href="#themes"><span class="num">05</span>Theming</a>
-          <a href="#rules"><span class="num">06</span>Style Rules</a>
-          <a href="#shell"><span class="num">07</span>App Shell &amp; Sidebar</a>
-          <a href="#a11y"><span class="num">08</span>Accessibility</a>
-          <a href="#dialogs"><span class="num">09</span>Dialogs</a>
+          <a href="#richtext"><span class="num">05</span>Rich Text Messages</a>
+          <a href="#themes"><span class="num">06</span>Theming</a>
+          <a href="#rules"><span class="num">07</span>Style Rules</a>
+          <a href="#shell"><span class="num">08</span>App Shell &amp; Sidebar</a>
+          <a href="#a11y"><span class="num">09</span>Accessibility</a>
+          <a href="#dialogs"><span class="num">10</span>Dialogs</a>
         </nav>
 
         <div class="nav-group">Companion output</div>
@@ -426,7 +427,7 @@ onUnmounted(() => {
                 <tr><td class="tk">--radius-xl</td><td class="val">16px</td><td>container baseline: dialogs, settings cards, sheets, work panel</td><td class="val">13/16px →</td></tr>
                 <tr><td class="tk">--radius-2xl</td><td class="val">20px</td><td>workspace attachment card bottom (<code>0 0 2xl 2xl</code>) tucked under the composer</td><td class="val">18/20px →</td></tr>
                 <tr><td class="tk">--radius-composer</td><td class="val">32px</td><td>Composer shell, with <code>--corner-shape-composer</code></td><td class="val">product-specific</td></tr>
-                <tr><td class="tk">--radius-menu-row</td><td class="val">25.3px</td><td>Menu rows inset 6px inside a composer-radius frame (diagonal-exact concentric)</td><td class="val">product-specific</td></tr>
+                <tr><td class="tk">--radius-menu-row</td><td class="val">var(--radius-sm)</td><td>Menu rows inset 6px inside the plain <code>--radius-lg</code> menu frame (concentric: 12px − 6px hug)</td><td class="val">product-specific</td></tr>
                 <tr><td class="tk">--radius-full</td><td class="val">999px</td><td>pill badge, avatar, send button</td><td class="val">999px / 50%</td></tr>
               </tbody>
             </table>
@@ -467,6 +468,7 @@ onUnmounted(() => {
                 <tr><td class="tk">--duration-base</td><td class="val">160ms</td><td>hover, show/hide</td></tr>
                 <tr><td class="tk">--duration-slow</td><td class="val">260ms</td><td>dialog, Sheet, layout</td></tr>
                 <tr><td class="tk">--duration-hover-intent</td><td class="val">250ms</td><td>hover-intent reveal gate (TOC rail)</td></tr>
+                <tr><td class="tk">--duration-spin</td><td class="val">700ms</td><td>spinner rotation period (mention-tip probe spinner)</td></tr>
                 <tr><td class="tk">--duration-flash</td><td class="val">1200ms</td><td>one-shot attention flashes (search locate, provider-row added) — a highlight timeout, past the show/hide ramp on purpose</td></tr>
                 <tr><td class="tk">--anim-rive-spin</td><td class="val">416.7ms</td><td>new-chat / folder-plus icon: plus spin on hover</td></tr>
                 <tr><td class="tk">--anim-leftbar</td><td class="val">533.3ms</td><td>sidebar toggle icon: arrow fly-in on hover</td></tr>
@@ -1374,6 +1376,7 @@ onUnmounted(() => {
             <p><b>Send button tokens</b>: the send circle runs on <code>--color-send-bg</code> / <code>--color-send-bg-hover</code> / <code>--color-send-icon</code> (+ <code>*-disabled</code>, <code>--opacity-send-disabled</code>, <code>--shadow-send[-hover]</code>), following the production recipe (<code>.chat-input__send</code>): a neutral <code>labels.primary</code> fill (90% black light / 84% white dark, hover #252525 / 84.8%) with the production lift shadow (<code>0 7px 16px -13px 38% + 0 1px 2px 7%</code>, one step larger on hover), a <code>groupedBackground.secondary</code> glyph, and a disabled state of the same vocabulary — <code>fills.f2</code> fill with a <code>labels.quaternary</code> glyph at full opacity. The button is disabled exactly when submit would no-op — an empty draft with no ready attachment (image-only sends stay enabled), an upload in flight, or the starting spinner — so disabled is a first-class persistent state, never a fade.</p>
             <p><b>Layering, anchors, and motion</b>: the dock normally stays at <code>--z-sticky</code> so the Latest Messages pill can remain visible above its veil. While any Composer popup or work panel is open, the dock temporarily joins <code>--z-dropdown</code>, ensuring permission, work-mode, and model menus — and the work panel — always paint above that pill. The permission menu's left edge and the model menu's right edge each follow their own trigger pill. All three menus use <code>--shadow-menu</code> and the same trigger-corner pop motion as Session Row menus: 0.97 scale with a 2px shift toward the trigger, <code>--duration-base</code> on entry, and <code>--duration-fast</code> on exit.</p>
             <p><b>Attachment strip</b>: attachments hang inside the composer card above the input as two grouped rows — images/videos as shared <code>MediaThumb</code> rounded thumbnails, files as the shared <code>AttachmentChip</code> pill — the same pair the sent bubble renders, so a draft looks exactly like the sent message. File-store videos render a static play tile instead of fetching a first frame. The strip caps at two thumbnail rows and scrolls beyond that instead of pushing the input down; while overflowing, a quiet count badge pins to the bottom-left and new attachments auto-scroll into view (to the end of whichever group grew). With two or more attachments, a one-click clear-all pins to the strip's top-right corner as a quiet 22px badge (trash glyph, danger on hover). The composer's pending preview and the bubble's media clicks open the same <code>MediaLightbox</code> preview, which owns Escape via the shared dialog stack: images go through PhotoSwipe (<code>@moonshot-ai/app-client</code>'s <code>lib/mediaPreview</code>) and zoom out of the clicked thumbnail (scrim = <code>--color-scrim-strong</code>, caption = <code>--color-text-on-scrim</code>; the slide area is inset — 24px sides matching the video modal, 56px top/bottom clearing the close button and caption — so a viewport-filling image never kisses the edges), videos keep the custom modal. Both share the <code>--color-scrim-strong</code> backdrop and the same close button — the raised 36px circle (<code>.media-lightbox-close</code>) fixed at the viewport's top-right, rendered by <code>MediaLightbox</code> for both (PhotoSwipe's own top bar is disabled; zoom stays on wheel / pinch / image click). ReadMedia tool cards open it too (an App-level instance fed by the <code>openMedia</code> chain): the image zooms out of the card's thumbnail, and videos show as a static play tile that opens the modal player — no more right-side-panel detour or inline <code>&lt;video&gt;</code>.</p>
+            <p><b>Mention pills</b>: @-mentions render as inline pills in the editor — one element of the cross-surface rich-text vocabulary specified in §05 <b>Rich Text Messages</b> (visual recipe, wire forms, and behavior contract live there).</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Composer</span></div>
               <div class="stage p col" style="align-items:center;background:#fff">
@@ -1400,7 +1403,7 @@ onUnmounted(() => {
             <p><b>Workspace attachment card</b>: on the empty session, the workspace picker is a <b>separate attachment card</b> tucked under the composer — and the composer card itself stays complete (its own 0.5px border, <code>--radius-composer</code> corners with <code>--corner-shape-composer</code>, and shadow are never altered). The attachment lives inside the composer's padding box as the card's sibling, so its width always matches; its top <code>--space-4</code> slides behind the card (the card is raised to <code>--z-sticky</code>), its square top edge stays hidden, and only the rounded bottom (<code>0 0 --radius-xl --radius-xl</code>) shows. Background <code>--color-hover</code> at 60% via <code>color-mix</code> (≈0.03 black in light, self-adapting in dark), no border, no shadow. Inside sits one quiet capsule trigger: transparent, <code>--radius-full</code>, 16px leading icon and 12px label at weight 475 in <code>--color-text-muted</code>; hover deepens to <code>--color-selected</code> and the label turns <code>--color-text</code>. The dropdown follows the §03 menu spec and is viewport-aware (flips above when more room, clamps max-height to the scrollport); at <code>--z-dropdown</code> it outranks both the card and the fixed click-outside backdrop (<code>--z-sticky</code>), which renders outside the composer because the card's <code>container-type</code> captures <code>position: fixed</code> descendants.</p>
 
             <h3 class="sub">Autocomplete menus</h3>
-            <p>The slash, mention, and add popups share one geometry, all on dedicated tokens: the <code>--color-menu-bg-frost</code> surface (the frostier recipe), frame padding <code>--menu-row-hug</code>, rows at <code>--menu-row-padding-block</code> × <code>--menu-row-padding-inline</code> with <code>--radius-menu-row</code> caps on the <code>--corner-shape-menu</code> curve, an icon-to-label gap of <code>--menu-row-gap-icon</code>, and a <code>--menu-rows-seam</code> between stacked rows. Touch rows pad to <code>--menu-row-touch-padding-block</code> with a hard floor of <code>--touch-target-min</code>. Scroll height caps at <code>--p-slash-menu-h</code> / <code>--p-mention-menu-h</code> / <code>--p-add-menu-h</code>; the scroll-edge fade is <code>--menu-scroll-fade</code>, and the overlay thumb rides <code>--menu-scrollbar-width</code> / <code>--menu-scrollbar-edge</code> / <code>--menu-scrollbar-track-inset</code> / <code>--menu-scrollbar-thumb-min</code> in <code>--color-menu-scrollbar</code> (hover <code>--color-menu-scrollbar-hover</code>) — 3px visually, with a wider invisible drag strip.</p>
+            <p>The slash, mention, and add popups share one geometry, all on dedicated tokens: the <code>--color-menu-bg-frost</code> surface (the frostier recipe), frame padding <code>--menu-row-hug</code>, rows at <code>--menu-row-padding-block</code> × <code>--menu-row-padding-inline</code> with <code>--radius-menu-row</code> caps (plain corners — the frame is <code>--radius-lg</code> with NO corner-shape, and the row radius stays concentric: 12px frame − 6px hug = 6px), an icon-to-label gap of <code>--menu-row-gap-icon</code>, and a <code>--menu-rows-seam</code> between stacked rows. Touch rows pad to <code>--menu-row-touch-padding-block</code> with a hard floor of <code>--touch-target-min</code>. Scroll height caps at <code>--p-slash-menu-h</code> / <code>--p-mention-menu-h</code> / <code>--p-add-menu-h</code>; the scroll-edge fade is <code>--menu-scroll-fade</code>, and the overlay thumb rides <code>--menu-scrollbar-width</code> / <code>--menu-scrollbar-edge</code> / <code>--menu-scrollbar-track-inset</code> / <code>--menu-scrollbar-thumb-min</code> in <code>--color-menu-scrollbar</code> (hover <code>--color-menu-scrollbar-hover</code>) — 3px visually, with a wider invisible drag strip.</p>
             <h3 class="sub">Add menu</h3>
             <p>The composer's <b>+ button</b> opens the add menu — the autocomplete family's action-list member: one column of icon + label (+ muted description) rows (Files, Goal, Plan, Swarm) on the same frost surface and row geometry as the slash/mention popups, capped at <code>--p-add-menu-h</code>. Semantically it is an action menu, not an autocomplete listbox: rows are <code>menuitem</code> commands, DOM focus moves into the menu (arrows navigate, Enter activates, Escape closes), and the + button carries <code>aria-haspopup="menu"</code> — the textarea's combobox ARIA never points at it.</p>
             <p><b>Design decision: deliberately NOT the §03 Menu/MenuItem primitives.</b> Those are the trigger-dropdown family (sidebar, user menu, session rows) — <code>--color-menu-bg</code>, <code>--radius-lg</code>, a min-width box. The add menu instead shares the composer menus' material (the frostier surface, the composer corner curve, rows hugging the frame at the composer's text column, muted description sub-lines). Bending MenuItem into that material would require exactly the per-screen appearance overrides the primitive contract forbids, so the add menu keeps bespoke rows built directly on the shared <code>--menu-row-*</code> tokens. This paragraph is the canonical record of that choice — reviews should not re-litigate it.</p>
@@ -1513,10 +1516,36 @@ onUnmounted(() => {
             </div></div>
           </section>
 
-          <!-- ===== 05 Theming ===== -->
-          <section id="themes">
+          <!-- ===== 05 Rich Text Messages ===== -->
+          <section id="richtext">
             <div class="sec-head">
               <span class="sec-num">05</span>
+              <h2 class="sec-title">Rich Text Messages</h2>
+            </div>
+            <p class="sec-desc">
+              Structured references travel as <b>plain text on the wire</b> and render as <b>pills at both ends</b>: the composer's editing surface and the rendered message stream share one pill vocabulary, so what you type is what the message shows. This section is the category spec — every future rich-text element (marks, embeds, interactive chips) joins it here.
+            </p>
+            <h3 class="sub">Mention pill</h3>
+            <p>The mention is the first rich-text element. It exists in two synchronized forms: an <b>atom</b> inside the desktop composer's ProseMirror document, and a <b>pill in the message stream</b> — assistant Markdown decorates local links with the same classes, and user/queue bubbles (verbatim wire text, never Markdown) render through the declarative <code>ComposerText</code> component. Both are the same mark: <b>not a filled chip</b> — no background, no vertical padding — just body text in a heavier weight (<code>--weight-ui-strong</code>) on a lighter ink (<code>--color-text-muted</code>), so the baseline stays flush with the surrounding text; a 2px horizontal inset (<code>padding-inline: var(--space-05)</code>) supplies the CJK/Latin autospacing that can't cross element boundaries and sets the mention apart from plain text; a 13px muted <b>kind glyph</b> leads, and the label is the <b>basename</b> — never the full path, which lives on the tooltip. Hover deepens the ink (glyph included) toward <code>--color-text</code> on every surface; in the message stream the clickable kinds (file, skill) also take the pointer cursor and the link underline, while the composer keeps pure editing semantics — I-beam, no underline, a click just places the caret. The shared classes live in app-ui's global sheet; the kind → glyph mapping is single-sourced in app-composer (<code>mentionIcons</code>) and also drives the mention menu rows, so a file looks identical in the menu, the editor, and the sent bubble. Copying from a bubble re-serializes the selection back to the wire text — pills carry their full attrs in <code>data-mention-*</code>, so a copy/paste round trip restores the link instead of a truncated basename.</p>
+            <p><b>Kinds and wire forms</b> (serialization is a Markdown link, so the daemon payload stays plain text and the TUI needs nothing new):</p>
+            <table class="dt">
+              <thead><tr><th>Kind</th><th>Glyph</th><th>Wire form</th><th>Click (in messages)</th></tr></thead>
+              <tbody>
+                <tr><td>File</td><td>single folded-corner file glyph for every file (no per-extension variants)</td><td><code>[name](path)</code> — the dest is canonically encoded per path segment (every non-unreserved ASCII character → <code>%XX</code>; non-ASCII stays literal, so a CJK path reads as itself — one <code>decodeURIComponent</code> restores it on every surface)</td><td>opens the file preview</td></tr>
+                <tr><td>Folder</td><td>folder glyph</td><td><code>[name](path/)</code> — trailing slash marks the kind (dest <code>%</code> → <code>%25</code> as above)</td><td>inert (no target yet)</td></tr>
+                <tr><td>Skill</td><td>sparkling glyph</td><td><code>[name](kimi-code://skill/&lt;name&gt;)</code> — the app's deep-link protocol</td><td>opens the skill's SKILL.md in the preview panel</td></tr>
+              </tbody>
+            </table>
+            <p><b>Hover tooltip</b>: one document-level singleton (<code>mentionTooltip</code>) serves every pill — composer NodeViews, ComposerText-rendered bubbles, and Markdown anchors are all raw DOM a Vue wrapper can't reach, so it delegates on document mouseover into a single shared bubble. The bubble keeps the design-system tooltip's dark skin but is <b>interactive</b>. File and folder pills show the <b>full path</b>, wrapping anywhere within a fixed max width: every <code>/</code> separator muted, the basename bold (<code>--weight-semibold</code>). Skill pills show a card — the name with an <b>open button</b> at the right (opens the skill's SKILL.md in the preview panel; the path rides the wire skill descriptor through <code>AppSkill.path</code>), the description below, clamped to four lines; an unresolvable skill degrades to the name alone. Timing mirrors TooltipBubble (150ms show delay, top placement with flip, viewport clamping) and the bubble stays open while hovered so the button is reachable; native <code>title</code> tooltips are removed wherever a pill appears. The bubble is a <b>documented structural exception</b> to the component-primitive rule (like the dock overlay): its anchors are ProseMirror NodeViews and pillified spans a Vue wrapper can't reach, so the open/copy buttons re-implement the Button primitive's contract (size, hover, <code>:focus-visible</code> ring) by hand instead of importing it.</p>
+            <p><b>Edge cases</b>: labels cap at 32 chars — a longer name takes a <b>middle ellipsis</b> that keeps the head of the base name and the whole extension (the full name stays in the data attributes, the full path on the tooltip). A pill whose target was deleted after the fact: hovering fires a one-byte <b>existence probe</b> (an inline spinner sits at the tail of the tooltip's path text while in flight), and a definitive not-found fades the pill and strikes it through — in messages and in the composer alike. Clicks are never gated on the verdict (the preview's own not-found state is the final answer); only confirmed-existing verdicts are cached, scoped to the session, so a recreated file recovers on the next hover and a flaky daemon can never strike a pill by mistake.</p>
+            <p><b>Behavior contract</b>: a bare <code>@</code> opens the menu instantly with the workspace root listing (Esc dismisses); with a query, the menu groups <b>Files</b> (debounced daemon search) above <b>Skills</b> (instant local filter), captions shown only when both exist, and an in-flight search never hides the current rows (a corner spinner marks it). Full-width <code>＠</code> from IMEs triggers identically. Insertion replaces the @token and adds a separating trailing space; the pill is one atom — Backspace removes it whole, and a zero-width caret anchor keeps the caret on the pill's line when it ends a paragraph. Drafts, history recall, and queue reloads revive pills from their link form on load, and pasting mention-link text (e.g. a copied pill) revives them too — the serializer round-trips both ways. <b>Skill activation</b>: sending a message with exactly one skill pill activates that skill via the existing channel (the pill form of <code>/skill:&lt;name&gt;</code>, the full text — the pill traveling as its mention link — becomes the args, attachments ride along), and the sent bubble shows the original message verbatim with the pill revived in place (a slash-typed activation, whose bare args carry no pill, keeps the identity card instead); two or more skill pills degrade to plain references, because each activation is its own turn.</p>
+            <p><b>Implementation map</b>: schema/serialization/offset mapping in app-composer's <code>composerTextDoc</code> (pure, node-tested); the editor surface in <code>composerEditor</code>; user/queue bubbles render via app-composer's <code>ComposerText</code> (one segment pass, declarative tree — no post-processing); assistant-side classification (<code>classifyMentionHref</code>) and decoration in app-markdown's <code>Markdown.vue</code> link pass; hover + skill-click routing in app-composer's <code>mentionTooltip</code> singleton, wired per app shell. When editing these, keep the two surfaces in lockstep — a pill that serializes one way in the composer must read the same way in a message.</p>
+          </section>
+
+          <!-- ===== 06 Theming ===== -->
+          <section id="themes">
+            <div class="sec-head">
+              <span class="sec-num">06</span>
               <h2 class="sec-title">Theming</h2>
             </div>
             <p class="sec-desc">
@@ -1537,10 +1566,10 @@ onUnmounted(() => {
           </section>
 
 
-          <!-- ===== 06 Style Rules ===== -->
+          <!-- ===== 07 Style Rules ===== -->
           <section id="rules">
             <div class="sec-head">
-              <span class="sec-num">06</span>
+              <span class="sec-num">07</span>
               <h2 class="sec-title">Style Rules</h2>
             </div>
             <p class="sec-desc">
@@ -1596,10 +1625,10 @@ onUnmounted(() => {
             </div>
           </section>
 
-          <!-- ===== 07 App Shell & Sidebar ===== -->
+          <!-- ===== 08 App Shell & Sidebar ===== -->
           <section id="shell">
             <div class="sec-head">
-              <span class="sec-num">07</span>
+              <span class="sec-num">08</span>
               <h2 class="sec-title">App Shell &amp; Sidebar</h2>
             </div>
             <p class="sec-desc">
@@ -1734,10 +1763,10 @@ onUnmounted(() => {
             </div></div>
           </section>
 
-          <!-- ===== 08 Accessibility A11y ===== -->
+          <!-- ===== 09 Accessibility A11y ===== -->
           <section id="a11y">
             <div class="sec-head">
-              <span class="sec-num">08</span>
+              <span class="sec-num">09</span>
               <h2 class="sec-title">Accessibility (pragmatic edition)</h2>
             </div>
             <p class="sec-desc">
@@ -1798,10 +1827,10 @@ onUnmounted(() => {
             </div></div>
           </section>
 
-          <!-- ===== 09 Dialogs ===== -->
+          <!-- ===== 10 Dialogs ===== -->
           <section id="dialogs">
             <div class="sec-head">
-              <span class="sec-num">09</span>
+              <span class="sec-num">10</span>
               <h2 class="sec-title">Dialogs</h2>
             </div>
             <p class="sec-desc">
@@ -2523,7 +2552,7 @@ onUnmounted(() => {
   .dw-bar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-1-5); }
   /* Add menu mock — the composer family's action list. */
   .am-mock { display: flex; flex-direction: column; gap: var(--menu-rows-seam); width: 100%; max-width: 420px; padding: var(--space-1-5) var(--space-3); background: var(--color-menu-bg-frost); -webkit-backdrop-filter: var(--p-menu-backdrop); backdrop-filter: var(--p-menu-backdrop); border: 0.5px solid var(--p-line); border-radius: var(--radius-composer); corner-shape: var(--corner-shape-composer); box-shadow: var(--p-sh-menu); font-family: var(--font-ui); }
-  .am-mock-row { display: flex; align-items: center; gap: var(--menu-row-gap-icon); padding: var(--menu-row-padding-block) var(--menu-row-padding-inline); border: 0.5px solid transparent; border-radius: var(--radius-menu-row); corner-shape: var(--corner-shape-menu); color: var(--p-text); font-size: var(--p-font-size-base); }
+  .am-mock-row { display: flex; align-items: center; gap: var(--menu-row-gap-icon); padding: var(--menu-row-padding-block) var(--menu-row-padding-inline); border-radius: var(--radius-menu-row); color: var(--p-text); font-size: var(--p-font-size-base); }
   .am-mock-row.focus { background: var(--color-selected); }
   .am-mock-row .n { font-weight: var(--weight-medium); }
   .am-mock-row .d { margin-left: var(--space-1); color: var(--p-text-muted); font-size: var(--text-sm); }

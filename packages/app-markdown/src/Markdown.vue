@@ -13,6 +13,7 @@ import {
 } from 'markstream-vue';
 import { useIsDark } from '@moonshot-ai/app-core';
 import type { ResolveImage } from '@moonshot-ai/app-core/contracts';
+import { classifyMentionHref, decodeSkillName, fileMentionIconSvg, mentionActionPath, mentionHrefToPath, mentionIconSvg, truncateMentionName, unescapeRenderedLinkText } from '@moonshot-ai/app-composer';
 import { collectFilePathAliases, findFilePathLinks } from './lib/filePathLinks';
 import { splitFrontmatter } from './lib/frontmatter';
 import { configureMarkdownIt } from './lib/inlineMath';
@@ -85,6 +86,16 @@ const props = withDefaults(
   defineProps<{
     text: string;
     openFile?: (target: FilePreviewRequest) => void;
+    /**
+     * Resolve a mention pill's decoded link path before it lands in
+     * dataset.mentionPath (tooltip text, copy button, existence probe).
+     * Hosts rendering a Markdown FILE (FilePreview) pass a resolver that
+     * maps relative link targets onto that file's directory, so the global
+     * mention tooltip — which probes from the workspace root — sees the
+     * real path. Display only: the click target still flows through
+     * openFile unchanged. Absent → the decoded path is used as-is.
+     */
+    resolveMentionPath?: (path: string) => string;
     /**
      * True only for the assistant turn that is actively streaming. Drives BOTH
      * `final` (= !streaming) AND markstream's `smooth-streaming`. We bind
@@ -267,25 +278,8 @@ function processFileLinks(): void {
   }
 }
 
-function isLocalLink(href: string): boolean {
-  if (!href) return false;
-  if (/^(https?:|mailto:|tel:|data:|blob:|#)/i.test(href)) return false;
-  return true;
-}
-
-/** Strip `?query` and `#fragment` from a link path so it can be opened as a
-    workspace file. Pure `#anchor` links are skipped upstream by isLocalLink. */
-function stripFragmentAndQuery(href: string): string {
-  let cut = href.length;
-  for (const sep of ['#', '?']) {
-    const idx = href.indexOf(sep);
-    if (idx !== -1 && idx < cut) cut = idx;
-  }
-  return href.slice(0, cut);
-}
-
 function processMarkdownLinks(): void {
-  if (!mdRef.value || !props.openFile || props.streaming) return;
+  if (!mdRef.value || props.streaming) return;
   const links = mdRef.value.querySelectorAll<HTMLAnchorElement>('a[href]');
   for (const link of links) {
     if (link.dataset.mdLinkHandled === 'true') continue;
@@ -293,13 +287,125 @@ function processMarkdownLinks(): void {
     // workspace file paths.
     if (link.closest('svg')) continue;
     const href = link.getAttribute('href') ?? '';
-    if (!isLocalLink(href)) continue;
+    // Local links (workspace paths, kimi-code://skill/…) render as mention
+    // pills — the same vocabulary as the composer's atoms. External and
+    // in-page-anchor links stay ordinary.
+    const kind = classifyMentionHref(href);
+    if (kind === null) continue;
+    // A clickable thumbnail ([![alt](thumb.png)](full.png)) keeps its <img>
+    // subtree — pill decoration would replace the link's children with a name
+    // span and erase it.
+    if (link.querySelector('img')) continue;
     link.dataset.mdLinkHandled = 'true';
+    // An author-set title ([README](README.md "Documentation")) would double
+    // up with the mentionTooltip bubble — pills never keep a native title.
+    link.removeAttribute('title');
+    // File/folder hrefs are raw workspace paths: `#`/`?` are legitimate
+    // filename characters, so the DISPLAY path (dataset.mentionPath —
+    // tooltip, copy) keeps them via a single decodeURIComponent
+    // (mentionHrefToPath; the composer escapes `%` as `%25` and Markdown
+    // rendering percent-encodes spaces/non-ASCII, so one decode restores
+    // the real filesystem path). Only ACTION sites (the click below, the
+    // mentionTooltip probe) strip an unencoded `#`/`?` tail
+    // (mentionActionPath) so `[Usage](README.md#usage)` opens README.md.
+    // Skill hrefs (kimi-code://skill/<encoded name>) keep their URL form —
+    // nothing resolves them as paths.
+    const path = kind === 'skill' ? href : mentionHrefToPath(href);
+    // The rendered link text is the WIRE label after the renderer consumed
+    // the CommonMark backslash layer — decode only the serializer's private
+    // percent layers (unescapeRenderedLinkText): a real 'a%20b.md' would
+    // otherwise show as 'a%2520b.md', and a literal backslash in the name
+    // (a\[b.md) must survive (unescapeLinkText would strip it a second time).
+    const name = unescapeRenderedLinkText(link.textContent ?? '');
+    link.classList.add('mention-pill', `mention-${kind}`);
+    // Hover tooltip + skill-click routing read these (mentionTooltip
+    // singleton); no native title — that would double up with the bubble.
+    // A skill pill's identity is the link TARGET's tail, not the label
+    // (`[发布](kimi-code://skill/deploy)` must resolve 'deploy') — same as
+    // parseMentionLinks on the composer side; the label is display-only.
+    link.dataset.mentionKind = kind;
+    link.dataset.mentionName = kind === 'skill' ? decodeSkillName(href) : name;
+    // File/folder pills carry the host-resolved path when a resolver is
+    // provided (FilePreview maps relative targets onto the previewed file's
+    // directory) so the workspace-rooted tooltip probe/copy see it too.
+    link.dataset.mentionPath = kind === 'skill' ? path : (props.resolveMentionPath?.(path) ?? path);
+    // …and, when it differs, the exact ACTION variant (read by the
+    // mentionTooltip probe as data-mention-action-path): strip the
+    // fragment/query on the RAW href first — a literal '#'- or '?'-filename
+    // survives — then decode and host-resolve. The display path alone can't
+    // tell a fragment tail from a filename character.
+    if (kind !== 'skill') {
+      const actionPath =
+        props.resolveMentionPath?.(mentionHrefToPath(mentionActionPath(href))) ??
+        mentionHrefToPath(mentionActionPath(href));
+      if (actionPath !== link.dataset.mentionPath) link.dataset.mentionActionPath = actionPath;
+    }
+    // Link navigation ends here for routed surfaces: a pill on a host with
+    // openFile and EVERY skill pill act through app routes (the preview
+    // panel / mentionTooltip's skill activation), never through the browser
+    // — keeping the href would leave middle-click and the context menu's
+    // "open in new tab" navigating a workspace path (or kimi-code://) as a
+    // web URL. The href goes; explicit tabIndex + button role keep the pill
+    // in the keyboard order with honest semantics (Enter/Space on a file
+    // pill fire the action below; skill pills are routed by mentionTooltip's
+    // document-level keydown). Folder pills stay inert: the href is dropped
+    // where the host can open files (Tab/Enter must not land on a dead
+    // link) and kept as a plain navigation fallback on surfaces WITHOUT
+    // openFile (UpdateIndicator, QuestionCard — there a dead static text is
+    // worse than a plain navigation, so file pills keep theirs too).
+    // Class/dataset stay for styling and the tooltip; idempotency is
+    // unaffected — the href-less pill simply falls out of the a[href]
+    // selection on re-runs, with mdLinkHandled already set.
+    if (kind === 'skill' || props.openFile) link.removeAttribute('href');
+    if (kind === 'skill' || (kind === 'file' && props.openFile)) {
+      link.tabIndex = 0;
+      link.setAttribute('role', 'button');
+    }
+    // Over-long labels middle-truncate (extension preserved); the full name
+    // stays in the data attributes and the tooltip carries the full path.
+    const displayName = truncateMentionName(name);
+    // The display name lives in a .mention-pill-name span, not an anonymous
+    // text node — the shared max-width/ellipsis rules only reach the span,
+    // and a nowrap pill must not stretch a narrow message column.
+    const label = document.createElement('span');
+    label.className = 'mention-pill-name';
+    label.textContent = displayName;
+    link.replaceChildren(label);
+    if (!link.querySelector('.mention-pill-icon')) {
+      const icon = document.createElement('span');
+      icon.className = 'mention-pill-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.innerHTML =
+        kind === 'skill'
+          ? mentionIconSvg('skill', '', name)
+          : fileMentionIconSvg(path, name, kind === 'folder');
+      link.prepend(icon);
+    }
     link.addEventListener('click', (event) => {
+      // Hosts without an openFile handler (UpdateIndicator, QuestionCard, …)
+      // keep the link's default behavior — swallowing the click would turn it
+      // into a dead link. Skill pills are the exception: their click is always
+      // routed (and swallowed) by the mentionTooltip singleton.
+      if (kind !== 'skill' && !props.openFile) return;
       event.preventDefault();
       event.stopPropagation();
-      props.openFile?.({ path: stripFragmentAndQuery(href) });
+      // Only files have a click target today (the preview panel); folder and
+      // skill pills are inert. The click is an ACTION: strip an unencoded
+      // `#`/`?` tail from the raw href, then decode (see mentionActionPath) —
+      // dataset.mentionPath above keeps the full display path.
+      if (kind === 'file') props.openFile?.({ path: mentionHrefToPath(mentionActionPath(href)) });
     });
+    if (kind === 'file' && props.openFile) {
+      // The href is gone (above), so the anchor no longer activates on
+      // Enter — and role=button owes Space too. Both fire the same action
+      // as the click.
+      link.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        event.stopPropagation();
+        props.openFile?.({ path: mentionHrefToPath(mentionActionPath(href)) });
+      });
+    }
   }
 }
 
@@ -892,6 +998,18 @@ function copyDiff(code: string, idx: number) {
 }
 .md :deep(a:hover) {
   text-decoration: underline;
+}
+
+/* Mention pills inside messages (see processMarkdownLinks): beat the plain
+   link skin above — the pill vocabulary lives in app-ui's global sheet. The
+   clickable pills (file, skill) get the global hover underline; folder pills
+   are inert, so the generic anchor underline must NOT reach them. */
+.md :deep(a.mention-pill) {
+  color: var(--color-text-muted);
+  text-decoration: none;
+}
+.md :deep(a.mention-folder:hover) {
+  text-decoration: none;
 }
 
 /* KaTeX math. Colour already inherits (--color-text) since KaTeX draws with

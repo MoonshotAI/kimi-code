@@ -122,6 +122,7 @@ import RiEyeLine from '~icons/ri/eye-line';
 import RiEyeOffLine from '~icons/ri/eye-off-line';
 import RiFileAddLine from '~icons/ri/file-add-line';
 import RiFlashlightLine from '~icons/ri/flashlight-line';
+import RiSparklingLine from '~icons/ri/sparkling-line';
 import RiFolderFill from '~icons/ri/folder-fill';
 import RiGitForkLine from '~icons/ri/git-fork-line';
 import RiGitPullRequestLine from '~icons/ri/git-pull-request-line';
@@ -223,6 +224,7 @@ import RawEyeLine from '~icons/ri/eye-line?raw';
 import RawEyeOffLine from '~icons/ri/eye-off-line?raw';
 import RawFileAddLine from '~icons/ri/file-add-line?raw';
 import RawFlashlightLine from '~icons/ri/flashlight-line?raw';
+import RawSparklingLine from '~icons/ri/sparkling-line?raw';
 import RawFolderFill from '~icons/ri/folder-fill?raw';
 import RawGitForkLine from '~icons/ri/git-fork-line?raw';
 import RawGitPullRequestLine from '~icons/ri/git-pull-request-line?raw';
@@ -318,6 +320,7 @@ export type IconName =
   | 'clock'
   | 'robot'
   | 'sparkles'
+  | 'sparkling'
   | 'gen-title'
   | 'histogram'
   | 'music'
@@ -418,6 +421,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   translate: entry(KimiTranslate, RawKimiTranslate),
   'check-list': entry(KimiTodo, RawKimiTodo),
   bolt: entry(RiFlashlightLine, RawFlashlightLine),
+  sparkling: entry(RiSparklingLine, RawSparklingLine),
   keyboard: entry(KimiKeyboard, RawKimiKeyboard),
   trash: entry(KimiTrash, RawKimiTrash),
   'git-fork': entry(RiGitForkLine, RawGitForkLine),
@@ -567,6 +571,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'histogram',
       'music',
       'sparkles',
+      'sparkling',
       'gen-title',
       'pause',
       'play',

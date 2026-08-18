@@ -29,7 +29,7 @@ import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient, promptAttachmentToTurnAttachment } from '@moonshot-ai/app-client/client';
 import { getKimiWebApi } from './api';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
-import { runComposerMenuEdit } from '@moonshot-ai/app-client/lib';
+import { runComposerMenuEdit, startMentionTooltip } from '@moonshot-ai/app-composer';
 import type { ColorScheme, FontScale, PromptAttachment } from '@moonshot-ai/app-client/client';
 import type { OpenMediaRequest, ToolMedia, TurnAttachment } from './types';
 import { usePageTitle } from '@moonshot-ai/app-client/composables';
@@ -49,7 +49,7 @@ import {
 import type { AppConfig, ThinkingLevel } from './api/types';
 import { commitLevel, effectiveThinkingLevel, segmentsFor } from '@moonshot-ai/app-core/lib';
 import { modelDisplayName, subagentEffortSuffix } from '@moonshot-ai/app-core/lib';
-import { stripSkillPrefix } from '@moonshot-ai/app-core/lib';
+import { stripSkillPrefix, SKILL_COMMAND_PREFIX } from '@moonshot-ai/app-core/lib';
 import { ActionToast, Icon, IconButton } from '@moonshot-ai/app-ui';
 import { isDesktop, isMacosDesktop, isWindowsDesktop } from '@moonshot-ai/app-core/lib';
 import WindowsTitleBar from './components/window/WindowsTitleBar.vue';
@@ -598,6 +598,25 @@ const {
 // panel is hidden.
 const previewOpen = computed(() => detailTarget.value !== null);
 
+// Mention-pill hover tooltip + skill-pill click routing — one document-level
+// singleton covering the composer, message bubbles, and Markdown alike (see
+// mentionTooltip.ts). Skill pills/cards open the skill's SKILL.md here.
+onMounted(() => {
+  const stop = startMentionTooltip({
+    resolveSkill: (name) => client.skills.value.find((s) => s.name === name) ?? null,
+    openPath: (target) => void openFilePreview(target),
+    openSkillLabel: () => t('mention.openSkill'),
+    copyPathLabel: () => t('mention.copyPath'),
+    probePath: (path, kind) => client.probeWorkspacePath(path, kind),
+    skillsLoaded: () => client.skillsLoaded.value,
+    // No-session onboarding probes are workspace-rooted, so scope by the
+    // workspace then — activeSessionId normalizes to '' (not null) when no
+    // session exists, and two sessionless workspaces must not share a scope.
+    probeScope: () => client.activeSessionId.value || client.activeWorkspaceId.value,
+  });
+  onUnmounted(stop);
+});
+
 // Floating preview for tool-card media (ReadMediaFile image/video): the same
 // MediaLightbox user-bubble attachments get — PhotoSwipe for images (zooming
 // out of the clicked thumbnail), the custom modal player for videos.
@@ -1070,8 +1089,10 @@ function toEditableAttachments(atts: PromptAttachment[]): TurnAttachment[] {
 // command-form submissions like `/goal <objective>`). When the daemon reports
 // no usable provider/model (GET /auth not ready), shows the sign-in prompt
 // and hands the cleared composer content back — the gate must never eat the
-// draft. Resolves true when the caller may proceed.
-async function passAuthGate(text: string, attachments: PromptAttachment[]): Promise<boolean> {
+// draft. `restoreText` overrides what goes back into the composer (a
+// synthesized command restores its original composer text, not the command
+// line). Resolves true when the caller may proceed.
+async function passAuthGate(text: string, attachments: PromptAttachment[], restoreText?: string): Promise<boolean> {
   if (client.authReady.value) return true;
   // The cached flag can predate a readiness change that never re-ran
   // checkAuth through this client — a provider added in settings, a default
@@ -1104,7 +1125,7 @@ async function passAuthGate(text: string, attachments: PromptAttachment[]): Prom
           variant: 'primary',
         },
   );
-  conversationPaneRef.value?.loadComposerForEdit(text, toEditableAttachments(attachments));
+  conversationPaneRef.value?.loadComposerForEdit(restoreText ?? text, toEditableAttachments(attachments));
   if (confirmed) {
     if (isFreeAccount) openUpgrade();
     else openLogin();
@@ -1118,8 +1139,10 @@ async function passAuthGate(text: string, attachments: PromptAttachment[]): Prom
 // continuation is command-specific, not a plain prompt pendingWorkspaceSubmit
 // can resume. Resolves true when the caller may proceed. Skill commands carry
 // the composer's pending attachments — restore them alongside the text or a
-// gated first-skill send would lose the chips.
-async function passWorkspaceGateForCommand(text: string, attachments: PromptAttachment[] = []): Promise<boolean> {
+// gated first-skill send would lose the chips. `restoreText` is the
+// gate-failure composer content when it differs from the command line (see
+// passAuthGate).
+async function passWorkspaceGateForCommand(text: string, attachments: PromptAttachment[] = [], restoreText?: string): Promise<boolean> {
   if (client.activeSessionId.value || client.activeWorkspaceId.value) return true;
   const pick = await confirm({
     title: t('workspace.requiredTitle'),
@@ -1127,22 +1150,30 @@ async function passWorkspaceGateForCommand(text: string, attachments: PromptAtta
     confirmLabel: t('conversation.pickFolder'),
     variant: 'primary',
   });
-  conversationPaneRef.value?.loadComposerForEdit(text, toEditableAttachments(attachments));
+  conversationPaneRef.value?.loadComposerForEdit(restoreText ?? text, toEditableAttachments(attachments));
   if (pick) void requestAddWorkspace();
   return false;
 }
 
 // Both gates, for command paths that submit work. `text` is the full command
-// line, handed back to the composer when gated; `attachments` are the
+// line, handed back to the composer when gated (unless `restoreText` carries
+// the original composer text of a synthesized command); `attachments` are the
 // composer's pending uploads (skill commands only — other commands pass none).
-async function passCommandGates(text: string, attachments: PromptAttachment[] = []): Promise<boolean> {
-  if (!(await passAuthGate(text, attachments))) return false;
-  return passWorkspaceGateForCommand(text, attachments);
+async function passCommandGates(text: string, attachments: PromptAttachment[] = [], restoreText?: string): Promise<boolean> {
+  if (!(await passAuthGate(text, attachments, restoreText))) return false;
+  return passWorkspaceGateForCommand(text, attachments, restoreText);
 }
 
 // Handler for slash commands emitted by Composer (via ConversationPane)
-async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[] }): Promise<void> {
-  const { cmd, attachments } = payload;
+// Monotonic count of user-initiated prompt/skill sends. A failed skill
+// activation restores its original text only if no NEWER send started while
+// the request was in flight — an empty composer alone can't tell "nothing
+// moved" apart from "the user already sent (or queued) the next message",
+// and a late restore would re-fill the old command for an easy duplicate.
+let sendGeneration = 0;
+
+async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string }): Promise<void> {
+  const { cmd, attachments, restoreText } = payload;
   // `/compact <text>` carries an optional free-text instruction steering what
   // the summary should focus on (TUI parity).
   if (cmd === '/compact' || cmd.startsWith('/compact ')) {
@@ -1243,21 +1274,76 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
       // the first prompt) so the activation isn't silently dropped on the
       // new-session screen.
       const space = cmd.indexOf(' ');
-      const name = stripSkillPrefix((space === -1 ? cmd : cmd.slice(0, space)).slice(1));
-      const args = space === -1 ? undefined : cmd.slice(space + 1).trim() || undefined;
+      // A skill name with SPACES can't ride the space-delimited cmd string
+      // ('/skill:write goal …' would activate 'write' with 'goal …' as args)
+      // — the single-skill-pill command carries it structured instead. Args
+      // follow the same rule: the original message (restoreText), or the cmd
+      // minus the exact '/skill:<name>' head — never "after the first space".
+      const name = payload.skillName ?? stripSkillPrefix((space === -1 ? cmd : cmd.slice(0, space)).slice(1));
+      const args = payload.skillName
+        ? (() => {
+            const head = cmd.startsWith(`/${SKILL_COMMAND_PREFIX}${payload.skillName} `)
+              ? `/${SKILL_COMMAND_PREFIX}${payload.skillName} `
+              : cmd.startsWith(`/${payload.skillName} `)
+                ? `/${payload.skillName} `
+                : null;
+            return (head ? cmd.slice(head.length).trim() : (restoreText ?? '').trim()) || undefined;
+          })()
+        : space === -1
+          ? undefined
+          : cmd.slice(space + 1).trim() || undefined;
       if (!name) break;
-      if (!(await passCommandGates(cmd, attachments))) return;
+      // This activation is itself a send — a SECOND skill command (or a
+      // normal submit, see handleSubmit) starting while an earlier
+      // activation is still in flight must invalidate the earlier one's
+      // failure restore.
+      const generation = ++sendGeneration;
+      // restoreText rides along for the single-skill-pill command (a
+      // synthesized `/skill:<name> <original text>` line): a failed gate
+      // restores the original message, so the re-fire synthesizes the prefix
+      // once instead of stacking it.
+      if (!(await passCommandGates(cmd, attachments, restoreText))) return;
       if (!client.activeSessionId.value && client.activeWorkspaceId.value) {
-        const draftKey = terminalBucketKey('', client.activeWorkspaceId.value);
-        const createdId = await client.startSessionAndActivateSkill(
-          client.activeWorkspaceId.value,
+        const workspaceId = client.activeWorkspaceId.value;
+        const draftKey = terminalBucketKey('', workspaceId);
+        const { sessionId: createdId, activated } = await client.startSessionAndActivateSkill(
+          workspaceId,
           name,
           args,
           attachments,
         );
         migrateDraftTerminals(draftKey, createdId);
+        // A refused first activation returns activated:false — restore the
+        // original message (guarded: only when nothing newer was sent — the
+        // send generation must not have advanced — and the composer is still
+        // empty). A created session must still be the active one; a FAILED
+        // creation (sessionId: null — '' === null is never true) only needs
+        // the user to still be on the same workspace.
+        if (
+          !activated &&
+          generation === sendGeneration &&
+          conversationPaneRef.value?.isComposerEmpty() &&
+          (createdId === null
+            ? client.activeWorkspaceId.value === workspaceId
+            : client.activeSessionId.value === createdId)
+        ) {
+          conversationPaneRef.value.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments));
+        }
       } else {
-        void client.activateSkill(name, args, attachments);
+        // A failed activation (busy refusal, daemon error) must not lose the
+        // message — the composer already cleared it. Restore the ORIGINAL
+        // text (restoreText when present), but only when nothing moved since
+        // the request: same session, the same send generation (no newer
+        // submit/queue), AND a still-empty composer — otherwise the late
+        // restore would clobber a new draft, write the old session's content
+        // into another session, or re-fill a message the user already sent.
+        const sid = client.activeSessionId.value;
+        void client.activateSkill(name, args, attachments).then((ok) => {
+          if (ok) return;
+          if (client.activeSessionId.value === sid && generation === sendGeneration && conversationPaneRef.value?.isComposerEmpty()) {
+            conversationPaneRef.value.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments));
+          }
+        });
       }
       break;
     }
@@ -1280,6 +1366,9 @@ function handleReorderQueue(payload: { from: number; to: number }): void {
 
 async function handleSubmit(payload: SubmitPayload): Promise<void> {
   if (!(await passAuthGate(payload.text, payload.attachments))) return;
+  // Count every user-initiated send: an in-flight skill activation's failure
+  // restore checks this generation before re-filling the composer.
+  sendGeneration++;
   const wsId = client.activeWorkspaceId.value;
   if (!client.activeSessionId.value && wsId) {
     const draftKey = terminalBucketKey('', wsId);
@@ -1608,6 +1697,7 @@ function openPr(url: string): void {
       :managed-membership="client.managedMembership.value"
       :starred-ids="client.starredModelIds.value"
       :skills="client.skills.value"
+      :skills-loaded="client.skillsLoaded.value"
       :questions="client.questions.value"
       :pending-question-actions="client.pendingQuestionActions"
       :pending-approval-actions="client.pendingApprovalActions"

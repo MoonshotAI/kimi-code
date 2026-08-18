@@ -75,6 +75,9 @@ export const FLAT_SESSIONS_PAGE_SIZE = 50;
 const SESSION_NOT_FOUND_CODE = 40401;
 const PROMPT_NOT_FOUND_CODE = 40402;
 const WORKSPACE_NOT_FOUND_CODE = 40410;
+// Mention-pill probe verdict (see probeWorkspacePath): the only definitive
+// "does not exist" answer — every other failure reports true.
+const FS_PATH_NOT_FOUND_CODE = 40409;
 // Shared "already resolved" conflict (40902). The daemon reuses it for both
 // approvals and questions when a second client races the resolve, so a
 // duplicate submit is reported as a conflict even though the desired end
@@ -1614,16 +1617,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     skillName: string,
     args?: string,
     attachments?: PromptAttachment[],
-  ): Promise<string | null> {
+  ): Promise<{ sessionId: string | null; activated: boolean }> {
     // Same reentry window as startSessionAndSendPrompt (see the guard there):
     // draft-session creation selects the new session before the activation,
     // so concurrent first actions must be dropped here.
-    if (startingFirstPromptWorkspaces.has(workspaceId)) return null;
+    if (startingFirstPromptWorkspaces.has(workspaceId)) return { sessionId: null, activated: false };
     startingFirstPromptWorkspaces.add(workspaceId);
     let createdId: string | null = null;
     try {
       const sid = await createDraftSession(workspaceId);
-      if (!sid) return null;
+      if (!sid) return { sessionId: null, activated: false };
       createdId = sid;
       // Unlike a plain prompt, skill activation carries no prompt-time
       // controls, so the daemon never sees the prompt-time controls the user
@@ -1658,8 +1661,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       );
       // The persist surfaces its own failure; activating at a stale profile
       // effort is worse than not activating (the finally still re-arms below).
-      // The session itself exists either way — return it regardless.
-      if (!persisted) return sid;
+      // The session itself exists either way — the id still comes back, with
+      // activated:false so the caller can restore the message.
+      if (!persisted) return { sessionId: sid, activated: false };
       if (planMode) {
         // The persist landed planMode:true — the armed intent is cashed.
         // Consume it and mirror the fact locally at once: a /status refetch
@@ -1671,12 +1675,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: true };
       }
       // The patch above already carried (and awaited) the thinking level —
-      // skip the redundant second write inside activateSkill.
-      await modelProvider.activateSkill(skillName, args, attachments, sid, { skipThinkingPersist: true });
-      return sid;
+      // skip the redundant second write inside activateSkill. Its result rides
+      // the return: a busy/daemon refusal must not look like success (the
+      // composer already cleared the message).
+      const activated = await modelProvider.activateSkill(skillName, args, attachments, sid, { skipThinkingPersist: true });
+      return { sessionId: sid, activated };
     } catch (err) {
       pushOperationFailure('startSessionAndActivateSkill', err);
-      return createdId;
+      return { sessionId: createdId, activated: false };
     } finally {
       startingFirstPromptWorkspaces.delete(workspaceId);
     }
@@ -3274,6 +3280,70 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
+  /**
+   * Cheap existence probe for a mention-pill hover check. Reads a single byte
+   * (folders go through listDirectory instead). Only the definitive
+   * fs.path_not_found verdict reports false — transient failures (network,
+   * gating, EISDIR-style errors) report true so a flaky daemon can never
+   * strike a pill through by mistake.
+   */
+  async function probeWorkspacePath(path: string, kind: 'file' | 'folder'): Promise<boolean> {
+    const sid = rawState.activeSessionId;
+    if (!sid) {
+      // Onboarding composer (a workspace is chosen but no session exists
+      // yet): the session fs endpoints are unreachable, so probe through the
+      // daemon's GLOBAL fs:content instead of blindly reporting true —
+      // otherwise a deleted file could never strike through here. The pill's
+      // workspace-relative path resolves against the active workspace's root
+      // (in fallback mode the workspace id IS the root); an already-absolute
+      // path probes as-is. fs:content answers a directory with
+      // FS_IS_DIRECTORY and the client caps oversized reads with
+      // FileTooLargeError — both mean "exists", so the mapping below (only
+      // fs.path_not_found reports false) still holds for both kinds.
+      // Trade-off: fs:content has no length cap, so the probe downloads the
+      // whole file (≤ 10 MiB) once per hover/TTL instead of a single byte —
+      // accepted because the only other global endpoint (fs:browse) swallows
+      // its errors and can never return a definitive not-found.
+      let abs = path;
+      if (!isAbsoluteLocalPath(path)) {
+        // A fresh empty workspace shown in the sidebar may not be written to
+        // rawState.activeWorkspaceId yet — fall back to the first visible
+        // workspace, the same chain createGoal uses.
+        const raw = rawState.activeWorkspaceId;
+        const wid =
+          raw && workspacesView.value.some((w) => w.id === raw)
+            ? raw
+            : (workspacesView.value[0]?.id ?? null);
+        const root = wid ? mergedWorkspaces.value.find((w) => w.id === wid)?.root : undefined;
+        if (!root) return true; // No root to resolve against — no verdict.
+        abs = `${root.replace(/[\\/]+$/, '')}/${path}`;
+      }
+      try {
+        await readHostFileContent(abs);
+        return true;
+      } catch (err) {
+        return !(isDaemonApiError(err) && err.code === FS_PATH_NOT_FOUND_CODE);
+      }
+    }
+    try {
+      // An absolute path outside the workspace is unreachable for the
+      // session fs endpoints (useFilePreview routes those through the
+      // daemon's global fs:content too) — probe it there, or the
+      // out-of-gate error would be misread as "exists" and a missing
+      // external file could never strike through.
+      if (isAbsoluteLocalPath(path)) {
+        await readHostFileContent(path);
+        return true;
+      }
+      const api = getKimiWebApi();
+      if (kind === 'folder') await api.listDirectory(sid, { path });
+      else await api.readFile(sid, { path, length: 1 });
+      return true;
+    } catch (err) {
+      return !(isDaemonApiError(err) && err.code === FS_PATH_NOT_FOUND_CODE);
+    }
+  }
+
   // Absolute-path read via the daemon's global fs:content — no workspace prefix
   // gate, so a file the turn touched outside the active cwd (e.g. a worktree)
   // opens too. Throws on daemon not-found so the preview can show the real cause.
@@ -3397,7 +3467,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       const api = getKimiWebApi();
       const result = await api.searchFiles(ref, { query, limit: 20 });
-      return result.items.map((item) => ({ path: item.path, name: item.name }));
+      return result.items.map((item) => ({ path: item.path, name: item.name, kind: item.kind }));
     } catch {
       return [];
     }
@@ -3477,6 +3547,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     undo,
     listDir,
     readHostFileContent,
+    probeWorkspacePath,
     getFileDownloadUrl,
     openWorkspaceFile,
     openInApp,

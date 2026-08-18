@@ -237,8 +237,7 @@ watch(
   -webkit-backdrop-filter: var(--p-menu-backdrop);
   backdrop-filter: var(--p-menu-backdrop);
   border: 0.5px solid var(--color-line);
-  border-radius: var(--radius-composer);
-  corner-shape: var(--corner-shape-composer);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
   z-index: var(--z-dropdown);
 }
@@ -294,20 +293,14 @@ watch(
   align-items: baseline;
   gap: var(--space-2);
   /* Box hugs 6px from the menu edge while the command text lands on the
-     composer's 16px text column; radius = composer radius − 6 stays
-     concentric with the menu frame. The 0.5px transparent border is a
-     workaround: without a border, Chromium paints the corner-shaped
-     background as a plain rect and the menu frame's corner shears the
-     row's ends off. Padding is narrowed by the border width so neither
-     the text column nor the row height moves. */
+     composer's 16px text column; --radius-menu-row keeps the row caps
+     concentric with the 12px menu frame (12px − 6px hug). */
   margin: 0 calc(-1 * var(--menu-row-hug));
   padding: var(--menu-row-padding-block) var(--menu-row-padding-inline);
-  border: var(--p-hairline) solid transparent;
   cursor: pointer;
   font-family: var(--font-ui);
   font-size: var(--ui-b2);
   border-radius: var(--radius-menu-row);
-  corner-shape: var(--corner-shape-menu);
 }
 
 .slash-item:hover {

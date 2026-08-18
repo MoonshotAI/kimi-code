@@ -181,7 +181,7 @@ describe('startSessionAndActivateSkill', () => {
 
     const result = await ws.startSessionAndActivateSkill('workspace', 'agent-browser', undefined);
 
-    expect(result).toBe('session-1');
+    expect(result).toEqual({ sessionId: 'session-1', activated: true });
     expect(rawState.thinkingBySession['session-1']).toBe(DRAFT_PICK_LEVEL);
     expect(persistSessionProfile).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'kimi-k3', thinking: DRAFT_PICK_LEVEL }),
@@ -205,7 +205,7 @@ describe('startSessionAndActivateSkill', () => {
 
     const result = await ws.startSessionAndActivateSkill('workspace', 'agent-browser', undefined);
 
-    expect(result).toBe('session-1');
+    expect(result).toEqual({ sessionId: 'session-1', activated: true });
     expect(persistSessionProfile).toHaveBeenCalledWith(
       expect.objectContaining({ planMode: true }),
       'session-1',
@@ -226,7 +226,7 @@ describe('startSessionAndActivateSkill', () => {
 
     const result = await ws.startSessionAndActivateSkill('workspace', 'agent-browser', 'go', attachments);
 
-    expect(result).toBe('session-1');
+    expect(result).toEqual({ sessionId: 'session-1', activated: true });
     expect(modelProvider.activateSkill).toHaveBeenCalledWith('agent-browser', 'go', attachments, 'session-1', {
       skipThinkingPersist: true,
     });

@@ -50,6 +50,22 @@ export const useModelsStore = defineStore('kimi.models', () => {
   // Workspace-scoped skills, used to populate the `/` menu before a session exists
   // (onboarding composer). Keyed by workspace id; loaded once per workspace.
   const skillsByWorkspace = ref<Record<string, AppSkill[]>>({});
+  // Scopes whose skill fetch has FINISHED, success or failure. Kept apart from
+  // the data maps on purpose: a failed fetch leaves no data key, so the lazy
+  // load triggers (which guard on data-key presence) RETRY on the next
+  // session/workspace switch — while skillsLoaded can still tell a stale
+  // skill pill the wait is over (degrade) instead of leaving it focusable
+  // forever.
+  const skillsFetchedBySession = ref<Record<string, true>>({});
+  const skillsFetchedByWorkspace = ref<Record<string, true>>({});
+  // Scopes with a skill fetch CURRENTLY in flight. Two overlapping loads for
+  // the same scope (e.g. back-to-back selectSession flows) would race their
+  // `finally` blocks — an older flight writing the finished marker while the
+  // newer one is still fetching (skillsLoaded goes true on an empty list).
+  // Dedupe instead: one in-flight request per scope, so its `finally` is the
+  // only writer of the marker.
+  const skillsFetchInflightSession = new Set<string>();
+  const skillsFetchInflightWorkspace = new Set<string>();
 
   // Model picked while in the "new session draft" state (onboarding composer —
   // no backend session exists yet, so POST /profile has nothing to target).
@@ -89,22 +105,47 @@ export const useModelsStore = defineStore('kimi.models', () => {
   }
 
   async function loadSkillsForSession(sessionId: string): Promise<void> {
+    if (skillsFetchInflightSession.has(sessionId)) return;
+    skillsFetchInflightSession.add(sessionId);
+    // A (re)fetch begins: back to "loading". Without the reset, a retry after
+    // a failure would keep the finished marker true for its whole flight, and
+    // a stale skill pill focused in that window would degrade on the strength
+    // of the PREVIOUS failure (and nothing re-runs its decoration on success).
+    const fetching = { ...skillsFetchedBySession.value };
+    delete fetching[sessionId];
+    skillsFetchedBySession.value = fetching;
     try {
       const list = await getKimiWebApi().listSkills(sessionId);
       setSkillsForSession(sessionId, list);
     } catch {
       // Skills are side data; an older daemon without /skills just yields no
-      // slash-skills, the built-in commands still work.
+      // slash-skills, the built-in commands still work. The data key stays
+      // absent so the next session switch RETRIES the fetch (the failure may
+      // be a daemon still starting, a dropped connection, …).
+    } finally {
+      skillsFetchInflightSession.delete(sessionId);
+      skillsFetchedBySession.value = { ...skillsFetchedBySession.value, [sessionId]: true };
     }
   }
 
   async function loadSkillsForWorkspace(workspaceId: string): Promise<void> {
+    if (skillsFetchInflightWorkspace.has(workspaceId)) return;
+    skillsFetchInflightWorkspace.add(workspaceId);
+    // Back to "loading" for the flight — same retry-reset reason as
+    // loadSkillsForSession above.
+    const fetching = { ...skillsFetchedByWorkspace.value };
+    delete fetching[workspaceId];
+    skillsFetchedByWorkspace.value = fetching;
     try {
       const list = await getKimiWebApi().listSkillsForWorkspace(workspaceId);
       setSkillsForWorkspace(workspaceId, list);
     } catch {
       // Side data; an older daemon without /workspaces/{id}/skills just yields
-      // no slash-skills for the onboarding composer.
+      // no slash-skills for the onboarding composer. The data key stays absent
+      // so the next workspace switch retries, same as loadSkillsForSession.
+    } finally {
+      skillsFetchInflightWorkspace.delete(workspaceId);
+      skillsFetchedByWorkspace.value = { ...skillsFetchedByWorkspace.value, [workspaceId]: true };
     }
   }
 
@@ -115,6 +156,8 @@ export const useModelsStore = defineStore('kimi.models', () => {
     draftModel,
     skillsBySession,
     skillsByWorkspace,
+    skillsFetchedBySession,
+    skillsFetchedByWorkspace,
     setModels,
     setProviders,
     setDraftModel,
