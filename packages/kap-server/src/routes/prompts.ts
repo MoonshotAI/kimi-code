@@ -1,10 +1,3 @@
-/**
- * `/api/v1` prompt routes — v1-compatible prompt surface backed directly by
- * the Agent-scoped `prompt` scheduler. This edge applies protocol conversion,
- * request overrides, and metadata updates while preserving the paths and wire
- * shapes from `packages/server/src/routes/prompts.ts`.
- */
-
 import { join } from 'node:path';
 
 import {
@@ -14,16 +7,21 @@ import {
   IAgentProfileService,
   IAgentToolPolicyService,
   IAgentPromptService,
+  IAgentSkillService,
   IAuthSummaryService,
+  IEventBus,
   IEventService,
   IFileService,
   ISessionMediaStore,
   ISessionMetadata,
+  ISessionSkillCatalog,
+  isUserActivatableSkillType,
   promptMetadataTextFromContentParts,
   ProfileError,
   type PromptHandle,
   type PromptQueueSnapshot,
   type PromptReservation,
+  type PromptWithSkillsResult,
   reservePrompt,
   ISessionContext,
   resumeSessionById,
@@ -45,6 +43,7 @@ import {
   promptSteerResultSchema,
   promptSubmissionSchema,
   promptSubmitResultSchema,
+  type PromptSkillActivation,
 } from '../protocol/rest-prompt';
 import { z } from 'zod';
 
@@ -89,10 +88,6 @@ const authProviderDetailsSchema = z.object({ provider_id: z.string() });
 const authModelDetailsSchema = z.object({ model_id: z.string(), provider_id: z.string() }).partial();
 
 async function resolveSession(core: Scope, sessionId: string): Promise<ISessionScopeHandle> {
-  // `resume` (not `get`) so a persisted-but-cold session — created by a previous
-  // process, by v1, or closed in this one — is loaded from disk instead of
-  // being reported as `session.not_found`. Mirrors the snapshot route. Returns
-  // `undefined` only when the session is unknown or its workspace is gone.
   const session = await resumeSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2('session.not_found', `session ${sessionId} does not exist`);
@@ -105,10 +100,6 @@ async function resolvePrompt(core: Scope, sessionId: string, agentId?: string) {
 }
 
 async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: string) {
-  // A prompt may target a forked side-channel agent (e.g. `/btw`) via
-  // `body.agent_id`. Default to `main` when absent; only `main` is
-  // auto-created — any other id must already exist (forked beforehand), or it
-  // is reported as `agent.not_found`.
   const agent =
     agentId === undefined || agentId === MAIN_AGENT_ID
       ? await ensureMainAgent(session)
@@ -118,6 +109,8 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   }
   return {
     prompt: agent.accessor.get(IAgentPromptService),
+    skill: agent.accessor.get(IAgentSkillService),
+    events: agent.accessor.get(IEventBus),
     auth: agent.accessor.get(IAuthSummaryService),
     profile: agent.accessor.get(IAgentProfileService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
@@ -125,22 +118,25 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   };
 }
 
-/**
- * Bind the resolved agent to the profile named by a prompt submission's
- * `profile` field. First-bind semantics live in the engine: a same-name
- * repeat is short-circuited here as a no-op, while an unknown name or a
- * post-bind switch is rejected by `AgentProfileService.bind` with a coded
- * `ProfileError` — this edge only maps it onto 40001. Checking anything
- * beyond the no-op shortcut here would re-introduce a check-then-act window
- * the engine guard has already closed.
- *
- * `model` falls back to the configured default inside the engine. `thinking`
- * rides along in the bind so an unsupported effort rejects atomically —
- * before any state mutation — instead of wedging the session's identity with
- * a successful bind followed by a failed `setThinking`.
- *
- * Returns true when a bind happened (i.e. `thinking` was consumed by it).
- */
+async function assertActivatableSkills(
+  catalog: ISessionSkillCatalog,
+  skills: readonly PromptSkillActivation[],
+): Promise<void> {
+  await catalog.ready;
+  for (const skill of skills) {
+    const definition = catalog.catalog.getSkill(skill.name);
+    if (definition === undefined) {
+      throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${skill.name}" was not found`);
+    }
+    if (!isUserActivatableSkillType(definition.metadata.type)) {
+      throw new Error2(
+        ErrorCodes.SKILL_TYPE_UNSUPPORTED,
+        `Skill "${definition.name}" cannot be activated by the user`,
+      );
+    }
+  }
+}
+
 async function applyProfileSelection(
   profile: IAgentProfileService,
   profileName: string,
@@ -163,7 +159,6 @@ async function applyProfileSelection(
   }
   return true;
 }
-
 
 export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
   const listRoute = defineRoute(
@@ -198,6 +193,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       success: { data: promptSubmitResultSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema: validationDetailsSchema },
+        [ErrorCode.SKILL_NOT_FOUND]: {},
+        [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
         [ErrorCode.AUTH_PROVISIONING_REQUIRED]: {},
         [ErrorCode.AUTH_TOKEN_MISSING]: { detailsSchema: authProviderDetailsSchema },
         [ErrorCode.AUTH_TOKEN_UNAUTHORIZED]: { detailsSchema: authProviderDetailsSchema },
@@ -216,11 +213,20 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       let reservation: PromptReservation | undefined;
       let enqueued = false;
       try {
-        // Fail fast on stale file references before anything is resolved or
-        // mutated: a bad `file_id` must not create the agent, register `main`
-        // in session metadata, or touch the session's controls.
         await assertPromptFileRefs(req.body.content, core.accessor.get(IFileService));
         const session = await resolveSession(core, session_id);
+        if (req.body.skills !== undefined) {
+          if (req.body.prompt_id !== undefined) {
+            throw new Error2(
+              ErrorCodes.REQUEST_INVALID,
+              'prompt_id cannot be combined with a bundled skill submission',
+            );
+          }
+          await assertActivatableSkills(
+            session.accessor.get(ISessionSkillCatalog),
+            req.body.skills,
+          );
+        }
         await assertPromptSessionMediaRefs(
           req.body.content,
           session.accessor.get(ISessionMediaStore),
@@ -229,13 +235,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         reservation = reservePrompt(resolved.prompt, req.body.prompt_id);
         await resolved.auth.ensureReady();
 
-        // Media resolution runs BEFORE any control mutation, so a failed
-        // submission leaves the session's controls untouched. Prompt videos
-        // and uploaded images are carried into context as bare internal
-        // `kimi-file://` references; the engine's prompt intake materializes
-        // the session copy and resolves them to a provider form
-        // (upload / inline / path tag) at request time, so the edge no longer
-        // uploads.
         const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
         preparedMedia = await resolvePromptMediaFiles(
           req.body.content,
@@ -257,7 +256,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         );
         const resolvedContent = preparedMedia.content;
 
-        // Media prepared successfully — only now do the overrides bind.
         let thinkingConsumed = false;
         if (req.body.profile !== undefined) {
           thinkingConsumed =
@@ -273,8 +271,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           resolved.profile.setThinking(req.body.thinking);
         if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
         if (req.body.disabled_tools !== undefined) {
-          // A session denylist before bind throws `profile.not_bound` — map it
-          // onto 40001 like the profile-selection errors above.
           try {
             await resolved.toolPolicy.setSessionDisabledTools(req.body.disabled_tools);
           } catch (error) {
@@ -285,6 +281,41 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           }
         }
         const parts = contentToCoreParts(resolvedContent);
+        if (req.body.skills !== undefined) {
+          if (req.body.agent_id !== undefined && req.body.agent_id !== MAIN_AGENT_ID) {
+            await applyPromptMetadataUpdate({
+              metadata: session.accessor.get(ISessionMetadata),
+              eventService: core.accessor.get(IEventService),
+              sessionId: session_id,
+            }, promptMetadataTextFromContentParts(parts));
+          }
+          const settlement = watchPromptSettlements(resolved.events);
+          let result: PromptWithSkillsResult;
+          try {
+            result = await resolved.skill.promptWithSkills({
+              input: parts,
+              skills: req.body.skills,
+            });
+          } catch (error) {
+            settlement.dispose();
+            throw error;
+          }
+          enqueued = true;
+          settlement.settle(result.prompt_id, () => preparedMedia?.discard());
+          reply.send(
+            okEnvelope(
+              {
+                prompt_id: result.prompt_id,
+                user_message_id: result.prompt_id,
+                status: result.state,
+                content: projectPromptContentParts(parts),
+                created_at: result.created_at,
+              },
+              req.id,
+            ),
+          );
+          return;
+        }
         await applyPromptMetadataUpdate({
           metadata: session.accessor.get(ISessionMetadata),
           eventService: core.accessor.get(IEventService),
@@ -304,10 +335,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         );
         reply.send(okEnvelope(projectPromptHandle(handle), req.id));
       } catch (error) {
-        // A submission that failed before the engine took the prompt projected
-        // no Session media to the client — roll back the uploads the
-        // preparation created. A successful enqueue releases them when the
-        // prompt launches (intake complete) or settles without launching.
         if (!enqueued) await preparedMedia?.discard();
         sendMappedError(reply, req, error);
       } finally {
@@ -402,24 +429,71 @@ function projectPromptHandle(handle: PromptHandle) {
   return projectPromptSnapshot(handle);
 }
 
-function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][number]) {
+export function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][number]) {
   const status = prompt.state === 'running' || prompt.state === 'steered'
     ? 'running'
     : prompt.state === 'blocked' ? 'blocked' : 'queued';
-  // The prompt queue holds user prompts only; the shared projection maps each
-  // self-contained daemon-ref media part to its `{kind:'session_media'}` wire
-  // shape, mirroring the message projection: the internal URL never reaches
-  // REST callers.
+  const origin = prompt.message.origin;
+  const bundled = origin?.kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0;
+  const content = bundled === 0 ? prompt.message.content : prompt.message.content.slice(bundled);
   return {
     prompt_id: prompt.id,
     user_message_id: prompt.userMessageId,
     status,
-    content: projectPromptContentParts(prompt.message.content),
+    content: projectPromptContentParts(content),
     created_at: prompt.createdAt,
   };
 }
 
-
+export function watchPromptSettlements(events: IEventBus): {
+  settle(promptId: string, discard: () => void | Promise<void>): void;
+  dispose(): void;
+} {
+  const settledIds = new Set<string>();
+  const parentOf = new Map<string, string>();
+  let armed: { id: string; discard: () => void | Promise<void> } | undefined;
+  const subscription = events.subscribe((event) => {
+    if (event.type === 'prompt.steered') {
+      const steered = event as {
+        readonly promptIds?: unknown;
+        readonly activePromptId?: unknown;
+      };
+      if (Array.isArray(steered.promptIds) && typeof steered.activePromptId === 'string') {
+        for (const childId of steered.promptIds) {
+          if (typeof childId === 'string') parentOf.set(childId, steered.activePromptId);
+        }
+        if (armed !== undefined && steered.promptIds.includes(armed.id)) {
+          armed = { id: steered.activePromptId, discard: armed.discard };
+        }
+      }
+      return;
+    }
+    if (event.type !== 'prompt.completed' && event.type !== 'prompt.aborted') return;
+    const id = (event as { readonly promptId?: unknown }).promptId;
+    if (typeof id !== 'string') return;
+    settledIds.add(id);
+    if (armed !== undefined && armed.id === id) {
+      const { discard } = armed;
+      armed = undefined;
+      subscription.dispose();
+      void discard();
+    }
+  });
+  return {
+    settle(promptId: string, discard: () => void | Promise<void>): void {
+      if (settledIds.has(promptId) || settledIds.has(parentOf.get(promptId) ?? '')) {
+        subscription.dispose();
+        void discard();
+        return;
+      }
+      armed = { id: promptId, discard };
+    },
+    dispose(): void {
+      armed = undefined;
+      subscription.dispose();
+    },
+  };
+}
 
 function sendMappedError(
   reply: { send(payload: unknown): unknown },
@@ -458,6 +532,12 @@ function sendMappedError(
       case 'request.invalid':
       case 'validation.failed':
         reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
+        return;
+      case 'skill.not_found':
+        reply.send(errEnvelope(ErrorCode.SKILL_NOT_FOUND, err.message, requestId, err.stack));
+        return;
+      case 'skill.type_unsupported':
+        reply.send(errEnvelope(ErrorCode.SKILL_NOT_ACTIVATABLE, err.message, requestId, err.stack));
         return;
       case 'auth.provisioning_required':
         reply.send({

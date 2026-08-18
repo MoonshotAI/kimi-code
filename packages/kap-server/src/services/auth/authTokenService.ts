@@ -1,16 +1,3 @@
-/**
- * `IAuthTokenService` DI surface (ROADMAP M2.1).
- *
- * Exposes the persistent bearer token plus a single validity check that accepts
- * EITHER the persistent token (constant-time, via `TokenStore`) OR a verified
- * user password (bcrypt, async). The seam exists so tests can inject a
- * fixed-token impl via `startServer({ serviceOverrides })`, and so `start.ts`
- * (M5.1) can wire the real async-built instance at boot.
- *
- * `isValid` is async because password verification (`bcrypt.compare`) is
- * async — the token path is synchronous, but the interface must await both.
- */
-
 import { createDecorator } from '@moonshot-ai/agent-core-v2';
 
 import { verifyPassword } from './password';
@@ -30,7 +17,6 @@ export interface IAuthTokenService {
   isValid(candidate: string): Promise<boolean>;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-redeclare
 export const IAuthTokenService =
   createDecorator<IAuthTokenService>('authTokenService');
 

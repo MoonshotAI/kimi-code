@@ -958,7 +958,7 @@ export class ToolManager {
     // Self-heal an empty builtin table. The constructor and every config-
     // mutation checkpoint gate initializeBuiltinTools() on hasProvider, but a
     // provider that becomes resolvable asynchronously (OAuth / managed
-    // free-tokens model registration) trips none of them — without this the
+    // model registration) trips none of them — without this the
     // agent runs with zero tools while the system prompt still advertises them.
     // loopTools is re-read before every step, so the table is populated on the
     // first step after the provider resolves. Steady state short-circuits on

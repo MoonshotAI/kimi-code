@@ -149,6 +149,10 @@ export function buildWebCommand(cmd: Command): Command {
       'Mount /api/v1/debug/* routes for test introspection. OFF by default; production callers leave this unset.',
       false,
     )
+    .option(
+      '--web-title <title>',
+      'Set a custom browser tab title for this web UI instance (default: "<workspace dir> | Kimi Code").',
+    )
     .option('--no-open', 'Do not open the web UI in the default browser.', true)
     .action(async (opts: WebCliOptions) => {
       try {
@@ -295,6 +299,7 @@ async function runServerInProcess(
     allowRemoteTerminals: options.allowRemoteTerminals,
     allowedHosts: options.allowedHosts,
     disableAuth: options.dangerousBypassAuth,
+    webTitle: options.webTitle,
     // Attach the engine's cloud telemetry appender (still gated by the config
     // `telemetry` toggle). Complements the v1 client registered above, which
     // only covers host-level events.

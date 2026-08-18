@@ -127,10 +127,6 @@ function blobStore(): IBlobStore {
 
 const telemetry = { track2: () => {} } as unknown as ITelemetryService;
 
-/**
- * Store stub over a plain dir: the canonical copy exists only when a test
- * plants it (mirrors the real store's by-id listing without materialization).
- */
 function stubMediaStore(sessionDir = '/nonexistent-session'): ISessionMediaStore {
   return {
     _serviceBrand: undefined,
@@ -237,7 +233,6 @@ describe('AgentMediaResolverService video strategy', () => {
     expect(firstPart(second)).toEqual(msPart('prov-1'));
     expect(upload).toHaveBeenCalledTimes(1);
 
-    // A message without a kimi-file reference passes through untouched.
     const plain = [videoMessage('ms://already-uploaded')];
     expect(await res.resolve(plain, req)).toBe(plain);
   });
@@ -251,8 +246,6 @@ describe('AgentMediaResolverService video strategy', () => {
     const capable = await res.resolve([message], requester({ uploadVideo: upload }));
     expect(firstPart(capable)).toEqual(msPart('prov-1'));
 
-    // Same provider, video_in:false: the memoized ms:// part must not leak to
-    // a model that cannot accept video.
     const incapable = await res.resolve(
       [message],
       requester({ videoIn: false, uploadVideo: upload }),
@@ -269,11 +262,6 @@ describe('AgentMediaResolverService video strategy', () => {
     const blobs = blobStore();
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
 
-    // Two independent instances over one shared blob store: the container
-    // hands out a singleton per token and would share the state service (and
-    // with it the in-memory upload memo), so the persisted-cache path would
-    // never run — direct construction is di-testing.md's two-instance
-    // exception.
     const upload1 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
     await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore()).resolve(
       [message],
@@ -460,8 +448,6 @@ describe('AgentMediaResolverService image strategy', () => {
 
   it('rethrows a cancelled image read instead of degrading to a tag', async () => {
     const controller = new AbortController();
-    // The stream failure is deliberately NOT abort-shaped: the aborted signal
-    // alone must decide cancellation, mirroring the video upload rule.
     const files: IFileService = {
       _serviceBrand: undefined,
       save: async () => {
@@ -579,9 +565,6 @@ describe('AgentMediaResolverService image strategy', () => {
     const expected = { type: 'image_url', imageUrl: { url: PNG_DATA_URL } };
 
     const first = await res.resolve([message], requester({}));
-    // The memo survives the transient upload's release and is
-    // requester-independent: a later step on another provider / protocol
-    // reuses the same inline part.
     files.delete(FILE_ID);
     const second = await res.resolve(
       [message],
@@ -614,8 +597,6 @@ describe('AgentMediaResolverService image strategy', () => {
   });
 
   it('evicts the least-recently-hit memo entry once the total byte budget is exceeded', async () => {
-    // Nine 8MB images overfill the 64MB total budget; each one is under the
-    // per-image cap, so every resolve memoizes.
     const bigPng = (): Buffer =>
       Buffer.concat([PNG_BYTES, Buffer.alloc(8 * 1024 * 1024 - PNG_BYTES.length)]);
     const ids = Array.from({ length: 9 }, (_, i) => `file_${i}`);
@@ -630,8 +611,6 @@ describe('AgentMediaResolverService image strategy', () => {
     );
     const req = requester({});
 
-    // Eight entries fill the budget exactly; a hit on file_0 makes it the
-    // most-recently-hit, so the ninth insert evicts file_1 instead.
     for (const id of ids.slice(0, 8)) {
       await res.resolve([imageMessage(buildKimiFileUrl(id))], req);
     }
@@ -639,7 +618,6 @@ describe('AgentMediaResolverService image strategy', () => {
     await res.resolve([imageMessage(buildKimiFileUrl('file_8'))], req);
     expect(counting.gets).toBe(9);
 
-    // file_0 survives as a memo hit; the evicted file_1 is re-read.
     await res.resolve([imageMessage(buildKimiFileUrl('file_0'))], req);
     expect(counting.gets).toBe(9);
     await res.resolve([imageMessage(buildKimiFileUrl('file_1'))], req);

@@ -1,11 +1,3 @@
-/**
- * `telemetry` domain — `CloudTransport`, the HTTP transport for cloud
- * telemetry. Posts enriched events to the telemetry endpoint with Bearer
- * auth, retry, and a byte-store fallback for failed events, persisted through
- * the `storage` byte layer (`IFileSystemStorageService`) under the `telemetry` scope.
- * App-scoped; independent of `@moonshot-ai/kimi-telemetry`.
- */
-
 import { randomBytes } from 'node:crypto';
 
 import { isAbortError } from '#/_base/utils/abort';

@@ -26,6 +26,7 @@ import { AppServicesView } from './components/AppServicesView';
 import { BashParserView } from './components/BashParserView';
 import { ChatView, type ChatJump } from './components/ChatView';
 import { DiInspectionView } from './components/DiInspectionView';
+import { FsSuggestView } from './components/FsSuggestView';
 import { ModelCatalogView } from './components/ModelCatalogView';
 import { NavRail, type AppView } from './components/NavRail';
 import { RightPanel } from './components/RightPanel';
@@ -117,6 +118,8 @@ export function App() {
           <AppServicesView />
         ) : view === 'workspace' ? (
           <WorkspaceServicesView />
+        ) : view === 'suggest' ? (
+          <FsSuggestView />
         ) : view === 'bash' ? (
           <BashParserView />
         ) : view === 'di' ? (

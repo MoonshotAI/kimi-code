@@ -1,30 +1,8 @@
-/**
- * `di` domain — collection tokens, live views, and the tree-global record
- * store (L3, D12).
- *
- * A contribution point is a `collection<T>(name)` token; contributing is
- * `this.provide(token, value)` — no registry API. Records physically live
- * under the provider's scope and are visible to the provider's ancestors AND
- * descendants (never to sibling subtrees): capabilities flow upward, and a
- * fold at any tier also sees what its own subtree contributed. Every record
- * carries the provider unit's name and scope path so folds can group/filter
- * by source. Record lifetime hangs on the provider's book — provider death
- * withdraws the record (and scope death tears the provider's book).
- *
- * A fold service declares the token as a constructor parameter and receives
- * a `CollectionView<T>`: `items`/`records` are computed live, `onDidChange`
- * delivers incremental `{added, removed}` payloads. Collection edges are
- * recorded in the persistent graph for introspection but never join a
- * cascade contagion set — a fold refolds incrementally instead of being
- * rebuilt.
- */
-
 import { Emitter, type Event } from '../event';
 import type { Ledger } from '../lifecycle/ledger';
 import { storeCustomDependency, type ServiceIdentifier } from './instantiation';
 
 export interface CollectionToken<T> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (target: any, key: string | symbol | undefined, index: number): void;
 
   readonly name: string;
@@ -50,7 +28,6 @@ export function collection<T>(
     return existing as CollectionToken<T>;
   }
   const token = function collectionDecorator(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     target: any,
     _key: string | symbol | undefined,
     index: number,
@@ -58,7 +35,6 @@ export function collection<T>(
     if (arguments.length !== 3) {
       throw new Error('@CollectionToken-decorator can only be used to decorate a parameter');
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     storeCustomDependency(token as unknown as ServiceIdentifier<any>, 'collection', target, index);
   } as unknown as CollectionToken<T>;
   Object.defineProperty(token, 'toString', {

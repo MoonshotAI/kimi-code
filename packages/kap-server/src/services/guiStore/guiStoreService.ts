@@ -1,7 +1,3 @@
-/**
- * `GuiStoreService` — persistent TOML-backed implementation of `IGuiStoreService`.
- */
-
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';

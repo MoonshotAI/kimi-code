@@ -1,19 +1,3 @@
-/**
- * BashTool tests for the v2 shellTools domain.
- *
- * Ported from v1 (`packages/agent-core/test/tools/bash.test.ts`) and adapted
- * to the v2 constructor `(runner, kaos, background, options)`. Self-contained:
- * builds minimal fake `ISessionProcessRunner` / `IProcess`, `IKaos`, and
- * `IAgentTaskService` inline so the tool can be exercised without the
- * composition root. The fake `IAgentTaskService` drives the real
- * `ProcessTask` so stream observation, timeout and user-interrupt
- * semantics match production.
- *
- * Deviations from v1:
- *   - v1's `execWithEnv(args, env)` is now `runner.exec(args, { env })`, so
- *     exec-call assertions read `options.env` from the second argument.
- */
-
 import { PassThrough, Readable, type Writable } from 'node:stream';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -65,7 +49,6 @@ const windowsBashEnv: IHostEnvironment = {
   homeDir: 'C:\\Users\\test',
   ready: Promise.resolve(),
 };
-
 
 function processWithOutput(
   options: {
@@ -294,7 +277,6 @@ function processWithOpenStreamsThatExitOnKill(): IHostProcess {
   };
 }
 
-
 function createTestEnv(env: IHostEnvironment = posixEnv): IHostEnvironment {
   return env;
 }
@@ -309,13 +291,11 @@ function createTestCtx(cwd = '/workspace'): ISessionContext {
   });
 }
 
-
 function createTestRunner(proc: IHostProcess | ReturnType<typeof vi.fn>) {
   const exec = typeof proc === 'function' ? proc : vi.fn().mockResolvedValue(proc);
   const runner = { _serviceBrand: undefined, spawn: exec } as IHostProcessService;
   return { runner, exec };
 }
-
 
 const TERMINAL_STATUSES: ReadonlySet<AgentTaskStatus> = new Set([
   'completed',
@@ -683,7 +663,6 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
   return { service, tasks, persisted };
 }
 
-
 function context(
   args: BashInput,
   signal = new AbortController().signal,
@@ -755,7 +734,6 @@ function bashTool(
   };
   return new BashTool(runtime, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config);
 }
-
 
 describe('BashTool', () => {
   it('exposes current metadata and schema', () => {
@@ -1263,8 +1241,6 @@ describe('BashTool', () => {
     expect(description).toContain('**Guidelines for safety and security:**');
     expect(description).toContain('**Guidelines for efficiency:**');
     expect(description).toContain('run_in_background=true');
-    expect(description).toContain('automatically notified');
-    expect(description).toContain('returning control to the user');
   });
 
   it('disables background execution when TaskList is inactive even if TaskOutput/TaskStop are active', async () => {
@@ -1277,8 +1253,6 @@ describe('BashTool', () => {
       stubToolPolicy((name) => name !== 'TaskList'),
     );
 
-    expect(tool.description).toContain('Background execution is disabled for this agent');
-
     const result = await executeTool(
       tool,
       context({ command: 'sleep 10', run_in_background: true, description: 'watch' }),
@@ -1287,43 +1261,6 @@ describe('BashTool', () => {
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('Background execution is not available');
     expect(exec).not.toHaveBeenCalled();
-  });
-
-  it('describes timeout behavior according to the auto-background config', () => {
-    const { runner } = createTestRunner(processWithOutput());
-    const autoBg = bashTool(runner);
-    expect(autoBg.description).toContain('moved to the background instead of being killed');
-
-    const killOnTimeout = bashTool(
-      runner,
-      createTestEnv(),
-      createTestCtx(),
-      createFakeTaskService().service,
-      stubToolPolicy(),
-      stubConfig({ task: { bashAutoBackgroundOnTimeout: false } }),
-    );
-    expect(killOnTimeout.description).not.toContain('moved to the background instead of being killed');
-    expect(killOnTimeout.description).toContain('hits its timeout is killed');
-
-    const legacyKillOnTimeout = bashTool(
-      runner,
-      createTestEnv(),
-      createTestCtx(),
-      createFakeTaskService().service,
-      stubToolPolicy(),
-      stubConfig({ background: { bashAutoBackgroundOnTimeout: false } }),
-    );
-    expect(legacyKillOnTimeout.description).toContain('hits its timeout is killed');
-
-    const noBackground = bashTool(
-      runner,
-      createTestEnv(),
-      createTestCtx(),
-      createFakeTaskService().service,
-      stubToolPolicy(() => false),
-    );
-    expect(noBackground.description).not.toContain('moved to the background instead of being killed');
-    expect(noBackground.description).toContain('hits its timeout is killed');
   });
 
   it('resolves the detach timeout from the bashTaskTimeoutS config', async () => {
@@ -1847,12 +1784,5 @@ describe('BashTool prompt / runtime consistency', () => {
       expect(promptToolNames).toContain(name);
     }
     expect(errorToolNames.length).toBeGreaterThan(0);
-  });
-
-  it('does not claim failure exit codes appear in a system tag', () => {
-    const { runner } = createTestRunner(processWithOutput());
-    const tool = bashTool(runner);
-
-    expect(tool.description).not.toMatch(/exit code will be provided in a system tag/);
   });
 });

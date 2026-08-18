@@ -596,8 +596,6 @@ describe('Agent context', () => {
 
     const surviving = context.get();
     expect(surviving.map((m) => m.role)).toEqual(['user', 'assistant']);
-    // The first exchange's anchor survives the cut, so the prefix reads its
-    // REAL measured size instead of a re-estimate.
     expect(tokenCounting.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
   });
 
@@ -769,7 +767,6 @@ describe('Agent context', () => {
       expect(zeroed.head).toHaveLength(0);
       expect(zeroed.tail).toHaveLength(messages.length);
 
-      // Sanity: the default estimator elides this much user text.
       expect(selectCompactionUserMessages(messages).elided).toBe(true);
     });
 
@@ -811,8 +808,6 @@ describe('Agent context', () => {
       });
 
       expect(withMeasured.tokensAfter).toBeGreaterThan(500);
-      // Same kept messages; only the summary component differs — the
-      // measured 500 replaces the summary-text estimate.
       expect(withMeasured.tokensAfter - 500).toBe(
         withEstimate.tokensAfter - estimateTokens('summary'),
       );
@@ -842,6 +837,32 @@ describe('Agent context', () => {
 
       expect(withOverhead.tokensAfter).toBe(withoutOverhead.tokensAfter + 3_000);
       expect(withOverhead.messages).toEqual(withoutOverhead.messages);
+    });
+  });
+
+  describe('legacy compaction layout', () => {
+    it('keeps the verbatim summary followed by the uncompacted tail', () => {
+      const history = [userMessage('old'), userMessage('tail')];
+      const legacySummary: ContextMessage = {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'legacy summary' }],
+        toolCalls: [],
+        origin: { kind: 'compaction_summary' },
+      };
+      const input = {
+        summary: 'legacy summary',
+        legacySummaryMessage: legacySummary,
+        compactedCount: 1,
+        tokensBefore: 100,
+        tokensAfter: 20,
+        legacyTail: true,
+      };
+
+      const shape = buildContextCompactionShape(history, input);
+
+      expect(shape.messages[0]).toBe(legacySummary);
+      expect(shape.messages[1]).toBe(history[1]);
+      expect(shape.messages.map(textOf)).toEqual(['legacy summary', 'tail']);
     });
   });
 });

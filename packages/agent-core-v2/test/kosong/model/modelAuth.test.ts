@@ -1,17 +1,3 @@
-/**
- * `kosong/model` modelAuth tests — credential precedence, env-bag resolution
- * through the provider-definition registry, and the effective-config fold:
- *
- *  - precedence: model apiKey > model oauth > provider apiKey/env > provider
- *    oauth; apiKey+oauth on the same
- *    level is a config error;
- *  - the env-bag fallback reads the vendor's declared `apiKeyEnv` chain via
- *    `resolveProviderEndpoint` (kimi / anthropic / openai / google-genai
- *    chain) — no per-protocol table;
- *  - `effectiveModelConfig` applies `overrides` and the Anthropic effort
- *    profile — inferred only for vendors whose thinking is not trait-driven.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { ConfigErrors } from '#/app/config/errors';

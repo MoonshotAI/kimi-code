@@ -15,7 +15,7 @@
  * `{type, payload}` envelope.
  */
 import type { Event } from '@moonshot-ai/agent-core';
-import type { DomainEvent } from '@moonshot-ai/agent-core-v2';
+import type { Event2 } from '@moonshot-ai/agent-core-v2';
 
 /**
  * DomainEvent types the v1 SDK event stream never carries:
@@ -61,21 +61,19 @@ const RENAMED_DOMAIN_EVENT_TYPES: Readonly<Record<string, string>> = {
  * counterpart.
  */
 export function translateDomainEvent(
-  event: DomainEvent,
+  event: Event2<any>,
   sessionId: string,
   agentId: string,
 ): Event | undefined {
   if (DROPPED_DOMAIN_EVENT_TYPES.has(event.type)) return undefined;
   const type = RENAMED_DOMAIN_EVENT_TYPES[event.type] ?? event.type;
   if (event.type === 'turn.started') {
-    // `promptAttachments` is an internal transcript-projection input, not part
-    // of the public event contract — kap-server strips it from the WS wire
-    // event, so the in-process SDK drops it too, keeping both consumers on the
-    // same `turn.started` field set.
-    const { promptAttachments: _internal, ...publicFields } = event;
-    return { ...publicFields, type, sessionId, agentId } as unknown as Event;
+    const { promptAttachments: _internal, ...publicFields } = event as Event2<any> & {
+      promptAttachments?: unknown;
+    };
+    return Object.assign({}, publicFields, { type, sessionId, agentId }) as unknown as Event;
   }
-  return { ...event, type, sessionId, agentId } as unknown as Event;
+  return Object.assign({}, event, { type, sessionId, agentId }) as unknown as Event;
 }
 
 /**
@@ -86,12 +84,10 @@ export function translateDomainEvent(
  * other global-bus type is a daemon/WS-edge event the in-process v1 client
  * never saw.
  */
-export function translateGlobalEvent(event: {
-  readonly type: string;
-  readonly payload: unknown;
-}): Event | undefined {
-  if (event.type !== 'session.meta.updated' || typeof event.payload !== 'object') {
+export function translateGlobalEvent(event: Event2<any>): Event | undefined {
+  const payload = (event as { readonly payload?: unknown }).payload;
+  if (event.type !== 'session.meta.updated' || typeof payload !== 'object') {
     return undefined;
   }
-  return { type: event.type, ...event.payload } as unknown as Event;
+  return { type: event.type, ...payload } as unknown as Event;
 }

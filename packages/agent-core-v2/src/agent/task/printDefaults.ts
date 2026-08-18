@@ -1,23 +1,3 @@
-/**
- * `task` domain — print-mode (`kimi -p`) config-section defaults.
- *
- * A headless run should not be cut short by limits meant for interactive use, so every filled value
- * is "effectively unbounded". Fills land in the config memory layer via
- * `IConfigService.set(…, ConfigTarget.Memory)`, never on disk.
- *
- * Only keys the user left unset are filled. A key counts as set when it has a
- * user-config value (for `bashTaskTimeoutS`, in either `[task]` or the legacy
- * `[background]` section), a memory-layer value, or an env-overlay value (an
- * effective value with no user/memory source and different from the section
- * default). Because the memory layer shadows a whole section on read, each
- * patch spreads the section's current effective value so sibling user keys
- * stay visible. Explicit user config always wins over these defaults.
- *
- * The wait ceiling defaults to the host timer's maximum delay
- * (`MAX_TIMER_DELAY_MS`, ~24.8 days) expressed in seconds: effectively
- * unbounded, while `ceilingS * 1000` can never overflow a timer.
- */
-
 import { MAX_TIMER_DELAY_MS } from '#/_base/utils/timer';
 import { ConfigTarget, type ConfigInspectValue, type IConfigService } from '#/app/config/config';
 import { LOOP_CONTROL_SECTION } from '#/agent/loop/configSection';

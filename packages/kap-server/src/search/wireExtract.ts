@@ -1,30 +1,3 @@
-/**
- * `search` module — wire.jsonl record extraction (pure functions).
- *
- * One wire.jsonl line yields three independent readings:
- *
- *  1. Indexable messages (0..n): `context.append_message` with
- *     `message.role === 'user'` → the user's real input (origins that are NOT
- *     user-typed are filtered out); `context.append_loop_event` with
- *     `event.type === 'content.part'` and a text part → one assistant text
- *     block (thinking, tool calls and tool results are NOT indexed).
- *
- *  2. A turn effect — how the record moves the 0-based turn counter, aligned
- *     with the transcript's cold-path grouping (`packages/transcript/src/
- *     history/groupTurns.ts`). Turn counting is deliberately INDEPENDENT of
- *     indexing: a text-less user message (pure image) is not indexed but
- *     still opens a turn, and a filtered origin may still open one
- *     (`system_trigger` names in TURN_OPENING_SYSTEM_TRIGGERS).
- *
- *  3. A step effect — `step.begin` contributes a (uuid → ordinal) mapping
- *     entry so assistant text (which carries the event's `stepUuid`) can be
- *     attributed to its transcript step id (`t<turn>.<step>`). Only
- *     `step.begin` moves the tracker; `step.end` is a no-op because the
- *     mapping lives until the next turn boundary.
- *
- * Kept free of any service / filesystem dependency so it is unit-testable.
- */
-
 import { matchSingleMediaPathTag } from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
 
 export interface ExtractedWireMessage {
@@ -89,15 +62,6 @@ const NONE: TurnEffect = { kind: 'none' };
 const ENSURE: TurnEffect = { kind: 'ensure' };
 const STEP_NONE: StepEffect = { kind: 'none' };
 
-/**
- * Message origins appended by the system rather than typed by the user. These
- * ride the wire as user-role `append_message` records but are not user input.
- * Aligned with the transcript's grouping (hidden origins injection /
- * system_trigger / retry, plus the marker origin compaction_summary).
- * `skill_activation` / `plugin_command` are handled separately: a `user-slash`
- * trigger is a command the user actually typed and stays searchable; other
- * triggers are system noise and are filtered.
- */
 const NON_USER_ORIGIN_KINDS: ReadonlySet<string> = new Set([
   'injection',
   'system_trigger',
@@ -105,18 +69,11 @@ const NON_USER_ORIGIN_KINDS: ReadonlySet<string> = new Set([
   'compaction_summary',
 ]);
 
-/** groupTurns: hidden user origins that are folded away without opening a turn. */
 const HIDDEN_USER_ORIGINS: ReadonlySet<string> = new Set(['injection', 'system_trigger', 'retry']);
-/**
- * groupTurns: hidden origins that nonetheless OPEN a real engine turn
- * (`MessageStepRequest` with `admission: 'newTurn'` — goal continuation,
- * subagent run prompts). They advance the ordinal but are not undo anchors.
- */
 const TURN_OPENING_SYSTEM_TRIGGERS: ReadonlySet<string> = new Set([
   'goal_continuation',
   'subagent',
 ]);
-/** groupTurns: origins rendered as timeline markers rather than turns. */
 const MARKER_USER_ORIGINS: ReadonlySet<string> = new Set([
   'skill_activation',
   'plugin_command',
@@ -144,7 +101,6 @@ function isUserTypedOrigin(origin: OriginLike): boolean {
   return true;
 }
 
-/** Same normalization as `sessionExport/wire-scan.ts`: seconds vs epoch ms. */
 function normalizeTimestampMs(value: unknown): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
   return value > 1e12 ? Math.floor(value) : Math.floor(value * 1000);
@@ -155,15 +111,6 @@ interface ContentPartLike {
   readonly text?: unknown;
 }
 
-/**
- * The user-visible text of a persisted message: text parts concatenated,
- * skipping standalone `<media path>` tag parts. A standalone tag is machine
- * markup (the upload residue of legacy sessions, or the model-facing degrade
- * form) and carries the materialization path, so it must never reach the
- * index — matching the other read models, which never treat it as searchable
- * prose either. A tag embedded in larger user text is indexed with that text:
- * stripping there would eat user content.
- */
 function textOfContent(content: unknown): string {
   if (!Array.isArray(content)) return '';
   let text = '';
@@ -201,9 +148,9 @@ function parseWireLine(line: string): ParsedWireRecord | undefined {
 function turnEffectOfAppendMessage(message: unknown): TurnEffect {
   if (message === null || typeof message !== 'object') return NONE;
   const m = message as { role?: unknown; origin?: unknown };
-  if (m.role === 'system') return NONE; // groupTurns skips system messages
+  if (m.role === 'system') return NONE;
   if (m.role === 'assistant') return ENSURE;
-  if (m.role !== 'user') return NONE; // tool-role messages attach, never open
+  if (m.role !== 'user') return NONE;
 
   const origin =
     m.origin !== null && typeof m.origin === 'object' ? (m.origin as OriginLike) : undefined;
@@ -219,14 +166,9 @@ function turnEffectOfAppendMessage(message: unknown): TurnEffect {
     return NONE;
   }
   if (typeof kind === 'string' && MARKER_USER_ORIGINS.has(kind)) {
-    // A user-slash skill/plugin command is a real user prompt (the engine's
-    // `isRealUserPrompt`): marker AND a turn opener, and an undo anchor.
     if (origin !== undefined && isUserSlashPrompt(origin)) return { kind: 'open', anchor: true };
     return NONE;
   }
-  // Every other user message opens a turn (kind 'user' / undefined / cron /
-  // task / hook_result / shell_command / …). Only origin-less and 'user'
-  // ones are undo anchors (`isUndoAnchor`).
   const anchor = kind === undefined || kind === 'user';
   return { kind: 'open', anchor };
 }
@@ -283,10 +225,6 @@ export function analyzeWireLine(line: string): WireLineAnalysis {
     }
     const stepUuid =
       typeof e.stepUuid === 'string' && e.stepUuid.length > 0 ? e.stepUuid : undefined;
-    // `ensure` only for events whose folded assistant message survives
-    // settling: non-vacuous content parts and tool calls. A `tool.result`
-    // folds into a tool message (never opens a turn), and a step with only
-    // vacuous content is dropped at `step.end`.
     let turn: TurnEffect = NONE;
     if (e.type === 'content.part') {
       const part = e.part;
@@ -299,11 +237,8 @@ export function analyzeWireLine(line: string): WireLineAnalysis {
             turn = ENSURE;
           }
         } else if (p.type === 'think' && typeof p.think === 'string') {
-          // Vacuous thinking (empty, unsigned) is dropped at `step.end`,
-          // same as empty text; signed or non-empty thinking survives.
           if (p.think.trim().length > 0 || p.encrypted !== undefined) turn = ENSURE;
         } else {
-          // Non-text content (image, …) is non-vacuous: the assistant survives.
           turn = ENSURE;
         }
       }

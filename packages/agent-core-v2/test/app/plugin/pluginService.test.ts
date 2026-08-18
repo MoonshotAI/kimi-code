@@ -1,15 +1,3 @@
-/**
- * `plugin` domain — App-scope `PluginService` boundary scenarios.
- *
- * Covers load-failure degradation and recovery, serialized catalog changes,
- * coded management errors, and managed endpoint injection. Resolves the real
- * service by interface through a scoped host; bootstrap, provider, and skill
- * discovery are stubbed, while the installed-file store remains real except
- * for controlled read/write failures used for concurrency and rollback.
- *
- * Run: pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/app/plugin/pluginService.test.ts
- */
-
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';

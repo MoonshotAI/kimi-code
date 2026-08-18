@@ -1,13 +1,3 @@
-/**
- * `subagent` domain — registers the `secondary-model` experimental flag
- * into `flag`.
- *
- * Gates the subagent model pool for newly spawned subagents, including the
- * agent-facing model choices and startup pool validation. Off by default;
- * enable via `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL`, the master
- * `KIMI_CODE_EXPERIMENTAL_FLAG`, or the `[experimental]` config section.
- */
-
 import { type FlagDefinitionInput, registerFlagDefinition } from '#/app/flag/flagRegistry';
 
 export const SECONDARY_MODEL_FLAG_ID = 'secondary-model';

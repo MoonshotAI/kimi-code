@@ -1,62 +1,7 @@
-/**
- * `SessionEventBroadcaster` — per-session single fan-out point that turns agent
- * events (via the per-agent `IEventBus`) into a sequenced,
- * journaled, replayable `/api/v1/ws` event stream (the `{seq, epoch}` watermark).
- *
- * Port of v1's `WSBroadcastService` (`packages/server/.../wsBroadcastService.ts`),
- * adapted to v2 where agent events live on the per-agent `IEventBus`
- * (not a Core firehose). For each session it:
- *
- *   1. Subscribes to every agent's `IEventBus` via
- *      `IAgentLifecycleService` reach-down-via-handle (and `onDidCreate` /
- *      `onDidDispose` for late agents); `record` emissions are persisted and not
- *      broadcast (see step 3). The same lifecycle callbacks fan durable
- *      `agent.created` / `agent.disposed` facts out at session granularity
- *      (they bypass per-subscription agent allowlists but never leave the
- *      session). Also subscribes to the session's
- *      `ISessionInteractionService` and synthesizes the v1 approval/question
- *      protocol events from pending-set changes and resolutions.
- *   2. Attaches `agentId`/`sessionId` to build the wire `Event`.
- *   3. Classifies durable vs volatile — `isVolatileSignal` for the agent
- *      wire-emission path (`isVolatileEventType` remains for the global/model path).
- *   4. Durable events: assign the next per-session `seq` (monotonic across
- *      restarts), persist to the `SessionEventJournal`, cache in an in-memory
- *      tail, fan out.
- *   5. Volatile events: fan out live with the current durable watermark as
- *      `seq` and `volatile: true`. Never journaled, never replayed.
- *   6. Exposes replay (`getBufferedSince`) keyed by `{seq, epoch}` cursors and
- *      an atomic `getSnapshotState` for the snapshot route.
- *
- * A session is activated (journaling starts) on first `subscribe` /
- * `getSnapshotState` / `getCursor` and stays active for the process lifetime so
- * the journal is continuous from first activation onward.
- *
- * Fan-out split: global events ({@link isGlobalEvent} — `session.meta.updated`
- * plus the `event.session.*` / `event.workspace.*` / `event.config.*`
- * families, including every session's `event.session.work_changed`) are pushed
- * to EVERY established connection (registered via
- * {@link SessionEventBroadcaster.addGlobalTarget}, no subscription needed)
- * union every subscribed target — except the `event.di.*` debug feed, which
- * only reaches connections opted in via
- * {@link SessionEventBroadcaster.addDiEventTarget}. Session/agent events only
- * reach connections subscribed to that session, subject to the
- * per-subscription agent allowlist and the transcript suppression below. Transcript frames (`transcript.reset`
- * / `transcript.ops`) are a separate channel: they are governed by the
- * per-agent transcript grades alone and bypass the agent allowlist entirely.
- *
- * Transcript dedup: a connection subscribed to the transcript protocol
- * (grade ≠ 'off' for the emitting agent) no longer receives the
- * `session_event`s the transcript already projects — see
- * {@link TRANSCRIPT_PROJECTED_EVENT_TYPES}. Suppression is a per-connection
- * send-view crop only: the journal and tail keep recording every event, and
- * connections without a transcript spec are unaffected.
- */
-
 import type {
   AgentActivityState,
   ApprovalResponse,
-  DomainEvent,
-  GlobalEvent,
+  Event2,
   IAgentScopeHandle,
   IDisposable,
   Interaction,
@@ -160,11 +105,8 @@ export interface TargetSubscription {
   readonly transcriptGrades?: TranscriptGradeSpec;
 }
 
-/** Per-session transcript streaming state (shared across all targets). */
 interface TranscriptStream {
-  /** The store this stream's listeners are attached to — a rebuilt store (session reload) forces re-attachment. */
   readonly store: TranscriptStore;
-  /** Agents already seeded (roster de-dup for the reset fan-out). */
   readonly knownAgents: Set<string>;
 }
 
@@ -173,33 +115,15 @@ interface SessionState {
   readonly journal: SessionEventJournal;
   readonly tracker: InFlightTurnTracker;
   readonly roster: SubagentRosterTracker;
-  /**
-   * The session's work aggregate is owned by the core's `ISessionActivityView`
-   * — this is only the latest `turn_ended`-caused state, buffered so the
-   * `work_changed(busy:false)` frame can be emitted AFTER the corresponding
-   * `turn.ended` frame. The agent bus fires full-stream subscribers before
-   * per-type ones, so the view's change is reported AFTER the edge's own
-   * `turn.ended` handling within the same synchronous publish — the buffer is
-   * flushed from a microtask, which still lands after the `turn.ended` frame
-   * was enqueued (see attachWorkView).
-   */
   deferredWork?: SessionActivityState;
-  /** Recent durable envelopes for in-memory replay. */
   readonly tail: Array<{ seq: number; envelope: EventEnvelope }>;
-  /** Connections subscribed to this session, each with its subscription view. */
   readonly targets: Map<BroadcastTarget, TargetSubscription>;
-  /** Per-session dispatch queue — serializes stamp / journal / fan-out. */
   queue: Promise<void>;
-  /** agentId → sink subscription. */
   readonly agentDisposables: Map<string, IDisposable>;
   readonly lifecycleDisposables: IDisposable[];
-  /** Interactions already announced (or pre-existing at activation): id → kind + owning agent (for the resolved event). */
   readonly knownInteractions: Map<string, { readonly kind: InteractionKind; readonly agentId: string }>;
-  /** Attached on first transcript-grade subscription for this session. */
   transcriptStream?: TranscriptStream;
-  /** Connections whose transcript baseline reset has landed — the ops fan-out is gated on it. */
   readonly transcriptSeeded: Set<BroadcastTarget>;
-  /** Resets deferred until the connection's cursor replay completes (ordering: backlog before baseline). */
   readonly deferredTranscriptSeeds: Map<
     BroadcastTarget,
     { readonly spec: TranscriptGradeSpec; readonly transcriptSince?: Record<string, number> }
@@ -258,11 +182,6 @@ export class SessionEventBroadcaster {
       readonly core: Scope;
       readonly logger?: JournalLogger;
       readonly maxBufferSize?: number;
-      /**
-       * Optional transcript owner; when present, `subscribe` with transcript
-       * grades activates per-agent op streaming for live sessions. Absent =
-       * transcript disabled (tests / minimal embeds).
-       */
       readonly transcriptService?: TranscriptService;
     },
   ) {
@@ -321,8 +240,6 @@ export class SessionEventBroadcaster {
     state.targets.set(target, { agentFilter: filter, transcriptGrades });
     if (transcriptGrades !== undefined) {
       if (opts?.deferTranscriptReset === true) {
-        // The baseline rides `flushTranscriptSeed` (after the caller's cursor
-        // replay), so the reset's seq always follows the replayed backlog.
         state.transcriptSeeded.delete(target);
         state.deferredTranscriptSeeds.set(target, {
           spec: transcriptGrades,
@@ -330,8 +247,6 @@ export class SessionEventBroadcaster {
         });
       } else {
         state.deferredTranscriptSeeds.delete(target);
-        // Gate the ops fan-out only while a replacement baseline is actually
-        // on its way — a no-reset resubscribe must not black out the stream.
         const gated = this.willSendTranscriptReset(state, transcriptGrades, prev);
         if (gated) state.transcriptSeeded.delete(target);
         await this.subscribeTranscript(
@@ -341,9 +256,6 @@ export class SessionEventBroadcaster {
           prev?.transcriptGrades,
           opts?.transcriptSince,
         );
-        // A no-reset subscription owes no baseline — the target is seeded
-        // either way (a fresh session with an empty roster must still
-        // receive roster resets and ops once agents appear).
         if (state.targets.has(target)) state.transcriptSeeded.add(target);
       }
     }
@@ -432,11 +344,6 @@ export class SessionEventBroadcaster {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Transcript streaming (v1 incremental add-on; the durable event path is
-  // untouched — transcript frames never advance seq and never touch the journal)
-  // ---------------------------------------------------------------------------
-
   /**
    * Handle one connection's transcript subscription: attach the shared
    * per-session stream on first use and send `transcript.reset` snapshots for
@@ -473,8 +380,6 @@ export class SessionEventBroadcaster {
     await Promise.all(
       [...backfill].map((agentId) => service.ensureAgentHistory(state.sessionId, agentId)),
     );
-    // A newer subscribe/unsubscribe may have replaced this target's grades
-    // while history was loading — only the latest subscription is owed resets.
     const current = state.targets.get(target);
     if (current?.transcriptGrades === undefined) return;
     const currentSpec = current.transcriptGrades;
@@ -484,10 +389,6 @@ export class SessionEventBroadcaster {
       if (grade === 'off') continue;
       const transcript = store.getAgent(descriptor.agentId);
       if (transcript === undefined) continue;
-      // A catch-up cursor the journal still covers replaces the baseline
-      // reset: replay exactly the batches past the cursor (grade-filtered, in
-      // seq order) and the connection converges without a snapshot. Anything
-      // the journal cannot vouch for falls through to the ordinary reset.
       const since = transcriptSince?.[descriptor.agentId] ?? transcriptSince?.['*'];
       if (since !== undefined) {
         const catchup = service.getOpsSince(state.sessionId, descriptor.agentId, since);
@@ -527,7 +428,6 @@ export class SessionEventBroadcaster {
           }),
         );
       } catch {
-        // best-effort fan-out; a broken target is dropped, not fatal
       }
     }
   }
@@ -555,7 +455,6 @@ export class SessionEventBroadcaster {
 
     const opsDisposable = service.onSessionOps(state.sessionId, ({ agentId, ops }, seq) => {
       for (const [target, sub] of state.targets) {
-        // No ops before the baseline reset (see subscribe).
         if (!state.transcriptSeeded.has(target)) continue;
         const grade = gradeFor(sub.transcriptGrades, agentId);
         const filtered = filterOpsForGrade(grade, ops);
@@ -569,7 +468,6 @@ export class SessionEventBroadcaster {
             }),
           );
         } catch {
-          // best-effort fan-out; a broken target is dropped, not fatal
         }
       }
     });
@@ -589,7 +487,6 @@ export class SessionEventBroadcaster {
             try {
               this.sendTranscriptReset(state, target, transcript, grade);
             } catch {
-              // best-effort fan-out; a broken target is dropped, not fatal
             }
           }
         }
@@ -617,7 +514,6 @@ export class SessionEventBroadcaster {
         agent_id: transcript.agentId,
         snapshot,
         has_more_older: snapshot.hasMoreOlder ?? false,
-        // Watermark: the snapshot includes every op batch dispatched so far.
         seq: this.opts.transcriptService?.getSeqWatermark(state.sessionId, transcript.agentId),
       }),
     );
@@ -655,7 +551,6 @@ export class SessionEventBroadcaster {
     if (state === undefined) {
       return { events: [], resyncRequired: 'session_recreated', currentSeq: 0, epoch: '' };
     }
-    // Drain so the cursor reflects everything dispatched so far.
     await state.queue;
     const { journal, tail } = state;
     const currentSeq = journal.seq;
@@ -665,7 +560,6 @@ export class SessionEventBroadcaster {
       return { events: [], resyncRequired: 'epoch_changed', currentSeq, epoch };
     }
     if (cursor.seq > currentSeq) {
-      // Stale / foreign cursor (e.g. from a different epoch or a pre-journal client).
       return { events: [], resyncRequired: 'epoch_changed', currentSeq, epoch };
     }
     if (cursor.seq === currentSeq) {
@@ -675,12 +569,6 @@ export class SessionEventBroadcaster {
       return { events: [], resyncRequired: 'buffer_overflow', currentSeq, epoch };
     }
 
-    // Filter is a view crop over the session's single durable sequence: the
-    // watermark and overflow checks above stay global, only the returned
-    // envelopes are narrowed to the subscriber's agent allowlist — and, for a
-    // transcript subscriber, stripped of the events the transcript already
-    // projects. The journal itself keeps every event, so re-subscribing
-    // without a transcript spec replays the complete history.
     const applyFilter = (
       entries: Array<{ seq: number; envelope: EventEnvelope }>,
     ): Array<{ seq: number; envelope: EventEnvelope }> =>
@@ -692,7 +580,6 @@ export class SessionEventBroadcaster {
               !suppressedByTranscript(envelope, transcriptGrades),
           );
 
-    // Serve from the memory tail when it fully covers the gap; else the journal.
     const tailStart = tail[0]?.seq;
     if (tailStart !== undefined && tailStart <= cursor.seq + 1) {
       const events = applyFilter(tail.filter((e) => e.seq > cursor.seq));
@@ -757,8 +644,6 @@ export class SessionEventBroadcaster {
     this.coreEventSubscription.dispose();
     for (const [sessionId, state] of this.sessions) {
       await disposeSessionState(state);
-      // Transcript bindings die with the session stream (its store
-      // subscriptions were disposed above; the producer binding goes here).
       this.opts.transcriptService?.dropSession(sessionId);
     }
     this.sessions.clear();
@@ -860,18 +745,11 @@ export class SessionEventBroadcaster {
     return state;
   }
 
-  private onCoreEvent(event: GlobalEvent): void {
+  private onCoreEvent(event: Event2<any>): void {
+    const corePayload = (event as { readonly payload?: unknown }).payload;
     if (event.type === 'event.session.created') {
-      const payload = sessionCreatedPayload(event.payload);
+      const payload = sessionCreatedPayload(corePayload);
       if (payload === undefined) return;
-      // Forward creation to every connection (`isGlobalEvent` already matches
-      // `event.session.*`), routed through the real session so the envelope
-      // carries the real `session_id` (not the `__global__` watermark) — exactly
-      // like `session.meta.updated` below. Without this, clients that didn't
-      // issue the create never learn the session exists, so a later
-      // `sessionStatusChanged` reducer is a no-op for the unknown session and
-      // kimi-web's Stop button (gated on session.status === 'running') never
-      // renders. Mirrors v1's `isGlobalSessionEvent` broadcast of creation.
       void this.dispatchSessionEvent(payload.sessionId, {
         type: 'event.session.created',
         session: payload.session,
@@ -883,17 +761,9 @@ export class SessionEventBroadcaster {
       return;
     }
     if (event.type === 'session.meta.updated') {
-      const payload = sessionMetaUpdatedPayload(event.payload);
+      const payload = sessionMetaUpdatedPayload(corePayload);
       if (payload === undefined) return;
-      // The originating session id travels on the core payload (the v1 protocol
-      // event itself carries only title/patch). Recover it so the WS envelope is
-      // addressed to the real session: routing through the global state would
-      // stamp `session_id = '__global__'`, and clients would fail to match the
-      // event to any sidebar session — so the auto-generated title (or a rename
-      // from another client) would never appear. `isGlobalEvent` still fans the
-      // dispatch out to every connection, so non-subscribed clients stay in sync
-      // exactly like v1.
-      const sessionId = sessionMetaUpdatedSessionId(event.payload);
+      const sessionId = sessionMetaUpdatedSessionId(corePayload);
       if (sessionId === undefined) return;
       void this.dispatchSessionEvent(sessionId, {
         type: 'session.meta.updated',
@@ -906,9 +776,6 @@ export class SessionEventBroadcaster {
       return;
     }
     if (event.type === 'event.plugin.changed') {
-      // Plugin set mutations (install/enable/disable/remove from ANY client)
-      // fan out so every host re-reads instead of caching stale rows. Bare
-      // signal by design — the payload is the services' own REST surfaces.
       void this.dispatchGlobal({
         type: 'event.plugin.changed',
         agentId: 'main',
@@ -919,7 +786,7 @@ export class SessionEventBroadcaster {
       return;
     }
     if (event.type === 'event.capability.changed') {
-      const payload = capabilityChangedPayload(event.payload);
+      const payload = capabilityChangedPayload(corePayload);
       if (payload === undefined) return;
       void this.dispatchGlobal({
         type: 'event.capability.changed',
@@ -932,12 +799,8 @@ export class SessionEventBroadcaster {
       return;
     }
     if (event.type === 'event.config.warning') {
-      const payload = configWarningPayload(event.payload);
+      const payload = configWarningPayload(corePayload);
       if (payload === undefined) return;
-      // Global fan-out: every established connection learns the current config
-      // warning set (deprecated keys/env vars in use, invalid sections) without
-      // subscribing to anything. Delivery is live-only — late joiners pull the
-      // diagnostics RPC surface instead.
       void this.dispatchGlobal({
         type: 'event.config.warning',
         warnings: payload.warnings,
@@ -949,13 +812,8 @@ export class SessionEventBroadcaster {
       return;
     }
     if (event.type === 'event.di.unit_changed') {
-      const payload = diUnitChangedPayload(event.payload);
+      const payload = diUnitChangedPayload(corePayload);
       if (payload === undefined) return;
-      // Engine DI unit state transitions (the debug-surface feed) have no
-      // owning session: route through the global state so the envelope carries
-      // the '__global__' watermark. `isGlobalEvent` fans it out, but delivery
-      // is gated to connections opted in via `addDiEventTarget` (kimi-inspect
-      // only) — `VOLATILE_EVENT_TYPES` keeps the churn unjournaled.
       void this.dispatchGlobal({
         type: 'event.di.unit_changed',
         ...payload,
@@ -986,9 +844,6 @@ export class SessionEventBroadcaster {
     try {
       state = await this.ensureState(sessionId);
     } catch (error) {
-      // The session's core scope can be disposed mid-dispatch during shutdown;
-      // the event is moot once its session is gone. Same guard as ensureState
-      // applies around attach*, extended to the accessor reads above it.
       if (error instanceof Error && error.message === 'InstantiationService has been disposed') {
         return;
       }
@@ -1015,15 +870,12 @@ export class SessionEventBroadcaster {
    */
   private attachWorkView(session: ISessionScopeHandle, state: SessionState): void {
     const workView = session.accessor.get(ISessionActivityView);
-    // The view is a Delayed service: an event subscription alone never
-    // constructs it — touch `state()` so the fold is live from activation on.
     workView.state();
     state.lifecycleDisposables.push(
       workView.onDidChange(({ state: work, cause }) => {
         if (cause === 'turn_ended') {
           state.deferredWork = work;
           queueMicrotask(() => {
-            // The session may have been torn down meanwhile.
             if (this.sessions.get(state.sessionId) !== state) return;
             this.flushDeferredWork(state);
           });
@@ -1052,9 +904,6 @@ export class SessionEventBroadcaster {
     state.lifecycleDisposables.push(
       agents.onDidCreate((handle) => {
         subscribeAgent(handle);
-        // Session-grained lifecycle fact, ahead of any of the agent's own
-        // events: `onDidCreate` fires before the agent's eager services
-        // ignite, so this enqueue lands first in the queue.
         this.enqueueDurable(state, {
           type: 'agent.created',
           agentId: handle.id,
@@ -1088,22 +937,16 @@ export class SessionEventBroadcaster {
       this.onAgentEvent(sessionId, MAIN_AGENT_ID, {
         type: 'agent.status.updated',
         ...snapshot,
-      });
+      } as unknown as Event2<any>);
     };
     const disposables: IDisposable[] = [
       eventBus.subscribe((event) => {
-        let projected = event;
+        let projected: Event2<any> = event;
         if (event.type === 'agent.status.updated') {
-          // v2 emits status in slices, and the model slice rides only the
-          // bind-time emission — for a subagent that lands before the client
-          // has seen `subagent.spawned` and is dropped there, leaving the
-          // subagent card without a model. Fold the full legacy snapshot
-          // (usage + context + model) into every agent's status event so the
-          // v1 combined-payload contract holds regardless of slice timing.
           const snapshot = readLegacyStatus(handle);
           if (snapshot !== undefined) {
             lastLegacyStatus = JSON.stringify(snapshot);
-            projected = { ...event, ...snapshot };
+            projected = Object.assign({}, event, snapshot) as unknown as Event2<any>;
           }
         }
         if (handle.id === MAIN_AGENT_ID && event.type === 'context.spliced') {
@@ -1116,18 +959,10 @@ export class SessionEventBroadcaster {
     return { dispose: () => disposables.forEach((disposable) => disposable.dispose()) };
   }
 
-  private onAgentEvent(sessionId: string, agentId: string, event: DomainEvent): void {
+  private onAgentEvent(sessionId: string, agentId: string, event: Event2<any>): void {
     const state = this.sessions.get(sessionId);
     if (state === undefined) return;
 
-    // Map the native v2 activity state to the legacy v1 `agent.status.updated`
-    // phase slice at the edge, so the v1 channel picks up the corrected
-    // semantics (approval-set, idle-after-ended) without the core engine
-    // carrying v1 compatibility. The core's own `agent.status.updated` phase
-    // slice is dropped here to avoid duplicate phase events; other slices
-    // (usage / context / plan / swarm) flow through unchanged. The session's
-    // work aggregate (busy / last_turn_reason) is the core
-    // `ISessionActivityView`'s job — see attachWorkView.
     if (event.type === 'agent.activity.updated') {
       const snapshot = event as unknown as AgentActivityState;
       const phase = toLegacyPhase(snapshot);
@@ -1151,47 +986,26 @@ export class SessionEventBroadcaster {
       return;
     }
 
-    // The migrated agent events are AgentEvent-shaped by construction (they were
-    // ported from the former `record.signal(agentEvent)` call sites); the declared
-    // `DomainEventMap` payload types are deliberately wider than the protocol
-    // contract, hence the assertion via `unknown`.
     let wireEvent: Event;
     if (event.type === 'turn.started') {
-      // `promptAttachments` is an internal transcript-projection input, not part
-      // of the v1 wire contract (`turnStartedEventSchema` stops at
-      // {type, turnId, origin, prompt?, promptId?}). Strip it at the edge so the
-      // payload — video-prompt turns included — keeps exactly the
-      // pre-attachment field set (plus the optional `promptId` echo). The
-      // journal records this same stripped envelope, so the one strip covers
-      // live fan-out and every replay path (memory tail + cursor read).
-      const { promptAttachments: _internal, ...wireFields } = event;
-      wireEvent = { ...wireFields, agentId, sessionId } as unknown as Event;
+      const { promptAttachments: _internal, ...wireFields } = event as typeof event & {
+        promptAttachments?: unknown;
+      };
+      wireEvent = Object.assign({}, wireFields, { agentId, sessionId }) as unknown as Event;
     } else if (event.type === 'prompt.steered' || event.type === 'prompt.queued') {
-      // `content` arrives as raw engine content parts carrying internal
-      // `kimi-file://<id>` daemon references. Each self-contained ref
-      // projects to one `{kind:'session_media'}` part, so neither the
-      // transient upload nor the internal URL leaves the process (for
-      // steered, the declared `promptSteeredEventSchema` content is
-      // `messageContentSchema`).
-      // Projecting before the journal write covers live fan-out and every
-      // replay path with one mapping.
-      wireEvent = {
-        ...event,
-        content: projectPromptContentParts(event.content),
+      const content = (event as unknown as { content: Parameters<typeof projectPromptContentParts>[0] }).content;
+      wireEvent = Object.assign({}, event, {
+        content: projectPromptContentParts(content),
         agentId,
         sessionId,
-      } as unknown as Event;
+      }) as unknown as Event;
     } else {
-      wireEvent = { ...event, agentId, sessionId } as unknown as Event;
+      wireEvent = Object.assign({}, event, { agentId, sessionId }) as unknown as Event;
     }
     const volatile = isVolatileSignal(event.type);
     state.queue = state.queue
       .then(() => this.dispatch(state, wireEvent, volatile))
       .catch((error: unknown) => this.logDispatchDropped(state.sessionId, wireEvent.type, error));
-    // v1 wire compat: fan the legacy `background.task.*` spelling out next to
-    // the native `task.*` event (see `legacyTaskEvent`) so unchanged v1 clients
-    // keep working while v2-shaped clients ignore the alias. Same volatility as
-    // the native event so replay/journal/filter stay coherent between the two.
     const legacy = legacyTaskEvent(event, agentId, sessionId);
     if (legacy !== undefined) {
       state.queue = state.queue
@@ -1212,16 +1026,11 @@ export class SessionEventBroadcaster {
     state: SessionState,
   ): void {
     const interactions = session.accessor.get(ISessionInteractionService);
-    // Seed silently: interactions already pending at activation are surfaced
-    // by the snapshot route (`pending_questions` / `pending_approvals`).
     for (const i of interactions.listPending()) {
       state.knownInteractions.set(i.id, { kind: i.kind, agentId: i.origin.agentId ?? 'main' });
     }
     state.lifecycleDisposables.push(
       interactions.onDidChangePending(() => {
-        // The session's pending-interaction work slice is recomputed by the
-        // core `ISessionActivityView` off this same notification — here only
-        // the protocol events for newly pending requests are synthesized.
         for (const i of interactions.listPending()) {
           if (state.knownInteractions.has(i.id)) continue;
           state.knownInteractions.set(i.id, {
@@ -1307,8 +1116,6 @@ export class SessionEventBroadcaster {
   private async dispatch(state: SessionState, event: Event, volatile: boolean): Promise<void> {
     const { journal, tracker, roster, tail, targets, sessionId } = state;
     const annotation = tracker.apply(sessionId, event);
-    // Same queue-discipline as the in-flight tracker: snapshot rebuilds must
-    // see exactly the roster as of the durable watermark.
     roster.apply(sessionId, event);
 
     let envelope: EventEnvelope;
@@ -1327,34 +1134,23 @@ export class SessionEventBroadcaster {
     }
 
     if (isGlobalEvent(event.type)) {
-      // Global events (session/workspace/config) are not agent events — fan
-      // out to every established connection (globalTargets) union every
-      // subscribed target, regardless of any agent filter. The union keeps
-      // targets that subscribed without a global registration (test doubles,
-      // minimal embeds) on the legacy delivery path.
       const recipients = new Set<BroadcastTarget>(this.globalTargets);
       for (const target of this.allTargets()) recipients.add(target);
-      // The `event.di.*` debug feed is opt-in (kimi-inspect only) — every
-      // other connection drops those frames unread anyway.
       const diGated = event.type.startsWith('event.di.');
       for (const target of recipients) {
         if (diGated && !this.diEventTargets.has(target)) continue;
         try {
           target.send(envelope, 'immediate');
         } catch {
-          // best-effort fan-out; a broken target is dropped, not fatal
         }
       }
     } else {
       for (const [target, sub] of targets) {
         if (!matchesAgentFilter(envelope, sub.agentFilter)) continue;
-        // Transcript subscribers already receive the projected equivalent of
-        // this event — drop the duplicate session_event on their send view.
         if (suppressedByTranscript(envelope, sub.transcriptGrades)) continue;
         try {
           target.send(envelope);
         } catch {
-          // best-effort fan-out; a broken target is dropped, not fatal
         }
       }
     }
@@ -1370,7 +1166,10 @@ export class SessionEventBroadcaster {
       type: event.type,
       seq,
       session_id: sessionId,
-      timestamp: new Date().toISOString(),
+      timestamp:
+        event.time !== undefined
+          ? new Date(event.time).toISOString()
+          : new Date().toISOString(),
       payload: event,
       ...extras,
     };
@@ -1383,14 +1182,6 @@ export class SessionEventBroadcaster {
   }
 }
 
-/**
- * Server-side durability gate for the agent event path. Live events reach the
- * edge via the per-agent `IEventBus`; their volatile vs durable
- * classification is owned here rather than by the protocol's
- * `VOLATILE_EVENT_TYPES` / `isVolatileEventType` (still used by the global /
- * model path in `dispatchGlobal`, and by the shipped v1 server). Volatile set
- * per plan line 475.
- */
 const VOLATILE_SIGNAL_TYPES = [
   'assistant.delta',
   'thinking.delta',
@@ -1408,27 +1199,13 @@ function isVolatileSignal(type: string): boolean {
   return volatileSignalTypeSet.has(type);
 }
 
-/**
- * v1 wire compatibility: map a native v2 background-task lifecycle event to its
- * pre-v2 spelling, returning `undefined` for every other event. The pre-v2
- * engine emitted `background.task.started`/`background.task.terminated`; v2
- * emits `task.started`/`task.terminated`. The payload (`info`) is kept
- * byte-identical and `agentId`/`sessionId` are re-stamped so the alias flows
- * through the same dispatch / journal / agent-filter path as the native event.
- *
- * Exists so unchanged v1 consumers (kimi-code TUI / `kimi -p`, node-sdk) keep
- * working while v2-shaped consumers (kimi-web) keep the native event and ignore
- * the alias (registered as known, no handler). Remove once every consumer has
- * migrated to `task.*`.
- */
-function legacyTaskEvent(event: DomainEvent, agentId: string, sessionId: string): Event | undefined {
+function legacyTaskEvent(event: Event2<any>, agentId: string, sessionId: string): Event | undefined {
   if (event.type !== 'task.started' && event.type !== 'task.terminated') return undefined;
   const legacyType =
     event.type === 'task.started' ? 'background.task.started' : 'background.task.terminated';
-  return { ...event, type: legacyType, agentId, sessionId } as unknown as Event;
+  return Object.assign({}, event, { type: legacyType, agentId, sessionId }) as unknown as Event;
 }
 
-/** Session/workspace/config/di events are broadcast to every connection. */
 function isGlobalEvent(type: string): boolean {
   return (
     type === 'session.meta.updated' ||
@@ -1445,20 +1222,6 @@ function isAgentLifecycleEvent(type: string): boolean {
   return type === 'agent.created' || type === 'agent.disposed';
 }
 
-/**
- * Per-subscription agent allowlist check — shared by live fan-out and replay.
- * Returns `true` when the envelope should be delivered to a subscriber carrying
- * `filter`:
- *   - `filter === undefined` → receive every agent (legacy session-grained
- *     behavior);
- *   - global events (session/workspace/config) and agent lifecycle events
- *     (`agent.created` / `agent.disposed`) are not per-agent stream content
- *     and always pass;
- *   - events without a string `agentId` (should not happen on the v1 wire,
- *     where the broadcaster stamps every event) pass defensively rather than
- *     being dropped;
- *   - otherwise the envelope's `payload.agentId` must be in the allowlist.
- */
 function matchesAgentFilter(envelope: EventEnvelope, filter: AgentFilter): boolean {
   if (filter === undefined) return true;
   if (isGlobalEvent(envelope.type)) return true;
@@ -1472,27 +1235,6 @@ function matchesAgentFilter(envelope: EventEnvelope, filter: AgentFilter): boole
   return filter.has(agentId);
 }
 
-/**
- * Event types the transcript protocol already projects (the authoritative
- * mapping is the projector — `services/transcript/coreEventMap.ts`): a
- * connection carrying a non-'off' transcript grade for the emitting agent
- * gets the same information via `transcript.ops` / `transcript.reset`, so the
- * duplicate `session_event` is suppressed on that connection.
- *
- * Deliberately retained (never suppressed):
- *   - `agent.created` / `agent.disposed` — the transcript has no lifecycle
- *     events; a roster change surfaces there only implicitly, as the new
- *     agent's baseline reset;
- *   - `tool.list.updated`, `mcp.server.status` — not projected;
- *   - every global event ({@link isGlobalEvent}) — session/workspace/config
- *     facts live outside the per-agent transcript.
- *
- * Two entries are defensive: `prompt.submitted` is projected but nobody
- * publishes it on the v2 bus today (Phase 2 finding), and `task.notified` has
- * a projector case without a v1 wire-schema entry. `background.task.started`
- * / `background.task.terminated` are the legacy aliases of the projected
- * `task.started` / `task.terminated` (see {@link legacyTaskEvent}).
- */
 const TRANSCRIPT_PROJECTED_EVENT_TYPES: ReadonlySet<string> = new Set([
   'turn.started',
   'turn.ended',
@@ -1544,20 +1286,6 @@ const TRANSCRIPT_PROJECTED_EVENT_TYPES: ReadonlySet<string> = new Set([
   'event.approval.resolved',
 ]);
 
-/**
- * Per-connection transcript dedup check — shared by live fan-out and replay,
- * mirroring {@link matchesAgentFilter}. Returns `true` when the envelope is a
- * transcript-projected `session_event` the subscriber already receives via
- * the transcript stream:
- *   - `spec === undefined` → nothing is suppressed (legacy connections see
- *     every `session_event`);
- *   - global events and agent lifecycle events are never suppressed;
- *   - events without a string `agentId` pass defensively (same rule as the
- *     agent allowlist);
- *   - an 'off' grade for the emitting agent suppresses nothing;
- *   - otherwise the envelope is suppressed iff its type is in
- *     {@link TRANSCRIPT_PROJECTED_EVENT_TYPES}.
- */
 function suppressedByTranscript(
   envelope: EventEnvelope,
   spec: TranscriptGradeSpec | undefined,
@@ -1574,13 +1302,6 @@ function suppressedByTranscript(
   if (gradeFor(spec, agentId) === 'off') return false;
   return TRANSCRIPT_PROJECTED_EVENT_TYPES.has(envelope.type);
 }
-
-// ---------------------------------------------------------------------------
-// Interaction → v1 protocol event synthesis. Event names and payload shapes
-// mirror v1's question/approval services
-// (`packages/server/src/services/{question,approval}/*Service.ts`); the wire
-// request bodies are the same projections the REST/snapshot routes use.
-// ---------------------------------------------------------------------------
 
 function interactionRequestedEvent(interaction: Interaction, sessionId: string): Event | undefined {
   const agentId = interaction.origin.agentId ?? 'main';
@@ -1600,7 +1321,6 @@ function interactionRequestedEvent(interaction: Interaction, sessionId: string):
         ...toWireApproval(interaction, sessionId),
       } as unknown as Event;
     default:
-      // 'user_tool' has no v1 protocol event.
       return undefined;
   }
 }
@@ -1615,7 +1335,6 @@ function interactionResolvedEvent(
   const resolvedAt = new Date().toISOString();
   switch (kind) {
     case 'question': {
-      // `null` marks a dismissal (see `ISessionQuestionService.dismiss`).
       if (response === null) {
         return {
           type: 'event.question.dismissed',
@@ -1625,7 +1344,6 @@ function interactionResolvedEvent(
           dismissed_at: resolvedAt,
         } as unknown as Event;
       }
-      // `QuestionResult` is either `{ answers, method? }` or a bare answers record.
       const answers = (response as { answers?: unknown }).answers ?? response;
       return {
         type: 'event.question.answered',
@@ -1655,14 +1373,6 @@ function interactionResolvedEvent(
   }
 }
 
-/**
- * Validate the `session.meta.updated` payload published on the core
- * `IEventService`. Both the first-prompt auto-title path
- * (`agent-core-v2`'s `applyPromptMetadataUpdate`) and the
- * `POST /sessions/{id}/profile` rename route wrap the v1 fields under
- * `payload` alongside `agentId`/`sessionId`; we unwrap the title/patch here
- * and re-attach `agentId`/`sessionId` at the edge.
- */
 function sessionMetaUpdatedPayload(
   payload: unknown,
 ): Pick<SessionMetaUpdatedEvent, 'title' | 'patch'> | undefined {
@@ -1679,7 +1389,6 @@ function sessionMetaUpdatedPayload(
   return { title, patch };
 }
 
-/** Recover the originating session id carried on the core payload. */
 function sessionMetaUpdatedSessionId(payload: unknown): string | undefined {
   if (typeof payload !== 'object' || payload === null) return undefined;
   const sessionId = (payload as { sessionId?: unknown }).sessionId;
@@ -1694,11 +1403,6 @@ const DI_UNIT_STATES: ReadonlySet<string> = new Set([
   'Failed',
 ]);
 
-/**
- * Validate the `event.di.unit_changed` payload published on the core
- * `IEventService` by agent-core-v2's `IDebugCascadeService` (the debug
- * surface's unit state feed). Malformed payloads are dropped, never forwarded.
- */
 function diUnitChangedPayload(
   payload: unknown,
 ): Pick<DiUnitChangedEvent, 'scope' | 'token' | 'state' | 'error'> | undefined {
@@ -1717,12 +1421,6 @@ function diUnitChangedPayload(
   };
 }
 
-/**
- * Validate the `event.session.created` payload published on the core
- * `IEventService`. The create/fork/child routes publish
- * `{ agentId, sessionId, session }`; we unwrap the real session id and wire
- * session here and re-attach `agentId`/`sessionId` at the edge.
- */
 function sessionCreatedPayload(
   payload: unknown,
 ): { sessionId: string; session: SessionCreatedEvent['session'] } | undefined {
@@ -1742,12 +1440,6 @@ function sessionCreatedPayload(
   return { sessionId, session };
 }
 
-/**
- * Validate the `event.config.warning` payload published on the core
- * `IEventService` (`{ warnings: [{ domain?, message }] }`). Any malformed
- * entry rejects the whole batch — the publisher always sends the full current
- * warning set, so a partial frame would be a lie by omission.
- */
 interface CapabilityChangedPayload {
   capability_id: string;
   install: {

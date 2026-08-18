@@ -1,13 +1,3 @@
-/**
- * `/api/v1/files` and session-canonical media downloads end-to-end for the v2 server.
- *
- * Mirrors the v1 server's files e2e (upload → download → delete → 404,
- * large uploads with no size cap, unknown ids, index persistence across
- * restart, the `name` override, and the missing-file validation) but boots
- * `startServer` from server-v2 and drives it through Fastify `app.inject`
- * with hand-built multipart bodies.
- */
-
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,7 +24,6 @@ afterEach(async () => {
   try {
     await server?.close();
   } catch {
-    // ignore
   }
   server = undefined;
   rmSync(home, { recursive: true, force: true });
@@ -261,8 +250,6 @@ describe('POST /api/v1/files (server-v2)', () => {
       url: `/api/v1/files/${env.data!.id}`,
     });
     expect(getRes.statusCode).toBe(200);
-    // `expect(buffer).toEqual(buffer)` deep-compares 51M elements and blows
-    // the heap — use the native memcmp instead.
     expect(getRes.rawPayload.equals(big)).toBe(true);
   });
 

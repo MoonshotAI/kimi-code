@@ -1,30 +1,14 @@
-/**
- * `toolSelect` domain — `IAgentToolSelectService` implementation.
- *
- * Shapes the provider-visible tool and history views for progressive tool
- * disclosure, tracks loaded dynamic schemas as pending declarations drained
- * by the `contextInjector` boundary provider (the declaration lands at a
- * quiescent boundary instead of mid-step inside a streaming tool exchange),
- * and exposes loadable-tools announcement text. Removal splices
- * (`undo`/`clear`) drop pending entries whose announcing exchange left the
- * conversation, while compaction's replacement splice keeps them, so the
- * declaration still lands at the post-compaction boundary. Reads live tools from
- * `toolRegistry`, active-tool and capability state from `profile`, gates
- * through `flag`, hooks into `toolExecutor`, and listens to context
- * lifecycle events through `event`. The mutable load-tracking state
- * (`pendingLoaded`) is registered into `agentState` (`IAgentStateService`)
- * and read/written through it. Bound at Agent scope.
- */
-
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
 import type { Tool } from '#/kosong/contract/tool';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -65,7 +49,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(toolSelectPendingLoadedKey);
+    this.states.contributeState(toolSelectPendingLoadedKey);
     this._register(
       toolExecutor.registerUnavailableToolDescriber((name) => this.describeUnavailableTool(name)),
     );
@@ -73,12 +57,12 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       toolExecutor.registerMissingToolDescriber((name) => this.describeMissingTool(name)),
     );
     this._register(
-      eventBus.subscribe('compaction.completed', () => {
+      eventBus.subscribe(CompactionCompleted, () => {
         this.pendingLoaded.clear();
       }),
     );
     this._register(
-      eventBus.subscribe('context.spliced', (splice) => {
+      eventBus.subscribe(ContextSpliced, (splice) => {
         if (splice.deleteCount === 0 || splice.messages.length > 0) return;
         this.dropPendingLoadedNotLanded();
       }),

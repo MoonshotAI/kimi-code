@@ -1,12 +1,3 @@
-/**
- * `permissionPolicy` domain — `IAgentPermissionPolicyService` implementation.
- *
- * Runs the static, ordered permission chain: every node adjudicates the *risk*
- * of a tool call (mode posture, user rules, session approval memory, sensitive
- * paths, intrinsic tool risk, workspace write trust, fallback). Bound at
- * Agent scope.
- */
-
 import { IInstantiationService } from "#/_base/di/instantiation";
 import { Service } from "#/_base/di/service";
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';

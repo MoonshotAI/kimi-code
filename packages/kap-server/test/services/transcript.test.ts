@@ -1,11 +1,3 @@
-/**
- * `AgentTranscriptProjector` — core event → L2 ops mapping fixtures.
- *
- * Each test feeds event batches through the projector and applies the emitted
- * ops to a real `AgentTranscript`, asserting both the op stream (offsets,
- * flush upserts) and the converged store state.
- */
-
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,7 +15,7 @@ import {
   LifecycleScope,
   SessionInteractionService,
   StateRegistry,
-  type DomainEvent,
+  type Event2,
   type ISessionScopeHandle,
   type ISessionStateService,
   type Scope,
@@ -43,7 +35,10 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { bindSessionTranscript } from '../../src/services/transcript/coreBinding';
-import { AgentTranscriptProjector } from '../../src/services/transcript/coreEventMap';
+import {
+  AgentTranscriptProjector,
+  type ProjectorBusEvent,
+} from '../../src/services/transcript/coreEventMap';
 import {
   healTurnOps,
   TranscriptService,
@@ -51,8 +46,8 @@ import {
   TRANSCRIPT_OPS_JOURNAL_CAPACITY,
 } from '../../src/services/transcript/transcriptService';
 
-function ev(payload: Record<string, unknown>): DomainEvent {
-  return payload as unknown as DomainEvent;
+function ev(payload: Record<string, unknown>): ProjectorBusEvent {
+  return payload as unknown as ProjectorBusEvent;
 }
 
 class TestSessionStateService extends StateRegistry implements ISessionStateService {
@@ -72,7 +67,7 @@ describe('AgentTranscriptProjector', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
     const ops: TranscriptOperation[] = [];
-    const feed = (event: DomainEvent): void => {
+    const feed = (event: ProjectorBusEvent): void => {
       const mapped = projector.map(event);
       ops.push(...mapped);
       tx.apply(mapped);
@@ -96,8 +91,6 @@ describe('AgentTranscriptProjector', () => {
     feed(ev({ type: 'turn.step.completed', turnId: 1, step: 1, stepId: 'u1' }));
     feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
 
-    // Op-level: turn/step headers carry no render content; deltas are appends
-    // with cumulative offsets; the step flush re-emits the full text.
     const appends = ops.filter((op): op is AppendOp => op.op === 'append');
     expect(appends.map((op) => [op.offset, op.text])).toEqual([
       [0, 'Hello'],
@@ -109,7 +102,6 @@ describe('AgentTranscriptProjector', () => {
     );
     expect(flushUpsert).toBeDefined();
 
-    // Converged store state.
     const turn = turnOps('t1', tx.getItems());
     expect(turn.state).toBe('completed');
     expect(turn.origin).toEqual({ kind: 'user', payload: { kind: 'user' } });
@@ -134,7 +126,7 @@ describe('AgentTranscriptProjector', () => {
   it('projects the live prompt from turn.started and keeps it through turn.ended', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => {
+    const feed = (event: ProjectorBusEvent): void => {
       tx.apply(projector.map(event));
     };
 
@@ -151,7 +143,7 @@ describe('AgentTranscriptProjector', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
     const ops: TranscriptOperation[] = [];
-    const feed = (event: DomainEvent): void => {
+    const feed = (event: ProjectorBusEvent): void => {
       const mapped = projector.map(event);
       ops.push(...mapped);
       tx.apply(mapped);
@@ -168,7 +160,6 @@ describe('AgentTranscriptProjector', () => {
     );
     feed(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
 
-    // Op-level: one attachment entity per referenced upload.
     expect(ops.filter((op) => op.op === 'attachment.upsert')).toEqual([
       {
         op: 'attachment.upsert',
@@ -180,7 +171,6 @@ describe('AgentTranscriptProjector', () => {
       },
     ]);
 
-    // Converged store: the id list survives the turn.ended header rebuild.
     const turn = turnOps('t0', tx.getItems());
     expect(turn.prompt).toBe('what is this?');
     expect(turn.attachmentIds).toEqual(['t0.att1']);
@@ -193,9 +183,6 @@ describe('AgentTranscriptProjector', () => {
 
   it('places late-attach deltas into the engine-reported active step', () => {
     const tx = new AgentTranscript('main');
-    // The projector missed turn.started AND turn.step.started for step 2 —
-    // without the lookup the fallback would synthesize t0.1 and stream into
-    // the wrong step.
     const projector = new AgentTranscriptProjector('main', {
       stepOrdinal: (turnId) => (turnId === 't0' ? 2 : undefined),
     });
@@ -210,8 +197,6 @@ describe('AgentTranscriptProjector', () => {
 
   it('adopts a backfilled stream frame on mid-turn attach instead of clobbering it', () => {
     const tx = new AgentTranscript('main');
-    // The backfill seeded the in-flight step's partial text before the
-    // projector observed any delta.
     tx.apply([
       {
         op: 'turn.upsert',
@@ -234,8 +219,6 @@ describe('AgentTranscriptProjector', () => {
         tx.getTurn(turnId)?.steps.find((s) => s.stepId === stepId)?.frames,
     });
 
-    // The live stream resumes: no empty upsert, the append continues at the
-    // seeded offset.
     const ops = projector.map(ev({ type: 'assistant.delta', turnId: 0, delta: 'world' }));
     tx.apply(ops);
     expect(ops.some((op) => op.op === 'frame.upsert')).toBe(false);
@@ -245,7 +228,6 @@ describe('AgentTranscriptProjector', () => {
     const text = turn.steps[0]?.frames.find((frame) => frame.kind === 'text');
     expect(text).toMatchObject({ text: 'Hello world' });
 
-    // Later frames in the same step must not collide with the adopted id.
     const next = projector.map(ev({ type: 'thinking.delta', turnId: 0, delta: 'hmm' }));
     const created = next.find((op): op is FrameUpsertOp => op.op === 'frame.upsert');
     expect(created?.frame.frameId).toBe('t0.1.f2');
@@ -253,8 +235,6 @@ describe('AgentTranscriptProjector', () => {
 
   it('adopts a backfilled tool frame when the result arrives after a mid-bind attach', () => {
     const tx = new AgentTranscript('main');
-    // The backfill seeded the running tool call (from the persisted assistant
-    // toolCalls) before the projector observed any event.
     tx.apply([
       {
         op: 'turn.upsert',
@@ -295,8 +275,6 @@ describe('AgentTranscriptProjector', () => {
       },
     });
 
-    // The projector never saw tool.call.started — without adoption the result
-    // is dropped and the seeded frame stays output-less.
     const ops = projector.map(ev({ type: 'tool.result', toolCallId: 'call_1', output: 'file.txt' }));
     expect(ops).toHaveLength(1);
     tx.apply(ops);
@@ -307,8 +285,6 @@ describe('AgentTranscriptProjector', () => {
 
   it('adopts a seeded parent tool frame when subagent.spawned links the child', () => {
     const tx = new AgentTranscript('main');
-    // The Agent tool call started before the projector attached; the backfill
-    // seeded its frame from the persisted assistant toolCalls.
     tx.apply([
       {
         op: 'turn.upsert',
@@ -367,14 +343,11 @@ describe('AgentTranscriptProjector', () => {
   it('gives live markers their own namespace so they never collide with backfilled markers', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    // A historical marker from the cold rebuild already occupies `m1`.
     tx.apply([{ op: 'marker.upsert', item: { kind: 'marker', markerId: 'm1', marker: 'skill' } }]);
 
     const ops = projector.map(ev({ type: 'compaction.started', trigger: 'auto' }));
     tx.apply(ops);
 
-    // Without the namespace the live marker would also be `m1`, and the
-    // store's upsert would have replaced the historical one.
     const markers = tx
       .getItems()
       .filter((item): item is Extract<typeof item, { kind: 'marker' }> => item.kind === 'marker');
@@ -416,13 +389,9 @@ describe('AgentTranscriptProjector', () => {
       meta: {},
     };
     const ops = snapshotToOps(snapshot);
-    // m1 sits before t1 in history; the trailing r1 anchors past the last
-    // snapshot turn (where the engine's next live turn lands).
     expect(ops.find((op) => op.op === 'marker.upsert')).toMatchObject({ beforeTurn: 1 });
     expect(ops.find((op) => op.op === 'taskref.upsert')).toMatchObject({ beforeTurn: 2 });
 
-    // A live turn arrived before the backfill landed; anchored items must
-    // slot into their historical positions, not append past it.
     const tx = new AgentTranscript('main');
     tx.apply([
       {
@@ -483,7 +452,7 @@ describe('AgentTranscriptProjector', () => {
   it('flushes open frames on turn.ended even without step completion', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
@@ -494,7 +463,6 @@ describe('AgentTranscriptProjector', () => {
     const turn = turnOps('t1', tx.getItems());
     expect(turn.state).toBe('cancelled');
     const step = turn.steps[0]!;
-    // The interrupted step is closed and both open frames carry whole text.
     expect(step.state).toBe('interrupted');
     expect(step.frames).toContainEqual(
       expect.objectContaining({ kind: 'thinking', text: 'hmm' }),
@@ -507,7 +475,7 @@ describe('AgentTranscriptProjector', () => {
   it('marks a user-cancelled turn with an interruption marker, but not programmatic aborts', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'hi' }));
     feed(
@@ -531,7 +499,7 @@ describe('AgentTranscriptProjector', () => {
   it('carries usage / finishReason / the full timing breakdown on turn.step.completed', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
@@ -569,8 +537,6 @@ describe('AgentTranscriptProjector', () => {
       llmClientConsumeMs: 100,
     });
 
-    // finishReason wins over the raw/provider fallbacks; providerFinishReason
-    // is the last resort.
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 2 }));
     feed(
       ev({
@@ -593,7 +559,7 @@ describe('AgentTranscriptProjector', () => {
   it('carries endReason / endMessage on turn.step.interrupted', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
@@ -616,7 +582,7 @@ describe('AgentTranscriptProjector', () => {
   it('sets retry on turn.step.retrying and clears it at the terminal upsert', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
     const step = (): TranscriptTurn['steps'][number] => turnOps('t1', tx.getItems()).steps[0]!;
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
@@ -636,7 +602,6 @@ describe('AgentTranscriptProjector', () => {
       }),
     );
 
-    // The step stays running with the retry detail on the header.
     expect(step().state).toBe('running');
     expect(step().retry).toEqual({
       failedAttempt: 1,
@@ -648,7 +613,6 @@ describe('AgentTranscriptProjector', () => {
       statusCode: 429,
     });
 
-    // The terminal upsert carries no retry — the whole-header replace clears it.
     feed(ev({ type: 'turn.step.completed', turnId: 1, step: 1 }));
     expect(step().state).toBe('completed');
     expect(step().retry).toBeUndefined();
@@ -657,7 +621,7 @@ describe('AgentTranscriptProjector', () => {
   it('fills durationMs / error / accumulated step usage on turn.ended', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
@@ -682,11 +646,8 @@ describe('AgentTranscriptProjector', () => {
 
     const turn = turnOps('t1', tx.getItems());
     expect(turn.durationMs).toBe(4200);
-    // inputTokens = inputOther + inputCacheCreation, summed across the steps.
     expect(turn.usage).toEqual({ inputTokens: 375, cachedTokens: 5, outputTokens: 30 });
 
-    // A turn whose steps reported no usage gets no usage; a failed turn
-    // carries the error message.
     feed(ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } }));
     feed(
       ev({
@@ -703,10 +664,24 @@ describe('AgentTranscriptProjector', () => {
     expect(failed.usage).toBeUndefined();
   });
 
+  it('takes the turn header endedAt from the turn.ended event time', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed', time: 1_700_000_000_000 }));
+    expect(turnOps('t1', tx.getItems()).endedAt).toBe(new Date(1_700_000_000_000).toISOString());
+
+    feed(ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.ended', turnId: 2, reason: 'completed' }));
+    expect(turnOps('t2', tx.getItems()).endedAt).toBeTypeOf('string');
+  });
+
   it('accumulates tool.call.delta into inputText, kept across tool.call.started', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
     const toolFrame = (toolCallId: string): TranscriptFrame | undefined =>
       turnOps('t1', tx.getItems())
         .steps.flatMap((step) => step.frames)
@@ -714,8 +689,6 @@ describe('AgentTranscriptProjector', () => {
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
-    // Deltas arrive before the started event: the frame is created running and
-    // the raw argument text accumulates.
     feed(
       ev({
         type: 'tool.call.delta',
@@ -733,11 +706,9 @@ describe('AgentTranscriptProjector', () => {
       state: 'running',
       inputText: '{"command":"ls"}',
     });
-    // A delta that never names the call leaves the name empty until started.
     feed(ev({ type: 'tool.call.delta', turnId: 1, toolCallId: 'c2', argumentsPart: '{}' }));
     expect(toolFrame('c2')).toMatchObject({ name: '', inputText: '{}' });
 
-    // The started event fills in the parsed input but keeps the raw text.
     feed(
       ev({
         type: 'tool.call.started',
@@ -751,10 +722,8 @@ describe('AgentTranscriptProjector', () => {
       input: { command: 'ls' },
       inputText: '{"command":"ls"}',
     });
-    // Deltas after started keep accumulating onto the same frame.
     feed(ev({ type: 'tool.call.delta', turnId: 1, toolCallId: 'c1', argumentsPart: '\n' }));
     expect(toolFrame('c1')).toMatchObject({ inputText: '{"command":"ls"}\n' });
-    // And the terminal result keeps the accumulated text too.
     feed(ev({ type: 'tool.result', turnId: 1, toolCallId: 'c1', output: 'file.txt' }));
     expect(toolFrame('c1')).toMatchObject({ state: 'done', inputText: '{"command":"ls"}\n' });
   });
@@ -762,9 +731,8 @@ describe('AgentTranscriptProjector', () => {
   it('overwrites tool frame progress and drops progress for unknown calls', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
-    // Unknown call (no started/delta frame, no seeded frame to adopt): dropped.
     expect(
       projector.map(
         ev({
@@ -793,7 +761,6 @@ describe('AgentTranscriptProjector', () => {
       turnOps('t1', tx.getItems()).steps[0]!.frames.find((frame) => frame.kind === 'tool');
     expect(tool()).toMatchObject({ progress: { kind: 'stdout', text: 'line1' } });
 
-    // The newest update overwrites the previous one wholesale.
     feed(
       ev({
         type: 'tool.progress',
@@ -809,7 +776,7 @@ describe('AgentTranscriptProjector', () => {
   it('marks tool.result errors and keeps the display payload', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
@@ -838,7 +805,7 @@ describe('AgentTranscriptProjector', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
     const ops: TranscriptOperation[] = [];
-    const feed = (event: DomainEvent): void => {
+    const feed = (event: ProjectorBusEvent): void => {
       const mapped = projector.map(event);
       ops.push(...mapped);
       tx.apply(mapped);
@@ -864,7 +831,6 @@ describe('AgentTranscriptProjector', () => {
       }),
     );
 
-    // Taskref anchors the entity in the timeline; output appends are offset-keyed.
     expect(ops.some((op) => op.op === 'taskref.upsert' && op.item.taskId === 'bash-1')).toBe(true);
     const appends = ops.filter((op): op is AppendOp => op.op === 'append');
     expect(appends.map((op) => [op.offset, op.text])).toEqual([
@@ -880,7 +846,6 @@ describe('AgentTranscriptProjector', () => {
       description: 'ls -la',
       outputTail: 'a\nb\n',
     });
-    // Non-text updates are dropped.
     expect(
       projector.map(
         ev({ type: 'shell.output', commandId: 'cmd-1', update: { kind: 'progress', percent: 50 } }),
@@ -905,9 +870,6 @@ describe('AgentTranscriptProjector', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
 
-    // Mid-command attach: no shell.started observed, but later events carry
-    // the task id — output and terminal state must still land, and the task
-    // needs its timeline taskref (exactly like onShellStarted emits).
     tx.apply(
       projector.map(
         ev({ type: 'shell.output', commandId: 'c1', taskId: 'task-1', update: { kind: 'stdout', text: 'hello' } }),
@@ -934,9 +896,6 @@ describe('AgentTranscriptProjector', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
 
-    // The command failed before its foreground task was registered (Bash
-    // validation/spawn error): every shell.* event arrives taskId-less. The
-    // stderr and the terminal state must still land, under a synthetic id.
     tx.apply(
       projector.map(ev({ type: 'shell.output', commandId: 'c1', update: { kind: 'stderr', text: 'boom' } })),
     );
@@ -971,7 +930,7 @@ describe('AgentTranscriptProjector', () => {
   it('links spawned subagents to the spawning tool frame (member for swarm)', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
@@ -1037,7 +996,6 @@ describe('AgentTranscriptProjector', () => {
     const marker = tx.getItems().find((item) => item.kind === 'marker');
     expect(marker).toMatchObject({ marker: 'goal', payload: { snapshot } });
 
-    // Cleared goal: only the marker lands (meta.merge cannot express clearing).
     const clearedOps = projector.map(ev({ type: 'goal.updated', snapshot: null }));
     expect(clearedOps.every((op) => op.op === 'marker.upsert')).toBe(true);
   });
@@ -1050,7 +1008,6 @@ describe('AgentTranscriptProjector', () => {
     tx.apply(projector.map(ev({ type: 'agent.status.updated', swarmMode: true })));
     expect(tx.getMeta().modes).toEqual({ plan: {}, swarm: {} });
 
-    // Mode exit clears the badge (`null` deletes the key in the reducer).
     tx.apply(projector.map(ev({ type: 'agent.status.updated', planMode: false })));
     expect(tx.getMeta().modes).toEqual({ swarm: {} });
     tx.apply(projector.map(ev({ type: 'agent.status.updated', swarmMode: false })));
@@ -1060,9 +1017,8 @@ describe('AgentTranscriptProjector', () => {
   it('mirrors status slices into meta.agent (shallow-merged across slices)', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
-    // A usage-only slice projects into meta.agent (never into modes).
     const usageOnly = projector.map(ev({ type: 'agent.status.updated', usage: {} }));
     expect(usageOnly).toEqual([{ op: 'meta.merge', meta: { agent: { usage: {} } } }]);
 
@@ -1085,7 +1041,6 @@ describe('AgentTranscriptProjector', () => {
     );
     feed(ev({ type: 'agent.status.updated', permission: 'yolo' }));
 
-    // Every arrived slice accumulates on meta.agent.
     expect(tx.getMeta().agent).toEqual({
       model: 'k2',
       thinkingEffort: 'high',
@@ -1096,7 +1051,6 @@ describe('AgentTranscriptProjector', () => {
       permission: 'yolo',
     });
 
-    // A later slice overwrites only the fields it carries.
     feed(ev({ type: 'agent.status.updated', model: 'k3' }));
     expect(tx.getMeta().agent).toMatchObject({ model: 'k3', thinkingEffort: 'high' });
   });
@@ -1104,7 +1058,7 @@ describe('AgentTranscriptProjector', () => {
   it('maps agent.activity.updated into meta.agent.phase', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
     const turn = (overrides: Record<string, unknown>): Record<string, unknown> => ({
       turnId: 1,
       origin: { kind: 'user' },
@@ -1136,7 +1090,6 @@ describe('AgentTranscriptProjector', () => {
     );
     expect(tx.getMeta().agent?.phase).toMatchObject({ kind: 'streaming', stream: 'assistant' });
 
-    // A pending approval keeps the awaiting_approval phase (v1 semantics).
     feed(
       ev({
         type: 'agent.activity.updated',
@@ -1153,7 +1106,6 @@ describe('AgentTranscriptProjector', () => {
       since: 1500,
     });
 
-    // No active turn + a last outcome → the ended phase; no outcome → idle.
     feed(
       ev({
         type: 'agent.activity.updated',
@@ -1172,7 +1124,6 @@ describe('AgentTranscriptProjector', () => {
     feed(ev({ type: 'agent.activity.updated', lifecycle: 'ready', background: [] }));
     expect(tx.getMeta().agent?.phase).toEqual({ kind: 'idle' });
 
-    // Disposing/disposed have no v1 phase concept: nothing is emitted.
     expect(
       projector.map(ev({ type: 'agent.activity.updated', lifecycle: 'disposed', background: [] })),
     ).toEqual([]);
@@ -1191,11 +1142,9 @@ describe('AgentTranscriptProjector', () => {
       bytes: 128,
     };
 
-    // Plan mode inactive: only the timeline marker lands (no badge).
     tx.apply(projector.map(ev(revision)));
     expect(tx.getMeta().modes).toBeUndefined();
 
-    // Active: a further revision refines the badge with its reference.
     tx.apply(projector.map(ev({ type: 'agent.status.updated', planMode: true })));
     expect(tx.getMeta().modes).toEqual({ plan: {} });
     tx.apply(
@@ -1205,8 +1154,6 @@ describe('AgentTranscriptProjector', () => {
       plan: { reviewPath: 'agents/main/plan/plan-1/v2.md', version: 2 },
     });
 
-    // Both revisions stay in the timeline (live marker namespace), payload =
-    // the reference fields.
     const markers = tx
       .getItems()
       .filter((item) => item.kind === 'marker' && item.marker === 'plan.revision');
@@ -1224,7 +1171,6 @@ describe('AgentTranscriptProjector', () => {
       },
     });
 
-    // Plan-mode exit clears the badge; the revision markers stay.
     tx.apply(projector.map(ev({ type: 'agent.status.updated', planMode: false })));
     expect(tx.getMeta().modes).toBeUndefined();
     expect(
@@ -1235,7 +1181,7 @@ describe('AgentTranscriptProjector', () => {
   it('projects skill / plugin-command / cron / compaction / hook / undo markers', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'skill.activated', activationId: 'a1', skillName: 'gen-docs', trigger: 'user-slash' }));
     feed(
@@ -1250,7 +1196,6 @@ describe('AgentTranscriptProjector', () => {
     feed(ev({ type: 'cron.fired', origin: { kind: 'cron_job', jobId: 'j1' }, prompt: 'ping' }));
     feed(ev({ type: 'compaction.started', trigger: 'auto' }));
     feed(ev({ type: 'compaction.completed', result: { kept: 3 } }));
-    // `hook.result` carries an optional turnId — absent here, payload verbatim.
     feed(ev({ type: 'hook.result', hookEvent: 'SessionStart', content: 'hook says hi' }));
     feed(
       ev({
@@ -1315,7 +1260,7 @@ describe('AgentTranscriptProjector', () => {
   it('emits interactions as global entities only (no inline frame), back-links on resolve', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 2, step: 1 }));
@@ -1344,10 +1289,7 @@ describe('AgentTranscriptProjector', () => {
       }),
     );
 
-    // Interactions are entity-only: the step carries just the tool frame, no
-    // inline interaction frame.
     expect(turnOps('t2', tx.getItems()).steps[0]!.frames.map((f) => f.kind)).toEqual(['tool']);
-    // The global entity, anchored by toolCallId.
     expect(tx.getInteraction('apr-1')).toMatchObject({
       interactionId: 'apr-1',
       interactionKind: 'approval',
@@ -1361,7 +1303,6 @@ describe('AgentTranscriptProjector', () => {
 
     const tool = turnOps('t2', tx.getItems()).steps[0]!.frames.find((f) => f.kind === 'tool');
     expect(tool).toMatchObject({ approvalId: 'apr-1' });
-    // Resolve also leaves the step frames untouched (entity-only).
     expect(turnOps('t2', tx.getItems()).steps[0]!.frames.map((f) => f.kind)).toEqual(['tool']);
     expect(tx.getInteraction('apr-1')).toMatchObject({
       state: 'approved',
@@ -1373,9 +1314,9 @@ describe('AgentTranscriptProjector', () => {
   it('surfaces a mid-turn task notification as a user input frame linked to the task', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
-    const notified = (): DomainEvent =>
+    const notified = (): ProjectorBusEvent =>
       ev({
         type: 'task.notified',
         notificationType: 'task.completed',
@@ -1386,8 +1327,6 @@ describe('AgentTranscriptProjector', () => {
         sourceId: 'task_1',
       });
 
-    // Idle (no open step): the notification opens a task-origin turn instead —
-    // no inline frame.
     tx.apply(projector.map(notified()));
     expect(tx.getItems()).toHaveLength(0);
 
@@ -1404,12 +1343,11 @@ describe('AgentTranscriptProjector', () => {
   it('replaces the global todo document on a confirmed TodoList write', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
 
-    // A read (no `todos` arg) writes nothing.
     feed(ev({ type: 'tool.call.started', turnId: 1, toolCallId: 'call_read', name: 'TodoList', args: {} }));
     feed(ev({ type: 'tool.result', toolCallId: 'call_read', output: '2 todos' }));
     expect(tx.getTodo('todo')).toBeUndefined();
@@ -1434,7 +1372,6 @@ describe('AgentTranscriptProjector', () => {
       { title: 'ship', status: 'pending' },
     ]);
 
-    // A failed write must not clobber the document.
     feed(
       ev({
         type: 'tool.call.started',
@@ -1449,8 +1386,6 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('emits an unanchored entity when the payload has no toolCallId', () => {
-    // An interaction without an anchor tool call still becomes an entity
-    // (toolCallId omitted); it renders floating in consumers, never inline.
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
 
@@ -1462,14 +1397,12 @@ describe('AgentTranscriptProjector', () => {
         origin: { agentId: 'main', turnId: 3 },
       }),
     );
-    // No turn/step/frame is materialized for the interaction.
     expect(tx.getItems()).toHaveLength(0);
     const entity = tx.getInteraction('q1');
     expect(entity).toMatchObject({ interactionKind: 'question', state: 'pending' });
     expect(entity?.toolCallId).toBeUndefined();
     expect(tx.listPendingInteractions()).toEqual(['q1']);
 
-    // Dismissed question (null response).
     tx.apply(projector.mapInteractionResolved('q1', null));
     expect(tx.getInteraction('q1')).toMatchObject({ state: 'dismissed' });
     expect(tx.listPendingInteractions()).toEqual([]);
@@ -1478,7 +1411,7 @@ describe('AgentTranscriptProjector', () => {
   it('projects prompt submitted/completed/aborted/steered as global queue entities', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(
       ev({
@@ -1503,8 +1436,6 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getPrompt('p1')).toMatchObject({ status: 'running', userMessageId: 'm1' });
     expect(tx.getPrompt('p2')).toMatchObject({ status: 'queued' });
 
-    // Steer: p2 merges into the running p1 — p1 keeps running with the merged
-    // content and the steer timestamp, p2 leaves the queue as completed.
     feed(
       ev({
         type: 'prompt.steered',
@@ -1532,7 +1463,6 @@ describe('AgentTranscriptProjector', () => {
       finishedAt: '2026-01-01T00:00:02.000Z',
     });
 
-    // Completed settles the active prompt (reason defaults to 'completed').
     feed(
       ev({
         type: 'prompt.completed',
@@ -1544,15 +1474,12 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getPrompt('p1')).toMatchObject({
       status: 'completed',
       finishedAt: '2026-01-01T00:00:10.000Z',
-      // The steered content survives the terminal upsert.
       content: [
         { type: 'text', text: 'first' },
         { type: 'text', text: 'second' },
       ],
     });
 
-    // A terminal event for a prompt whose submitted was never seen (the v2 bus
-    // does not publish it) synthesizes a minimal entity.
     feed(ev({ type: 'prompt.aborted', promptId: 'p3', abortedAt: '2026-01-01T00:00:03.000Z' }));
     expect(tx.getPrompt('p3')).toEqual({
       promptId: 'p3',
@@ -1579,7 +1506,7 @@ describe('AgentTranscriptProjector', () => {
   it('projects prompt.steered media content to the wire shape (no daemon ref or path leak)', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(
       ev({
@@ -1721,7 +1648,6 @@ describe('AgentTranscriptProjector', () => {
       const snapshot = await service.readColdSnapshot('s1', 'main');
       expect(snapshot).toBeDefined();
 
-      // Entities rebuilt from the non-context records.
       expect(snapshot!.tasks).toEqual([
         {
           taskId: 'task_1',
@@ -1755,8 +1681,6 @@ describe('AgentTranscriptProjector', () => {
         },
       ]);
 
-      // The turn tree comes from the context records; markers/taskrefs from
-      // the fact fold append after it in record order.
       const standalone = snapshot!.items.filter((item) => item.kind !== 'turn');
       expect(standalone).toEqual([
         expect.objectContaining({ kind: 'marker', marker: 'goal', markerId: 'm1' }),
@@ -1780,7 +1704,7 @@ describe('AgentTranscriptProjector', () => {
   it('maps cron / task origins onto the turn header', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(
       ev({
@@ -1812,17 +1736,15 @@ describe('AgentTranscriptProjector', () => {
   it('treats subagent.started/failed/suspended within the running→failed vocabulary', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'subagent.started', subagentId: 'agent-1' }));
     expect(tx.getTask('agent-1')).toMatchObject({ kind: 'subagent', state: 'running' });
-    // Suspension stays 'running' with the reason carried on the task.
     feed(ev({ type: 'subagent.suspended', subagentId: 'agent-1', reason: 'approval' }));
     expect(tx.getTask('agent-1')).toMatchObject({ state: 'running', stateReason: 'approval' });
     feed(ev({ type: 'subagent.failed', subagentId: 'agent-1', error: 'boom' }));
     expect(tx.getTask('agent-1')).toMatchObject({ state: 'failed', error: 'boom' });
 
-    // Completion carries the result summary and the run's token usage.
     feed(
       ev({
         type: 'subagent.completed',
@@ -1855,12 +1777,12 @@ describe('AgentTranscript transcript task vocabulary', () => {
 
 describe('bindSessionTranscript', () => {
   class FakeBus {
-    private readonly handlers = new Set<(event: DomainEvent) => void>();
-    subscribe(cb: (event: DomainEvent) => void): { dispose: () => void } {
+    private readonly handlers = new Set<(event: Event2<any>) => void>();
+    subscribe(cb: (event: Event2<any>) => void): { dispose: () => void } {
       this.handlers.add(cb);
       return { dispose: () => this.handlers.delete(cb) };
     }
-    emit(event: DomainEvent): void {
+    emit(event: Event2<any>): void {
       for (const cb of this.handlers) cb(event);
     }
   }
@@ -1953,11 +1875,8 @@ describe('bindSessionTranscript', () => {
       ops.push(...event.ops),
     );
 
-    // The pending is registered (so resolves route) but nothing is announced
-    // before the post-backfill seed.
     expect(ops).toHaveLength(0);
 
-    // The user answers before the seed: captured for replay, not dropped.
     interactions.respond('apr-1', { decision: 'approved' });
     expect(ops).toHaveLength(0);
 
@@ -1983,11 +1902,6 @@ describe('bindSessionTranscript', () => {
     sub.bus.emit(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
     expect(store.getAgent('sub-1')?.getItems()).toHaveLength(1);
 
-    // Disposal kills the projector but must not drop already-served history:
-    // the service's backfill cache dedupes per agent, so removing the
-    // transcript would rebuild an empty shell on the next read. The roster
-    // entry stays and carries its end timestamp so REST / fresh-reset
-    // consumers can tell the dead agent from a live one.
     agents.remove('sub-1');
     expect(store.getAgent('sub-1')?.getItems()).toHaveLength(1);
     const descriptor = store.agents().find((a) => a.agentId === 'sub-1');
@@ -1997,7 +1911,6 @@ describe('bindSessionTranscript', () => {
     binding.dispose();
   });
 
-  /** The upload carried by an attachment seed: its cold fold yields the `att_1` entity. */
   const SHOT_PNG_UPLOAD = {
     type: 'file',
     file_id: 'file_1',
@@ -2005,11 +1918,6 @@ describe('bindSessionTranscript', () => {
     name: 'shot.png',
   };
 
-  /**
-   * Wire seed: a lone `hi` user message — or, with `attachment`, an
-   * upload-carrying user message (its cold fold yields the `att_1` entity)
-   * trailed by an assistant reply.
-   */
   async function seedWireHome(attachment?: Record<string, unknown>): Promise<string> {
     const home = await mkdtemp(join(tmpdir(), 'transcript-overlay-'));
     const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
@@ -2090,8 +1998,6 @@ describe('bindSessionTranscript', () => {
     expect(store.getAgent('sub-1')?.getItems()).toHaveLength(1);
 
     agents.remove('sub-1');
-    // The agent's subscriptions are disposed with it — late events from the
-    // dying scope must not project into the store.
     sub.bus.emit(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
     expect(store.getAgent('sub-1')?.getItems()[0]).toMatchObject({ kind: 'turn', state: 'running' });
     binding.dispose();
@@ -2118,9 +2024,6 @@ describe('bindSessionTranscript', () => {
         },
       ],
     };
-    // The projector attached mid-turn and guessed f1's kind wrong (the
-    // thinking stream was missed); its longer text must NOT shield the real
-    // thinking frame from the heal.
     const liveTurn: TranscriptTurn = {
       kind: 'turn',
       turnId: 't0',
@@ -2163,10 +2066,7 @@ describe('bindSessionTranscript', () => {
       { kind: 'tool', frameId: 't0.1.call_3', toolCallId: 'call_3', name: 'Bash', state: 'done', input: {}, output: 'y' },
     ]);
     const liveTurn = makeTurn([
-      // Result missed in the attach race — the heal must fill it, keeping
-      // the live-only display payload.
       { kind: 'tool', frameId: 't0.1.call_1', toolCallId: 'call_1', name: 'Bash', state: 'running', input: { command: 'ls' }, display: { kind: 'command', command: 'ls' } },
-      // Already resolved live — the heal must not touch it.
       { kind: 'tool', frameId: 't0.1.call_2', toolCallId: 'call_2', name: 'Read', state: 'done', input: {}, output: 'live-out' },
     ]);
 
@@ -2195,14 +2095,10 @@ describe('bindSessionTranscript', () => {
       attachmentIds,
       steps: [],
     });
-    // Live turn opened by the projector with its own `{turnId}.att<N>` ids:
-    // the merged header must keep them, not churn to the cold `att_<n>` form.
     const header = healTurnOps(makeTurn(['att_1']), makeTurn(['t0.att1'])).find(
       (op) => op.op === 'turn.upsert',
     );
     expect(header).toMatchObject({ turn: { attachmentIds: ['t0.att1'] } });
-    // A mid-turn-attached projector never saw turn.started: the live header
-    // has no ids and the heal falls back to the persisted cold ones.
     const fallback = healTurnOps(makeTurn(['att_1']), makeTurn(undefined)).find(
       (op) => op.op === 'turn.upsert',
     );
@@ -2221,8 +2117,6 @@ describe('bindSessionTranscript', () => {
     );
     const main = agents.add('main');
 
-    // The history backfill landed first: the store already holds the running
-    // turn with its cold attachment ids…
     store.ensureAgent('main').apply([
       {
         op: 'attachment.upsert',
@@ -2248,11 +2142,6 @@ describe('bindSessionTranscript', () => {
       },
     ]);
 
-    // …but the projector attached mid-turn: the only live event it ever sees
-    // for this turn is the terminal one. The terminal batch itself must carry
-    // the inherited header — waiting for the debounced heal is too late (the
-    // whole-header replace has already wiped the ids, and the session may
-    // close before the heal runs).
     main.bus.emit(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
 
     const terminal = ops.filter((op) => op.op === 'turn.upsert');
@@ -2286,8 +2175,6 @@ describe('bindSessionTranscript', () => {
       byAgent.set(event.agentId, [...(byAgent.get(event.agentId) ?? []), ...event.ops]);
     });
 
-    // A main-scoped seed announces only main-owned pendings; the subagent's
-    // waits for its own backfill.
     binding.seedPendingInteractions('main');
     expect([...byAgent.keys()]).toEqual(['main']);
 
@@ -2304,8 +2191,6 @@ describe('bindSessionTranscript', () => {
       byAgent.set(event.agentId, [...(byAgent.get(event.agentId) ?? []), ...event.ops]);
     });
 
-    // Created live, but during the backfill window (no seed has run yet):
-    // announcing now would misplace it into a synthetic step for good.
     interactions.enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, origin: { agentId: 'sub-1', turnId: 0 } });
     expect(byAgent.size).toBe(0);
 
@@ -2326,8 +2211,6 @@ describe('bindSessionTranscript', () => {
       byAgent.set(event.agentId, [...(byAgent.get(event.agentId) ?? []), ...event.ops]);
     });
 
-    // Created AFTER binding: fully live-covered by its projector, so its
-    // pendings announce without waiting for any backfill.
     agents.add('sub-1');
     interactions.enqueue({ id: 'q1', kind: 'question', payload: { toolCallId: 'call_q1' }, origin: { agentId: 'sub-1', turnId: 0 } });
     expect([...byAgent.keys()]).toEqual(['sub-1']);
@@ -2391,13 +2274,9 @@ describe('bindSessionTranscript', () => {
       byAgent.set(event.agentId, [...(byAgent.get(event.agentId) ?? []), ...event.ops]);
     });
 
-    // Seeding creates the projector WITHOUT a lifecycle handle — no bus
-    // subscription can exist yet. (One op: the entity upsert.)
     binding.seedPendingInteractions('sub-1');
     expect(byAgent.get('sub-1')?.map((op) => op.op)).toEqual(['interaction.upsert']);
 
-    // The agent materializes later: it must still get its live subscription
-    // (guarding on the projector's existence would drop every live event).
     const sub = agents.add('sub-1');
     sub.bus.emit(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     expect(byAgent.get('sub-1')!.length).toBeGreaterThan(1);
@@ -2415,8 +2294,6 @@ describe('bindSessionTranscript', () => {
       });
       const store = service.forSessionLive('s1');
       await service.whenReady('s1');
-      // The cold rebuild marked the turn completed; the overlay restores the
-      // in-flight state and keeps the snapshot's prompt.
       expect(store?.getAgent('main')?.getTurn('t0')).toMatchObject({
         state: 'running',
         prompt: 'hi',
@@ -2437,7 +2314,6 @@ describe('bindSessionTranscript', () => {
         core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
       });
       const store = service.forSessionLive('s1');
-      // Live events land while the backfill is still reading from disk.
       const bus = agents.get('main')!.bus;
       bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'hi' }));
       bus.emit(ev({ type: 'turn.step.started', turnId: 0, step: 1 }));
@@ -2456,10 +2332,8 @@ describe('bindSessionTranscript', () => {
 
       const turn = store?.getAgent('main')?.getTurn('t0');
       expect(turn?.state).toBe('running');
-      // The longer live text must not be replaced by the staler persisted one.
       const text = turn?.steps[0]?.frames.find((f) => f.kind === 'text');
       expect(text).toMatchObject({ text: 'Hello world' });
-      // The live-only display survives; the persisted outcome heals on top.
       const tool = turn?.steps[0]?.frames.find((f) => f.kind === 'tool');
       expect(tool).toMatchObject({
         state: 'done',
@@ -2482,8 +2356,6 @@ describe('bindSessionTranscript', () => {
         core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
       });
       const store = service.forSessionLive('s1');
-      // The projector writes the live running header before the disk backfill
-      // lands; the snapshot's cold 'completed' header must not win.
       agents
         .get('main')!
         .bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'live hi' }));
@@ -2508,8 +2380,6 @@ describe('bindSessionTranscript', () => {
         core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
       });
       const store = service.forSessionLive('s1');
-      // The live turn.started (with its own `t0.att1` attachment) lands while
-      // the backfill is still reading the persisted `att_1` form from disk.
       agents.get('main')!.bus.emit(
         ev({
           type: 'turn.started',
@@ -2522,14 +2392,11 @@ describe('bindSessionTranscript', () => {
       await service.whenReady('s1');
 
       const agent = store?.getAgent('main');
-      // Neither the live-first merge nor the running-overlay may churn or
-      // clear the live ids.
       expect(agent?.getTurn('t0')).toMatchObject({
         state: 'running',
         prompt: 'live prompt',
         attachmentIds: ['t0.att1'],
       });
-      // The snapshot's cold counterpart must not land as an orphan entity.
       expect(agent?.getAttachment('t0.att1')).toBeDefined();
       expect(agent?.getAttachment('att_1')).toBeUndefined();
       service.dropSession('s1');
@@ -2565,16 +2432,12 @@ describe('bindSessionTranscript', () => {
       await service.whenReady('s1');
 
       bus.emit(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
-      // The debounced heal re-reads the persisted snapshot and merges it back;
-      // its batch is the one carrying the (live-missed) wholesale step.
       await waitFor(() =>
         batches.some((batch) => batch.some((op) => op.op === 'step.upsert' && op.turnId === 't0')),
       );
       const healBatch = batches.find((batch) =>
         batch.some((op) => op.op === 'step.upsert' && op.turnId === 't0'),
       )!;
-      // No id churn on the wire: the healed header keeps the live ids, and no
-      // batch ever upserts the cold `att_1` entity.
       expect(healBatch.find((op) => op.op === 'turn.upsert')).toMatchObject({
         turn: { attachmentIds: ['t0.att1'] },
       });
@@ -2608,8 +2471,6 @@ describe('bindSessionTranscript', () => {
       });
       service.forSessionLive('s1');
       await service.whenReady('s1');
-      // The backfill dispatch is the first journaled batch for main; measure
-      // everything relative to it.
       const base = service.getSeqWatermark('s1', 'main');
 
       const seen: number[] = [];
@@ -2620,30 +2481,23 @@ describe('bindSessionTranscript', () => {
       expect(seen).toEqual([base + 1, base + 2]);
       expect(service.getSeqWatermark('s1', 'main')).toBe(base + 2);
 
-      // Complete catch-up: exactly the batches past the cursor, ascending.
       const catchup = service.getOpsSince('s1', 'main', base);
       expect(catchup?.complete).toBe(true);
       expect(catchup?.latestSeq).toBe(base + 2);
       expect(catchup?.batches.map((batch) => batch.seq)).toEqual([base + 1, base + 2]);
 
-      // An up-to-date cursor replays nothing but is still complete.
       expect(service.getOpsSince('s1', 'main', base + 2)).toMatchObject({
         batches: [],
         latestSeq: base + 2,
         complete: true,
       });
-      // A cursor ahead of the watermark belongs to a dead journal
-      // incarnation — the server cannot vouch for it.
       expect(service.getOpsSince('s1', 'main', base + 3)?.complete).toBe(false);
 
-      // Seqs are per agent: a late agent starts its own counter at 1 (no
-      // backfill batch precedes its live ops).
       const sub = agents.add('sub-1');
       sub.bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' } }));
       expect(service.getSeqWatermark('s1', 'sub-1')).toBe(1);
       expect(service.getOpsSince('s1', 'sub-1', 0)?.batches.map((batch) => batch.seq)).toEqual([1]);
 
-      // Unknown agent / cold session: watermark 0, no journal at all.
       expect(service.getSeqWatermark('s1', 'nope')).toBe(0);
       expect(service.getOpsSince('nope-session', 'main', 0)).toBeUndefined();
       service.dropSession('s1');
@@ -2666,14 +2520,11 @@ describe('bindSessionTranscript', () => {
       const watermark = service.getSeqWatermark('s1', 'main');
       expect(watermark).toBe(base + TRANSCRIPT_OPS_JOURNAL_CAPACITY + 1);
 
-      // The oldest batches evicted: a cursor at the former base is no longer
-      // covered.
       const evicted = service.getOpsSince('s1', 'main', base);
       expect(evicted?.complete).toBe(false);
       expect(evicted?.latestSeq).toBe(watermark);
       expect(evicted?.batches).toHaveLength(TRANSCRIPT_OPS_JOURNAL_CAPACITY);
 
-      // A recent cursor is still fully covered.
       const recent = service.getOpsSince('s1', 'main', watermark - 10);
       expect(recent?.complete).toBe(true);
       expect(recent?.batches.map((batch) => batch.seq)).toEqual(

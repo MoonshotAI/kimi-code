@@ -1,22 +1,3 @@
-/**
- * `kimi-webbridge` capability entry (macOS / Linux / Windows).
- *
- * Layers: daemon binary (`~/.kimi-webbridge/bin/`, local HTTP daemon on
- * 127.0.0.1:10086) + agent wiring (the official `kimi-webbridge` plugin —
- * skills only, installed through `IPluginService`) + browser extension
- * (soft gate, user installs from the webstore or the manual zip).
- *
- * A running daemon is left untouched (start-if-down only, Kimi Work
- * coexistence). Reinstall replaces the on-disk binary from the latest
- * channel, which takes effect the next time the daemon starts. Installs
- * are detect-first and idempotent: only unsatisfied layers are redone,
- * setup re-enables a previously disabled wiring plugin, the binary step
- * requires the executable bit on POSIX (an interrupted install reads as
- * missing and re-downloads). Legacy standalone skill copies are moved into
- * a Kimi Code backup after the managed plugin has been refreshed, so plugin
- * updates become authoritative without deleting user files.
- */
-
 import { constants } from 'node:fs';
 import { access, chmod, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

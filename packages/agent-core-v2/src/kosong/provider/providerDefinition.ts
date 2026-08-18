@@ -1,22 +1,3 @@
-/**
- * `kosong/provider` domain — the provider-definition registry.
- *
- * A `ProviderDefinition` is the declarative answer to "who is this vendor and
- * where do its key/url come from": the protocol base this registration
- * composes with, its deviation traits (applying to that protocol only), its
- * endpoint fallback chain, how much of the host's request headers it
- * receives, and how its models are discovered. Registration happens once per
- * vendor × protocol pair: a vendor running over several transports registers
- * one definition per protocol. Vendor-level facts (endpoint, host headers,
- * model source) are declared identically on every registration of the same id
- * via shared constants, so id-level queries can read any of them.
- *
- * `resolveProviderEndpoint` is the single authority on the endpoint fallback
- * chain: definition-level `endpoint` first, otherwise the aggregation of the
- * definition's trait endpoint hooks, resolved against a caller-supplied env
- * bag (defaulting to `process.env`).
- */
-
 import { BugIndicatingError } from '#/_base/errors/errors';
 import type { Protocol, ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 import type {

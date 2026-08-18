@@ -1,16 +1,3 @@
-/**
- * `kosong/protocol` base registry — registration, lookup, and ordering.
- *
- * Locks the registry contract the L2 `*.contrib.ts` modules rely on: a base
- * registers once under its id, duplicate registration throws (never silently
- * overwrites), lookup of an unregistered id returns `undefined`, and listing
- * preserves registration order so `supportedProtocols()` can be derived.
- *
- * Note: the registry is module-level state shared across this file, so each
- * test registers a distinct base id; `openai_responses` stays unregistered
- * until the final test so the early negative lookups hold.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import type { ChatProvider } from '#/kosong/contract/provider';

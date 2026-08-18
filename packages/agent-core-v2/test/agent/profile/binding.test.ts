@@ -123,9 +123,6 @@ describe('AgentProfileService.bind', () => {
     expect(svc.getSystemPrompt()).toContain('Kimi Code CLI');
   });
 
-  // A fast bootstrap can bind while config is still loading; the model
-  // materialization inside bind must wait for the identity freeze instead of
-  // tripping its pre-freeze guard through the host-headers port.
   it('waits for the identity freeze instead of racing it', async () => {
     const deferred = deferredAgentIdentityStub();
     ctx = createTestAgent(

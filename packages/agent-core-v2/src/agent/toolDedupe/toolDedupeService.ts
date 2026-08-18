@@ -1,26 +1,9 @@
-/**
- * `toolDedupe` domain — `IAgentToolDedupeService` implementation.
- *
- * Self-wiring plugin: its constructor registers `loop` onWillBeginStep/onDidFinishStep
- * hooks, an `onBeforeExecuteTool` veto listener (same-step duplicates are
- * vetoed with a placeholder synthetic result), and an `onDidExecuteTool`
- * hook to drive same-step suppression and cross-step repeat reminders, and
- * reports repeat telemetry through `telemetry`. The mutable dedupe state
- * (`stepCalls`, `originalCallIndex`, `syntheticCallIds`, `callKeyByCallId`,
- * `consecutiveKey`, `consecutiveCount`, `activeTurnId`, `activeStep`) is
- * registered into `agentState` (`IAgentStateService`) and read/written
- * through it; the `stepDeferreds` promise locks stay plain fields.
- * Constructed eagerly at
- * Agent scope so the hooks are installed without any other service
- * injecting it.
- */
-
 import { createHash } from 'node:crypto';
 
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { canonicalTelemetryArgs } from '#/_base/utils/canonical-args';
 import type { ToolCallDedupDetectedEvent, ToolCallRepeatEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -157,14 +140,14 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(toolDedupeStepCallsKey);
-    this.states.register(toolDedupeOriginalCallIndexKey);
-    this.states.register(toolDedupeSyntheticCallIdsKey);
-    this.states.register(toolDedupeCallKeyByCallIdKey);
-    this.states.register(toolDedupeConsecutiveKeyKey);
-    this.states.register(toolDedupeConsecutiveCountKey);
-    this.states.register(toolDedupeActiveTurnIdKey);
-    this.states.register(toolDedupeActiveStepKey);
+    this.states.contributeState(toolDedupeStepCallsKey);
+    this.states.contributeState(toolDedupeOriginalCallIndexKey);
+    this.states.contributeState(toolDedupeSyntheticCallIdsKey);
+    this.states.contributeState(toolDedupeCallKeyByCallIdKey);
+    this.states.contributeState(toolDedupeConsecutiveKeyKey);
+    this.states.contributeState(toolDedupeConsecutiveCountKey);
+    this.states.contributeState(toolDedupeActiveTurnIdKey);
+    this.states.contributeState(toolDedupeActiveStepKey);
     loop.hooks.onWillBeginStep.register('toolDedupe', async (ctx, next) => {
       this.beginStep(ctx.turnId, ctx.step);
       await next();

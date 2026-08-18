@@ -1,13 +1,3 @@
-/**
- * `prompt` domain — safe, displayable metadata text derived from prompts.
- *
- * Shared by prompt submission and undo projection so `lastPrompt` uses one
- * normalization, redaction, and length limit, with image captions supplied by
- * the `media` domain. A standalone `<media path="…">` tag is machine markup
- * (the model-facing degrade form) and never reaches titles / lastPrompt, so
- * a materialization path cannot leak into them.
- */
-
 import type { ContentPart } from '#/kosong/contract/message';
 import { matchSingleMediaPathTag } from '#/agent/media/mediaRef';
 import { extractImageCompressionCaptions } from '#/agent/media/image-compress';

@@ -1,16 +1,6 @@
-/**
- * The v1 WS `Event` union — the per-agent event stream frame payloads.
- *
- * Most frames are the engine's own `DomainEvent`s (turn / tool / subagent /
- * compaction / mcp / …), re-exported here as the stream's backbone. The
- * remaining interfaces are the v1-only frames this transport synthesizes
- * (session/workspace lifecycle, config changes, the merged
- * legacy status overlay, and the legacy background-task spellings) — they
- * never had an engine-side producer, so they are defined here, next to the
- * broadcaster that emits them.
- */
+import type { z } from 'zod';
 
-import type { DomainEvent } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
+import type { agentEventSchema } from '../../../protocol/events-zod';
 import type { MessageContent } from '../../../protocol/message';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
@@ -220,8 +210,10 @@ export interface BackgroundTaskTerminatedEvent {
   readonly info: TaskInfo;
 }
 
+type CoreStreamEvent = z.infer<typeof agentEventSchema>;
+
 export type AgentEvent =
-  | DomainEvent
+  | CoreStreamEvent
   | AgentStatusUpdatedEvent
   | AgentCreatedEvent
   | AgentDisposedEvent
@@ -241,7 +233,7 @@ export type AgentEvent =
   | BackgroundTaskStartedEvent
   | BackgroundTaskTerminatedEvent;
 
-export type Event = AgentEvent & { agentId: string; sessionId: string };
+export type Event = AgentEvent & { agentId: string; sessionId: string; readonly time?: number };
 
 export const VOLATILE_EVENT_TYPES = [
   'assistant.delta',
@@ -253,9 +245,6 @@ export const VOLATILE_EVENT_TYPES = [
   'shell.completed',
   'agent.status.updated',
   'event.di.unit_changed',
-  // Live-only install progress (per-chunk download ticks) — durable journaling
-  // would persist hundreds of stale frames per install. The settle frame is
-  // recoverable via a direct capability read, so the whole type stays volatile.
   'event.capability.changed',
 ] as const;
 

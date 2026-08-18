@@ -1,28 +1,3 @@
-/**
- * `skill` domain — `IAgentSkillService` implementation.
- *
- * Resolves skills from the session catalog, renders the activation prompt,
- * records the activation as a `skill.activate` fact through `wire.dispatch`
- * (a stateless, identity-apply Op), derives the `skill.activated` event
- * through the Op's `toEvent`, and delivers user-slash activations through
- * `prompt.inject` — steered into the running turn when one is active,
- * launched as a fresh turn when idle, exactly the queue/steer equivalence of
- * plain user input (attachment parts from the caller ride the same user
- * message after the rendered prompt). It settles `{turn_id}` for the caller,
- * persists the derived title/lastPrompt through `sessionMetadata` for the
- * main agent only (publishing the live update through `event`), and reports
- * `skill_invoked` / `flow_invoked` through `telemetry`. `promptWithSkills`
- * bundles one or more skill activations into the prompt's own user message:
- * the rendered skill blocks precede the caller's parts in the content and
- * each activation's metadata rides the prompt origin's `skillActivations`,
- * so the bundle launches as a single turn and undoes as a single anchor;
- * every skill is validated before anything is recorded, so an invalid name
- * or an empty skill list rejects the whole submission. The fact is transient
- * (`persist: false`), so neither the event nor telemetry fires on resume —
- * bundled activations are rebuilt from the prompt origin instead. Bound at
- * Agent scope.
- */
-
 import { randomUUID } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -40,17 +15,19 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { Service } from '#/_base/di/service';
 import { ErrorCodes, Error2 } from '#/errors';
 import { isUserActivatableSkillType, type SkillDefinition } from '#/app/skillCatalog/types';
-import { IAgentPromptService, type PromptLaunchResult } from '#/agent/prompt/prompt';
+import { IAgentPromptService, reservePrompt, type PromptLaunchResult } from '#/agent/prompt/prompt';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
-import { IWireService } from '#/wire/wire';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   IAgentSkillService,
   type PromptSkillActivation,
   type PromptWithSkillsInput,
+  type PromptWithSkillsResult,
   type SkillActivationInput,
 } from './skill';
-import { skillActivate } from './skillOps';
+import { SkillActivate, skillKey } from './skillOps';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { IEventService } from '#/app/event/event';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -65,14 +42,16 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @IAgentPromptService private readonly prompt: IAgentPromptService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
-    @IWireService private readonly wire: IWireService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @IEventService private readonly eventService: IEventService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IAgentStateService agentState: IAgentStateService,
   ) {
     super();
+    agentState.contributeState(skillKey);
   }
 
   async activate(input: SkillActivationInput): Promise<PromptLaunchResult> {
@@ -136,7 +115,7 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     return { turn_id: turn.id };
   }
 
-  async promptWithSkills(input: PromptWithSkillsInput): Promise<PromptLaunchResult | undefined> {
+  async promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult> {
     if (input.input.length === 0) {
       throw new Error2(ErrorCodes.REQUEST_INVALID, 'promptWithSkills requires a non-empty prompt');
     }
@@ -161,8 +140,9 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     for (const activation of prepared) {
       void this.recordActivation(activation.origin);
     }
-    const handle = await this.prompt.enqueue({
-      message: {
+    const reservation = reservePrompt(this.prompt);
+    try {
+      const handle = await reservation.submit({
         role: 'user',
         content: [...prepared.map((activation) => activation.part), ...input.input],
         toolCalls: [],
@@ -170,11 +150,23 @@ export class AgentSkillService extends Service implements IAgentSkillService {
           kind: 'user',
           skillActivations: prepared.map((activation) => activation.entry),
         },
-      },
-    });
-    if (handle.state === 'pending') return undefined;
-    const turn = await handle.launched;
-    return turn === undefined ? undefined : { turn_id: turn.id };
+      });
+      if (handle.state === 'pending') {
+        return { prompt_id: handle.id, created_at: handle.createdAt, state: 'queued' };
+      }
+      const turn = await handle.launched;
+      if (turn === undefined && handle.state !== 'blocked') {
+        throw new Error2(ErrorCodes.INTERNAL, 'promptWithSkills failed to launch a turn');
+      }
+      return {
+        turn_id: turn?.id,
+        prompt_id: handle.id,
+        created_at: handle.createdAt,
+        state: handle.state === 'blocked' ? 'blocked' : 'running',
+      };
+    } finally {
+      reservation.dispose();
+    }
   }
 
   recordModelToolActivation(origin: SkillActivationOrigin): void {
@@ -236,7 +228,7 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     origin: SkillActivationOrigin,
     input?: readonly ContentPart[],
   ): Promise<Turn | undefined> {
-    this.wire.dispatch(skillActivate({ origin }));
+    await this.dispatcher.dispatch(new SkillActivate({ origin }));
     this.publishActivation(origin);
 
     if (input === undefined) return undefined;
@@ -246,10 +238,6 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       toolCalls: [],
       origin,
     };
-    // Plain-input equivalence, no opt-in: an activation that arrives while a
-    // turn is running steers into it at the next step boundary (the
-    // skill_activation origin rides the `turn.steer` record); with no running
-    // turn it queues as a fresh prompt turn exactly like normal input.
     if (this.loop.status().state === 'running') {
       return this.prompt.inject(message);
     }

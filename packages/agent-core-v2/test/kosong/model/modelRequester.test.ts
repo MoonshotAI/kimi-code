@@ -1,20 +1,3 @@
-/**
- * `kosong/model` ModelRequesterImpl tests — request execution against a fake
- * ChatProvider (the adapter registry is stubbed to return it, so no wire I/O
- * happens):
- *
- *  - `ModelRequestParams` map 1:1 onto `GenerateOptions` (cacheKey / sampling /
- *    thinking effort+keep / budget + window-clamp companions), with auth
- *    threaded per attempt;
- *  - the event stream carries parts, usage, finish, and timing;
- *  - a 401 against a refreshable auth provider forces one token refresh and
- *    exactly one replay; a 401 that survives the replay surfaces as
- *    `provider.auth_error`; other failures go through
- *    `translateProviderError`; an abort is rethrown untouched;
- *  - `uploadVideo` presence is the capability declaration;
- *  - `buildStreamTiming` splits TTFT at the request-sent boundary.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { isError2 } from '#/_base/errors/errors';

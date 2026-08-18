@@ -30,6 +30,7 @@ import type { ScopedCaller } from './session.js';
 // klient free of protocol-package imports).
 export type PromptLaunchResult = Awaited<ReturnType<IAgentPromptService['submit']>>;
 export type PromptWithSkillsInput = Parameters<IAgentSkillService['promptWithSkills']>[0];
+export type PromptWithSkillsResult = Awaited<ReturnType<IAgentSkillService['promptWithSkills']>>;
 export type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;
 export type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']>>;
 export type ThinkingLevel = ReturnType<IAgentProfileService['getEffectiveThinkingLevel']>;
@@ -55,10 +56,11 @@ export interface AgentFacade {
    * same user message: the skills are validated up front (an unknown name or
    * an empty list rejects the whole submission), rendered ahead of the
    * caller's parts in the same turn, and the bundle undoes as a single
-   * anchor. Resolves with the launched turn id, or `undefined` when the
-   * submission queued behind a running turn.
+   * anchor. Resolves with the submitted bundle's queue identity (`prompt_id`
+   * / `created_at` / `state`), plus `turn_id` once launched — `state` is
+   * `queued` when the submission queued behind a running turn.
    */
-  promptWithSkills(input: PromptWithSkillsInput): Promise<PromptLaunchResult>;
+  promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult>;
   steer(input: { input: readonly ContentPart[] }): Promise<PromptLaunchResult>;
   /**
    * Activate a skill as a user-slash activation: the engine renders the skill
@@ -107,7 +109,7 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     prompt: (input) =>
       call(scope, 'agentPromptService', 'submit', [input]) as Promise<PromptLaunchResult>,
     promptWithSkills: (input) =>
-      call(scope, 'agentSkillService', 'promptWithSkills', [input]) as Promise<PromptLaunchResult>,
+      call(scope, 'agentSkillService', 'promptWithSkills', [input]) as Promise<PromptWithSkillsResult>,
     steer: (input) =>
       call(scope, 'agentPromptService', 'submitSteer', [input]) as Promise<PromptLaunchResult>,
     activateSkill: (input) =>

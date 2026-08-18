@@ -1,22 +1,6 @@
-/**
- * `workspaceSkillCatalog` domain — `IWorkspaceSkillCatalog`
- * implementation.
- *
- * Merges builtin, user, explicit, extra, workspace-root, and plugin skill
- * sources by priority ONCE per handler, serializing refreshes for each
- * source; afterwards a source's `onDidChange` (fs watch / config section /
- * plugin reload) re-scans that source alone and re-fires the merged change
- * event — no full rescan ever leaves the build-time load. The merged view is
- * shared by every session of the handler through the
- * `ISessionSkillCatalogData` seed (`sessionData()`), a live read view over
- * this service. The plain-data state (`contributions`, `merged`) is
- * registered into `workspaceState` (`IWorkspaceStateService`) and
- * read/written through it. Bound at Workspace scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import type { ISkillSource, SkillContribution } from '#/app/skillCatalog/skillSource';
@@ -58,8 +42,8 @@ export class WorkspaceSkillCatalogService extends Disposable implements IWorkspa
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
   ) {
     super();
-    this.states.register(workspaceSkillCatalogContributionsKey);
-    this.states.register(workspaceSkillCatalogMergedKey);
+    this.states.contributeState(workspaceSkillCatalogContributionsKey);
+    this.states.contributeState(workspaceSkillCatalogMergedKey);
     this.sources = [builtin, user, explicit, extra, workspace, plugin].toSorted(
       (a, b) => a.priority - b.priority,
     );

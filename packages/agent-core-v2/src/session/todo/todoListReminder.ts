@@ -1,11 +1,3 @@
-/**
- * `todo` domain — pure stale-todo reminder logic.
- *
- * Computes the `todo_list_reminder` context injection from the agent's context
- * history (turns since the last `TodoList` write / last reminder) and the
- * current session todo list. Pure — no scoped state.
- */
-
 import type { ContextMessage } from '#/agent/contextMemory/types';
 
 import { TODO_LIST_TOOL_NAME, type TodoItem } from './todoItem';

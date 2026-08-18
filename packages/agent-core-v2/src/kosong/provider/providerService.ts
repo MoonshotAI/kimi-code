@@ -1,11 +1,3 @@
-/**
- * `kosong/provider` domain — `IProviderService` implementation.
- *
- * The in-memory provider registry plus the default-provider pointer. Holds no
- * config dependency: the persistence bridge hydrates it via `loadAll` and
- * persists the change events it fires. Bound at App scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -23,7 +15,6 @@ import {
 
 const NO_ABORT = new AbortController().signal;
 
-// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class ProviderService extends Disposable implements IProviderService {
   declare readonly _serviceBrand: undefined;
 

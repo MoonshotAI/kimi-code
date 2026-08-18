@@ -1,12 +1,3 @@
-/**
- * Scenario: JSONL append-log ordering, durability, rewrite serialization, and decoding.
- *
- * Resolves the real `AppendLogStore` by interface over in-memory storage;
- * controlled storage promises expose write ordering without wall-clock waits.
- * Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/persistence/backends/node-fs/appendLogStore.test.ts`.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';

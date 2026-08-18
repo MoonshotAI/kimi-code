@@ -1,10 +1,3 @@
-/**
- * `kimi-webbridge` capability entry — platform asset mapping, layered
- * detect, and the idempotent install flow (download → start-if-down →
- * plugin wiring). All host effects are faked
- * (temp dirs, scripted fetch, scripted host processes, fake plugins).
- */
-
 import { mkdtemp, readFile, readdir, rm, mkdir, writeFile, access, chmod, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -90,8 +83,6 @@ function fakePlugins(installed: Array<{ id: string; enabled: boolean; state: str
       ),
     installPlugin: (input: { source: string }) => {
       installs.push(input.source);
-      // Upsert semantics of the real manager: a new id installs enabled, an
-      // existing record keeps its (possibly disabled) enabled flag.
       const existing = installed.find((p) => p.id === 'kimi-webbridge');
       if (existing === undefined) {
         installed.push({ id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.11.3' });
@@ -111,7 +102,6 @@ function fakePlugins(installed: Array<{ id: string; enabled: boolean; state: str
   return { service, installs, enabledCalls };
 }
 
-/** Scripted fetch: answers daemon /status and CDN binary downloads. */
 function fakeFetch(opts: {
   statusSequence?: Array<object | 'error'>;
   binary?: Uint8Array;
@@ -179,9 +169,6 @@ describe('kimi-webbridge entry', () => {
     await writeFile(from, 'new');
     await writeFile(to, 'old-running');
 
-    // Stage-then-rename on the target filesystem: the live destination is
-    // replaced atomically (never opened for write — ETXTBSY-safe), the
-    // source is removed, and no sibling temp is left behind.
     await renameAcrossDevicesFallback(from, to);
 
     expect(await readFile(to, 'utf-8')).toBe('new');
@@ -263,7 +250,6 @@ describe('kimi-webbridge entry', () => {
   it('installs end-to-end: download, start-if-down, and plugin wiring', async () => {
     const plugins = fakePlugins([]);
     const host = fakeHostProcess();
-    // First status poll (before start): down. Subsequent polls: up.
     const { fetchImpl } = fakeFetch({
       statusSequence: [
         { running: false },
@@ -278,16 +264,12 @@ describe('kimi-webbridge entry', () => {
 
     await entry.install((step, percent) => reports.push([step, percent]));
 
-    // Binary downloaded into place and made executable.
     const binPath = path.join(root, 'user-home', '.kimi-webbridge', 'bin', 'kimi-webbridge');
     await access(binPath);
-    // Daemon started exactly once (start-if-down).
     expect(host.calls.map((c) => `${c.command} ${c.args.join(' ')}`)).toEqual([`${binPath} start`]);
-    // Plugin wiring installed from the official CDN zip.
     expect(plugins.installs).toEqual([
       'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip',
     ]);
-    // Progress reported download steps.
     expect(reports[0]).toEqual(['download', 0]);
     expect(reports.some(([step]) => step === 'daemon')).toBe(true);
     expect(reports.some(([step]) => step === 'skill')).toBe(true);
@@ -401,7 +383,6 @@ describe('kimi-webbridge entry', () => {
   it('treats a non-executable leftover binary as missing and re-downloads it', async () => {
     const userHome = path.join(root, 'user-home');
     await mkdir(path.join(userHome, '.kimi-webbridge', 'bin'), { recursive: true });
-    // An install interrupted between rename and chmod leaves this behind.
     const binPath = path.join(userHome, '.kimi-webbridge', 'bin', 'kimi-webbridge');
     await writeFile(binPath, 'stale');
     await chmod(binPath, 0o644);
@@ -432,8 +413,6 @@ describe('kimi-webbridge entry', () => {
     });
     const entry = createKimiWebbridgeEntry(makeCtx({ plugins: plugins.service, fetchImpl }));
 
-    // installPlugin preserves the disabled flag, but setup must not strand
-    // the capability at partial by leaving the wiring off.
     await entry.install(() => {});
     expect(plugins.enabledCalls).toEqual([{ id: 'kimi-webbridge', enabled: true }]);
   });

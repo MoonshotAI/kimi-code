@@ -1,7 +1,3 @@
-/**
- * `plugin` domain test stubs — shared plugin boundary fixtures.
- */
-
 import { Event, type Emitter } from '#/_base/event';
 import type { IPluginService } from '#/app/plugin/plugin';
 import type {

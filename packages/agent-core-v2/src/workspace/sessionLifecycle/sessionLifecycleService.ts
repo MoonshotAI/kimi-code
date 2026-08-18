@@ -1,107 +1,3 @@
-/**
- * `sessionLifecycle` domain — `ISessionLifecycleService` implementation.
- *
- * Owns the registry of THIS handler's open Session child scopes, creating
- * them through the DI scope tree (children of the handler's Workspace
- * scope) and seeding each with its identity, storage addressing derived
- * from the handler's persistence scope, and a per-session lifecycle-hooks
- * slots instance it runs around create/close,
- * tearing sessions down on close/archive — archiving flags the session's
- * metadata, removes its agents, restoring clears
- * the archived flag, and broadcasts the transition; deleting closes a live
- * session through the same flow, then removes the session directory
- * (metadata, agent wire records, plans, logs), evicts the index read-model
- * entry, and appends a `deleted` tombstone to the shared
- * `session_index.jsonl`, raising `session.not_found` for ids this handler
- * never persisted. Pending metadata writes and the index mirror are
- * drained before any teardown, so a listing right after close/archive/delete
- * never reads a stale outcome. Session start and
- * resume failures are reported through telemetry. Each Session scope
- * receives a telemetry view bound to its session id, while failures before
- * a scope is available use an ephemeral context view. Closing a session
- * never touches the handler itself.
- * Every Session scope is also seeded with the handler's shared workspace
- * resources as pure-data read views (the injection contracts) — discovery,
- * watching and connecting all live on the Workspace-scope services; session
- * consumers read the seeds and refresh off their change events. The five
- * workspace-projection seeds are provided by the seed-adapter units
- * installed with the scope (`installSessionSeedAdapters`), not by `extra`.
- * Materializes the session's initial metadata on
- * creation. Bound at Workspace scope.
- * Persisted sessions are discovered through the session-index read model.
- * On create / fork the
- * session is also appended to the shared `session_index.jsonl` so v1 clients
- * (TUI, export) can discover sessions created by the v2 engine; the entry is
- * indexed under the handler's workspace id — the same id seeding the
- * session's storage scope — so an alias spelling of the workDir cannot split
- * the session into a bucket v1 readers never look in. Fork flushes
- * live Agent wire journals, normalizes a missing protocol envelope, and
- * appends the fork boundary before restoring the target Agent; fork is
- * confined to this handler (source and target share the workspace bucket).
- * Fork rejects a LIVE source with an active turn
- * (`session.fork_active_turn`, read off the agents' `activityView`); a
- * closed source forks from disk unchecked. The copied file set drops the
- * v1-only `upcoming-goals.json` goal queue on every fork. A fork carrying
- * a `turnIndex` truncates the copy through the addressed user-visible turn
- * (the slicing itself lives in `internal/forkTurnSlice.ts`, with the
- * `prompt` domain's metadata-text normalization deriving the fork's
- * `lastPrompt` from the addressed turn): the main wire is sliced at the
- * turn boundary keeping only matched turn inputs, subagent wires time-cut
- * at the main slice's latest record time and subagents left empty are
- * dropped with their copied files, retained agents' `tasks/` and `cron/`
- * dirs are cleared, and cron duplication is skipped. The slice runs before
- * any target artifact exists, so an out-of-range index fails without a
- * cleanup pass. v1's missing-parent sweep has no counterpart: v2 agent metas
- * parent `main` by construction, so a retained agent's chain cannot dangle
- * outside fabricated wires.
- * Fork restores the source's recency onto the target: the metadata write
- * carries an explicit `updatedAt` and runs after agent recreation as the
- * fork's final metadata write (agent registration is non-touching), ahead
- * of cron duplication, so a mid-fork failure never leaves cloned cron
- * records behind.
- * On
- * materialize, the agent-profile loaders' `ready` is awaited
- * before the handle is published — agent-file discovery is local-
- * fs and cheap, and a resumed session's first turn must see file-defined
- * agent types in the `Agent` tool description; only the `fatal` explicit
- * loader rejects, exactly the case that should
- * fail fast, and on that failure the half-materialized handle is disposed
- * instead of poisoning the session cache, and the explicit loader is re-armed
- * with a fire-and-forget `reload()` so a fixed agent file unblocks later
- * creates
- * (the workspace skill catalog, by contrast, is kicked fire-and-forget).
- * The handler's shared MCP manager is NOT awaited before create/resume
- * returns — it connects fire-and-forget at Workspace scope, and the seeded
- * handle's `ready` promise lets the agent's LLM steps wait on it instead
- * (see `AgentMcpService`). A session created with ephemeral `mcpServers`
- * gets them seeded verbatim (`ISessionEphemeralMcpServers`); connecting
- * them is the MCP domain's own concern — `workspaceMcp` subscribes to this
- * service's `onWillCreateSession`, reads the session's seeds through the
- * event's session-domain surface (`readSeed` / `contributeSeed` /
- * `onSessionDispose`), contributes its session overlay handle, and attaches
- * the overlay's shutdown to the session's teardown, so this service never
- * depends on MCP.
- * The session-level services whose subscriptions
- * must exist before the first agent / turn (external hooks, cron, the
- * subagent model-pool startup validation) opt into `OnScopeCreated` activation.
- * The subagent model pool itself is validated even earlier — at
- * the top of `materializeSession`, before the MCP overlay, the session scope,
- * and any persisted artifact come into existence, and again at the top of
- * `fork` before the source session's files are copied — so a broken pool
- * (or invalid `force` configuration) fails create/resume/fork without
- * leaving orphaned session dirs or leaked
- * overlay connections behind; the Session-scope validation service
- * (`session/subagent/subagentModelsValidationService.ts`) repeats the same
- * check at scope activation as a backstop for paths that bypass this service.
- * That pre-flight awaits the kosong model/provider registries' `ready`
- * alongside `config.ready` first: the catalog resolves aliases through those
- * registries rather than the config document, so a cold bootstrap that
- * creates a session before hydration completes must not fail a valid pool
- * with `CONFIG_INVALID`.
- * The pool is gated behind the `secondary-model` experiment, so with the
- * experiment off these validations are no-ops and the section stays inert.
- */
-
 import { randomUUID } from 'node:crypto';
 
 import { join } from 'pathe';
@@ -148,7 +44,7 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { drainSessionMetadataWrites, toEpochMs } from '#/session/sessionMetadata/sessionMetadataService';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
-import { IWireService } from '#/wire/wire';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   AGENT_WIRE_RECORD_KEY,
   createWireMetadataRecord,
@@ -179,6 +75,7 @@ import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
+import { SessionArchived } from './sessionLifecycleEvents';
 import {
   assertForkTurnIndex,
   sliceMainRecordsAtTurn,
@@ -211,7 +108,6 @@ const SESSION_CREATE_RELOAD_SKILL_SOURCES: readonly string[] = [
   PLUGIN_SKILL_SOURCE_ID,
 ];
 
-// NOTE: stays Disposable — its own 'get' and 'config' collide with the Fiber
 export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
   declare readonly _serviceBrand: undefined;
   private readonly sessions = new Map<string, ISessionScopeHandle>();
@@ -237,6 +133,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private readonly _onDidForkSession = this._register(new Emitter<SessionForkedEvent>());
   readonly onDidForkSession: Event<SessionForkedEvent> = this._onDidForkSession.event;
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
+  private readonly resumeFailures = new Map<string, Error>();
 
   constructor(
     private readonly instantiation: IInstantiationService,
@@ -415,6 +312,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (inflight !== undefined) return inflight;
     const live = this.sessions.get(sessionId);
     if (live !== undefined) return Promise.resolve(live);
+    this.resumeFailures.delete(sessionId);
     const promise = this.doResume(sessionId, opts)
       .catch((error: unknown) => {
         this.telemetry
@@ -422,11 +320,18 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           .track2('session_load_failed', {
             reason: isError2(error) ? error.code : error instanceof Error ? error.name : 'unknown',
           });
+        this.resumeFailures.set(sessionId, error instanceof Error ? error : new Error('session resume failed'));
         throw error;
       })
       .finally(() => this.resuming.delete(sessionId));
     this.resuming.set(sessionId, promise);
     return promise;
+  }
+
+  async whenResumeSettled(sessionId: string): Promise<void> {
+    await this.resuming.get(sessionId);
+    const failure = this.resumeFailures.get(sessionId);
+    if (failure !== undefined) throw failure;
   }
 
   private async doResume(
@@ -446,11 +351,17 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       additionalDirs: opts?.additionalDirs,
       mcpServers: opts?.mcpServers,
     });
-    const agents = handle.accessor.get(IAgentLifecycleService);
-    if (agents.get(MAIN_AGENT_ID) === undefined) {
-      await agents.create({ agentId: MAIN_AGENT_ID });
+    try {
+      const agents = handle.accessor.get(IAgentLifecycleService);
+      if (agents.get(MAIN_AGENT_ID) === undefined) {
+        await agents.create({ agentId: MAIN_AGENT_ID });
+      }
+      await this.announceCreated({ sessionId, handle, source: 'resume' });
+    } catch (error) {
+      this.sessions.delete(sessionId);
+      handle.dispose();
+      throw error;
     }
-    await this.announceCreated({ sessionId, handle, source: 'resume' });
     return handle;
   }
 
@@ -480,10 +391,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const meta = handle.accessor.get(ISessionMetadata);
     await meta.setArchived(true);
     await this.drainAgents(handle);
-    this.event.publish({
-      type: 'event.session.archived',
-      payload: { sessionId },
-    });
+    this.event.publish(new SessionArchived({ payload: { sessionId } }));
     await this.announceWillClose({ sessionId, handle, reason: 'archive' });
     this.sessions.delete(sessionId);
     await drainSessionMetadataWrites();
@@ -562,9 +470,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     let targetSessionDir: string | undefined;
     try {
       await this.assertSubagentModelPoolPreFlight();
-      // A turn that just ended may still have its outcome write queued;
-      // settle pending metadata writes before reading the source for
-      // inheritance, or the fork could copy a stale (or absent) outcome.
       await drainSessionMetadataWrites();
       const sourceMeta =
         sourceHandle !== undefined
@@ -650,9 +555,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         archived: false,
         updatedAt: toEpochMs(sourceMeta?.updatedAt) || Date.now(),
         lastPrompt: turnSlice === undefined ? sourceMeta?.lastPrompt : turnSlice.lastPrompt,
-        // The fork continues the source's conversation, so it inherits the
-        // last turn's outcome too — otherwise a restart would drop a failure
-        // the warm fork was still reporting.
         lastTurnReason: sourceMeta?.lastTurnReason,
         custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
       });
@@ -744,7 +646,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (sourceHandle !== undefined) {
       const agentHandle = sourceHandle.accessor.get(IAgentLifecycleService).get(agentId);
       if (agentHandle !== undefined) {
-        await agentHandle.accessor.get(IWireService).flush();
+        await agentHandle.accessor.get(IEventDispatcher).flush();
       }
     }
     return collect(
@@ -834,7 +736,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return this.docs.get<SessionMeta>(sessionScopeOf(this.handlerScope, sessionId), 'state.json');
   }
 }
-
 
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const items: T[] = [];

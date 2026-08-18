@@ -1,11 +1,3 @@
-/**
- * `skillCatalog` domain — SKILL.md parsing primitives.
- *
- * Parses a SKILL.md (frontmatter + body) into a `SkillDefinition` and extracts
- * flowchart blocks. Pure functions with no IO: callers read bytes however they
- * like and pass the decoded text in.
- */
-
 import path from 'pathe';
 
 import { Error2 } from '#/_base/errors/errors';

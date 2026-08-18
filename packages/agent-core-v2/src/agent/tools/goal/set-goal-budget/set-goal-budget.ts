@@ -1,13 +1,3 @@
-/**
- * `tools` domain — `ISetGoalBudgetTool` contract.
- *
- * Public contract of the SetGoalBudget tool: the budget-unit enum backing the
- * input schema the model calls with, plus the Agent-scope identifier used to
- * resolve the implementation through the container. The tool records a
- * user-stated hard runtime limit for the current goal, one limit at a time.
- * Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

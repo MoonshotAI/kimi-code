@@ -1,10 +1,3 @@
-/**
- * `hostFsWatch` domain — `IHostFsWatchService` implementation.
- *
- * Reports precise or coarse host filesystem changes through platform
- * watchers. Each handle owns and disposes its watcher. Bound at App scope.
- */
-
 import { watch as fsWatch } from 'node:fs';
 import { basename, isAbsolute, join, relative } from 'node:path';
 

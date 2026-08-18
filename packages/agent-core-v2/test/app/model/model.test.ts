@@ -1,13 +1,3 @@
-/**
- * `model` domain tests — covers `effectiveModelConfig`, the `models` config
- * section registration + TOML transforms (now owned by the app/kosongConfig
- * persistence wrapper), and the `KIMI_MODEL_*` env overlay.
- *
- * The registry itself (`ModelService`) is a pure in-memory store covered by
- * `test/kosong/model/modelService.test.ts`; persistence through the config
- * bridge is covered by `test/app/kosongConfig/kosongConfigService.test.ts`.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { ConfigRegistry } from '#/app/config/configService';

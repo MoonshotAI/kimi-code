@@ -64,9 +64,6 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-model-catalog-'));
-    // Disable the background refresh scheduler so its startup refresh never
-    // races the route-level assertions below (it shares the IProviderDiscoveryService
-    // binding that the stub tests override).
     process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START'] = '0';
     process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS'] = '0';
   });
@@ -201,7 +198,6 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       has_api_key: true,
       status: 'connected',
       models: ['k2', 'turbo'],
-      // The single GET reveals the stored key; the list above never does.
       api_key: 'sk-test',
     });
 

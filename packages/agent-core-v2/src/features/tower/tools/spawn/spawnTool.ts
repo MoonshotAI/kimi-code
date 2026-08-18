@@ -1,45 +1,3 @@
-/**
- * `tools` domain — `TowerSpawnTool` implementation (the `TowerSpawn` tool).
- *
- * The tower's worker/reviewer launcher, ported from v1
- * (`agent-core/src/tools/builtin/tower/spawn.ts`) onto v2's spawn composition:
- * the briefing prompt is assembled here from the mission/review briefing
- * (never by the tower LLM), the roster/worktree/mission bookkeeping goes
- * through `TowerStore` (`tower` domain protocol), the agent is created
- * through `IAgentLifecycleService` with the `tower-worker` profile and driven
- * via `ISessionSubagentService.run` mirrored onto the tower's record stream
- * (`mirrorAgentRun`), and the run is registered detached with
- * `IAgentTaskService` under a `SubagentTask` — the same background path as
- * the `Agent` tool. Spawn concurrency is gated by `ITowerRateLimitService`;
- * the slot is released when the agent's completion settles (or immediately on
- * a launch/registration failure). The worker's model binding follows the same
- * rule as the `Agent`/`AgentSwarm` tools (`resolveSubagentBinding`): the
- * configured secondary model while the secondary-model experiment is on,
- * otherwise the tower's own model — except reviewers, who always bind the
- * tower's (primary) model. The resolved model is reported in the tool output
- * and the `spawn` line of the tower activity log. The spawned agent is pinned
- * to the `auto` permission mode regardless of the tower's own mode: workers
- * and reviewers run detached and unattended, so per-call approval prompts
- * would serialize the fleet on the user's attention (and with no approval
- * broker attached they silently auto-approve anyway). User-configured deny
- * rules and the tower-worker write guard still apply — both adjudicate
- * independently of the mode. `broadcastPermissionMode` skips
- * `tower-worker`-profile agents, so a later session-wide mode switch does not
- * move them off `auto` either.
- *
- * Deliberate v2 adaptation — no per-agent cwd: v1 confined each worker by
- * overriding its process cwd to the worktree. v2 freezes the session cwd by
- * design (every agent shares it), so confinement is instead (a) briefed —
- * `buildPrompt` states the worker's absolute worktree path and instructs it
- * to address every file operation (and every Bash `cd`) at that path — and
- * (b) enforced — the tower-worker write guard in `towerService.ts` hard-denies
- * Write/Edit outside the roster-recorded worktree. `buildPrompt` is otherwise
- * a verbatim v1 port; only the cwd-relative phrasing changed.
- *
- * Registered main-only (the tower) by `towerFeature.ts`. Bound at Agent
- * scope.
- */
-
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -168,8 +126,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         try {
           await store.addWorktree(mission.worktree, mission.branch, state.base);
         } catch (error) {
-          // The worktree may already exist (e.g. respawn after a crash) — the
-          // agent can still work in it; surface the git message and continue.
           notes.push(
             `worktree setup warning (continuing): ${error instanceof Error ? error.message : String(error)}`,
           );
@@ -187,9 +143,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           ? `tower worker ${args.name}: ${mission.title}`
           : `tower reviewer ${args.name}: ${reviewTarget ?? ''}`;
 
-      // Adaptive concurrency gate: refused while the provider is rate-limiting
-      // (pause) or the inflight budget is exhausted. The slot is released when
-      // the agent's completion settles — or immediately on a launch failure.
       const gate = this.rateLimit.acquire();
       if (!gate.ok) {
         return { output: gate.reason, isError: true };
@@ -197,11 +150,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       let slotHeld = true;
       try {
         const controller = new AbortController();
-        // The same binding rule as the Agent/AgentSwarm tools: the configured
-        // secondary model when the experiment is on, otherwise inherit the
-        // tower's own model. Reviewers are the exception — they always bind
-        // the tower's (primary) model: review quality is not where the
-        // secondary model saves money.
         const own = this.profile.data();
         const binding =
           own.modelAlias === undefined
@@ -256,11 +204,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           spawnedAt: new Date().toISOString(),
         });
         if (mission !== undefined) {
-          // Only once the spawn is real (gate passed, task registered, roster
-          // written): marking the mission active+owned any earlier would leave
-          // a phantom owner behind when the gate or the launch fails. Silent:
-          // the spawn log line below already carries name/owner/mission — a
-          // second mission.update line for the same assignment is pure noise.
           await store.updateMission(
             TOWER_NAME,
             mission.id,
@@ -308,9 +251,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         if (slotHeld) this.rateLimit.release();
       }
     } catch (error) {
-      // Expected protocol/git failures surface as error results — their
-      // messages are written as next-step guidance for the model. Unexpected
-      // (programming) errors keep propagating.
       if (error instanceof TowerProtocolError || error instanceof GitError) {
         return { output: error.message, isError: true };
       }
@@ -332,8 +272,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
 
     let created: IAgentScopeHandle;
     try {
-      // Validate the bound alias up front so a dangling [secondary_model]
-      // pointer fails the spawn here, not mid-turn inside the worker.
       if (binding !== undefined) this.modelCatalog.get(binding.model);
       created = await this.lifecycle.create({
         binding: {
@@ -348,8 +286,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         ? error
         : wrapSubagentModelError(error, binding.model, this.profile.data().modelAlias);
     }
-    // Pin the spawned agent to auto (see the file header): the fleet runs
-    // unattended, and broadcastPermissionMode will not move it off auto later.
     created.accessor.get(IAgentPermissionModeService).setMode('auto');
     const agentId = created.id;
 

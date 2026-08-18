@@ -1,23 +1,3 @@
-/**
- * `tool` domain — workspace path access policy for file tools.
- *
- * Owns `WorkspaceConfig` (the roots tools are allowed to access, injected
- * through each tool's constructor), the lexical path guards used by
- * Read/Write/Edit/Grep/Glob — canonicalization, workspace containment,
- * sensitive-file detection (env / credential / SSH key patterns with
- * explicit exemptions like `.env.example`) — and `PathSecurityError`.
- * `extendWorkspaceWithSkillRoots` merges skill-catalog roots into a tool
- * workspace so skill directories outside the cwd (e.g. `~/.kimi-code/skills`)
- * stay reachable.
- * Canonicalization is **lexical** only (no `realpath` / symlink following).
- * The guard stays host-aware: callers pass the active `IHostEnvironment`
- * path class so SSH paths stay POSIX even when the host Node process is
- * running on Windows. Shared-prefix escapes (a path like `/workspace-evil`
- * passing a naive `startswith('/workspace')` check) are blocked by
- * requiring a path separator (or exact equality) after the base prefix in
- * `isWithinDirectory`. Pure policy; no scoped service.
- */
-
 import * as pathe from 'pathe';
 
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';

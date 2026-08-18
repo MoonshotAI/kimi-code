@@ -59,6 +59,7 @@ import type {
   CompactOptions,
   SessionPlan,
   SessionStatus,
+  SessionTodoItem,
   SessionUsage,
   PromptInput,
   PromptSkillActivation,
@@ -716,6 +717,14 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId: this.interactiveAgentId,
     });
+  }
+
+  async getTodos(input: SessionIdRpcInput): Promise<readonly SessionTodoItem[]> {
+    void input;
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'getTodos is only available on the agent-core-v2 engine.',
+    );
   }
 
   async undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void> {

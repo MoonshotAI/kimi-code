@@ -14,9 +14,7 @@ describe('resolveTowerRepoRoot', () => {
   });
 
   it('does not mangle lookalike paths', () => {
-    // No trailing slash after the slot marker → not a tower worktree anchor.
     expect(resolveTowerRepoRoot('/repo/.tower/worktrees')).toBe('/repo/.tower/worktrees');
-    // A project that happens to be named worktrees is left alone.
     expect(resolveTowerRepoRoot('/repo/.tower/worktreesmith/x')).toBe(
       '/repo/.tower/worktreesmith/x',
     );
