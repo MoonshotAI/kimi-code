@@ -189,13 +189,23 @@ describe('agent skill routing', () => {
     const klient = createKlientFromChannel(channel);
     const agent = klient.session('s1').agent('main');
 
-    channel.result = { turn_id: 7 };
+    channel.result = {
+      turn_id: 7,
+      prompt_id: 'p1',
+      created_at: '2026-01-01T00:00:00.000Z',
+      state: 'running',
+    };
     await expect(
       agent.promptWithSkills({
         input: [{ type: 'text', text: 'Review this change.' }],
         skills: [{ name: 'review' }, { name: 'security', args: 'src/app.ts' }],
       }),
-    ).resolves.toEqual({ turn_id: 7 });
+    ).resolves.toEqual({
+      turn_id: 7,
+      prompt_id: 'p1',
+      created_at: '2026-01-01T00:00:00.000Z',
+      state: 'running',
+    });
     expect(channel.calls[0]).toEqual({
       scope: { sessionId: 's1', agentId: 'main' },
       service: 'agentSkillService',

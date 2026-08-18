@@ -136,3 +136,206 @@ export function rgText(l: RgLinesField | undefined): string {
   }
   return '';
 }
+
+export const VCS_METADATA_DIRS: ReadonlySet<string> = new Set([
+  '.git',
+  '.jj',
+  '.svn',
+  '.hg',
+  '.bzr',
+]);
+
+export interface SuggestQuery {
+  readonly nameQuery: string;
+  readonly pathSegments: readonly string[];
+  readonly showHidden: boolean;
+  readonly followGitignore: boolean;
+  readonly includeGlobs?: readonly string[];
+  readonly excludeGlobs?: readonly string[];
+}
+
+export interface SuggestCandidate {
+  readonly path: string;
+  readonly name: string;
+  readonly kind: 'file' | 'directory' | 'symlink';
+  readonly tier: number;
+  readonly depth: number;
+  readonly span: number;
+  readonly score: number;
+  readonly positions: readonly number[];
+}
+
+interface SuggestMatch {
+  readonly tier: number;
+  readonly span: number;
+  readonly positions: number[];
+}
+
+function subsequencePositions(segment: string, query: string): number[] | null {
+  const positions: number[] = [];
+  let idx = 0;
+  for (const ch of query) {
+    const found = segment.indexOf(ch, idx);
+    if (found < 0) return null;
+    positions.push(found);
+    idx = found + 1;
+  }
+  return positions;
+}
+
+function matchSuggestName(name: string, queryLower: string): SuggestMatch | null {
+  const positions = subsequencePositions(name.toLowerCase(), queryLower);
+  if (positions === null) return null;
+  const nameLower = name.toLowerCase();
+  const tier = nameLower === queryLower ? 3 : nameLower.startsWith(queryLower) ? 2 : 1;
+  const span = positions[positions.length - 1]! - positions[0]! + 1;
+  return { tier, span, positions };
+}
+
+function matchSuggestPath(path: string, querySegments: readonly string[]): SuggestMatch | null {
+  const pathLower = path.toLowerCase();
+  const pathSegments = pathLower.split('/');
+  const offsets: number[] = [];
+  let offset = 0;
+  for (const seg of pathSegments) {
+    offsets.push(offset);
+    offset += seg.length + 1;
+  }
+  const positions: number[] = [];
+  let nextSeg = 0;
+  let lastSeg = -1;
+  let lastSegPrefix = false;
+  for (const querySeg of querySegments) {
+    let matchedSeg = -1;
+    let segPositions: number[] | null = null;
+    for (let s = nextSeg; s < pathSegments.length; s++) {
+      segPositions = subsequencePositions(pathSegments[s]!, querySeg);
+      if (segPositions !== null) {
+        matchedSeg = s;
+        break;
+      }
+    }
+    if (matchedSeg < 0 || segPositions === null) return null;
+    for (const p of segPositions) positions.push(offsets[matchedSeg]! + p);
+    lastSegPrefix = pathSegments[matchedSeg]!.startsWith(querySeg);
+    lastSeg = matchedSeg;
+    nextSeg = matchedSeg + 1;
+  }
+  const tier =
+    pathLower === querySegments.join('/')
+      ? 3
+      : lastSeg === pathSegments.length - 1 && lastSegPrefix
+        ? 2
+        : 1;
+  const span = positions[positions.length - 1]! - positions[0]! + 1;
+  return { tier, span, positions };
+}
+
+export function evaluateSuggestCandidate(
+  relPath: string,
+  kind: 'file' | 'directory' | 'symlink',
+  query: SuggestQuery,
+): SuggestCandidate | null {
+  const segments = relPath.split('/');
+  if (segments.some((s) => VCS_METADATA_DIRS.has(s))) return null;
+  if (!query.showHidden && segments.some((s) => s.startsWith('.'))) return null;
+  const name = segments[segments.length - 1]!;
+  const pathMode = query.pathSegments.length > 0;
+  const match = pathMode
+    ? matchSuggestPath(relPath, query.pathSegments)
+    : matchSuggestName(name, query.nameQuery);
+  if (match === null) return null;
+  if (query.includeGlobs !== undefined && !matchesAnyGlob(relPath, query.includeGlobs)) return null;
+  if (query.excludeGlobs !== undefined && matchesAnyGlob(relPath, query.excludeGlobs)) return null;
+  const queryLength = pathMode
+    ? query.pathSegments.reduce((total, seg) => total + seg.length, 0)
+    : query.nameQuery.length;
+  const raw =
+    match.tier +
+    0.5 / segments.length +
+    0.25 * (queryLength / Math.max(name.length, 1)) +
+    0.25 * (queryLength / Math.max(match.span, 1));
+  const score = Math.min(1, raw / 4);
+  const base = relPath.length - name.length;
+  const positions = pathMode ? match.positions : match.positions.map((p) => base + p);
+  return {
+    path: relPath,
+    name,
+    kind,
+    tier: match.tier,
+    depth: segments.length,
+    span: match.span,
+    score,
+    positions,
+  };
+}
+
+export function compareSuggestCandidates(a: SuggestCandidate, b: SuggestCandidate): number {
+  if (a.tier !== b.tier) return b.tier - a.tier;
+  if (a.depth !== b.depth) return a.depth - b.depth;
+  if (a.name.length !== b.name.length) return a.name.length - b.name.length;
+  if (a.span !== b.span) return a.span - b.span;
+  if (a.path < b.path) return -1;
+  if (a.path > b.path) return 1;
+  return 0;
+}
+
+export class SuggestTopHeap {
+  private readonly heap: SuggestCandidate[] = [];
+
+  constructor(private readonly cap: number) {}
+
+  get size(): number {
+    return this.heap.length;
+  }
+
+  push(candidate: SuggestCandidate): void {
+    if (this.cap <= 0) return;
+    if (this.heap.length < this.cap) {
+      this.heap.push(candidate);
+      this.siftUp(this.heap.length - 1);
+      return;
+    }
+    if (compareSuggestCandidates(this.heap[0]!, candidate) <= 0) return;
+    this.heap[0] = candidate;
+    this.siftDown(0);
+  }
+
+  drain(): SuggestCandidate[] {
+    return this.heap.slice().sort(compareSuggestCandidates);
+  }
+
+  private siftUp(index: number): void {
+    let i = index;
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (compareSuggestCandidates(this.heap[parent]!, this.heap[i]!) >= 0) break;
+      [this.heap[parent], this.heap[i]] = [this.heap[i]!, this.heap[parent]!];
+      i = parent;
+    }
+  }
+
+  private siftDown(index: number): void {
+    let i = index;
+    for (;;) {
+      const left = i * 2 + 1;
+      const right = left + 1;
+      let worst = i;
+      if (
+        left < this.heap.length &&
+        compareSuggestCandidates(this.heap[left]!, this.heap[worst]!) > 0
+      ) {
+        worst = left;
+      }
+      if (
+        right < this.heap.length &&
+        compareSuggestCandidates(this.heap[right]!, this.heap[worst]!) > 0
+      ) {
+        worst = right;
+      }
+      if (worst === i) break;
+      [this.heap[worst], this.heap[i]] = [this.heap[i]!, this.heap[worst]!];
+      i = worst;
+    }
+  }
+}

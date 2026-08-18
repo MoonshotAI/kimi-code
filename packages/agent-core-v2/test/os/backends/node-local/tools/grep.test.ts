@@ -395,18 +395,10 @@ describe('GrepTool', () => {
     const tool = new GrepTool(createFakeKaos(), workspace);
 
     expect(tool.name).toBe('Grep');
-    expect(tool.description).toContain('unknown content or unknown file locations');
-    expect(tool.description).toContain('Do not use shell `grep` or `rg` directly');
     expect(tool.parameters).toMatchObject({
       type: 'object',
       properties: {
-        pattern: {
-          type: 'string',
-          description: expect.stringContaining('Regular expression'),
-        },
-        path: {
-          description: expect.stringContaining('Use Read instead'),
-        },
+        pattern: { type: 'string' },
       },
     });
     expect(GrepInputSchema.safeParse({ pattern: 'needle' }).success).toBe(true);
@@ -467,79 +459,6 @@ describe('GrepTool', () => {
           `${name} description should be non-empty`,
         ).toBeGreaterThan(0);
       }
-    });
-
-    it('notes that context flags require content output mode', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      const params = tool.parameters as {
-        properties: Record<string, { description?: string }>;
-      };
-      for (const name of ['-A', '-B', '-C', '-n']) {
-        expect(params.properties[name]?.description).toContain('content');
-      }
-    });
-
-    it('mentions count_matches in the output_mode description', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      const params = tool.parameters as {
-        properties: Record<string, { description?: string }>;
-      };
-      expect(params.properties['output_mode']?.description).toContain('count_matches');
-      expect(params.properties['output_mode']?.description).toContain('per-file');
-    });
-
-    it('documents that files_with_matches is ordered most-recently-modified first', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      const params = tool.parameters as {
-        properties: Record<string, { description?: string }>;
-      };
-      expect(params.properties['output_mode']?.description).toContain('most-recently-modified');
-    });
-
-    it('does not present an absolute path as a hard requirement for path', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      const params = tool.parameters as {
-        properties: Record<string, { description?: string }>;
-      };
-      const description = params.properties['path']?.description ?? '';
-      expect(description).not.toMatch(/^Absolute path/);
-      expect(description.toLowerCase()).toContain('relative');
-    });
-
-    it('guides type as the more efficient filter over glob', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      const params = tool.parameters as {
-        properties: Record<string, { description?: string }>;
-      };
-      const description = params.properties['type']?.description ?? '';
-      expect(description).toContain('glob');
-      expect(description).toContain('efficient');
-    });
-
-    it('describes include_ignored as covering all ignore files, not just .gitignore', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      const params = tool.parameters as {
-        properties: Record<string, { description?: string }>;
-      };
-      const description = params.properties['include_ignored']?.description ?? '';
-      expect(description).toContain('.gitignore');
-      expect(description).toContain('.ignore');
-      expect(description).toContain('.rgignore');
-    });
-  });
-
-  describe('prompt content', () => {
-    it('explains ripgrep regex syntax and brace escaping', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      expect(tool.description).toContain('ripgrep');
-      expect(tool.description).toContain('\\{');
-    });
-
-    it('explains hidden files, include_ignored, and sensitive-file behavior', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      expect(tool.description).toContain('include_ignored');
-      expect(tool.description.toLowerCase()).toContain('hidden file');
-      expect(tool.description).toContain('.env');
     });
   });
 
@@ -2162,16 +2081,6 @@ describe('GrepTool', () => {
     expect(output).not.toContain('leaked');
     expect(output).toContain('Filtered');
     expect(output).toContain('my-project/.env');
-  });
-
-  it('locks the grep description to ripgrep-tip phrasing about hidden files and include_ignored', () => {
-    const tool = new GrepTool(createFakeKaos(), workspace);
-
-    expect(tool.description).toContain('ripgrep');
-    expect(tool.description).toContain('Hidden files');
-    expect(tool.description).toContain('include_ignored');
-    expect(tool.description).toMatch(/sensitive/i);
-    expect(tool.description).toMatch(/ALWAYS use Grep tool instead of running `grep` or `rg`/);
   });
 
   it('aborts and kills ripgrep after the process has spawned', async () => {

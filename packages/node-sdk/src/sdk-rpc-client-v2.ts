@@ -210,6 +210,7 @@ import {
   ISessionMcpHandle,
   ISessionMetadata,
   ISessionSkillCatalog,
+  ISessionTodoService,
   ISessionWorkspaceContext,
   ITelemetryService,
   IWorkspaceAliases,
@@ -317,6 +318,7 @@ import type {
   SessionStatus,
   SessionSummary,
   SessionSummaryPage,
+  SessionTodoItem,
   SessionUsage,
   SkillSummary,
   TelemetryClient,
@@ -1844,6 +1846,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * v1 splices a partial suffix out of the live history and then throws
    * `request.invalid` — pinned in the parity KNOWN_DIFFS.
    */
+  override async getTodos(input: SessionIdRpcInput): Promise<readonly SessionTodoItem[]> {
+    const session = this.requireLiveSession(input.sessionId);
+    return session.accessor
+      .get(ISessionTodoService)
+      .getTodos()
+      .map((todo) => ({ title: todo.title, status: todo.status }));
+  }
+
   override async undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
     await agent.accessor.get(IAgentConversationUndoService).undo(input.count);
