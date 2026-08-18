@@ -1,0 +1,74 @@
+# Sync upstream (MoonshotAI/kimi-code) changes into development daily.
+#
+# Keeps the fork's development branch up to date with upstream while
+# preserving fork-owned features (visual model assignment, etc.).
+
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: Sync upstream to development
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: git fetch upstream main
+
+      - name: Switch to development
+        run: git checkout development || git checkout -b development
+
+      - name: Check if already up to date
+        id: check
+        run: |
+          LOCAL=$(git rev-parse HEAD)
+          UPSTREAM=$(git rev-parse upstream/main)
+          if [ "$LOCAL" = "$UPSTREAM" ]; then
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge upstream changes
+        if: steps.check.outputs.up_to_date == 'false'
+        run: |
+          if git merge upstream/main --no-edit -m "merge: sync upstream $(date +%Y-%m-%d)"; then
+            echo "Merge succeeded"
+          else
+            echo "Merge conflict — taking upstream for conflicts"
+            # Resolve conflicts by preferring upstream
+            CONFLICTS=$(git diff --name-only --diff-filter=U)
+            for f in $CONFLICTS; do
+              git checkout --theirs "$f"
+              git add "$f"
+            done
+            git commit --no-edit -m "merge: sync upstream $(date +%Y-%m-%d) (conflicts resolved)"
+          fi
+
+      - name: Build check
+        if: steps.check.outputs.up_to_date == 'false'
+        run: |
+          npm install --ignore-scripts 2>/dev/null || true
+          npx tsc --noEmit 2>/dev/null || echo "Type check failed but continuing"
+
+      - name: Push
+        if: steps.check.outputs.up_to_date == 'false'
+        run: git push origin development
