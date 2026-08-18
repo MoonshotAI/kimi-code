@@ -6,6 +6,32 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.37.0 (2026-08-18)
+
+### Features
+
+- Activate multiple skills in a single prompt. Type `/` after whitespace to insert a skill token.
+- The Windows native (single-binary) CLI now supports automatic updates.
+- web: The sidebar gains Open / Done / Workspaces tabs, and sessions can be marked as done.
+- web: Add a session management page.
+
+### Polish
+
+- Queue slash skill commands entered while the agent is busy instead of rejecting them.
+- web: @-mentioned files, folders, and skills in chat messages now render as icon pills.
+- web: The browser tab title now shows the current workspace directory name.
+- web: The search dialog now finds workspaces too, and picking a workspace or session result expands the sidebar and scrolls the item into view.
+- web: Renamed the Subagent panel to "Background Agent".
+- Warn when a typed `/goal` objective exceeds the 4000-character limit, and keep the input if it is rejected.
+
+### Bug Fixes
+
+- Fix Gemini tool-calling sessions failing on follow-up requests.
+- web: Fix Ctrl+K in the composer opening session search on macOS — session search now only answers to Cmd+K.
+- web: Fix the Background Agent panel showing incorrect task counts and statuses.
+- web: Fix pasting a copied folder into the composer failing the upload with a connection error — folders are now skipped instead.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 0.36.1 (2026-08-14)
 
 ### Features
