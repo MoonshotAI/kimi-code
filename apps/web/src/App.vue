@@ -522,7 +522,7 @@ async function handleComposerSelectModel(modelId: string): Promise<void> {
 // reject.
 //
 // Archive runs WITHOUT a confirm dialog: archive immediately, then show a
-// top-center toast with Undo / Settings links (design-system §03 ActionToast).
+// top-center toast with an Undo action (design-system §03 ActionToast).
 // Every archive entry point (sidebar row, chat header, mobile switcher)
 // funnels here. client.archiveSession toasts its own errors and never
 // rejects, so a failed archive simply shows no undo toast.
@@ -532,13 +532,16 @@ async function handleComposerSelectModel(modelId: string): Promise<void> {
 // would overlap exactly and hide each other's buttons. The newest action
 // replaces the current toast — and an in-flight export's delayed writes (the
 // 400ms running toast, the completion swap) compare keys first, so they never
-// overwrite a newer toast (its Undo/Settings must survive).
+// overwrite a newer toast (its Undo must survive).
 // `key` is bumped on every assignment so the toast remounts and its
 // auto-dismiss timer restarts (it is read once in setup) — the export
 // running→done swap relies on this to get the 4s done window instead of
 // inheriting the 60s running one.
+// The archive toast carries a `reopen` flag for the complete⇄reopen two-way
+// flow: completing shows "已完成 · 撤销", reopening shows "已恢复进行中 · 撤销"
+// (whose Undo re-completes).
 type AppActionToast =
-  | { kind: 'archive'; id: string; key: number }
+  | { kind: 'archive'; id: string; reopen?: boolean; key: number }
   | { kind: 'export'; state: 'running' | 'done'; key: number };
 const actionToast = ref<AppActionToast | null>(null);
 let actionToastKey = 0;
@@ -548,6 +551,15 @@ async function archiveSessionWithToast(id: string): Promise<void> {
   // A failed archive keeps the session in the list — no toast then.
   if (client.sessionsForView.value.some((s) => s.id === id)) return;
   actionToast.value = { kind: 'archive', id, key: ++actionToastKey };
+}
+
+// Reopen (restore) a done session — the inverse of completing one, surfaced
+// through the same toast channel so it can itself be undone (undoing a
+// reopen re-completes).
+async function restoreSessionWithToast(id: string): Promise<void> {
+  if (await client.restoreSession(id)) {
+    actionToast.value = { kind: 'archive', id, reopen: true, key: ++actionToastKey };
+  }
 }
 
 // Export feedback mirrors the archive pattern (design-system §03 ActionToast,
@@ -602,6 +614,15 @@ async function exportSessionWithToast(id?: string): Promise<void> {
 async function undoArchive(): Promise<void> {
   const toast = actionToast.value;
   if (!toast || toast.kind !== 'archive') return;
+  if (toast.reopen) {
+    // Undoing a reopen re-completes the session (and swaps the toast back).
+    await client.archiveSession(toast.id);
+    if (client.sessionsForView.value.some((s) => s.id === toast.id)) return;
+    // Same in-flight guard: only swap when this toast still holds the slot.
+    if (actionToast.value?.key !== toast.key) return;
+    actionToast.value = { kind: 'archive', id: toast.id, key: ++actionToastKey };
+    return;
+  }
   if (await client.restoreSession(toast.id)) {
     // A newer toast may have taken the slot while the restore was in flight
     // — clear only the one this Undo acted on.
@@ -617,9 +638,9 @@ function dismissActionToast(token: string | number | undefined): void {
   if (token !== undefined && actionToast.value?.key === token) actionToast.value = null;
 }
 
-// Deep link into a settings tab (the archive undo toast opens Settings →
-// Archived). Read once at SettingsDialog mount, then reset on close so later
-// manual opens land on General again.
+// Deep link into a settings tab (the onboarding custom-provider entry opens
+// Settings → Providers). Read once at SettingsDialog mount, then reset on
+// close so later manual opens land on General again.
 const settingsInitialTab = ref<'providers' | 'archived' | undefined>(undefined);
 // Same deep link for the mobile settings sheet (its archived sub-view).
 // Reset when the sheet closes so later manual opens land on the main view.
@@ -627,19 +648,6 @@ const mobileSettingsInitialView = ref<'archived' | undefined>(undefined);
 watch(showMobileSettings, (open) => {
   if (!open) mobileSettingsInitialView.value = undefined;
 });
-
-// "Settings" deep-links to the archived-sessions tab (desktop dialog) or
-// sub-view (mobile sheet).
-function openArchivedSettings(): void {
-  actionToast.value = null;
-  if (isMobile.value) {
-    mobileSettingsInitialView.value = 'archived';
-    showMobileSettings.value = true;
-  } else {
-    settingsInitialTab.value = 'archived';
-    showSettings.value = true;
-  }
-}
 
 async function confirmDeleteWorkspace(id: string): Promise<void> {
   const name = client.workspacesView.value.find((w) => w.id === id)?.name ?? id;
@@ -1065,7 +1073,7 @@ function focusComposerAfterDraft(): void {
 function handleCreateSession(): void {
   const wsId = client.activeWorkspaceId.value;
   if (wsId) {
-    client.openWorkspaceDraft(wsId);
+    client.openWorkspaceDraft(wsId, { entry: 'newChat' });
   } else {
     client.clearActiveSession();
   }
@@ -1076,9 +1084,22 @@ function handleCreateSession(): void {
 // state in the chosen workspace. No backend session is created until the user
 // actually sends a message.
 function handleCreateSessionInWorkspace(workspaceId: string): void {
+  client.openWorkspaceDraft(workspaceId, { entry: 'workspace' });
+  focusComposerAfterDraft();
+}
+
+// The draft composer's workspace picker only re-targets the pending draft —
+// the entry intent (newChat / workspace) belongs to whoever opened the draft.
+function handleDraftWorkspaceSelect(workspaceId: string): void {
   client.openWorkspaceDraft(workspaceId);
   focusComposerAfterDraft();
 }
+
+// Workspace home (draft empty state): the active/draft workspace's recent
+// sessions — open first, then done, capped by the facade.
+const homeRecentSessions = computed(() =>
+  client.recentSessionsForWorkspace(client.activeWorkspaceId.value),
+);
 
 // Chat header: open a GitHub PR in a new tab.
 function openPr(url: string): void {
@@ -1115,6 +1136,9 @@ function openPr(url: string): void {
         :flat-sessions="client.flatSessions.value"
         :flat-has-more="client.flatSessionsHasMore.value"
         :flat-loading-more="client.flatSessionsLoadingMore.value"
+        :done-sessions="client.doneSessions.value"
+        :done-has-more="client.doneSessionsHasMore.value"
+        :done-loading-more="client.doneSessionsLoadingMore.value"
         :initialized="client.initialized.value"
         :active-id="client.activeSessionId.value"
         :attention-by-session="client.attentionBySession.value"
@@ -1128,6 +1152,7 @@ function openPr(url: string): void {
         @rename="(id, title) => client.renameSession(id, title)"
         @generate-title="(id, done) => void client.regenerateSessionTitle(id).then(done)"
         @archive="archiveSessionWithToast($event)"
+        @restore="restoreSessionWithToast($event)"
         @fork="(id) => client.forkSession(id)"
         @export="(id) => void exportSessionWithToast(id)"
         @pin="client.togglePinSession($event)"
@@ -1141,6 +1166,8 @@ function openPr(url: string): void {
         @load-all-sessions="void client.loadAllSessions()"
         @ensure-flat-sessions="void client.ensureFlatSessions()"
         @load-more-flat-sessions="void client.loadMoreFlatSessions()"
+        @ensure-done-sessions="void client.ensureDoneSessions()"
+        @load-more-done-sessions="void client.loadMoreDoneSessions()"
         @open-settings="showSettings = true"
         @login="openLogin"
         @collapse="toggleSidebarCollapse"
@@ -1220,10 +1247,14 @@ function openPr(url: string): void {
       :git-diff-stats="client.gitDiffStats.value"
       :workspaces="client.workspacesView.value"
       :active-workspace-id="client.activeWorkspaceId.value"
+      :recent-sessions="homeRecentSessions"
+      :draft-entry="client.draftEntry.value"
       :session-title="activeSessionTitle"
+      :session-archived="client.activeSessionArchived.value"
       :pr="client.activePullRequest.value"
       @open-changes="openDiffDetail()"
-      @select-workspace="handleCreateSessionInWorkspace($event)"
+      @select-workspace="handleDraftWorkspaceSelect($event)"
+      @select-session="(id) => client.selectSession(id)"
       @add-workspace="showAddWorkspace = true"
       @open-pr="openPr"
       @submit="handleSubmit($event)"
@@ -1249,6 +1280,7 @@ function openPr(url: string): void {
       @rename-session="(id, title) => client.renameSession(id, title)"
       @fork-session="(id) => client.forkSession(id)"
       @archive-session="archiveSessionWithToast($event)"
+      @restore-session="restoreSessionWithToast($event)"
       @export-session="(id) => void exportSessionWithToast(id)"
       @compact="client.compact()"
       @pick-model="openModelPicker()"
@@ -1471,11 +1503,11 @@ function openPr(url: string): void {
     <!-- Floating warnings / agent errors (e.g. a 403 from the model provider) -->
     <WarningToasts :warnings="client.warnings.value" @dismiss="client.dismissWarning" />
 
-    <!-- Archive undo toast / export result toast (top-center): archiving skips
-         the confirm dialog — Undo restores the session, Settings opens the
-         archived list. Both actions share ONE ActionToast (newest replaces the
-         current) so two fixed pills never overlap. The export 'running' state
-         only appears for genuinely slow exports (>=400ms).
+    <!-- Complete/reopen toast + export result toast (top-center): completing
+         skips the confirm dialog — Undo restores the session (and undoing a
+         reopen re-completes). All actions share ONE ActionToast (newest
+         replaces the current) so two fixed pills never overlap. The export
+         'running' state only appears for genuinely slow exports (>=400ms).
          Teleported to body so it layers above the teleported dialogs. -->
     <Teleport to="body">
       <Transition name="action-toast">
@@ -1487,10 +1519,12 @@ function openPr(url: string): void {
           @dismiss="dismissActionToast"
         >
           <template v-if="actionToast.kind === 'archive'">
+            {{
+              actionToast.reopen
+                ? t('sidebar.reopenToastLead')
+                : t('sidebar.completeToastLead')
+            }}
             <button type="button" @click="undoArchive">{{ t('sidebar.archiveToastUndo') }}</button>
-            {{ t('sidebar.archiveToastMid') }}
-            <button type="button" @click="openArchivedSettings">{{ t('sidebar.archiveToastSettings') }}</button>
-            {{ t('sidebar.archiveToastTail') }}
           </template>
           <template v-else>
             {{ actionToast.state === 'running' ? t('commands.export.started') : t('commands.export.done') }}

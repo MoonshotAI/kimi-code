@@ -42,6 +42,7 @@ import { logWarn } from '@moonshot-ai/app-core/lib';
 import { workspaceRootKey } from '@moonshot-ai/app-core/lib';
 import { pathRelativeTo } from '@moonshot-ai/app-core/lib';
 import { readSessionIdFromLocation, sessionUrl } from '@moonshot-ai/app-core/lib';
+import { isSessionAdminLocation, SESSION_ADMIN_PATH } from '@moonshot-ai/app-core/lib';
 import { ackThinkingPending, markThinkingPending } from '@moonshot-ai/app-core/lib';
 import { attachmentsToContent } from './attachmentsToContent';
 import type { SessionUrlMode } from '@moonshot-ai/app-core/lib';
@@ -1070,6 +1071,95 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
+  /** Done list (the status view's 已完成 tab): v2 query with archived:true
+   *  into rawState.doneSessions — deliberately NOT the shared pool (the local
+   *  archive path forgets pool rows; see ExtendedState.doneSessions). Mirrors
+   *  the flat list's paging minus the frontier: this array has a single
+   *  source, so server order is the render order. */
+  async function fetchDoneSessionsFirstPage(): Promise<void> {
+    const page = await getKimiWebApi().listSessionsV2({
+      pageSize: FLAT_SESSIONS_PAGE_SIZE,
+      include: 'git',
+      archived: true,
+    });
+    const seen = new Set<string>();
+    rawState.doneSessions = page.items
+      .filter((s) => (s.meta.last_prompt ?? '').length > 0)
+      .filter((s) => {
+        if (seen.has(s.id)) return false;
+        seen.add(s.id);
+        return true;
+      })
+      .map(toAppSessionFromV2);
+    rawState.doneSessionsNextPageToken = page.nextPageToken;
+    rawState.doneSessionsHasMore = page.hasMore;
+  }
+
+  /** Seed the done list (first page). Idempotent — later calls are no-ops. */
+  async function ensureDoneSessions(): Promise<void> {
+    if (rawState.doneSessionsSeeded || rawState.doneSessionsLoading) return;
+    rawState.doneSessionsLoading = true;
+    try {
+      await fetchDoneSessionsFirstPage();
+      rawState.doneSessionsSeeded = true;
+    } catch (err) {
+      pushOperationFailure('ensureDoneSessions', err);
+    } finally {
+      rawState.doneSessionsLoading = false;
+    }
+  }
+
+  /** Fetch the next done-list page (the list bottom's "show more" button).
+   *  Same cursor-discipline as the flat list: a 409 page_token_mismatch
+   *  drops the cursor and re-seeds from the first page. */
+  async function loadMoreDoneSessions(): Promise<void> {
+    if (rawState.doneSessionsLoading || rawState.doneSessionsLoadingMore) return;
+    if (!rawState.doneSessionsHasMore) return;
+    rawState.doneSessionsLoadingMore = true;
+    try {
+      if (!rawState.doneSessionsSeeded) {
+        await fetchDoneSessionsFirstPage();
+        rawState.doneSessionsSeeded = true;
+        return;
+      }
+      // A page can filter down to zero VISIBLE rows (empty last_prompt, rows
+      // the facade hides) — keep paging until something renders, the list
+      // drains, or the page budget runs out, or 加载更多 would look dead.
+      let pagesLeft = 3;
+      for (;;) {
+        const pageToken = rawState.doneSessionsNextPageToken;
+        if (pageToken === null) return;
+        let page: V2SessionsPage;
+        try {
+          page = await getKimiWebApi().listSessionsV2({
+            pageSize: FLAT_SESSIONS_PAGE_SIZE,
+            pageToken,
+            include: 'git',
+            archived: true,
+          });
+        } catch (err) {
+          if (!isPageTokenMismatchError(err)) throw err;
+          rawState.doneSessionsNextPageToken = null;
+          await fetchDoneSessionsFirstPage();
+          return;
+        }
+        const existing = new Set(rawState.doneSessions.map((s) => s.id));
+        const fresh = page.items
+          .filter((s) => !existing.has(s.id) && (s.meta.last_prompt ?? '').length > 0)
+          .map(toAppSessionFromV2);
+        if (fresh.length > 0) rawState.doneSessions = [...rawState.doneSessions, ...fresh];
+        rawState.doneSessionsNextPageToken = page.nextPageToken;
+        rawState.doneSessionsHasMore = page.hasMore;
+        pagesLeft -= 1;
+        if (fresh.length > 0 || !page.hasMore || pagesLeft <= 0) return;
+      }
+    } catch (err) {
+      pushOperationFailure('loadMoreDoneSessions', err);
+    } finally {
+      rawState.doneSessionsLoadingMore = false;
+    }
+  }
+
   /** Archive backfill (local archive path only): restore the pre-archive
    *  loaded count while the server has more pages; re-anchor the paging
    *  cursor when the archived session was the cursor. */
@@ -1298,6 +1388,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // session may live outside the loaded pages (e.g. archived) — fetch it then.
       // selectSession syncs the active workspace off the (now present) entry.
       bindSessionRoute();
+      // /admin/sessions deep link: open straight into the session admin page.
+      // The session auto-select below still runs — in the background ('none'),
+      // so the address bar keeps /admin/sessions and closing the page lands on
+      // the session it would otherwise have opened.
+      const sessionAdminDeepLink =
+        typeof window !== 'undefined' && isSessionAdminLocation(window.location);
+      if (sessionAdminDeepLink) rawState.mainView = 'sessionAdmin';
       const urlSessionId =
         typeof window !== 'undefined' ? readSessionIdFromLocation(window.location) : undefined;
       if (!rawState.activeSessionId && urlSessionId !== undefined) {
@@ -1312,7 +1409,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // Auto-select first session if none selected (also the fallback for a dead
       // deep link — 'replace' rewrites the URL to the session actually shown).
       if (!rawState.activeSessionId && sessions.length > 0) {
-        await selectSession(sessions[0]!.id, { urlMode: 'replace', skipTrack: true });
+        await selectSession(sessions[0]!.id, {
+          urlMode: sessionAdminDeepLink ? 'none' : 'replace',
+          skipTrack: true,
+        });
       }
     } catch (err) {
       traceStatus = 'failed';
@@ -1370,6 +1470,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    *  workspace is empty so the centred composer is shown; otherwise activate
    *  the most recent session in that workspace. */
   function openWorkspace(id: string): void {
+    // Workspace open is a user navigation to the chat view (admin page closes).
+    rawState.mainView = 'chat';
     selectWorkspace(id);
     const sessionsInWs = rawState.sessions.filter((s) => workspaceIdForSession(s) === id);
     if (sessionsInWs.length > 0) {
@@ -1464,13 +1566,23 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   /** Clear the active session without creating a new one. */
   function clearActiveSession(): void {
     setActiveSessionId(undefined);
+    // The draft state this lands on is a chat-view state (admin page closes);
+    // flip BEFORE the URL write — it is suspended while the admin page is open.
+    rawState.mainView = 'chat';
     writeSessionUrl(undefined, 'push');
   }
 
   /** Enter the "new session draft" state for a workspace: select it, clear the
    *  active session, and show the onboarding composer. No backend session is
-   *  created until the user sends the first message. */
-  function openWorkspaceDraft(workspaceId: string): void {
+   *  created until the user sends the first message. `entry` records how the
+   *  draft was reached — the primary 新建会话 button keeps the brand doodle
+   *  hero, a workspace directory row lands on the workspace home; omitted =
+   *  keep the current entry (the in-draft workspace picker). */
+  function openWorkspaceDraft(
+    workspaceId: string,
+    opts?: { entry?: 'newChat' | 'workspace' },
+  ): void {
+    if (opts?.entry !== undefined) rawState.draftEntry = opts.entry;
     selectWorkspace(workspaceId);
     clearActiveSession();
     filesStore().clearFileDiff();
@@ -1733,7 +1845,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       const ws = await api.addWorkspace({ root: trimmed });
       upsertWorkspacePreserveOrder(ws);
-      openWorkspaceDraft(ws.id);
+      openWorkspaceDraft(ws.id, { entry: 'workspace' });
       return true;
     } catch (err) {
       // The caller shows an inline error in the picker; keep the cause in the log.
@@ -1767,16 +1879,18 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   // ---------------------------------------------------------------------------
-  // URL ↔ session binding (no router): '/' ↔ /sessions/<id>
+  // URL ↔ main-view/session binding (no router):
+  //   '/'              no active session (chat view)
+  //   /sessions/<id>   the active session (chat view)
+  //   /admin/sessions  the session admin page (mainView === 'sessionAdmin')
   // urlMode semantics: 'push' = user navigation (new history entry); 'replace' =
   // programmatic/auto selection (first load, fallback after delete); 'none' =
   // popstate-driven (the URL is already correct — writing it again would loop).
   // ---------------------------------------------------------------------------
 
-  function writeSessionUrl(sessionId: string | undefined, mode: SessionUrlMode): void {
+  function writeUrl(target: string, mode: SessionUrlMode): void {
     if (mode === 'none') return;
     if (typeof window === 'undefined' || !window.history) return;
-    const target = sessionUrl(sessionId);
     if (window.location.pathname === target) return;
     try {
       if (mode === 'push') window.history.pushState(null, '', target);
@@ -1784,6 +1898,34 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     } catch {
       // history API unavailable (e.g. sandboxed iframe) — URL sync is best-effort
     }
+  }
+
+  function writeSessionUrl(sessionId: string | undefined, mode: SessionUrlMode): void {
+    // The session admin page owns the address bar while it is the main view:
+    // session-URL writes are suspended so programmatic rewrites (archive
+    // fallback, workspace removal, …) can't yank /admin/sessions away. The URL
+    // is rewritten from the live session state when the page closes
+    // (closeSessionAdmin) or when a user navigation leaves it (selectSession /
+    // clearActiveSession flip mainView first).
+    if (rawState.mainView !== 'chat') return;
+    writeUrl(sessionUrl(sessionId), mode);
+  }
+
+  /** Open the session admin page as the main view. The chat (and its active
+   *  session) stays alive underneath — closing lands back on it. One history
+   *  entry per user navigation; idempotent while already open. */
+  function openSessionAdmin(): void {
+    if (rawState.mainView === 'sessionAdmin') return;
+    rawState.mainView = 'sessionAdmin';
+    writeUrl(SESSION_ADMIN_PATH, 'push');
+  }
+
+  /** Leave the session admin page: back to the chat view, restoring the
+   *  session URL of the (untouched) active session — '/' when none. */
+  function closeSessionAdmin(opts?: { urlMode?: 'push' | 'replace' }): void {
+    if (rawState.mainView !== 'sessionAdmin') return;
+    rawState.mainView = 'chat';
+    writeSessionUrl(rawState.activeSessionId, opts?.urlMode ?? 'push');
   }
 
   /** Fetch a session that is not in the loaded list (deep link beyond the first
@@ -1818,6 +1960,15 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   function onSessionRoutePopState(): void {
+    // Back/forward INTO the admin page: flip the main view only — the active
+    // session underneath is deliberately untouched (closing lands back on it).
+    if (isSessionAdminLocation(window.location)) {
+      rawState.mainView = 'sessionAdmin';
+      return;
+    }
+    // Back/forward OUT of the admin page (or between session URLs): any
+    // non-admin location is a chat-view route.
+    rawState.mainView = 'chat';
     const id = readSessionIdFromLocation(window.location);
     if (id === undefined) {
       // Back/forward landed on '/' — no active session.
@@ -1896,6 +2047,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // Re-selecting the already-active session is a no-op navigation, not a resume.
     const isResumedNavigation = rawState.activeSessionId !== sessionId;
     try {
+      // A session open is a chat-view navigation: leave the session admin
+      // page. Only 'push' (user navigation) flips — programmatic re-selects
+      // ('replace': load's deep-link/auto-select, the archive fallback) and
+      // popstate ('none') must not yank the user out of the admin page;
+      // popstate owns mainView while URL-driven.
+      if ((opts?.urlMode ?? 'push') === 'push') rawState.mainView = 'chat';
       // Write the URL synchronously (before any await) so rapid clicks lay down
       // history entries in click order.
       writeSessionUrl(sessionId, opts?.urlMode ?? 'push');
@@ -2867,6 +3024,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const api = getKimiWebApi();
       await api.updateSession(id, { title });
       updateSession(id, (s) => ({ ...s, title }));
+      if (rawState.doneSessions.some((s) => s.id === id)) {
+        rawState.doneSessions = rawState.doneSessions.map((s) =>
+          s.id === id ? { ...s, title } : s,
+        );
+      }
     } catch (err) {
       pushOperationFailure('renameSession', err, { sessionId: id });
     }
@@ -2888,6 +3050,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     });
     if (title === null) {
       notify({ severity: 'info', title: t('sidebar.genTitleUnavailable') });
+    } else if (rawState.doneSessions.some((s) => s.id === id)) {
+      rawState.doneSessions = rawState.doneSessions.map((s) =>
+        s.id === id ? { ...s, title } : s,
+      );
     }
     return title;
   }
@@ -2979,6 +3145,62 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
+  /** Local archive/restore reconciliation shared by the single-session paths
+   *  (archiveSession / restoreSession) and the session admin page's BATCH
+   *  endpoints. Purely local: folds ids out of the pool into the done list
+   *  (archive) or back into the pool (restore), plus the active-session
+   *  fallback. NO api calls, no workspace backfill, no tracking — batch
+   *  callers must not pay the per-session side-effect costs N times.
+   *  Restore folds done-list copies back into the pool only when the pool
+   *  doesn't already hold a (fresher) row. */
+  async function applySessionsArchivedLocally(ids: string[], archived: boolean): Promise<void> {
+    const idSet = new Set(ids);
+    if (archived) {
+      const archivedAt = new Date().toISOString();
+      // Feed the status view's 已完成 tab: the pool forgets archived rows, so
+      // the done list keeps its own copy. archivedAt is stamped locally; the
+      // server's value wins on the next seed.
+      const rows = rawState.sessions.filter((s) => idSet.has(s.id));
+      if (rows.length > 0) {
+        rawState.doneSessions = [
+          ...rows.map((s): AppSession => ({ ...s, archived: true, archivedAt })),
+          ...rawState.doneSessions.filter((s) => !idSet.has(s.id)),
+        ];
+      }
+      for (const id of ids) {
+        forgetSession(id);
+        titleGenBySession.delete(id);
+        sideChat.clearSideChatForSession(id);
+        const { [id]: _removedIds, ...restIds } = rawState.sideChatUserMessageIdsBySession;
+        void _removedIds;
+        rawState.sideChatUserMessageIdsBySession = restIds;
+      }
+      // If an archived session was active, pick another. 'replace' so the
+      // address bar doesn't keep pointing at (and back doesn't return to) a
+      // dead session.
+      if (rawState.activeSessionId !== undefined && idSet.has(rawState.activeSessionId)) {
+        const next = rawState.sessions[0];
+        if (next) {
+          await selectSession(next.id, { urlMode: 'replace', skipTrack: true });
+        } else {
+          setActiveSessionId(undefined);
+          writeSessionUrl(undefined, 'replace');
+        }
+      }
+      return;
+    }
+    // Restore: drop from the done list; fold its done-list copy back into the
+    // pool only when the pool doesn't already know the row (a single restore
+    // upserts the daemon-returned row first, so this is a batch-only path).
+    const copies = rawState.doneSessions.filter((s) => idSet.has(s.id));
+    rawState.doneSessions = rawState.doneSessions.filter((s) => !idSet.has(s.id));
+    for (const copy of copies) {
+      if (!rawState.sessions.some((s) => s.id === copy.id)) {
+        upsertSessionSorted({ ...copy, archived: false });
+      }
+    }
+  }
+
   /** Archive a session — calls API, persists the archive flag, removes locally, picks another active session or none */
   async function archiveSession(id: string): Promise<void> {
     try {
@@ -2991,27 +3213,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const backfillTarget =
         workspaceId !== undefined ? loadedInWorkspace(workspaceId).length : 0;
       await api.archiveSession(id);
-      forgetSession(id);
-      titleGenBySession.delete(id);
+      await applySessionsArchivedLocally([id], true);
       if (archived !== undefined && workspaceId !== undefined) {
         // Fire-and-forget: the undo toast must not wait for the fetch.
         void backfillWorkspaceSessions(workspaceId, id, archived.updatedAt, backfillTarget);
-      }
-      sideChat.clearSideChatForSession(id);
-      const { [id]: _removedIds, ...restIds } = rawState.sideChatUserMessageIdsBySession;
-      void _removedIds;
-      rawState.sideChatUserMessageIdsBySession = restIds;
-
-      // If archived session was active, pick another. 'replace' so the address
-      // bar doesn't keep pointing at (and back doesn't return to) a dead session.
-      if (rawState.activeSessionId === id) {
-        const next = rawState.sessions[0];
-        if (next) {
-          await selectSession(next.id, { urlMode: 'replace', skipTrack: true });
-        } else {
-          setActiveSessionId(undefined);
-          writeSessionUrl(undefined, 'replace');
-        }
       }
     } catch (err) {
       pushOperationFailure('archiveSession', err, { sessionId: id });
@@ -3110,6 +3315,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       const restored = await getKimiWebApi().restoreSession(id);
       upsertSessionSorted(restored);
+      // The pool already holds the freshest row — this only drops the done
+      // list's copy (shared with the batch path).
+      await applySessionsArchivedLocally([id], false);
       return true;
     } catch (err) {
       pushOperationFailure('restoreSession', err, { sessionId: id });
@@ -3493,6 +3701,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     loadAllSessions,
     ensureFlatSessions,
     loadMoreFlatSessions,
+    ensureDoneSessions,
+    loadMoreDoneSessions,
     selectWorkspace,
     openWorkspace,
     upsertWorkspacePreserveOrder,
@@ -3506,6 +3716,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     browseFs,
     getFsHome,
     writeSessionUrl,
+    openSessionAdmin,
+    closeSessionAdmin,
     fetchSessionIntoList,
     onSessionRoutePopState,
     bindSessionRoute,
@@ -3545,6 +3757,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     renameWorkspace,
     deleteWorkspace,
     archiveSession,
+    applySessionsArchivedLocally,
     exportSession,
     restoreSession,
     loadArchivedSessions,

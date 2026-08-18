@@ -89,21 +89,38 @@ async function acquireLock() {
 }
 
 async function downloadSource(font) {
-  let response;
-  try {
-    response = await fetch(font.url);
-  } catch (error) {
-    throw new Error(`Could not download ${font.name} from ${font.url}`, { cause: error });
+  // The sources ride raw.githubusercontent.com, which rate-limits (429) and
+  // blips (5xx) under shared CI egress — retry with backoff before failing
+  // the whole install. The window must outlast a raw-CDN rate-limit reset:
+  // ~3 minutes of retries total.
+  const delays = [2000, 5000, 15000, 30000, 60000, 60000];
+  for (let attempt = 0; ; attempt++) {
+    let response;
+    try {
+      response = await fetch(font.url);
+    } catch (error) {
+      if (attempt >= delays.length) {
+        throw new Error(`Could not download ${font.name} from ${font.url}`, { cause: error });
+      }
+    }
+    if (response !== undefined && response.ok) {
+      const source = new Uint8Array(await response.arrayBuffer());
+      const actual = sha256(source);
+      if (actual !== font.sourceSha256) {
+        throw new Error(`${font.name} source checksum mismatch: expected ${font.sourceSha256}, got ${actual}`);
+      }
+      return source;
+    }
+    if (response !== undefined && response.status !== 429 && response.status < 500) {
+      throw new Error(`Could not download ${font.name}: HTTP ${response.status} ${response.statusText}`);
+    }
+    if (attempt >= delays.length) {
+      throw new Error(
+        `Could not download ${font.name}: HTTP ${response?.status} ${response?.statusText}`,
+      );
+    }
+    await sleep(delays[attempt]);
   }
-  if (!response.ok) {
-    throw new Error(`Could not download ${font.name}: HTTP ${response.status} ${response.statusText}`);
-  }
-  const source = new Uint8Array(await response.arrayBuffer());
-  const actual = sha256(source);
-  if (actual !== font.sourceSha256) {
-    throw new Error(`${font.name} source checksum mismatch: expected ${font.sourceSha256}, got ${actual}`);
-  }
-  return source;
 }
 
 async function prepareFont(font) {

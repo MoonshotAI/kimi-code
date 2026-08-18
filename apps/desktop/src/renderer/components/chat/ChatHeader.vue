@@ -11,7 +11,7 @@ import { canOpenInNative, listNativeOpenInApps, openInNativeApp } from '../../li
 import { track } from '../../lib/track';
 import OpenInMenu from './OpenInMenu.vue';
 import { useNativeTerminal } from '../../composables/useNativeTerminal';
-import { Icon, IconButton, Menu, MenuItem, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
+import { Button, Icon, IconButton, Menu, MenuItem, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 
@@ -32,6 +32,11 @@ const props = defineProps<{
   pr?: { number: number; state: string; url: string } | null;
   /** True for ~2s after a successful copy-all, to flip the icon to a check. */
   copied?: boolean;
+  /** True when the session is archived (completed) — the header shows a Done
+   *  pill + quiet reopen button for a completed session. Reachable via a
+   *  remote archive while open or a deep link (the local flow switches away
+   *  from the session it completes). */
+  archived?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -42,6 +47,8 @@ const emit = defineEmits<{
   renameSession: [id: string, title: string];
   forkSession: [id: string];
   archiveSession: [id: string];
+  /** Reopen a done (archived) session — the inverse of archiveSession. */
+  restoreSession: [id: string];
   exportSession: [id: string];
 }>();
 
@@ -228,14 +235,22 @@ function exportSession(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Archive — no confirm; App.vue (archiveSessionWithToast) archives directly
-// and shows the undo toast. The header only emits the intent.
+// Archive ("mark as done") — no confirm; App.vue (archiveSessionWithToast)
+// archives directly and shows the undo toast. The header only emits the intent.
 // ---------------------------------------------------------------------------
 function startArchive(): void {
   if (!props.sessionId) return;
   track('session_menu_action', { action: 'archive' });
   closeMenu();
   emit('archiveSession', props.sessionId);
+}
+
+// Reopen a done session (the header's Done-state button).
+function startRestore(): void {
+  if (!props.sessionId) return;
+  track('session_menu_action', { action: 'restore' });
+  closeMenu();
+  emit('restoreSession', props.sessionId);
 }
 
 // Git changes / PR header buttons — tracked with the same session_menu_action
@@ -359,9 +374,13 @@ function toggleTerminalPanel(): void {
           <Icon name="download" size="sm" />
           {{ t('header.exportSession') }}
         </MenuItem>
-        <MenuItem @click="startArchive">
-          <Icon name="archive" size="sm" />
-          {{ t('header.archiveSession') }}
+        <MenuItem v-if="archived" @click="startRestore">
+          <Icon name="undo" size="sm" />
+          {{ t('header.reopenSession') }}
+        </MenuItem>
+        <MenuItem v-else @click="startArchive">
+          <Icon name="state-done" size="sm" />
+          {{ t('header.markSessionDone') }}
         </MenuItem>
       </template>
       </Menu>
@@ -426,6 +445,19 @@ function toggleTerminalPanel(): void {
       <Icon name="git-pull-request" size="sm" />
       <span>PR #{{ pr.number }} · {{ prStateLabel(pr.state) }}</span>
     </button>
+
+    <!-- 已完成 state — display-only Done pill + a quiet reopen, shown only
+         when viewing a completed session (the ⋯ menu carries 标记完成). -->
+    <template v-if="sessionId && archived">
+      <span class="ch-pill ch-pr pr-merged ch-done-pill">
+        <Icon name="state-done" size="sm" />
+        <span>{{ t('header.sessionDone') }}</span>
+      </span>
+      <Button variant="secondary" size="sm" @click="startRestore">
+        <Icon name="undo" size="sm" />
+        {{ t('header.reopenSession') }}
+      </Button>
+    </template>
 
   </header>
 </template>
@@ -585,6 +617,9 @@ function toggleTerminalPanel(): void {
 .ch-pr.pr-draft { color: var(--color-text-muted); border-color: var(--color-line-strong); background: var(--color-well); }
 .ch-pr.pr-unknown { color: var(--color-text-muted); border-color: var(--color-line-strong); background: var(--color-well); }
 .ch-pr:hover { border-color: var(--color-line-strong); }
+/* The Done state pill is display-only (no click). */
+.ch-done-pill { cursor: default; }
+.ch-done-pill:hover { border-color: var(--color-done-bd); }
 
 /* Fixed more-menu, anchored to the kebab trigger. Surface / items come from
    the Menu + MenuItem primitives; only positioning stays here. */

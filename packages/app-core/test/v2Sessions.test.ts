@@ -121,7 +121,7 @@ describe('DaemonKimiWebApi.listSessionsV2', () => {
 
   it('calls /api/v2/sessions and unwraps the v1-enveloped page', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      envelope({ items: [v2Item('a')], has_more: true, next_page_token: 'tok1' }),
+      envelope({ items: [v2Item('a')], has_more: true, next_page_token: 'tok1', total: 1 }),
     );
     vi.stubGlobal('fetch', fetchMock);
 
@@ -134,11 +134,12 @@ describe('DaemonKimiWebApi.listSessionsV2', () => {
     expect(page.items[0]!.id).toBe('a');
     expect(page.hasMore).toBe(true);
     expect(page.nextPageToken).toBe('tok1');
+    expect(page.total).toBe(1);
   });
 
   it('sends the page token and archived flag through', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      envelope({ items: [], has_more: false, next_page_token: null }),
+      envelope({ items: [], has_more: false, next_page_token: null, total: 0 }),
     );
     vi.stubGlobal('fetch', fetchMock);
 
@@ -151,7 +152,7 @@ describe('DaemonKimiWebApi.listSessionsV2', () => {
 
   it('serializes filter arrays as repeated params (OR semantics)', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      envelope({ items: [], has_more: false, next_page_token: null }),
+      envelope({ items: [], has_more: false, next_page_token: null, total: 0 }),
     );
     vi.stubGlobal('fetch', fetchMock);
 
@@ -182,5 +183,73 @@ describe('DaemonKimiWebApi.listSessionsV2', () => {
       .listSessionsV2({ pageToken: 'stale' })
       .catch((e: unknown) => e);
     expect(isPageTokenMismatchError(err)).toBe(true);
+  });
+
+  it('sends the page-number mode and updated_before through', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      envelope({ items: [], has_more: false, next_page_token: null, total: 0 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await makeApi().listSessionsV2({ page: 3, updatedBefore: 1720000000000 });
+
+    const url = new URL(fetchMock.mock.calls[0]![0] as string);
+    expect(url.searchParams.get('page')).toBe('3');
+    expect(url.searchParams.get('meta.updated_before')).toBe('1720000000000');
+  });
+});
+
+describe('DaemonKimiWebApi batch archive/restore', () => {
+  const identity = { clientId: 'web_t', clientName: 't', clientVersion: '0', clientUiMode: 'web' };
+
+  function makeApi(): DaemonKimiWebApi {
+    return new DaemonKimiWebApi({
+      origin: 'http://test.local',
+      identity,
+      projectorFactory: () => ({}) as AgentProjector,
+    });
+  }
+
+  function envelope(data: unknown): Response {
+    return new Response(JSON.stringify({ code: 0, msg: '', data, request_id: 'r' }), {
+      status: 200,
+    });
+  }
+
+  const batchData = {
+    results: [
+      { id: 'a', ok: true },
+      { id: 'b', ok: false, error: { code: 40401, message: 'session b does not exist' } },
+    ],
+    succeeded: 1,
+    failed: 1,
+  };
+
+  it('POSTs {ids} to /api/v2/sessions:archive and returns per-item results', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(envelope(batchData));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await makeApi().archiveSessions(['a', 'b']);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new URL(url).pathname).toBe('/api/v2/sessions:archive');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ ids: ['a', 'b'] });
+    expect(res.succeeded).toBe(1);
+    expect(res.results[1]).toEqual({
+      id: 'b',
+      ok: false,
+      error: { code: 40401, message: 'session b does not exist' },
+    });
+  });
+
+  it('POSTs {ids} to /api/v2/sessions:restore', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(envelope(batchData));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await makeApi().restoreSessions(['a', 'b']);
+
+    const url = new URL(fetchMock.mock.calls[0]![0] as string);
+    expect(url.pathname).toBe('/api/v2/sessions:restore');
   });
 });

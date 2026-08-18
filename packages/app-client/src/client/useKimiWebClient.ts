@@ -77,6 +77,7 @@ import {
   settleLocalTurn,
   useWorkspaceState,
 } from './useWorkspaceState';
+import { useSessionAdmin } from './useSessionAdmin';
 import { useDocumentTitle } from '../composables/useDocumentTitle';
 import { sessionsStore } from '../stores/sessions';
 import { approvalsStore } from '../stores/approvals';
@@ -412,6 +413,14 @@ const rawState: ExtendedState = reactive({
   flatSessionsLoadingMore: false,
   flatSessionsSeeded: false,
   flatSessionsFrontier: null,
+  doneSessions: [],
+  doneSessionsNextPageToken: null,
+  doneSessionsHasMore: true,
+  doneSessionsLoading: false,
+  doneSessionsLoadingMore: false,
+  doneSessionsSeeded: false,
+  draftEntry: 'newChat',
+  mainView: 'chat',
 });
 
 const plansBySession = reactive<Record<string, Record<string, SessionPlan>>>({});
@@ -3364,6 +3373,110 @@ function loadMoreFlatSessions(): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Done list (status view's 已完成 tab) — projection over rawState.doneSessions
+// (kept out of the shared pool; see ExtendedState.doneSessions). A done session
+// can still be chatted with, so rows carry the live status cluster like open
+// rows: the v2 row's own activity snapshot is the baseline, and a pool row
+// (present once the session has been opened this run) overrides it with live
+// WS-driven state. The pool also bumps updatedAt on real activity, so the
+// effective time is the newer of the two and the list re-sorts by it — a done
+// session you keep chatting with floats to the top like an open one.
+// ---------------------------------------------------------------------------
+const doneVisibleCount = ref(FLAT_SESSIONS_PAGE_SIZE);
+
+const doneSessionsAll = computed<Session[]>(() => {
+  void sessionTimeClock.value;
+  const visibleWorkspaceIds = new Set(workspacesView.value.map((w) => w.id));
+  const nameByWorkspaceId = new Map(workspacesView.value.map((w) => [w.id, w.name]));
+  return rawState.doneSessions
+    .filter((s) => visibleWorkspaceIds.has(workspaceIdForSession(s)))
+    .map((s) => {
+      const workspaceId = workspaceIdForSession(s);
+      const live = rawState.sessions.find((p) => p.id === s.id);
+      const updatedAt =
+        live !== undefined && new Date(live.updatedAt).getTime() > new Date(s.updatedAt).getTime()
+          ? live.updatedAt
+          : s.updatedAt;
+      return {
+        id: s.id,
+        title: s.title,
+        time: formatTime(updatedAt),
+        busy: live?.busy ?? s.busy,
+        pendingInteraction: live?.pendingInteraction ?? s.pendingInteraction,
+        lastTurnReason: live?.lastTurnReason ?? s.lastTurnReason,
+        lastPrompt: s.lastPrompt,
+        updatedAt,
+        workspaceId,
+        workspaceName: nameByWorkspaceId.get(workspaceId),
+        archived: true,
+        cwdLabel: s.cwd ? basename(s.cwd) : '-',
+        pullRequest: s.pullRequest,
+      };
+    })
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+});
+
+const doneSessions = computed<Session[]>(() =>
+  doneSessionsAll.value.slice(0, doneVisibleCount.value),
+);
+
+const doneListHasMore = computed(
+  () => rawState.doneSessionsHasMore || doneVisibleCount.value < doneSessionsAll.value.length,
+);
+
+/** One "load more" click on the done list: widen the window, topping up from
+ *  the server only when the window outgrows the loaded rows. */
+function loadMoreDoneSessions(): void {
+  doneVisibleCount.value += FLAT_SESSIONS_PAGE_SIZE;
+  if (doneVisibleCount.value > doneSessionsAll.value.length && rawState.doneSessionsHasMore) {
+    void workspaceState.loadMoreDoneSessions();
+  }
+}
+
+/** True when the ACTIVE session is archived (completed). Reachable only via a
+ *  remote/WS archive while the session is open or a deep link — the local
+ *  complete flow switches away from the session it archives. Drives the chat
+ *  header's Done pill + reopen button. */
+const activeSessionArchived = computed<boolean>(() => {
+  const id = rawState.activeSessionId;
+  if (!id) return false;
+  return rawState.sessions.find((s) => s.id === id)?.archived === true;
+});
+
+/** Recent sessions of one workspace for the draft-state workspace home: open
+ *  ones first (updatedAt desc), then done ones, capped. Read-only projection;
+ *  the caller computes it inside its own computed for reactivity. */
+function recentSessionsForWorkspace(workspaceId: string | null, limit = 6): Session[] {
+  if (!workspaceId) return [];
+  const nameByWorkspaceId = new Map(workspacesView.value.map((w) => [w.id, w.name]));
+  const toRow = (s: AppSession, doneAt?: string): Session => ({
+    id: s.id,
+    title: s.title,
+    time: formatTime(doneAt ?? s.updatedAt),
+    busy: doneAt === undefined && isMainTurnActive(s.id, s.mainTurnActive),
+    pendingInteraction: doneAt === undefined ? s.pendingInteraction : undefined,
+    lastTurnReason: doneAt === undefined ? s.lastTurnReason : undefined,
+    lastPrompt: s.lastPrompt,
+    updatedAt: doneAt ?? s.updatedAt,
+    workspaceId,
+    workspaceName: nameByWorkspaceId.get(workspaceId),
+    archived: doneAt !== undefined,
+    cwdLabel: s.cwd ? basename(s.cwd) : '-',
+    pullRequest: s.pullRequest,
+  });
+  const open = rawState.sessions
+    .filter(
+      (s) => !s.parentSessionId && !s.archived && workspaceIdForSession(s) === workspaceId,
+    )
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  const done = rawState.doneSessions.filter((s) => workspaceIdForSession(s) === workspaceId);
+  return [
+    ...open.map((s) => toRow(s)),
+    ...done.map((s) => toRow(s, s.updatedAt)),
+  ].slice(0, limit);
+}
+
 /**
  * Per-workspace groups for the 'all workspaces' scope. With `excludePinned`,
  * pinned sessions move OUT of their group into the pinned section above the
@@ -3381,6 +3494,11 @@ function buildWorkspaceGroups(excludePinned: boolean): WorkspaceGroup[] {
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
   )) {
     if (s.parentSessionId) continue; // child sessions stay out of the list
+    // Archived rows normally never enter the pool, but opening a done session
+    // pulls it in via fetchSessionIntoList — the flat list already excludes
+    // archived rows; the grouped projection must too, or the open tab would
+    // show (and re-offer completing) a completed session.
+    if (s.archived) continue;
     const wid = workspaceIdForSession(s);
     if (excludePinned && pinnedSet.has(s.id)) {
       // Pinned sessions live in the pinned section — counted per workspace so
@@ -3594,6 +3712,20 @@ const workspaceState = useWorkspaceState(rawState, {
   connectIssue,
 });
 
+// Session admin page (/admin/sessions) data layer — server-side paged table.
+// Seeded on entry into the page (the facade owns mainView, so the watcher
+// lives here rather than in the view component).
+const sessionAdmin = useSessionAdmin({
+  pushOperationFailure,
+  applySessionsArchivedLocally: workspaceState.applySessionsArchivedLocally,
+});
+watch(
+  () => rawState.mainView,
+  (view) => {
+    if (view === 'sessionAdmin') sessionAdmin.ensureSeeded();
+  },
+);
+
 /** True when the user is actually watching this session: it is the active
     session, the page is visible, and the window has focus. Focus matters on
     top of visibility: a window that lost focus to another app often stays
@@ -3755,6 +3887,13 @@ export function useKimiWebClient() {
     flatSessions,
     flatSessionsHasMore: flatListHasMore,
     flatSessionsLoadingMore: computed(() => rawState.flatSessionsLoadingMore),
+    doneSessions,
+    doneSessionsHasMore: doneListHasMore,
+    doneSessionsLoadingMore: computed(() => rawState.doneSessionsLoadingMore),
+    activeSessionArchived,
+    recentSessionsForWorkspace,
+    draftEntry: computed(() => rawState.draftEntry),
+    mainView: computed(() => rawState.mainView),
     attentionBySession,
     pendingBySession,
     attentionByWorkspace,
@@ -3851,6 +3990,60 @@ export function useKimiWebClient() {
     load: workspaceState.load,
     selectSession: workspaceState.selectSession,
     clearActiveSession: workspaceState.clearActiveSession,
+    /** Open the session admin page. A workspace id (the workspace home's
+     *  查看更多 entry) pre-selects that workspace in the filter bar — applied
+     *  BEFORE the view switch so its fetch doubles as the seed, and the
+     *  entry watcher's ensureSeeded no-ops: one entry, one list request.
+     *  The sidebar menu entry passes none and keeps the current conditions. */
+    openSessionAdmin: (workspaceId?: string) => {
+      if (workspaceId !== undefined) {
+        sessionAdmin.applyFilters({
+          workspaceIds: [workspaceId],
+          status: 'all',
+          updatedFrom: '',
+          updatedTo: '',
+        });
+      }
+      workspaceState.openSessionAdmin();
+    },
+    closeSessionAdmin: workspaceState.closeSessionAdmin,
+
+    // Session admin page (/admin/sessions): server-side paged table state +
+    // filter/page setters. Row mapping (workspace names, time strings) is the
+    // view's job — items stay raw V2Session.
+    sessionAdminItems: computed(() => sessionAdmin.state.items),
+    sessionAdminTotal: computed(() => sessionAdmin.state.total),
+    sessionAdminLoading: computed(() => sessionAdmin.state.loading),
+    sessionAdminFilters: computed(() => sessionAdmin.state.filters),
+    sessionAdminPage: computed(() => sessionAdmin.state.page),
+    sessionAdminPageSize: computed(() => sessionAdmin.state.pageSize),
+    refreshSessionAdminSessions: sessionAdmin.refresh,
+    applySessionAdminFilters: sessionAdmin.applyFilters,
+    setSessionAdminWorkspaceFilter: sessionAdmin.setWorkspaceIds,
+    setSessionAdminStatusFilter: sessionAdmin.setStatus,
+    setSessionAdminTimeRange: sessionAdmin.setTimeRange,
+    setSessionAdminPage: sessionAdmin.setPage,
+    setSessionAdminPageSize: sessionAdmin.setPageSize,
+
+    // Session admin selection (kept across pages/filters) + batch ops. The
+    // Set/Map are reactive — template .has()/.size reads track fine.
+    sessionAdminSelectedIds: computed(() => sessionAdmin.state.selectedIds),
+    sessionAdminSelectedCount: computed(() => sessionAdmin.state.selectedIds.size),
+    /** Selected ids split by lifecycle: the batch bar's Mark-as-done runs on
+     *  the open subset, Reopen on the done subset (counts + disables). */
+    sessionAdminOpenSelectedIds: computed(() => sessionAdmin.selectedIdsByArchived(false)),
+    sessionAdminDoneSelectedIds: computed(() => sessionAdmin.selectedIdsByArchived(true)),
+    toggleSessionAdminSelection: sessionAdmin.toggleSelection,
+    toggleSessionAdminPageSelection: sessionAdmin.togglePageSelection,
+    setSessionAdminSelection: sessionAdmin.setSelection,
+    clearSessionAdminSelection: sessionAdmin.clearSelection,
+    /** Gmail-style select-all-matching: materialize every id matching the
+     *  current filters into the selection (ids projection, cursor-walked). */
+    selectSessionAdminAllMatching: sessionAdmin.selectAllMatching,
+    sessionAdminAllMatching: computed(() => sessionAdmin.state.allMatching),
+    sessionAdminMaterializingAll: computed(() => sessionAdmin.state.materializingAll),
+    archiveSessions: sessionAdmin.archiveSessions,
+    restoreSessions: sessionAdmin.restoreSessions,
     loadOlderMessages: workspaceState.loadOlderMessages,
 
     // Workspace actions
@@ -3859,6 +4052,8 @@ export function useKimiWebClient() {
     loadAllSessions: workspaceState.loadAllSessions,
     ensureFlatSessions: workspaceState.ensureFlatSessions,
     loadMoreFlatSessions,
+    ensureDoneSessions: workspaceState.ensureDoneSessions,
+    loadMoreDoneSessions,
     selectWorkspace: workspaceState.selectWorkspace,
     openWorkspace: workspaceState.openWorkspace,
     openWorkspaceDraft: workspaceState.openWorkspaceDraft,

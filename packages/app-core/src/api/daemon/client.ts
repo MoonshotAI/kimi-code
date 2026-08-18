@@ -39,6 +39,7 @@ import type {
   KimiEventConnection,
   KimiEventHandlers,
   KimiWebApi,
+  ListSessionIdsV2Input,
   ListSessionsV2Input,
   ManagedUsageResult,
   ManagedUserInfoResult,
@@ -55,7 +56,9 @@ import type {
   SessionTranscriptQuery,
   UpdateProviderInput,
   UpdateProviderResult,
+  V2SessionIdsPage,
   V2SessionsPage,
+  V2BatchSessionResponse,
 } from '../types';
 import { DaemonHttpClient, FORK_TIMEOUT_MS, type RestQuery } from './http';
 import { FileTooLargeError, isDaemonApiError } from '../errors';
@@ -127,7 +130,9 @@ import type {
   WireSessionSnapshot,
   WireUpdateProviderRequest,
   WireUpdateProviderResult,
+  WireV2SessionIdsPage,
   WireV2SessionsPage,
+  WireV2BatchSessionResponse,
   WireWorkspace,
   WireLogoutResult,
   WireUsageResult,
@@ -469,7 +474,9 @@ export class DaemonKimiWebApi implements KimiWebApi {
       sort: input?.sort,
       page_size: input?.pageSize,
       page_token: input?.pageToken,
+      page: input?.page,
       'meta.updated_after': input?.updatedAfter,
+      'meta.updated_before': input?.updatedBefore,
       'meta.archived':
         input?.archived === undefined ? undefined : String(input.archived),
       include: input?.include,
@@ -478,7 +485,30 @@ export class DaemonKimiWebApi implements KimiWebApi {
       'activity.status': input?.statuses,
     };
     const data = await this.httpV2.get<WireV2SessionsPage>('/sessions', query);
-    return { items: data.items, hasMore: data.has_more, nextPageToken: data.next_page_token };
+    return { items: data.items, hasMore: data.has_more, nextPageToken: data.next_page_token, total: data.total };
+  }
+
+  /**
+   * GET /api/v2/sessions?fields=id,archived — ids 投影：每项只有 { id,
+   * archived }，pageSize 上限放宽至 10000。会话管理页「全选匹配」的物化
+   * 来源；过滤/排序语义与 listSessionsV2 一致（git 不可投影，故无 include）。
+   */
+  async listSessionIdsV2(input?: ListSessionIdsV2Input): Promise<V2SessionIdsPage> {
+    const query: RestQuery = {
+      sort: input?.sort,
+      page_size: input?.pageSize,
+      page_token: input?.pageToken,
+      page: input?.page,
+      'meta.updated_after': input?.updatedAfter,
+      'meta.updated_before': input?.updatedBefore,
+      'meta.archived':
+        input?.archived === undefined ? undefined : String(input.archived),
+      fields: 'id,archived',
+      'workspace.id': input?.workspaceIds,
+      'activity.status': input?.statuses,
+    };
+    const data = await this.httpV2.get<WireV2SessionIdsPage>('/sessions', query);
+    return { items: data.items, hasMore: data.has_more, nextPageToken: data.next_page_token, total: data.total };
   }
 
   async createSession(input: {
@@ -646,6 +676,16 @@ export class DaemonKimiWebApi implements KimiWebApi {
       {},
     );
     return toAppSession(data);
+  }
+
+  // POST /api/v2/sessions:archive | :restore — 批量归档/取消归档（会话管理页）。
+  // 冷 session 服务端直写磁盘不物化；per-item 结果，只有 body 校验失败才抛错。
+  async archiveSessions(ids: string[]): Promise<V2BatchSessionResponse> {
+    return this.httpV2.post<WireV2BatchSessionResponse>('/sessions:archive', { ids });
+  }
+
+  async restoreSessions(ids: string[]): Promise<V2BatchSessionResponse> {
+    return this.httpV2.post<WireV2BatchSessionResponse>('/sessions:restore', { ids });
   }
 
   // -------------------------------------------------------------------------

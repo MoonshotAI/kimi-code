@@ -19,6 +19,7 @@ import { logWarn } from '@moonshot-ai/app-core/lib';
 import {
   loadCollapsedWorkspaces,
   loadSidebarViewMode,
+  openTabAttention,
   saveCollapsedWorkspaces,
   savePinnedCollapsed,
   saveSidebarViewMode,
@@ -44,7 +45,7 @@ import { resolvedBindingKeys } from '../composables/useShortcuts';
 import { SESSIONS_EXPAND_BATCH } from '@moonshot-ai/app-client/client';
 import { track } from '../lib/track';
 import type { SessionCreatedSource } from '../../shared/track-events';
-import { Icon, IconButton, Kbd, Menu, MenuItem, Pill, Tooltip } from '@moonshot-ai/app-ui';
+import { Icon, IconButton, Kbd, Menu, MenuItem, Pill, SegmentedControl, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 
@@ -103,6 +104,12 @@ const props = withDefaults(
     flatHasMore?: boolean;
     /** Flat mode: true while the next page is being fetched. */
     flatLoadingMore?: boolean;
+    /** Status view's 已完成 tab: done (archived) sessions, updatedAt desc. */
+    doneSessions?: Session[];
+    /** Done tab: whether the endpoint reports more pages. */
+    doneHasMore?: boolean;
+    /** Done tab: true while the next page is being fetched. */
+    doneLoadingMore?: boolean;
     /** True once the app's initial load() has settled — the flat seed waits
      *  for it (seeding earlier races load()'s wholesale pool replace). */
     initialized?: boolean;
@@ -130,6 +137,9 @@ const props = withDefaults(
     flatSessions: () => [],
     flatHasMore: false,
     flatLoadingMore: false,
+    doneSessions: () => [],
+    doneHasMore: false,
+    doneLoadingMore: false,
     initialized: false,
     backend: 'v1',
     attentionBySession: () => ({}),
@@ -155,6 +165,8 @@ const emit = defineEmits<{
   /** Gen Title (✨ in the session row's rename input): force-regenerate. */
   generateTitle: [id: string, done: (title: string | null) => void];
   archive: [id: string];
+  /** Reopen a done session (status view's 已完成 tab rows / header button). */
+  restore: [id: string];
   fork: [id: string];
   export: [id: string];
   pin: [id: string];
@@ -171,6 +183,11 @@ const emit = defineEmits<{
   /** Flat mode: seed the first page (idempotent) / fetch the next page. */
   ensureFlatSessions: [];
   loadMoreFlatSessions: [];
+  /** Status view's done list: seed the first page / fetch the next page. */
+  ensureDoneSessions: [];
+  loadMoreDoneSessions: [];
+  /** Open the session admin page (the view menu's 会话管理… entry). */
+  openSessionAdmin: [];
   openSettings: [];
   login: [];
   collapse: [];
@@ -210,7 +227,7 @@ function onSearchButtonClick(): void {
 
 // App.vue's shortcut dispatcher drives the dialog through these exposes
 // (isSearchOpen lets it allow the closing press through the overlay guard).
-defineExpose({ openSearch, toggleSearch, isSearchOpen: () => showSearch.value });
+defineExpose({ openSearch, toggleSearch, isSearchOpen: () => showSearch.value, setStatusTab, selectSibling });
 
 // Scroll-linked seams: each edge shows a soft fade only while more session
 // content exists beyond that edge. This keeps the pinned actions and Settings
@@ -403,27 +420,187 @@ function onDropPinnedSession(id: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// View mode: flat list vs grouped by workspace
+// List display mode within the session tabs: flat list vs grouped by workspace
 // ---------------------------------------------------------------------------
-// 'grouped' (the default): the classic per-workspace grouping. 'flat': every
-// session across workspaces, newest first, fed by the v2 session query
-// (ensureFlatSessions/loadMoreFlatSessions). Persisted per device (lib/storage).
-const viewMode = ref<SidebarViewMode>(loadSidebarViewMode());
+// The status tabs (进行中 / 已完成 / 工作空间) are the sidebar's TOP level;
+// 'flat'/'grouped' is the display switch INSIDE the open and done tabs (the
+// workspace tab is a pure directory and ignores it). Persisted per device
+// (lib/storage).
+const listMode = ref<SidebarViewMode>(loadSidebarViewMode());
 
-function setViewMode(mode: SidebarViewMode): void {
-  if (viewMode.value === mode) return;
-  viewMode.value = mode;
+function setListMode(mode: SidebarViewMode): void {
+  if (listMode.value === mode) return;
+  listMode.value = mode;
   saveSidebarViewMode(mode);
-  if (mode === 'flat') emit('ensureFlatSessions');
 }
 
-// Seed the flat list only once the app's initial load() has settled: seeding
+// ---------------------------------------------------------------------------
+// Status view tabs (进行中 / 已完成 / 工作空间). The open tab reuses the flat
+// list's data; the done tab has its own paged list; workspaces is a pure
+// directory (click = draft a session there). Ephemeral: the tab always opens
+// on 进行中.
+// ---------------------------------------------------------------------------
+const statusTab = ref<'open' | 'done' | 'workspaces'>('open');
+
+// The open and done tabs carry no count — instead a blue dot (same accent as
+// the rows' unread dot) flags that ANY loaded row in that tab wants attention:
+// approval / question / aborted / unread, aggregated by priority. Plain
+// running/idle shows nothing: the tab stays quiet for normal progress.
+const openAttention = computed(() =>
+  openTabAttention(
+    [...props.pinnedSessions, ...props.flatSessions].map((s) => ({
+      busy: s.busy,
+      unread: props.unreadBySession[s.id] ?? false,
+      questionCount: props.pendingBySession[s.id]?.questions ?? 0,
+      approvalCount: props.pendingBySession[s.id]?.approvals ?? 0,
+      pendingInteraction: s.pendingInteraction,
+      lastTurnReason: s.lastTurnReason,
+    })),
+  ),
+);
+
+// Done rows can keep running (chatting in a completed session) and can raise
+// approvals/questions — the done tab aggregates them exactly like the open tab.
+const doneAttention = computed(() =>
+  openTabAttention(
+    props.doneSessions.map((s) => ({
+      busy: s.busy,
+      unread: props.unreadBySession[s.id] ?? false,
+      questionCount: props.pendingBySession[s.id]?.questions ?? 0,
+      approvalCount: props.pendingBySession[s.id]?.approvals ?? 0,
+      pendingInteraction: s.pendingInteraction,
+      lastTurnReason: s.lastTurnReason,
+    })),
+  ),
+);
+
+const TAB_ATTENTION_SWATCH = 'var(--color-accent)';
+
+const statusTabOptions = computed(() => [
+  {
+    value: 'open',
+    label: t('sidebar.tabOpen'),
+    swatch: openAttention.value === null ? undefined : TAB_ATTENTION_SWATCH,
+  },
+  {
+    value: 'done',
+    label: t('sidebar.tabDone'),
+    swatch: doneAttention.value === null ? undefined : TAB_ATTENTION_SWATCH,
+  },
+  { value: 'workspaces', label: t('sidebar.tabWorkspaces') },
+]);
+
+function setStatusTab(tab: string): void {
+  statusTab.value = tab as 'open' | 'done' | 'workspaces';
+  if (tab === 'done') emit('ensureDoneSessions');
+}
+
+// Prev/next sibling navigation (⇧⌘[ / ⇧⌘]): the rendered order of the active
+// tab — sessions in 进行中/已完成 (following the flat/grouped display), the
+// directory in 工作空间 (where selecting = entering that workspace's draft).
+// Grouped display: pinned rows first, then each group's VISIBLE rows (the
+// in-group expand cap mirrors WorkspaceGroup's visibleSessions, including
+// its keep-the-active-row-visible append). Collapsed groups contribute their
+// rows and get auto-expanded when navigation lands inside them.
+function visibleGroupRowIds(group: (typeof props.groups)[number]): string[] {
+  const cap = visibleLimit(group.workspace.id) ?? group.initialCount;
+  const head = group.sessions.slice(0, cap);
+  if (props.activeId && !head.some((s) => s.id === props.activeId)) {
+    const active = group.sessions.find((s) => s.id === props.activeId);
+    if (active) return [...head, active].map((s) => s.id);
+  }
+  return head.map((s) => s.id);
+}
+
+const siblingOrder = computed<string[]>(() => {
+  if (statusTab.value === 'open') {
+    if (listMode.value === 'flat') {
+      return [...props.pinnedSessions, ...props.flatSessions].map((s) => s.id);
+    }
+    return [
+      ...props.pinnedSessions.map((s) => s.id),
+      ...props.groups.flatMap((g) => visibleGroupRowIds(g)),
+    ];
+  }
+  if (statusTab.value === 'done') {
+    if (listMode.value === 'flat') return props.doneSessions.map((s) => s.id);
+    return doneGroups.value.flatMap((g) => g.sessions.map((s) => s.id));
+  }
+  return props.groups.map((g) => g.workspace.id);
+});
+
+/** The workspace whose group contains the session in the current tab's
+ *  grouped display (null in flat display / not found). */
+function groupOfSession(id: string): string | null {
+  if (statusTab.value === 'open') {
+    return props.groups.find((g) => g.sessions.some((s) => s.id === id))?.workspace.id ?? null;
+  }
+  if (statusTab.value === 'done') {
+    return doneGroups.value.find((g) => g.sessions.some((s) => s.id === id))?.workspace.id ?? null;
+  }
+  return null;
+}
+
+function selectSibling(delta: 1 | -1): void {
+  const ids = siblingOrder.value;
+  if (ids.length === 0) return;
+  // The workspace tab's "current" position is the active WORKSPACE, not the
+  // active session — a draft has no session id, so keying off activeId would
+  // reset to the first row on every press.
+  const currentId = statusTab.value === 'workspaces' ? (props.activeWorkspaceId ?? '') : props.activeId;
+  const idx = ids.findIndex((id) => id === currentId);
+  const nextIdx =
+    idx === -1 ? (delta > 0 ? 0 : ids.length - 1) : (idx + delta + ids.length) % ids.length;
+  const id = ids[nextIdx];
+  if (id === undefined) return;
+  if (statusTab.value === 'workspaces') {
+    emit('createInWorkspace', id);
+    return;
+  }
+  // Keyboard navigation landing inside a collapsed group expands it first,
+  // or the selection would be invisible.
+  const wsId = groupOfSession(id);
+  if (wsId !== null && isCollapsed(wsId)) toggleCollapse(wsId);
+  emit('select', { sessionId: id, source: 'sidebar' });
+}
+
+// Open tab, grouped: workspaces with no open sessions render NOTHING — an
+// empty folder is noise after a cleanup, and the 工作空间 tab is the
+// directory for creating sessions (the Done tab's doneGroups already filters
+// the same way). The one exception is the ACTIVE workspace: its group stays
+// so the draft state keeps its "where I am" head fill (see the design doc's
+// Workspace group section). Keyboard nav is unaffected: empty groups
+// contribute no row ids either way.
+const openGroups = computed(() =>
+  props.groups.filter(
+    (g) => g.sessions.length > 0 || g.workspace.id === props.activeWorkspaceId,
+  ),
+);
+
+// Done tab, grouped: aggregate the done rows under each workspace (in the
+// user's workspace order); workspaces with no done sessions are skipped.
+// cwdLabel is stripped so the rows render as single-line group rows (the
+// workspace name is already the group header).
+const doneGroups = computed(() =>
+  props.groups
+    .map((g) => ({
+      workspace: g.workspace,
+      sessions: props.doneSessions
+        .filter((s) => s.workspaceId === g.workspace.id)
+        .map((s) => ({ ...s, cwdLabel: undefined })),
+    }))
+    .filter((g) => g.sessions.length > 0),
+);
+
+// Seed both session lists once the app's initial load() has settled: seeding
 // earlier races load()'s wholesale pool replace, which would drop v2-only
 // page-1 rows while the flat cursor has already moved past them.
 watch(
   () => props.initialized,
   (ready) => {
-    if (ready && viewMode.value === 'flat') emit('ensureFlatSessions');
+    if (!ready) return;
+    emit('ensureFlatSessions');
+    emit('ensureDoneSessions');
   },
   { immediate: true },
 );
@@ -481,13 +658,18 @@ function closeViewMenu(): void {
   window.removeEventListener('resize', closeViewMenu);
 }
 
-function chooseViewMode(mode: SidebarViewMode): void {
-  setViewMode(mode);
+function chooseListMode(mode: SidebarViewMode): void {
+  setListMode(mode);
   closeViewMenu();
 }
 
 function chooseSortMode(mode: WorkspaceSortMode): void {
   emit('setWorkspaceSortMode', mode);
+  closeViewMenu();
+}
+
+function openSessionAdmin(): void {
+  emit('openSessionAdmin');
   closeViewMenu();
 }
 
@@ -505,22 +687,26 @@ function onFlatSessionDragStart(id: string, event: DragEvent): void {
   event.dataTransfer.setData('text/plain', id);
 }
 
-// Drag-back-to-unpin in flat mode: the grouped mode's home-group rule can't
-// apply (the flat list holds every workspace's sessions), so the whole flat
-// list is the drop target — dropping anywhere unpins. Handlers sit on the
-// .sessions scroll container and are gated on flat mode, so the grouped
-// groups keep their own home-group handling (events bubble up harmlessly).
+// Drag-back-to-unpin in flat-style lists: the grouped mode's home-group rule
+// can't apply (these lists hold every workspace's sessions), so the whole
+// list is the drop target — dropping anywhere unpins. Applies when the open
+// tab shows its flat variant. Handlers sit on the .sessions scroll container
+// and are gated on the flat-style list being shown, so the grouped groups
+// keep their own home-group handling (events bubble up harmlessly).
+const flatLikeListActive = computed(
+  () => statusTab.value === 'open' && listMode.value === 'flat',
+);
 const flatPinnedDropHover = ref(false);
 
 function onSessionsPinnedDragOver(event: DragEvent): void {
-  if (viewMode.value !== 'flat' || pinnedDragSession.value === null) return;
+  if (!flatLikeListActive.value || pinnedDragSession.value === null) return;
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
   flatPinnedDropHover.value = true;
 }
 
 function onSessionsPinnedDrop(event: DragEvent): void {
-  if (viewMode.value !== 'flat' || pinnedDragSession.value === null) return;
+  if (!flatLikeListActive.value || pinnedDragSession.value === null) return;
   event.preventDefault();
   flatPinnedDropHover.value = false;
   onDropPinnedSession(pinnedDragSession.value.id);
@@ -634,7 +820,9 @@ function locateSession(sessionId: string): void {
     });
     return;
   }
-  if (viewMode.value !== 'grouped') setViewMode('grouped');
+  // Session groups render in the open tab's grouped variant — switch to it.
+  if (statusTab.value !== 'open') setStatusTab('open');
+  if (listMode.value !== 'grouped') setListMode('grouped');
   if (isCollapsed(group.workspace.id)) toggleCollapse(group.workspace.id);
   void nextTick(() => {
     const row = [...(sessionsEl.value?.querySelectorAll<HTMLElement>('[data-session-id]') ?? [])].find(
@@ -656,7 +844,9 @@ const flashWsId = ref<string | null>(null);
 let flashWsTimer: ReturnType<typeof setTimeout> | null = null;
 
 function onSearchSelectWorkspace(workspaceId: string): void {
-  if (viewMode.value !== 'grouped') setViewMode('grouped');
+  // Workspace groups render in the open tab's grouped variant — switch to it.
+  if (statusTab.value !== 'open') setStatusTab('open');
+  if (listMode.value !== 'grouped') setListMode('grouped');
   if (isCollapsed(workspaceId)) toggleCollapse(workspaceId);
   emit('selectWorkspace', workspaceId);
   void nextTick(() => {
@@ -770,6 +960,17 @@ function cancelRenameWorkspace(): void {
 
 function onUpdateRenameValue(value: string): void {
   renameValue.value = value;
+}
+
+// The workspaces tab hosts its rename input directly (the grouped views' one
+// lives in WorkspaceGroup) — IME guard so an Enter that only confirms a
+// composition candidate never commits.
+const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } =
+  useImeComposition();
+
+function onDirRenameEnter(e: KeyboardEvent): void {
+  if (isComposingKeyEvent(e)) return;
+  confirmRenameWorkspace();
 }
 
 // ---------------------------------------------------------------------------
@@ -1147,26 +1348,38 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
+      <!-- The 进行中 / 已完成 / 工作空间 tabs are the sidebar's top level —
+           always rendered. Flat/grouped is a display switch inside the two
+           session tabs (the section label's switcher below). -->
+      <div class="status-tabs">
+        <SegmentedControl
+          class="status-seg"
+          size="sm"
+          :model-value="statusTab"
+          :options="statusTabOptions"
+          @update:model-value="setStatusTab"
+        />
+      </div>
+
       <!-- Fixed head above the scroll container (same pattern as
            .sidebar-actions / .side-footer): the pinned section and the
-           WORKSPACES label stay put while the workspace groups scroll under
-           them, so the block also owns the scroll-linked seam at its bottom
-           edge. Rendered only when at least one workspace exists (matching
-           the old in-list v-else). -->
+           section label stay put while the list scrolls under them, so the
+           block also owns the scroll-linked seam at its bottom edge. -->
       <div
-        v-if="viewMode === 'flat' || groups.length > 0"
         class="sessions-head"
         :class="{ 'sessions-head--scrolled': sessionsScrolled }"
       >
-        <!-- Pinned section: above every workspace caption, listing pinned
-             sessions across all workspaces. Hidden when nothing is pinned. -->
+        <!-- Pinned section: above every caption, listing pinned sessions
+             across all workspaces — open tab only (pinned sessions are open
+             by definition: completing one unpins it). -->
         <PinnedSessionList
+          v-if="pinnedSessions.length > 0 && statusTab === 'open'"
           ref="pinnedListRef"
-          v-if="pinnedSessions.length > 0"
           :sessions="pinnedSessions"
           :active-id="activeId"
           :pending-by-session="pendingBySession"
           :unread-by-session="unreadBySession"
+          state-tag="open"
           :flash-session-id="flashSessionId"
           @select-session="onSelectSession"
           @rename-session="(id, title) => emit('rename', id, title)"
@@ -1180,10 +1393,28 @@ onBeforeUnmount(() => {
           @session-drag-end="onPinnedSessionDragEnd"
         />
         <div class="side-section-label">
-          <span class="side-section-title">{{ t('sidebar.sessionsHeader') }}</span>
+          <span class="side-section-title">{{
+            statusTab === 'workspaces'
+              ? t('sidebar.tabWorkspaces')
+              : statusTab === 'done'
+                ? t('sidebar.tabDone')
+                : t('sidebar.sessionsHeader')
+          }}</span>
           <div class="side-section-actions">
+            <!-- Workspace tab: the new-workspace entry lives here (icon +
+                 tooltip), not as a row at the list bottom. -->
+            <Tooltip v-if="statusTab === 'workspaces'" :text="t('sidebar.newWorkspace')">
+              <IconButton
+                class="side-section-toggle"
+                size="sm"
+                :label="t('sidebar.newWorkspace')"
+                @click.stop="emit('addWorkspace')"
+              >
+                <Icon name="folder-plus" />
+              </IconButton>
+            </Tooltip>
             <IconButton
-              v-if="viewMode === 'grouped'"
+              v-if="statusTab !== 'workspaces' && listMode === 'grouped'"
               class="side-section-toggle"
               size="sm"
               :label="allCollapsed ? t('sidebar.expandAll') : t('sidebar.collapseAll')"
@@ -1193,11 +1424,11 @@ onBeforeUnmount(() => {
               <Icon v-if="allCollapsed" name="expand" />
               <Icon v-else name="collapse" />
             </IconButton>
-            <!-- View switcher: opens a dropdown picking flat / grouped. Fixed
-                 icon (does not follow the current view) with a hover tooltip;
-                 rightmost of the section actions; hover-revealed like the
-                 collapse-all button (product call: not always visible). -->
-            <Tooltip :text="t('sidebar.viewSwitcher')">
+            <!-- Display switcher (flat / grouped within the session tabs):
+                 opens a dropdown picking the presentation. Fixed icon (does
+                 not follow the current mode) with a hover tooltip; rightmost
+                 of the section actions; always visible. -->
+            <Tooltip v-if="statusTab !== 'workspaces'" :text="t('sidebar.viewSwitcher')">
               <IconButton
                 class="side-section-toggle side-section-view"
                 size="sm"
@@ -1211,8 +1442,9 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <!-- Session list — grouped by workspace, or flat (all sessions, newest
-           first) depending on viewMode. The scroll container doubles as the
+      <!-- Session list — per statusTab (open / done / workspaces); the session
+           tabs render grouped by workspace or flat (all sessions, newest
+           first) depending on listMode. The scroll container doubles as the
            flat mode's drag-back-to-unpin target (grouped mode keeps that on
            the home workspace group). -->
       <div
@@ -1220,7 +1452,7 @@ onBeforeUnmount(() => {
         class="sessions"
         :class="{
           scrolling: sessionsScrolling,
-          'pinned-drag-active': viewMode === 'flat' && pinnedDragSession !== null,
+          'pinned-drag-active': flatLikeListActive && pinnedDragSession !== null,
           'flat-pinned-drop-hover': flatPinnedDropHover,
         }"
         @scroll="onSessionsScroll"
@@ -1228,113 +1460,254 @@ onBeforeUnmount(() => {
         @drop="onSessionsPinnedDrop"
         @dragleave="onSessionsPinnedDragLeave"
       >
-        <template v-if="viewMode === 'grouped'">
-          <!-- Empty state — only when no workspace is registered at all; empty
-               workspaces still render their group header (with the + button). -->
-          <div v-if="groups.length === 0" class="empty">
-            {{ t('workspace.noWorkspace') }}
-          </div>
-
-          <template v-else>
+        <!-- 进行中：open sessions. Flat variant = the flat list's rows (all
+             workspaces, newest first); grouped variant = the per-workspace
+             groups (both carry the Open state tag). -->
+        <template v-if="statusTab === 'open'">
+          <template v-if="listMode === 'flat'">
+            <SessionRow
+              v-for="s in flatSessions"
+              :key="s.id"
+              :session="s"
+              :active="s.id === activeId"
+              :approval-count="pendingBySession[s.id]?.approvals ?? 0"
+              :question-count="pendingBySession[s.id]?.questions ?? 0"
+              :unread="unreadBySession[s.id] ?? false"
+              state-tag="open"
+              :draggable="renamingFlatId !== s.id"
+              @dragstart="onFlatSessionDragStart(s.id, $event)"
+              @rename-state-change="renamingFlatId = $event ? s.id : null"
+              @select="onSelectSession"
+              @rename="(id, title) => emit('rename', id, title)"
+              @generate-title="(id, done) => emit('generateTitle', id, done)"
+              @archive="(id) => emit('archive', id)"
+              @fork="(id) => emit('fork', id)"
+              @export="(id) => emit('export', id)"
+              @pin="onPinSession"
+            />
             <div
-              v-for="g in groups"
-              :key="g.workspace.id"
-              class="ws-drop-target"
-              :data-ws-id="g.workspace.id"
-              :class="{
-                'drop-before': dragOver?.id === g.workspace.id && dragOver.position === 'before',
-                'drop-after': dragOver?.id === g.workspace.id && dragOver.position === 'after',
-                'ws-locate-flash': flashWsId === g.workspace.id,
-              }"
-              @dragover="onGroupDragOver($event, g.workspace.id)"
-              @drop="onGroupDrop(g.workspace.id)"
+              v-if="flatSessions.length === 0 && !flatHasMore && pinnedSessions.length === 0"
+              class="empty"
             >
-              <WorkspaceGroup
-                :group="g"
-                :active-workspace-id="activeWorkspaceId"
-                :active-id="activeId"
-                :renaming-id="renamingId"
-                :rename-value="renameValue"
-                :rename-input-ref="getRenameInputRef()"
-                :pending-by-session="pendingBySession"
-                :unread-by-session="unreadBySession"
-                :ws-menu-open-id="wsMenuOpenId"
-                :dragging="draggingWsId === g.workspace.id"
-                :sortable="workspaceSortMode === 'manual'"
-                :is-collapsed="isCollapsed"
-                :visible-limit="visibleLimit"
-                :flash-session-id="flashSessionId"
-                :pinned-drag-session="pinnedDragSession"
-                @group-click="handleGhClick"
-                @group-contextmenu="openGhMenu"
-                @toggle-ws-menu="toggleWsMenu"
-                @create-in-workspace="(id) => emit('createInWorkspace', id)"
-                @select-session="onSelectSession"
-                @rename-session="(id, title) => emit('rename', id, title)"
-                @generate-session-title="(id, done) => emit('generateTitle', id, done)"
-                @archive-session="(id) => emit('archive', id)"
-                @fork-session="(id) => emit('fork', id)"
-                @export-session="(id) => emit('export', id)"
-                @pin-session="onPinSession"
-                @drop-pinned-session="onDropPinnedSession"
-                @expand="onExpand"
-                @collapse="onCollapse"
-                @confirm-rename="confirmRenameWorkspace"
-                @cancel-rename="cancelRenameWorkspace"
-                @update-rename-value="onUpdateRenameValue"
-                @ws-dragstart="onWsDragstart"
-                @ws-dragend="onWsDragend"
-              />
+              {{ t('sidebar.noSessions') }}
             </div>
+            <div v-if="flatHasMore" class="show-more-row">
+              <button
+                class="show-more"
+                :disabled="flatLoadingMore"
+                @click.stop="emit('loadMoreFlatSessions')"
+              >
+                <span class="show-more-label">{{
+                  flatLoadingMore ? t('sidebar.loadingMore') : t('sidebar.loadMore')
+                }}</span>
+                <Icon name="chevron-down" size="sm" />
+              </button>
+            </div>
+          </template>
+          <template v-else>
+            <!-- Empty states — no workspace registered at all, or every
+                 workspace is session-less (e.g. right after a mass cleanup;
+                 the pinned section above still counts as open sessions). -->
+            <div v-if="groups.length === 0" class="empty">
+              {{ t('workspace.noWorkspace') }}
+            </div>
+            <div v-else-if="openGroups.length === 0 && pinnedSessions.length === 0" class="empty">
+              {{ t('sidebar.noOpenSessions') }}
+            </div>
+            <template v-else>
+              <div
+                v-for="g in openGroups"
+                :key="g.workspace.id"
+                class="ws-drop-target"
+                :data-ws-id="g.workspace.id"
+                :class="{
+                  'drop-before': dragOver?.id === g.workspace.id && dragOver.position === 'before',
+                  'drop-after': dragOver?.id === g.workspace.id && dragOver.position === 'after',
+                  'ws-locate-flash': flashWsId === g.workspace.id,
+                }"
+                @dragover="onGroupDragOver($event, g.workspace.id)"
+                @drop="onGroupDrop(g.workspace.id)"
+              >
+                <WorkspaceGroup
+                  :group="g"
+                  :active-workspace-id="activeWorkspaceId"
+                  :active-id="activeId"
+                  :renaming-id="renamingId"
+                  :rename-value="renameValue"
+                  :rename-input-ref="getRenameInputRef()"
+                  :pending-by-session="pendingBySession"
+                  :unread-by-session="unreadBySession"
+                  :ws-menu-open-id="wsMenuOpenId"
+                  :dragging="draggingWsId === g.workspace.id"
+                  :sortable="workspaceSortMode === 'manual'"
+                  :is-collapsed="isCollapsed"
+                  :visible-limit="visibleLimit"
+                  :flash-session-id="flashSessionId"
+                  :pinned-drag-session="pinnedDragSession"
+                  state-tag="open"
+                  @group-click="handleGhClick"
+                  @group-contextmenu="openGhMenu"
+                  @toggle-ws-menu="toggleWsMenu"
+                  @create-in-workspace="(id) => emit('createInWorkspace', id)"
+                  @select-session="onSelectSession"
+                  @rename-session="(id, title) => emit('rename', id, title)"
+                  @generate-session-title="(id, done) => emit('generateTitle', id, done)"
+                  @archive-session="(id) => emit('archive', id)"
+                  @fork-session="(id) => emit('fork', id)"
+                  @export-session="(id) => emit('export', id)"
+                  @pin-session="onPinSession"
+                  @drop-pinned-session="onDropPinnedSession"
+                  @expand="onExpand"
+                  @collapse="onCollapse"
+                  @confirm-rename="confirmRenameWorkspace"
+                  @cancel-rename="cancelRenameWorkspace"
+                  @update-rename-value="onUpdateRenameValue"
+                  @ws-dragstart="onWsDragstart"
+                  @ws-dragend="onWsDragend"
+                />
+              </div>
+            </template>
           </template>
         </template>
 
-        <!-- Flat mode: every session across workspaces, newest first. Rows are
-             the shared SessionRow with the cwd second line (the facade projects
-             cwdLabel); drag-to-pin reuses the grouped rows' marker MIME. -->
-        <template v-else>
-          <SessionRow
-            v-for="s in flatSessions"
-            :key="s.id"
-            :session="s"
-            :active="s.id === activeId"
-            :approval-count="pendingBySession[s.id]?.approvals ?? 0"
-            :question-count="pendingBySession[s.id]?.questions ?? 0"
-            :unread="unreadBySession[s.id] ?? false"
-            :draggable="renamingFlatId !== s.id"
-            @dragstart="onFlatSessionDragStart(s.id, $event)"
-            @rename-state-change="renamingFlatId = $event ? s.id : null"
-            @select="onSelectSession"
-            @rename="(id, title) => emit('rename', id, title)"
-            @generate-title="(id, done) => emit('generateTitle', id, done)"
-            @archive="(id) => emit('archive', id)"
-            @fork="(id) => emit('fork', id)"
-            @export="(id) => emit('export', id)"
-            @pin="onPinSession"
-          />
-          <!-- Empty state only once the endpoint reports no more pages —
-               while the first page is in flight the list is simply blank
-               (hasMore starts true), so there is no empty-state flash. And not
-               while pinned rows remain above: they ARE the visible history. -->
-          <div
-            v-if="flatSessions.length === 0 && !flatHasMore && pinnedSessions.length === 0"
-            class="empty"
-          >
-            {{ t('sidebar.noSessions') }}
+        <!-- 已完成：done (archived) sessions, updatedAt desc (display and
+             sort share the field). Flat variant = the paged done list;
+             grouped variant aggregates the loaded done rows under their
+             workspace (collapse shared with the open tab's groups). Row
+             action = reopen. -->
+        <template v-else-if="statusTab === 'done'">
+          <template v-if="listMode === 'flat'">
+            <SessionRow
+              v-for="s in doneSessions"
+              :key="s.id"
+              :session="s"
+              :active="s.id === activeId"
+              :approval-count="pendingBySession[s.id]?.approvals ?? 0"
+              :question-count="pendingBySession[s.id]?.questions ?? 0"
+              :unread="unreadBySession[s.id] ?? false"
+              state-tag="done"
+              @select="onSelectSession"
+              @rename="(id, title) => emit('rename', id, title)"
+              @generate-title="(id, done) => emit('generateTitle', id, done)"
+              @restore="(id) => emit('restore', id)"
+              @fork="(id) => emit('fork', id)"
+              @export="(id) => emit('export', id)"
+            />
+          </template>
+          <template v-else>
+            <div v-for="g in doneGroups" :key="g.workspace.id" class="done-group">
+              <div
+                class="done-gh"
+                @click="toggleCollapse(g.workspace.id)"
+                @contextmenu="openGhMenu(g.workspace, $event)"
+              >
+                <Icon v-if="isCollapsed(g.workspace.id)" class="done-gh-folder" name="folder-closed" />
+                <Icon v-else class="done-gh-folder" name="folder" />
+                <span class="done-gh-name">{{ g.workspace.name }}</span>
+                <span class="done-gh-count">{{ g.sessions.length }}</span>
+                <span class="done-gh-act">
+                  <IconButton
+                    class="gh-more"
+                    :class="{ open: wsMenuOpenId === g.workspace.id }"
+                    size="sm"
+                    :label="t('sidebar.options')"
+                    :tooltip="t('sidebar.options')"
+                    aria-haspopup="menu"
+                    :aria-expanded="wsMenuOpenId === g.workspace.id"
+                    @click.stop="toggleWsMenu(g.workspace, $event)"
+                  >
+                    <Icon name="dots-horizontal" />
+                  </IconButton>
+                </span>
+              </div>
+              <div v-if="!isCollapsed(g.workspace.id)" class="done-sessions">
+                <SessionRow
+                  v-for="s in g.sessions"
+                  :key="s.id"
+                  :session="s"
+                  :active="s.id === activeId"
+                  :approval-count="pendingBySession[s.id]?.approvals ?? 0"
+                  :question-count="pendingBySession[s.id]?.questions ?? 0"
+                  :unread="unreadBySession[s.id] ?? false"
+                  state-tag="done"
+                  @select="onSelectSession"
+                  @rename="(id, title) => emit('rename', id, title)"
+                  @generate-title="(id, done) => emit('generateTitle', id, done)"
+                  @restore="(id) => emit('restore', id)"
+                  @fork="(id) => emit('fork', id)"
+                  @export="(id) => emit('export', id)"
+                />
+              </div>
+            </div>
+          </template>
+          <div v-if="doneSessions.length === 0 && !doneHasMore" class="empty">
+            {{ t('sidebar.noDoneSessions') }}
           </div>
-          <!-- Manual paging: the next page loads only on an explicit click.
-               Centered, icon trailing — a quiet link-style button. -->
-          <div v-if="flatHasMore" class="show-more-row">
+          <div v-if="doneHasMore" class="show-more-row">
             <button
               class="show-more"
-              :disabled="flatLoadingMore"
-              @click.stop="emit('loadMoreFlatSessions')"
+              :disabled="doneLoadingMore"
+              @click.stop="emit('loadMoreDoneSessions')"
             >
               <span class="show-more-label">{{
-                flatLoadingMore ? t('sidebar.loadingMore') : t('sidebar.loadMore')
+                doneLoadingMore ? t('sidebar.loadingMore') : t('sidebar.loadMore')
               }}</span>
               <Icon name="chevron-down" size="sm" />
             </button>
+          </div>
+        </template>
+
+        <!-- 工作空间：a pure directory — click drafts a session in that
+             workspace (no tab switch); the ⋯ / right-click menu keeps the
+             workspace management entries (copy path, rename, remove). -->
+        <template v-else>
+          <div
+            v-for="g in groups"
+            :key="g.workspace.id"
+            class="ws-dir"
+            :class="{ on: g.workspace.id === activeWorkspaceId }"
+            @click="emit('createInWorkspace', g.workspace.id)"
+            @contextmenu="openGhMenu(g.workspace, $event)"
+          >
+            <div class="ws-dir-row">
+              <Icon class="ws-dir-icon" name="folder-closed" />
+              <!-- Inline rename lives right here in this tab (the grouped
+                   views' input is WorkspaceGroup's) — Enter commits, Esc/blur
+                   cancels; clicks stay off the row's create-session target. -->
+              <input
+                v-if="renamingId === g.workspace.id"
+                :ref="(el) => (renameInputRef = el as HTMLInputElement | null)"
+                v-model="renameValue"
+                class="ws-dir-rename"
+                type="text"
+                @keydown.enter.stop="onDirRenameEnter"
+                @keydown.esc.stop="cancelRenameWorkspace()"
+                @compositionstart="handleCompositionStart"
+                @compositionend="handleCompositionEnd"
+                @blur="cancelRenameWorkspace()"
+                @click.stop
+              />
+              <span v-else class="ws-dir-name">{{ g.workspace.name }}</span>
+              <span class="ws-dir-act">
+                <IconButton
+                  v-if="renamingId !== g.workspace.id"
+                  class="gh-more"
+                  :class="{ open: wsMenuOpenId === g.workspace.id }"
+                  size="sm"
+                  :label="t('sidebar.options')"
+                  :tooltip="t('sidebar.options')"
+                  aria-haspopup="menu"
+                  :aria-expanded="wsMenuOpenId === g.workspace.id"
+                  @click.stop="toggleWsMenu(g.workspace, $event)"
+                >
+                  <Icon name="dots-horizontal" />
+                </IconButton>
+              </span>
+            </div>
+            <div class="ws-dir-sub">{{ g.workspace.root }}</div>
+          </div>
+          <div v-if="groups.length === 0" class="empty">
+            {{ t('workspace.noWorkspace') }}
           </div>
         </template>
       </div>
@@ -1405,9 +1778,9 @@ onBeforeUnmount(() => {
         </MenuItem>
       </Menu>
     </Transition>
-    <!-- View switcher dropdown (position:fixed, anchored to the section toggle):
-         a muted group label heads the options; each view keeps its own icon and
-         the current one carries a checkmark at the row's right edge. -->
+    <!-- Display switcher dropdown (position:fixed, anchored to the section
+         toggle): flat vs grouped presentation within the session tabs; the
+         current one carries a checkmark at the row's right edge. -->
     <Transition name="menu-pop">
       <Menu
         v-if="viewMenuOpen"
@@ -1417,23 +1790,23 @@ onBeforeUnmount(() => {
         @click.stop
       >
         <div class="view-menu-label">{{ t('sidebar.viewGroup') }}</div>
-        <MenuItem @click="chooseViewMode('flat')">
+        <MenuItem @click="chooseListMode('flat')">
           <Icon name="list" size="sm" />
           {{ t('sidebar.viewFlat') }}
           <span class="view-menu-check">
-            <Icon v-if="viewMode === 'flat'" name="check" size="sm" />
+            <Icon v-if="listMode === 'flat'" name="check" size="sm" />
           </span>
         </MenuItem>
-        <MenuItem @click="chooseViewMode('grouped')">
+        <MenuItem @click="chooseListMode('grouped')">
           <Icon name="tree-view" size="sm" />
           {{ t('sidebar.viewGrouped') }}
           <span class="view-menu-check">
-            <Icon v-if="viewMode === 'grouped'" name="check" size="sm" />
+            <Icon v-if="listMode === 'grouped'" name="check" size="sm" />
           </span>
         </MenuItem>
-        <!-- Group-order section: only meaningful in the grouped view (the flat
-             list has no groups to order). -->
-        <template v-if="viewMode === 'grouped'">
+        <!-- Group-order section: only meaningful in the grouped display (the
+             flat list has no groups to order). -->
+        <template v-if="listMode === 'grouped'">
           <div class="view-menu-label">{{ t('sidebar.sortGroup') }}</div>
           <MenuItem @click="chooseSortMode('manual')">
             <Icon name="grip" size="sm" />
@@ -1450,6 +1823,13 @@ onBeforeUnmount(() => {
             </span>
           </MenuItem>
         </template>
+        <!-- Cross-workspace management lives on its own page — separated from
+             the display options above; a plain navigation entry (no check). -->
+        <MenuItem separator />
+        <MenuItem @click="openSessionAdmin">
+          <Icon name="session-admin" size="sm" />
+          {{ t('sidebar.sessionAdmin') }}
+        </MenuItem>
       </Menu>
     </Transition>
     <!-- Dev backend switcher menu (position:fixed, anchored to the brand pill) -->
@@ -1802,6 +2182,196 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+/* Status view tabs — the design-system SegmentedControl (sm), stretched to
+   the full column width; items share it evenly. Sits on its own row under
+   the action buttons. */
+.status-tabs {
+  padding: var(--space-2) var(--sb-inset) 0;
+}
+.status-seg {
+  width: 100%;
+  display: flex;
+}
+.status-seg :deep(.ui-seg__item) {
+  flex: 1;
+  min-width: 0;
+  justify-content: center;
+  padding: 0 var(--space-1);
+  overflow: hidden;
+}
+
+/* Status view's 工作空间 tab: one directory row per workspace — folder icon +
+   name + root sub-line (the flat session row's two-line geometry). Click
+   drafts a session there; the ⋯ hover action opens the same workspace menu
+   the grouped header uses. */
+.ws-dir {
+  display: block;
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  position: relative;
+  user-select: none;
+}
+.ws-dir:hover {
+  background: var(--sb-hover, var(--color-hover));
+}
+/* The active workspace's directory row carries the same neutral selected
+   fill as a session row — it reads as "where I am". */
+.ws-dir.on {
+  background: var(--sb-selected, var(--color-selected));
+}
+.ws-dir + .ws-dir {
+  margin-top: var(--space-05);
+}
+.ws-dir-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sb-gap);
+  min-width: 0;
+}
+.ws-dir-icon {
+  flex: none;
+  color: var(--color-text-muted);
+}
+.ws-dir-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--ui-font-size-sm);
+  font-weight: 450;
+  line-height: var(--leading-tight);
+  color: var(--color-text);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+  -webkit-mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
+}
+.ws-dir-act {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 3px;
+  display: inline-flex;
+  align-items: center;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    visibility 0s linear var(--duration-fast);
+}
+/* Inline rename input in the directory row — mirrors WorkspaceGroup's
+   .gh-rename (accent hairline, page ground). */
+.ws-dir-rename {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-ui);
+  font-size: var(--ui-font-size-sm);
+  font-weight: 450;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 0.5px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  padding: 2px 5px;
+  outline: none;
+}
+.ws-dir:hover .ws-dir-act,
+.ws-dir:focus-within .ws-dir-act {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.ws-dir-sub {
+  margin: var(--space-1) 0 0;
+  color: var(--color-text-faint);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+  -webkit-mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
+}
+/* The hover ⋯ is absolutely positioned over the row's right edge — while it is
+   visible, both text lines yield its footprint so no text renders under it.
+   (Margin, not padding: these lines clip with overflow:hidden + a fade mask,
+   which both measure to the border box — padding would leave the clip edge
+   unchanged.) */
+.ws-dir:hover .ws-dir-name,
+.ws-dir:focus-within .ws-dir-name,
+.ws-dir:hover .ws-dir-sub,
+.ws-dir:focus-within .ws-dir-sub {
+  margin-right: calc(var(--icon-button-sm) + var(--space-2));
+}
+
+/* Done tab's grouped variant: the group header mirrors the workspace
+   group's .gh geometry (folder icon lands at --sb-pad-x, name aligns with
+   the session titles below); click collapses, ⋯ opens the workspace menu. */
+.done-gh {
+  display: flex;
+  align-items: center;
+  gap: var(--sb-gap);
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border-radius: var(--radius-sm);
+  font-family: var(--font-ui);
+  color: var(--color-text);
+  user-select: none;
+  position: relative;
+  cursor: pointer;
+}
+.done-gh:hover {
+  background: var(--sb-hover, var(--color-hover));
+}
+.done-gh-folder {
+  flex: none;
+  color: var(--color-text-muted);
+}
+.done-gh-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--ui-font-size-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+  -webkit-mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
+}
+.done-gh-count {
+  flex: none;
+  color: var(--color-text-faint);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.done-gh-act {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 3px;
+  display: inline-flex;
+  align-items: center;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    visibility 0s linear var(--duration-fast);
+}
+.done-gh:hover .done-gh-act,
+.done-gh:focus-within .done-gh-act {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.done-gh:hover .done-gh-count,
+.done-gh:focus-within .done-gh-count {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    visibility 0s linear var(--duration-fast);
+}
+
 /* Sessions — scrolling group list. The top gap to the action rows lives on
    the fixed .sessions-head (which carries the seam); this container keeps the
    side inset and the bottom breathing room. Scrolled content clips at the
@@ -1876,14 +2446,10 @@ onBeforeUnmount(() => {
 .sessions-head .pinned + .side-section-label {
   margin-top: var(--space-2);
 }
+/* Section actions (collapse-all, display switcher) are always visible — they
+   are the only way to reach the flat/grouped switch and group folding. */
 .side-section-toggle {
   color: var(--faint);
-  opacity: 0;
-  transition: opacity var(--duration-base) var(--ease-out);
-}
-.side-section-label:hover .side-section-toggle,
-.side-section-label:focus-within .side-section-toggle {
-  opacity: 1;
 }
 .side-section-toggle:hover {
   color: var(--dim);

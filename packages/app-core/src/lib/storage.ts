@@ -185,8 +185,10 @@ export function savePinnedCollapsed(collapsed: boolean): void {
 export type SidebarViewMode = 'flat' | 'grouped';
 
 /**
- * Sidebar session-list dimension: 'grouped' (by workspace — the default) or
- * 'flat' (all sessions across workspaces, newest first). UI-only, no
+ * Sidebar session-list display: 'grouped' (by workspace — the default) or
+ * 'flat' (all sessions across workspaces, newest first). Since the status
+ * tabs (open/done/workspaces) became the sidebar's top level, this is the
+ * display switch INSIDE the open/done tabs, not a parallel view. UI-only, no
  * server-side source of truth — same rationale as collapsedWorkspaces.
  */
 export function loadSidebarViewMode(): SidebarViewMode {

@@ -5,6 +5,13 @@ import { useI18n } from 'vue-i18n';
 import Sidebar from './components/Sidebar.vue';
 import ResizeHandle from './components/ResizeHandle.vue';
 import ConversationPane from './components/chat/ConversationPane.vue';
+import SessionAdminView from './components/admin/SessionAdminView.vue';
+import {
+  planAdminBatchToast,
+  undoBatchDirectionOf,
+  type AdminBatchToastPlan,
+  type SessionAdminBatchDirection,
+} from './components/admin/adminBatchToast';
 import FilePreview from './components/FilePreview.vue';
 import ThinkingPanel from './components/chat/ThinkingPanel.vue';
 import AgentDetailPanel from './components/chat/AgentDetailPanel.vue';
@@ -466,9 +473,12 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
       handleCreateSession();
       break;
     case 'archiveSession': {
-      // Same no-confirm + undo-toast path as the sidebar archive button.
+      // Same no-confirm + undo-toast path as the sidebar archive button —
+      // but only for an OPEN session: on a Done one the shortcut would
+      // re-archive (idempotent server-side) and yank the user out of the
+      // session they're reading, or surface a pointless error.
       const sid = client.activeSessionId.value;
-      if (sid) void archiveSessionWithToast(sid);
+      if (sid && !client.activeSessionArchived.value) void archiveSessionWithToast(sid);
       break;
     }
     case 'toggleSideChat':
@@ -493,6 +503,22 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
       if (!isMobile.value && terminalStore.available) {
         terminalStore.toggle(terminalCwd.value ?? undefined);
       }
+      break;
+    // Status tabs: switch the sidebar's top-level tab.
+    case 'sidebarTabOpen':
+    case 'sidebarTabDone':
+    case 'sidebarTabWorkspaces':
+      sidebarRef.value?.setStatusTab(
+        id === 'sidebarTabOpen' ? 'open' : id === 'sidebarTabDone' ? 'done' : 'workspaces',
+      );
+      break;
+    // Previous/next sibling within the active tab (sessions or workspaces —
+    // the sidebar owns the rendered order).
+    case 'selectPrevSibling':
+      sidebarRef.value?.selectSibling(-1);
+      break;
+    case 'selectNextSibling':
+      sidebarRef.value?.selectSibling(1);
       break;
   }
 }
@@ -864,11 +890,12 @@ async function handleComposerSelectModel(modelId: string): Promise<void> {
   }
 }
 
-// Archive runs WITHOUT a confirm dialog: archive immediately, then show a
-// top-center toast with Undo / Settings links (design-system §03 ActionToast).
-// Every archive entry point (sidebar row, chat header, mobile switcher,
-// shortcut) funnels here. client.archiveSession toasts its own errors and
-// never rejects, so a failed archive simply shows no undo toast.
+// Archive ("mark as done") runs WITHOUT a confirm dialog: archive
+// immediately, then show a top-center toast with Undo / Settings links
+// (design-system §03 ActionToast). Every archive entry point (sidebar row,
+// chat header, mobile switcher, shortcut) funnels here.
+// client.archiveSession toasts its own errors and never rejects, so a failed
+// archive simply shows no undo toast.
 //
 // Archive and export share ONE ActionToast state: the component paints a
 // single fixed top-center pill with no stacking offset, so two live toasts
@@ -880,11 +907,70 @@ async function handleComposerSelectModel(modelId: string): Promise<void> {
 // auto-dismiss timer restarts (it is read once in setup) — the export
 // running→done swap relies on this to get the 4s done window instead of
 // inheriting the 60s running one.
+// The archive toast carries a `reopen` flag for the complete⇄reopen two-way
+// flow: completing shows "已完成 · 撤销", reopening shows "已恢复进行中 · 撤销"
+// (whose Undo re-completes).
+// The adminBatch toast is the session admin page's batch variant: undo runs
+// the same (succeeded) id set through the inverse batch endpoint and swaps
+// the direction — the complete⇄reopen two-way flow, batched.
 type AppActionToast =
-  | { kind: 'archive'; id: string; key: number }
-  | { kind: 'export'; state: 'running' | 'done'; key: number };
+  | { kind: 'archive'; id: string; reopen?: boolean; key: number }
+  | { kind: 'export'; state: 'running' | 'done'; key: number }
+  | { kind: 'adminBatch'; plan: AdminBatchToastPlan; key: number };
 const actionToast = ref<AppActionToast | null>(null);
 let actionToastKey = 0;
+
+/** Direction of the in-flight admin batch (null = idle). A large selected set
+ *  keeps the request open for seconds — this drives the batch bar's spinner +
+ *  disabled state and guards runSessionAdminBatch against re-entry. */
+const sessionAdminBatchRunning = ref<SessionAdminBatchDirection | null>(null);
+
+/** Session admin page batch Mark-as-done / Reopen (single-row actions ride
+ *  the same batch endpoint). The toast carries the succeeded count (+ failed
+ *  count when partial) and an Undo through the inverse endpoint; an
+ *  all-failed batch has nothing to undo and surfaces as an error notice. */
+async function runSessionAdminBatch(direction: SessionAdminBatchDirection, ids: string[]): Promise<void> {
+  if (ids.length === 0 || sessionAdminBatchRunning.value !== null) return;
+  sessionAdminBatchRunning.value = direction;
+  try {
+    const outcome =
+      direction === 'archive' ? await client.archiveSessions(ids) : await client.restoreSessions(ids);
+    const plan = planAdminBatchToast(direction, outcome);
+    if (plan === null) {
+      client.notify({
+        severity: 'error',
+        title: t(
+          direction === 'archive' ? 'admin.batchDoneFailedNotice' : 'admin.batchReopenFailedNotice',
+          { n: outcome.failed },
+        ),
+      });
+      return;
+    }
+    actionToast.value = { kind: 'adminBatch', plan, key: ++actionToastKey };
+  } finally {
+    sessionAdminBatchRunning.value = null;
+  }
+}
+
+// Undo puts the same id set through the inverse endpoint and swaps the toast
+// direction (complete⇄reopen two-way, batched). On failure the toast stays
+// so the user can retry — the error itself surfaces via WarningToasts.
+async function undoSessionAdminBatch(): Promise<void> {
+  const toast = actionToast.value;
+  if (!toast || toast.kind !== 'adminBatch') return;
+  const direction = undoBatchDirectionOf(toast.plan.direction);
+  const outcome =
+    direction === 'archive'
+      ? await client.archiveSessions(toast.plan.ids)
+      : await client.restoreSessions(toast.plan.ids);
+  const plan = planAdminBatchToast(direction, outcome);
+  if (plan === null) return; // undo failed — keep the toast for a retry
+  // A newer toast (export, another completion…) may have taken the slot
+  // while the undo was in flight — never clobber it (the single-session
+  // undo path guards the same way).
+  if (actionToast.value?.key !== toast.key) return;
+  actionToast.value = { kind: 'adminBatch', plan, key: ++actionToastKey };
+}
 
 async function archiveSessionWithToast(id: string): Promise<void> {
   await client.archiveSession(id);
@@ -893,6 +979,15 @@ async function archiveSessionWithToast(id: string): Promise<void> {
   if (client.sessionsForView.value.some((s) => s.id === id)) return;
   terminalStore.destroySession(id);
   actionToast.value = { kind: 'archive', id, key: ++actionToastKey };
+}
+
+// Reopen (restore) a done session — the inverse of completing one, surfaced
+// through the same toast channel so it can itself be undone (undoing a
+// reopen re-completes).
+async function restoreSessionWithToast(id: string): Promise<void> {
+  if (await client.restoreSession(id)) {
+    actionToast.value = { kind: 'archive', id, reopen: true, key: ++actionToastKey };
+  }
 }
 
 // Export feedback mirrors the archive pattern (design-system §03 ActionToast,
@@ -947,6 +1042,16 @@ async function exportSessionWithToast(id?: string): Promise<void> {
 async function undoArchive(): Promise<void> {
   const toast = actionToast.value;
   if (!toast || toast.kind !== 'archive') return;
+  if (toast.reopen) {
+    // Undoing a reopen re-completes the session (and swaps the toast back).
+    await client.archiveSession(toast.id);
+    if (client.sessionsForView.value.some((s) => s.id === toast.id)) return;
+    terminalStore.destroySession(toast.id);
+    // Same in-flight guard: only swap when this toast still holds the slot.
+    if (actionToast.value?.key !== toast.key) return;
+    actionToast.value = { kind: 'archive', id: toast.id, key: ++actionToastKey };
+    return;
+  }
   if (await client.restoreSession(toast.id)) {
     // A newer toast may have taken the slot while the restore was in flight
     // — clear only the one this Undo acted on.
@@ -960,19 +1065,6 @@ async function undoArchive(): Promise<void> {
 // (matching key) may clear the shared state.
 function dismissActionToast(token: string | number | undefined): void {
   if (token !== undefined && actionToast.value?.key === token) actionToast.value = null;
-}
-
-// "Settings" deep-links to the archived-sessions tab (desktop dialog) or
-// sub-view (mobile sheet).
-function openArchivedSettings(): void {
-  actionToast.value = null;
-  if (isMobile.value) {
-    mobileSettingsInitialView.value = 'archived';
-    showMobileSettings.value = true;
-  } else {
-    settingsInitialTab.value = 'archived';
-    showSettings.value = true;
-  }
 }
 
 async function confirmDeleteWorkspace(id: string): Promise<void> {
@@ -1542,7 +1634,7 @@ function setFontScaleFromSettings(
 function handleCreateSession(): void {
   const wsId = client.activeWorkspaceId.value;
   if (wsId) {
-    client.openWorkspaceDraft(wsId);
+    client.openWorkspaceDraft(wsId, { entry: 'newChat' });
   } else {
     client.clearActiveSession();
   }
@@ -1554,7 +1646,7 @@ function handleCreateSession(): void {
 // actually sends a message.
 function handleCreateSessionInWorkspace(workspaceId: string): void {
   setSessionIntent('sidebar');
-  client.openWorkspaceDraft(workspaceId);
+  client.openWorkspaceDraft(workspaceId, { entry: 'workspace' });
   focusComposerAfterDraft();
 }
 
@@ -1571,6 +1663,12 @@ function handleSelectSession(selection: {
 }): void {
   void client.selectSession(selection.sessionId, { source: selection.source });
 }
+
+// Workspace home (draft empty state): the active/draft workspace's recent
+// sessions — open first, then done, capped by the facade.
+const homeRecentSessions = computed(() =>
+  client.recentSessionsForWorkspace(client.activeWorkspaceId.value),
+);
 
 // Chat header: open a GitHub PR in a new tab.
 function openPr(url: string): void {
@@ -1616,6 +1714,9 @@ function openPr(url: string): void {
         :flat-sessions="client.flatSessions.value"
         :flat-has-more="client.flatSessionsHasMore.value"
         :flat-loading-more="client.flatSessionsLoadingMore.value"
+        :done-sessions="client.doneSessions.value"
+        :done-has-more="client.doneSessionsHasMore.value"
+        :done-loading-more="client.doneSessionsLoadingMore.value"
         :initialized="client.initialized.value"
         :active-id="client.activeSessionId.value"
         :attention-by-session="client.attentionBySession.value"
@@ -1631,6 +1732,7 @@ function openPr(url: string): void {
         @rename="(id, title) => client.renameSession(id, title)"
         @generate-title="(id, done) => void client.regenerateSessionTitle(id).then(done)"
         @archive="archiveSessionWithToast($event)"
+        @restore="restoreSessionWithToast($event)"
         @fork="(id) => client.forkSession(id)"
         @export="(id) => void exportSessionWithToast(id)"
         @pin="client.togglePinSession($event)"
@@ -1644,6 +1746,9 @@ function openPr(url: string): void {
         @load-all-sessions="void client.loadAllSessions()"
         @ensure-flat-sessions="void client.ensureFlatSessions()"
         @load-more-flat-sessions="void client.loadMoreFlatSessions()"
+        @ensure-done-sessions="void client.ensureDoneSessions()"
+        @load-more-done-sessions="void client.loadMoreDoneSessions()"
+        @open-session-admin="client.openSessionAdmin()"
         @open-settings="openSettingsFromButton"
         @login="openLogin"
         @collapse="runShortcutAction('toggleSidebar', 'button')"
@@ -1674,6 +1779,7 @@ function openPr(url: string): void {
 
     <ConversationPane
       ref="conversationPaneRef"
+      v-show="client.mainView.value === 'chat'"
       :mobile="isMobile"
       :turns="client.turns.value"
       :session-id="client.activeSessionId.value"
@@ -1724,12 +1830,17 @@ function openPr(url: string): void {
       :git-diff-stats="client.gitDiffStats.value"
       :workspaces="client.workspacesView.value"
       :active-workspace-id="client.activeWorkspaceId.value"
+      :recent-sessions="homeRecentSessions"
+      :draft-entry="client.draftEntry.value"
       :session-title="activeSessionTitle"
+      :session-archived="client.activeSessionArchived.value"
       :pr="client.activePullRequest.value"
       @open-changes="openDiffDetail()"
       @select-workspace="handleDraftWorkspaceSelect($event)"
+      @select-session="(id) => handleSelectSession({ sessionId: id, source: 'sidebar' })"
       @add-workspace="runShortcutAction('openFolder', 'button')"
       @open-pr="openPr"
+      @open-session-admin="client.openSessionAdmin($event)"
       @submit="handleSubmit($event)"
       @login="openLogin()"
       @steer="client.steerPrompt($event.text, $event.attachments)"
@@ -1753,6 +1864,7 @@ function openPr(url: string): void {
       @rename-session="(id, title) => client.renameSession(id, title)"
       @fork-session="(id) => client.forkSession(id)"
       @archive-session="archiveSessionWithToast($event)"
+      @restore-session="restoreSessionWithToast($event)"
       @export-session="(id) => void exportSessionWithToast(id)"
       @compact="client.compact()"
       @pick-model="openModelPicker()"
@@ -1763,6 +1875,15 @@ function openPr(url: string): void {
       @open-compaction="openCompactionPanel($event)"
       @open-agent="openAgentPanel($event)"
       @edit-message="handleEditMessage"
+    />
+
+    <!-- Session admin page (/admin/sessions): a full-pane main view switched
+         with ConversationPane via v-show so the chat keeps its state. -->
+    <SessionAdminView
+      v-show="client.mainView.value === 'sessionAdmin'"
+      :batch-running="sessionAdminBatchRunning"
+      @archive-sessions="(ids) => void runSessionAdminBatch('archive', ids)"
+      @restore-sessions="(ids) => void runSessionAdminBatch('restore', ids)"
     />
 
     <!-- Sidebar toggle — floating only when the platform control can't serve:
@@ -2012,10 +2133,22 @@ function openPr(url: string): void {
           @dismiss="dismissActionToast"
         >
           <template v-if="actionToast.kind === 'archive'">
+            {{
+              actionToast.reopen
+                ? t('sidebar.reopenToastLead')
+                : t('sidebar.completeToastLead')
+            }}
             <button type="button" @click="undoArchive">{{ t('sidebar.archiveToastUndo') }}</button>
-            {{ t('sidebar.archiveToastMid') }}
-            <button type="button" @click="openArchivedSettings">{{ t('sidebar.archiveToastSettings') }}</button>
-            {{ t('sidebar.archiveToastTail') }}
+          </template>
+          <template v-else-if="actionToast.kind === 'adminBatch'">
+            {{
+              actionToast.plan.direction === 'archive'
+                ? t('admin.batchDoneToast', { n: actionToast.plan.succeeded })
+                : t('admin.batchReopenedToast', { n: actionToast.plan.succeeded })
+            }}<template v-if="actionToast.plan.failed > 0">{{
+              t('admin.batchFailedSuffix', { n: actionToast.plan.failed })
+            }}</template>
+            <button type="button" @click="undoSessionAdminBatch">{{ t('admin.undo') }}</button>
           </template>
           <template v-else>
             {{ actionToast.state === 'running' ? t('commands.export.started') : t('commands.export.done') }}
@@ -2383,6 +2516,22 @@ function openPr(url: string): void {
    buttons shift to the window edge (toggle at 16px, new-chat at 42px), so the
    header padding falls back to the non-mac collapsed value. */
 .app.fullscreen.sidebar-collapsed.macos-desktop .chat-header {
+  padding-left: 78px;
+}
+/* The session admin page's head occupies the same top strip as the
+   conversation header — same clearance while the sidebar is collapsed
+   (Windows needs none: its toggle lives in the global titlebar). Only the
+   head pads: the page body (filters + table) always spans the full pane. */
+.app.sidebar-collapsed .session-admin .sa-head {
+  padding-left: 78px;
+}
+.app.sidebar-collapsed.windows-desktop .session-admin .sa-head {
+  padding-left: var(--space-6);
+}
+.app.sidebar-collapsed.macos-desktop .session-admin .sa-head {
+  padding-left: 146px;
+}
+.app.fullscreen.sidebar-collapsed.macos-desktop .session-admin .sa-head {
   padding-left: 78px;
 }
 

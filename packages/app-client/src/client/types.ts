@@ -8,6 +8,7 @@
 import type {
   AppConfig,
   AppMessage,
+  AppSession,
   AppWorkspace,
   KimiClientState,
   ManagedUserInfo,
@@ -193,4 +194,35 @@ export interface ExtendedState extends KimiClientState {
    *  excepted): rows pooled from other sources carry no global-order
    *  guarantee until the walk covers them. null = not seeded yet. */
   flatSessionsFrontier: number | null;
+  /** Done (archived) sessions for the sidebar status view's 已完成 tab, fed by
+   *  GET /api/v2/sessions with archived:true. Kept OUT of the shared pool on
+   *  purpose: the local archive path forgets pool rows (forgetSession), so a
+   *  pool projection could not retain just-archived sessions. Live WS updates
+   *  do not reach this array (renames elsewhere won't live-update); it
+   *  re-seeds on entry to the tab. */
+  doneSessions: AppSession[];
+  /** Opaque cursor for the next done-list page; null when no next page is
+   *  known (pre-seed or fully drained). */
+  doneSessionsNextPageToken: string | null;
+  /** Whether the v2 endpoint reports more done-list pages. */
+  doneSessionsHasMore: boolean;
+  /** True while the first done-list page is being fetched. */
+  doneSessionsLoading: boolean;
+  /** True while a follow-up done-list page is being fetched. */
+  doneSessionsLoadingMore: boolean;
+  /** True once the done list has fetched its first page this run. */
+  doneSessionsSeeded: boolean;
+  /** How the current draft (empty-session state) was entered: 'newChat' = the
+   *  primary 新建会话 button (shows the brand doodle hero); 'workspace' = a
+   *  workspace directory row / add-workspace flow (shows the workspace home
+   *  with recent sessions, no doodle). Only meaningful while no session is
+   *  active. */
+  draftEntry: 'newChat' | 'workspace';
+  /** Main content view: 'chat' = the conversation pane; 'sessionAdmin' = the
+   *  session admin page, a full-pane view switched with v-show so the chat
+   *  (and its active session) stays alive underneath. URL-bound:
+   *  'sessionAdmin' ↔ /admin/sessions — while it is the main view it owns the
+   *  address bar and session-URL writes are suspended (see writeSessionUrl).
+   *  Desktop-only for now; web initializes the field but never leaves 'chat'. */
+  mainView: 'chat' | 'sessionAdmin';
 }

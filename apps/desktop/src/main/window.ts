@@ -190,7 +190,7 @@ interface WindowBounds {
   y?: number;
 }
 
-const DEFAULT_BOUNDS: WindowBounds = { width: 1280, height: 860 };
+const DEFAULT_BOUNDS: WindowBounds = { width: 1440, height: 900 };
 
 /** Saved bounds that (nearly) fill a whole display mean the window was closed
     while maximized or full-screen — relaunch at the default size instead of a

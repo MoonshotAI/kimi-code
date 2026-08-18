@@ -8,6 +8,11 @@ export const APP_ACTION_IDS = [
   'openInDefaultApp',
   'openSettings',
   'toggleTerminal',
+  'sidebarTabOpen',
+  'sidebarTabDone',
+  'sidebarTabWorkspaces',
+  'selectPrevSibling',
+  'selectNextSibling',
 ] as const;
 
 export type AppActionId = (typeof APP_ACTION_IDS)[number];

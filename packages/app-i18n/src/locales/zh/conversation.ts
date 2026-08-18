@@ -9,6 +9,10 @@ export default {
   workingRetry: '模型请求失败，正在重试（第 {n}/{max} 次）…',
   emptyWorkspaceHint: '在 {name} 中发送',
   switchWorkspace: '切换工作区',
+  recentSessions: '最近会话',
+  // 列表底部居中的「查看更多」按钮（跳转会话管理页，hover 出 tooltip）
+  viewMoreSessions: '查看更多',
+  sessionAdminTooltip: '在会话管理页面查看并管理更多会话',
   addWorkspace: '添加工作区',
   moreWorkspaces: '更多工作区 ({count})',
   pickFolder: '选择文件夹…',

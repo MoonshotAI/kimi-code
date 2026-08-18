@@ -137,6 +137,7 @@ export const rendererTrackEventSchema = z.discriminatedUnion('event', [
         'fork',
         'export',
         'archive',
+        'restore',
         'openChanges',
         'openPr',
       ]),

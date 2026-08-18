@@ -39,6 +39,9 @@ const props = defineProps<{
   /** The pinned session currently being dragged back (null when idle). Only
    *  its home workspace is a drop target; see the drag handlers below. */
   pinnedDragSession?: { id: string; workspaceId: string } | null;
+  /** State tag forwarded to each SessionRow ('open' in the status tabs'
+   *  grouped open list; unset = no tag). */
+  stateTag?: 'open' | 'done';
 }>();
 
 const emit = defineEmits<{
@@ -282,6 +285,7 @@ function onSessionDragStart(id: string, event: DragEvent): void {
         :approval-count="pendingBySession[s.id]?.approvals ?? 0"
         :question-count="pendingBySession[s.id]?.questions ?? 0"
         :unread="unreadBySession[s.id] ?? false"
+        :state-tag="props.stateTag"
         :draggable="renamingSessionId !== s.id"
         :data-session-id="s.id"
         :class="{ 'se-locate-flash': flashSessionId === s.id }"

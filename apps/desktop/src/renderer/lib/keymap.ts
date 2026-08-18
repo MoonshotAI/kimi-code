@@ -72,6 +72,18 @@ const SHORTCUT_ACTION_DEFINITIONS: Record<
   openInDefaultApp: { scope: 'global', labelKey: 'shortcuts.actions.openInDefaultApp.label', descKey: 'shortcuts.actions.openInDefaultApp.desc', defaultBinding: 'alt+mod+o', requiresSession: true },
   openSettings: { scope: 'global', labelKey: 'shortcuts.actions.openSettings.label', descKey: 'shortcuts.actions.openSettings.desc', defaultBinding: 'mod+,' },
   toggleTerminal: { scope: 'global', labelKey: 'shortcuts.actions.toggleTerminal.label', descKey: 'shortcuts.actions.toggleTerminal.desc', defaultBinding: 'ctrl+`' },
+  // Status tabs (进行中 / 已完成 / 工作空间) — letter mnemonics from VS
+  // Code's activity-bar family (⇧⌘E/F/D/…): O = Open, D = Done, E =
+  // Explorer (workspaces). (Digit chords are out — ⇧⌘3 is macOS's
+  // screenshot shortcut and never reaches the app.)
+  sidebarTabOpen: { scope: 'global', labelKey: 'shortcuts.actions.sidebarTabOpen.label', descKey: 'shortcuts.actions.sidebarTabOpen.desc', defaultBinding: 'shift+mod+o' },
+  sidebarTabDone: { scope: 'global', labelKey: 'shortcuts.actions.sidebarTabDone.label', descKey: 'shortcuts.actions.sidebarTabDone.desc', defaultBinding: 'shift+mod+d' },
+  sidebarTabWorkspaces: { scope: 'global', labelKey: 'shortcuts.actions.sidebarTabWorkspaces.label', descKey: 'shortcuts.actions.sidebarTabWorkspaces.desc', defaultBinding: 'shift+mod+e' },
+  // Previous/next sibling within the active tab: sessions in 进行中/已完成,
+  // workspaces in 工作空间 (selecting one enters its draft). VS Code's
+  // prev/next-editor chords.
+  selectPrevSibling: { scope: 'global', labelKey: 'shortcuts.actions.selectPrevSibling.label', descKey: 'shortcuts.actions.selectPrevSibling.desc', defaultBinding: 'shift+mod+[' },
+  selectNextSibling: { scope: 'global', labelKey: 'shortcuts.actions.selectNextSibling.label', descKey: 'shortcuts.actions.selectNextSibling.desc', defaultBinding: 'shift+mod+]' },
   // Composer (textarea-scoped). Steer (Ctrl/Cmd+S) and interrupt (Escape)
   // stay hardcoded in Composer.vue / ConversationPane.vue by decision —
   // they are NOT customizable and must not appear here.

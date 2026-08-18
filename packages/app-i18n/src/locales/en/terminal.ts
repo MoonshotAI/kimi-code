@@ -3,6 +3,8 @@ export default {
   toolbarAria: 'Terminal tabs',
   resizeAria: 'Resize terminal panel height',
   toggle: 'Toggle terminal',
+  open: 'Open terminal',
+  close: 'Close terminal',
   newTab: 'New terminal',
   closeTab: 'Close terminal',
   restartTab: 'Restart terminal',

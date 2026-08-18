@@ -41,6 +41,8 @@ function createState({ loaded, cursor, hasMore, listSessions }: SetupOptions) {
   });
   const rawState = {
     sessions: [...loaded],
+    // The status view's 已完成 list — archiveSession feeds it on success.
+    doneSessions: [] as ReturnType<typeof makeSession>[],
     sessionsCursorByWorkspace: { [WS]: cursor } as Record<string, string | undefined>,
     sessionsHasMoreByWorkspace: { [WS]: hasMore } as Record<string, boolean>,
     sessionsLoadingMoreByWorkspace: {} as Record<string, boolean>,

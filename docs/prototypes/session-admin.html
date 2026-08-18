@@ -1,0 +1,1581 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-color-scheme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>会话管理 · 高保真原型</title>
+<style>
+/* ===========================================================================
+   Tokens —— 与 session-status-tabs.html 同源，逐条对齐
+   packages/app-ui/src/style.css 的 token 值（light / dark）。
+   =========================================================================== */
+:root {
+  --color-bg: #ffffff;
+  --color-surface: #f5f5f5;
+  --color-surface-raised: #ffffff;
+  --color-surface-sunken: #f5f5f5;
+  --color-well: #f5f5f5;
+  --color-sidebar-bg: #f9fbfc;
+  --color-text: rgba(0, 0, 0, 0.9);
+  --color-text-strong: #000000;
+  --color-text-muted: rgba(0, 0, 0, 0.6);
+  --color-text-faint: rgba(0, 0, 0, 0.45);
+  --color-line: rgba(0, 0, 0, 0.13);
+  --color-subtle: rgba(0, 0, 0, 0.05);
+  --color-line-strong: rgba(0, 0, 0, 0.15);
+  --color-selected: rgba(0, 0, 0, 0.05);
+  --color-hover: rgba(0, 0, 0, 0.03);
+  --color-accent: #1783ff;
+  --color-accent-hover: #167ff7;
+  --color-accent-soft: #e8f3ff;
+  --color-accent-bd: rgba(23, 131, 255, 0.25);
+  --color-success: #0e7a38;
+  --color-success-soft: #e7f6ee;
+  --color-success-bd: #bfe3cc;
+  --color-warning: #a9610a;
+  --color-warning-soft: #fbf1e0;
+  --color-warning-bd: #f0d9b8;
+  --color-danger: #c0392b;
+  --color-danger-soft: #fbeaea;
+  --color-danger-bd: #f0cccc;
+  /* "Done" 紫色阶 —— 与 GitHub merged PR 同色 */
+  --color-done: #8250df;
+  --color-done-soft: #f3e8ff;
+  --color-done-bd: #e0ccff;
+  --color-info: #1783ff;
+  --color-menu-bg: rgba(255, 255, 255, 0.95);
+  --color-user-bubble-bg: #f5f5f5;
+  --color-composer-bg: #ffffff;
+  --color-composer-line: rgba(0, 0, 0, 0.13);
+  --color-send-bg: rgba(0, 0, 0, 0.9);
+  --color-send-bg-hover: #252525;
+  --color-send-icon: #ffffff;
+  --color-send-bg-disabled: rgba(0, 0, 0, 0.05);
+  --color-send-icon-disabled: rgba(0, 0, 0, 0.27);
+
+  --dim: rgba(0, 0, 0, 0.6);
+  --muted: rgba(0, 0, 0, 0.45);
+  --faint: rgba(0, 0, 0, 0.3);
+  --line: var(--color-line);
+
+  --space-05: 2px; --space-1: 4px; --space-2: 8px; --space-3: 12px;
+  --space-4: 16px; --space-5: 20px; --space-6: 24px; --space-8: 32px;
+
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px;
+  --radius-xl: 16px; --radius-2xl: 20px; --radius-composer: 32px; --radius-full: 999px;
+
+  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-menu: 0 6px 18px lch(0% 0 0 / 0.02), 0 3px 9px lch(0% 0 0 / 0.04), 0 1px 1px lch(0% 0 0 / 0.04);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.07), 0 2px 4px rgba(16, 24, 40, 0.05);
+  --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.12), 0 4px 10px rgba(16, 24, 40, 0.08);
+  --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.07);
+  --p-menu-backdrop: blur(24px) saturate(1.8);
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 160ms;
+  --duration-slow: 260ms;
+
+  --text-2xs: 11px; --text-xs: 12px; --text-sm: 13px; --text-base: 14px; --text-lg: 16px;
+  --ui-font-size: 14px;
+  --ui-font-size-sm: 13px;
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-prose: 1.6;
+  --weight-regular: 400;
+  --weight-option-label: 475;
+  --weight-medium: 500;
+  --weight-section-label: 600;
+
+  --font-ui: "Schibsted Grotesk Variable", "Helvetica Neue", Arial,
+    "Noto Sans SC Variable", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
+    "SF Mono", Menlo, Consolas, monospace;
+  --font-kbd: "Schibsted Grotesk Variable", system-ui, sans-serif;
+
+  --z-dropdown: 200;
+  --z-toast: 600;
+}
+html[data-color-scheme="dark"] {
+  color-scheme: dark;
+  --color-bg: #121212;
+  --color-surface: #1f1f1f;
+  --color-surface-raised: #292929;
+  --color-surface-sunken: #121212;
+  --color-well: #1f1f1f;
+  --color-sidebar-bg: #0d0d0d;
+  --color-text: rgba(255, 255, 255, 0.84);
+  --color-text-strong: #ffffff;
+  --color-text-muted: rgba(255, 255, 255, 0.56);
+  --color-text-faint: rgba(255, 255, 255, 0.42);
+  --color-line: rgba(255, 255, 255, 0.12);
+  --color-subtle: rgba(255, 255, 255, 0.05);
+  --color-line-strong: rgba(255, 255, 255, 0.18);
+  --color-selected: rgba(255, 255, 255, 0.1);
+  --color-hover: rgba(255, 255, 255, 0.05);
+  --color-accent: #1a88ff;
+  --color-accent-hover: #258eff;
+  --color-accent-soft: rgba(26, 136, 255, 0.1);
+  --color-accent-bd: rgba(26, 136, 255, 0.28);
+  --color-success: #3fb950;
+  --color-success-soft: rgba(63, 185, 80, 0.14);
+  --color-success-bd: rgba(63, 185, 80, 0.28);
+  --color-warning: #d29922;
+  --color-warning-soft: rgba(210, 153, 34, 0.14);
+  --color-warning-bd: rgba(210, 153, 34, 0.28);
+  --color-danger: #f85149;
+  --color-danger-soft: rgba(248, 81, 73, 0.14);
+  --color-danger-bd: rgba(248, 81, 73, 0.28);
+  --color-done: #a371f7;
+  --color-done-soft: rgba(163, 113, 247, 0.14);
+  --color-done-bd: rgba(163, 113, 247, 0.28);
+  --color-info: #1a88ff;
+  --color-menu-bg: rgba(41, 41, 41, 0.95);
+  --color-user-bubble-bg: #292929;
+  --color-composer-bg: #1f1f1f;
+  --color-composer-line: rgba(255, 255, 255, 0.12);
+  --color-send-bg: rgba(255, 255, 255, 0.84);
+  --color-send-bg-hover: rgba(255, 255, 255, 0.848);
+  --color-send-icon: #1f1f1f;
+  --color-send-bg-disabled: rgba(255, 255, 255, 0.1);
+  --color-send-icon-disabled: rgba(255, 255, 255, 0.28);
+  --dim: rgba(255, 255, 255, 0.56);
+  --muted: rgba(255, 255, 255, 0.42);
+  --faint: rgba(255, 255, 255, 0.26);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
+  --shadow-menu: 0 6px 18px rgba(0, 0, 0, 0.2), 0 3px 9px rgba(0, 0, 0, 0.24), 0 1px 1px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  color: var(--color-text);
+  background: var(--color-bg);
+  min-height: 100vh;
+}
+button { font-family: inherit; cursor: pointer; background: none; border: none; color: inherit; }
+svg.ic { display: block; flex: none; fill: currentColor; }
+
+/* --- 页面骨架：应用窗口 = 左侧边栏 + 右侧主内容区 ---------------------------- */
+body { overflow: hidden; }
+.app-shell { display: flex; height: 100vh; }
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--color-bg); }
+.page { padding: var(--space-6) var(--space-6) 64px; overflow-y: auto; flex: 1; min-height: 0; }
+/* 标题栏：页面标题在顶部 48px 条内（窗口 drag 区），不在页面正文里 */
+.titlebar {
+  height: 48px; display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-6);
+  border-bottom: 0.5px solid var(--color-line); flex: none;
+}
+/* 标题栏返回：icon-only + tooltip（title 即提示） */
+.tb-back {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.tb-back:hover { background: var(--color-hover); color: var(--color-text); }
+.tb-back svg { width: 16px; height: 16px; }
+.titlebar h1 { font-size: var(--text-base); font-weight: var(--weight-semibold); letter-spacing: -0.01em; }
+.page-head {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-4);
+}
+.page-head p {
+  margin: 0; font-size: var(--text-sm); flex: 1; min-width: 240px;
+  color: var(--color-text-muted); max-width: 760px; line-height: var(--leading-normal);
+}
+.controls { display: flex; gap: var(--space-2); }
+.ctl {
+  padding: 5px 12px; border: 0.5px solid var(--color-line); border-radius: var(--radius-full);
+  background: transparent; color: var(--color-text-muted); font-size: var(--text-xs);
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.ctl:hover { background: var(--color-hover); color: var(--color-text); }
+
+/* --- 筛选栏 ---------------------------------------------------------------- */
+.filter-bar {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+/* 自定义下拉（app 风格，非原生 select）：按钮 + .ctx-menu 菜单 */
+.select {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 10px;
+  border: 0.5px solid var(--color-line); border-radius: var(--radius-md);
+  background: transparent; color: var(--color-text);
+  font-size: var(--text-sm); font-weight: var(--weight-option-label); line-height: 1;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.select:hover, .select.is-open { background: var(--color-hover); }
+.select svg { width: 14px; height: 14px; color: var(--color-text-faint); }
+.select .sel-label { white-space: nowrap; }
+/* 筛选条件 label（muted sm） */
+.f-label { font-size: var(--text-sm); color: var(--color-text-muted); user-select: none; margin-left: var(--space-2); }
+.f-label:first-child { margin-left: 0; }
+
+/* 查询制按钮组：主按钮 accent 填充，重置 quiet 文本（同高与批量条 btn-q 一族） */
+.f-actions { display: inline-flex; align-items: center; gap: var(--space-2); margin-left: var(--space-2); }
+.btn-primary {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 26px; padding: 0 12px;
+  border: none; border-radius: var(--radius-sm);
+  background: var(--color-accent); color: var(--color-text-on-accent);
+  font-size: var(--text-sm); font-weight: var(--weight-medium); line-height: 1;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.btn-primary:hover { opacity: 0.88; }
+.btn-quiet-x {
+  display: inline-flex; align-items: center; height: 26px; padding: 0 var(--space-2);
+  border: none; border-radius: var(--radius-sm); background: transparent;
+  color: var(--color-text-muted); font-size: var(--text-sm); font-weight: var(--weight-medium);
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.btn-quiet-x:hover { background: var(--color-hover); color: var(--color-text); }
+
+/* --- 批量操作（GitHub issues 列表式：表头行原地变身，零布局位移） ------------- */
+/* th 固定 32px 高：普通表头与批量操作条两种内容共享同一高度，表格体一像素不动 */
+.batch-count {
+  font-size: var(--text-sm); color: var(--color-text-muted);
+  margin-right: var(--space-1); user-select: none; white-space: nowrap;
+}
+.batch-count b { color: var(--color-text); font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; }
+/* 全选匹配 / 清除选择：批量条里的链接式按钮（accent 文本，无 chrome） */
+.batch-link {
+  display: inline-flex; align-items: center; height: 24px; padding: 0 var(--space-1);
+  border: none; background: transparent;
+  color: var(--color-accent); font-size: var(--text-sm); font-weight: var(--weight-medium);
+  white-space: nowrap; cursor: pointer;
+}
+.batch-link:hover { text-decoration: underline; }
+.th-batch-inner { display: flex; align-items: center; gap: var(--space-2); }
+/* quiet / secondary 按钮（Button §03 secondary 几何缩版） */
+.btn-q {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 24px; padding: 0 8px;
+  border: 0.5px solid var(--color-line); border-radius: var(--radius-sm);
+  background: transparent; color: var(--color-text);
+  font-size: var(--text-xs); font-weight: var(--weight-medium); line-height: 1;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.btn-q:hover { background: var(--color-hover); }
+.btn-q:disabled { opacity: 0.42; cursor: default; }
+.btn-q:disabled:hover { background: transparent; }
+.btn-q svg { width: 14px; height: 14px; color: var(--color-text-muted); }
+.btn-q:hover svg { color: var(--color-text); }
+/* 批量条里唯一的主按钮：标记完成 = accent 填充（图标文字同为 on-accent） */
+.btn-q--primary, .btn-q--primary svg {
+  border-color: var(--color-accent); background: var(--color-accent); color: var(--color-text-on-accent);
+}
+.btn-q--primary:hover, .btn-q--primary:hover svg {
+  border-color: var(--color-accent-hover); background: var(--color-accent-hover); color: var(--color-text-on-accent);
+}
+.btn-q--primary:disabled, .btn-q--primary:disabled:hover,
+.btn-q--primary:disabled svg, .btn-q--primary:disabled:hover svg {
+  border-color: var(--color-accent); background: var(--color-accent); color: var(--color-text-on-accent);
+}
+
+/* --- 表格 ------------------------------------------------------------------ */
+.table-card {
+  border: 0.5px solid var(--color-line); border-radius: var(--radius-lg);
+  background: var(--color-bg);
+  /* 兜底横向滚动（auto 仍裁剪圆角）；卡片即 container query 的容器 */
+  overflow-x: auto;
+  container-type: inline-size;
+}
+table { width: 100%; min-width: 640px; border-collapse: collapse; table-layout: fixed; }
+col.col-cb { width: 36px; }
+col.col-title { width: max(200px, 20%); } /* 会话名保底宽度，prompt 列先让位 */
+col.col-ws { width: 116px; }
+col.col-status { width: 88px; }
+col.col-time { width: 140px; }
+col.col-act { width: 84px; }
+/* 响应式：先缩水时间值（MM-DD HH:mm）… */
+.time-compact { display: none; }
+@container (max-width: 1020px) {
+  col.col-time { width: 108px; }
+  .time-full { display: none; }
+  .time-compact { display: inline; }
+}
+/* …再隐藏时间列、去掉工作空间图标 */
+@container (max-width: 760px) {
+  col.col-time, .c-time { display: none; }
+  col.col-ws { width: 96px; }
+  .ws svg { display: none; }
+}
+thead th {
+  text-align: left; white-space: nowrap; user-select: none;
+  font-size: var(--text-xs); font-weight: var(--weight-medium); color: var(--color-text-faint);
+  height: 32px; padding: 0 var(--space-3);
+  border-bottom: 0.5px solid var(--color-line);
+}
+tbody td {
+  height: 40px; padding: 0 var(--space-3);
+  font-size: var(--text-sm); line-height: var(--leading-tight);
+  border-bottom: 0.5px solid var(--color-subtle);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  vertical-align: middle;
+}
+tbody tr:last-child td { border-bottom: none; }
+tbody tr { transition: background var(--duration-fast) var(--ease-out); }
+tbody tr:hover { background: var(--color-hover); }
+th.col-cb, td.col-cb { width: 36px; padding-right: 0; }
+
+/* 自定义 checkbox（支持 indeterminate） */
+.cb {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: var(--radius-xs);
+  border: 0.5px solid var(--color-line-strong);
+  background: transparent; color: #fff;
+  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+  vertical-align: middle;
+}
+.cb:hover { border-color: var(--color-text-faint); }
+.cb.on, .cb.ind { background: var(--color-accent); border-color: var(--color-accent); }
+.cb svg { width: 12px; height: 12px; }
+
+/* 状态列：GitHub issue 列表语言 —— Open = 圈点（绿），Done = 圈勾（紫），图标 + 文字 */
+.st { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); }
+.st svg { width: 14px; height: 14px; }
+.st--open { color: var(--color-success); }
+.st--done { color: var(--color-done); }
+
+/* 会话名列 */
+.t-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.t-title {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--color-text); font-weight: var(--weight-option-label);
+}
+.t-pin { flex: none; display: inline-flex; color: var(--color-text-faint); }
+.t-pin svg { width: 12px; height: 12px; }
+
+/* 工作空间列 */
+.ws { display: inline-flex; align-items: center; gap: 6px; color: var(--color-text-muted); max-width: 100%; }
+.ws svg { width: 14px; height: 14px; color: var(--color-text-faint); }
+.ws span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* prompt / 时间列 */
+.prompt { color: var(--color-text-muted); }
+.time {
+  font-family: var(--font-mono); font-size: var(--text-xs);
+  color: var(--color-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.time--none { color: var(--color-text-faint); }
+
+/* 操作列（常驻）：生命周期 icon 按钮（完成 = 圈勾，重新打开 = 撤销箭头，title 即标签）+ ⋯ IconButton */
+.act-cell { display: flex; align-items: center; gap: 2px; }
+
+/* IconButton（app-ui IconButton sm 复刻） */
+.ib {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  transition: background var(--duration-base) var(--ease-out), color var(--duration-base) var(--ease-out);
+}
+.ib:hover { background: var(--color-hover); color: var(--color-text); }
+.ib svg { width: 16px; height: 16px; }
+
+/* 行内重命名 input */
+.rename {
+  width: 100%; height: 26px; padding: 0 6px;
+  font-family: inherit; font-size: var(--text-sm); color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-accent); border-radius: var(--radius-sm);
+  outline: none; box-shadow: 0 0 0 2px var(--color-accent-bd);
+}
+
+/* 空态 */
+.empty { padding: 56px var(--space-4); text-align: center; }
+.empty p { font-size: var(--text-sm); color: var(--color-text-faint); }
+
+/* --- 分页 ------------------------------------------------------------------ */
+.pager {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-3);
+}
+.total { font-size: var(--text-sm); color: var(--color-text-muted); font-variant-numeric: tabular-nums; user-select: none; }
+.pager-right { display: flex; align-items: center; gap: var(--space-3); }
+.pages { display: flex; align-items: center; gap: 2px; }
+.pg {
+  min-width: 26px; height: 26px; padding: 0 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm); color: var(--color-text-muted); font-variant-numeric: tabular-nums;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.pg:hover { background: var(--color-hover); color: var(--color-text); }
+.pg.cur { background: var(--color-selected); color: var(--color-text); font-weight: var(--weight-medium); }
+.pg.cur:hover { background: var(--color-selected); }
+.pg:disabled { opacity: 0.38; cursor: default; }
+.pg:disabled:hover { background: transparent; color: var(--color-text-muted); }
+.pg svg { width: 14px; height: 14px; }
+.pg-ellipsis { padding: 0 3px; color: var(--color-text-faint); font-size: var(--text-sm); user-select: none; }
+
+/* ===========================================================================
+   左侧边栏 —— 静态简化版，样式逐条移植自 session-status-tabs.html
+   （.side / .ch / .sidebar-actions / .seg / .list-head / .se / .side-footer）
+   =========================================================================== */
+:root {
+  --sb-inset: var(--space-2);
+  --sb-pad-x: var(--space-4);
+  --sb-gutter: 16px;
+  --sb-gap: var(--space-2);
+  --sb-hover: var(--color-hover);
+  --sb-selected: color-mix(in srgb, var(--color-selected) 75%, transparent);
+}
+.side {
+  width: 264px; flex: none;
+  background: var(--color-sidebar-bg);
+  border-right: 0.5px solid var(--line);
+  display: flex; flex-direction: column; min-height: 0;
+}
+/* Header: brand + collapse */
+.ch {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: var(--space-3);
+  min-height: calc(26px + 2 * var(--space-3));
+}
+.ch-brand { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; user-select: none; }
+.ch-logo { height: 22px; width: auto; flex: none; display: block; }
+.ch-name { font-size: var(--ui-font-size); font-weight: 500; line-height: 22px; color: var(--color-text); white-space: nowrap; }
+.ch-tail { display: flex; align-items: center; gap: var(--space-2); flex: none; }
+
+/* New chat / Search */
+.sidebar-actions { display: flex; flex-direction: column; gap: 2px; padding: 0 var(--sb-inset) var(--space-1); }
+.btn-new-chat, .search {
+  display: flex; align-items: center; gap: var(--sb-gap);
+  width: 100%; min-width: 0;
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: var(--ui-font-size-sm); font-weight: var(--weight-medium);
+  line-height: var(--leading-tight); text-align: left;
+}
+.btn-new-chat:hover, .search:hover { background: var(--sb-hover); }
+.btn-new-chat svg, .search svg { flex: none; width: 16px; height: 16px; }
+.btn-new-chat span, .search-input { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kbd {
+  margin-left: auto;
+  font-family: var(--font-kbd); font-size: 11px; color: var(--color-text-faint);
+  border: 0.5px solid var(--color-line); border-radius: var(--radius-xs);
+  padding: 1px 4px;
+}
+
+/* 状态 tab（静态版：active 直接给 pill 底色，无滑动指示器） */
+.seg-wrap { padding: var(--space-2) var(--sb-inset) 0; }
+.seg {
+  display: flex; width: 100%; gap: 2px; padding: 2px;
+  background: var(--color-surface-sunken);
+  border: 0.5px solid var(--color-line);
+  border-radius: var(--radius-md);
+}
+.seg-item {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1);
+  height: 24px; padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm); font-weight: var(--weight-medium);
+  line-height: 1; white-space: nowrap;
+}
+.seg-item.is-on { color: var(--color-text); background: var(--color-surface-raised); box-shadow: var(--shadow-sm); }
+.seg-count { font-size: var(--text-2xs); font-weight: var(--weight-regular); color: var(--color-text-faint); font-variant-numeric: tabular-nums; }
+
+/* 列表头：caption + 平铺/分组切换（静态） */
+.list-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: var(--space-2) calc(var(--sb-inset) + var(--space-2)) var(--space-1);
+  font-size: var(--text-xs); font-weight: var(--weight-section-label);
+  text-transform: uppercase; color: var(--faint); user-select: none;
+}
+.list-head-actions { display: flex; align-items: center; gap: 2px; }
+.list-mode { width: 22px; height: 22px; color: var(--faint); display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius-xs); transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
+.list-mode:hover { color: var(--dim); background: var(--color-hover); }
+.list-mode.is-open { color: var(--dim); background: var(--color-selected); }
+.list-mode svg { width: 13px; height: 13px; }
+
+/* 会话滚动区 */
+.sessions {
+  flex: 1; overflow-y: auto; min-height: 0;
+  padding: var(--space-2) var(--sb-inset) var(--space-3);
+}
+.sessions::-webkit-scrollbar { width: 4px; }
+.sessions::-webkit-scrollbar-track { background: transparent; }
+.sessions::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--color-text) 12%, transparent); border-radius: var(--radius-full); }
+
+/* Session 行（flat 两行：标题行 + folder/cwd 行） */
+.se {
+  display: block;
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border-radius: var(--radius-sm);
+  color: var(--color-text); cursor: pointer;
+}
+.se:hover { background: var(--sb-hover); }
+.se .row { display: flex; align-items: center; gap: var(--sb-gap); min-width: 0; }
+.lead { width: var(--sb-gutter); flex: none; display: inline-flex; align-items: center; justify-content: center; }
+.st-ico { display: inline-flex; flex: none; }
+.st-ico svg { width: 14px; height: 14px; }
+.st-ico--open { color: var(--color-success); }
+.st-ico--done { color: var(--color-done); }
+.se .t {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--ui-font-size-sm); font-weight: 450; line-height: var(--leading-tight);
+  user-select: none;
+}
+.act { flex: none; display: inline-flex; align-items: center; }
+.ts { color: var(--color-text-faint); font-size: var(--text-xs); font-weight: 475; font-variant-numeric: tabular-nums; }
+.sub {
+  display: flex; align-items: center; gap: var(--space-1);
+  margin: var(--space-1) 0 0; padding-left: calc(var(--sb-gutter) + var(--sb-gap));
+  color: var(--color-text-faint); font-size: var(--text-xs); line-height: var(--leading-tight);
+  user-select: none;
+}
+.sub-icon { flex: none; display: inline-flex; color: var(--color-text-muted); }
+.sub-icon svg { width: 14px; height: 14px; }
+.sub-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sessions .se + .se { margin-top: var(--space-05); }
+
+/* Footer：用户区 */
+.side-footer { flex: none; padding: var(--space-2) var(--sb-inset); border-top: 0.5px solid var(--line); }
+.user-row {
+  display: flex; align-items: center; gap: var(--sb-gap);
+  padding: 6px calc(var(--sb-pad-x) - var(--sb-inset));
+  border-radius: var(--radius-sm); cursor: pointer;
+}
+.user-row:hover { background: var(--sb-hover); }
+.avatar {
+  width: 22px; height: 22px; border-radius: var(--radius-full); flex: none;
+  background: linear-gradient(135deg, #1783ff, #77b6ff);
+  color: #fff; font-size: 11px; font-weight: var(--weight-medium);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.user-name { font-size: var(--ui-font-size-sm); font-weight: var(--weight-medium); color: var(--color-text); }
+</style>
+<style>
+/* --- 菜单（Menu/MenuItem 移植，与 session-status-tabs.html 同款） ----------- */
+.ctx-menu {
+  position: fixed; z-index: var(--z-dropdown);
+  min-width: 180px; padding: 4px;
+  background: var(--color-menu-bg);
+  -webkit-backdrop-filter: var(--p-menu-backdrop); backdrop-filter: var(--p-menu-backdrop);
+  border: 0.5px solid var(--color-line); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-menu);
+  animation: menu-pop-in var(--duration-base) var(--ease-out);
+  transform-origin: top left;
+}
+@keyframes menu-pop-in { from { opacity: 0; transform: scale(0.97) translateY(-2px); } }
+.mi {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  padding: 5px 9px; border-radius: var(--radius-sm);
+  color: var(--color-text); font-size: var(--text-sm); font-weight: var(--weight-option-label);
+  line-height: var(--leading-tight); text-align: left;
+  transition: background var(--duration-base), color var(--duration-base);
+}
+.mi:hover { background: var(--color-hover); color: var(--color-text-strong); }
+.mi:disabled { opacity: 0.42; cursor: default; }
+.mi:disabled:hover { background: transparent; color: var(--color-text); }
+.mi svg { width: 16px; height: 16px; color: var(--muted); }
+.mi:hover svg { color: var(--color-text-strong); }
+.mi-sep { height: 1px; margin: 4px 0; background: var(--color-line); }
+.mi-head { padding: 6px 10px 4px; color: var(--color-text-faint); font-size: var(--text-xs); user-select: none; }
+/* 下拉选项的选中勾槽位 */
+.mi .ck-slot { width: 16px; flex: none; display: inline-flex; align-items: center; justify-content: center; }
+.mi .ck-slot svg { width: 14px; height: 14px; color: var(--color-text); }
+.mi:hover .ck-slot svg { color: var(--color-text-strong); }
+/* 状态选项里的彩色圆点 */
+.mi .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+/* 多选面板行（checkbox + folder + 名称）：勾保持白色，不被 .mi svg 染色 */
+.mi .cb { flex: none; pointer-events: none; }
+.mi .cb svg { width: 12px; height: 12px; color: #fff; }
+.mi-ws > svg { flex: none; }
+/* 菜单项行尾槽位（如「当前页」勾） */
+.mi-tail { margin-left: auto; display: inline-flex; flex: none; }
+.mi-tail svg { width: 14px; height: 14px; color: var(--color-text-muted); }
+
+/* --- Toast（ActionToast 风格，顶部居中） ----------------------------------- */
+.toast {
+  position: fixed; top: 16px; left: 50%; z-index: var(--z-toast);
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: var(--space-3);
+  max-width: min(480px, calc(100vw - 32px));
+  padding: 10px 12px 10px 14px;
+  background: var(--color-surface-raised);
+  border: 0.5px solid var(--color-line); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--text-sm);
+  animation: toast-in 0.24s var(--ease-out);
+}
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, -8px) scale(0.995); } }
+.toast.hide { opacity: 0; transform: translate(-50%, -4px); transition: opacity var(--duration-base), transform var(--duration-base); }
+.toast-msg { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text); }
+.toast-msg b { font-weight: var(--weight-medium); }
+.toast-undo {
+  flex: none; color: var(--color-accent); font-size: var(--text-sm); font-weight: var(--weight-medium);
+  padding: 2px 6px; border-radius: var(--radius-xs);
+}
+.toast-undo:hover { background: var(--color-accent-soft); }
+.toast-close { flex: none; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius-xs); color: var(--color-text-faint); }
+.toast-close:hover { background: var(--color-hover); color: var(--color-text); }
+.toast-close svg { width: 12px; height: 12px; }
+</style>
+<style>[hidden]{display:none !important;}</style>
+</head>
+<body>
+<div class="app-shell">
+  <!-- ================= 左侧边栏（静态简化版，入口示意） ================= -->
+  <aside class="side">
+    <div class="ch">
+      <div class="ch-brand">
+        <svg class="ch-logo" viewBox="0 0 32 28.2791" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code">
+          <defs>
+            <radialGradient id="chLogoFace" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(14.5195 12.5993) scale(14.1117)">
+              <stop stop-color="#117DFB" /><stop offset="0.759254" stop-color="#449BFF" /><stop offset="1" stop-color="#77B6FF" />
+            </radialGradient>
+          </defs>
+          <path d="M 14.5195 0.3556 C 22.2186 0.3556 28.4601 6.5969 28.4601 14.2961 C 28.4601 21.9952 22.2186 28.2366 14.5195 28.2366 C 6.8204 28.2366 0.579 21.9952 0.579 14.2961 C 0.579 6.5969 6.8204 0.3556 14.5195 0.3556 Z" fill="url(#chLogoFace)" />
+          <g fill="#fff">
+            <path d="M 12.8637 8.8339 C 12.7301 7.8611 13.4042 6.965 14.3693 6.8324 C 15.3344 6.6999 16.2251 7.3811 16.3587 8.3539 L 16.7656 11.3165 C 16.8992 12.2893 16.2251 13.1854 15.26 13.318 C 14.2949 13.4505 13.4042 12.7693 13.2706 11.7965 L 12.8637 8.8339 Z" />
+            <path d="M 20.1974 7.8996 C 20.0705 6.9754 20.6717 6.1295 21.5403 6.0102 C 22.4089 5.8909 23.216 6.5434 23.3429 7.4676 L 23.7295 10.282 C 23.8564 11.2062 23.2551 12.0521 22.3865 12.1714 C 21.5179 12.2907 20.7109 11.6382 20.5839 10.714 L 20.1974 7.8996 Z" />
+          </g>
+          <rect x="0" y="17.8221" width="31.9124" height="10.4405" rx="1.158" fill="#002E58" />
+          <path d="M 2.6265 21.0396 L 5.5577 22.7318 C 5.7989 22.8711 5.7989 23.2193 5.5577 23.3586 L 2.6265 25.0509" stroke="#fff" stroke-width="1.3133" stroke-linecap="round" />
+          <path d="M 8.7332 25.439 H 11.6282" stroke="#007CFF" stroke-width="1.3133" stroke-linecap="round" />
+          <path d="M 28.9734 0 C 30.2364 0 31.2604 1.0239 31.2604 2.287 C 31.2604 3.55 30.2364 4.574 28.9734 4.574 L 26.9555 4.574 C 26.8068 4.574 26.6864 4.4535 26.6864 4.3049 L 26.6864 2.287 C 26.6864 1.0239 27.7103 0 28.9734 0 Z" fill="#1783FF" />
+        </svg>
+        <span class="ch-name">Kimi Code</span>
+      </div>
+      <div class="ch-tail">
+        <button class="ib" title="收起侧边栏" type="button"><svg class="ic" viewBox="0 0 24 24"><path d="M 9.3 18.951 L 9.3 4.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M -7.9 -4.8 C -7.9 -6.512 -6.512 -7.9 -4.8 -7.9 L 4.8 -7.9 C 6.512 -7.9 7.9 -6.512 7.9 -4.8 L 7.9 4.8 C 7.9 6.512 6.512 7.9 4.8 7.9 L -4.8 7.9 C -6.512 7.9 -7.9 6.512 -7.9 4.8 L -7.9 -4.8 Z" fill="none" stroke="currentColor" stroke-width="1.8" transform="matrix(1 0 0 1 11.8 11.8)"/></svg></button>
+      </div>
+    </div>
+
+    <div class="sidebar-actions">
+      <button class="btn-new-chat" type="button">
+        <span data-ic="plus" style="display:inline-flex"></span>
+        <span>新会话</span><span class="kbd">⌘N</span>
+      </button>
+      <button class="search" type="button">
+        <span data-ic="search" style="display:inline-flex"></span>
+        <span class="search-input">搜索</span>
+      </button>
+    </div>
+
+    <div class="seg-wrap">
+      <div class="seg">
+        <button class="seg-item is-on" type="button">进行中 <span class="seg-count">6</span></button>
+        <button class="seg-item" type="button">已完成 <span class="seg-count">4</span></button>
+        <button class="seg-item" type="button">工作空间</button>
+      </div>
+    </div>
+
+    <div class="list-head">
+      <span>会话</span>
+      <div class="list-head-actions">
+        <button class="list-mode" id="list-settings-btn" title="列表管理" type="button"><span data-ic="listSettings" style="display:inline-flex"></span></button>
+      </div>
+    </div>
+
+    <div class="sessions" id="sb-sessions"></div>
+
+    <div class="side-footer">
+      <div class="user-row">
+        <span class="avatar">M</span>
+        <span class="user-name">moonshot</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ================= 右侧主内容区 ================= -->
+  <main class="main">
+<div class="titlebar">
+  <button class="tb-back" type="button" title="返回"><span data-ic="chevronLeft" style="display:inline-flex"></span></button>
+  <h1>会话管理</h1>
+</div>
+<div class="page">
+  <div class="page-head">
+    <p>管理所有会话，把任务完成的会话标记完成。旧会话按更新时间筛选，即可批量清理。（静态原型，数据为固定 seed 的本地 mock，刷新结果一致）</p>
+    <div class="controls">
+      <button class="ctl" id="scheme-toggle">切换到暗色</button>
+    </div>
+  </div>
+
+  <!-- 筛选栏（查询制：控件只改草稿，查询/重置/Enter 才应用发请求） -->
+  <div class="filter-bar" id="filter-bar">
+    <span class="f-label">工作空间</span>
+    <button class="select" id="sel-ws" type="button">
+      <span class="sel-label">全部工作空间</span>
+    </button>
+    <span class="f-label">状态</span>
+    <button class="select" id="sel-status" type="button">
+      <span class="sel-label">全部状态</span>
+    </button>
+    <span class="f-label">更新时间</span>
+    <!-- 与线上实现一致的 preset 下拉：全部时间 / 3 天以前 / 7 天以前 / 30 天以前 -->
+    <button class="select" id="sel-time" type="button">
+      <span class="sel-label">全部时间</span>
+    </button>
+    <div class="f-actions">
+      <button class="btn-primary" id="btn-query" type="button">查询</button>
+      <button class="btn-quiet-x" id="btn-reset" type="button">重置</button>
+    </div>
+  </div>
+
+  <!-- 表格 -->
+  <div class="table-card">
+    <table id="tbl">
+      <colgroup>
+        <col class="col-cb">
+        <col class="col-title">
+        <col class="col-ws">
+        <col class="col-status">
+        <col>
+        <col class="col-time">
+        <col class="col-time">
+        <col class="col-act">
+      </colgroup>
+      <thead>
+        <tr id="thead-tr">
+          <th class="col-cb"><button class="cb" id="cb-all" aria-label="全选本页"></button></th>
+          <th class="th-normal">会话名</th>
+          <th class="th-normal">工作空间</th>
+          <th class="th-normal">状态</th>
+          <th class="th-normal">最后一条 prompt</th>
+          <th class="th-normal c-time">最后更新</th>
+          <th class="th-normal c-time">完成时间</th>
+          <th class="th-normal">操作</th>
+          <th class="th-batch" colspan="7" hidden>
+            <div class="th-batch-inner">
+              <span class="batch-count" id="batch-count">已选 <b id="batch-n">0</b> 项</span>
+              <button class="batch-link" id="batch-all-link" type="button" hidden></button>
+              <button class="btn-q btn-q--primary" id="batch-done" type="button"></button>
+              <button class="btn-q" id="batch-reopen" type="button"></button>
+            </div>
+          </th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="empty" id="empty" hidden><p>没有符合当前筛选条件的会话</p></div>
+  </div>
+
+  <!-- 分页 -->
+  <div class="pager">
+    <span class="total" id="total">共 0 条</span>
+    <div class="pager-right">
+      <button class="select" id="sel-size" type="button">
+        <span class="sel-label">20 条/页</span>
+      </button>
+      <div class="pages" id="pages"></div>
+    </div>
+  </div>
+</div>
+  </main>
+</div>
+
+<!-- 共享菜单（下拉 / 右键复用同一个浮层） -->
+<div class="ctx-menu" id="menu" hidden></div>
+
+<!-- Toast -->
+<div class="toast" id="toast" hidden>
+  <span class="toast-msg" id="toast-msg"></span>
+  <button class="toast-undo" id="toast-undo" type="button">撤销</button>
+  <button class="toast-close" id="toast-close" type="button" aria-label="关闭"></button>
+</div>
+<script>
+/* ============================ 图标（与 app 内同源，tabler 风格 24 viewBox） ============ */
+const IC = {
+  recordCircle: '<svg class="ic" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.56 3.69a9 9 0 0 0-2.92 1.95M3.69 8.56A9 9 0 0 0 3 12m.69 3.44a9 9 0 0 0 1.95 2.92m2.92 1.95A9 9 0 0 0 12 21m3.44-.69a9 9 0 0 0 2.92-1.95m1.95-2.92A9 9 0 0 0 21 12m-.69-3.44a9 9 0 0 0-1.95-2.92m-2.92-1.95A9 9 0 0 0 12 3"/></svg>',
+  checkCircle: '<svg class="ic" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0"/><path d="m9 12l2 2l4-4"/></g></svg>',
+  check: '<svg class="ic" viewBox="0 0 24 24"><path d="m5 12l5 5l9-10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  minus: '<svg class="ic" viewBox="0 0 24 24"><path d="M6 12h12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  close: '<svg class="ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  chevronDown: '<svg class="ic" viewBox="0 0 24 24"><path fill-rule="evenodd" clip-rule="evenodd" d="M11.3912 16.7134C11.743 17.0627 12.3111 17.0617 12.6617 16.7111L19.6364 9.73641C19.9878 9.38494 19.9878 8.81509 19.6364 8.46362C19.2849 8.11215 18.7151 8.11215 18.3636 8.46362L12.023 14.8042L5.63407 8.46132C5.28133 8.11112 4.71149 8.11318 4.36129 8.46592C4.01109 8.81866 4.01314 9.3885 4.36588 9.73871L11.3912 16.7134Z"/></svg>',
+  chevronLeft: '<svg class="ic" viewBox="0 0 24 24"><path d="m14 6l-6 6l6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  chevronRight: '<svg class="ic" viewBox="0 0 24 24"><path d="m10 6l6 6l-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  folder: '<svg class="ic" viewBox="0 0 24 24"><path d="M9.2373 3.7002C10.4169 3.7002 11.5297 4.24779 12.249 5.18262L12.4424 5.43359H18C20.0987 5.43359 21.7998 7.13472 21.7998 9.2334V16.5C21.7998 18.5987 20.0987 20.2998 18 20.2998H6C3.90132 20.2998 2.2002 18.5987 2.2002 16.5V7.5C2.2002 5.40132 3.90132 3.7002 6 3.7002H9.2373ZM6 5.5C4.89543 5.5 4 6.39543 4 7.5V16.5C4 17.6046 4.89543 18.5 6 18.5H18C19.0357 18.5 19.887 17.7128 19.9893 16.7041L20 16.5V9.2334C20 8.19775 19.2128 7.34641 18.2041 7.24414L18 7.2334H12.0479L11.9326 7.22656C11.666 7.19561 11.4205 7.05812 11.2549 6.84277L10.8223 6.28027C10.4437 5.78834 9.85808 5.5 9.2373 5.5H6ZM16 9.59961C16.4971 9.59961 16.9004 10.0029 16.9004 10.5C16.9004 10.9971 16.4971 11.4004 16 11.4004H8C7.50294 11.4004 7.09961 10.9971 7.09961 10.5C7.09961 10.0029 7.50294 9.59961 8 9.59961H16Z"/></svg>',
+  pin: '<svg class="ic" viewBox="0 0 24 24"><path d="m13.827 1.69l8.486 8.485l-1.415 1.414l-.707-.707l-4.242 4.243l-.707 3.536l-1.415 1.414l-4.242-4.243l-4.95 4.95l-1.414-1.414l4.95-4.95l-4.243-4.243l1.414-1.414l3.536-.707l4.242-4.243l-.707-.707zm.707 3.536l-4.67 4.67l-2.822.565l6.5 6.5l.564-2.822l4.671-4.67z"/></svg>',
+  undo: '<svg class="ic" viewBox="0 0 24 24"><path d="M7.36336 3.3634C7.71483 3.01192 8.28533 3.01192 8.6368 3.3634C8.98817 3.71488 8.98824 4.2854 8.6368 4.63683L6.17391 7.09972H15.0001C18.2585 7.09977 20.9005 9.74166 20.9005 13.0001C20.9004 16.2585 18.2585 18.9005 15.0001 18.9005H7.00008C6.50307 18.9005 6.09976 18.4971 6.09969 18.0001C6.09969 17.5031 6.50302 17.0997 7.00008 17.0997H15.0001C17.2644 17.0997 19.0996 15.2644 19.0997 13.0001C19.0997 10.7358 17.2644 8.90055 15.0001 8.90051H6.17391L8.6368 11.3634L8.69832 11.4318C8.98668 11.7853 8.96632 12.3073 8.6368 12.6368C8.30728 12.9663 7.78521 12.9867 7.43172 12.6984L7.36336 12.6368L3.36336 8.63683C3.33098 8.60445 3.30286 8.56908 3.27645 8.53332C3.25597 8.50559 3.23607 8.47741 3.21883 8.44738C3.20492 8.42311 3.19221 8.39837 3.18074 8.37316C3.1764 8.36365 3.17109 8.35453 3.16707 8.34484C3.1627 8.33427 3.1593 8.32331 3.15535 8.31261C3.12946 8.24274 3.11237 8.16872 3.10457 8.09191C3.09258 7.97426 3.10262 7.85446 3.1368 7.74035C3.14281 7.72035 3.15094 7.70114 3.15828 7.68176C3.16165 7.67283 3.16341 7.66325 3.16707 7.65441C3.17216 7.64216 3.17806 7.63025 3.18367 7.61828C3.19055 7.60356 3.19744 7.58874 3.20516 7.57433C3.24709 7.49624 3.3012 7.42556 3.36336 7.3634L7.36336 3.3634Z"/></svg>',
+  fork: '<svg class="ic" viewBox="0 0 24 24"><path d="M6 5a1 1 0 1 0 0 2a1 1 0 0 0 0-2M3 6a3 3 0 1 1 4 2.83V9a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-.17a3.001 3.001 0 1 1 2 0V9a4 4 0 0 1-4 4h-2v2.17a3.001 3.001 0 1 1-2 0V13H9a4 4 0 0 1-4-4v-.17A3 3 0 0 1 3 6m15-1a1 1 0 1 0 0 2a1 1 0 0 0 0-2m-6 12a1 1 0 1 0 0 2a1 1 0 0 0 0-2"/></svg>',
+  pencil: '<svg class="ic" viewBox="0 0 24 24"><path fill-rule="evenodd" clip-rule="evenodd" d="M18.0176 4.89998C17.7305 4.89998 17.4552 5.014 17.2522 5.217L6.35429 16.1149C5.957 16.5122 5.67517 17.01 5.53889 17.5551L5.23691 18.763L6.44486 18.4611C6.98994 18.3248 7.48773 18.0429 7.88502 17.6456L18.783 6.74773C18.8834 6.64728 18.9631 6.52797 19.0176 6.39658C19.072 6.26517 19.1 6.12441 19.1 5.98236C19.1 5.84031 19.072 5.69956 19.0176 5.56815C18.9631 5.43676 18.8834 5.31745 18.783 5.217C18.6825 5.11649 18.5631 5.03676 18.4318 4.98237C18.3005 4.92798 18.1597 4.89998 18.0176 4.89998ZM15.9794 3.94421C16.52 3.40366 17.2531 3.09998 18.0176 3.09998C18.3961 3.09998 18.7709 3.17452 19.1207 3.31938C19.4704 3.46424 19.7881 3.67656 20.0558 3.94421C20.3235 4.21192 20.5357 4.52969 20.6805 4.87932C20.8254 5.22895 20.9 5.60375 20.9 5.98236C20.9 6.36098 20.8254 6.73578 20.6805 7.08541C20.5357 7.43504 20.3235 7.75281 20.0558 8.02052L17.6385 10.4378L9.15781 18.9184C8.52984 19.5464 7.74301 19.9919 6.88142 20.2073L4.21828 20.8731C3.91158 20.9498 3.58714 20.8599 3.3636 20.6364C3.14006 20.4128 3.05019 20.0884 3.12686 19.7817L3.79264 17.1185C4.00803 16.257 4.45351 15.4701 5.0815 14.8421L15.9794 3.94421Z"/></svg>',
+  download: '<svg class="ic" viewBox="0 0 24 24"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2.90002C12.4971 2.90002 12.9 3.30297 12.9 3.80002V12.2939L15.8081 9.38585C16.1595 9.03438 16.7294 9.03438 17.0808 9.38585C17.4323 9.73732 17.4323 10.3072 17.0808 10.6586L12.6364 15.1031C12.4676 15.2719 12.2387 15.3667 12 15.3667C11.7613 15.3667 11.5324 15.2719 11.3636 15.1031L6.91917 10.6586C6.5677 10.3072 6.5677 9.73732 6.91917 9.38585C7.27064 9.03438 7.84049 9.03438 8.19196 9.38585L11.1 12.2939V3.80002C11.1 3.30297 11.503 2.90002 12 2.90002ZM4.00001 13.5874C4.49706 13.5874 4.90001 13.9903 4.90001 14.4874V18.043C4.90001 18.2758 4.99249 18.499 5.1571 18.6636C5.32172 18.8282 5.54498 18.9207 5.77778 18.9207H18.2222C18.455 18.9207 18.6783 18.8283 18.8429 18.6636C19.0075 18.499 19.1 18.2758 19.1 18.043V14.4874C19.1 13.9903 19.5029 13.5874 20 13.5874C20.4971 13.5874 20.9 13.9903 20.9 14.4874V18.043C20.9 18.7531 20.6179 19.4342 20.1157 19.9364C19.6135 20.4386 18.9324 20.7207 18.2222 20.7207H5.77778C5.06759 20.7207 4.38649 20.4386 3.88431 19.9364C3.38213 19.4342 3.10001 18.7531 3.10001 14.4874C3.10001 13.9903 3.50295 13.5874 4.00001 13.5874Z"/></svg>',
+  openIn: '<svg class="ic" viewBox="0 0 24 24"><path d="M7 17L17 7M9 7h8v8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  plus: '<svg class="ic" viewBox="0 0 24 24"><path d="M12.0684 2.03418C12.5654 2.03421 12.9687 2.43755 12.9688 2.93457V11.0996H21.0654C21.5625 11.0996 21.9658 11.503 21.9658 12C21.9658 12.497 21.5625 12.9004 21.0654 12.9004H12.9688V21.0654C12.9687 21.5624 12.5654 21.9658 12.0684 21.9658C11.5713 21.9658 11.168 21.5625 11.168 21.0654V12.9004H2.93457C2.43751 12.9004 2.03418 12.4971 2.03418 12C2.03418 11.5029 2.43751 11.0996 2.93457 11.0996H11.168V2.93457C11.168 2.43753 11.5713 2.03418 12.0684 2.03418Z"/></svg>',
+  search: '<svg class="ic" viewBox="0 0 24 24"><path d="M11.5 3C16.1944 3 20 6.80558 20 11.5C20 13.523 19.2933 15.381 18.1132 16.8404L21.1364 19.8636C21.4879 20.2151 21.4879 20.7849 21.1364 21.1364C20.7849 21.4879 20.2151 21.4879 19.8636 21.1364L16.8404 18.1132C15.381 19.2933 13.523 20 11.5 20C6.80558 20 3 16.1944 3 11.5C3 6.80558 6.80558 3 11.5 3ZM11.5 18.2C15.2003 18.2 18.2 15.2003 18.2 11.5C18.2 7.79969 15.2003 4.8 11.5 4.8C7.79969 4.8 4.8 7.79969 4.8 11.5C4.8 15.2003 7.79969 18.2 11.5 18.2Z"/></svg>',
+  listSettings: '<svg class="ic" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6.5h7M17 6.5h3M4 12h3M11 12h9M4 17.5h7M17 17.5h3"/><circle cx="15" cy="6.5" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="15" cy="17.5" r="2"/></g></svg>',
+  dots: '<svg class="ic" viewBox="0 0 24 24"><path d="M6 12C6 12.8283 5.32834 13.5 4.5 13.5C3.67166 13.5 3 12.8283 3 12C3 11.1717 3.67166 10.5 4.5 10.5C5.32834 10.5 6 11.1717 6 12Z"/><path d="M13.5 12C13.5 12.8283 12.8283 13.5 12 13.5C11.1717 13.5 10.5 12.8283 10.5 12C10.5 11.1717 11.1717 10.5 12 10.5C12.8283 10.5 13.5 11.1717 13.5 12Z"/><path d="M19.5002 13.5C20.3287 13.5 21 12.8287 21 12.0002C21 11.1718 20.3287 10.5 19.5002 10.5C18.6718 10.5 18 11.1718 18 12.0002C18 12.8287 18.6718 13.5 19.5002 13.5Z"/></svg>',
+};
+const CHEV = IC.chevronDown;
+document.querySelectorAll('.select').forEach((b) => b.insertAdjacentHTML('beforeend', CHEV));
+/* 静态 HTML 里的图标槽位：<span data-ic="name"> 注入 IC 注册表 SVG */
+document.querySelectorAll('[data-ic]').forEach((el) => { el.innerHTML = IC[el.dataset.ic] || ''; });
+</script>
+<script>
+/* ============================ Mock 数据（固定 seed，刷新一致） ============================ */
+const NOW = Date.now();
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const rnd = mulberry32(20260815);
+
+const WORKSPACES = ['code-app', 'code-app-4', 'kimi-code', 'oh-my-pi', 'kimi-code-app'];
+
+const TITLES = [
+  '✨ 侧边栏状态标签页设计', '修复 flat 列表分页闪烁', 'release 0.0.16 发版检查',
+  '重构 useWorkspaceState 组合式函数', 'agent-browser 技能文档补全', '同步 web 产物到 dist-web',
+  '托盘菜单双语文案', '更新弹窗 release notes 翻译', '修复 CJK 输入法回车误提交',
+  '桌面端图标资源重建', 'Migrate settings store to signals', 'Design token audit: light vs dark contrast',
+  '给 Composer 加语音输入按钮', '长会话虚拟滚动性能优化', '🔥 紧急修复登录态刷新丢失',
+  'WebSocket 重连退避策略', '补齐 changeset 发版流程文档', '会话导出为 Markdown',
+  'Refactor Menu positioning & edge flip', '暗色模式对比度巡检', '新增 session-admin 管理页原型',
+  '⌘K 命令面板模糊搜索', '修复超长 emoji 标题截断异常', 'CI 打包子模块缓存优化',
+  'OAuth device flow 接入 auth.kimi.com', '写 release-notes skill 的双语模板',
+  '「已完成」会话的归档策略讨论稿', 'fix: code highlight streaming race condition',
+  '给 proto 原型补交互说明区', '🎨 DesignSystemView §03 组件规范补齐',
+  '表格批量操作的 undo 设计', 'kimi-code-app 签名与公证流程', 'TOS CDN 发布脚本双链路切换',
+  'investigate: renderer HMR 偶发白屏', '会话搜索支持按工作空间过滤', 'Mock server 固定 seed 数据生成',
+  '把 toast 换成顶部居中的 ActionToast', '🧹 清理 dead code：旧版 Sidebar 分组逻辑',
+  '窗口最小化到托盘的确认弹窗', 'feat: per-page size selector for admin tables',
+  '给右键菜单加键盘导航', 'pnpm engine-strict 升级 Node 24', '验证 phase0：daemon 到 app 的全链路',
+  '📦 0.0.17 里程碑 issue 梳理', '空态插画与文案（无结果 / 无会话）', 'docs: 双仓工作流 README 重写',
+  'Fix menu backdrop blur on Windows', '为「会话管理」页面制作高保真原型并走查亮色暗色两套主题的 hover 与 focus 状态',
+];
+const GEN_V = ['修复', '优化', '重构', '调研', '清理', '实现', '补齐', '验证'];
+const GEN_O = [
+  '消息流渲染卡顿', 'token 计数偏差', '会话恢复竞态', '快捷键 ⌘J 冲突', '主题切换时的闪烁',
+  '菜单边缘翻转计算', 'submodule 同步脚本', 'release CI 缓存失效', '托盘菜单状态同步',
+  '断网重连提示文案', '代码高亮流式竞态', '字体子集化构建', '窗口尺寸记忆', '多窗口状态同步',
+  '分页器省略号折叠', 'checkbox indeterminate 态', '空态兜底文案', '筛选联动逻辑',
+];
+const EMOJI = ['✨', '🐛', '🔥', '🚧', '📦', '🎨', '🧹'];
+const PROMPTS = [
+  '帮我把筛选逻辑拆成纯函数，方便补单元测试。',
+  'Why does the websocket reconnect loop hammer the server on 503?',
+  '把这个组件的 hover 态对齐 DesignSystemView 的规范。',
+  '看一下这个 race condition：流式高亮和翻页同时发生时会闪。',
+  '给我一份 release checklist，按之前 0.0.15 的格式。',
+  '把 toast 从右下角挪到顶部居中，动画保持 240ms ease-out。',
+  '这个菜单在屏幕右缘应该翻转，现在被裁掉了。',
+  'Review 一下这个 PR 的 token 用法，有没有手写色值。',
+  '用固定 seed 生成 100 条会话 mock 数据。',
+  'Explain how the submodule bump workflow works end to end.',
+  '把「完成」按钮的 hover 色改成 success。',
+  '这个页面在暗色模式下对比度不够，巡检一遍。',
+  '帮我写个脚本：把 web dist 同步到 kimi-code checkout。',
+  '表格行高 40px，hairline 用 0.5px，检查有没有写死的。',
+  '为什么 file:// 打开时 clipboard API 不可用？给个降级方案。',
+  '把分页器做成 1 … 4 5 6 … 12 的折叠形式。',
+  '补一下 changeset，patch 级别，只写 kimi-code-app。',
+  '这个下拉不要用原生 select，用 app 风格的菜单。',
+  '右键行时如果不在多选里，先把选中坍缩成这一行。',
+  'Give me a one-paragraph summary of the dual-repo workflow.',
+  '把相对时间超过 30 天的显示成具体日期。',
+  '空态文案写得克制一点，不要有 emoji。',
+  '检查一遍：所有交互都不能有 console 报错。',
+  '把批量操作条放到筛选栏和表格之间。',
+];
+
+function genSessions() {
+  const list = [];
+  const used = new Set();
+  for (let i = 0; i < 96; i++) {
+    /* 标题：前 46 条用语料池，之后用动宾组合生成，保证唯一 */
+    let title;
+    if (i < TITLES.length) {
+      title = TITLES[i];
+    } else {
+      do {
+        title = GEN_V[Math.floor(rnd() * GEN_V.length)] + GEN_O[Math.floor(rnd() * GEN_O.length)];
+      } while (used.has(title));
+      if (rnd() < 0.18) title = EMOJI[Math.floor(rnd() * EMOJI.length)] + ' ' + title;
+    }
+    used.add(title);
+
+    const status = rnd() < 0.7 ? 'open' : 'done';
+    /* 1 小时 ～ 60 天前，幂分布偏向近期 */
+    const ageH = 1 + Math.pow(rnd(), 1.7) * (24 * 60 - 1);
+    const updatedAt = NOW - Math.round(ageH * 3600e3);
+    let doneAt;
+    if (status === 'done') {
+      doneAt = Math.min(NOW, updatedAt + Math.round(rnd() * 36 * 3600e3));
+      if (doneAt < updatedAt) doneAt = updatedAt;
+    }
+    let prompt = PROMPTS[Math.floor(rnd() * PROMPTS.length)];
+    if (rnd() < 0.3) prompt += ' ' + PROMPTS[Math.floor(rnd() * PROMPTS.length)];
+    const hex = (n) => Array.from({ length: n }, () => Math.floor(rnd() * 16).toString(16)).join('');
+    list.push({
+      id: 's' + String(i + 1).padStart(3, '0'),
+      /* 真实 session id 很长（session_… 形态）；表格不展示，导出时写入 */
+      uuid: `session_${hex(8)}${hex(8)}${hex(4)}`,
+      ws: WORKSPACES[Math.floor(rnd() * WORKSPACES.length)],
+      title, status, prompt, updatedAt, doneAt, pinned: false,
+    });
+  }
+  return list;
+}
+const sessions = genSessions();
+
+/* ============================ 状态 ============================ */
+const state = {
+  wsSet: new Set(),   // 已应用筛选（查询制：只在 查询/重置 时从草稿一次性写入）
+  status: 'all',      // 'all' | 'open' | 'done'，默认全部
+  timePreset: 'all',  // 'all' | '3d' | '7d' | '30d'，最后更新在 N 天以前
+  page: 1,
+  pageSize: 20,
+  selected: new Set(),
+  allMatching: false, // Gmail 式「全选匹配」模式：已把当前条件下的全部 id 物化进选择集
+};
+/* 条件指纹：全选匹配绑定物化时的条件，条件真变了整组清除，重应用同条件保留 */
+function filtersKey(f) {
+  return JSON.stringify([[...f.wsSet].sort(), f.status, f.timePreset]);
+}
+/* 查询制草稿（antd Pro 查询表单语义）：控件只改草稿，不发请求；
+   查询 = 草稿一次性应用 + page 归 1 + 一次请求（原型即一次 render）；
+   重置 = 草稿恢复默认并同样应用。Enter 在筛选栏等效查询（浮层打开时除外）。
+   分页（页码/每页条数）不走草稿，仍然立即生效。 */
+const draft = { wsSet: new Set(), status: 'all', timePreset: 'all' };
+function applyQuery() {
+  const next = { wsSet: new Set(draft.wsSet), status: draft.status, timePreset: draft.timePreset };
+  if (state.allMatching && filtersKey(next) !== filtersKey(state)) {
+    state.selected.clear();
+    state.allMatching = false;
+  }
+  state.wsSet = next.wsSet;
+  state.status = next.status;
+  state.timePreset = next.timePreset;
+  state.page = 1;
+  render();
+}
+$('#btn-query').addEventListener('click', applyQuery);
+$('#btn-reset').addEventListener('click', () => {
+  draft.wsSet = new Set(); draft.status = 'all'; draft.timePreset = 'all';
+  $('#sel-status .sel-label').textContent = STATUS_ITEMS.find((i) => i.v === 'all').label;
+  $('#sel-time .sel-label').textContent = TIME_ITEMS.find((i) => i.v === 'all').label;
+  updateWsSummary();
+  applyQuery();
+});
+$('#filter-bar').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  if (!menu.hidden) return; /* 有下拉/浮层打开时 Enter 归浮层 */
+  applyQuery();
+});
+
+/* ============================ 工具 ============================ */
+const $ = (sel) => document.querySelector(sel);
+const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+const pad2 = (n) => String(n).padStart(2, '0');
+function fmtFull(ts) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+/* 紧凑时间（MM-DD HH:mm）：中宽档的缩水格式 */
+function fmtCompact(ts) {
+  const d = new Date(ts);
+  return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+const byId = (id) => sessions.find((s) => s.id === id);
+
+/* 筛选 + 排序（置顶优先，其后 updatedAt 倒序） */
+const TIME_PRESET_DAYS = { '3d': 3, '7d': 7, '30d': 30 };
+function filtered() {
+  let list = sessions.slice();
+  if (state.wsSet.size > 0 && state.wsSet.size < WORKSPACES.length) list = list.filter((s) => state.wsSet.has(s.ws));
+  if (state.status !== 'all') list = list.filter((s) => s.status === state.status);
+  /* 更新时间 preset：「N 天以前」= 最后更新早于 N 天前 */
+  if (state.timePreset !== 'all') {
+    const cutoff = NOW - TIME_PRESET_DAYS[state.timePreset] * 24 * 3600e3;
+    list = list.filter((s) => s.updatedAt <= cutoff);
+  }
+  list.sort((a, b) => (Number(b.pinned) - Number(a.pinned)) || (b.updatedAt - a.updatedAt));
+  return list;
+}
+</script>
+<script>
+/* ============================ 渲染 ============================ */
+function cbHtml(id) {
+  const on = state.selected.has(id);
+  return `<button class="cb row-cb ${on ? 'on' : ''}" data-id="${id}" aria-label="选择会话">${on ? IC.check : ''}</button>`;
+}
+function syncCbAll(pageRows) {
+  const cb = $('#cb-all');
+  const sel = pageRows.filter((s) => state.selected.has(s.id)).length;
+  cb.classList.toggle('on', pageRows.length > 0 && sel === pageRows.length);
+  cb.classList.toggle('ind', sel > 0 && sel < pageRows.length);
+  cb.innerHTML = cb.classList.contains('on') ? IC.check : cb.classList.contains('ind') ? IC.minus : '';
+}
+
+function rowHtml(s) {
+  const open = s.status === 'open';
+  const st = open
+    ? `<span class="st st--open">${IC.recordCircle}<span>进行中</span></span>`
+    : `<span class="st st--done">${IC.checkCircle}<span>已完成</span></span>`;
+  const doneCell = open
+    ? '<span class="time--none">—</span>'
+    : `<span class="time time-full">${fmtFull(s.doneAt)}</span><span class="time time-compact">${fmtCompact(s.doneAt)}</span>`;
+  const primary = open
+    ? `<button class="ib act-primary" data-act="complete" data-id="${s.id}" title="标记完成">${IC.checkCircle}</button>`
+    : `<button class="ib act-primary" data-act="reopen" data-id="${s.id}" title="重新打开">${IC.undo}</button>`;
+  return `<tr data-id="${s.id}">
+    <td class="col-cb">${cbHtml(s.id)}</td>
+    <td><div class="t-cell"><span class="t-title" title="${esc(s.title)}">${esc(s.title)}</span>${s.pinned ? `<span class="t-pin" title="已置顶">${IC.pin}</span>` : ''}</div></td>
+    <td><span class="ws">${IC.folder}<span>${esc(s.ws)}</span></span></td>
+    <td>${st}</td>
+    <td class="prompt" title="${esc(s.prompt)}">${s.prompt ? esc(s.prompt) : '<span class="time--none">—</span>'}</td>
+    <td class="c-time"><span class="time time-full">${fmtFull(s.updatedAt)}</span><span class="time time-compact">${fmtCompact(s.updatedAt)}</span></td>
+    <td class="c-time">${doneCell}</td>
+    <td><div class="act-cell">${primary}<button class="ib act-more" data-id="${s.id}" title="更多操作">${IC.dots}</button></div></td>
+  </tr>`;
+}
+
+/* 页码折叠：1 … 4 5 6 … 12 */
+function pageItems(cur, total) {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  if (cur <= 4) return [1, 2, 3, 4, 5, '…', total];
+  if (cur >= total - 3) return [1, '…', total - 4, total - 3, total - 2, total - 1, total];
+  return [1, '…', cur - 1, cur, cur + 1, '…', total];
+}
+
+function render() {
+  const list = filtered();
+  const totalPages = Math.max(1, Math.ceil(list.length / state.pageSize));
+  if (state.page > totalPages) state.page = totalPages;
+  const start = (state.page - 1) * state.pageSize;
+  const rows = list.slice(start, start + state.pageSize);
+
+  $('#tbody').innerHTML = rows.map(rowHtml).join('');
+  $('#empty').hidden = list.length > 0;
+  $('#tbl').style.display = list.length > 0 ? '' : 'none';
+  $('#total').textContent = `共 ${list.length} 条`;
+
+  /* 分页按钮 */
+  const p = [];
+  p.push(`<button class="pg" data-pg="prev" ${state.page === 1 ? 'disabled' : ''} title="上一页">${IC.chevronLeft}</button>`);
+  for (const it of pageItems(state.page, totalPages)) {
+    p.push(it === '…'
+      ? '<span class="pg-ellipsis">…</span>'
+      : `<button class="pg ${it === state.page ? 'cur' : ''}" data-pg="${it}">${it}</button>`);
+  }
+  p.push(`<button class="pg" data-pg="next" ${state.page === totalPages ? 'disabled' : ''} title="下一页">${IC.chevronRight}</button>`);
+  $('#pages').innerHTML = list.length ? p.join('') : '';
+
+  syncCbAll(rows);
+  renderBatch(rows, list.length);
+}
+
+function renderBatch(pageRows, filteredTotal) {
+  const n = state.selected.size;
+  const batchMode = n > 0;
+  /* 表头行原地变身：普通列头 ↔ 批量操作条，行高不变、表格体零位移 */
+  document.querySelectorAll('.th-normal').forEach((th) => { th.hidden = batchMode; });
+  document.querySelector('.th-batch').hidden = !batchMode;
+  if (!batchMode) return;
+  /* 计数文案 + 全选匹配链接（Gmail 式：全选本页后提供「选中全部 N 项」；
+     激活后变「清除选择」，都在批量条内，表格体不动） */
+  $('#batch-count').innerHTML = state.allMatching
+    ? `已选中全部 <b>${n}</b> 项`
+    : `已选 <b>${n}</b> 项`;
+  const link = $('#batch-all-link');
+  const pageAllSelected = pageRows.length > 0 && pageRows.every((s) => state.selected.has(s.id));
+  if (state.allMatching) {
+    link.hidden = false;
+    link.textContent = '清除选择';
+    link.dataset.act = 'clear';
+  } else if (pageAllSelected && filteredTotal > n) {
+    link.hidden = false;
+    link.textContent = `选中当前条件下的全部 ${filteredTotal} 项`;
+    link.dataset.act = 'all';
+  } else {
+    link.hidden = true;
+  }
+  const rows = [...state.selected].map(byId).filter(Boolean);
+  const nOpen = rows.filter((s) => s.status === 'open').length;
+  const nDone = rows.length - nOpen;
+  const bd = $('#batch-done'), br = $('#batch-reopen');
+  bd.innerHTML = `${IC.checkCircle}<span>标记完成</span>`;
+  br.innerHTML = `${IC.undo}<span>重新打开</span>`;
+  bd.disabled = nOpen === 0;
+  br.disabled = nDone === 0;
+}
+
+/* ============================ Toast（顶部居中，可撤销） ============================ */
+let toastTimer = null;
+function showToast(html, onUndo) {
+  const toast = $('#toast');
+  $('#toast-msg').innerHTML = html;
+  $('#toast-undo').hidden = !onUndo;
+  toast.hidden = false;
+  toast.classList.remove('hide');
+  clearTimeout(toastTimer);
+  const dismiss = () => {
+    toast.classList.add('hide');
+    setTimeout(() => { toast.hidden = true; }, 200);
+  };
+  toastTimer = setTimeout(dismiss, 4500);
+  $('#toast-undo').onclick = () => { clearTimeout(toastTimer); dismiss(); onUndo && onUndo(); };
+  $('#toast-close').onclick = () => { clearTimeout(toastTimer); dismiss(); };
+}
+
+/* ============================ 状态流转（单个 / 批量共用，支持撤销） ============================ */
+function applyStatus(ids, next) {
+  const prev = ids.map((id) => {
+    const s = byId(id);
+    return { id, status: s.status, doneAt: s.doneAt, pinned: s.pinned };
+  });
+  const now = Date.now();
+  ids.forEach((id) => {
+    const s = byId(id);
+    s.status = next;
+    if (next === 'done') { s.doneAt = now; s.pinned = false; }
+    else { delete s.doneAt; s.updatedAt = now; }
+  });
+  render();
+  const undo = () => {
+    prev.forEach((p) => {
+      const s = byId(p.id);
+      if (!s) return;
+      s.status = p.status; s.doneAt = p.doneAt; s.pinned = p.pinned;
+      if (p.status === 'open') delete s.doneAt;
+    });
+    render();
+  };
+  return undo;
+}
+function completeSession(id) {
+  const s = byId(id);
+  if (!s || s.status === 'done') return;
+  const undo = applyStatus([id], 'done');
+  showToast(`<b>已完成</b>「${esc(s.title)}」`, undo);
+}
+function reopenSession(id) {
+  const s = byId(id);
+  if (!s || s.status === 'open') return;
+  const undo = applyStatus([id], 'open');
+  showToast(`<b>已重新打开</b>「${esc(s.title)}」`, undo);
+}
+function batchStatus(next) {
+  const ids = [...state.selected].filter((id) => {
+    const s = byId(id);
+    return s && s.status !== next;
+  });
+  if (!ids.length) return;
+  const undo = applyStatus(ids, next);
+  /* 实现注记（原型从简不展开）：真实实现走服务端批量端点 + per-item 结果——
+     成功/部分失败弹 ActionToast（带成功计数与撤销=反向批量端点）；
+     全部失败时没有可撤销对象，不弹 ActionToast，改走 WarningToast 错误提示。 */
+  showToast(next === 'done' ? `已标记完成 <b>${ids.length} 个会话</b>` : `已重新打开 <b>${ids.length} 个会话</b>`, undo);
+}
+
+/* ============================ 菜单（下拉 / 右键共用浮层） ============================ */
+const menu = $('#menu');
+let menuOpenFor = null; /* 下拉按钮引用，用于 is-open 高亮 */
+function closeMenu() {
+  menu.hidden = true;
+  if (menuOpenFor) { menuOpenFor.classList.remove('is-open'); menuOpenFor = null; }
+}
+function placeMenu(x, y, anchorBtn) {
+  const margin = 8;
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  let top = y, left = x;
+  if (top + mh > window.innerHeight - margin) top = Math.max(margin, y - mh - (anchorBtn ? anchorBtn.offsetHeight + 8 : 0));
+  if (left + mw > window.innerWidth - margin) left = Math.max(margin, window.innerWidth - mw - margin);
+  menu.style.top = top + 'px';
+  menu.style.left = left + 'px';
+}
+function openMenu(html, x, y, onAction, anchorBtn) {
+  closeMenu();
+  menu.innerHTML = html;
+  menu.hidden = false;
+  placeMenu(x, y, anchorBtn);
+  if (anchorBtn) { anchorBtn.classList.add('is-open'); menuOpenFor = anchorBtn; }
+  menu.querySelectorAll('.mi').forEach((mi) => {
+    mi.addEventListener('click', () => {
+      if (mi.disabled) return;
+      closeMenu();
+      onAction(mi.dataset);
+    });
+  });
+}
+document.addEventListener('mousedown', (e) => {
+  if (!menu.hidden && !menu.contains(e.target) && !(menuOpenFor && menuOpenFor.contains(e.target))) closeMenu();
+});
+window.addEventListener('resize', closeMenu);
+window.addEventListener('scroll', () => { if (!menu.hidden) closeMenu(); }, true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+
+/* 下拉：通用 select（选项带选中勾） */
+function openSelect(btn, items, current, onPick) {
+  if (menuOpenFor === btn && !menu.hidden) { closeMenu(); return; }
+  const r = btn.getBoundingClientRect();
+  const html = items.map((it) => `<button class="mi" data-v="${it.v}">
+      <span class="ck-slot">${String(it.v) === String(current) ? IC.check : ''}</span>
+      ${it.dot ? `<span class="dot" style="background:${it.dot}"></span>` : ''}
+      <span>${esc(it.label)}</span>
+    </button>`).join('');
+  openMenu(html, r.left, r.bottom + 4, (d) => onPick(d.v), btn);
+}
+
+const STATUS_ITEMS = [
+  { v: 'all', label: '全部状态' },
+  { v: 'open', label: '进行中', dot: 'var(--color-success)' },
+  { v: 'done', label: '已完成', dot: 'var(--color-done)' },
+];
+/* 更新时间 preset（最后更新在 N 天以前） */
+const TIME_ITEMS = [
+  { v: 'all', label: '全部时间' },
+  { v: '3d', label: '3 天以前' },
+  { v: '7d', label: '7 天以前' },
+  { v: '30d', label: '30 天以前' },
+];
+const SIZE_ITEMS = [10, 20, 50, 100].map((n) => ({ v: n, label: `${n} 条/页` }));
+
+/* 工作空间多选（antd Select multiple 思路，app 风格实现）：
+   空集 = 全部（不筛选）；面板点击行切换勾选，不自动关闭；
+   查询制：勾选只改 draft + 摘要，不触发请求（查询时才应用） */
+function updateWsSummary() {
+  const n = draft.wsSet.size;
+  const sel = WORKSPACES.filter((w) => draft.wsSet.has(w)); /* 保持固定顺序 */
+  let label = '全部工作空间';
+  if (n === 1) label = sel[0];
+  else if (n === 2) label = sel.join('、');
+  else if (n >= 3 && n < WORKSPACES.length) label = sel.slice(0, 2).join('、') + ` 等 ${n} 个`;
+  $('#sel-ws .sel-label').textContent = label;
+}
+function wsPanelHtml() {
+  const n = draft.wsSet.size;
+  const all = n === WORKSPACES.length;
+  const ind = n > 0 && n < WORKSPACES.length;
+  const allCb = `<span class="cb ${all ? 'on' : ind ? 'ind' : ''}">${all ? IC.check : ind ? IC.minus : ''}</span>`;
+  const rows = WORKSPACES.map((w) => {
+    const on = draft.wsSet.has(w);
+    return `<button class="mi mi-ws" data-ws="${w}">
+      <span class="cb ${on ? 'on' : ''}">${on ? IC.check : ''}</span>
+      ${IC.folder}<span>${w}</span>
+    </button>`;
+  }).join('');
+  return `<button class="mi mi-ws" data-ws="__all">${allCb}<span>全选</span></button>
+    <div class="mi-sep"></div>${rows}`;
+}
+function bindWsPanel() {
+  menu.querySelectorAll('.mi-ws').forEach((mi) => {
+    mi.addEventListener('click', () => {
+      const w = mi.dataset.ws;
+      if (w === '__all') {
+        draft.wsSet = draft.wsSet.size === WORKSPACES.length ? new Set() : new Set(WORKSPACES);
+      } else {
+        draft.wsSet.has(w) ? draft.wsSet.delete(w) : draft.wsSet.add(w);
+      }
+      updateWsSummary();
+      menu.innerHTML = wsPanelHtml(); /* 面板保持打开，仅刷新勾选态 */
+      bindWsPanel();
+    });
+  });
+}
+function openWsMulti() {
+  const btn = $('#sel-ws');
+  if (menuOpenFor === btn && !menu.hidden) { closeMenu(); return; }
+  closeMenu();
+  const r = btn.getBoundingClientRect();
+  menu.innerHTML = wsPanelHtml();
+  menu.hidden = false;
+  placeMenu(r.left, r.bottom + 4, btn);
+  btn.classList.add('is-open');
+  menuOpenFor = btn;
+  bindWsPanel();
+}
+$('#sel-ws').addEventListener('click', openWsMulti);
+$('#sel-status').addEventListener('click', (e) => {
+  openSelect(e.currentTarget, STATUS_ITEMS, draft.status, (v) => {
+    draft.status = v; /* 查询制：只改草稿 */
+    $('#sel-status .sel-label').textContent = STATUS_ITEMS.find((x) => x.v === v).label;
+  });
+});
+$('#sel-time').addEventListener('click', (e) => {
+  openSelect(e.currentTarget, TIME_ITEMS, draft.timePreset, (v) => {
+    draft.timePreset = v; /* 查询制：只改草稿 */
+    $('#sel-time .sel-label').textContent = TIME_ITEMS.find((x) => x.v === v).label;
+  });
+});
+$('#sel-size').addEventListener('click', (e) => {
+  openSelect(e.currentTarget, SIZE_ITEMS, state.pageSize, (v) => {
+    state.pageSize = Number(v); state.page = 1;
+    $('#sel-size .sel-label').textContent = `${v} 条/页`;
+    render();
+  });
+});
+
+/* ============================ 表格交互（事件委托） ============================ */
+const tbody = $('#tbody');
+
+/* 操作列 ⋯：app 风格下拉（重命名… / Fork / 导出），右缘对齐按钮 */
+function openRowMoreMenu(btn) {
+  const id = btn.dataset.id;
+  if (!byId(id)) return;
+  if (menuOpenFor === btn && !menu.hidden) { closeMenu(); return; }
+  const r = btn.getBoundingClientRect();
+  const html = `
+    <button class="mi" data-act="rename">${IC.pencil}<span>重命名…</span></button>
+    <button class="mi" data-act="fork">${IC.fork}<span>Fork</span></button>
+    <button class="mi" data-act="export">${IC.download}<span>导出</span></button>`;
+  openMenu(html, r.right - 180, r.bottom + 4, (d) => {
+    if (d.act === 'rename') startRename(id);
+    else if (d.act === 'fork') forkSession(id);
+    else if (d.act === 'export') exportSession(id);
+  }, btn);
+}
+
+tbody.addEventListener('click', (e) => {
+  const cb = e.target.closest('.row-cb');
+  if (cb) {
+    const id = cb.dataset.id;
+    state.selected.has(id) ? state.selected.delete(id) : state.selected.add(id);
+    if (state.selected.size === 0) state.allMatching = false; /* 清空即退出全选匹配 */
+    render();
+    return;
+  }
+  const primary = e.target.closest('.act-primary');
+  if (primary) {
+    if (primary.dataset.act === 'complete') completeSession(primary.dataset.id);
+    else reopenSession(primary.dataset.id);
+    return;
+  }
+  const moreBtn = e.target.closest('.act-more');
+  if (moreBtn) { openRowMoreMenu(moreBtn); }
+});
+
+/* 表头全选本页 */
+$('#cb-all').addEventListener('click', () => {
+  const list = filtered();
+  const rows = list.slice((state.page - 1) * state.pageSize, state.page * state.pageSize);
+  const all = rows.length > 0 && rows.every((s) => state.selected.has(s.id));
+  rows.forEach((s) => (all ? state.selected.delete(s.id) : state.selected.add(s.id)));
+  if (state.selected.size === 0) state.allMatching = false;
+  render();
+});
+
+/* 分页 */
+$('#pages').addEventListener('click', (e) => {
+  const b = e.target.closest('.pg');
+  if (!b || b.disabled) return;
+  const totalPages = Math.max(1, Math.ceil(filtered().length / state.pageSize));
+  if (b.dataset.pg === 'prev') state.page = Math.max(1, state.page - 1);
+  else if (b.dataset.pg === 'next') state.page = Math.min(totalPages, state.page + 1);
+  else state.page = Number(b.dataset.pg);
+  render();
+});
+
+/* 批量操作 */
+$('#batch-done').addEventListener('click', () => batchStatus('done'));
+$('#batch-reopen').addEventListener('click', () => batchStatus('open'));
+/* 全选匹配：把当前筛选条件下的全部 id 物化进选择集（实现走 ids 投影接口）；
+   激活后取消勾选单行 = 排除项，清空选择或条件变更 = 模式失效 */
+$('#batch-all-link').addEventListener('click', () => {
+  if ($('#batch-all-link').dataset.act === 'clear') {
+    state.selected.clear();
+    state.allMatching = false;
+  } else {
+    filtered().forEach((s) => state.selected.add(s.id));
+    state.allMatching = true;
+  }
+  render();
+});
+
+/* ============================ 行内重命名 ============================ */
+function startRename(id) {
+  const tr = tbody.querySelector(`tr[data-id="${id}"]`);
+  if (!tr) return;
+  const s = byId(id);
+  const cell = tr.querySelector('.t-cell');
+  const input = document.createElement('input');
+  input.className = 'rename';
+  input.value = s.title;
+  cell.replaceChildren(input);
+  input.focus();
+  input.select();
+  let settled = false;
+  const commit = () => {
+    if (settled) return;
+    settled = true;
+    const v = input.value.trim();
+    if (v && v !== s.title) {
+      const old = s.title;
+      s.title = v;
+      render();
+      showToast(`<b>已重命名</b>为「${esc(v)}」`, () => { s.title = old; render(); });
+    } else render();
+  };
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') commit();
+    else if (e.key === 'Escape') { settled = true; render(); }
+  });
+  input.addEventListener('blur', commit);
+}
+
+/* ============================ 右键菜单 ============================ */
+function forkSession(id) {
+  const s = byId(id);
+  if (!s) return;
+  const copy = {
+    ...s,
+    id: 's' + String(sessions.length + 1).padStart(3, '0') + 'c' + Math.floor(Math.random() * 1e4),
+    uuid: s.uuid + '-fork',
+    title: s.title + ' (copy)',
+    status: 'open', pinned: false,
+    updatedAt: Date.now(), doneAt: undefined,
+  };
+  sessions.unshift(copy);
+  state.page = 1;
+  render();
+  showToast(`已 Fork 为「${esc(copy.title)}」`, () => {
+    const i = sessions.findIndex((x) => x.id === copy.id);
+    if (i >= 0) sessions.splice(i, 1);
+    state.selected.delete(copy.id);
+    render();
+  });
+}
+function exportSession(id) {
+  const s = byId(id);
+  if (!s) return;
+  const md = [
+    `# ${s.title}`, '',
+    `- 会话 ID：${s.uuid}`,
+    `- 工作空间：${s.ws}`,
+    `- 状态：${s.status === 'open' ? '进行中' : '已完成'}`,
+    `- 最后更新：${fmtFull(s.updatedAt)}`,
+    s.doneAt ? `- 完成时间：${fmtFull(s.doneAt)}` : null,
+    '', '## 最后一条 prompt', '', `> ${s.prompt}`,
+  ].filter((l) => l !== null).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown' }));
+  a.download = s.title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 60) + '.md';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  showToast(`<b>已导出</b>「${esc(s.title)}」`);
+}
+
+function openSingleMenu(id, x, y) {
+  const s = byId(id);
+  if (!s) return;
+  const done = s.status === 'done';
+  const html = `
+    <button class="mi" data-act="open">${IC.openIn}<span>打开会话</span></button>
+    <button class="mi" data-act="rename">${IC.pencil}<span>重命名…</span></button>
+    <button class="mi" data-act="fork">${IC.fork}<span>Fork</span></button>
+    <button class="mi" data-act="export">${IC.download}<span>导出</span></button>
+    <div class="mi-sep"></div>
+    ${done
+      ? `<button class="mi" data-act="reopen">${IC.undo}<span>重新打开</span></button>`
+      : `<button class="mi" data-act="complete">${IC.checkCircle}<span>标记为完成</span></button>`}`;
+  openMenu(html, x, y, (d) => {
+    if (d.act === 'open') showToast(`<b>已打开</b>「${esc(s.title)}」（原型占位）`);
+    else if (d.act === 'rename') startRename(id);
+    else if (d.act === 'fork') forkSession(id);
+    else if (d.act === 'export') exportSession(id);
+    else if (d.act === 'complete') completeSession(id);
+    else if (d.act === 'reopen') reopenSession(id);
+  });
+}
+
+function openMultiMenu(ids, x, y) {
+  const rows = ids.map(byId).filter(Boolean);
+  const nOpen = rows.filter((s) => s.status === 'open').length;
+  const nDone = rows.length - nOpen;
+  const html = `
+    <div class="mi-head">已选 ${ids.length} 项</div>
+    <button class="mi" data-act="complete" ${nOpen ? '' : 'disabled'}>${IC.checkCircle}<span>标记完成（${nOpen}）</span></button>
+    <button class="mi" data-act="reopen" ${nDone ? '' : 'disabled'}>${IC.undo}<span>重新打开（${nDone}）</span></button>`;
+  openMenu(html, x, y, (d) => {
+    if (d.act === 'complete') batchStatus('done');
+    else if (d.act === 'reopen') batchStatus('open');
+  });
+}
+
+tbody.addEventListener('contextmenu', (e) => {
+  const tr = e.target.closest('tr[data-id]');
+  if (!tr) return;
+  e.preventDefault();
+  const id = tr.dataset.id;
+  if (!(state.selected.has(id) && state.selected.size > 1)) {
+    /* 不在多选内：选中坍缩为仅该行，开单行菜单 */
+    state.selected = new Set([id]);
+    render();
+    openSingleMenu(id, e.clientX, e.clientY);
+  } else {
+    openMultiMenu([...state.selected], e.clientX, e.clientY);
+  }
+});
+
+/* ============================ 侧边栏静态会话（入口示意，无交互） ============================ */
+const SB_SESSIONS = [
+  { title: '✨ 侧边栏状态标签页设计', ws: 'code-app', time: '12m', pinned: true },
+  { title: '修复 flat 列表分页闪烁', ws: 'code-app', time: '1h' },
+  { title: 'release 0.0.16 发版检查', ws: 'code-app', time: '3h' },
+  { title: '重构 useWorkspaceState 组合式函数', ws: 'kimi-code', time: '昨天' },
+  { title: 'agent-browser 技能文档补全', ws: 'kimi-code', time: '2d' },
+  { title: '同步 web 产物到 dist-web', ws: 'oh-my-pi', time: '2d' },
+];
+$('#sb-sessions').innerHTML = SB_SESSIONS.map((s) => `
+  <div class="se flat">
+    <div class="row">
+      <span class="lead"><span class="st-ico st-ico--open">${IC.recordCircle}</span></span>
+      <span class="t">${esc(s.title)}</span>
+      <span class="act"><span class="ts">${s.time}</span></span>
+    </div>
+    <div class="sub">
+      <span class="sub-icon">${IC.folder}</span>
+      <span class="sub-text">${s.ws}</span>
+      ${s.pinned ? `<span class="t-pin" title="已置顶">${IC.pin}</span>` : ''}
+    </div>
+  </div>`).join('');
+
+/* ============================ 侧边栏「列表管理」dropdown（唯一侧边栏交互） ============================ */
+let sbListMode = 'flat'; /* 静态侧栏的视图单选态：flat | group（仅面板内勾选态，不驱动行渲染） */
+function listSettingsHtml() {
+  const ck = (m) => `<span class="ck-slot">${sbListMode === m ? IC.check : ''}</span>`;
+  return `
+    <button class="mi" data-mode="flat">${ck('flat')}<span>平铺列表</span></button>
+    <button class="mi" data-mode="group">${ck('group')}<span>按工作区分组</span></button>
+    <div class="mi-sep"></div>
+    <button class="mi" data-act="admin"><span>会话管理</span></button>`;
+}
+function openListSettings() {
+  const btn = $('#list-settings-btn');
+  if (menuOpenFor === btn && !menu.hidden) { closeMenu(); return; }
+  closeMenu();
+  const r = btn.getBoundingClientRect();
+  menu.innerHTML = listSettingsHtml();
+  menu.hidden = false;
+  placeMenu(r.right - 180, r.bottom + 4, btn);
+  btn.classList.add('is-open');
+  menuOpenFor = btn;
+  menu.querySelectorAll('.mi').forEach((mi) => {
+    mi.addEventListener('click', () => {
+      if (mi.dataset.mode) sbListMode = mi.dataset.mode; /* 单选语义；「会话管理」为当前页，点击仅关闭 */
+      closeMenu();
+    });
+  });
+}
+$('#list-settings-btn').addEventListener('click', openListSettings);
+
+/* ============================ 亮 / 暗主题切换 ============================ */
+$('#scheme-toggle').addEventListener('click', (e) => {
+  const html = document.documentElement;
+  const dark = html.dataset.colorScheme !== 'dark';
+  html.dataset.colorScheme = dark ? 'dark' : 'light';
+  e.target.textContent = dark ? '切换到亮色' : '切换到暗色';
+});
+
+render();
+</script>
+</body>
+</html>

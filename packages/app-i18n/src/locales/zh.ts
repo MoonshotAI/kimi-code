@@ -1,6 +1,7 @@
 import common from './zh/common';
 import app from './zh/app';
 import sidebar from './zh/sidebar';
+import admin from './zh/admin';
 import workspace from './zh/workspace';
 import conversation from './zh/conversation';
 import status from './zh/status';
@@ -34,6 +35,7 @@ export default {
   common,
   app,
   sidebar,
+  admin,
   workspace,
   conversation,
   status,

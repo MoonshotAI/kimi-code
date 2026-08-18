@@ -24,6 +24,9 @@ const props = defineProps<{
   activeId: string;
   pendingBySession: Record<string, { approvals: number; questions: number }>;
   unreadBySession: Record<string, boolean>;
+  /** Status view passes 'open' so pinned rows carry the same state tag as the
+   *  open tab; the flat/grouped views leave it unset (no tag). */
+  stateTag?: 'open' | 'done';
   /** Session being locate-flashed by the search dialog (null when idle) — the
    *  matching row pulses an accent wash so the eye lands on it. */
   flashSessionId?: string | null;
@@ -175,6 +178,7 @@ function onContainerDragLeave(event: DragEvent): void {
           :approval-count="pendingBySession[s.id]?.approvals ?? 0"
           :question-count="pendingBySession[s.id]?.questions ?? 0"
           :unread="unreadBySession[s.id] ?? false"
+          :state-tag="props.stateTag"
           :data-session-id="s.id"
           :class="{ 'se-locate-flash': flashSessionId === s.id }"
           @rename-state-change="renamingSessionId = $event ? s.id : null"

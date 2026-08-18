@@ -3,6 +3,8 @@ export default {
   toolbarAria: '终端标签页',
   resizeAria: '调整终端面板高度',
   toggle: '切换终端',
+  open: '打开终端',
+  close: '关闭终端',
   newTab: '新建终端',
   closeTab: '关闭终端',
   restartTab: '重启终端',

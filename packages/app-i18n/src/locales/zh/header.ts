@@ -22,6 +22,9 @@ export default {
   renameSession: '重命名',
   forkSession: '分叉会话',
   archiveSession: '归档',
+  markSessionDone: '标记为完成',
+  sessionDone: '已完成',
+  reopenSession: '恢复进行中',
   exportSession: '导出会话',
   devBadge: '开发环境运行中',
 };

@@ -30,8 +30,14 @@ const props = withDefaults(
     questionCount?: number;
     /** A background turn finished here that the user hasn't opened — blue dot. */
     unread?: boolean;
+    /** Status-view state tag: 'open' (green) or 'done' (purple), mirroring
+     *  GitHub PR labels. Grouped rows render it in the fixed-width leading
+     *  slot (aligned with the workspace's folder icon), flat-style rows
+     *  inline before the title. 'done' also swaps the hover action + context
+     *  menu from complete to reopen. */
+    stateTag?: 'open' | 'done';
   }>(),
-  { approvalCount: 0, questionCount: 0, unread: false },
+  { approvalCount: 0, questionCount: 0, unread: false, stateTag: undefined },
 );
 
 const emit = defineEmits<{
@@ -45,6 +51,8 @@ const emit = defineEmits<{
       a drag gesture over the input selects text instead of moving the row. */
   renameStateChange: [editing: boolean];
   archive: [id: string];
+  /** Reopen a done (archived) session — the done rows' inverse of archive. */
+  restore: [id: string];
   fork: [id: string];
   export: [id: string];
   pin: [id: string];
@@ -66,12 +74,12 @@ const fullTime = computed(() =>
 // Flat-style variant, keyed off the facade projecting cwdLabel: used by the
 // sidebar's flat list AND always by the pinned section (itself a flat list,
 // regardless of view mode); only the grouped workspace rows leave cwdLabel
-// undefined. Differences: no leading status slot — the title is left-aligned —
-// and the first line's right side shows the session's status (pills, spinner,
-// unread dot) INSTEAD of the time. The time only renders when there is
-// nothing to report. The status itself is the shared SessionDisplayStatus
-// derivation (app-core sessionDisplayStatus.ts) — one status per row at any
-// moment; inline rename reports 'idle' (badges would fight the input).
+// undefined. Differences from the grouped row: no leading state slot — the
+// Open/Done glyph renders inline before the title — and a second line under
+// the title (folder icon + cwd). The trailing status cluster is shared by
+// every row: one status at a time (the shared SessionDisplayStatus
+// derivation, app-core sessionDisplayStatus.ts) replaces the time on the
+// right; inline rename reports 'idle' (badges would fight the input).
 const isFlat = computed(() => props.session.cwdLabel !== undefined);
 const displayStatus = computed(() =>
   renaming.value
@@ -90,7 +98,7 @@ const showApprovalBadge = computed(() => displayStatus.value === 'awaiting-appro
 const showAbortedBadge = computed(() => displayStatus.value === 'aborted');
 const showBusySpinner = computed(() => displayStatus.value === 'running');
 const showUnreadDot = computed(() => displayStatus.value === 'unread');
-const flatHasStatus = computed(() => displayStatus.value !== 'idle');
+const hasStatus = computed(() => displayStatus.value !== 'idle');
 
 // Right-click menu — the row's only menu (there is no kebab button; the hover
 // actions are one-shot pin / archive buttons).
@@ -466,11 +474,18 @@ function togglePinRow(): void {
   emit('pin', props.session.id);
 }
 
-// Archive — no confirm; App.vue (archiveSessionWithToast) archives directly
-// and shows the undo toast. The row only emits the intent.
+// Archive ("mark as done") — no confirm; App.vue (archiveSessionWithToast)
+// archives directly and shows the undo toast. The row only emits the intent.
 function startArchive(): void {
   closeMenu();
   emit('archive', props.session.id);
+}
+
+// Reopen a done session (the done rows' inverse action) — App.vue restores
+// and shows the same undo-style toast.
+function startRestore(): void {
+  closeMenu();
+  emit('restore', props.session.id);
 }
 
 // Expose closeMenu so the parent can close on outside-click.
@@ -488,16 +503,13 @@ function openPullRequest(): void {
 <template>
   <div class="se" :class="{ on: active, flat: isFlat }" @click="emit('select', session.id)" @contextmenu="onRowContextMenu">
     <div class="row">
-      <!-- Leading status slot (in the gutter left of the title): a spinner
-           while the session runs, otherwise an unread blue dot; when an
-           attention pill owns the row the slot stays empty (the enum reports
-           one status at a time). Fixed width so the title start never shifts.
-           Grouped rows only — the flat-style rows (flat list, pinned section)
-           drop the slot (left-aligned) and move status right. -->
-      <span v-if="!isFlat" class="lead" aria-hidden="true">
-        <Spinner v-if="showBusySpinner" size="sm" />
-        <span v-else-if="showUnreadDot" class="unread-dot" />
-      </span>
+      <!-- Leading slot (grouped rows only): an empty fixed-width gutter that
+           keeps the title start aligned with the workspace header's NAME.
+           The status-view Open/Done state glyphs used to ride here (and
+           inline before the title in flat rows) — removed: the tab above
+           already says which state the list is. Running / unread / attention
+           status all report on the row's trailing side (see .act). -->
+      <span v-if="!isFlat" class="lead"></span>
 
       <div class="left">
         <!-- Inline rename: the WHOLE row becomes the input (the status/time
@@ -544,21 +556,20 @@ function openPullRequest(): void {
         >{{ emojiSplit.emoji }}</button>{{ displayText }}</span>
       </div>
 
-      <!-- Trailing action slot: the status cluster (pills + flat-mode
-           indicator) or the relative time sits in flow and sets the slot
-           width; the hover actions (pin + archive) are absolutely positioned
-           over it and swapped via a cross-fade (opacity + visibility, never
-           display:none), so the slot width is identical in hover and rest and
-           nothing reflows — see design-system §07 "Session row".
-           Pending tags: "Answer" = an askUserQuestion is waiting; "Approve" =
-           a permission request is waiting; "Aborted" = quiet session whose
-           last main turn died on an error (a manually stopped turn is the
-           user's own doing and never raises the tag; hidden while input is
-           pending). The list-level interaction fact is the fallback for
-           sessions whose detailed pending lists aren't loaded. Flat mode: the
-           pills anchor to the row's right edge and the hover actions fade IN
-           as the pills fade OUT — the two never co-exist (grouped rows keep
-           pills visible on hover, status there lives in the lead slot). -->
+      <!-- Trailing action slot: the status cluster (attention pills + running
+           spinner / unread dot) or the relative time sits in flow and sets the
+           slot width; the hover actions (pin + complete) are absolutely
+           positioned over it and swapped via a cross-fade (opacity +
+           visibility, never display:none), so the slot width is identical in
+           hover and rest and nothing reflows — see design-system §07 "Session
+           row". Pending tags: "Answer" = an askUserQuestion is waiting;
+           "Approve" = a permission request is waiting; "Aborted" = quiet
+           session whose last main turn died on an error (a manually stopped
+           turn is the user's own doing and never raises the tag; hidden while
+           input is pending). The list-level interaction fact is the fallback
+           for sessions whose detailed pending lists aren't loaded. On hover
+           the actions fade IN as the whole status cluster (pills included)
+           fades OUT — the two never co-exist. -->
       <span v-if="!renaming" class="act">
         <Tooltip :text="t('workspace.awaitingAnswerTitle')">
           <Badge
@@ -587,37 +598,53 @@ function openPullRequest(): void {
             {{ t('workspace.aborted') }}
           </Badge>
         </Tooltip>
-        <!-- Flat-style rows (flat list, pinned section): status replaces the
-             time on the right of the first line (the time only renders when
-             nothing is reported). Grouped rows always show the time. The
-             spinner yields to attention pills (showBusySpinner): a session
-             waiting for approval/answer never shows both. -->
-        <span v-if="!isFlat || !flatHasStatus" class="ts">{{ session.time }}</span>
+        <!-- Status replaces the time on the right of the first line — the time
+             only renders when nothing is reported (one status per row, the
+             shared SessionDisplayStatus derivation). The spinner yields to
+             attention pills (showBusySpinner): a session waiting for
+             approval/answer never shows both. -->
+        <span v-if="!hasStatus" class="ts">{{ session.time }}</span>
         <span v-else-if="showBusySpinner || showUnreadDot" class="st">
           <Spinner v-if="showBusySpinner" size="sm" />
           <span v-else class="unread-dot" />
         </span>
         <span v-if="!renaming" class="ha">
-          <Tooltip :text="session.pinned ? t('sidebar.unpin') : t('sidebar.pin')">
-            <IconButton
-              class="pin-btn"
-              size="sm"
-              :label="session.pinned ? t('sidebar.unpin') : t('sidebar.pin')"
-              @click.stop="togglePinRow"
-            >
-              <Icon :name="session.pinned ? 'unpin' : 'pin'" />
-            </IconButton>
-          </Tooltip>
-          <Tooltip :text="t('sidebar.archive')">
-            <IconButton
-              class="archive-btn"
-              size="sm"
-              :label="t('sidebar.archive')"
-              @click.stop="startArchive"
-            >
-              <Icon name="archive" />
-            </IconButton>
-          </Tooltip>
+          <!-- Done rows: the only action is reopen. -->
+          <template v-if="stateTag === 'done'">
+            <Tooltip :text="t('sidebar.reopen')">
+              <IconButton
+                class="reopen-btn"
+                size="sm"
+                :label="t('sidebar.reopen')"
+                @click.stop="startRestore"
+              >
+                <Icon name="undo" />
+              </IconButton>
+            </Tooltip>
+          </template>
+          <template v-else>
+            <Tooltip :text="session.pinned ? t('sidebar.unpin') : t('sidebar.pin')">
+              <IconButton
+                class="pin-btn"
+                size="sm"
+                :label="session.pinned ? t('sidebar.unpin') : t('sidebar.pin')"
+                @click.stop="togglePinRow"
+              >
+                <Icon :name="session.pinned ? 'unpin' : 'pin'" />
+              </IconButton>
+            </Tooltip>
+            <!-- The archive action, relabeled as 完成 (PR-merge semantics). -->
+            <Tooltip :text="t('sidebar.complete')">
+              <IconButton
+                class="complete-btn"
+                size="sm"
+                :label="t('sidebar.complete')"
+                @click.stop="startArchive"
+              >
+                <Icon name="state-done" />
+              </IconButton>
+            </Tooltip>
+          </template>
         </span>
       </span>
     </div>
@@ -679,13 +706,17 @@ function openPullRequest(): void {
           <Icon name="download" size="sm" />
           {{ t('sidebar.export') }}
         </MenuItem>
-        <MenuItem @click="togglePinRow">
+        <MenuItem v-if="stateTag !== 'done'" @click="togglePinRow">
           <Icon :name="session.pinned ? 'unpin' : 'pin'" size="sm" />
           {{ session.pinned ? t('sidebar.unpin') : t('sidebar.pin') }}
         </MenuItem>
-        <MenuItem @click="startArchive">
-          <Icon name="archive" size="sm" />
-          {{ t('sidebar.archive') }}
+        <MenuItem v-if="stateTag === 'done'" @click="startRestore">
+          <Icon name="undo" size="sm" />
+          {{ t('sidebar.reopen') }}
+        </MenuItem>
+        <MenuItem v-else @click="startArchive">
+          <Icon name="state-done" size="sm" />
+          {{ t('sidebar.markDone') }}
         </MenuItem>
         <MenuItem separator />
         <div class="menu-time">{{ fullTime }}</div>
@@ -755,9 +786,10 @@ function openPullRequest(): void {
   min-width: 0;
 }
 
-/* Leading status slot — mirrors the workspace header's icon slot (so the title
-   aligns under the workspace name) AND carries the running spinner / unread dot.
-   Fixed width keeps the title start fixed whether or not an indicator shows. */
+/* Leading slot — an empty fixed-width gutter mirroring the workspace
+   header's icon slot, so the session title aligns exactly with the group
+   head's NAME (the status-view state glyphs that used to ride here were
+   removed; the tab above already labels the list's state). */
 .lead {
   width: var(--sb-gutter, 16px);
   flex: none;
@@ -770,6 +802,11 @@ function openPullRequest(): void {
   height: 7px;
   border-radius: var(--radius-full);
   background: var(--color-accent);
+}
+
+/* The complete action reads as a success affordance on hover. */
+.ha .complete-btn:hover {
+  color: var(--color-success);
 }
 
 /* The title dissolves (mask-image fade) before it reaches the hover cluster —
@@ -959,8 +996,8 @@ function openPullRequest(): void {
     visibility 0s linear var(--duration-fast);
 }
 
-/* Flat mode's right-side status indicator (spinner / unread dot) shares the
-   trailing slot with the time and cross-fades out on hover the same way. */
+/* The right-side status indicator (spinner / unread dot) shares the trailing
+   slot with the time and cross-fades out on hover the same way. */
 .act .st {
   display: inline-flex;
   align-items: center;
@@ -974,13 +1011,12 @@ function openPullRequest(): void {
     visibility 0s linear var(--duration-fast);
 }
 
-/* The pending pills ride the same cross-fade, flat rows only: hover swaps the
-   whole status cluster for the actions, so pills and pin/archive never
-   co-exist. Grouped rows keep the pills visible on hover. */
+/* The pending pills ride the same cross-fade: hover swaps the whole status
+   cluster for the actions, so pills and pin/complete never co-exist. */
 .act .ui-badge {
   transition: opacity var(--duration-fast) var(--ease-out);
 }
-.se.flat:hover .act .ui-badge {
+.se:hover .act .ui-badge {
   opacity: 0;
   visibility: hidden;
   transition:

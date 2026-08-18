@@ -107,6 +107,10 @@ import KimiUser from '~icons/kimi/user';
 import KimiWarning from '~icons/kimi/warning';
 
 // Components (Tabler) ---------------------------------------------------------
+import TablerAdjustmentsHorizontal from '~icons/tabler/adjustments-horizontal';
+import TablerChevronLeft from '~icons/tabler/chevron-left';
+import TablerCircleCheck from '~icons/tabler/circle-check';
+import TablerCircleDashed from '~icons/tabler/circle-dashed';
 import TablerSidebarRightCollapse from '~icons/tabler/layout-sidebar-right-collapse';
 import TablerPaperclip from '~icons/tabler/paperclip';
 
@@ -209,6 +213,10 @@ import RawKimiUser from '~icons/kimi/user?raw';
 import RawKimiWarning from '~icons/kimi/warning?raw';
 
 // Raw SVG strings (Tabler) ----------------------------------------------------
+import RawTablerAdjustmentsHorizontal from '~icons/tabler/adjustments-horizontal?raw';
+import RawTablerChevronLeft from '~icons/tabler/chevron-left?raw';
+import RawTablerCircleCheck from '~icons/tabler/circle-check?raw';
+import RawTablerCircleDashed from '~icons/tabler/circle-dashed?raw';
 import RawTablerSidebarRightCollapse from '~icons/tabler/layout-sidebar-right-collapse?raw';
 import RawTablerPaperclip from '~icons/tabler/paperclip?raw';
 
@@ -247,6 +255,8 @@ export type IconName =
   | 'close'
   | 'check'
   | 'circle-check'
+  | 'state-open'
+  | 'state-done'
   | 'archive'
   | 'search'
   | 'copy'
@@ -268,6 +278,7 @@ export type IconName =
   | 'shield-question'
   | 'chevron-down'
   | 'chevron-right'
+  | 'chevron-left'
   | 'chevron-up'
   | 'arrow-up'
   | 'arrow-down'
@@ -285,6 +296,7 @@ export type IconName =
   | 'tree-view'
   | 'sort'
   | 'grip'
+  | 'session-admin'
   | 'folder'
   | 'folder-closed'
   | 'folder-plus'
@@ -360,7 +372,13 @@ export const ICONS: Record<IconName, IconEntry> = {
   'calendar-todo': entry(RiCalendarTodoLine, RawCalendarTodoLine),
   close: entry(KimiClose, RawKimiClose),
   check: entry(KimiCheck, RawKimiCheck),
+  // Session-state glyphs for the status view's Open/Done row icons — both
+  // from tabler's circle family so they share the same ring geometry and
+  // optical size: open = dashed ring, done = solid ring with a check. (The
+  // kimi 'circle-check' is a full-bleed glyph reserved for dock/task states.)
   'circle-check': entry(KimiCircleCheck, RawKimiCircleCheck),
+  'state-open': entry(TablerCircleDashed, RawTablerCircleDashed),
+  'state-done': entry(TablerCircleCheck, RawTablerCircleCheck),
   archive: entry(KimiArchive, RawKimiArchive),
   search: entry(KimiSearch, RawKimiSearch),
   copy: entry(KimiCopy, RawKimiCopy),
@@ -382,6 +400,9 @@ export const ICONS: Record<IconName, IconEntry> = {
   'shield-question': entry(KimiShieldQuestion, RawKimiShieldQuestion),
   'chevron-down': entry(KimiChevronDown, RawKimiChevronDown),
   'chevron-right': entry(KimiChevronRight, RawKimiChevronRight),
+  // The Kimi set has no left chevron (navigation never needed one before the
+  // admin page's pager) — tabler's, same stroke family as the state glyphs.
+  'chevron-left': entry(TablerChevronLeft, RawTablerChevronLeft),
   'chevron-up': entry(KimiChevronUp, RawKimiChevronUp),
   'arrow-up': entry(KimiArrowUp, RawKimiArrowUp),
   'arrow-down': entry(KimiArrowDown, RawKimiArrowDown),
@@ -399,6 +420,8 @@ export const ICONS: Record<IconName, IconEntry> = {
   'tree-view': entry(RiNodeTree, RawNodeTree),
   sort: entry(RiSortDesc, RawSortDesc),
   grip: entry(KimiGrip, RawKimiGrip),
+  // Sidebar view-menu entry opening the session admin page (/admin/sessions).
+  'session-admin': entry(TablerAdjustmentsHorizontal, RawTablerAdjustmentsHorizontal),
   folder: entry(KimiFolderOpen, RawKimiFolderOpen),
   'folder-closed': entry(KimiFolder, RawKimiFolder),
   'folder-plus': entry(KimiAddFolder, RawKimiAddFolder),

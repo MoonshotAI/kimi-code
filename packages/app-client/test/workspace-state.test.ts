@@ -139,6 +139,17 @@ function createSession(): AppSession {
 function createState(): ExtendedState {
   const state: ExtendedState = {
     ...createInitialState(),
+    // Status-view fields (the factory predates them — the archive path folds
+    // into doneSessions and reads the side-chat id map).
+    doneSessions: [],
+    doneSessionsNextPageToken: null,
+    doneSessionsHasMore: false,
+    doneSessionsLoading: false,
+    doneSessionsLoadingMore: false,
+    doneSessionsSeeded: false,
+    draftEntry: 'newChat',
+    mainView: 'chat',
+    sideChatUserMessageIdsBySession: {},
     sessions: [createSession()],
     activeSessionId: 'sess_1',
     connected: true,

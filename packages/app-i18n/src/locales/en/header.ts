@@ -22,6 +22,9 @@ export default {
   renameSession: 'Rename',
   forkSession: 'Fork session',
   archiveSession: 'Archive',
+  markSessionDone: 'Mark as done',
+  sessionDone: 'Done',
+  reopenSession: 'Mark as open',
   exportSession: 'Export session',
   devBadge: 'Running in development mode',
 };

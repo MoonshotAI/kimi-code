@@ -9,6 +9,10 @@ export default {
   workingRetry: 'Model request failed — retrying ({n}/{max})…',
   emptyWorkspaceHint: 'Send in {name}',
   switchWorkspace: 'Switch workspace',
+  recentSessions: 'Recent sessions',
+  // Centered 'View more' button at the list foot (opens the session admin page; hover tooltip).
+  viewMoreSessions: 'View more',
+  sessionAdminTooltip: 'View and manage more sessions in Session Management',
   addWorkspace: 'New workspace',
   moreWorkspaces: 'More workspaces ({count})',
   pickFolder: 'Choose folder…',

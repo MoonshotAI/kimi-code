@@ -1,0 +1,1642 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-color-scheme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>侧边栏状态标签页 + Session「完成」流转 · 高保真原型</title>
+<style>
+/* ===========================================================================
+   Tokens —— 对齐 packages/app-ui/src/style.css 的 token 值（light / dark）。
+   字体在真实应用中是自托管 Schibsted Grotesk + Noto Sans SC Variable，
+   原型退回系统字体栈（仅影响字腔，不影响节奏/颜色/层级）。
+   =========================================================================== */
+:root {
+  --color-bg: #ffffff;
+  --color-surface: #f5f5f5;
+  --color-surface-raised: #ffffff;
+  --color-surface-sunken: #f5f5f5;
+  --color-well: #f5f5f5;
+  --color-sidebar-bg: #f9fbfc;
+  --color-text: rgba(0, 0, 0, 0.9);
+  --color-text-strong: #000000;
+  --color-text-muted: rgba(0, 0, 0, 0.6);
+  --color-text-faint: rgba(0, 0, 0, 0.45);
+  --color-line: rgba(0, 0, 0, 0.13);
+  --color-subtle: rgba(0, 0, 0, 0.05);
+  --color-line-strong: rgba(0, 0, 0, 0.15);
+  --color-selected: rgba(0, 0, 0, 0.05);
+  --color-hover: rgba(0, 0, 0, 0.03);
+  --color-accent: #1783ff;
+  --color-accent-hover: #167ff7;
+  --color-accent-soft: #e8f3ff;
+  --color-accent-bd: rgba(23, 131, 255, 0.25);
+  --color-success: #0e7a38;
+  --color-success-soft: #e7f6ee;
+  --color-success-bd: #bfe3cc;
+  --color-warning: #a9610a;
+  --color-warning-soft: #fbf1e0;
+  --color-warning-bd: #f0d9b8;
+  --color-danger: #c0392b;
+  --color-danger-soft: #fbeaea;
+  --color-danger-bd: #f0cccc;
+  /* "Done" 紫色阶 —— 与 GitHub merged PR 同色（token 里已有，§PR tag 在用） */
+  --color-done: #8250df;
+  --color-done-soft: #f3e8ff;
+  --color-done-bd: #e0ccff;
+  --color-info: #1783ff;
+  --color-menu-bg: rgba(255, 255, 255, 0.95);
+  --color-user-bubble-bg: #f5f5f5;
+  --color-composer-bg: #ffffff;
+  --color-composer-line: rgba(0, 0, 0, 0.13);
+  --color-send-bg: rgba(0, 0, 0, 0.9);
+  --color-send-bg-hover: #252525;
+  --color-send-icon: #ffffff;
+  --color-send-bg-disabled: rgba(0, 0, 0, 0.05);
+  --color-send-icon-disabled: rgba(0, 0, 0, 0.27);
+
+  --dim: rgba(0, 0, 0, 0.6);
+  --muted: rgba(0, 0, 0, 0.45);
+  --faint: rgba(0, 0, 0, 0.3);
+  --line: var(--color-line);
+
+  --space-05: 2px; --space-1: 4px; --space-2: 8px; --space-3: 12px;
+  --space-4: 16px; --space-5: 20px; --space-6: 24px; --space-8: 32px;
+
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px;
+  --radius-xl: 16px; --radius-2xl: 20px; --radius-composer: 32px; --radius-full: 999px;
+
+  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-menu: 0 6px 18px lch(0% 0 0 / 0.02), 0 3px 9px lch(0% 0 0 / 0.04), 0 1px 1px lch(0% 0 0 / 0.04);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.07), 0 2px 4px rgba(16, 24, 40, 0.05);
+  --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.12), 0 4px 10px rgba(16, 24, 40, 0.08);
+  --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.07);
+  --p-menu-backdrop: blur(24px) saturate(1.8);
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 160ms;
+  --duration-slow: 260ms;
+
+  --text-2xs: 11px; --text-xs: 12px; --text-sm: 13px; --text-base: 14px; --text-lg: 16px;
+  --ui-font-size: 14px;
+  --ui-font-size-sm: 13px;
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-prose: 1.6;
+  --weight-regular: 400;
+  --weight-option-label: 475;
+  --weight-medium: 500;
+  --weight-section-label: 600;
+
+  --font-ui: "Schibsted Grotesk Variable", "Helvetica Neue", Arial,
+    "Noto Sans SC Variable", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
+    "SF Mono", Menlo, Consolas, monospace;
+  --font-kbd: "Schibsted Grotesk Variable", system-ui, sans-serif;
+
+  /* Sidebar 内部几何（对齐 Sidebar.vue 的 --sb-* 约定） */
+  --sb-inset: var(--space-2);
+  --sb-pad-x: var(--space-4);
+  --sb-gutter: 16px;
+  --sb-gap: var(--space-2);
+  --sb-hover: var(--color-hover);
+  --sb-selected: color-mix(in srgb, var(--color-selected) 75%, transparent);
+
+  --z-dropdown: 200;
+  --z-toast: 600;
+}
+html[data-color-scheme="dark"] {
+  color-scheme: dark;
+  --color-bg: #121212;
+  --color-surface: #1f1f1f;
+  --color-surface-raised: #292929;
+  --color-surface-sunken: #121212;
+  --color-well: #1f1f1f;
+  --color-sidebar-bg: #0d0d0d;
+  --color-text: rgba(255, 255, 255, 0.84);
+  --color-text-strong: #ffffff;
+  --color-text-muted: rgba(255, 255, 255, 0.56);
+  --color-text-faint: rgba(255, 255, 255, 0.42);
+  --color-line: rgba(255, 255, 255, 0.12);
+  --color-subtle: rgba(255, 255, 255, 0.05);
+  --color-line-strong: rgba(255, 255, 255, 0.18);
+  --color-selected: rgba(255, 255, 255, 0.1);
+  --color-hover: rgba(255, 255, 255, 0.05);
+  --color-accent: #1a88ff;
+  --color-accent-hover: #258eff;
+  --color-accent-soft: rgba(26, 136, 255, 0.1);
+  --color-accent-bd: rgba(26, 136, 255, 0.28);
+  --color-success: #3fb950;
+  --color-success-soft: rgba(63, 185, 80, 0.14);
+  --color-success-bd: rgba(63, 185, 80, 0.28);
+  --color-warning: #d29922;
+  --color-warning-soft: rgba(210, 153, 34, 0.14);
+  --color-warning-bd: rgba(210, 153, 34, 0.28);
+  --color-danger: #f85149;
+  --color-danger-soft: rgba(248, 81, 73, 0.14);
+  --color-danger-bd: rgba(248, 81, 73, 0.28);
+  --color-done: #a371f7;
+  --color-done-soft: rgba(163, 113, 247, 0.14);
+  --color-done-bd: rgba(163, 113, 247, 0.28);
+  --color-info: #1a88ff;
+  --color-menu-bg: rgba(41, 41, 41, 0.95);
+  --color-user-bubble-bg: #292929;
+  --color-composer-bg: #1f1f1f;
+  --color-composer-line: rgba(255, 255, 255, 0.12);
+  --color-send-bg: rgba(255, 255, 255, 0.84);
+  --color-send-bg-hover: rgba(255, 255, 255, 0.848);
+  --color-send-icon: #1f1f1f;
+  --color-send-bg-disabled: rgba(255, 255, 255, 0.1);
+  --color-send-icon-disabled: rgba(255, 255, 255, 0.28);
+  --dim: rgba(255, 255, 255, 0.56);
+  --muted: rgba(255, 255, 255, 0.42);
+  --faint: rgba(255, 255, 255, 0.26);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
+  --shadow-menu: 0 6px 18px rgba(0, 0, 0, 0.2), 0 3px 9px rgba(0, 0, 0, 0.24), 0 1px 1px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  color: var(--color-text);
+  background: var(--color-bg);
+  min-height: 100vh;
+}
+button { font-family: inherit; cursor: pointer; background: none; border: none; color: inherit; }
+svg.ic { display: block; flex: none; fill: currentColor; }
+
+/* --- 页面骨架 ------------------------------------------------------------- */
+.page { max-width: 1180px; margin: 0 auto; padding: var(--space-8) var(--space-6) 64px; }
+.page-head {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-5);
+}
+.page-head h1 { font-size: 20px; font-weight: var(--weight-medium); letter-spacing: -0.01em; }
+.page-head p {
+  margin-top: var(--space-1); font-size: var(--text-sm);
+  color: var(--color-text-muted); max-width: 720px; line-height: var(--leading-normal);
+}
+.controls { display: flex; gap: var(--space-2); }
+.ctl {
+  padding: 5px 12px; border: 0.5px solid var(--color-line); border-radius: var(--radius-full);
+  background: transparent; color: var(--color-text-muted); font-size: var(--text-xs);
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.ctl:hover { background: var(--color-hover); color: var(--color-text); }
+
+/* --- 应用窗口框 ------------------------------------------------------------ */
+.app-frame {
+  display: flex;
+  height: min(736px, calc(100vh - 190px));
+  min-height: 480px;
+  border: 0.5px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+  position: relative;
+  background: var(--color-bg);
+}
+
+/* ===========================================================================
+   侧边栏 —— 样式逐条移植自 Sidebar.vue / SessionRow.vue / WorkspaceGroup.vue
+   =========================================================================== */
+.side {
+  width: 264px;
+  flex: none;
+  background: var(--color-sidebar-bg);
+  border-right: 0.5px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Header: brand + collapse（Sidebar.vue .ch） */
+.ch {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: var(--space-3);
+  min-height: calc(26px + 2 * var(--space-3));
+}
+.ch-brand { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; user-select: none; }
+.ch-logo { height: 22px; width: auto; flex: none; display: block; }
+.ch-name {
+  font-size: var(--ui-font-size); font-weight: 500; line-height: 22px;
+  color: var(--color-text); white-space: nowrap;
+}
+.ch-tail { display: flex; align-items: center; gap: var(--space-2); flex: none; }
+
+/* IconButton（app-ui IconButton sm/md 的最小复刻） */
+.ib {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  transition: background var(--duration-base) var(--ease-out), color var(--duration-base) var(--ease-out);
+}
+.ib:hover { background: var(--color-hover); color: var(--color-text); }
+.ib svg { width: 16px; height: 16px; }
+.ib--sm { width: 26px; height: 26px; }
+.ib--sm svg { width: 14px; height: 14px; }
+
+/* New chat / Search（Sidebar.vue .sidebar-actions） */
+.sidebar-actions {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0 var(--space-2);
+  padding: 0 var(--sb-inset) var(--space-1);
+}
+.btn-new-chat, .search {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: var(--sb-gap);
+  width: 100%; min-width: 0;
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: var(--ui-font-size-sm); font-weight: var(--weight-medium);
+  line-height: var(--leading-tight); text-align: left;
+}
+.btn-new-chat:hover, .search:hover { background: var(--sb-hover); }
+.btn-new-chat svg, .search svg { flex: none; width: 16px; height: 16px; }
+.btn-new-chat span, .search-input { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kbd {
+  margin-left: auto;
+  font-family: var(--font-kbd); font-size: 11px; color: var(--color-text-faint);
+  border: 0.5px solid var(--color-line); border-radius: var(--radius-xs);
+  padding: 1px 4px; opacity: 0; transition: opacity var(--duration-base) var(--ease-out);
+}
+.btn-new-chat:hover .kbd, .search:hover .kbd { opacity: 1; }
+
+/* --- 新增：状态标签页（SegmentedControl §03 的全宽变体） --------------------
+   真实组件是 packages/app-ui/src/components/ui/SegmentedControl.vue（size=sm），
+   这里仅做一点扩展：宽度撑满侧栏；进行中 tab 带一个注意力圆点（swatch），
+   颜色 = 底下所有进行中会话的最高优先级状态。 */
+.seg-wrap { padding: var(--space-2) var(--sb-inset) 0; }
+.seg {
+  position: relative;
+  display: flex; width: 100%;
+  gap: 2px; padding: 2px;
+  background: var(--color-surface-sunken);
+  border: 0.5px solid var(--color-line);
+  border-radius: var(--radius-md);
+}
+.seg-ind {
+  position: absolute; top: 0; left: 0; z-index: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--duration-base) var(--ease-out), width var(--duration-base) var(--ease-out);
+  pointer-events: none;
+}
+.seg-item {
+  position: relative; z-index: 1;
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1);
+  height: 24px; padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm); font-weight: var(--weight-medium);
+  line-height: 1; white-space: nowrap;
+  transition: color var(--duration-base) var(--ease-out);
+}
+.seg-item:hover:not(.is-on) { color: var(--color-text); }
+.seg-item.is-on { color: var(--color-text); }
+.seg-count { font-size: var(--text-2xs); font-weight: var(--weight-regular); color: var(--color-text-faint); font-variant-numeric: tabular-nums; }
+/* 列表头（状态 tab 内）：caption + 平铺/分组展示切换 */
+.list-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: var(--space-2) calc(var(--sb-inset) + var(--space-2)) var(--space-1);
+  font-size: var(--text-xs); font-weight: var(--weight-section-label);
+  text-transform: uppercase; color: var(--faint); user-select: none;
+}
+.list-head-actions { display: flex; align-items: center; gap: 2px; }
+.list-mode { width: 22px; height: 22px; color: var(--faint); }
+.list-mode:hover { color: var(--dim); }
+.list-mode.is-on { color: var(--dim); background: var(--color-selected); }
+.list-mode svg { width: 13px; height: 13px; }
+
+/* 进行中 tab 的注意力圆点（SegmentedControl swatch 同款 7px）：
+   待审批=warning 橙，待回答=info 蓝，异常中止=danger 红，跑完未读=success 绿。 */
+.seg-dot {
+  width: 7px; height: 7px; flex: none;
+  border-radius: 50%;
+  border: 0.5px solid color-mix(in srgb, currentColor 22%, transparent);
+}
+
+/* 滚动区（Sidebar.vue .sessions） */
+.sessions {
+  flex: 1; overflow-y: auto; min-height: 0;
+  padding: var(--space-2) var(--sb-inset) var(--space-3);
+}
+.sessions::-webkit-scrollbar { width: 4px; }
+.sessions::-webkit-scrollbar-track { background: transparent; }
+.sessions::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--color-text) 12%, transparent); border-radius: var(--radius-full); }
+
+/* Section label（Sidebar.vue .side-section-label / PinnedSessionList .pinned-label） */
+.sec-label {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 0 var(--space-3) var(--space-1) var(--space-2);
+  font-size: var(--text-xs); font-weight: var(--weight-section-label);
+  text-transform: uppercase; color: var(--faint); user-select: none;
+}
+.sec-label .ib { width: 20px; height: 20px; color: var(--faint); opacity: 0; transition: opacity var(--duration-base) var(--ease-out); }
+.sec-label:hover .ib { opacity: 1; }
+.sec-label .ib svg { width: 13px; height: 13px; }
+.sec-label + * { margin-top: 0; }
+.list-block { margin-top: var(--space-2); }
+</style>
+<style>
+/* --- Session 行（SessionRow.vue .se，含 flat 两行变体） --------------------- */
+.se {
+  --se-pad-x: calc(var(--sb-pad-x) - var(--sb-inset));
+  display: block;
+  padding: 8px var(--se-pad-x);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  position: relative;
+}
+.se:hover { background: var(--sb-hover); }
+.se.on { background: var(--sb-selected); }
+.se .row { display: flex; align-items: center; gap: var(--sb-gap); min-width: 0; }
+.se .left { display: flex; align-items: center; flex: 1; min-width: 0; gap: var(--space-1); }
+/* Leading state slot（仅分组行）：Open/Done 状态图标，与组头文件夹 icon 对齐 */
+.lead { width: var(--sb-gutter); flex: none; display: inline-flex; align-items: center; justify-content: center; }
+.unread-dot { width: 7px; height: 7px; border-radius: var(--radius-full); background: var(--color-accent); }
+
+/* 标题：mask 渐隐（text-overflow: clip），hover 时让位给操作簇 */
+.t {
+  --sb-fade: 0px; --sb-fade-len: 16px;
+  color: inherit;
+  font-size: var(--ui-font-size-sm); font-weight: 450; line-height: var(--leading-tight);
+  user-select: none; flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: clip; white-space: nowrap;
+  -webkit-mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - var(--sb-fade) - var(--sb-fade-len)), transparent calc(100% - var(--sb-fade)));
+  mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - var(--sb-fade) - var(--sb-fade-len)), transparent calc(100% - var(--sb-fade)));
+}
+.se:hover .t { --sb-fade: 34px; --sb-fade-len: 26px; }
+.se:has(.ui-badge):hover .t { --sb-fade: 0px; --sb-fade-len: 16px; }
+.t .emoji { padding: 0; background: transparent; border: none; cursor: pointer; }
+
+/* --- 新增：Open / Done 状态图标 --------------------------------------------
+   只用一个彩色图标（GitHub issue 列表语言：open = 圈点，closed/done = 圈勾），
+   无底色无描边，比文字 chip 轻。色值吃 token：--color-success / --color-done。 */
+.st-ico { display: inline-flex; flex: none; }
+.st-ico svg { width: 14px; height: 14px; }
+.st-ico--open { color: var(--color-success); }
+.st-ico--done { color: var(--color-done); }
+
+/* Trailing 操作簇（SessionRow.vue .act / .ha）：rest 显示时间或状态，
+   hover 交叉淡入 pin + 完成 */
+.act {
+  position: relative; flex: none; align-self: stretch;
+  display: inline-flex; align-items: center; justify-content: flex-end;
+  gap: var(--sb-gap); min-width: 26px;
+}
+.ts {
+  color: var(--color-text-faint); font-size: var(--text-xs); font-weight: 475;
+  line-height: var(--leading-tight); font-variant-numeric: tabular-nums; text-align: right;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.act .st { display: inline-flex; align-items: center; transition: opacity var(--duration-fast) var(--ease-out); }
+.act .ha {
+  position: absolute; top: 0; bottom: 0;
+  right: calc(3px - var(--se-pad-x));
+  display: inline-flex; align-items: center; gap: 2px;
+  opacity: 0; visibility: hidden;
+  transition: opacity var(--duration-fast) var(--ease-out), visibility 0s linear var(--duration-fast);
+}
+.se:hover .ha { opacity: 1; visibility: visible; transition: opacity var(--duration-fast) var(--ease-out); }
+.se:hover .act .ts, .se:hover .act .st, .se:hover .act .ui-badge {
+  opacity: 0; visibility: hidden;
+  transition: opacity var(--duration-fast) var(--ease-out), visibility 0s linear var(--duration-fast);
+}
+/* hover 簇里的小图标按钮（pin / 完成 / 重新打开） */
+.ha .ib { width: 22px; height: 22px; }
+.ha .ib svg { width: 14px; height: 14px; }
+/* 新增：hover 簇里的「完成」按钮 —— 吃 success 色，和普通图标按钮区分 */
+.ha .ib.act-done:hover { color: var(--color-success); }
+
+/* Badge（app-ui Badge sm 复刻：Answer / Approve / Aborted 提示） */
+.ui-badge {
+  display: inline-flex; align-items: center;
+  height: 18px; padding: 0 7px;
+  border-radius: var(--radius-full);
+  border: 0.5px solid transparent;
+  font-size: 11px; font-weight: var(--weight-medium); line-height: 1;
+  white-space: nowrap; flex: none;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.ui-badge--info { background: var(--color-accent-soft); color: var(--color-accent-hover); border-color: var(--color-accent-bd); }
+.ui-badge--warning { background: var(--color-warning-soft); color: var(--color-warning); border-color: var(--color-warning-bd); }
+.ui-badge--danger { background: var(--color-danger-soft); color: var(--color-danger); border-color: var(--color-danger-bd); }
+
+/* Spinner（app-ui Spinner sm 复刻） */
+.spinner { display: inline-flex; flex: none; color: var(--color-accent); width: 14px; height: 14px; animation: kspin 0.85s linear infinite; }
+.spinner svg { width: 100%; height: 100%; }
+.spinner .track { fill: none; stroke: var(--color-line); stroke-width: 2.2; }
+.spinner .arc { fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-dasharray: 56 56; stroke-dashoffset: 38; }
+@keyframes kspin { to { transform: rotate(360deg); } }
+
+/* flat 行第二行（SessionRow.vue .sub）：folder + cwd + PR tag */
+.sub {
+  display: flex; align-items: center; gap: var(--space-1);
+  margin: var(--space-1) 0 0;
+  color: var(--color-text-faint); font-size: var(--text-xs); line-height: var(--leading-tight);
+  user-select: none;
+}
+.sub-icon { flex: none; color: var(--color-text-muted); width: 14px; height: 14px; }
+.sub-text {
+  flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: clip;
+  -webkit-mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
+}
+/* PR tag（SessionRow.vue .pr，原样） */
+.pr {
+  display: inline-flex; align-items: center; gap: var(--space-05);
+  flex: none; padding: 1px var(--space-1);
+  border: 0.5px solid var(--color-line); border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken); color: var(--color-text-muted);
+  font-size: var(--text-2xs); font-weight: var(--weight-medium); line-height: 1;
+  cursor: pointer;
+}
+.pr svg { width: 10px; height: 10px; }
+.pr--open { background: var(--color-success-soft); border-color: var(--color-success-bd); color: var(--color-success); }
+.pr--merged { background: var(--color-done-soft); border-color: var(--color-done-bd); color: var(--color-done); }
+.sessions .se.flat + .se.flat { margin-top: var(--space-05); }
+
+/* --- Workspace 分组（WorkspaceGroup.vue .gh） ------------------------------ */
+.gh {
+  display: flex; flex-direction: column;
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs); color: var(--color-text);
+  user-select: none; position: relative; cursor: pointer;
+}
+.gh:hover { background: var(--sb-hover); }
+.gh-top { position: relative; display: flex; align-items: center; gap: var(--sb-gap); }
+.gh-folder { flex: none; color: var(--color-text-muted); width: 16px; height: 16px; }
+.gh-name {
+  font-size: var(--ui-font-size-sm); font-weight: var(--weight-medium); line-height: var(--leading-tight);
+  color: var(--color-text-muted); flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: clip; white-space: nowrap;
+  -webkit-mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
+}
+.gh-count { flex: none; color: var(--color-text-faint); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.gh-actions {
+  position: absolute; right: calc(3px - (var(--sb-pad-x) - var(--sb-inset))); top: 50%;
+  transform: translateY(-50%);
+  display: flex; align-items: center; gap: var(--space-1);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+.gh:hover .gh-actions { opacity: 1; pointer-events: auto; }
+.gh-actions .ib { width: 22px; height: 22px; color: var(--faint); }
+.gh-actions .ib:hover { color: var(--dim); }
+.gh-actions .ib svg { width: 14px; height: 14px; }
+.group-sessions { overflow: hidden; }
+.group-empty {
+  padding: var(--space-1) var(--space-2) var(--space-1) calc(var(--sb-pad-x) - var(--sb-inset) + var(--sb-gutter) + var(--sb-gap));
+  font-size: var(--text-xs); color: var(--color-text-faint); user-select: none;
+}
+/* 「显示更多」 */
+.show-more-row { display: flex; align-items: center; justify-content: center; }
+.show-more {
+  display: flex; align-items: center; gap: var(--space-1);
+  padding: 6px var(--space-3); border-radius: var(--radius-sm);
+  color: var(--color-text-muted); font-size: var(--text-xs); line-height: var(--leading-tight);
+}
+.show-more:hover { background: var(--sb-hover); }
+.show-more svg { width: 14px; height: 14px; }
+
+/* Footer（Sidebar.vue .side-footer + UserMenu 简版） */
+.side-footer {
+  flex: none; padding: var(--space-2) var(--sb-inset);
+  border-top: 0.5px solid var(--line);
+}
+.user-row {
+  display: flex; align-items: center; gap: var(--sb-gap);
+  padding: 6px calc(var(--sb-pad-x) - var(--sb-inset));
+  border-radius: var(--radius-sm); cursor: pointer;
+}
+.user-row:hover { background: var(--sb-hover); }
+.avatar {
+  width: 22px; height: 22px; border-radius: var(--radius-full); flex: none;
+  background: linear-gradient(135deg, #1783ff, #77b6ff);
+  color: #fff; font-size: 11px; font-weight: var(--weight-medium);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.user-name { font-size: var(--ui-font-size-sm); font-weight: var(--weight-medium); color: var(--color-text); }
+
+/* ===========================================================================
+   正文区
+   =========================================================================== */
+.pane { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--color-bg); }
+
+/* Chat header（ChatHeader.vue 移植 + 新增「完成」按钮） */
+.chat-header {
+  flex: none; display: flex; align-items: center; gap: 14px;
+  height: 48px; padding: 0 16px;
+  border-bottom: 0.5px solid var(--color-line);
+  background: var(--color-bg);
+  user-select: none;
+}
+.ch-id { display: flex; align-items: center; gap: 6px; min-width: 0; flex: none; max-width: 46%; }
+.ch-ws { color: var(--color-text-muted); font-size: var(--text-base); font-weight: var(--weight-medium); flex: none; }
+.ch-sep { color: var(--color-text-faint); flex: none; }
+.ch-ses {
+  color: var(--color-text); font-size: var(--text-base); font-weight: var(--weight-medium);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ch-act-more { width: 24px; height: 24px; border-radius: var(--radius-sm); }
+.ch-act-more svg { width: 14px; height: 14px; }
+.ch-spacer { flex: 1; min-width: 0; }
+.ch-git {
+  display: flex; align-items: center; gap: 4px;
+  color: var(--muted); font-size: calc(var(--ui-font-size) - 2px); cursor: pointer;
+}
+.ch-git svg { width: 14px; height: 14px; color: var(--color-text-muted); }
+.ch-branch { color: var(--dim); white-space: nowrap; margin-right: 4px; }
+.ch-git:hover .ch-branch { color: var(--color-text); }
+.ch-pill {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 1px 5px; border-radius: 999px;
+  background: var(--panel, var(--color-well)); border: 0.5px solid var(--line);
+  font-size: calc(var(--ui-font-size) - 3px);
+  font-variant-numeric: tabular-nums;
+}
+.ch-add { color: var(--color-success); }
+.ch-del { color: var(--color-danger); }
+.ch-pr {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 22px; padding: 0 9px; flex: none;
+  border: 0.5px solid var(--color-line); border-radius: var(--radius-full);
+  background: var(--color-well); color: var(--color-text-muted);
+  font-size: var(--text-xs); font-weight: 500; cursor: pointer;
+}
+.ch-pr svg { width: 14px; height: 14px; }
+.ch-pr.pr-open { color: var(--color-success); border-color: var(--color-success-bd); background: var(--color-success-soft); }
+.ch-pr.pr-merged { color: var(--color-done); border-color: var(--color-done-bd); background: var(--color-done-soft); }
+
+/* 新增：header 右侧「完成」按钮 —— Button(§03) sm / primary 几何，
+   对齐 GitHub PR 页 Merge 按钮的位置与显著度（主行动按钮）。 */
+.btn-complete {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 var(--space-3); flex: none;
+  border: 0.5px solid transparent; border-radius: var(--radius-sm);
+  background: var(--color-accent); color: #fff;
+  font-size: var(--text-sm); font-weight: var(--weight-medium); line-height: 1;
+  transition: background var(--duration-base) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+}
+.btn-complete:hover { background: var(--color-accent-hover); }
+.btn-complete:active { transform: scale(0.98); }
+.btn-complete svg { width: 14px; height: 14px; }
+/* 完成后的 header 状态：紫色 Done pill（pr-merged 配方）+ 安静的重开按钮 */
+.done-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 22px; padding: 0 9px; flex: none;
+  border: 0.5px solid var(--color-done-bd); border-radius: var(--radius-full);
+  background: var(--color-done-soft); color: var(--color-done);
+  font-size: var(--text-xs); font-weight: 500;
+}
+.done-pill svg { width: 12px; height: 12px; }
+.btn-reopen {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 var(--space-3); flex: none;
+  border: 0.5px solid var(--color-line); border-radius: var(--radius-sm);
+  background: transparent; color: var(--color-text-muted);
+  font-size: var(--text-sm); font-weight: var(--weight-medium); line-height: 1;
+  transition: background var(--duration-base) var(--ease-out), color var(--duration-base) var(--ease-out);
+}
+.btn-reopen:hover { background: var(--color-hover); color: var(--color-text); }
+.btn-reopen svg { width: 14px; height: 14px; }
+
+/* Transcript mock */
+.transcript { flex: 1; overflow-y: auto; min-height: 0; padding: var(--space-6) var(--space-6) var(--space-4); }
+.transcript-inner { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-5); }
+.msg-user { display: flex; justify-content: flex-end; }
+.u-bub {
+  max-width: 70%;
+  background: var(--color-user-bubble-bg);
+  border-radius: var(--radius-lg);
+  padding: 8px 12px;
+  font-size: var(--text-base); line-height: var(--leading-prose);
+}
+.a-msg { font-size: var(--text-base); line-height: var(--leading-prose); color: var(--color-text); }
+.a-msg p + p { margin-top: var(--space-2); }
+.a-msg code {
+  font-family: var(--font-mono); font-size: var(--text-sm);
+  background: var(--color-well); border-radius: var(--radius-xs); padding: 1px 4px;
+}
+.a-working { display: flex; align-items: center; gap: var(--space-2); color: var(--color-text-muted); font-size: var(--text-sm); }
+
+/* Composer mock */
+.composer-wrap { flex: none; padding: var(--space-2) var(--space-6) var(--space-5); }
+.composer {
+  max-width: 760px; margin: 0 auto;
+  background: var(--color-composer-bg);
+  border: 0.5px solid var(--color-composer-line);
+  border-radius: var(--radius-composer);
+  box-shadow: var(--shadow-input);
+  padding: 14px 14px 14px 20px;
+  display: flex; align-items: flex-end; gap: var(--space-3);
+}
+.composer-ph { flex: 1; color: var(--color-text-faint); font-size: var(--text-base); line-height: 1.5; user-select: none; }
+.send {
+  width: 32px; height: 32px; flex: none; border-radius: var(--radius-full);
+  background: var(--color-send-bg-disabled); color: var(--color-send-icon-disabled);
+  display: inline-flex; align-items: center; justify-content: center; cursor: default;
+}
+.send svg { width: 16px; height: 16px; }
+
+/* ===========================================================================
+   右键菜单（Menu/MenuItem 移植）+ 完成 Toast（ActionToast 风格）
+   =========================================================================== */
+.ctx-menu {
+  position: fixed; z-index: var(--z-dropdown);
+  min-width: 180px; padding: 4px;
+  background: var(--color-menu-bg);
+  -webkit-backdrop-filter: var(--p-menu-backdrop); backdrop-filter: var(--p-menu-backdrop);
+  border: 0.5px solid var(--color-line); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-menu);
+  animation: menu-pop-in var(--duration-base) var(--ease-out);
+  transform-origin: top left;
+}
+@keyframes menu-pop-in { from { opacity: 0; transform: scale(0.97) translateY(-2px); } }
+.mi {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  padding: 5px 9px; border-radius: var(--radius-sm);
+  color: var(--color-text); font-size: var(--text-sm); font-weight: var(--weight-option-label);
+  line-height: var(--leading-tight); text-align: left;
+  transition: background var(--duration-base), color var(--duration-base);
+}
+.mi:hover { background: var(--color-hover); color: var(--color-text-strong); }
+.mi svg { width: 16px; height: 16px; color: var(--muted); }
+.mi:hover svg { color: var(--color-text-strong); }
+.mi-sep { height: 1px; margin: 4px 0; background: var(--color-line); }
+.mi-time { padding: 6px 10px; color: var(--color-text-faint); font-size: var(--text-xs); user-select: none; }
+
+.toast {
+  position: absolute; right: 20px; bottom: 92px; z-index: var(--z-toast);
+  display: flex; align-items: center; gap: var(--space-3);
+  max-width: 420px;
+  padding: 10px 12px 10px 14px;
+  background: var(--color-surface-raised);
+  border: 0.5px solid var(--color-line); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--text-sm);
+  animation: toast-in 0.24s var(--ease-out);
+}
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px) scale(0.995); } }
+.toast.hide { opacity: 0; transform: translateY(4px); transition: opacity var(--duration-base), transform var(--duration-base); }
+.toast-msg { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text); }
+.toast-msg b { font-weight: var(--weight-medium); }
+.toast-undo {
+  flex: none; color: var(--color-accent); font-size: var(--text-sm); font-weight: var(--weight-medium);
+  padding: 2px 6px; border-radius: var(--radius-xs);
+}
+.toast-undo:hover { background: var(--color-accent-soft); }
+.toast-close { flex: none; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius-xs); color: var(--color-text-faint); }
+.toast-close:hover { background: var(--color-hover); color: var(--color-text); }
+.toast-close svg { width: 12px; height: 12px; }
+
+/* --- 说明区 --------------------------------------------------------------- */
+.notes { margin-top: var(--space-6); display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.note-card {
+  border: 0.5px solid var(--color-line); border-radius: var(--radius-lg);
+  padding: var(--space-4); background: var(--color-bg);
+}
+.note-card h2 { font-size: var(--text-base); font-weight: var(--weight-medium); margin-bottom: var(--space-2); }
+.note-card ul { padding-left: 18px; }
+.note-card li { font-size: var(--text-sm); color: var(--color-text-muted); line-height: var(--leading-prose); }
+.note-card code { font-family: var(--font-mono); font-size: var(--text-xs); background: var(--color-well); border-radius: var(--radius-xs); padding: 1px 4px; }
+
+/* --- 工作空间 tab：目录行 --------------------------------------------------
+   复用 .se.flat 的两行几何：第一行 folder + 目录名（hover 出 ⋯），
+   第二行路径。整行点击 = 在该工作空间新建会话。 */
+.ws-ic { display: inline-flex; flex: none; color: var(--color-text-muted); }
+.ws-ic svg { width: 16px; height: 16px; }
+.mi--danger { color: var(--color-danger); }
+.mi--danger:hover { background: var(--color-danger-soft); color: var(--color-danger); }
+
+/* --- 工作空间主页（新会话草稿态） -------------------------------------------
+   居中栏：目录名 + 路径 + 环境动作（分支/编辑器/终端）+ composer + 近期会话。
+   内容超高时允许滚动。 */
+.empty-state { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: var(--space-4) var(--space-6); overflow-y: auto; }
+.empty-spacer { flex: 1 0 var(--space-4); }
+.ws-home { flex: none; width: min(760px, 100%); margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-4); }
+.ws-home-head { display: flex; flex-direction: column; align-items: center; gap: 4px; user-select: none; }
+.ws-home-title { display: flex; align-items: center; gap: 10px; font-size: 24px; font-weight: 600; }
+.ws-home-title svg { width: 22px; height: 22px; color: var(--color-text-muted); }
+.ws-home-path { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-text-faint); }
+.ws-home-actions { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
+.ws-action {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px var(--space-3);
+  border: 0.5px solid var(--color-line); border-radius: var(--radius-full);
+  color: var(--color-text-muted); font-size: var(--text-sm); font-weight: var(--weight-medium);
+  transition: background var(--duration-base) var(--ease-out), color var(--duration-base) var(--ease-out);
+}
+.ws-action:hover { background: var(--color-hover); color: var(--color-text); }
+.ws-action svg { width: 14px; height: 14px; flex: none; }
+.es-composer { position: relative; z-index: 1; width: 100%; margin: 0; }
+.es-input {
+  flex: 1; min-width: 0; border: none; outline: none; background: transparent;
+  color: var(--color-text); font-family: var(--font-ui); font-size: var(--text-base); line-height: 1.5;
+}
+.es-input::placeholder { color: var(--color-text-faint); }
+.send.on { background: var(--color-send-bg); color: var(--color-send-icon); cursor: pointer; }
+.send.on:hover { background: var(--color-send-bg-hover); }
+/* 主页里的近期会话：单行 .se（tag + 标题 + 右侧状态/hover 操作），无第二行 */
+.ws-recent-caption {
+  padding: 0 var(--space-2) var(--space-1);
+  font-size: var(--text-xs); font-weight: var(--weight-section-label);
+  text-transform: uppercase; color: var(--faint); user-select: none;
+}
+.ws-recent .se + .se { margin-top: var(--space-05); }
+
+/* --- 设计思路区 ------------------------------------------------------------- */
+.arch { margin-top: var(--space-6); display: flex; flex-direction: column; gap: var(--space-4); }
+.arch-title { font-size: var(--text-lg); font-weight: var(--weight-medium); letter-spacing: -0.01em; }
+.arch-card {
+  border: 0.5px solid var(--color-line); border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-5); background: var(--color-bg);
+}
+.arch-card h3 { font-size: var(--text-base); font-weight: var(--weight-medium); margin-bottom: var(--space-2); }
+.arch-card p, .arch-card li { font-size: var(--text-sm); color: var(--color-text-muted); line-height: var(--leading-prose); }
+.arch-card b { color: var(--color-text); font-weight: var(--weight-medium); }
+.arch-card ul, .arch-card ol { padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
+.arch-card p + ul, .arch-card p + ol { margin-top: var(--space-2); }
+.arch-note { margin-top: var(--space-2); }
+.arch-table { width: 100%; border-collapse: collapse; margin: var(--space-1) 0 var(--space-2); }
+.arch-table th, .arch-table td {
+  text-align: left; vertical-align: top;
+  padding: 8px var(--space-3) 8px 0;
+  font-size: var(--text-sm); line-height: var(--leading-normal);
+  border-bottom: 0.5px solid var(--color-subtle);
+}
+.arch-table th { color: var(--color-text-faint); font-weight: var(--weight-medium); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em; }
+.arch-table td { color: var(--color-text-muted); }
+.arch-table td b { color: var(--color-text); font-weight: var(--weight-medium); }
+.arch-table tr:last-child td { border-bottom: none; }
+/* 状态机 chips */
+.flow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: var(--space-2) 0 var(--space-3); }
+.f-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 10px;
+  border-radius: var(--radius-full); border: 0.5px solid var(--color-line);
+  background: var(--color-surface-sunken); color: var(--color-text-muted);
+  font-size: var(--text-xs); font-weight: var(--weight-medium); white-space: nowrap;
+}
+.f-sub { font-weight: var(--weight-regular); opacity: 0.75; }
+.f-arrow { color: var(--color-text-faint); font-size: var(--text-xs); }
+.f-info { background: var(--color-accent-soft); border-color: var(--color-accent-bd); color: var(--color-accent-hover); }
+.f-warn { background: var(--color-warning-soft); border-color: var(--color-warning-bd); color: var(--color-warning); }
+.f-accent { background: var(--color-accent-soft); border-color: var(--color-accent-bd); color: var(--color-accent); }
+.f-done { background: var(--color-done-soft); border-color: var(--color-done-bd); color: var(--color-done); }
+.f-danger { background: var(--color-danger-soft); border-color: var(--color-danger-bd); color: var(--color-danger); }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="page-head">
+    <div>
+      <h1>侧边栏状态标签页 + Session「完成」流转</h1>
+      <p>侧边栏改为两层结构：顶部标签页（<b>进行中 / 已完成 / 工作空间</b>）是状态维度，平铺 / 按工作空间分组降为「进行中」「已完成」tab 内部的展示切换（列表头右侧）；Session 行前带 Open / Done 状态图标（虚线环 = Open、圈勾 = Done）；行 hover 的归档按钮改为「完成」；正文 header 右侧新增主行动「完成」按钮（对齐 PR Merge）；「工作空间」tab 只列目录，点击目录在该工作空间起草新会话——不跳转标签页，发送首条消息后才进入「进行中」。下面的窗口是可交互的：切标签、切平铺/分组、选会话、点目录起草、在空状态里真的发一条消息、点「完成」/「重新打开」、右键行打开菜单。</p>
+    </div>
+    <div class="controls">
+      <button class="ctl" id="scheme-toggle">切换到暗色</button>
+      <button class="ctl" id="reset">重置演示</button>
+    </div>
+  </div>
+
+  <div class="app-frame" id="frame">
+    <!-- ================= 侧边栏 ================= -->
+    <aside class="side">
+      <div class="ch">
+        <div class="ch-brand">
+          <svg class="ch-logo" viewBox="0 0 32 28.2791" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code">
+            <defs>
+              <radialGradient id="chLogoFace" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(14.5195 12.5993) scale(14.1117)">
+                <stop stop-color="#117DFB" /><stop offset="0.759254" stop-color="#449BFF" /><stop offset="1" stop-color="#77B6FF" />
+              </radialGradient>
+            </defs>
+            <path d="M 14.5195 0.3556 C 22.2186 0.3556 28.4601 6.5969 28.4601 14.2961 C 28.4601 21.9952 22.2186 28.2366 14.5195 28.2366 C 6.8204 28.2366 0.579 21.9952 0.579 14.2961 C 0.579 6.5969 6.8204 0.3556 14.5195 0.3556 Z" fill="url(#chLogoFace)" />
+            <g fill="#fff">
+              <path d="M 12.8637 8.8339 C 12.7301 7.8611 13.4042 6.965 14.3693 6.8324 C 15.3344 6.6999 16.2251 7.3811 16.3587 8.3539 L 16.7656 11.3165 C 16.8992 12.2893 16.2251 13.1854 15.26 13.318 C 14.2949 13.4505 13.4042 12.7693 13.2706 11.7965 L 12.8637 8.8339 Z" />
+              <path d="M 20.1974 7.8996 C 20.0705 6.9754 20.6717 6.1295 21.5403 6.0102 C 22.4089 5.8909 23.216 6.5434 23.3429 7.4676 L 23.7295 10.282 C 23.8564 11.2062 23.2551 12.0521 22.3865 12.1714 C 21.5179 12.2907 20.7109 11.6382 20.5839 10.714 L 20.1974 7.8996 Z" />
+            </g>
+            <rect x="0" y="17.8221" width="31.9124" height="10.4405" rx="1.158" fill="#002E58" />
+            <path d="M 2.6265 21.0396 L 5.5577 22.7318 C 5.7989 22.8711 5.7989 23.2193 5.5577 23.3586 L 2.6265 25.0509" stroke="#fff" stroke-width="1.3133" stroke-linecap="round" />
+            <path d="M 8.7332 25.439 H 11.6282" stroke="#007CFF" stroke-width="1.3133" stroke-linecap="round" />
+            <path d="M 28.9734 0 C 30.2364 0 31.2604 1.0239 31.2604 2.287 C 31.2604 3.55 30.2364 4.574 28.9734 4.574 L 26.9555 4.574 C 26.8068 4.574 26.6864 4.4535 26.6864 4.3049 L 26.6864 2.287 C 26.6864 1.0239 27.7103 0 28.9734 0 Z" fill="#1783FF" />
+          </svg>
+          <span class="ch-name">Kimi Code</span>
+        </div>
+        <div class="ch-tail">
+          <button class="ib" title="收起侧边栏"><svg class="ic" viewBox="0 0 24 24"><path d="M 9.3 18.951 L 9.3 4.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M -7.9 -4.8 C -7.9 -6.512 -6.512 -7.9 -4.8 -7.9 L 4.8 -7.9 C 6.512 -7.9 7.9 -6.512 7.9 -4.8 L 7.9 4.8 C 7.9 6.512 6.512 7.9 4.8 7.9 L -4.8 7.9 C -6.512 7.9 -7.9 6.512 -7.9 4.8 L -7.9 -4.8 Z" fill="none" stroke="currentColor" stroke-width="1.8" transform="matrix(1 0 0 1 11.8 11.8)"/></svg></button>
+        </div>
+      </div>
+
+      <div class="sidebar-actions">
+        <button class="btn-new-chat" id="btn-new" type="button">
+          <svg class="ic" viewBox="0 0 24 24"><path d="M 0 -9.9 C -5.468 -9.9 -9.9 -5.468 -9.9 0 C -9.9 1.923 -9.351 3.719 -8.402 5.239 C -8.402 5.239 -9.483 7.821 -9.483 7.821 C -9.896 8.809 -9.171 9.9 -8.099 9.9 C -8.099 9.9 0 9.9 0 9.9 C 5.468 9.9 9.9 5.468 9.9 0 C 9.9 -5.468 5.468 -9.9 0 -9.9 Z M -8.1 0 C -8.1 -4.474 -4.474 -8.1 0 -8.1 C 4.473 -8.1 8.1 -4.474 8.1 0 C 8.1 4.473 4.473 8.1 -0.001 8.1 C -0.001 8.1 -7.648 8.1 -7.648 8.1 L -6.365 5.035 C -6.365 5.035 -6.648 4.629 -6.648 4.629 C -7.563 3.317 -8.1 1.723 -8.1 0 Z" transform="matrix(1 0 0 1 12 12)" fill-rule="evenodd"/><path d="M 3.6 0.5 L -2.6 0.5 M 0.5 -2.573 L 0.5 3.573" transform="translate(11.5 11.5)" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span>新会话</span><span class="kbd">⌘N</span>
+        </button>
+        <button class="search" type="button">
+          <svg class="ic" viewBox="0 0 24 24"><path d="M11.5 3C16.1944 3 20 6.80558 20 11.5C20 13.523 19.2933 15.381 18.1132 16.8404L21.1364 19.8636C21.4879 20.2151 21.4879 20.7849 21.1364 21.1364C20.7849 21.4879 20.2151 21.4879 19.8636 21.1364L16.8404 18.1132C15.381 19.2933 13.523 20 11.5 20C6.80558 20 3 16.1944 3 11.5C3 6.80558 6.80558 3 11.5 3ZM11.5 18.2C15.2003 18.2 18.2 15.2003 18.2 11.5C18.2 7.79969 15.2003 4.8 11.5 4.8C7.79969 4.8 4.8 7.79969 4.8 11.5C4.8 15.2003 7.79969 18.2 11.5 18.2Z"/></svg>
+          <span class="search-input">搜索会话</span><span class="kbd">⌘K</span>
+        </button>
+      </div>
+
+      <!-- 新增：状态标签页（SegmentedControl sm 全宽变体，进行中 tab 带注意力圆点） -->
+      <div class="seg-wrap">
+        <div class="seg" id="seg" role="tablist">
+          <span class="seg-ind" id="seg-ind" aria-hidden="true"></span>
+          <button class="seg-item is-on" data-tab="open" role="tab" type="button"><span class="seg-dot" id="dot-open" hidden></span>进行中</button>
+          <button class="seg-item" data-tab="done" role="tab" type="button">已完成</button>
+          <button class="seg-item" data-tab="ws" role="tab" type="button">工作空间</button>
+        </div>
+      </div>
+
+      <!-- 列表头：caption + 平铺/分组展示切换（会话 tab）/ 新建工作区图标（工作空间 tab）。
+           平铺/分组不再是与 tab 并列的视图，而是进行中/已完成 tab 内部的展示方式。 -->
+      <div class="list-head" id="list-head">
+        <span class="list-head-title" id="list-head-title">会话</span>
+        <div class="list-head-actions">
+          <button class="ib list-mode is-on" data-mode="flat" type="button" title="平铺列表">
+            <svg class="ic" viewBox="0 0 24 24"><path fill-rule="evenodd" clip-rule="evenodd" d="M4.10001 5.99998C4.10001 5.50292 4.50295 5.09998 5.00001 5.09998H19C19.4971 5.09998 19.9 5.50292 19.9 5.99998C19.9 6.49703 19.4971 6.89998 19 6.89998H5.00001C4.50295 6.89998 4.10001 6.49703 4.10001 5.99998ZM4.10001 12C4.10001 11.5029 4.50295 11.1 5.00001 11.1H19C19.4971 11.1 19.9 11.5029 19.9 12C19.9 12.497 19.4971 12.9 19 12.9H5.00001C4.50295 12.9 4.10001 12.497 4.10001 12ZM4.10001 18C4.10001 17.5029 4.50295 17.1 5.00001 17.1H19C19.4971 17.1 19.9 17.5029 19.9 18C19.9 18.497 19.4971 18.9 19 18.9H5.00001C4.50295 18.9 4.10001 18.497 4.10001 18Z"/></svg>
+          </button>
+          <button class="ib list-mode" data-mode="grouped" type="button" title="按工作空间分组">
+            <svg class="ic" viewBox="0 0 24 24"><path d="M10 2a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H8v2h5V9a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1v-1H8v6h5v-1a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1v-1H7a1 1 0 0 1-1-1V8H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm9 16h-4v2h4zm0-8h-4v2h4zM9 4H5v2h4z"/></svg>
+          </button>
+          <button class="ib" id="ws-add-btn" type="button" title="新建工作空间" hidden>
+            <svg class="ic" viewBox="0 0 24 24"><path d="M12.0684 2.03418C12.5654 2.03421 12.9687 2.43755 12.9688 2.93457V11.0996H21.0654C21.5625 11.0996 21.9658 11.503 21.9658 12C21.9658 12.497 21.5625 12.9004 21.0654 12.9004H12.9688V21.0654C12.9687 21.5624 12.5654 21.9658 12.0684 21.9658C11.5713 21.9658 11.168 21.5625 11.168 21.0654V12.9004H2.93457C2.43751 12.9004 2.03418 12.4971 2.03418 12C2.03418 11.5029 2.43751 11.0996 2.93457 11.0996H11.168V2.93457C11.168 2.43753 11.5713 2.03418 12.0684 2.03418Z"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="sessions" id="sessions">
+        <div id="tab-open" role="tabpanel"></div>
+        <div id="tab-done" role="tabpanel" hidden></div>
+        <div id="tab-ws" role="tabpanel" hidden></div>
+      </div>
+
+      <div class="side-footer">
+        <div class="user-row"><span class="avatar">K</span><span class="user-name">Kimi User</span></div>
+      </div>
+    </aside>
+
+    <!-- ================= 正文 ================= -->
+    <div class="pane">
+      <header class="chat-header">
+        <div class="ch-id">
+          <span class="ch-ws" id="hd-ws"></span>
+          <span class="ch-sep" id="hd-sep">/</span>
+          <span class="ch-ses" id="hd-title"></span>
+        </div>
+        <button class="ib ch-act-more" id="hd-kebab" title="选项">
+          <svg class="ic" viewBox="0 0 24 24"><path d="M6 12C6 12.8283 5.32834 13.5 4.5 13.5C3.67166 13.5 3 12.8283 3 12C3 11.1717 3.67166 10.5 4.5 10.5C5.32834 10.5 6 11.1717 6 12Z"/><path d="M13.5 12C13.5 12.8283 12.8283 13.5 12 13.5C11.1717 13.5 10.5 12.8283 10.5 12C10.5 11.1717 11.1717 10.5 12 10.5C12.8283 10.5 13.5 11.1717 13.5 12Z"/><path d="M19.5002 13.5C20.3287 13.5 21 12.8287 21 12.0002C21 11.1718 20.3287 10.5 19.5002 10.5C18.6718 10.5 18 11.1718 18 12.0002C18 12.8287 18.6718 13.5 19.5002 13.5Z"/></svg>
+        </button>
+        <div class="ch-spacer"></div>
+        <button class="ch-git" type="button">
+          <svg class="ic" viewBox="0 0 24 24"><path d="M6 5a1 1 0 1 0 0 2a1 1 0 0 0 0-2M3 6a3 3 0 1 1 4 2.83V9a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-.17a3.001 3.001 0 1 1 2 0V9a4 4 0 0 1-4 4h-2v2.17a3.001 3.001 0 1 1-2 0V13H9a4 4 0 0 1-4-4v-.17A3 3 0 0 1 3 6m15-1a1 1 0 1 0 0 2a1 1 0 0 0 0-2m-6 12a1 1 0 1 0 0 2a1 1 0 0 0 0-2"/></svg>
+          <span class="ch-branch">main</span>
+          <span class="ch-pill"><span class="ch-add">+128</span>&nbsp;<span class="ch-del">−36</span></span>
+        </button>
+        <button class="ch-pr pr-open" id="hd-pr" type="button">
+          <svg class="ic" viewBox="0 0 24 24"><path d="M15 5h2a2 2 0 0 1 2 2v8.17a3.001 3.001 0 1 1-2 0V7h-2v3l-4.5-4L15 2zM5 8.83a3.001 3.001 0 1 1 2 0v6.34a3.001 3.001 0 1 1-2 0zM6 7a1 1 0 1 0 0-2a1 1 0 0 0 0 2m0 12a1 1 0 1 0 0-2a1 1 0 0 0 0 2m12 0a1 1 0 1 0 0-2a1 1 0 0 0 0 2"/></svg>
+          <span id="hd-pr-text">PR #413 · 开放</span>
+        </button>
+        <!-- 新增：完成 / 已完成 状态（对齐 PR Merge 按钮位） -->
+        <button class="btn-complete" id="hd-complete" type="button">
+          <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10.875" stroke="currentColor" stroke-width="2.25" fill="none"/><path d="M7.125 12.6L10.65 16.125L17.025 8.85" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+          <span>完成</span>
+        </button>
+        <span class="done-pill" id="hd-done-pill" hidden>
+          <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10.875" stroke="currentColor" stroke-width="2.25" fill="none"/><path d="M7.125 12.6L10.65 16.125L17.025 8.85" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+          <span>已完成</span>
+        </span>
+        <button class="btn-reopen" id="hd-reopen" type="button" hidden>
+          <svg class="ic" viewBox="0 0 24 24"><path d="M7.36336 3.3634C7.71483 3.01192 8.28533 3.01192 8.6368 3.3634C8.98817 3.71488 8.98824 4.2854 8.6368 4.63683L6.17391 7.09972H15.0001C18.2585 7.09977 20.9005 9.74166 20.9005 13.0001C20.9004 16.2585 18.2585 18.9005 15.0001 18.9005H7.00008C6.50307 18.9005 6.09976 18.4971 6.09969 18.0001C6.09969 17.5031 6.50302 17.0997 7.00008 17.0997H15.0001C17.2644 17.0997 19.0996 15.2644 19.0997 13.0001C19.0997 10.7358 17.2644 8.90055 15.0001 8.90051H6.17391L8.6368 11.3634L8.69832 11.4318C8.98668 11.7853 8.96632 12.3073 8.6368 12.6368C8.30728 12.9663 7.78521 12.9867 7.43172 12.6984L7.36336 12.6368L3.36336 8.63683C3.33098 8.60445 3.30286 8.56908 3.27645 8.53332C3.25597 8.50559 3.23607 8.47741 3.21883 8.44738C3.20492 8.42311 3.19221 8.39837 3.18074 8.37316C3.1764 8.36365 3.17109 8.35453 3.16707 8.34484C3.1627 8.33427 3.1593 8.32331 3.15535 8.31261C3.12946 8.24274 3.11237 8.16872 3.10457 8.09191C3.09258 7.97426 3.10262 7.85446 3.1368 7.74035C3.14281 7.72035 3.15094 7.70114 3.15828 7.68176C3.16165 7.67283 3.16341 7.66325 3.16707 7.65441C3.17216 7.64216 3.17806 7.63025 3.18367 7.61828C3.19055 7.60356 3.19744 7.58874 3.20516 7.57433C3.24709 7.49624 3.3012 7.42556 3.36336 7.3634L7.36336 3.3634Z"/></svg>
+          <span>重新打开</span>
+        </button>
+      </header>
+
+      <!-- 已有会话：静态 mock transcript -->
+      <div class="transcript" id="transcript">
+        <div class="transcript-inner">
+          <div class="msg-user"><div class="u-bub">把侧边栏改成三个状态标签页：进行中、已完成、工作空间。完成了的会话要像 Merge PR 一样收进「已完成」。</div></div>
+          <div class="a-msg">
+            <p>好的，方案如下：标签页用设计系统里的 <code>SegmentedControl</code>（sm、全宽变体），进行中 tab 带一个注意力圆点（待审批橙 / 待回答蓝 / 中止红 / 跑完未读绿，取最高优先级）；Session 行前的 Open / Done 用彩色图标（虚线环 / 圈勾），色值直接吃 token 里的 <code>--color-success</code> / <code>--color-done</code>。</p>
+            <p>「完成」是归档的语义升级：行 hover、右键菜单、正文 header 三处入口统一为「完成」，确认/撤销沿用现有归档的 undo toast，不新增打断式弹窗。</p>
+          </div>
+          <div class="a-working">
+            <span class="spinner"><svg viewBox="0 0 24 24"><circle class="track" cx="12" cy="12" r="9"/><circle class="arc" cx="12" cy="12" r="9"/></svg></span>
+            <span>正在修改 Sidebar.vue…</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 草稿发出首条消息后的动态 transcript -->
+      <div class="transcript" id="live-transcript" hidden>
+        <div class="transcript-inner">
+          <div class="msg-user"><div class="u-bub" id="live-bubble"></div></div>
+          <div class="a-working">
+            <span class="spinner"><svg viewBox="0 0 24 24"><circle class="track" cx="12" cy="12" r="9"/><circle class="arc" cx="12" cy="12" r="9"/></svg></span>
+            <span>正在工作…</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer-wrap" id="composer-dock">
+        <div class="composer">
+          <div class="composer-ph">输入消息…</div>
+          <span class="send"><svg class="ic" viewBox="0 0 24 24"><path d="M16.5364 10.1636C16.8879 10.5151 16.8879 11.0849 16.5364 11.4364C16.1849 11.7879 15.6151 11.7879 15.2636 11.4364L12.9 9.07281V17.1C12.9 17.597 12.4971 18 12 18C11.503 18 11.1 17.597 11.1 17.1V9.07281L8.73641 11.4364C8.38494 11.7879 7.81509 11.7879 7.46362 11.4364C7.11214 10.8849 7.11214 10.5151 7.46362 10.1636L11.3636 6.2636C11.7151 5.91211 12.2849 5.91211 12.6364 6.2636L16.5364 10.1636Z"/></svg></span>
+        </div>
+      </div>
+
+      <!-- 新会话草稿 = 工作空间主页：环境条（目录/分支）+ 打开方式 + 居中 composer + 该目录近期会话。
+           发消息才建 session；不发消息时，分支/编辑器/终端等环境动作可用。 -->
+      <div class="empty-state" id="empty-state" hidden>
+        <div class="empty-spacer"></div>
+        <div class="ws-home">
+          <div class="ws-home-head">
+            <div class="ws-home-title">
+              <svg class="ic" viewBox="0 0 24 24"><path d="M9.2373 3.7002C10.4169 3.7002 11.5297 4.24779 12.249 5.18262L12.4424 5.43359H18C20.0987 5.43359 21.7998 7.13472 21.7998 9.2334V16.5C21.7998 18.5987 20.0987 20.2998 18 20.2998H6C3.90132 20.2998 2.2002 18.5987 2.2002 16.5V7.5C2.2002 5.40132 3.90132 3.7002 6 3.7002H9.2373ZM6 5.5C4.89543 5.5 4 6.39543 4 7.5V16.5C4 17.6046 4.89543 18.5 6 18.5H18C19.0357 18.5 19.887 17.7128 19.9893 16.7041L20 16.5V9.2334C20 8.19775 19.2128 7.34641 18.2041 7.24414L18 7.2334H12.0479L11.9326 7.22656C11.666 7.19561 11.4205 7.05812 11.2549 6.84277L10.8223 6.28027C10.4437 5.78834 9.85808 5.5 9.2373 5.5H6Z"/></svg>
+              <span id="es-ws-title">code-app</span>
+            </div>
+            <div class="ws-home-path" id="es-ws-path">~/code/code-app</div>
+            <div class="ws-home-actions">
+              <button class="ws-action" type="button" title="切换分支">
+                <svg class="ic" viewBox="0 0 24 24"><path d="M6 5a1 1 0 1 0 0 2a1 1 0 0 0 0-2M3 6a3 3 0 1 1 4 2.83V9a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-.17a3.001 3.001 0 1 1 2 0V9a4 4 0 0 1-4 4h-2v2.17a3.001 3.001 0 1 1-2 0V13H9a4 4 0 0 1-4-4v-.17A3 3 0 0 1 3 6m15-1a1 1 0 1 0 0 2a1 1 0 0 0 0-2m-6 12a1 1 0 1 0 0 2a1 1 0 0 0 0-2"/></svg>
+                <span>main</span>
+                <svg class="ic" style="width:12px;height:12px" viewBox="0 0 24 24"><path fill-rule="evenodd" clip-rule="evenodd" d="M11.3912 16.7134C11.743 17.0627 12.3111 17.0617 12.6617 16.7111L19.6364 9.73641C19.9878 9.38494 19.9878 8.81509 19.6364 8.46362C19.2849 8.11215 18.7151 8.11215 18.3636 8.46362L12.023 14.8042L5.63407 8.46132C5.28133 8.11112 4.71149 8.11318 4.36129 8.46592C4.01109 8.81866 4.01314 9.3885 4.36588 9.73871L11.3912 16.7134Z"/></svg>
+              </button>
+              <button class="ws-action" type="button" title="在编辑器打开">
+                <svg class="ic" viewBox="0 0 24 24"><path d="M10 6v2H5v11h11v-5h2v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zm11-3v8h-2V6.413l-7.793 7.794l-1.414-1.414L17.585 5H13V3z"/></svg>
+                <span>在编辑器打开</span>
+              </button>
+              <button class="ws-action" type="button" title="打开终端">
+                <svg class="ic" viewBox="0 0 24 24"><path d="M16.5293 15.0596C16.9496 15.1021 17.2772 15.4572 17.2773 15.8887C17.2773 16.3202 16.9497 16.6753 16.5293 16.7178L16.4443 16.7217H12C11.5399 16.7216 11.167 16.3488 11.167 15.8887C11.1671 15.4286 11.54 15.0558 12 15.0557H16.4443L16.5293 15.0596Z"/><path d="M6.96582 7.52246C7.27077 7.21751 7.75375 7.1983 8.08105 7.46484L8.14453 7.52246L10.8232 10.2002C11.5102 10.8872 11.5102 12.0014 10.8232 12.6885L8.14453 15.3672L8.08105 15.4248C7.75377 15.6913 7.27075 15.6721 6.96582 15.3672C6.66114 15.0621 6.64234 14.5791 6.90918 14.252L6.96582 14.1885L9.64453 11.5098C9.68057 11.4736 9.68062 11.415 9.64453 11.3789L6.96582 8.7002C6.64116 8.37488 6.6411 7.84774 6.96582 7.52246Z"/><path fill-rule="evenodd" clip-rule="evenodd" d="M17 3.09961C19.1539 3.09966 20.9004 4.84612 20.9004 7V17C20.9004 19.1539 19.1539 20.9003 17 20.9004H7C4.84609 20.9004 3.09961 19.1539 3.09961 17V7C3.09961 4.84609 4.84609 3.09961 7 3.09961H17ZM7 4.90039C5.8402 4.90039 4.90039 5.8402 4.90039 7V17C4.90039 18.1598 5.8402 19.0996 7 19.0996H17C18.1598 19.0996 19.0996 18.1598 19.0996 17V7C19.0996 5.84024 18.1598 4.90044 17 4.90039H7Z"/></svg>
+                <span>打开终端</span>
+              </button>
+            </div>
+          </div>
+          <div class="composer es-composer">
+            <input class="es-input" id="es-input" type="text" placeholder="输入消息，在该工作空间新建会话…" autocomplete="off">
+            <button class="send" id="es-send" type="button" disabled>
+              <svg class="ic" viewBox="0 0 24 24"><path d="M16.5364 10.1636C16.8879 10.5151 16.8879 11.0849 16.5364 11.4364C16.1849 11.7879 15.6151 11.7879 15.2636 11.4364L12.9 9.07281V17.1C12.9 17.597 12.4971 18 12 18C11.503 18 11.1 17.597 11.1 17.1V9.07281L8.73641 11.4364C8.38494 11.7879 7.81509 11.7879 7.46362 11.4364C7.11214 10.8849 7.11214 10.5151 7.46362 10.1636L11.3636 6.2636C11.7151 5.91211 12.2849 5.91211 12.6364 6.2636L16.5364 10.1636Z"/></svg>
+            </button>
+          </div>
+          <div class="ws-recent" id="ws-recent">
+            <div class="ws-recent-caption">最近会话</div>
+            <div id="es-recent"></div>
+          </div>
+        </div>
+        <div class="empty-spacer"></div>
+      </div>
+    </div>
+
+    <!-- 完成 toast（复用归档 undo toast 的交互） -->
+    <div class="toast" id="toast" hidden>
+      <span class="toast-msg" id="toast-msg"></span>
+      <button class="toast-undo" id="toast-undo" type="button">撤销</button>
+      <button class="toast-close" id="toast-close" type="button" title="关闭">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M17.9542 4.77253C18.3056 4.42106 18.8761 4.42106 19.2276 4.77253C19.579 5.12401 19.579 5.69452 19.2276 6.04597L13.2735 12.0001L19.2276 17.9542C19.5791 18.3056 19.5791 18.8761 19.2276 19.2276C18.8761 19.5791 18.3056 19.5791 17.9542 19.2276L12.0001 13.2735L6.04595 19.2276C5.69451 19.5791 5.12399 19.579 4.77252 19.2276C4.42104 18.8761 4.42104 18.3056 4.77252 17.9542L10.7266 12.0001L4.77252 6.04597C4.42104 5.6945 4.42104 5.124 4.77252 4.77253C5.12399 4.42107 5.69448 4.42106 6.04595 4.77253L12.0001 10.7266L17.9542 4.77253Z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ================= 设计思路（架构说明） ================= -->
+  <div class="arch">
+    <h2 class="arch-title">设计思路：Agent 时代的多 Workspace / 多 Session 任务管理</h2>
+
+    <div class="arch-card">
+      <h3>1 · 要解决的问题</h3>
+      <ul>
+        <li><b>Session 没有生命周期状态</b>——进行中和已完成无法区分。现状只有瞬时状态（spinner / 待批准 / 未读点）和一个终态「归档」，中间是断的：agent 跑完、你看完，会话就悬在那里，和正在跑的看起来没区别。</li>
+        <li><b>工作空间入口承载两个意图</b>——「在这个目录建任务」和「切到这个目录看代码 / 切分支」，今天它们被混在同一个分组列表里。</li>
+        <li><b>旧会话无脑堆积</b>——做完的、放弃的、跑完没人看的，全堆在一个按时间排序的列表里，没有出清机制。</li>
+      </ul>
+    </div>
+
+    <div class="arch-card">
+      <h3>2 · 核心判断：稀缺的是注意力，不是 session</h3>
+      <p>Agent 任务和人的任务（Linear/Jira）有本质区别：<b>创建成本极低</b>（一句话）、<b>状态机器可观测</b>（系统知道在跑 / 在等你 / 跑完了）、<b>并行度高</b>（同时挂五个不稀奇）、<b>产出是工件</b>（diff / PR）。因此瓶颈是用户的注意力，整个架构围绕「注意力分配」组织，而不是围绕「列表组织」。多任务场景下唯一重要的头部指标是：<b>等你的有几个</b>。</p>
+    </div>
+
+    <div class="arch-card">
+      <h3>3 · Session 生命周期：机器能判的，不让用户判</h3>
+      <div class="flow">
+        <span class="f-chip f-neutral">草稿</span><span class="f-arrow">→</span>
+        <span class="f-chip f-info">运行中</span><span class="f-arrow">⇄</span>
+        <span class="f-chip f-warn">待处理<span class="f-sub">等你批准/回答</span></span><span class="f-arrow">→</span>
+        <span class="f-chip f-accent">待验收<span class="f-sub">跑完还没看</span></span><span class="f-arrow">→</span>
+        <span class="f-chip f-neutral">进行中·挂起</span><span class="f-arrow">→</span>
+        <span class="f-chip f-done">已完成</span>
+        <span class="f-chip f-danger">已放弃</span>
+      </div>
+      <ul>
+        <li>运行中 / 待处理 / 待验收<b>系统全部知道</b>（spinner、Approve 徽章、未读点就是它们的外显），用户一个都不用标；用户只声明终态。</li>
+        <li>终态<b>双轨</b>：「做完了」和「不做了」是两个语义，合并会让已完成列表失去成绩册的价值。</li>
+        <li>PR 有客观终态事件（merge），session 没有——所以 Done 靠<b>手动零摩擦 + 系统建议</b>两条腿。</li>
+      </ul>
+    </div>
+
+    <div class="arch-card">
+      <h3>4 · 信息架构：三个 tab 各管一件事</h3>
+      <table class="arch-table">
+        <thead><tr><th>Tab</th><th>职责</th><th>回答的问题</th></tr></thead>
+        <tbody>
+          <tr><td><b>进行中</b></td><td>注意力队列（默认视图）：排序 = 待处理 &gt; 待验收 &gt; 运行中 &gt; 挂起；tab 上的圆点按最高优先级状态变色</td><td>「现在需要我干什么？」</td></tr>
+          <tr><td><b>已完成</b></td><td>出清后的档案：时间倒序，不分组不清理，回收靠 ⌘K 搜索</td><td>「那个任务最后怎么收的？」</td></tr>
+          <tr><td><b>工作空间</b></td><td>环境入口：只列目录，点击 = 进入该环境（草稿态，不占列表）</td><td>「我要在哪个目录干活 / 看代码？」</td></tr>
+        </tbody>
+      </table>
+      <p class="arch-note">关键取舍：workspace 是<b>资源上下文</b>（分支、文件、终端、编辑器），session 是跑在其上的<b>任务</b>。队列里 workspace 降为行内元数据（cwd 小字），不再作为分组维度——把项目维度塞进注意力队列，队列就碎了。<b>层级关系</b>：状态 tab 是上层（回答「要不要我看」），平铺/分组是 tab 内的展示层（回答「怎么摆」），两者不再并列。</p>
+    </div>
+
+    <div class="arch-card">
+      <h3>5 · 三个关键机制</h3>
+      <ul>
+        <li><b>完成零摩擦</b>：行 hover、正文 header、右键菜单三处入口；免确认，撤销 toast 是全部仪式。功能价值完全取决于完成率，入口密度比标签本身重要。</li>
+        <li><b>系统建议完成</b>：PR merged → toast 建议标完成。v2 git domain 已经把 PR 状态喂到行上，这是精确且几乎免费的信号；后续可加「N 天未动 → 建议完成」。只建议，不自动。</li>
+        <li><b>目录主页（落地态）</b>：点击目录不跳 tab，正文落在该工作空间的主页——composer + 分支 + 在编辑器打开 / 终端 + 该目录近期会话。「建任务」与「看环境」在此统一：发消息才创建 session，不发消息什么都不会产生。</li>
+      </ul>
+    </div>
+
+    <div class="arch-card">
+      <h3>6 · 明确不做</h3>
+      <ul>
+        <li><b>不做看板拖拽</b>——agent 任务生命周期以分钟计，手动挪状态是家务活；</li>
+        <li><b>不再加层级</b>——workspace &gt; session 两级封顶，subagent / todo 收在 session 内部；</li>
+        <li><b>完成不加确认弹窗</b>、已完成不做分组 / 清理策略——没人浏览两百条的已完成列表。</li>
+      </ul>
+    </div>
+
+    <div class="arch-card">
+      <h3>7 · 与现状的差量</h3>
+      <p><b>八成已存在</b>：瞬时状态（徽章 / spinner / 蓝点）、注意力计数（pendingBySession）、PR 状态信号（git domain）、草稿语义（首条消息才建 session）。增量只有三个：</p>
+      <ol>
+        <li>用户可声明的终态（Done / 放弃双轨；若复用 archived 换皮则不动 server）；</li>
+        <li>进行中 tab 从时间序改为注意力序；</li>
+        <li>工作空间目录 tab + 落地主页。</li>
+      </ol>
+      <p class="arch-note">上方 demo 已覆盖 ① 的骨架与 ③（目录 tab + 工作空间主页）；注意力排序是下一步。</p>
+    </div>
+  </div>
+
+  <!-- ================= Demo 级说明 ================= -->
+  <h2 class="arch-title" style="margin-top: var(--space-6)">Demo 交互映射与待定问题</h2>
+  <div class="notes" style="margin-top: var(--space-4)">
+    <div class="note-card">
+      <h2>交互映射（对现状的改动点）</h2>
+      <ul>
+        <li>标签页 = 设计系统 <code>SegmentedControl</code>（sm 全宽变体），是<b>状态维度</b>的上层结构；「平铺 / 按工作空间」不再是并列视图，降为进行中 / 已完成 tab 内的展示切换（列表头右侧的 list/tree 开关）。</li>
+        <li>Session 行 hover 的 <b>归档</b> 按钮 → <b>完成</b>（✓ 图标，hover 呈 success 色）；右键菜单里的「归档」 → 「标记为完成」。</li>
+        <li>Open / Done 用彩色状态图标（圈点 / 圈勾，GitHub issue 列表语言），色值：<code>--color-success</code> / <code>--color-done</code>。</li>
+        <li>正文 header 右侧新增主行动按钮「完成」（Button sm / primary），完成后变为紫色 Done pill + 「重新打开」，对齐 PR Merge → Merged 的位置与语义。</li>
+        <li>完成的确认/撤销复用归档的 undo toast，不引入新的打断式弹窗。</li>
+      </ul>
+    </div>
+    <div class="note-card">
+      <h2>待定问题（本 demo 先按加粗项演示）</h2>
+      <ul>
+        <li>完成时是否自动取消置顶：<b>是</b>（置顶区只放进行中的会话）。</li>
+        <li>「工作空间」tab 不再罗列 session：<b>只显示目录</b>；点击目录 = 在该工作空间起草稿——<b>不跳转 tab</b>，正文变为新会话空状态，<b>发送首条消息后才计入「进行中」</b>；⋯ / 右键菜单保留复制路径、重命名、移除。</li>
+        <li>「平铺 / 分组」视图切换：<b>降为 tab 内的展示开关</b>，进行中与已完成各自可切；工作空间 tab 只列目录，不涉及。</li>
+        <li>已完成 tab 的行 hover 只留「重新打开」，不再给置顶。</li>
+        <li>「完成」是否要求二次确认：<b>否</b>，toast 撤销即可（与归档一致）。</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- 右键菜单（挂载到 body，fixed 定位） -->
+<div class="ctx-menu" id="ctx" hidden></div>
+
+<style>[hidden]{display:none !important;}</style>
+<script>
+/* ============================ 图标（与 app 内同源） ============================ */
+const IC = {
+  recordCircle: '<svg class="ic" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.56 3.69a9 9 0 0 0-2.92 1.95M3.69 8.56A9 9 0 0 0 3 12m.69 3.44a9 9 0 0 0 1.95 2.92m2.92 1.95A9 9 0 0 0 12 21m3.44-.69a9 9 0 0 0 2.92-1.95m1.95-2.92A9 9 0 0 0 21 12m-.69-3.44a9 9 0 0 0-1.95-2.92m-2.92-1.95A9 9 0 0 0 12 3"/></svg>',
+  checkCircle: '<svg class="ic" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0"/><path d="m9 12l2 2l4-4"/></g></svg>',
+  plus: '<svg class="ic" viewBox="0 0 24 24"><path d="M12.0684 2.03418C12.5654 2.03421 12.9687 2.43755 12.9688 2.93457V11.0996H21.0654C21.5625 11.0996 21.9658 11.503 21.9658 12C21.9658 12.497 21.5625 12.9004 21.0654 12.9004H12.9688V21.0654C12.9687 21.5624 12.5654 21.9658 12.0684 21.9658C11.5713 21.9658 11.168 21.5625 11.168 21.0654V12.9004H2.93457C2.43751 12.9004 2.03418 12.4971 2.03418 12C2.03418 11.5029 2.43751 11.0996 2.93457 11.0996H11.168V2.93457C11.168 2.43753 11.5713 2.03418 12.0684 2.03418Z"/></svg>',
+  copy: '<svg class="ic" viewBox="0 0 24 24"><path fill-rule="evenodd" clip-rule="evenodd" d="M17 7.09961C19.1539 7.09961 20.9004 8.84609 20.9004 11V17C20.9004 19.1539 19.1539 20.9004 17 20.9004H11C8.84609 20.9004 7.09961 19.1539 7.09961 17V11C7.09961 8.84609 8.84609 7.09961 11 7.09961H17ZM11 8.90039C9.8402 8.90039 8.90039 9.8402 8.90039 11V17C8.90039 18.1598 9.8402 19.0996 11 19.0996H17C18.1598 19.0996 19.0996 18.1598 19.0996 17V11C19.0996 9.8402 18.1598 8.90039 17 8.90039H11Z"/><path d="M13 3.09961C14.4447 3.09961 15.705 3.88644 16.3779 5.0498C16.6265 5.47999 16.4789 6.03049 16.0488 6.2793C15.6186 6.52781 15.0681 6.38029 14.8193 5.9502C14.4548 5.32041 13.776 4.90039 13 4.90039H7C5.8402 4.90039 4.90039 5.8402 4.90039 7V13C4.90039 13.776 5.32041 14.4548 5.9502 14.8193C6.38029 15.0681 6.52781 15.6186 6.2793 16.0488C6.03049 16.4789 5.47999 16.6265 5.0498 16.3779C3.88644 15.705 3.09961 14.4447 3.09961 13V7C3.09961 4.84609 4.84609 3.09961 7 3.09961H13Z"/></svg>',
+  pin: '<svg class="ic" viewBox="0 0 24 24"><path d="m13.827 1.69l8.486 8.485l-1.415 1.414l-.707-.707l-4.242 4.243l-.707 3.536l-1.415 1.414l-4.242-4.243l-4.95 4.95l-1.414-1.414l4.95-4.95l-4.243-4.243l1.414-1.414l3.536-.707l4.242-4.243l-.707-.707zm.707 3.536l-4.67 4.67l-2.822.565l6.5 6.5l.564-2.822l4.671-4.67z"/></svg>',
+  check: '<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10.875" stroke="currentColor" stroke-width="2.25" fill="none"/><path d="M7.125 12.6L10.65 16.125L17.025 8.85" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>',
+  undo: '<svg class="ic" viewBox="0 0 24 24"><path d="M7.36336 3.3634C7.71483 3.01192 8.28533 3.01192 8.6368 3.3634C8.98817 3.71488 8.98824 4.2854 8.6368 4.63683L6.17391 7.09972H15.0001C18.2585 7.09977 20.9005 9.74166 20.9005 13.0001C20.9004 16.2585 18.2585 18.9005 15.0001 18.9005H7.00008C6.50307 18.9005 6.09976 18.4971 6.09969 18.0001C6.09969 17.5031 6.50302 17.0997 7.00008 17.0997H15.0001C17.2644 17.0997 19.0996 15.2644 19.0997 13.0001C19.0997 10.7358 17.2644 8.90055 15.0001 8.90051H6.17391L8.6368 11.3634L8.69832 11.4318C8.98668 11.7853 8.96632 12.3073 8.6368 12.6368C8.30728 12.9663 7.78521 12.9867 7.43172 12.6984L7.36336 12.6368L3.36336 8.63683C3.33098 8.60445 3.30286 8.56908 3.27645 8.53332C3.25597 8.50559 3.23607 8.47741 3.21883 8.44738C3.20492 8.42311 3.19221 8.39837 3.18074 8.37316C3.1764 8.36365 3.17109 8.35453 3.16707 8.34484C3.1627 8.33427 3.1593 8.32331 3.15535 8.31261C3.12946 8.24274 3.11237 8.16872 3.10457 8.09191C3.09258 7.97426 3.10262 7.85446 3.1368 7.74035C3.14281 7.72035 3.15094 7.70114 3.15828 7.68176C3.16165 7.67283 3.16341 7.66325 3.16707 7.65441C3.17216 7.64216 3.17806 7.63025 3.18367 7.61828C3.19055 7.60356 3.19744 7.58874 3.20516 7.57433C3.24709 7.49624 3.3012 7.42556 3.36336 7.3634L7.36336 3.3634Z"/></svg>',
+  folder: '<svg class="ic" viewBox="0 0 24 24"><path d="M9.2373 3.7002C10.4169 3.7002 11.5297 4.24779 12.249 5.18262L12.4424 5.43359H18C20.0987 5.43359 21.7998 7.13472 21.7998 9.2334V16.5C21.7998 18.5987 20.0987 20.2998 18 20.2998H6C3.90132 20.2998 2.2002 18.5987 2.2002 16.5V7.5C2.2002 5.40132 3.90132 3.7002 6 3.7002H9.2373ZM6 5.5C4.89543 5.5 4 6.39543 4 7.5V16.5C4 17.6046 4.89543 18.5 6 18.5H18C19.0357 18.5 19.887 17.7128 19.9893 16.7041L20 16.5V9.2334C20 8.19775 19.2128 7.34641 18.2041 7.24414L18 7.2334H12.0479L11.9326 7.22656C11.666 7.19561 11.4205 7.05812 11.2549 6.84277L10.8223 6.28027C10.4437 5.78834 9.85808 5.5 9.2373 5.5H6ZM16 9.59961C16.4971 9.59961 16.9004 10.0029 16.9004 10.5C16.9004 10.9971 16.4971 11.4004 16 11.4004H8C7.50294 11.4004 7.09961 10.9971 7.09961 10.5C7.09961 10.0029 7.50294 9.59961 8 9.59961H16Z"/></svg>',
+  folderOpen: '<svg class="ic" viewBox="0 0 24 24"><path d="M18.3623 9.99976L18.209 8.48999C18.2031 8.43161 18.2004 8.37289 18.2002 8.31421C18.1988 8.31196 18.1956 8.30842 18.1904 8.30347C18.1718 8.28559 18.1302 8.26245 18.0713 8.26245H11C10.261 8.26245 9.59753 7.81016 9.32617 7.1228L8.9082 6.06421C8.88101 5.9953 8.85737 5.92501 8.83887 5.85327C8.83778 5.85099 8.833 5.84268 8.81836 5.83179C8.79454 5.81475 8.7549 5.79939 8.70605 5.80054H3.92871C3.86986 5.80054 3.82825 5.82368 3.80957 5.84155C3.80816 5.8429 3.80675 5.84428 3.80566 5.84546L4.47559 14.0955L3.62109 17.5154L5.12109 11.5154C5.34367 10.6251 6.1438 9.99977 7.06152 9.99976H18.3623ZM7.06152 11.7996C6.96976 11.7996 6.88944 11.8629 6.86719 11.9519L5.36719 17.9519C5.33598 18.078 5.43158 18.1999 5.56152 18.2H19.4385C19.5302 18.1999 19.6106 18.1376 19.6328 18.0486L21.1328 12.0486C21.1644 11.9224 21.0686 11.7996 20.9385 11.7996H7.06152ZM20.9385 9.99976C22.2396 9.99977 23.1945 11.2228 22.8789 12.4851L21.3789 18.4851C21.1563 19.3754 20.3562 19.9997 19.4385 19.9998H4.92871C4.41722 19.9998 3.92613 19.8059 3.56445 19.4597C3.20281 19.1135 3.00004 18.6436 3 18.1541L2 5.84644C2.00006 5.35711 2.20311 4.88786 2.56445 4.54175C2.92613 4.19554 3.41722 4.00073 3.92871 4.00073H8.66406C9.10133 3.99051 9.5296 4.1225 9.87793 4.37573C10.2285 4.63118 10.4767 4.99457 10.582 5.40405L11 6.46167H18.0713C18.5828 6.46167 19.0739 6.65648 19.4355 7.00269C19.7971 7.34888 20 7.81883 20 8.30835L20.1719 9.99976H20.9385Z"/></svg>',
+  chevronDown: '<svg class="ic" viewBox="0 0 24 24"><path fill-rule="evenodd" clip-rule="evenodd" d="M11.3912 16.7134C11.743 17.0627 12.3111 17.0617 12.6617 16.7111L19.6364 9.73641C19.9878 9.38494 19.9878 8.81509 19.6364 8.46362C19.2849 8.11215 18.7151 8.11215 18.3636 8.46362L12.023 14.8042L5.63407 8.46132C5.28133 8.11112 4.71149 8.11318 4.36129 8.46592C4.01109 8.81866 4.01314 9.3885 4.36588 9.73871L11.3912 16.7134Z"/></svg>',
+  dots: '<svg class="ic" viewBox="0 0 24 24"><path d="M6 12C6 12.8283 5.32834 13.5 4.5 13.5C3.67166 13.5 3 12.8283 3 12C3 11.1717 3.67166 10.5 4.5 10.5C5.32834 10.5 6 11.1717 6 12Z"/><path d="M13.5 12C13.5 12.8283 12.8283 13.5 12 13.5C11.1717 13.5 10.5 12.8283 10.5 12C10.5 11.1717 11.1717 10.5 12 10.5C12.8283 10.5 13.5 11.1717 13.5 12Z"/><path d="M19.5002 13.5C20.3287 13.5 21 12.8287 21 12.0002C21 11.1718 20.3287 10.5 19.5002 10.5C18.6718 10.5 18 11.1718 18 12.0002C18 12.8287 18.6718 13.5 19.5002 13.5Z"/></svg>',
+  pr: '<svg class="ic" viewBox="0 0 24 24"><path d="M15 5h2a2 2 0 0 1 2 2v8.17a3.001 3.001 0 1 1-2 0V7h-2v3l-4.5-4L15 2zM5 8.83a3.001 3.001 0 1 1 2 0v6.34a3.001 3.001 0 1 1-2 0zM6 7a1 1 0 1 0 0-2a1 1 0 0 0 0 2m0 12a1 1 0 1 0 0-2a1 1 0 0 0 0 2m12 0a1 1 0 1 0 0-2a1 1 0 0 0 0 2"/></svg>',
+  fork: '<svg class="ic" viewBox="0 0 24 24"><path d="M6 5a1 1 0 1 0 0 2a1 1 0 0 0 0-2M3 6a3 3 0 1 1 4 2.83V9a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-.17a3.001 3.001 0 1 1 2 0V9a4 4 0 0 1-4 4h-2v2.17a3.001 3.001 0 1 1-2 0V13H9a4 4 0 0 1-4-4v-.17A3 3 0 0 1 3 6m15-1a1 1 0 1 0 0 2a1 1 0 0 0 0-2m-6 12a1 1 0 1 0 0 2a1 1 0 0 0 0-2"/></svg>',
+  pencil: '<svg class="ic" viewBox="0 0 24 24"><path fill-rule="evenodd" clip-rule="evenodd" d="M18.0176 4.89998C17.7305 4.89998 17.4552 5.014 17.2522 5.217L6.35429 16.1149C5.957 16.5122 5.67517 17.01 5.53889 17.5551L5.23691 18.763L6.44486 18.4611C6.98994 18.3248 7.48773 18.0429 7.88502 17.6456L18.783 6.74773C18.8834 6.64728 18.9631 6.52797 19.0176 6.39658C19.072 6.26517 19.1 6.12441 19.1 5.98236C19.1 5.84031 19.072 5.69956 19.0176 5.56815C18.9631 5.43676 18.8834 5.31745 18.783 5.217C18.6825 5.11649 18.5631 5.03676 18.4318 4.98237C18.3005 4.92798 18.1597 4.89998 18.0176 4.89998ZM15.9794 3.94421C16.52 3.40366 17.2531 3.09998 18.0176 3.09998C18.3961 3.09998 18.7709 3.17452 19.1207 3.31938C19.4704 3.46424 19.7881 3.67656 20.0558 3.94421C20.3235 4.21192 20.5357 4.52969 20.6805 4.87932C20.8254 5.22895 20.9 5.60375 20.9 5.98236C20.9 6.36098 20.8254 6.73578 20.6805 7.08541C20.5357 7.43504 20.3235 7.75281 20.0558 8.02052L17.6385 10.4378L9.15781 18.9184C8.52984 19.5464 7.74301 19.9919 6.88142 20.2073L4.21828 20.8731C3.91158 20.9498 3.58714 20.8599 3.3636 20.6364C3.14006 20.4128 3.05019 20.0884 3.12686 19.7817L3.79264 17.1185C4.00803 16.257 4.45351 15.4701 5.0815 14.8421L15.9794 3.94421Z"/></svg>',
+  download: '<svg class="ic" viewBox="0 0 24 24"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2.90002C12.4971 2.90002 12.9 3.30297 12.9 3.80002V12.2939L15.8081 9.38585C16.1595 9.03438 16.7294 9.03438 17.0808 9.38585C17.4323 9.73732 17.4323 10.3072 17.0808 10.6586L12.6364 15.1031C12.4676 15.2719 12.2387 15.3667 12 15.3667C11.7613 15.3667 11.5324 15.2719 11.3636 15.1031L6.91917 10.6586C6.5677 10.3072 6.5677 9.73732 6.91917 9.38585C7.27064 9.03438 7.84049 9.03438 8.19196 9.38585L11.1 12.2939V3.80002C11.1 3.30297 11.503 2.90002 12 2.90002ZM4.00001 13.5874C4.49706 13.5874 4.90001 13.9903 4.90001 14.4874V18.043C4.90001 18.2758 4.99249 18.499 5.1571 18.6636C5.32172 18.8282 5.54498 18.9207 5.77778 18.9207H18.2222C18.455 18.9207 18.6783 18.8283 18.8429 18.6636C19.0075 18.499 19.1 18.2758 19.1 18.043V14.4874C19.1 13.9903 19.5029 13.5874 20 13.5874C20.4971 13.5874 20.9 13.9903 20.9 14.4874V18.043C20.9 18.7531 20.6179 19.4342 20.1157 19.9364C19.6135 20.4386 18.9324 20.7207 18.2222 20.7207H5.77778C5.06759 20.7207 4.38649 20.4386 3.88431 19.9364C3.38213 19.4342 3.10001 18.7531 3.10001 14.4874C3.10001 13.9903 3.50295 13.5874 4.00001 13.5874Z"/></svg>',
+  spinner: '<span class="spinner"><svg viewBox="0 0 24 24"><circle class="track" cx="12" cy="12" r="9"/><circle class="arc" cx="12" cy="12" r="9"/></svg></span>',
+};
+
+/* ============================ 演示数据 ============================ */
+const INITIAL_WS = [
+  { id: 'ws1', name: 'code-app', root: '~/code/code-app' },
+  { id: 'ws2', name: 'kimi-code', root: '~/code/kimi-code' },
+  { id: 'ws3', name: 'dotfiles', root: '~/code/dotfiles' },
+];
+let WS;
+const INITIAL = [
+  { id: 's1', ws: 'ws1', title: '✨ 侧边栏状态标签页设计', cwd: 'code-app', status: 'open', time: '现在', busy: true, pinned: true, pr: { n: 413, state: 'open' } },
+  { id: 's2', ws: 'ws1', title: '修复 flat 列表分页闪烁', cwd: 'code-app', status: 'open', time: '12m', awaiting: 'approval' },
+  { id: 's3', ws: 'ws1', title: 'release 0.0.16 发版检查', cwd: 'code-app', status: 'open', time: '1h', pinned: true, pr: { n: 407, state: 'merged' } },
+  { id: 's4', ws: 'ws2', title: '重构 useWorkspaceState 组合式函数', cwd: 'kimi-code', status: 'open', time: '3h', awaiting: 'question' },
+  { id: 's5', ws: 'ws2', title: 'agent-browser 技能文档补全', cwd: 'kimi-code', status: 'open', time: '昨天', unread: true },
+  { id: 's6', ws: 'ws2', title: '同步 web 产物到 dist-web', cwd: 'kimi-code', status: 'open', time: '2d' },
+  { id: 's7', ws: 'ws1', title: '托盘菜单双语文案', cwd: 'code-app', status: 'done', doneTime: '今天 10:24', pr: { n: 398, state: 'merged' } },
+  { id: 's8', ws: 'ws1', title: '更新弹窗 release notes 翻译', cwd: 'code-app', status: 'done', doneTime: '昨天' },
+  { id: 's9', ws: 'ws2', title: '修复 CJK 输入法回车误提交', cwd: 'kimi-code', status: 'done', doneTime: '周一' },
+  { id: 's10', ws: 'ws1', title: '桌面端图标资源重建', cwd: 'code-app', status: 'done', doneTime: '上周' },
+];
+const FULL_TIME = {
+  s1: '2026-08-12 14:03', s2: '2026-08-12 13:48', s3: '2026-08-12 12:55',
+  s4: '2026-08-12 11:20', s5: '2026-08-11 18:42', s6: '2026-08-10 16:07',
+  s7: '2026-08-12 10:24', s8: '2026-08-11 17:31', s9: '2026-08-10 15:02', s10: '2026-08-06 11:19',
+};
+
+let sessions, activeId, tab, listMode;
+function resetState() {
+  sessions = JSON.parse(JSON.stringify(INITIAL));
+  WS = JSON.parse(JSON.stringify(INITIAL_WS));
+  activeId = 's1';
+  tab = 'open';
+  listMode = 'flat';
+}
+resetState();
+
+/* ============================ 渲染 ============================ */
+const $ = (sel) => document.querySelector(sel);
+const wsName = (id) => (WS.find((w) => w.id === id) || { name: id }).name;
+const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+function tagHtml(s) {
+  // 图标化（GitHub issue 列表语言）：Open = 圈点（绿），Done = 圈勾（紫）
+  return s.status === 'done'
+    ? `<span class="st-ico st-ico--done" title="已完成">${IC.checkCircle}</span>`
+    : `<span class="st-ico st-ico--open" title="进行中">${IC.recordCircle}</span>`;
+}
+
+/* 行内第一行右侧的 rest 状态（所有行共用）：badge > spinner/dot > time */
+function statusCluster(s) {
+  if (s.status === 'done') return `<span class="ts">${esc(s.doneTime)}</span>`;
+  if (s.awaiting === 'approval') return '<span class="ui-badge ui-badge--warning">批准</span>';
+  if (s.awaiting === 'question') return '<span class="ui-badge ui-badge--info">回答</span>';
+  if (s.busy) return `<span class="st">${IC.spinner}</span>`;
+  if (s.unread) return '<span class="st"><span class="unread-dot"></span></span>';
+  return `<span class="ts">${esc(s.status === 'done' ? s.doneTime : s.time)}</span>`;
+}
+
+/* hover 操作簇：进行中 = pin + 完成；已完成 = 重新打开 */
+function hoverActions(s) {
+  if (s.status === 'done') {
+    return `<span class="ha"><button class="ib act-reopen" title="重新打开" data-id="${s.id}">${IC.undo}</button></span>`;
+  }
+  return `<span class="ha">
+    <button class="ib act-pin" title="${s.pinned ? '取消置顶' : '置顶'}" data-id="${s.id}">${IC.pin}</button>
+    <button class="ib act-done" title="标记为完成" data-id="${s.id}">${IC.checkCircle}</button>
+  </span>`;
+}
+
+/* flat 行（进行中 / 已完成 / 置顶区共用）：tag + 标题 + 右侧状态 + 第二行 cwd/PR */
+function flatRow(s) {
+  const pr = s.pr
+    ? `<button class="pr pr--${s.pr.state}" title="PR #${s.pr.n}">${IC.pr}<span>#${s.pr.n}</span></button>`
+    : '';
+  return `<div class="se flat ${s.id === activeId ? 'on' : ''}" data-id="${s.id}">
+    <div class="row">
+      <div class="left">${tagHtml(s)}<span class="t">${esc(s.title)}</span></div>
+      <span class="act">${statusCluster(s)}${hoverActions(s)}</span>
+    </div>
+    <div class="sub"><svg class="ic sub-icon" viewBox="0 0 24 24"><path d="M9.2373 3.7002C10.4169 3.7002 11.5297 4.24779 12.249 5.18262L12.4424 5.43359H18C20.0987 5.43359 21.7998 7.13472 21.7998 9.2334V16.5C21.7998 18.5987 20.0987 20.2998 18 20.2998H6C3.90132 20.2998 2.2002 18.5987 2.2002 16.5V7.5C2.2002 5.40132 3.90132 3.7002 6 3.7002H9.2373ZM6 5.5C4.89543 5.5 4 6.39543 4 7.5V16.5C4 17.6046 4.89543 18.5 6 18.5H18C19.0357 18.5 19.887 17.7128 19.9893 16.7041L20 16.5V9.2334C20 8.19775 19.2128 7.34641 18.2041 7.24414L18 7.2334H12.0479L11.9326 7.22656C11.666 7.19561 11.4205 7.05812 11.2549 6.84277L10.8223 6.28027C10.4437 5.78834 9.85808 5.5 9.2373 5.5H6Z"/></svg><span class="sub-text">${esc(s.cwd)}</span>${pr}</div>
+  </div>`;
+}
+
+/* 分组行（tab 内的分组形态）：gutter 状态图标（与文件夹 icon 对齐）+ 标题 + 右侧状态簇（与平铺一致） */
+function groupedRow(s) {
+  return `<div class="se ${s.id === activeId ? 'on' : ''}" data-id="${s.id}">
+    <div class="row">
+      <span class="lead">${tagHtml(s)}</span>
+      <div class="left"><span class="t">${esc(s.title)}</span></div>
+      <span class="act">${statusCluster(s)}${hoverActions(s)}</span>
+    </div>
+  </div>`;
+}
+
+/* 按 workspace 分组（进行中/已完成 tab 的分组形态共用；空目录不显示） */
+function groupedList(list) {
+  return WS.map((w) => ({ w, rows: list.filter((s) => s.ws === w.id) }))
+    .filter((g) => g.rows.length > 0)
+    .map(
+      ({ w, rows }) => `
+    <div class="group">
+      <div class="gh"><div class="gh-top">
+        <span class="gh-folder">${IC.folderOpen}</span>
+        <span class="gh-name">${esc(w.name)}</span>
+        <span class="gh-count">${rows.length}</span>
+      </div></div>
+      <div class="group-sessions">${rows.map(groupedRow).join('')}</div>
+    </div>`,
+    )
+    .join('');
+}
+
+function renderOpen() {
+  const pinned = sessions.filter((s) => s.status === 'open' && !s.draft && s.pinned);
+  const rest = sessions.filter((s) => s.status === 'open' && !s.draft && !s.pinned);
+  const pinnedBlock = pinned.length
+    ? `<div class="list-block" style="margin-top:0">
+      <div class="sec-label"><span>置顶</span></div>
+      ${pinned.map(flatRow).join('')}
+    </div>`
+    : '';
+  if (listMode === 'grouped') {
+    $('#tab-open').innerHTML = pinnedBlock + groupedList(rest);
+    return;
+  }
+  $('#tab-open').innerHTML = pinnedBlock + `<div class="list-block">${rest.map(flatRow).join('')}
+    <div class="show-more-row"><button class="show-more" type="button"><span class="show-more-label">显示更多</span>${IC.chevronDown}</button></div>
+  </div>`;
+}
+
+function renderDone() {
+  const done = sessions.filter((s) => s.status === 'done');
+  if (!done.length) {
+    $('#tab-done').innerHTML = '<div class="group-empty" style="padding:24px 12px;text-align:center">还没有已完成的会话</div>';
+    return;
+  }
+  $('#tab-done').innerHTML =
+    listMode === 'grouped'
+      ? groupedList(done)
+      : `<div class="list-block" style="margin-top:0">${done.map(flatRow).join('')}</div>`;
+}
+
+/* 工作空间 tab：纯目录列表（不罗列 session），点击目录即在该工作空间新建会话；
+   当前草稿/会话所在目录带选中高亮。 */
+function renderWs() {
+  const activeWs = (sessions.find((s) => s.id === activeId) || {}).ws;
+  $('#tab-ws').innerHTML = `<div class="list-block" style="margin-top:0">${WS.map((w) => `
+    <div class="se flat ws-row ${w.id === activeWs ? 'on' : ''}" data-ws="${w.id}" title="点击在「${esc(w.name)}」中新建会话">
+      <div class="row">
+        <div class="left"><span class="ws-ic">${IC.folder}</span><span class="t">${esc(w.name)}</span></div>
+        <span class="act"><span class="ha"><button class="ib act-ws-menu" title="工作空间选项" data-ws="${w.id}">${IC.dots}</button></span></span>
+      </div>
+      <div class="sub"><span class="sub-text">${esc(w.root)}</span></div>
+    </div>`).join('')}
+  </div>`;
+}
+
+/* 进行中 tab 圆点：聚合所有进行中会话的最高优先级状态
+   （待审批 > 待回答 > 异常中止 > 跑完未读；仅在运行/空闲时不显示）。 */
+const ATTENTION_COLOR = {
+  approval: 'var(--color-warning)',
+  question: 'var(--color-info)',
+  aborted: 'var(--color-danger)',
+  unread: 'var(--color-success)',
+};
+function renderOpenDot() {
+  const open = sessions.filter((s) => s.status === 'open' && !s.draft);
+  let level = null;
+  for (const s of open) {
+    if (s.awaiting === 'approval') { level = 'approval'; break; }
+    if (s.awaiting === 'question') level = 'question';
+    else if (s.aborted && level !== 'question') level = 'aborted';
+    else if (s.unread && level === null) level = 'unread';
+  }
+  const dot = $('#dot-open');
+  dot.hidden = level === null;
+  if (level) dot.style.background = ATTENTION_COLOR[level];
+}
+
+const PR_LABEL = { open: '开放', merged: '已合并', closed: '已关闭' };
+function renderHeader() {
+  const s = sessions.find((x) => x.id === activeId);
+  if (!s) return;
+  const draft = Boolean(s.draft);
+  $('#hd-ws').textContent = wsName(s.ws);
+  $('#hd-sep').hidden = draft;
+  $('#hd-title').hidden = draft;
+  $('#hd-title').textContent = s.title;
+  $('#hd-kebab').hidden = draft;
+  const pr = $('#hd-pr');
+  if (s.pr && !draft) {
+    pr.hidden = false;
+    pr.className = `ch-pr pr-${s.pr.state}`;
+    $('#hd-pr-text').textContent = `PR #${s.pr.n} · ${PR_LABEL[s.pr.state]}`;
+  } else {
+    pr.hidden = true;
+  }
+  const done = s.status === 'done';
+  $('#hd-complete').hidden = done || draft;
+  $('#hd-done-pill').hidden = !done || draft;
+  $('#hd-reopen').hidden = !done || draft;
+}
+
+/* 正文区三态：草稿（工作空间主页）/ 刚发出首条消息（动态 transcript）/ 静态 mock */
+function renderMain() {
+  const s = sessions.find((x) => x.id === activeId);
+  const isDraft = Boolean(s && s.draft);
+  const isLive = Boolean(s && s.firstMessage);
+  $('#empty-state').hidden = !isDraft;
+  $('#composer-dock').hidden = isDraft;
+  $('#transcript').hidden = isDraft || isLive;
+  $('#live-transcript').hidden = isDraft || !isLive;
+  if (isDraft) renderWsHome(s);
+  if (isLive) $('#live-bubble').textContent = s.firstMessage;
+}
+
+/* 主页近期会话行：单行（tag + 标题 + 状态/hover 操作），无 cwd 第二行 */
+function homeRow(s) {
+  return `<div class="se ${s.id === activeId ? 'on' : ''}" data-id="${s.id}">
+    <div class="row">
+      <div class="left">${tagHtml(s)}<span class="t">${esc(s.title)}</span></div>
+      <span class="act">${statusCluster(s)}${hoverActions(s)}</span>
+    </div>
+  </div>`;
+}
+
+/* 工作空间主页：环境条 + 该目录近期会话（进行中在前，已完成在后，封顶 6 条） */
+function renderWsHome(s) {
+  const w = WS.find((x) => x.id === s.ws);
+  if (!w) return;
+  $('#es-ws-title').textContent = w.name;
+  $('#es-ws-path').textContent = w.root;
+  const rows = sessions.filter((x) => x.ws === w.id && !x.draft);
+  const shown = [
+    ...rows.filter((x) => x.status === 'open'),
+    ...rows.filter((x) => x.status === 'done'),
+  ].slice(0, 6);
+  $('#ws-recent').hidden = shown.length === 0;
+  $('#es-recent').innerHTML = shown.map(homeRow).join('');
+}
+
+function renderAll() {
+  renderOpen(); renderDone(); renderWs(); renderOpenDot(); renderHeader(); renderMain();
+  moveIndicator();
+}
+
+/* ============================ 标签页 ============================ */
+function moveIndicator() {
+  const on = document.querySelector('.seg-item.is-on');
+  const ind = $('#seg-ind');
+  if (!on) return;
+  ind.style.width = on.offsetWidth + 'px';
+  ind.style.height = on.offsetHeight + 'px';
+  ind.style.transform = `translate(${on.offsetLeft}px, ${on.offsetTop}px)`;
+}
+function setTab(next) {
+  tab = next;
+  document.querySelectorAll('.seg-item').forEach((b) => b.classList.toggle('is-on', b.dataset.tab === next));
+  $('#tab-open').hidden = next !== 'open';
+  $('#tab-done').hidden = next !== 'done';
+  $('#tab-ws').hidden = next !== 'ws';
+  // 列表头按 tab 换内容：会话 tab 给平铺/分组开关；工作空间 tab 给新建图标。
+  const isWs = next === 'ws';
+  $('#list-head-title').textContent = isWs ? '工作空间' : next === 'done' ? '已完成' : '会话';
+  document.querySelectorAll('.list-mode').forEach((b) => { b.hidden = isWs; });
+  $('#ws-add-btn').hidden = !isWs;
+  moveIndicator();
+}
+$('#seg').addEventListener('click', (e) => {
+  const btn = e.target.closest('.seg-item');
+  if (btn) setTab(btn.dataset.tab);
+});
+window.addEventListener('resize', moveIndicator);
+
+/* 平铺 / 分组展示切换（作用于进行中、已完成两个 tab） */
+document.querySelectorAll('.list-mode').forEach((b) =>
+  b.addEventListener('click', () => {
+    listMode = b.dataset.mode;
+    document.querySelectorAll('.list-mode').forEach((x) => x.classList.toggle('is-on', x === b));
+    renderOpen();
+    renderDone();
+  }),
+);
+/* 工作空间 tab 列表头的新建工作区图标 */
+$('#ws-add-btn').addEventListener('click', addWorkspace);
+
+/* ============================ 完成 / 重新打开 ============================ */
+let toastTimer = null;
+function showToast(html, onUndo) {
+  const toast = $('#toast');
+  $('#toast-msg').innerHTML = html;
+  toast.hidden = false;
+  toast.classList.remove('hide');
+  clearTimeout(toastTimer);
+  const dismiss = () => {
+    toast.classList.add('hide');
+    setTimeout(() => { toast.hidden = true; }, 200);
+  };
+  toastTimer = setTimeout(dismiss, 4500);
+  $('#toast-undo').onclick = () => { clearTimeout(toastTimer); dismiss(); onUndo && onUndo(); };
+  $('#toast-close').onclick = () => { clearTimeout(toastTimer); dismiss(); };
+}
+
+function completeSession(id, { quiet = false } = {}) {
+  const s = sessions.find((x) => x.id === id);
+  if (!s || s.status === 'done' || s.draft) return;
+  s.status = 'done';
+  s.doneTime = '刚刚';
+  s.pinned = false; // 完成即自动取消置顶（见说明区）
+  renderAll();
+  if (!quiet) {
+    showToast(`<b>已完成</b>「${esc(s.title)}」`, () => reopenSession(id, { quiet: true }));
+  }
+}
+function reopenSession(id, { quiet = false } = {}) {
+  const s = sessions.find((x) => x.id === id);
+  if (!s || s.status === 'open') return;
+  s.status = 'open';
+  s.time = '刚刚';
+  delete s.doneTime;
+  renderAll();
+  if (!quiet) showToast(`<b>已重新打开</b>「${esc(s.title)}」`, () => completeSession(id, { quiet: true }));
+}
+
+/* ============================ 行交互（事件委托） ============================ */
+function onListClick(e) {
+  /* 工作空间 tab：⋯ 菜单 / 目录行点击（点击 = 新建会话）/ 添加工作空间 */
+  const wsMenuBtn = e.target.closest('.act-ws-menu');
+  if (wsMenuBtn) {
+    e.stopPropagation();
+    const r = wsMenuBtn.getBoundingClientRect();
+    openWsMenu(wsMenuBtn.dataset.ws, r.left, r.bottom + 4);
+    return;
+  }
+  const wsRow = e.target.closest('.ws-row');
+  if (wsRow) { createInWorkspace(wsRow.dataset.ws); return; }
+  const doneBtn = e.target.closest('.act-done');
+  if (doneBtn) { e.stopPropagation(); completeSession(doneBtn.dataset.id); return; }
+  const reopenBtn = e.target.closest('.act-reopen');
+  if (reopenBtn) { e.stopPropagation(); reopenSession(reopenBtn.dataset.id); return; }
+  const pinBtn = e.target.closest('.act-pin');
+  if (pinBtn) {
+    e.stopPropagation();
+    const s = sessions.find((x) => x.id === pinBtn.dataset.id);
+    if (s) { s.pinned = !s.pinned; renderAll(); }
+    return;
+  }
+  const row = e.target.closest('.se');
+  if (row) { activeId = row.dataset.id; renderAll(); }
+}
+$('#sessions').addEventListener('click', onListClick);
+$('#es-recent').addEventListener('click', onListClick);
+
+/* ============================ 工作空间 tab ============================ */
+let newCounter = 0;
+function createInWorkspace(wsId) {
+  const w = WS.find((x) => x.id === wsId);
+  if (!w) return;
+  const id = 'n' + ++newCounter;
+  // 草稿：不进任何列表/计数，停留在当前 tab；发送首条消息后才算「进行中」。
+  sessions.unshift({ id, ws: wsId, title: '', cwd: w.name, status: 'open', time: '刚刚', draft: true });
+  activeId = id;
+  renderAll();
+  $('#es-input').focus();
+}
+function addWorkspace() {
+  const n = WS.length + 1;
+  WS.push({ id: 'wsx' + n, name: 'untitled-' + n, root: '~/code/untitled-' + n });
+  renderWs();
+}
+/* 目录行的 ⋯ / 右键菜单：复制路径 / 重命名 / 移除工作空间 */
+function openWsMenu(wsId, x, y) {
+  const w = WS.find((v) => v.id === wsId);
+  if (!w) return;
+  ctx.innerHTML = `
+    <button class="mi" data-act="copy">${IC.copy}<span>复制路径</span></button>
+    <button class="mi" data-act="rename">${IC.pencil}<span>重命名</span></button>
+    <div class="mi-sep"></div>
+    <button class="mi mi--danger" data-act="remove"><span>移除工作空间</span></button>`;
+  ctx.hidden = false;
+  const margin = 8;
+  const mw = ctx.offsetWidth, mh = ctx.offsetHeight;
+  let top = y, left = x;
+  if (top + mh > window.innerHeight - margin) top = Math.max(margin, y - mh);
+  if (left + mw > window.innerWidth - margin) left = Math.max(margin, x - mw);
+  ctx.style.top = top + 'px';
+  ctx.style.left = left + 'px';
+  ctx.querySelectorAll('.mi').forEach((mi) => {
+    mi.addEventListener('click', () => {
+      closeCtx();
+      if (mi.dataset.act === 'copy' && navigator.clipboard) navigator.clipboard.writeText(w.root).catch(() => {});
+      if (mi.dataset.act === 'remove') { WS = WS.filter((v) => v.id !== wsId); renderWs(); }
+    });
+  });
+}
+
+/* ============================ 右键菜单 ============================ */
+const ctx = $('#ctx');
+function closeCtx() { ctx.hidden = true; }
+document.addEventListener('mousedown', (e) => { if (!ctx.contains(e.target)) closeCtx(); });
+window.addEventListener('resize', closeCtx);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCtx(); });
+
+function onListContextMenu(e) {
+  const wsRow = e.target.closest('.ws-row');
+  if (wsRow) { e.preventDefault(); openWsMenu(wsRow.dataset.ws, e.clientX, e.clientY); return; }
+  const row = e.target.closest('.se');
+  if (!row) return;
+  e.preventDefault();
+  const s = sessions.find((x) => x.id === row.dataset.id);
+  if (!s) return;
+  const done = s.status === 'done';
+  ctx.innerHTML = `
+    ${done ? '' : `<button class="mi" data-act="pin">${IC.pin}<span>${s.pinned ? '取消置顶' : '置顶'}</span></button>`}
+    <button class="mi" data-act="rename">${IC.pencil}<span>重命名</span></button>
+    <button class="mi" data-act="fork">${IC.fork}<span>Fork</span></button>
+    <button class="mi" data-act="export">${IC.download}<span>导出</span></button>
+    <div class="mi-sep"></div>
+    ${done
+      ? `<button class="mi" data-act="reopen">${IC.undo}<span>重新打开</span></button>`
+      : `<button class="mi" data-act="complete">${IC.checkCircle}<span>标记为完成</span></button>`}
+    <div class="mi-sep"></div>
+    <div class="mi-time">${FULL_TIME[s.id] || ''}</div>`;
+  ctx.hidden = false;
+  /* 锚定到光标，越界翻转（对齐 SessionRow positionMenuAtCursor） */
+  const margin = 8;
+  const mw = ctx.offsetWidth, mh = ctx.offsetHeight;
+  let top = e.clientY, left = e.clientX;
+  if (top + mh > window.innerHeight - margin) top = Math.max(margin, e.clientY - mh);
+  if (left + mw > window.innerWidth - margin) left = Math.max(margin, e.clientX - mw);
+  ctx.style.top = top + 'px';
+  ctx.style.left = left + 'px';
+  ctx.querySelectorAll('.mi').forEach((mi) => {
+    mi.addEventListener('click', () => {
+      const act = mi.dataset.act;
+      closeCtx();
+      if (act === 'complete') completeSession(s.id);
+      else if (act === 'reopen') reopenSession(s.id);
+      else if (act === 'pin') { s.pinned = !s.pinned; renderAll(); }
+    });
+  });
+}
+$('#sessions').addEventListener('contextmenu', onListContextMenu);
+$('#es-recent').addEventListener('contextmenu', onListContextMenu);
+
+/* ============================ Header 按钮 ============================ */
+$('#hd-complete').addEventListener('click', () => completeSession(activeId));
+$('#hd-reopen').addEventListener('click', () => reopenSession(activeId));
+
+/* ============================ 新会话草稿 ============================ */
+/* 侧栏「新会话」：在当前会话所属工作空间起草稿（行为同点目录）。 */
+$('#btn-new').addEventListener('click', () => {
+  const cur = sessions.find((x) => x.id === activeId);
+  createInWorkspace(cur ? cur.ws : WS[0].id);
+});
+/* 空状态 composer：有内容时发送键点亮；Enter / 点击发送 → 草稿转正，
+   进入「进行中」列表，正文切换到动态 transcript。 */
+const esInput = $('#es-input');
+const esSend = $('#es-send');
+esInput.addEventListener('input', () => {
+  const has = esInput.value.trim().length > 0;
+  esSend.disabled = !has;
+  esSend.classList.toggle('on', has);
+});
+function sendDraft() {
+  const text = esInput.value.trim();
+  if (!text) return;
+  const s = sessions.find((x) => x.id === activeId);
+  if (!s || !s.draft) return;
+  delete s.draft;
+  s.title = text.length > 40 ? text.slice(0, 40) + '…' : text;
+  s.firstMessage = text;
+  s.time = '刚刚';
+  s.busy = true;
+  esInput.value = '';
+  esSend.disabled = true;
+  esSend.classList.remove('on');
+  renderAll();
+}
+esInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendDraft(); });
+esSend.addEventListener('click', sendDraft);
+
+/* ============================ 页面控制 ============================ */
+$('#scheme-toggle').addEventListener('click', (e) => {
+  const html = document.documentElement;
+  const dark = html.dataset.colorScheme !== 'dark';
+  html.dataset.colorScheme = dark ? 'dark' : 'light';
+  e.target.textContent = dark ? '切换到亮色' : '切换到暗色';
+});
+$('#reset').addEventListener('click', () => {
+  resetState();
+  setTab('open');
+  document.querySelectorAll('.list-mode').forEach((x) => x.classList.toggle('is-on', x.dataset.mode === 'flat'));
+  renderAll();
+});
+
+renderAll();
+requestAnimationFrame(moveIndicator);
+</script>
+</body>
+</html>

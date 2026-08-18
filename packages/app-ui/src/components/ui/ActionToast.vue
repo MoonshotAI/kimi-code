@@ -99,10 +99,13 @@ onUnmounted(() => {
 }
 .ui-action-toast__body { min-width: 0; }
 /* The sentence's actions are plain slotted <button>s — styled here once so
-   every caller gets the accent inline-link look for free. */
+   every caller gets the accent inline-link look for free. The inline margin
+   stands in for the word space the condensed template drops between the text
+   runs and the action (已完成撤销 → 已完成 撤销). */
 .ui-action-toast__body :slotted(button) {
   border: 0;
   padding: 0;
+  margin-inline: var(--space-1);
   background: none;
   color: var(--color-accent);
   cursor: pointer;

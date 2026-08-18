@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  openTabAttention,
   sessionDisplayStatus,
   type SessionDisplayStatusInput,
 } from '../src/lib/sessionDisplayStatus';
@@ -104,5 +105,37 @@ describe('sessionDisplayStatus — unread / idle', () => {
   it('is idle only when nothing reports', () => {
     expect(sessionDisplayStatus(input())).toBe('idle');
     expect(sessionDisplayStatus(input({ lastTurnReason: 'cancelled' }))).toBe('idle');
+  });
+});
+
+describe('openTabAttention — status view 进行中 tab aggregation', () => {
+  it('is null for an empty list, idle rows, and running-only rows', () => {
+    expect(openTabAttention([])).toBeNull();
+    expect(openTabAttention([input()])).toBeNull();
+    expect(openTabAttention([input({ busy: true })])).toBeNull();
+  });
+
+  it('reports unread / aborted / question / approval', () => {
+    expect(openTabAttention([input({ unread: true })])).toBe('unread');
+    expect(openTabAttention([input({ lastTurnReason: 'failed' })])).toBe('aborted');
+    expect(openTabAttention([input({ questionCount: 1 })])).toBe('question');
+    expect(openTabAttention([input({ approvalCount: 1 })])).toBe('approval');
+  });
+
+  it('priority: approval > question > aborted > unread', () => {
+    expect(
+      openTabAttention([
+        input({ unread: true }),
+        input({ lastTurnReason: 'failed' }),
+        input({ questionCount: 1 }),
+        input({ approvalCount: 1 }),
+      ]),
+    ).toBe('approval');
+    expect(
+      openTabAttention([input({ unread: true }), input({ lastTurnReason: 'failed' })]),
+    ).toBe('aborted');
+    expect(
+      openTabAttention([input({ unread: true }), input({ questionCount: 1 })]),
+    ).toBe('question');
   });
 });

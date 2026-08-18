@@ -47,6 +47,10 @@ export interface Session {
   workspaceName?: string;
   /** True when the session is pinned to the top pinned section. */
   pinned?: boolean;
+  /** True when the session is archived ("done" in the status view). Only
+      projected on lists that can contain done sessions (the status view's
+      已完成 tab, the workspace home's recent list). */
+  archived?: boolean;
   /** Session working directory — projected on the `sessions` list so the
       workspace-delete cleanup can match by root (App.vue confirmDeleteWorkspace).
       Flat-style rows render `cwdLabel` instead. */

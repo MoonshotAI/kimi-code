@@ -57,3 +57,26 @@ export function sessionDisplayStatus(input: SessionDisplayStatusInput): SessionD
   if (input.unread) return 'unread';
   return 'idle';
 }
+
+/** Attention level of the status view's 进行中 tab, aggregated over all open
+ *  sessions: the highest-priority display status wins and the tab shows its
+ *  color as a dot. Priority: approval > question > aborted > unread. 'running'
+ *  and 'idle' map to null — a normal in-flight turn is not an attention
+ *  request, so the tab stays quiet. */
+export type OpenTabAttention = 'approval' | 'question' | 'aborted' | 'unread' | null;
+
+export function openTabAttention(rows: SessionDisplayStatusInput[]): OpenTabAttention {
+  let best: OpenTabAttention = null;
+  for (const row of rows) {
+    const s = sessionDisplayStatus(row);
+    if (s === 'awaiting-approval') return 'approval';
+    if (s === 'awaiting-question') {
+      best = 'question';
+    } else if (s === 'aborted') {
+      if (best !== 'question') best = 'aborted';
+    } else if (s === 'unread') {
+      if (best === null) best = 'unread';
+    }
+  }
+  return best;
+}

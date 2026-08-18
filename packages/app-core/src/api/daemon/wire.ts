@@ -28,6 +28,24 @@ export interface WireV2SessionsPage {
   items: V2Session[];
   has_more: boolean;
   next_page_token: string | null;
+  total: number;
+}
+
+// GET /api/v2/sessions?fields=id,archived 的投影分页结构——每项只带
+// { id, archived }（全选匹配的 id 物化来源，page_size 上限放宽至 10000）。
+export interface WireV2SessionIdsPage {
+  items: { id: string; archived: boolean }[];
+  has_more: boolean;
+  next_page_token: string | null;
+  total: number;
+}
+
+// POST /api/v2/sessions:archive | :restore 的响应 data。字段本身都是小写
+// 单词（id/ok/error/succeeded/failed），wire 与 app 形状一致。
+export interface WireV2BatchSessionResponse {
+  results: { id: string; ok: boolean; error?: { code: number; message: string } }[];
+  succeeded: number;
+  failed: number;
 }
 
 // ---------------------------------------------------------------------------

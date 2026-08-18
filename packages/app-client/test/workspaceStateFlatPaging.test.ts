@@ -32,7 +32,7 @@ function v2Item(
 }
 
 function page(items: V2Session[], hasMore: boolean, nextToken: string | null): V2SessionsPage {
-  return { items, hasMore, nextPageToken: hasMore ? nextToken : null };
+  return { items, hasMore, nextPageToken: hasMore ? nextToken : null, total: items.length };
 }
 
 interface SetupOptions {

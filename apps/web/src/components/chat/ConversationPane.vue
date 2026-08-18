@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, onUnmounted, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, OpenMediaRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, TurnAttachment, UIQuestion, WorkspaceView } from '../../types';
+import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, OpenMediaRequest, PermissionMode, QueuedPromptView, Session, TaskItem, TodoView, TurnAttachment, UIQuestion, WorkspaceView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, SessionPlan, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
 import type { ManagedMembership, PromptAttachment } from '@moonshot-ai/app-client/client';
@@ -10,6 +10,8 @@ import ChatPane from './ChatPane.vue';
 import ChatHeader from './ChatHeader.vue';
 import Composer from './Composer.vue';
 import ChatDock from './ChatDock.vue';
+import WorkspaceHome from './WorkspaceHome.vue';
+import WorkspaceRecentSessions from './WorkspaceRecentSessions.vue';
 import ConversationToc, { type ConversationTocItem } from './ConversationToc.vue';
 import TranscriptSearch from './TranscriptSearch.vue';
 import KimiDoodle from '../KimiDoodle.vue';
@@ -124,8 +126,17 @@ const props = defineProps<{
   workspaces?: WorkspaceView[];
   /** Active workspace id, to highlight the current entry in the picker. */
   activeWorkspaceId?: string | null;
+  /** The draft workspace's recent sessions (open first, then done), shown
+   *  under the centred composer on the workspace home (empty state). */
+  recentSessions?: Session[];
+  /** How the current draft was entered: 'workspace' renders the workspace
+   *  home (no doodle); 'newChat' (default) keeps the classic doodle hero. */
+  draftEntry?: 'newChat' | 'workspace';
   /** Active session title, shown in the chat header. */
   sessionTitle?: string;
+  /** True when the active session is archived (completed) — drives the chat
+   *  header's Done pill + reopen button (PR-merge semantics). */
+  sessionArchived?: boolean;
   /** GitHub PR for the current branch, when known (shown in the chat header). */
   pr?: { number: number; state: string; url: string } | null;
 }>();
@@ -168,14 +179,18 @@ const emit = defineEmits<{
   selectWorkspace: [workspaceId: string];
   /** Empty-composer workspace picker: create a new workspace. */
   addWorkspace: [];
+  /** Workspace home (empty state): open one of the recent sessions. */
+  selectSession: [id: string];
   /** Chat header: open the GitHub PR in a new tab. */
   openPr: [url: string];
   /** Chat header / session row: rename current session. */
   renameSession: [id: string, title: string];
   /** Chat header / session row: fork current session. */
   forkSession: [id: string];
-  /** Chat header / session row: archive current session. */
+  /** Chat header / session row: archive (mark done) current session. */
   archiveSession: [id: string];
+  /** Chat header: reopen a done (archived) session. */
+  restoreSession: [id: string];
   /** Chat header: export current session. */
   exportSession: [id: string];
 }>();
@@ -191,6 +206,13 @@ const activeWorkspaceLabel = computed(() => {
   const w = props.workspaces?.find((ws) => ws.id === props.activeWorkspaceId);
   return w?.name ?? props.workspaceName ?? '';
 });
+
+// The workspace home replaces the doodle hero only for drafts entered from a
+// workspace directory row (or the add-workspace flow) — the primary 新建会话
+// draft, mobile and the starting transition keep the classic empty state.
+const showWorkspaceHome = computed(
+  () => !props.mobile && !props.starting && props.draftEntry === 'workspace',
+);
 
 const hasWorkspaces = computed(() => (props.workspaces?.length ?? 0) > 0);
 
@@ -2159,6 +2181,7 @@ defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone
       :is-git-repo="!!gitInfo"
       :pr="pr"
       :copied="copyConversationCopied"
+      :archived="sessionArchived"
       @open-changes="emit('openChanges')"
       @copy-all="chatPaneRef?.copyConversation()"
       @copy-final-summary="chatPaneRef?.copyFinalSummary()"
@@ -2166,6 +2189,7 @@ defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone
       @rename-session="(id, title) => emit('renameSession', id, title)"
       @fork-session="(id) => emit('forkSession', id)"
       @archive-session="(id) => emit('archiveSession', id)"
+      @restore-session="(id) => emit('restoreSession', id)"
       @export-session="(id) => emit('exportSession', id)"
     />
     <!-- Empty-composer state renders no ChatHeader (no session context yet), so
@@ -2211,7 +2235,17 @@ defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone
           <template v-if="turns.length === 0 && !sessionLoading">
             <!-- Empty session: Composer rendered in the centre of the pane -->
             <div class="empty-spacer" />
-            <div class="empty-hint">
+            <!-- Draft entered from a workspace directory = the workspace home
+                 (workspace identity above the composer, this workspace's
+                 recent sessions below) — no brand doodle. A draft from the
+                 primary 新建会话 button (and mobile / the starting
+                 transition) keeps the classic doodle hero. -->
+            <WorkspaceHome
+              v-if="showWorkspaceHome"
+              :workspace-name="activeWorkspaceLabel"
+              :workspace-root="workspaceRoot"
+            />
+            <div v-else class="empty-hint">
               <KimiDoodle v-if="!starting" class="empty-doodle">
                 <template #fallback>
                   <span class="empty-hint-title">{{ t('composer.emptyConversationTitle') }}</span>
@@ -2342,6 +2376,11 @@ defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone
             <!-- Backdrop must live outside the composer card (container-type
                  captures position:fixed). -->
             <div v-if="wsPickOpen" class="ws-backdrop" @click="wsPickOpen = false" />
+            <WorkspaceRecentSessions
+              v-if="showWorkspaceHome && (recentSessions?.length ?? 0) > 0"
+              :sessions="recentSessions ?? []"
+              @select-session="(id) => emit('selectSession', id)"
+            />
             <div class="empty-spacer" />
           </template>
           <template v-else>
@@ -2462,10 +2501,13 @@ defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone
       @close="closeTranscriptSearch"
     />
 
-    <!-- "New messages" pill — only visible when scrolled up and new content arrives. -->
+    <!-- "New messages" pill — only visible when scrolled up and new content
+         arrives. Gated on an actual transcript: on the empty state the same
+         container can still scroll (tall hero content, squeezed panes), and
+         a "latest messages" pill is meaningless there. -->
     <Transition name="pill">
       <button
-        v-if="showPill"
+        v-if="showPill && turns.length > 0"
         class="newmsg-pill"
         :style="{ bottom: `${dockHeight + 12}px` }"
         :aria-label="t('conversation.jumpToLatestAria')"

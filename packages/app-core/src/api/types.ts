@@ -200,6 +200,8 @@ export interface ListSessionsV2Input {
   statuses?: V2SessionActivityStatus[];
   /** 只返回 updated_at >= 该值的 session（Unix 毫秒）。 */
   updatedAfter?: number;
+  /** 只返回 updated_at <= 该值的 session（Unix 毫秒）。 */
+  updatedBefore?: number;
   /** 默认 false（排除已归档）；true 只看已归档；'all' 全部。 */
   archived?: boolean | 'all';
   /** 默认 meta.updated_at_desc。 */
@@ -208,8 +210,12 @@ export interface ListSessionsV2Input {
   include?: 'git';
   /** 默认 50，范围 1–100。 */
   pageSize?: number;
-  /** 翻页游标；翻页时其余参数必须与首页一致，否则 409 page_token_mismatch。 */
+  /** 翻页游标；翻页时其余参数必须与首页一致，否则 409 page_token_mismatch。
+   *  与 page 互斥（同传 40001）。 */
   pageToken?: string;
+  /** 页码模式（1-based）：无状态切片，不签发 pageToken，每次请求自带完整
+   *  条件——管理页的跳页入口。与 pageToken 互斥（同传 40001）。 */
+  page?: number;
 }
 
 export interface V2SessionsPage {
@@ -217,6 +223,39 @@ export interface V2SessionsPage {
   hasMore: boolean;
   /** hasMore=false 时为 null。 */
   nextPageToken: string | null;
+  /** 过滤排序后的全集长度（页码模式的总数来源；游标模式同样返回）。 */
+  total: number;
+}
+
+/** `fields=id,archived` 投影返回的单项（全选匹配物化的最小形状）。 */
+export interface V2SessionIdProjection {
+  id: string;
+  archived: boolean;
+}
+
+/** ids 投影的输入：过滤/排序与 ListSessionsV2Input 一致（无 include——git
+ *  不可投影）；pageSize 上限放宽至 10000。 */
+export type ListSessionIdsV2Input = Omit<ListSessionsV2Input, 'include'>;
+
+export interface V2SessionIdsPage {
+  items: V2SessionIdProjection[];
+  hasMore: boolean;
+  nextPageToken: string | null;
+  total: number;
+}
+
+/** POST /api/v2/sessions:archive | :restore 的 per-item 结果。 */
+export interface V2BatchSessionResult {
+  id: string;
+  ok: boolean;
+  error?: { code: number; message: string };
+}
+
+export interface V2BatchSessionResponse {
+  /** 按输入顺序。 */
+  results: V2BatchSessionResult[];
+  succeeded: number;
+  failed: number;
 }
 
 /**
@@ -1194,6 +1233,9 @@ export interface KimiWebApi {
   /** GET /api/v2/sessions — domain 分组的 session 列表查询（契约见 types.ts 的
       v2 注释块）。当前由 mock 实现（见 client.ts 的 V2_SESSIONS_SOURCE）。 */
   listSessionsV2(input?: ListSessionsV2Input): Promise<V2SessionsPage>;
+  /** GET /api/v2/sessions?fields=id,archived — ids 投影（全选匹配的物化来源，
+      pageSize 上限 10000）。 */
+  listSessionIdsV2(input?: ListSessionIdsV2Input): Promise<V2SessionIdsPage>;
   createSession(input: { title?: string; cwd?: string; model?: string; workspaceId?: string }): Promise<AppSession>;
   /** Fetch one session by id (deep links beyond the first listSessions page). */
   getSession(sessionId: string): Promise<AppSession>;
@@ -1206,6 +1248,11 @@ export interface KimiWebApi {
   getSessionWarnings(sessionId: string): Promise<AppSessionWarning[]>;
   archiveSession(sessionId: string): Promise<{ archived: true }>;
   restoreSession(sessionId: string): Promise<AppSession>;
+  /** POST /api/v2/sessions:archive — 批量归档（管理页）。per-item 结果，
+   *  只有 body 校验失败才整请求抛错。 */
+  archiveSessions(ids: string[]): Promise<V2BatchSessionResponse>;
+  /** POST /api/v2/sessions:restore — 批量取消归档。 */
+  restoreSessions(ids: string[]): Promise<V2BatchSessionResponse>;
   listMessages(sessionId: string, input?: PageRequest & { role?: AppMessageRole }): Promise<Page<AppMessage>>;
   /** v2 initial sync: atomic session state + `asOfSeq` watermark + epoch. */
   getSessionSnapshot(sessionId: string): Promise<AppSessionSnapshot>;
