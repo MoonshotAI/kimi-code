@@ -43,6 +43,7 @@ describe('update preference commands', () => {
       theme: 'auto',
       editorCommand: null,
       disablePasteBurst: false,
+      renderLatex: true,
       cacheExpiryHint: true,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: false },
@@ -51,5 +52,30 @@ describe('update preference commands', () => {
     expect(setAppState).toHaveBeenCalledWith({ upgrade: { autoInstall: false } });
     expect(track).toHaveBeenCalledWith('upgrade_preference_changed', { auto_install: false });
     expect(showStatus).toHaveBeenCalledWith('Automatic updates disabled.');
+  });
+
+  it('preserves a render_latex opt-out when saving an unrelated preference', async () => {
+    mocks.saveTuiConfig.mockClear();
+    const host = {
+      state: {
+        appState: {
+          theme: 'auto' as const,
+          editorCommand: null,
+          renderLatex: false,
+          notifications: { enabled: true, condition: 'unfocused' as const },
+          upgrade: { autoInstall: true },
+        },
+        theme: { palette: darkColors },
+      },
+      setAppState: vi.fn(),
+      showStatus: vi.fn(),
+      track: vi.fn(),
+    };
+
+    await applyUpdatePreferenceChoice(host, false);
+
+    expect(mocks.saveTuiConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ renderLatex: false }),
+    );
   });
 });

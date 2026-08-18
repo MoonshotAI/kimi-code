@@ -63,6 +63,7 @@ import type {
   SessionRestoreOptions,
   SessionSummary,
 } from '@moonshot-ai/klient';
+import { ErrorCodes, isError2 } from '@moonshot-ai/agent-core-v2';
 import { RPCError } from '@moonshot-ai/klient';
 
 import type { AcpClient } from './acp-client';
@@ -80,6 +81,13 @@ import { IOAuthToolkit } from '@moonshot-ai/agent-core-v2/app/auth/auth';
  * branch key across the wire, mirrored from the klient facade's `NOT_FOUND`.
  */
 const SESSION_NOT_FOUND_CODE = 40404;
+
+function isSessionNotFound(error: unknown): boolean {
+  return (
+    (error instanceof RPCError && error.code === SESSION_NOT_FOUND_CODE) ||
+    (isError2(error) && error.code === ErrorCodes.SESSION_NOT_FOUND)
+  );
+}
 
 /** Host-provided slash commands plus optional aliases that activate engine skills. */
 export interface SlashCommandsSnapshot {
@@ -128,6 +136,8 @@ export interface AcpServerOptions {
    * scope. Absent → `persistOriginalImage`'s shared temp-dir fallback.
    */
   readonly resolveOriginalsDir?: (sessionId: string) => string | undefined;
+  readonly bindSessionRuntime?: (sessionId: string) => Promise<void>;
+  readonly unbindSessionRuntime?: (sessionId: string) => Promise<void>;
   /** Static or per-session host command palette, compatible with acp-adapter. */
   readonly slashCommands?: SlashCommandsResolver;
   /**
@@ -145,6 +155,8 @@ export class AcpServer {
   private readonly terminalAuthEnv: Readonly<Record<string, string>> | undefined;
   private readonly terminalAuthLegacyCommand: string | undefined;
   private readonly resolveOriginalsDir: ((sessionId: string) => string | undefined) | undefined;
+  private readonly bindSessionRuntime: ((sessionId: string) => Promise<void>) | undefined;
+  private readonly unbindSessionRuntime: ((sessionId: string) => Promise<void>) | undefined;
   private readonly oauthToolkit: IOAuthToolkit | undefined;
   private readonly resolveSlashCommands: (
     session: SessionHandle,
@@ -167,6 +179,8 @@ export class AcpServer {
     this.terminalAuthEnv = opts.terminalAuthEnv;
     this.terminalAuthLegacyCommand = opts.terminalAuthLegacyCommand;
     this.resolveOriginalsDir = opts.resolveOriginalsDir;
+    this.bindSessionRuntime = opts.bindSessionRuntime;
+    this.unbindSessionRuntime = opts.unbindSessionRuntime;
     this.oauthToolkit = opts.oauthToolkit;
     const slashCommands = opts.slashCommands;
     this.resolveSlashCommands =
@@ -270,7 +284,7 @@ export class AcpServer {
     try {
       forkedId = (await this.klient.session(params.sessionId).fork()).id;
     } catch (error) {
-      if (error instanceof RPCError && error.code === SESSION_NOT_FOUND_CODE) {
+      if (isSessionNotFound(error)) {
         throw RequestError.invalidParams(
           { sessionId: params.sessionId },
           `Unknown sessionId: ${params.sessionId}`,
@@ -334,6 +348,7 @@ export class AcpServer {
       this.sessions.delete(params.sessionId);
     }
     await this.klient.session(params.sessionId).close();
+    await this.unbindSessionRuntime?.(params.sessionId);
   }
 
   /**
@@ -348,7 +363,7 @@ export class AcpServer {
     try {
       await this.klient.session(params.sessionId).delete();
     } catch (error) {
-      if (error instanceof RPCError && error.code === SESSION_NOT_FOUND_CODE) {
+      if (isSessionNotFound(error)) {
         throw RequestError.invalidParams(
           { sessionId: params.sessionId },
           `Unknown sessionId: ${params.sessionId}`,
@@ -361,6 +376,7 @@ export class AcpServer {
       acpSession.dispose();
       this.sessions.delete(params.sessionId);
     }
+    await this.unbindSessionRuntime?.(params.sessionId);
     return {};
   }
 
@@ -550,6 +566,7 @@ export class AcpServer {
   private async wireSession(sessionId: string): Promise<AcpSession> {
     const session = this.klient.session(sessionId);
     await this.bindDefaultModel(session.agent('main'));
+    await this.bindSessionRuntime?.(sessionId);
     const hostCommands = await this.resolveSlashCommands(session);
     const acpSession = new AcpSession(
       this.conn,

@@ -1,12 +1,5 @@
-/**
- * `prompt` domain — safe, displayable metadata text derived from prompts.
- *
- * Shared by prompt submission and undo projection so `lastPrompt` uses one
- * normalization, redaction, and length limit, with image captions supplied by
- * the `media` domain.
- */
-
 import type { ContentPart } from '#/kosong/contract/message';
+import { matchSingleMediaPathTag } from '#/agent/media/mediaRef';
 import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
 
 const MAX_TITLE_LENGTH = 200;
@@ -51,6 +44,7 @@ export function promptMetadataTextFromText(text: string): string | undefined {
 function promptPartText(part: ContentPart): string | undefined {
   switch (part.type) {
     case 'text': {
+      if (matchSingleMediaPathTag(part.text) !== undefined) return undefined;
       const { text } = extractImageCompressionCaptions(part.text);
       return text.trim().length === 0 ? undefined : text;
     }

@@ -1,12 +1,3 @@
-/**
- * `externalHooks` domain — `hooks` config-section schema and TOML
- * transforms.
- *
- * Owns the `[[hooks]]` configuration section (external hook definitions),
- * including the snake_case ↔ camelCase TOML transforms for each hook entry.
- * Registered at module load via `registerConfigSection`.
- */
-
 import { z } from 'zod';
 
 import { registerConfigSection } from '#/app/config/configSectionContributions';

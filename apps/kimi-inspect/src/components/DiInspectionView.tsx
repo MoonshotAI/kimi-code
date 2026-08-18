@@ -12,12 +12,16 @@
  *     with that service's direct dependencies; rows carry path-scoped
  *     relation bars (one per path ancestor with a direct edge) and a
  *     path-root background highlight;
+ *   - Events: event subscriptions (`IDebugEventsService.subscriptions`) —
+ *     unit-book ledger entries labeled `on:<name>` /
+ *     `disposable:EventSubscription` per scope, plus per-bus listener counts
+ *     as the fallback side (`di/DiEventsPanel.tsx`);
  *   - Cascade: the cross-scope cascade history rings
  *     (`IDebugCascadeService.history`), newest first;
  *   - Pending: the waiting area + sticky failures per scope
  *     (`IDebugCascadeService.pending`), with an `update` retry per failure.
  *
- * All four panels poll on a short interval and refresh eagerly when the
+ * All five panels poll on a short interval and refresh eagerly when the
  * global `event.di.unit_changed` WS frame fires (`useDiQueryInvalidation`
  * invalidates the `['di']` query prefix).
  */
@@ -31,6 +35,10 @@ import {
 } from '@moonshot-ai/agent-core-v2/debug/debugCascade';
 import { IDebugGraphService, type DebugGraph } from '@moonshot-ai/agent-core-v2/debug/debugGraph';
 import {
+  IDebugEventsService,
+  type DebugEventSubscriptions,
+} from '@moonshot-ai/agent-core-v2/features/debugEvents/debugEvents';
+import {
   IDebugLedgerService,
   type DebugLedgerNode,
   type DebugUnit,
@@ -42,13 +50,15 @@ import { useDiQueryInvalidation } from '../activity/di';
 import type { InspectClient } from '../channel';
 import { useConnection } from '../connection';
 import { ActionButton, Badge, ErrorLine } from '../ui';
+import { DiEventsPanel } from './di/DiEventsPanel';
 import { DiGraphPanel } from './di/DiGraphPanel';
 
-type DiPanel = 'units' | 'graph' | 'cascade' | 'pending';
+type DiPanel = 'units' | 'graph' | 'events' | 'cascade' | 'pending';
 
 const PANELS: readonly { id: DiPanel; title: string }[] = [
   { id: 'units', title: 'Units' },
   { id: 'graph', title: 'Deps' },
+  { id: 'events', title: 'Events' },
   { id: 'cascade', title: 'Cascade' },
   { id: 'pending', title: 'Pending' },
 ];
@@ -86,6 +96,8 @@ export function DiInspectionView() {
           <UnitsPanel />
         ) : panel === 'graph' ? (
           <GraphPanel />
+        ) : panel === 'events' ? (
+          <EventsPanel />
         ) : panel === 'cascade' ? (
           <CascadePanel />
         ) : (
@@ -382,6 +394,19 @@ function GraphPanel() {
   const gate = panelGate(query);
   if (gate !== null) return gate;
   return <DiGraphPanel graph={query.data as DebugGraph} />;
+}
+
+// ---------------------------------------------------------------------------
+// Events panel — event subscriptions; rendering lives in di/DiEventsPanel.tsx
+// ---------------------------------------------------------------------------
+
+function EventsPanel() {
+  const query = useDiQuery('events', (klient) =>
+    klient.core(IDebugEventsService).subscriptions(),
+  );
+  const gate = panelGate(query);
+  if (gate !== null) return gate;
+  return <DiEventsPanel data={query.data as DebugEventSubscriptions} />;
 }
 
 // ---------------------------------------------------------------------------

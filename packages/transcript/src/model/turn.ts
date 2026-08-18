@@ -1,11 +1,3 @@
-/**
- * Turn and step containers.
- *
- * A turn is one agent "run" (a prompt through loop completion). Turn headers
- * are closed structures; steps and frames arrive through their own ops, so a
- * coarse-grained subscriber legitimately holds turns with `steps: []`.
- */
-
 import type { TranscriptFrame } from './frame';
 import type { AttachmentId, StepId, TaskId, TurnId } from './ids';
 

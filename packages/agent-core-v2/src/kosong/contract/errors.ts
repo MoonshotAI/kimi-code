@@ -1,28 +1,3 @@
-/**
- * `kosong/contract` domain — the provider error taxonomy.
- *
- * The single authority on error classification for the LLM wire layer:
- * the `API*Error` class family, the retry verdict (`isRetryableGenerateError`),
- * the telemetry classification (`ApiErrorKind` / `classifyApiError`), and the
- * status-error normalizer every dialect's error converter funnels through.
- * Alongside the wire-status classes, `VideoUploadUnsupportedError` marks the
- * by-design capability gap (provider has no video upload hook) so callers
- * can tell it apart from an upload that failed at runtime.
- *
- * The family is born-coded: every class extends `Error2` and computes its
- * wire code (`provider.*` / `context.overflow`) at construction from the
- * status code / finish reason, so no boundary translation is needed — the
- * code string constants live here (the L0 wire contract) and are registered
- * by `kosong/protocol/errors.ts` (`ProtocolErrors`). `translateProviderError`
- * only remains as the abort guard and the foreign-error fallback.
- *
- * Abort has exactly one standard shape here: the DOMException built by
- * `createAbortError`. Provider error converters must run the `throwIfAbortError`
- * guard FIRST in their classification chain — a user cancellation is thrown
- * as the standard abort shape, never converted into (and never returned as)
- * a retryable provider error.
- */
-
 import { Error2, type Error2Options } from '#/_base/errors/errors';
 import type { FinishReason } from './provider';
 

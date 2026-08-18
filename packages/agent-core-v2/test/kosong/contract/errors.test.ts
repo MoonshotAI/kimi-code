@@ -1,12 +1,3 @@
-/**
- * `kosong/contract` errors — abort shape and error classification authority.
- *
- * Locks the behavior-fix intent of the kosong refactor: a user cancellation
- * surfaces as the standard abort DOMException from `createAbortError`, the
- * `throwIfAbortError` guard throws (never returns) and wins over every other
- * classification branch, and `isRetryableGenerateError` never retries aborts.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import {

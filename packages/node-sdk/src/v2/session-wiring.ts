@@ -38,13 +38,11 @@ import {
   IAgentTokenCountingService,
   IAgentUsageService,
   IEventBus,
-  IModelCatalog,
   ISessionApprovalService,
   ISessionInteractionService,
   ISessionQuestionService,
   MAIN_AGENT_ID,
-  SECONDARY_DERIVED_MODEL_ID,
-  type DomainEvent,
+  type Event2,
   type IAgentScopeHandle,
   type IDisposable,
   type Interaction,
@@ -270,7 +268,7 @@ export class SessionEventWiring {
  * two client-facing packages so the core engine stays free of v1
  * wire-compatibility concerns.
  */
-function withStatusSnapshot(agent: IAgentScopeHandle, event: DomainEvent): DomainEvent {
+function withStatusSnapshot(agent: IAgentScopeHandle, event: Event2<any>): Event2<any> {
   const profile = agent.accessor.get(IAgentProfileService) as IAgentProfileService | undefined;
   const usageService = agent.accessor.get(IAgentUsageService) as IAgentUsageService | undefined;
   const tokenCounting = agent.accessor.get(IAgentTokenCountingService) as
@@ -284,31 +282,10 @@ function withStatusSnapshot(agent: IAgentScopeHandle, event: DomainEvent): Domai
   const contextTokens = tokenCounting.statusSize();
   const capabilities = profile.getModelCapabilities();
   const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
-  return {
-    ...event,
+  return Object.assign({}, event, {
     usage: usageService.status(),
     contextTokens,
     maxContextTokens,
-    model: displayModelAlias(agent, profile.getModel()),
-  } as unknown as DomainEvent;
-}
-
-/**
- * The wire `model` is normally the bound alias, which clients resolve against
- * the model listing into a display name. The secondary-model derived entry is
- * synthesized runtime state hidden from that listing, so resolve it here to
- * the pointed entry's display string (the client's own
- * `displayName ?? wireName` priority) instead of leaking the reserved id.
- * Mirrors kap-server's `displayModelAlias`.
- */
-function displayModelAlias(agent: IAgentScopeHandle, alias: string): string {
-  if (alias !== SECONDARY_DERIVED_MODEL_ID) return alias;
-  const catalog = agent.accessor.get(IModelCatalog) as IModelCatalog | undefined;
-  if (catalog === undefined) return alias;
-  try {
-    const model = catalog.get(alias);
-    return model.displayName ?? model.name;
-  } catch {
-    return alias;
-  }
+    model: profile.getModel(),
+  }) as unknown as Event2<any>;
 }

@@ -1,20 +1,3 @@
-/**
- * `sessionIndex` domain (L2) — read-model layout shared by the index, the
- * mirror, and the projector.
- *
- * The derived read model is versioned by *generation*: every projection
- * writes a fresh `session:g<N>` collection (summaries, keyed by session id,
- * with the generation's recency column declared) plus a
- * `sessionCounters:g<N>` collection (per-workspace materialized
- * active/archived counts), then publishes `N` with one atomic checkpoint
- * write. Readers only ever read the published generation, so a projection
- * that dies midway leaves the previous generation fully intact; orphaned
- * halves of crashed generations are dropped before reuse and the previous
- * generation is dropped after a successful publish. The collections are
- * plain `IQueryStore` collections — no backend-specific type escapes into
- * the domain.
- */
-
 import type { SessionSummary } from './sessionIndex';
 
 export const SESSION_INDEX_MANIFEST = 'sessionIndex';

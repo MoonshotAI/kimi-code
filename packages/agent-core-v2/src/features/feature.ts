@@ -1,18 +1,3 @@
-/**
- * `features` domain — the `Feature` base class: one self-contained built-in
- * capability (plan, mcp, …) authored as a single App-scope unit recipe.
- *
- * A subclass declares its contributions inside its constructor through the
- * `contribute*` helpers — thin compositions over the unit capabilities and
- * the existing collection seams: config sections (`config`), per-scope
- * service materialization (`ScopeUnits` — the kernel folds one live unit per
- * present and future scope of that kind), agent tools (`toolRegistry`), and
- * agent profiles (`agentProfileCatalog`). Everything a Feature provides hangs
- * on its own book, so retracting the Feature unit withdraws every
- * contribution across the scope tree (连坐). Recipes declare a stable
- * `static readonly name`; the assembly keys managed units by it.
- */
-
 import { type CollectionToken } from '#/_base/di/collection';
 import {
   ScopeUnits,
@@ -28,6 +13,7 @@ import {
   AgentProfileContribution,
   AGENT_PROFILE_SOURCE_PRIORITY,
 } from '#/app/agentProfileCatalog/agentProfileContribution';
+import { FeatureServiceContribution } from '#/app/feature/featureServiceContribution';
 import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { ConfigSchema, RegisterSectionOptions } from '#/app/config/config';
 import { ConfigSectionContribution } from '#/app/config/configSectionContributions';
@@ -66,6 +52,7 @@ export abstract class Feature extends Service {
     ctor: ServiceClassRecipe,
     opts?: FiberProvideOptions,
   ): FiberHandle {
+    this.provide(FeatureServiceContribution, { scope, id });
     return this.provide(ScopeUnits(scope), {
       name: `${this.name}:${String(id)}`,
       apply(fiber: Fiber): void {

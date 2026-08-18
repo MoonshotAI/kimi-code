@@ -1,16 +1,3 @@
-/**
- * `tools` domain — `FetchURLTool` implementation.
- *
- * Receives the App-scope `IWebFetchService` via DI and resolves its
- * host-injected `UrlFetcher` per invocation — the service re-reads config and
- * login state on each `getUrlFetcher()` call, and composing the fetcher at
- * tool construction would both pin that state for the agent's lifetime and
- * race the identity freeze during a fast bootstrap. The default service falls
- * back to the built-in `LocalFetchURLProvider`, so `FetchURL` is always
- * available without OAuth. Bound at Agent scope; self-registers via
- * `registerAgentToolService(...)` at module load.
- */
-
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import {

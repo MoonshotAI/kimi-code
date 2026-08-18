@@ -1,25 +1,3 @@
-/**
- * `sessionIndex` domain (L2) — authoritative session-metadata scanning.
- *
- * Reads the persisted session set through the `storage` access-pattern
- * stores, rooted at the `sessionsDir` path layout fact from `bootstrap`. The
- * directory tree `<sessionsDir>/<workspaceId>/<sessionId>/` is the
- * authoritative index: workspace and session ids are enumerated via
- * `IFileSystemStorageService.list`, and each session's metadata document is
- * read via `IAtomicDocumentStore` to build its summary.
- *
- * The session metadata document lives at `<sessionDir>/state.json`, a layout
- * shared by v1 and v2; the `version` field distinguishes them (`2` = v2,
- * epoch-ms timestamps; absent = v1, ISO-string timestamps). The reader also
- * falls back to the legacy `<sessionDir>/session-meta/state.json` path for v2
- * sessions written before the layouts were unified. Both timestamp
- * representations are normalized to epoch ms.
- *
- * These helpers serve the index's authoritative fallback (legacy path), the
- * projector's full scans, and reconciliation — pure functions over injected
- * stores, owning no state themselves.
- */
-
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
@@ -66,6 +44,7 @@ export function buildSessionSummary(fields: {
   createdAt: number;
   updatedAt: number;
   archived: boolean;
+  archivedAt?: number;
   custom?: Record<string, unknown>;
   lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }): SessionSummary {
@@ -78,6 +57,7 @@ export function buildSessionSummary(fields: {
     createdAt: fields.createdAt,
     updatedAt: fields.updatedAt,
     archived: fields.archived,
+    archivedAt: fields.archivedAt,
     custom: fields.custom,
     lastTurnReason: fields.lastTurnReason,
   };
@@ -108,6 +88,7 @@ export function summaryEquals(a: SessionSummary, b: SessionSummary): boolean {
     a.createdAt === b.createdAt &&
     a.updatedAt === b.updatedAt &&
     a.archived === b.archived &&
+    a.archivedAt === b.archivedAt &&
     a.lastTurnReason === b.lastTurnReason &&
     JSON.stringify(a.custom) === JSON.stringify(b.custom)
   );
@@ -159,6 +140,7 @@ export async function readSessionSummary(
     createdAt: parseTime(meta['createdAt']),
     updatedAt: parseTime(meta['updatedAt']),
     archived: meta['archived'] === true,
+    archivedAt: meta['archivedAt'] === undefined ? undefined : parseTime(meta['archivedAt']),
     custom,
     lastTurnReason: parseTurnOutcome(meta['lastTurnReason']),
   });

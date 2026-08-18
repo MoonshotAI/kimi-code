@@ -1,29 +1,3 @@
-/**
- * `kosong/provider` domain — the single production implementation of
- * `IProtocolAdapterRegistry`.
- *
- * This is the one resolution point for "(protocol, providerType) → which base
- * + which traits" and the single construction point for composed
- * ChatProviders:
- *
- *  - `resolveAdapterIdentity` — the two branches: a `(providerType,
- *    protocol)` pair registration → the protocol as base with that
- *    registration's traits; no pair registration (unregistered vendor, no
- *    providerType, or the vendor does not run over this protocol) → the
- *    protocol itself as base with no vendor traits. The config
- *    `defaultHeaders` synthetic trait is ALWAYS appended last, so config
- *    headers win header aggregation; it declares no per-request hooks, so it
- *    can never shadow a real trait hook in composition.
- *  - `createChatProvider` — re-binds every resolved trait's context to the
- *    full adapter config (identity resolution knows only
- *    `(protocol, providerType)`; composition needs the real config) and
- *    delegates to the registered base's contrib factory.
- *  - `resolveCapability` — the fixed fallback chain: trait capability hooks
- *    (last declarer wins) → the base's own catalog → `UNKNOWN_CAPABILITY`.
- *
- * Bound at App scope, eager.
- */
-
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';

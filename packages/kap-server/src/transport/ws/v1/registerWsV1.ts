@@ -1,13 +1,3 @@
-/**
- * `/api/v1/ws` — creates the v1 (legacy) WebSocket server. The HTTP `upgrade`
- * event is dispatched by the bootstrap (`start.ts`), which routes by path so
- * this is the only WebSocket endpoint.
- *
- * Each connection is a {@link WsConnectionV1}, tracked in the shared
- * {@link IConnectionRegistry}; shutdown (close-all + wss.close) is owned by the
- * bootstrap.
- */
-
 import type { Scope } from '@moonshot-ai/agent-core-v2';
 import { WebSocketServer } from 'ws';
 
@@ -32,10 +22,12 @@ export interface RegisterWsV1Options {
   readonly flushIntervalMs?: number;
   readonly maxBatchSize?: number;
   readonly highWaterMarkBytes?: number;
+  /** Heartbeat ping cadence override — tests inject small values. */
+  readonly heartbeatIntervalMs?: number;
 }
 
 export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketServer {
-  void core; // the broadcaster already holds the Core scope
+  void core;
   const wss = new WebSocketServer({ noServer: true, handleProtocols: selectWsBearerProtocol });
   const { registry, broadcaster } = opts;
 
@@ -53,6 +45,7 @@ export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketS
       flushIntervalMs: opts.flushIntervalMs,
       maxBatchSize: opts.maxBatchSize,
       highWaterMarkBytes: opts.highWaterMarkBytes,
+      heartbeatIntervalMs: opts.heartbeatIntervalMs,
     });
     socket.on('close', () => registry.remove(conn.id));
   });

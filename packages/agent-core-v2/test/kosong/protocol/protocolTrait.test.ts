@@ -1,13 +1,3 @@
-/**
- * `kosong/protocol` trait surface — the seventeen-hook declaration shape
- * and the `traitDefaultHeaders` / `traitConvertError` aggregation helpers.
- *
- * Locks the trait contract: every hook is optional and takes `TraitContext`
- * as its last parameter, and header aggregation runs in trait order with
- * later declarers winning per key (the mechanism that lets config
- * `defaultHeaders`, appended as the trailing synthetic trait, always win).
- */
-
 import { describe, expect, it } from 'vitest';
 
 import {

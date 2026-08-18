@@ -29,6 +29,7 @@ const baseState: AppState = {
   isReplaying: false,
   streamingPhase: 'idle',
   streamingStartTime: 0,
+  stepRetry: null,
   planMode: false,
   inputMode: 'prompt',
   swarmMode: false,

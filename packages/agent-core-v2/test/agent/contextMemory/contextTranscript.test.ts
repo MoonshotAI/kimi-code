@@ -1,11 +1,3 @@
-/**
- * Tests for `reduceContextTranscript` — the wire-transcript reducer used by the
- * snapshot and messages endpoints. Mirrors v1 `reduceWireRecords` expectations:
- * compaction keeps the prefix and appends a summary marker; undo removes the
- * tail but stops at compaction summaries / clear floors; clear keeps the
- * transcript but resets the folded view.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import {

@@ -1,12 +1,3 @@
-/**
- * `plugin` domain — App-scoped plugin management and consumption contract.
- *
- * Defines `IPluginService`, which manages installed plugins and exposes their
- * enabled commands, skills, session-start content, system-prompt sections,
- * MCP servers, and hooks. Successful reloads are announced through
- * `onDidReload`. Bound at App scope.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
 import type { HookDef } from '#/agent/externalHooks/types';
@@ -66,15 +57,8 @@ export interface IPluginService {
   enabledSystemPrompts(): Promise<readonly EnabledPluginSystemPrompt[]>;
   enabledMcpServers(): Promise<Record<string, McpServerConfig>>;
   enabledHooks(): Promise<readonly HookDef[]>;
-  // Consumption reads resolve to a per-method fallback (never reject) while
-  // no snapshot has loaded; consumers pinning a read use this to tell a real
-  // empty snapshot from the fallback.
   hasLoadedSnapshot(): boolean;
   readonly onDidReload: Event<ReloadSummary>;
-  // Fires only after a mutation (install / enable / disable / remove) has
-  // reloaded and notified — unlike `onDidReload`, an explicit
-  // `reloadPlugins()` does not raise it, so live-session consumers can tell
-  // "the plugin set changed under you" apart from a deliberate reload.
   readonly onDidMutate: Event<PluginMutationSummary>;
 }
 

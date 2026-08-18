@@ -1,7 +1,3 @@
-/**
- * `SubagentRosterTracker` — live subagent roster for snapshot rebuilds.
- */
-
 import type { Event } from '../src/transport/ws/v1/events';
 import { describe, expect, it } from 'vitest';
 
@@ -80,11 +76,9 @@ describe('SubagentRosterTracker', () => {
         },
       });
 
-    // A still-foreground registration (not detached) must keep the entry.
     t.apply(SID, taskStarted(false));
     expect(t.get(SID)).toHaveLength(1);
 
-    // The detach transition hands the subagent to REST /tasks — drop the row.
     t.apply(SID, taskStarted(true));
     expect(t.get(SID)).toEqual([]);
   });
@@ -105,7 +99,6 @@ describe('SubagentRosterTracker', () => {
       suspended_reason: 'rate limit',
     });
 
-    // A resumed subagent re-fires started; the original started_at is kept.
     const startedAt = t.get(SID)[0]?.started_at;
     t.apply(SID, ev({ type: 'subagent.started', subagentId: 'agent-1' }));
     expect(t.get(SID)[0]).toMatchObject({ subagent_phase: 'working', started_at: startedAt });
@@ -138,18 +131,12 @@ describe('SubagentRosterTracker', () => {
     const t = new SubagentRosterTracker();
     t.apply(SID, spawn('agent-1'));
 
-    // A swarm member's own turn.ended flows through the same session queue and
-    // must not drop the roster mid-swarm.
     t.apply(SID, ev({ type: 'turn.ended', agentId: 'agent-1', turnId: 1 }));
     expect(t.get(SID)).toHaveLength(1);
 
-    // The main turn.ended must not drop the roster either: the swarm result
-    // may still be queued behind the async wire append, and a refresh in that
-    // window would otherwise lose the member list.
     t.apply(SID, ev({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' }));
     expect(t.get(SID)).toHaveLength(1);
 
-    // The next main turn.started settles the previous transcript — safe to drop.
     t.apply(SID, ev({ type: 'turn.started', agentId: 'main', turnId: 2 }));
     expect(t.get(SID)).toEqual([]);
   });
@@ -160,8 +147,6 @@ describe('SubagentRosterTracker', () => {
     t.apply(SID, spawn('agent-2'));
     t.apply(SID, ev({ type: 'subagent.completed', subagentId: 'agent-2', resultSummary: 'done' }));
 
-    // The abort path suppresses the members' own subagent.failed events, so
-    // the tracker must settle them itself.
     t.apply(SID, ev({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'cancelled' }));
 
     const entries = t.get(SID);
@@ -172,7 +157,6 @@ describe('SubagentRosterTracker', () => {
       output_preview: 'Main turn cancelled',
     });
     expect(entries[0]?.completed_at).toBeDefined();
-    // Already-terminal entries are left untouched.
     expect(entries[1]).toMatchObject({ id: 'agent-2', status: 'completed', output_preview: 'done' });
   });
 

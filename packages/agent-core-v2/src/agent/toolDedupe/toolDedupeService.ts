@@ -1,26 +1,9 @@
-/**
- * `toolDedupe` domain — `IAgentToolDedupeService` implementation.
- *
- * Self-wiring plugin: its constructor registers `loop` onWillBeginStep/onDidFinishStep
- * hooks, an `onBeforeExecuteTool` veto listener (same-step duplicates are
- * vetoed with a placeholder synthetic result), and an `onDidExecuteTool`
- * hook to drive same-step suppression and cross-step repeat reminders, and
- * reports repeat telemetry through `telemetry`. The mutable dedupe state
- * (`stepCalls`, `originalCallIndex`, `syntheticCallIds`, `callKeyByCallId`,
- * `consecutiveKey`, `consecutiveCount`, `activeTurnId`, `activeStep`) is
- * registered into `agentState` (`IAgentStateService`) and read/written
- * through it; the `stepDeferreds` promise locks stay plain fields.
- * Constructed eagerly at
- * Agent scope so the hooks are installed without any other service
- * injecting it.
- */
-
 import { createHash } from 'node:crypto';
 
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { canonicalTelemetryArgs } from '#/_base/utils/canonical-args';
 import type { ToolCallDedupDetectedEvent, ToolCallRepeatEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -28,35 +11,39 @@ import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { wrapSystemReminder } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IAgentToolDedupeService, type ToolDedupeResult } from './toolDedupe';
 
 const REMINDER_TEXT_1 =
-  '\n\n<system-reminder>\n' +
-  'The same tool call has been repeated several times in a row. ' +
-  'Before making your next call, write one sentence stating what new information you expect it to produce. ' +
-  'Then act on that sentence: if it names something this result does not already give you, choose the action that best provides it; otherwise, continue with the evidence you already have.' +
-  '\n</system-reminder>';
+  '\n\n' +
+  wrapSystemReminder(
+    'The same tool call has been repeated several times in a row. ' +
+      'Before making your next call, write one sentence stating what new information you expect it to produce. ' +
+      'Then act on that sentence: if it names something this result does not already give you, choose the action that best provides it; otherwise, continue with the evidence you already have.',
+  );
 
 function makeReminderText2(repeatCount: number): string {
   return (
-    '\n\n<system-reminder>\n' +
-    `The same tool call has now been issued ${String(repeatCount)} times in a row. ` +
-    'Choose exactly one of the following and state your choice before acting:\n' +
-    '(1) Falsification check: run the cheapest test that could conclusively disprove your current approach, if such a test exists.\n' +
-    '(2) Missing input: tell the user precisely what information or decision you need to proceed, and ask for it.\n' +
-    '(3) Conclude: deliver your best result based on the evidence already gathered, listing anything that remains uncertain.' +
-    '\n</system-reminder>'
+    '\n\n' +
+    wrapSystemReminder(
+      `The same tool call has now been issued ${String(repeatCount)} times in a row. ` +
+        'Choose exactly one of the following and state your choice before acting:\n' +
+        '(1) Falsification check: run the cheapest test that could conclusively disprove your current approach, if such a test exists.\n' +
+        '(2) Missing input: tell the user precisely what information or decision you need to proceed, and ask for it.\n' +
+        '(3) Conclude: deliver your best result based on the evidence already gathered, listing anything that remains uncertain.',
+    )
   );
 }
 
 const REMINDER_TEXT_3 =
-  '\n\n<system-reminder>\n' +
-  'Write your final response now, without any further tool calls. ' +
-  'Cover: the current blocker, each approach you have tried and what it established, and the specific information or decision you need from the user to unblock progress. ' +
-  'Text only.' +
-  '\n</system-reminder>';
+  '\n\n' +
+  wrapSystemReminder(
+    'Write your final response now, without any further tool calls. ' +
+      'Cover: the current blocker, each approach you have tried and what it established, and the specific information or decision you need from the user to unblock progress. ' +
+      'Text only.',
+  );
 
 const REPEAT_REMINDER_1_START = 3;
 const REPEAT_REMINDER_2_START = 5;
@@ -153,14 +140,14 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(toolDedupeStepCallsKey);
-    this.states.register(toolDedupeOriginalCallIndexKey);
-    this.states.register(toolDedupeSyntheticCallIdsKey);
-    this.states.register(toolDedupeCallKeyByCallIdKey);
-    this.states.register(toolDedupeConsecutiveKeyKey);
-    this.states.register(toolDedupeConsecutiveCountKey);
-    this.states.register(toolDedupeActiveTurnIdKey);
-    this.states.register(toolDedupeActiveStepKey);
+    this.states.contributeState(toolDedupeStepCallsKey);
+    this.states.contributeState(toolDedupeOriginalCallIndexKey);
+    this.states.contributeState(toolDedupeSyntheticCallIdsKey);
+    this.states.contributeState(toolDedupeCallKeyByCallIdKey);
+    this.states.contributeState(toolDedupeConsecutiveKeyKey);
+    this.states.contributeState(toolDedupeConsecutiveCountKey);
+    this.states.contributeState(toolDedupeActiveTurnIdKey);
+    this.states.contributeState(toolDedupeActiveStepKey);
     loop.hooks.onWillBeginStep.register('toolDedupe', async (ctx, next) => {
       this.beginStep(ctx.turnId, ctx.step);
       await next();

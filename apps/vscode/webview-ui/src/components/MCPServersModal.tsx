@@ -379,9 +379,11 @@ function ServerItem({ server, onDelete }: { server: MCPServerConfig; onDelete: (
           <Button variant="ghost" size="icon" className="size-6" onClick={() => { void handleTest(); }} disabled={isLoading}>
             {isLoading ? <IconLoader2 className="size-3 animate-spin" /> : <IconPlugConnected className="size-3" />}
           </Button>
-          <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-destructive" onClick={onDelete} disabled={isLoading}>
-            <IconTrash className="size-3" />
-          </Button>
+          {server.mutable !== false && (
+            <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-destructive" onClick={onDelete} disabled={isLoading}>
+              <IconTrash className="size-3" />
+            </Button>
+          )}
         </div>
         <IconChevronDown className={cn("size-3.5 text-muted-foreground transition-transform", expanded && "rotate-180")} />
       </div>
@@ -397,7 +399,15 @@ function ServerItem({ server, onDelete }: { server: MCPServerConfig; onDelete: (
               ))}
             </div>
           )}
-          <ServerForm data={form} onChange={setForm} onSubmit={() => { void handleUpdate(); }} onCancel={() => setExpanded(false)} submitLabel="Update" />
+          {server.mutable === false ? (
+            <p className="text-[10px] text-muted-foreground">
+              {server.source === "plugin"
+                ? `Contributed by plugin "${server.origin ?? ""}" — update the plugin manifest instead`
+                : `Defined in ${server.origin ?? "a project config file"} — edit that file instead`}
+            </p>
+          ) : (
+            <ServerForm data={form} onChange={setForm} onSubmit={() => { void handleUpdate(); }} onCancel={() => setExpanded(false)} submitLabel="Update" />
+          )}
         </div>
       )}
     </div>

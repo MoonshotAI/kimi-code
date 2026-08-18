@@ -1,13 +1,3 @@
-/**
- * Scenario: agent-file parsing primitives — frontmatter validation, defaults,
- * and the AgentFileDefinition → AgentProfile factory (template substitution,
- * `${base_prompt}`, `${plugin_sections}`, tool pass-through, explicit override
- * intent).
- * Pure-function level, no IO.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/workspace/workspaceAgentProfileLoader/agentFile.test.ts`.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { AgentFileParseError, parseAgentFileText } from '#/workspace/workspaceAgentProfileLoader/internal/agentFile';
@@ -58,28 +48,11 @@ describe('parseAgentFileText', () => {
     const def = parse('---\nname: solo\ndescription: d\n---\n\nbody\n');
 
     expect(def.override).toBe(false);
-    expect(def.modelPreference).toBeUndefined();
     expect(def.tools).toBeUndefined();
     expect(def.disallowedTools).toBeUndefined();
     expect(def.subagents).toBeUndefined();
     expect(def.whenToUse).toBeUndefined();
     expect(def.prompt).toBe('body');
-  });
-
-  it('parses a symbolic model preference', () => {
-    const def = parse(
-      '---\nname: solo\ndescription: d\nmodel_preference: primary\n---\n\nbody\n',
-    );
-
-    expect(def.modelPreference).toBe('primary');
-  });
-
-  it('rejects an unsupported model preference', () => {
-    expect(() =>
-      parse(
-        '---\nname: solo\ndescription: d\nmodel_preference: provider/model\n---\n\nbody\n',
-      ),
-    ).toThrow(/"model_preference"/);
   });
 
   it('rejects missing frontmatter', () => {
@@ -325,12 +298,6 @@ describe('agentProfileFromFile', () => {
     const profile = agentProfileFromFile({ ...base, subagents: ['explore'] }, basePrompt);
 
     expect(profile.subagents).toEqual(['explore']);
-  });
-
-  it('passes the model preference through', () => {
-    const profile = agentProfileFromFile({ ...base, modelPreference: 'secondary' }, basePrompt);
-
-    expect(profile.modelPreference).toBe('secondary');
   });
 
   it('treats an explicit file as an override intent', () => {

@@ -1,11 +1,3 @@
-/**
- * `file` domain — `IFileService` contract and error helpers.
- *
- * Process-global upload store: persists uploaded bytes via `IBlobStore` and
- * their `FileMeta` index in the same store, then hands callers a stream back
- * on download. Bound at App scope.
- */
-
 import type { Readable } from 'node:stream';
 
 import { z } from 'zod';
@@ -51,6 +43,17 @@ export interface IFileService {
 
 export const IFileService: ServiceIdentifier<IFileService> = createDecorator<IFileService>('fileService');
 
+/**
+ * The upload id shape every `fileId`-addressed store may rely on. Ids are
+ * minted by `IFileService.save` (`f_<uuid>`); anything else is not an upload
+ * and must never reach a storage key — the character whitelist is what keeps
+ * a caller-supplied id from escaping its storage scope (`..`, separators).
+ */
+export const FILE_ID_REGEX = /^f_[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+export function isFileId(value: string): boolean {
+  return FILE_ID_REGEX.test(value);
+}
 
 export const FileErrors = {
   codes: {

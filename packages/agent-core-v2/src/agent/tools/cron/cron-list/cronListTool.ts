@@ -1,49 +1,3 @@
-/**
- * `tools` domain — `ICronListTool` implementation.
- *
- * CronListTool — enumerate the cron tasks currently scheduled in this
- * session.
- *
- * Read-only and side-effect-free. The output uses a
- * `key: value\n---\n` record layout so the LLM sees a consistent
- * layout across the "list scheduled work" tools.
- *
- * What each record carries:
- *
- *   - `id`            — the task id (a ULID) (also accepted by CronDelete).
- *   - `cron`          — verbatim 5-field expression as scheduled.
- *   - `humanSchedule` — best-effort plain-English rendering via
- *                       `cronToHuman`; falls back to the raw `cron`
- *                       string if the expression can't be parsed.
- *   - `nextFireAt`    — post-jitter local ISO timestamp with offset,
- *                       or the literal
- *                       string `null` when there is no fire in the
- *                       5-year window (or the expression is malformed).
- *                       This is the same jittered value `CronCreate`
- *                       reports, so the LLM can reason about herd-
- *                       avoidance offsets without surprise.
- *   - `recurring`     — `true` unless the task was explicitly created
- *                       with `recurring: false`.
- *   - `ageDays`       — `(wallNow - createdAt) / day`, formatted to two
- *                       decimal places. Useful context for the `stale`
- *                       flag and for the LLM's "should I still be
- *                       running?" judgement.
- *   - `stale`         — mirrors `ISessionCronService.isStale(task)`
- *                       (`recurring && age >= 7 days`, gated by
- *                       `KIMI_CRON_NO_STALE`).
- *
- * The tool never throws on malformed cron strings. A defensive
- * try/catch around the parse path lets the record render with the raw
- * `cron`, a `humanSchedule` fallback equal to `cron`, and
- * `nextFireAt: null` — that should never happen for tasks that went
- * through `CronCreate` (which validates), but guards against future
- * direct `store.add(...)` inserts.
- *
- * Collaborators: `ISessionCronService` for the task list,
- * staleness and per-task next-fire reads, plus the App-scope cron helpers
- * for expression parsing and timestamp formatting. Bound at Agent scope.
- */
-
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -56,7 +10,6 @@ import { formatLocalIsoWithOffset } from '#/app/cron/format';
 
 import { ICronListTool, CronListInputSchema, type CronListInput } from './cron-list';
 import CRON_LIST_DESCRIPTION from './cron-list.md?raw';
-
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
