@@ -164,6 +164,18 @@ describe('FlowAdvanceTool', () => {
     expect(advance).not.toHaveBeenCalled();
   });
 
+  it('rejects whitespace-only evidence at execution even when raw args bypassed the JSON schema', async () => {
+    const args = {
+      stage: 'triage',
+      verdict: 'pass',
+      criteria: [{ criterion: 'found', met: true, evidence: '   ' }],
+    } as FlowAdvanceInput;
+    const result = await runnable(tool.resolveExecution(args)).execute(CTX);
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('Invalid FlowAdvance input');
+    expect(advance).not.toHaveBeenCalled();
+  });
+
   it('the input schema rejects blank criterion text and blank evidence', () => {
     const blankEvidence = FlowAdvanceInputSchema.safeParse({
       stage: 'triage',

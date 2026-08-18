@@ -59,9 +59,17 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
   }
 
   private async execution(
-    args: FlowAdvanceInput,
+    rawArgs: FlowAdvanceInput,
     reviewedByUser: boolean,
   ): Promise<ExecutableToolResult> {
+    const parsed = FlowAdvanceInputSchema.safeParse(rawArgs);
+    if (!parsed.success) {
+      return {
+        isError: true,
+        output: `Invalid FlowAdvance input: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`,
+      };
+    }
+    const args = parsed.data;
     const run = this.flow.run();
     if (!run.active) {
       return { isError: true, output: 'No active flow run. Use FlowStart first.' };

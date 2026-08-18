@@ -69,6 +69,8 @@ export interface FlowGateRecord {
 
 export interface FlowGatesState {
   records: FlowGateRecord[];
+  flowId?: string;
+  task?: string;
 }
 
 export interface FlowAdvanceOutcome {

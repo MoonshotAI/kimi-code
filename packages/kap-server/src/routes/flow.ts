@@ -63,11 +63,12 @@ export function registerFlowRoutes(app: FlowRouteHost, deps: FlowRouteDeps): voi
       const main = await ensureMainAgent(handle);
       const flow = main.accessor.get(IAgentFlowService);
       const run = flow.run();
+      const gates = flow.gates();
       const payload: FlowStateResponse = {
         run: {
           active: run.active,
-          flow_id: run.flowId,
-          task: run.task,
+          flow_id: run.flowId ?? gates.flowId,
+          task: run.task ?? gates.task,
           stages: run.stages?.map((stage) => ({
             id: stage.id,
             objective: stage.objective,

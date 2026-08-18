@@ -98,8 +98,14 @@ function extractStageNotes(body: string): Map<string, string> {
     if (fenceMatch !== undefined && fenceMatch !== null) {
       const marker = fenceMatch[1]![0]!;
       const length = fenceMatch[1]!.length;
-      if (fence === undefined) fence = { marker, length };
-      else if (
+      const infoString = line.slice(line.indexOf(fenceMatch[1]!) + length);
+      if (fence === undefined) {
+        if (marker === '`' && infoString.includes('`')) {
+          if (current !== undefined) buffer.push(line);
+          continue;
+        }
+        fence = { marker, length };
+      } else if (
         fence.marker === marker &&
         length >= fence.length &&
         /^ {0,3}(`{3,}|~{3,})\s*$/.test(line)

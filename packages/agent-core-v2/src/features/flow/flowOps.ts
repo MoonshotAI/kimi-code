@@ -97,8 +97,10 @@ export const flowKey = defineState('flow', (): FlowRunState => ({ active: false 
 
 export const flowGatesKey = defineState('flow.gates', (): FlowGatesState => ({ records: [] }))
   .replayable({ schema: z.custom<FlowGatesState>() })
-  .on(FlowRunStarted, (s) => {
+  .on(FlowRunStarted, (s, e) => {
     s.records = [];
+    s.flowId = e.flowId;
+    s.task = e.task;
   })
   .on(FlowVerdict, (s, e) => {
     s.records.push({

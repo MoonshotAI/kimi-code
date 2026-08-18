@@ -124,6 +124,13 @@ describe('parseFlowDefinition', () => {
     expect(definition.stages[0]!.notes).toBe('Indented but valid.');
   });
 
+  it('does not open a backtick fence whose info string contains a backtick', () => {
+    const definition = parseFlowDefinition(
+      '---\nid: badinfo\nstages:\n  - id: triage\n    objective: x\n    completion: y\n---\n\n## triage\n\n```md `example`\n\nStill notes, not fenced.\n',
+    );
+    expect(definition.stages[0]!.notes).toContain('Still notes, not fenced.');
+  });
+
   it('rejects a notes heading that matches no stage id, so a typo cannot silently drop the notes', () => {
     expect(() =>
       parseFlowDefinition(

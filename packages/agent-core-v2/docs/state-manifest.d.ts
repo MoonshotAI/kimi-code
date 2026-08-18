@@ -1605,6 +1605,8 @@ export interface AgentStateSnapshot {
       }[];
       readonly feedback?: string;
     }[];
+    flowId?: string;
+    task?: string;
   };
   // src/features/plan/injection/planModeInjection.ts
   'plan.wasActive': boolean;
