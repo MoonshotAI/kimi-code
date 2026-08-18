@@ -135,7 +135,7 @@ interface MessageDriver {
   persistInputHistory(text: string): Promise<void>;
   sendQueuedMessage(session: unknown, item: QueuedMessage): void;
   recallLastQueued(): QueuedMessage | undefined;
-  recallStashedMedia(text: string, extraction: ExtractionResult | undefined): void;
+  recallStashedMedia(extraction: ExtractionResult | undefined): void;
   clearQueuedMessages(): void;
   closeSession(reason: string): Promise<void>;
   setSession(session: unknown): Promise<void>;
@@ -465,18 +465,6 @@ async function makeTempHome(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'kimi-code-tui-'));
   tempDirs.push(dir);
   return dir;
-}
-
-/** Runs `run` with a temp clip.mp4 source, removing the temp dir afterwards. */
-async function withTempVideo(run: (srcVideo: string) => Promise<void>): Promise<void> {
-  const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
-  try {
-    const srcVideo = join(dir, 'clip.mp4');
-    await writeFile(srcVideo, 'video-bytes');
-    await run(srcVideo);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
 }
 
 function stagedImage(imageStore: ImageAttachmentStore, fileId: string) {
@@ -3167,90 +3155,58 @@ command = "vim"
     expect(transcript).not.toContain('review');
   });
 
-  it('keeps a pasted video cache copy for history until the session closes', async () => {
-    process.env['KIMI_CODE_HOME'] = await makeTempHome();
-    let finishPrompt!: () => void;
-    const promptSettled = new Promise<void>((resolve) => {
-      finishPrompt = resolve;
-    });
-    const session = makeSession({ prompt: vi.fn(() => promptSettled) });
-    const { driver } = await makeDriver(session);
+  it('deletes a pasted video’s daemon upload when the consuming turn ends', async () => {
+    const session = makeSession();
+    const { driver, harness } = await makeDriver(session);
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    try {
-      await withTempVideo(async (srcVideo) => {
-        const attachment = imageStore.addVideo('video/mp4', srcVideo);
+    const attachment = imageStore.addVideo('video/mp4', '/tmp/clip.mp4');
+    imageStore.completeVideo(attachment, { fileId: 'file-v1' });
 
-        // Submission is fully synchronous: the paste is copied to the cache and
-        // referenced by a `file://` video_url the engine resolves in-turn.
-        driver.handleUserInput(`watch ${attachment.placeholder}`);
+    // The paste was uploaded to the daemon file store, so the submission
+    // carries a bare `kimi-file://` reference — no local cache copy.
+    driver.handleUserInput(`watch ${attachment.placeholder}`);
 
-        const parts = vi.mocked(session.prompt).mock.calls[0]?.[0] as
-          | Array<{
-              type: string;
-              text?: string;
-              videoUrl?: { url: string };
-            }>
-          | undefined;
-        expect(parts?.[0]).toEqual({ type: 'text', text: 'watch ' });
-        expect(parts?.[1]?.type).toBe('video_url');
-        expect(parts?.[1]?.videoUrl?.url).toMatch(/^file:\/\/.*clip\.mp4$/);
-        const stagingPath = driver.state.queuedMessages[0]?.stagingPaths?.[0]
-          ?? new URL(parts![1]!.videoUrl!.url).pathname;
-        expect(existsSync(stagingPath)).toBe(true);
+    const parts = vi.mocked(session.prompt).mock.calls[0]?.[0] as
+      | Array<{
+          type: string;
+          text?: string;
+          videoUrl?: { url: string };
+        }>
+      | undefined;
+    expect(parts?.[0]).toEqual({ type: 'text', text: 'watch ' });
+    expect(parts?.[1]).toEqual({ type: 'video_url', videoUrl: { url: 'kimi-file://file-v1' } });
+    expect(harness.deleteFile).not.toHaveBeenCalled();
 
-        driver.sessionEventHandler.handleEvent(
-          { type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event,
-          () => {},
-        );
-        finishPrompt();
-        expect(existsSync(stagingPath)).toBe(true);
-        driver.sessionEventHandler.handleEvent(
-          { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
-          () => {},
-        );
-        // The cache copy survives the consuming turn: a v1 degrade persists a
-        // `<video path>` tag carrying this exact path into history, and later
-        // turns re-open it with ReadMediaFile.
-        await new Promise((resolve) => {
-          setTimeout(resolve, 20);
-        });
-        expect(existsSync(stagingPath)).toBe(true);
+    emitTurn(driver, 1);
 
-        // Session close retires it.
-        await driver.closeSession('test');
-        await vi.waitFor(() => {
-          expect(existsSync(stagingPath)).toBe(false);
-        });
-      });
-    } finally {
-      finishPrompt();
-    }
+    // The engine materialized its own session copy at intake, so the staged
+    // upload is garbage once the consuming turn ends.
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-v1');
+    });
+    expect(attachment.fileId).toBeUndefined();
   });
 
-  it('queues a pasted video (file:// part) while a turn is streaming', async () => {
-    process.env['KIMI_CODE_HOME'] = await makeTempHome();
+  it('queues a pasted video (kimi-file part) while a turn is streaming', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    await withTempVideo(async (srcVideo) => {
-      const attachment = imageStore.addVideo('video/mp4', srcVideo);
-      driver.state.appState.streamingPhase = 'waiting';
+    const attachment = imageStore.addVideo('video/mp4', '/tmp/clip.mp4');
+    imageStore.completeVideo(attachment, { fileId: 'file-v1' });
+    driver.state.appState.streamingPhase = 'waiting';
 
-      driver.handleUserInput(`describe ${attachment.placeholder}`);
+    driver.handleUserInput(`describe ${attachment.placeholder}`);
 
-      expect(session.prompt).not.toHaveBeenCalled();
-      expect(driver.state.queuedMessages).toHaveLength(1);
-      const queued = driver.state.queuedMessages[0];
-      const parts = queued?.parts as Array<{ type: string; text?: string; videoUrl?: { url: string } }>;
-      expect(parts?.[0]).toEqual({ type: 'text', text: 'describe ' });
-      expect(parts?.[1]?.type).toBe('video_url');
-      expect(parts?.[1]?.videoUrl?.url).toMatch(/^file:\/\/.*clip\.mp4$/);
-      expect(queued?.stagingPaths).toHaveLength(1);
-      expect(existsSync(queued!.stagingPaths![0]!)).toBe(true);
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toHaveLength(1);
+    const queued = driver.state.queuedMessages[0];
+    const parts = queued?.parts as Array<{ type: string; text?: string; videoUrl?: { url: string } }>;
+    expect(parts?.[0]).toEqual({ type: 'text', text: 'describe ' });
+    expect(parts?.[1]).toEqual({ type: 'video_url', videoUrl: { url: 'kimi-file://file-v1' } });
+    expect(queued?.videoAttachmentIds).toEqual([attachment.id]);
 
-      driver.sendQueuedMessage(session, queued!);
-      expect(vi.mocked(session.prompt).mock.calls[0]?.[0]).toEqual(parts);
-    });
+    driver.sendQueuedMessage(session, queued!);
+    expect(vi.mocked(session.prompt).mock.calls[0]?.[0]).toEqual(parts);
   });
 
   it('falls back to retained bytes when a queued image upload expires before dispatch', async () => {
@@ -3364,9 +3320,9 @@ command = "vim"
 
     // Simulate a cache-hint interception dismissed back into the editor: the
     // submit's extraction is stashed, then restored with recall semantics
-    // (retain consumed, staged files kept for the restored draft).
+    // (retain consumed, staged upload kept for the restored draft).
     const extraction = extractMediaAttachments(text, imageStore);
-    driver.recallStashedMedia(text, extraction);
+    driver.recallStashedMedia(extraction);
 
     // The restored draft resubmits and re-retains; the consuming turn must
     // still delete the daemon upload — a retain leaked by the dismissal would
@@ -3479,12 +3435,7 @@ command = "vim"
 
     driver.handleUserInput(`first ${attachment.placeholder}`);
     driver.handleUserInput(`second ${attachment.placeholder}`);
-    const stagingPaths = driver.state.queuedMessages.flatMap((item) => item.stagingPaths ?? []);
     expect(driver.state.queuedMessages).toHaveLength(2);
-    // An uploaded image stages no local cache copy — the engine's intake
-    // materializes the session copy — so only the daemon upload lease rides
-    // with each queued message.
-    expect(stagingPaths).toHaveLength(0);
 
     driver.clearQueuedMessages();
 
@@ -4033,28 +3984,30 @@ command = "vim"
     expect(harness.deleteFile).toHaveBeenCalledTimes(1);
   });
 
-  it('rebases a recalled video onto its staged cache copy', async () => {
-    process.env['KIMI_CODE_HOME'] = await makeTempHome();
+  it('keeps a recalled video’s daemon upload alive for the restored draft', async () => {
     const session = makeSession();
-    const { driver } = await makeDriver(session);
+    const { driver, harness } = await makeDriver(session);
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    await withTempVideo(async (srcVideo) => {
-      const attachment = imageStore.addVideo('video/mp4', srcVideo);
-      driver.state.appState.streamingPhase = 'waiting';
+    const attachment = imageStore.addVideo('video/mp4', '/tmp/clip.mp4');
+    imageStore.completeVideo(attachment, { fileId: 'file-v1' });
+    driver.state.appState.streamingPhase = 'waiting';
 
-      driver.handleUserInput(`describe ${attachment.placeholder}`);
-      const queued = driver.state.queuedMessages[0]!;
-      const cachePath = queued.stagingPaths![0]!;
-      expect(existsSync(cachePath)).toBe(true);
+    driver.handleUserInput(`describe ${attachment.placeholder}`);
+    expect(driver.state.queuedMessages).toHaveLength(1);
 
-      const recalled = driver.recallLastQueued();
-      expect(recalled?.text).toContain(attachment.placeholder);
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      // The cache copy survives the recall and becomes the video's source, so
-      // a vanished original cannot lose the media on resubmit.
-      expect(existsSync(cachePath)).toBe(true);
-      expect(attachment.sourcePath).toBe(cachePath);
-    });
+    const recalled = driver.recallLastQueued();
+    expect(recalled?.text).toContain(attachment.placeholder);
+    // The recall consumed the retain but kept the upload, so resubmitting
+    // the restored draft re-extracts the same daemon reference — a vanished
+    // original source cannot lose the media.
+    expect(attachment.fileId).toBe('file-v1');
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+
+    driver.handleUserInput(recalled!.text);
+    const queued = driver.state.queuedMessages[0];
+    const parts = queued?.parts as Array<{ type: string; videoUrl?: { url: string } }>;
+    expect(parts?.[1]).toEqual({ type: 'video_url', videoUrl: { url: 'kimi-file://file-v1' } });
+    expect(queued?.videoAttachmentIds).toEqual([attachment.id]);
   });
 
   it('steers consecutive image-only messages without a whitespace-only separator part', async () => {

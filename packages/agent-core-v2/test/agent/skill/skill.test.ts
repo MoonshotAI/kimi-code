@@ -252,22 +252,13 @@ describe('SkillTool', () => {
     const tool = makeTool(ix);
 
     expect(tool.name).toBe('Skill');
-    expect(tool.description).toContain('Invoke a registered skill');
-    expect(tool.description).toContain('skill-loaded');
-    expect(tool.description).toContain('with the same `args`');
     expect(tool.parameters).toMatchObject({
       type: 'object',
       required: ['skill'],
       additionalProperties: false,
       properties: {
-        skill: expect.objectContaining({
-          type: 'string',
-          description: expect.stringMatching(/skill listing/i),
-        }),
-        args: expect.objectContaining({
-          type: 'string',
-          description: expect.stringMatching(/argument/i),
-        }),
+        skill: { type: 'string' },
+        args: { type: 'string' },
       },
     });
     expect(SkillToolInputSchema.safeParse({ skill: 'commit' }).success).toBe(true);

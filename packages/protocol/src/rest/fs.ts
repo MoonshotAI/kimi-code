@@ -72,6 +72,7 @@ import {
   fsGitStatusSchema,
   fsGrepFileHitSchema,
   fsSearchHitSchema,
+  fsSuggestItemSchema,
 } from '../fs';
 
 export const fsListSortSchema = z.enum([
@@ -239,6 +240,22 @@ export const fsSearchResponseSchema = z.object({
   truncated: z.boolean(),
 });
 export type FsSearchResponse = z.infer<typeof fsSearchResponseSchema>;
+
+export const fsSuggestRequestSchema = z.object({
+  query: z.string(),
+  limit: z.number().int().min(1).max(200).default(50),
+  follow_gitignore: z.boolean().default(true),
+  show_hidden: z.boolean().default(false),
+  include_globs: z.array(z.string()).optional(),
+  exclude_globs: z.array(z.string()).optional(),
+});
+export type FsSuggestRequest = z.infer<typeof fsSuggestRequestSchema>;
+
+export const fsSuggestResponseSchema = z.object({
+  items: z.array(fsSuggestItemSchema),
+  truncated: z.boolean(),
+});
+export type FsSuggestResponse = z.infer<typeof fsSuggestResponseSchema>;
 
 export const fsGrepRequestSchema = z.object({
   pattern: z.string().min(1),

@@ -664,6 +664,20 @@ describe('AgentTranscriptProjector', () => {
     expect(failed.usage).toBeUndefined();
   });
 
+  it('takes the turn header endedAt from the turn.ended event time', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed', time: 1_700_000_000_000 }));
+    expect(turnOps('t1', tx.getItems()).endedAt).toBe(new Date(1_700_000_000_000).toISOString());
+
+    feed(ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.ended', turnId: 2, reason: 'completed' }));
+    expect(turnOps('t2', tx.getItems()).endedAt).toBeTypeOf('string');
+  });
+
   it('accumulates tool.call.delta into inputText, kept across tool.call.started', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
