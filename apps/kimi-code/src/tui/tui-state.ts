@@ -3,7 +3,6 @@ import {
   ProcessTerminal,
   ScrollView,
   TuiAltScreen,
-  TuiMainScreen,
   VStack,
   type TUI,
 } from '@moonshot-ai/pi-tui';
@@ -47,11 +46,11 @@ export interface TUIState {
   surveyContainer: Container;
   editorContainer: Container;
   /**
-   * Fullscreen mode only: the bottom dock (activity/todo/notify/queue/btw/editor +
-   * footer) stacked under the transcript ScrollView. Undefined in regular
-   * mode, where all chrome is a direct child of the root container.
+   * The bottom dock (activity/todo/notify/queue/btw/survey/editor + footer)
+   * stacked under the transcript ScrollView, pinned to the bottom of the
+   * terminal.
    */
-  dockContainer: VStack | undefined;
+  dockContainer: VStack;
   footer: FooterComponent;
   editor: CustomEditor;
   theme: Theme;
@@ -96,31 +95,30 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const terminal = new ProcessTerminal();
   setMarkdownRenderLatex(initialAppState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true);
   setMarkdownMermaidMode(initialAppState.markdown?.mermaid ?? DEFAULT_MARKDOWN_CONFIG.mermaid);
-  // Fullscreen is experimental and env-gated for now: KIMI_CODE_TUI_FULL_SCREEN=1.
-  const fullscreen = process.env['KIMI_CODE_TUI_FULL_SCREEN'] === '1';
-  const ui =
-    fullscreen
-      ? new TuiAltScreen(terminal, undefined, undefined, {
-          // Mouse capture takes over the terminal's native link activation, so
-          // route OSC 8 clicks through our own opener.
-          openUrl,
-          // Likewise, on Windows the terminal's native right-click paste is
-          // intercepted; feed the clipboard to the focused component as a
-          // bracketed paste instead (renderer only calls this on win32).
-          onRightClickPaste: () => {
-            const target = ui.getFocusedComponent();
-            if (!target?.handleInput || clipboard?.getText === undefined) return;
-            void clipboard
-              .getText()
-              .then((text) => {
-                if (!text || ui.getFocusedComponent() !== target) return;
-                target.handleInput?.(`\u001B[200~${text}\u001B[201~`);
-                ui.requestRender();
-              })
-              .catch(() => {});
-          },
+  // The interactive TUI always runs on the alternate screen, so the editor and
+  // chrome stay docked at the bottom while the transcript scrolls above them.
+  // `stopUiForExit` replays the transcript through a main-screen renderer on
+  // the way out, so native scrollback still ends up with the conversation.
+  const ui = new TuiAltScreen(terminal, undefined, undefined, {
+    // Mouse capture takes over the terminal's native link activation, so
+    // route OSC 8 clicks through our own opener.
+    openUrl,
+    // Likewise, on Windows the terminal's native right-click paste is
+    // intercepted; feed the clipboard to the focused component as a
+    // bracketed paste instead (renderer only calls this on win32).
+    onRightClickPaste: () => {
+      const target = ui.getFocusedComponent();
+      if (!target?.handleInput || clipboard?.getText === undefined) return;
+      void clipboard
+        .getText()
+        .then((text) => {
+          if (!text || ui.getFocusedComponent() !== target) return;
+          target.handleInput?.(`\u001B[200~${text}\u001B[201~`);
+          ui.requestRender();
         })
-      : new TuiMainScreen(terminal);
+        .catch(() => {});
+    },
+  });
 
   setMarkdownAltScreenActive(ui instanceof TuiAltScreen);
   setMarkdownRenderRequester(() => {
@@ -144,34 +142,31 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     ui.requestRender();
   });
 
-  let dockContainer: VStack | undefined;
-  if (ui instanceof TuiAltScreen) {
-    // Fullscreen (alternate screen): the transcript scrolls inside the primary
-    // ScrollView while the rest of the chrome stays docked at the bottom. The
-    // footer joins the dock later via mountFooter().
-    // Sizing contract (mirrors pi's interactive layout): the transcript starts
-    // from basis 0 and grows; the dock keeps its intrinsic height, with the
-    // editor never squeezed below its 3 rows (top border / input / bottom
-    // border) and the footer below 1 — otherwise the box outline gets clipped.
-    const scrollView = new ScrollView(transcriptContainer, {
-      follow: 'end',
-      primary: true,
-      overscroll: 'chain',
-      scrollbar: 'auto',
-    });
-    dockContainer = new VStack();
-    dockContainer.addChild(activityContainer, { shrink: 1, minSize: 0 });
-    dockContainer.addChild(todoPanelContainer, { shrink: 1, minSize: 0 });
-    dockContainer.addChild(notifyPanelContainer, { shrink: 1, minSize: 0 });
-    dockContainer.addChild(queueContainer, { shrink: 1, minSize: 0 });
-    dockContainer.addChild(btwPanelContainer, { shrink: 1, minSize: 0 });
-    dockContainer.addChild(surveyContainer, { shrink: 0, minSize: 0 });
-    dockContainer.addChild(editorContainer, { shrink: 1, minSize: 3 });
-    const root = new VStack();
-    root.addChild(scrollView, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
-    root.addChild(dockContainer, { basis: 'auto', grow: 0, shrink: 1, minSize: 1 });
-    ui.setLayoutRoot(root);
-  }
+  // The transcript scrolls inside the primary ScrollView while the rest of the
+  // chrome stays docked at the bottom. The footer joins the dock later via
+  // mountFooter().
+  // Sizing contract (mirrors pi's interactive layout): the transcript starts
+  // from basis 0 and grows; the dock keeps its intrinsic height, with the
+  // editor never squeezed below its 3 rows (top border / input / bottom
+  // border) and the footer below 1 - otherwise the box outline gets clipped.
+  const scrollView = new ScrollView(transcriptContainer, {
+    follow: 'end',
+    primary: true,
+    overscroll: 'chain',
+    scrollbar: 'auto',
+  });
+  const dockContainer = new VStack();
+  dockContainer.addChild(activityContainer, { shrink: 1, minSize: 0 });
+  dockContainer.addChild(todoPanelContainer, { shrink: 1, minSize: 0 });
+  dockContainer.addChild(notifyPanelContainer, { shrink: 1, minSize: 0 });
+  dockContainer.addChild(queueContainer, { shrink: 1, minSize: 0 });
+  dockContainer.addChild(btwPanelContainer, { shrink: 1, minSize: 0 });
+  dockContainer.addChild(surveyContainer, { shrink: 0, minSize: 0 });
+  dockContainer.addChild(editorContainer, { shrink: 1, minSize: 3 });
+  const root = new VStack();
+  root.addChild(scrollView, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
+  root.addChild(dockContainer, { basis: 'auto', grow: 0, shrink: 1, minSize: 1 });
+  ui.setLayoutRoot(root);
 
   return {
     ui,
