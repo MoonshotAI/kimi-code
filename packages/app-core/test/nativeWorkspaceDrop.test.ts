@@ -5,6 +5,7 @@ import {
   extractDroppedFolderPaths,
   looksLikeFolderDrag,
   partitionDroppedItems,
+  partitionPastedItems,
 } from '../src/lib/nativeWorkspaceDrop';
 
 // Renderer tests run in the node environment, so there is no real `window`;
@@ -166,6 +167,104 @@ describe('partitionDroppedItems', () => {
     const event = { dataTransfer: { items: [], files: [png] } } as unknown as DragEvent;
     const { files, folderPaths } = partitionDroppedItems(event, () => '/x');
     expect(files).toEqual([png]);
+    expect(folderPaths).toEqual([]);
+  });
+});
+
+function fakeClipboard(items: DataTransferItem[], files: File[] = []): DataTransfer {
+  return { items, files } as unknown as DataTransfer;
+}
+
+describe('partitionPastedItems', () => {
+  it('splits pasted plain files from folders, resolving folder paths', () => {
+    const png = new File(['x'], 'a.png');
+    const dirFile = new File([], 'dir');
+    const cd = fakeClipboard(
+      [
+        fakeItem({ isDirectory: false, type: 'image/png', file: png }),
+        fakeItem({ isDirectory: true, file: dirFile }),
+      ],
+      [png, dirFile],
+    );
+    const { files, folderPaths } = partitionPastedItems(cd, () => '/work/dir');
+    expect(files).toEqual([png]);
+    expect(folderPaths).toEqual(['/work/dir']);
+  });
+
+  it('drops an unresolvable pasted folder entirely instead of uploading its stub', () => {
+    // The reported bug: copy a folder in the file manager and paste it — with
+    // no bridge (web) the stub must reach neither the draft nor the upload.
+    const dirFile = new File([], 'dir');
+    const cd = fakeClipboard([fakeItem({ isDirectory: true, file: dirFile })], [dirFile]);
+    const { files, folderPaths } = partitionPastedItems(cd, () => null);
+    expect(files).toEqual([]);
+    expect(folderPaths).toEqual([]);
+  });
+
+  it('reports hasFolders even when no path resolves, so the caller can swallow the default paste', () => {
+    // Otherwise a clipboard carrying the folder + its name as text/plain would
+    // paste the bare name into the draft — the folder must be ignored fully.
+    const unresolved = fakeItem({ isDirectory: true });
+    expect(partitionPastedItems(fakeClipboard([unresolved]), () => null).hasFolders).toBe(true);
+
+    const resolved = fakeItem({ isDirectory: true });
+    expect(partitionPastedItems(fakeClipboard([resolved]), () => '/work/dir').hasFolders).toBe(true);
+
+    const plain = fakeItem({ isDirectory: false, type: 'image/png' });
+    const stringItem = fakeItem({ kind: 'string', type: 'text/plain' });
+    expect(partitionPastedItems(fakeClipboard([plain, stringItem]), () => '/x').hasFolders).toBe(false);
+    expect(partitionPastedItems(fakeClipboard([]), () => '/x').hasFolders).toBe(false);
+  });
+
+  it('excludes the folder stub from dataTransfer.files and de-duplicates across both lists', () => {
+    const png = new File(['x'], 'a.png');
+    const dirFile = new File([], 'dir');
+    // The same folder stub shows up in both lists; only the items list still
+    // carries the directory marker.
+    const cd = fakeClipboard(
+      [fakeItem({ isDirectory: true, file: dirFile }), fakeItem({ isDirectory: false, type: 'image/png', file: png })],
+      [dirFile, png],
+    );
+    const { files } = partitionPastedItems(cd, () => '/work/dir');
+    expect(files).toEqual([png]);
+  });
+
+  it('keeps screenshots that only appear in dataTransfer.files', () => {
+    const shot = new File(['x'], 'image.png', { type: 'image/png' });
+    const { files, folderPaths } = partitionPastedItems(fakeClipboard([], [shot]), () => null);
+    expect(files).toEqual([shot]);
+    expect(folderPaths).toEqual([]);
+  });
+
+  it('skips non-file items (e.g. copied text)', () => {
+    const stringItem = fakeItem({ kind: 'string', type: 'text/plain' });
+    const { files, folderPaths } = partitionPastedItems(fakeClipboard([stringItem]), () => '/x');
+    expect(files).toEqual([]);
+    expect(folderPaths).toEqual([]);
+  });
+
+  it('handles a directory item whose File is unavailable', () => {
+    const noFile = fakeItem({ isDirectory: true, file: null });
+    const { files, folderPaths } = partitionPastedItems(fakeClipboard([noFile]), () => '/x');
+    expect(files).toEqual([]);
+    expect(folderPaths).toEqual([]);
+  });
+
+  it('de-duplicates folders resolving to the same path', () => {
+    const a = fakeItem({ isDirectory: true, file: new File([], 'a') });
+    const b = fakeItem({ isDirectory: true, file: new File([], 'b') });
+    const { folderPaths } = partitionPastedItems(fakeClipboard([a, b]), () => '/work/dir');
+    expect(folderPaths).toEqual(['/work/dir']);
+  });
+
+  it('defaults to the desktop bridge and returns empty without one', () => {
+    const dir = fakeItem({ isDirectory: true });
+    setBridge({ getPathForFile: () => '/work/dir' });
+    expect(partitionPastedItems(fakeClipboard([dir])).folderPaths).toEqual(['/work/dir']);
+
+    setBridge(undefined);
+    const { files, folderPaths } = partitionPastedItems(fakeClipboard([dir]));
+    expect(files).toEqual([]);
     expect(folderPaths).toEqual([]);
   });
 });

@@ -3,9 +3,10 @@
 // upload machinery, the chip strip, and the preview lightbox. Images and
 // videos get media chips with thumbnails; any other file type attaches as a
 // generic file chip (an icon + name, no thumbnail) and is sent as a file part.
-// Dropped folders are the exception: they are never uploaded (the endpoint
-// rejects them) — the desktop bridge resolves their absolute paths and they
-// are inserted into the draft text instead (see nativeWorkspaceDrop.ts).
+// Dropped or pasted folders are the exception: they are never uploaded (the
+// endpoint rejects them) — the desktop bridge resolves their absolute paths
+// and they are inserted into the draft text instead (see
+// nativeWorkspaceDrop.ts).
 //
 // Pending attachments are scoped per session (keyed by session id) so switching
 // sessions can't leak one session's unsent attachments into another session's
@@ -18,7 +19,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { KimiWebApi } from '@moonshot-ai/app-core/api';
 import type { TurnAttachment } from '@moonshot-ai/app-core/client';
 import { track } from '../contracts';
-import { partitionDroppedItems } from '@moonshot-ai/app-core/lib';
+import { partitionDroppedItems, partitionPastedItems } from '@moonshot-ai/app-core/lib';
 
 export interface Attachment {
   /** Unique local id (used as :key) */
@@ -58,10 +59,10 @@ export interface AttachmentUploadDeps {
   uploadImage: () => UploadImage | undefined;
   /** Active session id — scopes pending attachments (getter for reactivity). */
   sessionId: () => string | undefined;
-  /** Dropped folders are never uploaded (the endpoint rejects them) — the
-      desktop bridge resolves their absolute paths and the composer inserts
-      them into the draft text instead. Without the bridge (web) a dropped
-      folder resolves to no path and is simply ignored. */
+  /** Dropped or pasted folders are never uploaded (the endpoint rejects
+      them) — the desktop bridge resolves their absolute paths and the
+      composer inserts them into the draft text instead. Without the bridge
+      (web) a folder resolves to no path and is simply ignored. */
   insertFolderPaths?: (paths: string[]) => void;
 }
 
@@ -196,38 +197,37 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
 
   // Global document-level paste handler — captures Ctrl+V anywhere the composer is mounted.
   function handleDocumentPaste(e: ClipboardEvent): void {
-    if (!uploadImage()) return;
-
     const cd = e.clipboardData;
     if (!cd) return;
 
-    // Collect attached files from both .items and .files to cover all browsers/OS.
-    const files: File[] = [];
-    const seenKeys = new Set<string>();
-
-    const addBlob = (blob: File | Blob, name: string): void => {
-      const key = `${blob.size}:${blob.type}:${name}`;
-      if (seenKeys.has(key)) return;
-      seenKeys.add(key);
-      const ext = blob.type.split('/')[1] ?? 'png';
-      const safeName = name.includes('.') ? name : `paste-${Date.now()}.${ext}`;
-      files.push(blob instanceof File ? blob : new File([blob], safeName, { type: blob.type }));
-    };
-
-    // From DataTransferItemList.
-    for (const item of Array.from(cd.items)) {
-      if (item.kind === 'file') {
-        const blob = item.getAsFile();
-        if (blob) addBlob(blob, blob.name || `paste-${Date.now()}.${item.type.split('/')[1] ?? 'png'}`);
-      }
+    // Split first: pasted folders are never uploaded — a copied folder's
+    // clipboard File is a directory stub, and uploading it fails the request
+    // (surfacing as a daemon connection error). Their paths go into the draft
+    // instead, exactly like dropped folders; on web (no bridge) the partition
+    // has already skipped them. Files come back de-duplicated across the
+    // clipboard's items/files lists.
+    const { files: pastedFiles, folderPaths, hasFolders } = partitionPastedItems(cd);
+    if (folderPaths.length > 0) {
+      insertFolderPaths?.(folderPaths);
+      // Keep the default paste from also inserting the folder's name as text.
+      e.preventDefault();
+    } else if (hasFolders) {
+      // Folders were seen but none resolved (web / no bridge): they are meant
+      // to be ignored, so swallow the default paste too — otherwise the
+      // clipboard's text/plain (the folder's name) lands in the draft.
+      e.preventDefault();
     }
 
-    // From FileList (some browsers/OS put screenshots here directly).
-    for (const file of Array.from(cd.files)) {
-      addBlob(file, file.name);
-    }
+    if (!uploadImage()) return;
+    if (pastedFiles.length === 0) return; // No files — let normal text paste proceed unmodified.
 
-    if (files.length === 0) return; // No files — let normal text paste proceed unmodified.
+    // A pasted blob with a dot-less name (e.g. a screenshot) gets a
+    // paste-<timestamp>.<ext> name so the chip and wire part stay readable.
+    const files = pastedFiles.map((file) => {
+      if (file.name.includes('.')) return file;
+      const ext = file.type.split('/')[1] ?? 'png';
+      return new File([file], `paste-${Date.now()}.${ext}`, { type: file.type });
+    });
 
     e.preventDefault();
     void addFiles(files, 'paste');
