@@ -3,11 +3,11 @@
      the draft workspace's open sessions first, then its done ones, capped by
      the facade. Rows carry the status view's Open/Done tag; click selects
      the session. Display-only rows — row-level actions stay in the sidebar.
-     (The desktop build's list foot links to its session admin page; web has
-     no admin page, so the foot is omitted.) -->
+     The list foot holds a centered 查看更多 button (tooltip on hover) that
+     opens the session admin page. -->
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
-import { Icon } from '@moonshot-ai/app-ui';
+import { Icon, Tooltip } from '@moonshot-ai/app-ui';
 import type { Session } from '../../types';
 
 defineProps<{
@@ -16,6 +16,8 @@ defineProps<{
 
 const emit = defineEmits<{
   selectSession: [id: string];
+  /** 查看更多 button — opens the cross-workspace session admin page. */
+  openSessionAdmin: [];
 }>();
 
 const { t } = useI18n();
@@ -37,6 +39,14 @@ const { t } = useI18n();
       <span class="wrs-title">{{ s.title }}</span>
       <span class="wrs-time">{{ s.time }}</span>
     </button>
+    <div class="wrs-foot">
+      <Tooltip :text="t('conversation.sessionAdminTooltip')">
+        <button type="button" class="wrs-more" @click="emit('openSessionAdmin')">
+          {{ t('conversation.viewMoreSessions') }}
+          <Icon name="chevron-down" size="sm" />
+        </button>
+      </Tooltip>
+    </div>
   </div>
 </template>
 
@@ -107,5 +117,37 @@ const { t } = useI18n();
   color: var(--color-text-faint);
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
+}
+/* 查看更多：列表底部居中的 quiet 按钮（文字 + 向下箭头，hover 出 tooltip
+   指向管理页）。 */
+.wrs-foot {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-2);
+}
+.wrs-more {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 26px;
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+.wrs-more:hover {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+.wrs-more svg {
+  color: var(--color-text-faint);
 }
 </style>

@@ -5,6 +5,13 @@ import { useI18n } from 'vue-i18n';
 import Sidebar from './components/Sidebar.vue';
 import ResizeHandle from './components/ResizeHandle.vue';
 import ConversationPane from './components/chat/ConversationPane.vue';
+import SessionAdminView from './components/admin/SessionAdminView.vue';
+import {
+  planAdminBatchToast,
+  undoBatchDirectionOf,
+  type AdminBatchToastPlan,
+  type SessionAdminBatchDirection,
+} from './components/admin/adminBatchToast';
 import FilePreview from './components/FilePreview.vue';
 import ThinkingPanel from './components/chat/ThinkingPanel.vue';
 import AgentDetailPanel from './components/chat/AgentDetailPanel.vue';
@@ -540,11 +547,67 @@ async function handleComposerSelectModel(modelId: string): Promise<void> {
 // The archive toast carries a `reopen` flag for the complete⇄reopen two-way
 // flow: completing shows "已完成 · 撤销", reopening shows "已恢复进行中 · 撤销"
 // (whose Undo re-completes).
+// The adminBatch toast is the session admin page's batch variant: undo runs
+// the same (succeeded) id set through the inverse batch endpoint and swaps
+// the direction — the complete⇄reopen two-way flow, batched.
 type AppActionToast =
   | { kind: 'archive'; id: string; reopen?: boolean; key: number }
-  | { kind: 'export'; state: 'running' | 'done'; key: number };
+  | { kind: 'export'; state: 'running' | 'done'; key: number }
+  | { kind: 'adminBatch'; plan: AdminBatchToastPlan; key: number };
 const actionToast = ref<AppActionToast | null>(null);
 let actionToastKey = 0;
+
+/** Direction of the in-flight admin batch (null = idle). A large selected set
+ *  keeps the request open for seconds — this drives the batch bar's spinner +
+ *  disabled state and guards runSessionAdminBatch against re-entry. */
+const sessionAdminBatchRunning = ref<SessionAdminBatchDirection | null>(null);
+
+/** Session admin page batch Mark-as-done / Reopen (single-row actions ride
+ *  the same batch endpoint). The toast carries the succeeded count (+ failed
+ *  count when partial) and an Undo through the inverse endpoint; an
+ *  all-failed batch has nothing to undo and surfaces as an error notice. */
+async function runSessionAdminBatch(direction: SessionAdminBatchDirection, ids: string[]): Promise<void> {
+  if (ids.length === 0 || sessionAdminBatchRunning.value !== null) return;
+  sessionAdminBatchRunning.value = direction;
+  try {
+    const outcome =
+      direction === 'archive' ? await client.archiveSessions(ids) : await client.restoreSessions(ids);
+    const plan = planAdminBatchToast(direction, outcome);
+    if (plan === null) {
+      client.notify({
+        severity: 'error',
+        title: t(
+          direction === 'archive' ? 'admin.batchDoneFailedNotice' : 'admin.batchReopenFailedNotice',
+          { n: outcome.failed },
+        ),
+      });
+      return;
+    }
+    actionToast.value = { kind: 'adminBatch', plan, key: ++actionToastKey };
+  } finally {
+    sessionAdminBatchRunning.value = null;
+  }
+}
+
+// Undo puts the same id set through the inverse endpoint and swaps the toast
+// direction (complete⇄reopen two-way, batched). On failure the toast stays
+// so the user can retry — the error itself surfaces via WarningToasts.
+async function undoSessionAdminBatch(): Promise<void> {
+  const toast = actionToast.value;
+  if (!toast || toast.kind !== 'adminBatch') return;
+  const direction = undoBatchDirectionOf(toast.plan.direction);
+  const outcome =
+    direction === 'archive'
+      ? await client.archiveSessions(toast.plan.ids)
+      : await client.restoreSessions(toast.plan.ids);
+  const plan = planAdminBatchToast(direction, outcome);
+  if (plan === null) return; // undo failed — keep the toast for a retry
+  // A newer toast (export, another completion…) may have taken the slot
+  // while the undo was in flight — never clobber it (the single-session
+  // undo path guards the same way).
+  if (actionToast.value?.key !== toast.key) return;
+  actionToast.value = { kind: 'adminBatch', plan, key: ++actionToastKey };
+}
 
 async function archiveSessionWithToast(id: string): Promise<void> {
   await client.archiveSession(id);
@@ -1168,6 +1231,7 @@ function openPr(url: string): void {
         @load-more-flat-sessions="void client.loadMoreFlatSessions()"
         @ensure-done-sessions="void client.ensureDoneSessions()"
         @load-more-done-sessions="void client.loadMoreDoneSessions()"
+        @open-session-admin="client.openSessionAdmin()"
         @open-settings="showSettings = true"
         @login="openLogin"
         @collapse="toggleSidebarCollapse"
@@ -1198,6 +1262,7 @@ function openPr(url: string): void {
 
     <ConversationPane
       ref="conversationPaneRef"
+      v-show="client.mainView.value === 'chat'"
       :mobile="isMobile"
       :turns="client.turns.value"
       :session-id="client.activeSessionId.value"
@@ -1257,6 +1322,7 @@ function openPr(url: string): void {
       @select-session="(id) => client.selectSession(id)"
       @add-workspace="showAddWorkspace = true"
       @open-pr="openPr"
+      @open-session-admin="client.openSessionAdmin($event)"
       @submit="handleSubmit($event)"
       @login="openLogin()"
       @steer="client.steerPrompt($event.text, $event.attachments)"
@@ -1291,6 +1357,15 @@ function openPr(url: string): void {
       @open-compaction="openCompactionPanel($event)"
       @open-agent="openAgentPanel($event)"
       @edit-message="handleEditMessage"
+    />
+
+    <!-- Session admin page (/admin/sessions): a full-pane main view switched
+         with ConversationPane via v-show so the chat keeps its state. -->
+    <SessionAdminView
+      v-show="client.mainView.value === 'sessionAdmin'"
+      :batch-running="sessionAdminBatchRunning"
+      @archive-sessions="(ids) => void runSessionAdminBatch('archive', ids)"
+      @restore-sessions="(ids) => void runSessionAdminBatch('restore', ids)"
     />
 
     <!-- Sidebar toggle — floating only when the in-header control can't serve:
@@ -1525,6 +1600,16 @@ function openPr(url: string): void {
                 : t('sidebar.completeToastLead')
             }}
             <button type="button" @click="undoArchive">{{ t('sidebar.archiveToastUndo') }}</button>
+          </template>
+          <template v-else-if="actionToast.kind === 'adminBatch'">
+            {{
+              actionToast.plan.direction === 'archive'
+                ? t('admin.batchDoneToast', { n: actionToast.plan.succeeded })
+                : t('admin.batchReopenedToast', { n: actionToast.plan.succeeded })
+            }}<template v-if="actionToast.plan.failed > 0">{{
+              t('admin.batchFailedSuffix', { n: actionToast.plan.failed })
+            }}</template>
+            <button type="button" @click="undoSessionAdminBatch">{{ t('admin.undo') }}</button>
           </template>
           <template v-else>
             {{ actionToast.state === 'running' ? t('commands.export.started') : t('commands.export.done') }}
@@ -1830,6 +1915,22 @@ function openPr(url: string): void {
 }
 .app.sidebar-collapsed.macos-desktop .chat-header {
   padding-left: 146px;
+}
+/* The session admin page's head occupies the same top strip as the
+   conversation header — same clearance while the sidebar is collapsed
+   (Windows needs none: its toggle lives in the global titlebar). Only the
+   head pads: the page body (filters + table) always spans the full pane. */
+.app.sidebar-collapsed .session-admin .sa-head {
+  padding-left: 78px;
+}
+.app.sidebar-collapsed.windows-desktop .session-admin .sa-head {
+  padding-left: var(--space-6);
+}
+.app.sidebar-collapsed.macos-desktop .session-admin .sa-head {
+  padding-left: 146px;
+}
+.app.fullscreen.sidebar-collapsed.macos-desktop .session-admin .sa-head {
+  padding-left: 78px;
 }
 
 /* macOS desktop (hidden title bar): the right panel's header row continues the

@@ -193,6 +193,9 @@ const emit = defineEmits<{
   restoreSession: [id: string];
   /** Chat header: export current session. */
   exportSession: [id: string];
+  /** Workspace home's 查看更多 entry: open the session admin page with the
+   *  draft workspace pre-selected in the filter bar. */
+  openSessionAdmin: [workspaceId?: string];
 }>();
 
 // Empty-composer workspace picker.
@@ -2380,6 +2383,7 @@ defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone
               v-if="showWorkspaceHome && (recentSessions?.length ?? 0) > 0"
               :sessions="recentSessions ?? []"
               @select-session="(id) => emit('selectSession', id)"
+              @open-session-admin="emit('openSessionAdmin', activeWorkspaceId ?? undefined)"
             />
             <div class="empty-spacer" />
           </template>

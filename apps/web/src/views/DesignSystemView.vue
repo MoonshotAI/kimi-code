@@ -96,6 +96,7 @@ onUnmounted(() => {
           <a href="#shell"><span class="num">08</span>App Shell &amp; Sidebar</a>
           <a href="#a11y"><span class="num">09</span>Accessibility</a>
           <a href="#dialogs"><span class="num">10</span>Dialogs</a>
+          <a href="#session-admin"><span class="num">11</span>Session Admin</a>
         </nav>
 
         <div class="nav-group">Companion output</div>
@@ -1902,6 +1903,69 @@ onUnmounted(() => {
               <b>Design intent:</b> a picker dialog should feel like a quiet command palette — one boxed search, calm rows, a neutral "you are here" fill,
               and a predictable shortcut bar. Anything noisier — badge clouds, accent-selected rows, per-dialog footer inventions — is a regression to weed out.
             </div></div>
+          </section>
+          <section id="session-admin">
+            <div class="sec-head">
+              <span class="sec-num">11</span>
+              <h2 class="sec-title">Session Admin Page</h2>
+            </div>
+            <p class="sec-desc">
+              The session admin page (<code>/admin/sessions</code>, opened from the sidebar's list-management menu) is a full-pane management view for
+              cross-workspace session triage: filters, a server-side paged table, and batch lifecycle actions. It is a main-view peer of the
+              conversation pane (<code>mainView</code> in the facade, switched with v-show so the chat stays alive) and page-private by decision —
+              everything lives under <code>components/admin/</code> (<code>SessionAdminView/Table/Pagination</code>, <code>FilterSelect</code>,
+              <code>MultiSelectMenu</code>, <code>SessionAdminMenu</code>, <code>useAnchoredMenu</code>); nothing here promotes to §03 until a second
+              consumer exists. Data is one <code>GET /api/v2/sessions</code> page-mode call per filter/page change (all conditions pushed down, no
+              client-side aggregation); batch archive/restore go through the v2 batch endpoints with per-item outcomes.
+            </p>
+
+            <h3 class="sub">Page skeleton — a full-pane admin surface</h3>
+            <p>A 48px title bar (a back IconButton — chevron-left, tooltip 返回, closing the page back to the chat underneath via <code>closeSessionAdmin</code> — then the page title, semibold base; hairline bottom edge; on macOS desktop it doubles as the window-drag region and takes the chat header's collapsed-sidebar clearance — 146px / 78px / Windows fallback — so ONLY the bar insets, the body never does) → muted subtitle → query-form filter bar → table card → pager. The title bar and the scroll container are siblings (bar fixed, body scrolls). The page wrapper spans the whole conversation column — <b>do not</b> apply the chat content measure (<code>--p-content-max</code>) here: under <code>table-layout: fixed</code> a narrow wrapper crushes the table's flexible columns to zero width (the title/prompt columns collapsed in practice). An admin table surface owns the pane width. The status filter defaults to 全部 (all) — the page is the whole inventory, 重置 restores that same default.</p>
+            <div class="callout warn"><span class="ico">!</span><div>
+              <b>Lesson (content measure):</b> <code>--p-content-max</code> is a READING measure for prose-like content (chat, dialogs). Full-bleed work surfaces — tables, grids, dashboards — span the pane instead. Pick one deliberately; inheriting the chat measure by default is the bug.
+            </div></div>
+
+            <h3 class="sub">Table</h3>
+            <p>The card is the flat shell: 0.5px <code>--color-line</code> hairline, <code>--radius-lg</code>, no shadow. Inside, <code>table-layout: fixed</code> with a <code>colgroup</code>: fixed-width utility columns (checkbox, workspace, status, the two time columns, actions) and two flexible content columns (title at <code>max(200px, 20%)</code> — a floor, not a bare percentage — last prompt taking the rest). The head row is a pinned-height 32px box (it hosts the batch transform below); body rows are 40px. Rows are separated by 0.5px <code>--color-subtle</code> hairlines (none after the last row), with a <code>--color-hover</code> wash on hover. Every cell truncates single-line with ellipsis and carries a <code>title</code> tooltip. Time columns are absolute (<code>YYYY-MM-DD HH:mm</code>) in <code>--font-mono</code> xs with <code>tabular-nums</code> — the admin page is an audit view, so no relative times; empty values render a faint <code>—</code>. The status column sits right after the workspace column and reuses the sidebar row's lifecycle glyphs: <code>state-open</code> (dashed ring, <code>--color-success</code>) for 进行中 and <code>state-done</code> (checked ring, <code>--color-done</code>) for 已完成, icon + label. First load swaps the body for a centered §03 Spinner; refetches keep the stale rows and dim the card (opacity + <code>pointer-events: none</code>) rather than flashing it away; filters with no matches render the centered faint empty line.</p>
+            <p><b>Responsive steps</b> (the card is the query container; web's narrow panes matter too): the time columns give ground FIRST — at ≤1020px their values swap to the compact <code>MM-DD HH:mm</code> at 108px (each time cell carries both spans, CSS toggles them — no JS measuring); at ≤760px the time columns hide outright (the <code>col</code> and the cells share <code>sa-c-time</code>/<code>sa-col-time</code> classes) and the workspace column drops its folder icon. The table itself floors at 640px and the card takes <code>overflow-x: auto</code> — past the floor the card scrolls horizontally instead of crushing title/prompt to zero, and auto still clips the rounded corners like hidden did.</p>
+            <table class="dt">
+              <thead><tr><th>Column</th><th>Width</th><th>Content</th></tr></thead>
+              <tbody>
+                <tr><td class="tk">checkbox</td><td class="val">36px</td><td>header select-this-page (indeterminate) + row checkboxes</td></tr>
+                <tr><td class="tk">会话名</td><td class="val">20%</td><td>title (emoji verbatim), weight 475, ellipsis; hosts inline rename</td></tr>
+                <tr><td class="tk">工作空间</td><td class="val">116px</td><td>folder-closed icon + workspace name (cwd basename fallback)</td></tr>
+                <tr><td class="tk">状态</td><td class="val">88px</td><td>state-open/state-done glyph + label</td></tr>
+                <tr><td class="tk">最后一条 prompt</td><td class="val">flex</td><td>muted, ellipsis, faint <code>—</code> when null</td></tr>
+                <tr><td class="tk">最后更新 / 完成时间</td><td class="val">140px ×2</td><td>mono tabular-nums absolute time; completed shows <code>—</code> while open</td></tr>
+                <tr><td class="tk">操作</td><td class="val">84px</td><td>lifecycle IconButton (state-done completes an open row, undo reopens a done one; tooltips carry 标记完成/恢复进行中) + ⋯ IconButton dropdown (Rename… / Fork / Export)</td></tr>
+              </tbody>
+            </table>
+
+            <h3 class="sub">Batch header — the zero-offset transform</h3>
+            <p>GitHub issues/PR semantics: while a selection exists, the head row transforms IN PLACE — the checkbox column stays put, and the remaining column headers swap for a single <code>&lt;th colspan&gt;</code> batch bar ("已选 n 项" + Mark-as-done / Reopen, each disabled when the selection holds no row of that lifecycle) inside the SAME pinned 32px box, so the table body does not move a pixel. Mark-as-done is the bar's one accent-primary button (fill + on-accent icon/label); Reopen stays a quiet hairline button. The selection itself is facade-owned (a reactive id set plus a per-id lifecycle map, reconciled against fresh rows on every landing) and survives page and filter changes — the batch count deliberately includes rows no longer visible. Successful batch items leave the selection and the current page is silently re-pulled; failures stay selected. There is deliberately no "clear selection" button for ordinary selections: unchecking rows or the header checkbox is the way out. Toasts ride App.vue's shared ActionToast channel (succeeded count, failed count when partial, Undo through the inverse batch endpoint); an all-failed batch has nothing to undo and surfaces as a WarningToast instead.</p>
+
+            <h3 class="sub">Select-all-matching — the Gmail move</h3>
+            <p>Page-size caps (≤100) make "mark everything done" hopeless against thousands of rows, so the batch bar borrows Gmail's escalation: once the header checkbox has the whole page selected and <code>total</code> says more rows exist, a link-style button appears IN the bar (zero-offset — no banner pushing the table down): "选中当前条件下的全部 N 项" (busy-label 正在选中… while fetching). Activating it materializes every matching id into the selection via the ids projection (<code>GET /api/v2/sessions?fields=id,archived</code> — the one cheap shape whose page_size ceiling relaxes to 10000; cursor-walked for larger sets), merging atomically: a filter change mid-flight discards the fetch entirely. While active the count reads "已选中全部 n 项" and the link becomes 清除选择. Exclusions are free — unchecking a row just drops it from the set; emptying the selection drops the mode, as does a right-click single-row collapse. The mode ties itself to the filter fingerprint it was built from: a real condition change (query-form apply with different values, or any granular setter) clears the whole selection — re-applying the SAME conditions keeps it. Batch executions chunk at the wire's 5000-unique-ids ceiling (sequential, merged per-item outcomes; a thrown chunk aborts the rest and counts everything unexecuted as failed — the succeeded ids still reconcile).</p>
+
+            <h3 class="sub">The quiet-button border reset</h3>
+            <p>All quiet icon/text buttons on the page (the batch bar's Reopen, the pager buttons) set <code>border: none; background: transparent</code> explicitly — or, for the bordered shapes (the filter triggers), an explicit 0.5px hairline. Row actions are pure §03 IconButtons (the sidebar row's language): the lifecycle glyph (<code>state-done</code> completes an open row, <code>undo</code> reopens a done one — tooltips carry the labels) plus the ⋯ dropdown; a text button per row read as visual noise once every row carried one.</p>
+            <div class="callout warn"><span class="ico">!</span><div>
+              <b>Lesson (UA borders):</b> the global reset clears button backgrounds only — a bare <code>&lt;button&gt;</code> still inherits the UA stylesheet's outset border, which reads as a stray box around every quiet control. Any quiet button outside the §03 primitives must reset both properties.
+            </div></div>
+
+            <h3 class="sub">Quiet filter controls (query form)</h3>
+            <p>The filter bar is a <b>query form</b> (antd Pro semantics): the controls edit a local DRAFT only — nothing is requested until an explicit apply. 查询 (a §03 <code>Button variant=primary size=sm</code>) applies the whole draft through the facade in one shot (<code>applySessionAdminFilters</code> — atomic write + page reset + exactly one request, never the per-setter debounce dribble), 重置 (a <code>ghost</code> sibling) restores defaults the same way, and Enter inside the bar queries too — except while any overlay (a select dropdown) is open, where Enter belongs to the overlay. Pagination is exempt: page/page-size changes still fetch immediately. Entry paths can pre-seed the conditions: the workspace home's 查看更多 opens the page with its workspace already selected in the filter (<code>openSessionAdmin(workspaceId)</code> applies the filter atomically with the navigation), and because the page is v-show-kept, the draft re-seeds from the applied filters on EVERY entry so the controls always show the true conditions. The controls themselves are muted sm labels plus a family of quiet 30px hairline controls (0.5px <code>--color-line</code>, <code>--radius-md</code>, transparent ground, <code>--color-hover</code> on hover/open) — deliberately NOT the §03 Select (a 32px+ form control with an accent focus ring, too heavy for a filter strip):</p>
+            <ul class="clean">
+              <li><b>FilterSelect</b> — quiet single-select (status, updated time, page size): the trigger carries the current label + a faint chevron; the dropdown is the §03 Menu surface with a leading fixed-width check slot and an optional lifecycle dot (<code>--color-success</code> open / <code>--color-done</code> done).</li>
+              <li><b>MultiSelectMenu</b> — workspace multi-select: the trigger shows the selection as removable tags (at most two, then "+N"; empty = the 全部工作空间 placeholder). The anchored panel leads with a search row (case-insensitive name filter, autofocused, reset on close), then a Select-all row, then the option rows — no checkboxes, selected rows take the active highlight. The options area is capped at 320px with its own scroll (in-menu scrolls never close the panel); the panel STAYS OPEN on toggles so several workspaces can be picked in one go (Esc / outside click / outside scroll closes). Empty selection = no filter.</li>
+              <li><b>Updated-time presets</b> — a FilterSelect of relative windows (全部时间 / 3 天以前 / 7 天以前 / 30 天以前): a pick maps onto the facade's <code>updatedTo</code> bound as the local calendar day N days back (computed at apply time, so a saved draft never goes stale), and the facade's day-end mapping turns it into <code>updatedBefore</code>. Deliberately not a calendar range picker — triage asks "older than X", not "between two dates".</li>
+            </ul>
+
+            <h3 class="sub">Point-anchored context menus</h3>
+            <p><code>useAnchoredMenu</code> is the page's one menu mechanic: fixed-position §03 Menu surface, pop-from-anchor motion (fade + 0.97 scale on the menu tokens, origin and nudge following the upward flip at the viewport edge), closed by outside mousedown / Esc / scroll / resize. Three anchor modes — left-aligned under a trigger (filter selects), right-edge under a trigger (the row ⋯), and <code>openAt(x, y)</code> at a raw viewport point for the row contextmenu. The contextmenu has two shapes: on a row outside the multi-selection the selection first collapses to just that row and the menu is the single shape (Open session / Rename… / Fork / Export / — / the lifecycle action); on a row inside it, the multi shape (a muted count head + Mark-as-done (n) / Reopen (n), disabled per availability). Open session is the facade's <code>selectSession</code> — a user navigation that also leaves the admin page back to chat.</p>
+
+            <h3 class="sub">Inline rename</h3>
+            <p>The title cell swaps for an accent-ringed input (<code>--color-accent</code> border + <code>--color-accent-bd</code> ring, <code>--radius-sm</code>) — Enter commits, Esc cancels, blur commits, settled once. The table is server-fed, so a commit is followed by a silent re-pull of the current page (the facade's pool update never reaches it).</p>
           </section>
 
         </div>

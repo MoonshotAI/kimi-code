@@ -135,6 +135,8 @@ const emit = defineEmits<{
   /** Status view's done list: seed the first page / fetch the next page. */
   ensureDoneSessions: [];
   loadMoreDoneSessions: [];
+  /** Open the session admin page (the view menu's 会话管理… entry). */
+  openSessionAdmin: [];
   openSettings: [];
   login: [];
   collapse: [];
@@ -551,6 +553,11 @@ function chooseListMode(mode: SidebarViewMode): void {
 
 function chooseSortMode(mode: WorkspaceSortMode): void {
   emit('setWorkspaceSortMode', mode);
+  closeViewMenu();
+}
+
+function openSessionAdmin(): void {
+  emit('openSessionAdmin');
   closeViewMenu();
 }
 
@@ -1623,6 +1630,13 @@ onBeforeUnmount(() => {
             </span>
           </MenuItem>
         </template>
+        <!-- Cross-workspace management lives on its own page — separated from
+             the display options above; a plain navigation entry (no check). -->
+        <MenuItem separator />
+        <MenuItem @click="openSessionAdmin">
+          <Icon name="session-admin" size="sm" />
+          {{ t('sidebar.sessionAdmin') }}
+        </MenuItem>
       </Menu>
     </Transition>
     <!-- Session search dialog (Cmd/Ctrl+K) -->
