@@ -31,6 +31,7 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
 import { IAgentUsageService, type UsageRecordedContext } from '#/agent/usage/usage';
 import type { GoalBudgetProperties } from '#/app/telemetry/events';
@@ -265,6 +266,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IAgentUsageService usageService: IAgentUsageService,
@@ -294,7 +296,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       new GoalInjection(
         {
           getGoal: () => this.getGoal().goal,
-          isWaitForEnabled: () => this.flags.enabled(WAIT_FOR_FLAG_ID),
+          isWaitForEnabled: () => this.isWaitForAvailable(),
         },
         injector,
       ),
@@ -899,6 +901,13 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     } catch {}
   }
 
+  private isWaitForAvailable(): boolean {
+    return (
+      this.flags.enabled(WAIT_FOR_FLAG_ID) &&
+      this.toolRegistry.resolve('WaitFor') !== undefined
+    );
+  }
+
   private launchContinuationTurn(goalId: string, stepCapped = false): void {
     if (!this.isActiveGoal(goalId)) return;
     if (this.pendingContinuation !== undefined) return;
@@ -908,7 +917,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       content: [
         {
           type: 'text',
-          text: this.flags.enabled(WAIT_FOR_FLAG_ID)
+          text: this.isWaitForAvailable()
             ? `${prompt} ${GOAL_WAIT_FOR_GUIDANCE}`
             : prompt,
         },

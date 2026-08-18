@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PassThrough, Readable, type Writable } from 'node:stream';
 
 import { isUserCancellation } from '#/_base/utils/abort';
+import { Event } from '#/_base/event';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 
@@ -55,6 +56,7 @@ import {
   createTestAgent as createHarnessTestAgent,
   execEnvServices,
   permissionModeServices,
+  sessionService,
   telemetryServices,
   wireRecordPersistenceServices,
   type TestAgentContext,
@@ -64,6 +66,7 @@ import {
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubFlag } from '../../app/flag/stubs';
 import { IFlagService } from '#/app/flag/flag';
+import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { stubAgentSwarm } from './stubs';
@@ -2744,6 +2747,39 @@ describe('AgentGoalService WaitFor guidance gating', () => {
 
   it('hides WaitFor from the reminder, the continuation prompt, and the tools when the flag is off', async () => {
     const ctx = createTestAgent(appService(IFlagService, stubFlag(false)));
+    try {
+      ctx.configure({ tools: ['UpdateGoal'] });
+      await ctx.rpc.createGoal({ objective: 'finish bounded work' });
+
+      ctx.mockNextResponse({ type: 'text', text: 'slice done' });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'ug_1',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
+
+      const allCalls = JSON.stringify(ctx.llmCalls);
+      expect(allCalls).not.toContain('WaitFor');
+      expect(allCalls).not.toContain('re-invoked again and again');
+      expect((await ctx.rpc.getGoal({})).goal).toBeNull();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('hides WaitFor guidance when a tool policy disables WaitFor even though the flag is on', async () => {
+    const ctx = createTestAgent(
+      sessionService(ISessionToolPolicyGate, {
+        _serviceBrand: undefined,
+        disabledTools: ['WaitFor'],
+        onDidChange: Event.None as Event<void>,
+      }),
+    );
     try {
       ctx.configure({ tools: ['UpdateGoal'] });
       await ctx.rpc.createGoal({ objective: 'finish bounded work' });
