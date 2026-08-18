@@ -36,6 +36,7 @@ describe('FlowAdvanceTool', () => {
   let active: boolean;
   let mode: string;
   let advance: ReturnType<typeof vi.fn>;
+  let approvedCalls: Set<string>;
 
   beforeEach(() => {
     ix = new TestInstantiationService();
@@ -46,10 +47,12 @@ describe('FlowAdvanceTool', () => {
       (outcome: FlowAdvanceOutcome) =>
         ({ recorded: true, runFinished: false, nextStage: STAGES[stageIndex + 1] }) as const,
     );
+    approvedCalls = new Set(['call_advance']);
     ix.stub(IAgentFlowService, {
       run: () => ({ active, flowId: 'issue-fix', task: 'fix #1', stages: STAGES, currentStageIndex: stageIndex }),
       currentStage: () => (active ? STAGES[stageIndex] : undefined),
       advance,
+      consumeGateApproval: (toolCallId: string) => approvedCalls.delete(toolCallId),
     } as unknown as IAgentFlowService);
     ix.stub(IAgentPermissionModeService, {
       get mode() {
@@ -81,6 +84,7 @@ describe('FlowAdvanceTool', () => {
 
   it('rejects a human-gated pass whose review was skipped because the stage changed after preparation', async () => {
     stageIndex = 1;
+    approvedCalls.clear();
     const execution = runnable(tool.resolveExecution(passArgs('triage')));
     expect(execution.display).toBeUndefined();
     stageIndex = 0;
@@ -100,6 +104,7 @@ describe('FlowAdvanceTool', () => {
 
   it('records an auto-mode human-gated pass as decided by auto, with a note', async () => {
     mode = 'auto';
+    approvedCalls.clear();
     const execution = runnable(tool.resolveExecution(passArgs('triage')));
     const result = await execution.execute(CTX);
     expect(result.isError).not.toBe(true);
@@ -107,8 +112,9 @@ describe('FlowAdvanceTool', () => {
     expect(advance).toHaveBeenCalledWith(expect.objectContaining({ decidedBy: 'auto' }));
   });
 
-  it('rejects an auto-prepared pass executed after the mode switched back to manual', async () => {
+  it('rejects an unapproved pass executed in manual mode, whatever the prepare-time mode was', async () => {
     mode = 'auto';
+    approvedCalls.clear();
     const execution = runnable(tool.resolveExecution(passArgs('triage')));
     mode = 'default';
     const result = await execution.execute(CTX);
@@ -117,12 +123,21 @@ describe('FlowAdvanceTool', () => {
     expect(advance).not.toHaveBeenCalled();
   });
 
-  it('keeps decidedBy human when a reviewed pass executes after a switch to auto', async () => {
+  it('keeps decidedBy human when a genuinely approved pass executes after a switch to auto', async () => {
     const execution = runnable(tool.resolveExecution(passArgs('triage')));
     mode = 'auto';
     const result = await execution.execute(CTX);
     expect(result.isError).not.toBe(true);
     expect(advance).toHaveBeenCalledWith(expect.objectContaining({ decidedBy: 'human' }));
+  });
+
+  it('never records human when the hook skipped the approval, even if a display existed', async () => {
+    approvedCalls.clear();
+    const execution = runnable(tool.resolveExecution(passArgs('triage')));
+    mode = 'auto';
+    const result = await execution.execute(CTX);
+    expect(result.isError).not.toBe(true);
+    expect(advance).toHaveBeenCalledWith(expect.objectContaining({ decidedBy: 'auto' }));
   });
 
   it('rejects a pass verdict that carries unmet criteria', async () => {

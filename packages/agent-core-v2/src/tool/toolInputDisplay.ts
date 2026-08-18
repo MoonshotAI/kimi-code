@@ -79,16 +79,16 @@ export type ToolInputDisplay =
   | {
       kind: 'flow_gate_review';
       flow_id: string;
-      task?: string | undefined;
+      task?: string;
       stage_id: string;
       stage_index: number;
       stage_total: number;
       gate: 'human' | 'ai-then-human';
       objective: string;
       completion: string;
-      next_stage_id?: string | undefined;
+      next_stage_id?: string;
       criteria: readonly { criterion: string; met: boolean; evidence: string }[];
-      note?: string | undefined;
+      note?: string;
     }
   | {
       kind: 'generic';

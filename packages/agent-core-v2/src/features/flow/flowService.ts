@@ -43,6 +43,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
 
   private readonly review: FlowGateReview;
   private activationInFlight = false;
+  private readonly approvedGateCalls = new Set<string>();
 
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
@@ -59,7 +60,9 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     super();
     this.agentState.contributeState(flowKey);
     this.agentState.contributeState(flowGatesKey);
-    this.review = new FlowGateReview(this, this.toolApproval);
+    this.review = new FlowGateReview(this, this.toolApproval, (toolCallId) => {
+      this.approvedGateCalls.add(toolCallId);
+    });
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => {
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
@@ -212,6 +215,10 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
       return { recorded: true, runFinished: true };
     }
     return { recorded: true, runFinished: false, nextStage: this.currentStage() };
+  }
+
+  consumeGateApproval(toolCallId: string): boolean {
+    return this.approvedGateCalls.delete(toolCallId);
   }
 
   abort(note?: string): void {

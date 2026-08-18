@@ -26,12 +26,11 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
 
   resolveExecution(args: FlowAdvanceInput): ToolExecution {
     const display = this.gateDisplay(args);
-    const preparedInAuto = this.modeService.mode === 'auto';
     return {
       description: `Submitting ${args.verdict} verdict for stage ${args.stage}`,
       display,
       approvalRule: this.name,
-      execute: () => this.execution(args, display !== undefined && !preparedInAuto),
+      execute: (ctx) => this.execution(args, this.flow.consumeGateApproval(ctx.toolCallId)),
     };
   }
 

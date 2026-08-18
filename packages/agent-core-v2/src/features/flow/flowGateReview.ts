@@ -15,6 +15,7 @@ export class FlowGateReview {
   constructor(
     private readonly flow: IAgentFlowService,
     private readonly toolApproval: IAgentToolApprovalService,
+    private readonly onApproved: (toolCallId: string) => void,
   ) {}
 
   async requestApproval(
@@ -40,7 +41,10 @@ export class FlowGateReview {
     result: ApprovalResponse,
     context: ResolvedToolExecutionHookContext,
   ): PermissionPolicyResolution | undefined {
-    if (result.decision === 'approved') return undefined;
+    if (result.decision === 'approved') {
+      this.onApproved(context.toolCall.id);
+      return undefined;
+    }
 
     if (result.decision === 'cancelled') {
       return {

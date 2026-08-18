@@ -94,6 +94,11 @@ export interface IAgentFlowService {
   start(definition: FlowDefinition, task: string): boolean;
   advance(outcome: FlowAdvanceOutcome): FlowAdvanceResult;
   abort(note?: string): void;
+  /** One-shot check that the user actually approved this call's gate review
+   *  (set by the gate hook when the approval resolves approved; consumed by
+   *  FlowAdvance's execution so the verdict provenance cannot be inferred
+   *  from prepare-time mode/display state). */
+  consumeGateApproval(toolCallId: string): boolean;
 }
 
 export const IAgentFlowService: ServiceIdentifier<IAgentFlowService> =
