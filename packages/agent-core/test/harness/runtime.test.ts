@@ -6,8 +6,6 @@ import type { Kaos } from '@moonshot-ai/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  FLAG_DEFINITIONS,
-  MASTER_ENV,
   createRPC,
   ErrorCodes,
   KimiCore,
@@ -16,30 +14,9 @@ import {
   type CoreAPI,
   type SDKAPI,
 } from '../../src';
-import {
-  __resetRootLoggerForTest,
-  getRootLogger,
-  resolveGlobalLogPath,
-} from '../../src/logging/logger';
-import { resolveLoggingConfig } from '../../src/logging/resolve-config';
+import { __resetRootLoggerForTest } from '../../src/logging/logger';
 import type { OAuthTokenProviderResolver } from '../../src/session/provider-manager';
 import { testKaos } from '../fixtures/test-kaos';
-
-function requiredFlagEnv(id: string): string {
-  // Micro compaction was the only registered flag and has been removed, so the
-  // env var name is derived directly; the (skipped) tests still type-check.
-  return `KIMI_CODE_EXPERIMENTAL_${id.toUpperCase()}`;
-}
-
-function clearExperimentalEnv(): void {
-  vi.stubEnv(MASTER_ENV, '0');
-  // No experimental flags are currently registered, so there are no per-flag
-  // env vars to clear.
-}
-
-function experimentalFeatureEnabled(core: KimiCore, id: string): boolean | undefined {
-  return core.getExperimentalFeatures().find((feature) => feature.id === id)?.enabled;
-}
 
 function setCoreKaos(core: KimiCore, kaos: Promise<Kaos>): void {
   (core as unknown as { kaos?: Promise<Kaos> }).kaos = kaos;
@@ -91,141 +68,6 @@ describe('KimiCore runtime config', () => {
     await __resetRootLoggerForTest();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
-  });
-
-  // Micro compaction was the only experimental flag and has been removed; this
-  // test is skipped because there is no flag to enable.
-  it.skip('logs all enabled experimental flags once on core startup', async () => {
-    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
-    const homeDir = join(tmp, 'home');
-    await mkdir(homeDir, { recursive: true });
-    await getRootLogger().configure(resolveLoggingConfig({ homeDir }));
-
-    vi.stubEnv(MASTER_ENV, '0');
-    // No experimental flags are currently registered, so there is nothing to clear.
-    // for (const def of FLAG_DEFINITIONS) {
-    //   vi.stubEnv(def.env, '0');
-    // }
-    vi.stubEnv(requiredFlagEnv('micro_compaction'), '1');
-
-    void new KimiCore(async () => ({}) as never, { homeDir });
-    await getRootLogger().flushGlobal();
-
-    const text = await readFile(resolveGlobalLogPath(homeDir), 'utf-8');
-    expect(text).toContain('experimental flags enabled');
-    expect(text).toContain('micro_compaction');
-    expect(text.match(/experimental flags enabled/g)).toHaveLength(1);
-  });
-
-  // Micro compaction was the only experimental flag and has been removed; this
-  // test is skipped because there is no flag to resolve.
-  it.skip('resolves experimental flags from each core config independently', async () => {
-    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
-    const firstHome = join(tmp, 'first-home');
-    const secondHome = join(tmp, 'second-home');
-    await mkdir(firstHome, { recursive: true });
-    await mkdir(secondHome, { recursive: true });
-    await writeFile(
-      join(firstHome, 'config.toml'),
-      `
-[experimental]
-micro_compaction = true
-`,
-    );
-    await writeFile(
-      join(secondHome, 'config.toml'),
-      `
-[experimental]
-micro_compaction = false
-`,
-    );
-    clearExperimentalEnv();
-
-    const first = new KimiCore(async () => ({}) as never, { homeDir: firstHome });
-    const second = new KimiCore(async () => ({}) as never, { homeDir: secondHome });
-
-    expect(experimentalFeatureEnabled(first, 'micro_compaction')).toBe(true);
-    expect(experimentalFeatureEnabled(second, 'micro_compaction')).toBe(false);
-  });
-
-  // Micro compaction was the only experimental flag and has been removed; this
-  // test is skipped because there is no flag to update.
-  it.skip('updates the scoped experimental resolver after setKimiConfig', async () => {
-    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
-    const homeDir = join(tmp, 'home');
-    await mkdir(homeDir, { recursive: true });
-    await writeFile(
-      join(homeDir, 'config.toml'),
-      `
-[experimental]
-micro_compaction = false
-`,
-    );
-    clearExperimentalEnv();
-
-    const core = new KimiCore(async () => ({}) as never, { homeDir });
-    expect(experimentalFeatureEnabled(core, 'micro_compaction')).toBe(false);
-
-    await core.setKimiConfig({
-      experimental: {
-        'micro_compaction': true,
-      },
-    });
-
-    expect(experimentalFeatureEnabled(core, 'micro_compaction')).toBe(true);
-  });
-
-  // Micro compaction was the only experimental flag and has been removed; this
-  // test is skipped because there is no flag to update.
-  it.skip('updates the shared experimental resolver while goal tools stay available', async () => {
-    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
-    const homeDir = join(tmp, 'home');
-    const workDir = join(tmp, 'work');
-    await mkdir(homeDir, { recursive: true });
-    await mkdir(workDir, { recursive: true });
-    await writeFile(
-      join(homeDir, 'config.toml'),
-      `${baseModelConfig()}
-[experimental]
-micro_compaction = false
-`,
-    );
-    clearExperimentalEnv();
-
-    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
-    const core = new KimiCore(coreRpc, { homeDir });
-    const rpc = await sdkRpc({
-      emitEvent: vi.fn(),
-      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
-      requestQuestion: vi.fn(async () => null),
-      toolCall: vi.fn(async () => ({ output: '' })),
-    });
-
-    const created = await rpc.createSession({
-      id: 'ses_runtime_experimental_refresh',
-      workDir,
-      model: 'default-mock',
-    });
-    const session = core.sessions.get(created.id);
-    const mainAgent = session?.getReadyAgent('main');
-
-    // expect(session?.experimentalFlags.enabled('micro_compaction')).toBe(false);
-    // expect(mainAgent?.experimentalFlags.enabled('micro_compaction')).toBe(false);
-    expect(mainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(true);
-
-    await core.setKimiConfig({
-      experimental: {
-        'micro_compaction': true,
-      },
-    });
-
-    // expect(session?.experimentalFlags.enabled('micro_compaction')).toBe(true);
-    // expect(mainAgent?.experimentalFlags.enabled('micro_compaction')).toBe(true);
-    expect(mainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(true);
-
-    await rpc.reloadSession({ sessionId: created.id });
-    const reloadedMainAgent = core.sessions.get(created.id)?.getReadyAgent('main');
-    expect(reloadedMainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(true);
   });
 
   it('live-applies the complete persisted secondary recipe', async () => {

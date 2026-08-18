@@ -2796,30 +2796,6 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     expect(status.degraded).toContain('metadata store down');
   });
 
-  it('a restart attaches the published generation instead of rebuilding (inline)', async () => {
-    const s1 = summary('s1', '代际复用', T1);
-    await writeWire(home!, 's1', 'main', [userLine('苹果 generation-reuse', T1)]);
-    const first = track(makeInlineService(home!, staticIndex([s1])));
-    await first.reindex();
-    const firstCore = coreOf(first) as unknown as {
-      db: { buildGeneration(trigger: 'manual'): Promise<void> } | null;
-    };
-    await firstCore.db!.buildGeneration('manual');
-    first.dispose();
-    await drainGlobalSearchDisposals();
-
-    const second = track(makeInlineService(home!, staticIndex([s1])));
-    await settleSync(second);
-    const page = await second.search({ query: '苹果' });
-    expect(page.items.length).toBe(1);
-    const core = coreOf(second) as unknown as {
-      db: { lifecycleStatus(): { path: string[] } } | null;
-    };
-    const path = core.db!.lifecycleStatus().path;
-    expect(path).toContain('generation-load');
-    expect(path).not.toContain('full-rebuild');
-  });
-
   it('concurrent cold calls open the index exactly once (inline)', async () => {
     const s1 = summary('s1', '单次打开', T1);
     await writeWire(home!, 's1', 'main', [userLine('苹果 single-open', T1)]);

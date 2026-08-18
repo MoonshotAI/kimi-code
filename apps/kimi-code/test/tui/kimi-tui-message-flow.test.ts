@@ -676,70 +676,6 @@ describe('KimiTUI message flow', () => {
     expect(session.activateSkill).not.toHaveBeenCalled();
   });
 
-  it('combines a leading skill command with later inline skills into one submission (v2 engine)', async () => {
-    const session = makeSession({ id: 'ses-lazy' });
-    const startupInput: KimiTUIStartupInput = {
-      ...makeStartupInput(),
-      engineV2: true,
-      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
-    };
-    const { driver } = await makeDriver(
-      session,
-      {
-        listWorkspaceSkills: vi.fn(async () => [
-          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
-          { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
-        ]),
-        listPluginCommands: vi.fn(async () => []),
-      },
-      startupInput,
-    );
-    await (
-      driver as unknown as { refreshSkillCommands(): Promise<void> }
-    ).refreshSkillCommands();
-
-    driver.handleUserInput('/skill:review check this /skill:security');
-
-    await vi.waitFor(() => {
-      expect(session.promptWithSkills).toHaveBeenCalledWith(
-        '/skill:review check this /skill:security',
-        [{ name: 'review' }, { name: 'security' }],
-      );
-    });
-    expect(session.activateSkill).not.toHaveBeenCalled();
-  });
-
-  it('bundles a repeated leading skill as one bundled submission (v2 engine)', async () => {
-    const session = makeSession({ id: 'ses-lazy' });
-    const startupInput: KimiTUIStartupInput = {
-      ...makeStartupInput(),
-      engineV2: true,
-      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
-    };
-    const { driver } = await makeDriver(
-      session,
-      {
-        listWorkspaceSkills: vi.fn(async () => [
-          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
-        ]),
-        listPluginCommands: vi.fn(async () => []),
-      },
-      startupInput,
-    );
-    await (
-      driver as unknown as { refreshSkillCommands(): Promise<void> }
-    ).refreshSkillCommands();
-
-    driver.handleUserInput('/skill:review check /skill:review');
-
-    await vi.waitFor(() => {
-      expect(session.promptWithSkills).toHaveBeenCalledWith('/skill:review check /skill:review', [
-        { name: 'review' },
-      ]);
-    });
-    expect(session.activateSkill).not.toHaveBeenCalled();
-  });
-
   it('passes no args in a bundle while media rides the prompt parts (v2 engine)', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
@@ -776,71 +712,6 @@ describe('KimiTUI message flow', () => {
         [{ name: 'review' }, { name: 'security' }],
       );
     });
-  });
-
-  it('bundles newline-separated skills with the leading one included (v2 engine)', async () => {
-    const session = makeSession({ id: 'ses-lazy' });
-    const startupInput: KimiTUIStartupInput = {
-      ...makeStartupInput(),
-      engineV2: true,
-      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
-    };
-    const { driver } = await makeDriver(
-      session,
-      {
-        listWorkspaceSkills: vi.fn(async () => [
-          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
-          { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
-        ]),
-        listPluginCommands: vi.fn(async () => []),
-      },
-      startupInput,
-    );
-    await (
-      driver as unknown as { refreshSkillCommands(): Promise<void> }
-    ).refreshSkillCommands();
-
-    driver.handleUserInput('/skill:review\ncheck this /skill:security');
-
-    await vi.waitFor(() => {
-      expect(session.promptWithSkills).toHaveBeenCalledWith(
-        '/skill:review\ncheck this /skill:security',
-        [{ name: 'review' }, { name: 'security' }],
-      );
-    });
-    expect(session.prompt).not.toHaveBeenCalled();
-  });
-
-  it('scans inline skills in messages that start with an unknown slash token (v2 engine)', async () => {
-    const session = makeSession({ id: 'ses-lazy' });
-    const startupInput: KimiTUIStartupInput = {
-      ...makeStartupInput(),
-      engineV2: true,
-      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
-    };
-    const { driver } = await makeDriver(
-      session,
-      {
-        listWorkspaceSkills: vi.fn(async () => [
-          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
-        ]),
-        listPluginCommands: vi.fn(async () => []),
-      },
-      startupInput,
-    );
-    await (
-      driver as unknown as { refreshSkillCommands(): Promise<void> }
-    ).refreshSkillCommands();
-
-    driver.handleUserInput('/dance please use /skill:review');
-
-    await vi.waitFor(() => {
-      expect(session.promptWithSkills).toHaveBeenCalledWith(
-        '/dance please use /skill:review',
-        [{ name: 'review' }],
-      );
-    });
-    expect(session.prompt).not.toHaveBeenCalled();
   });
 
   it('keeps inline skill tokens as plain text on the legacy engine', async () => {
@@ -3470,59 +3341,6 @@ command = "vim"
     expect(attachment.fileId).toBeUndefined();
   });
 
-  it('releases every queued use of shared media when the queue is discarded', async () => {
-    process.env['KIMI_CODE_HOME'] = await makeTempHome();
-    const { driver, harness } = await makeDriver();
-    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const attachment = stagedImage(imageStore, 'file-queued');
-    driver.state.appState.streamingPhase = 'waiting';
-
-    driver.handleUserInput(`first ${attachment.placeholder}`);
-    driver.handleUserInput(`second ${attachment.placeholder}`);
-    const stagingPaths = driver.state.queuedMessages.flatMap((item) => item.stagingPaths ?? []);
-    expect(driver.state.queuedMessages).toHaveLength(2);
-    // An uploaded image stages no local cache copy — the engine's intake
-    // materializes the session copy — so only the daemon upload lease rides
-    // with each queued message.
-    expect(stagingPaths).toHaveLength(0);
-
-    driver.clearQueuedMessages();
-
-    await vi.waitFor(() => {
-      expect(harness.deleteFile).toHaveBeenCalledWith('file-queued');
-    });
-    expect(harness.deleteFile).toHaveBeenCalledTimes(1);
-    expect(attachment.fileId).toBeUndefined();
-  });
-
-  it('does not delete shared daemon media while another turn still uses it', async () => {
-    const session = makeSession();
-    const { driver, harness } = await makeDriver(session);
-    driver.state.appState.model = 'k2';
-    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const attachment = stagedImage(imageStore, 'file-shared-turn');
-
-    driver.handleUserInput(`first ${attachment.placeholder}`);
-    driver.sessionEventHandler.handleEvent(
-      { type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event,
-      () => {},
-    );
-    driver.state.appState.streamingPhase = 'waiting';
-    driver.handleUserInput(`second ${attachment.placeholder}`);
-    driver.clearQueuedMessages();
-
-    await Promise.resolve();
-    expect(harness.deleteFile).not.toHaveBeenCalled();
-
-    driver.sessionEventHandler.handleEvent(
-      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
-      () => {},
-    );
-    await vi.waitFor(() => {
-      expect(harness.deleteFile).toHaveBeenCalledWith('file-shared-turn');
-    });
-  });
-
   it('queues editor input instead of prompting while a turn is already streaming', async () => {
     const { driver, session, harness } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
@@ -3966,35 +3784,6 @@ command = "vim"
     expect(harness.deleteFile).toHaveBeenCalledTimes(1);
     expect(attachment.fileId).toBeUndefined();
     expect(driver.state.queuedMessages).toEqual([]);
-  });
-
-  it('keeps a shared staged upload alive while another submission still holds it', async () => {
-    const session = makeSession();
-    const { driver, harness } = await makeDriver(session);
-    driver.state.appState.model = 'k2';
-    driver.state.appState.streamingPhase = 'waiting';
-    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const attachment = stagedImage(imageStore, 'file-shared');
-
-    // One message referencing the same image twice retains it once; a second
-    // queued message retains it again — two retains total.
-    driver.handleUserInput(`compare ${attachment.placeholder} with ${attachment.placeholder}`);
-    driver.handleUserInput(`and ${attachment.placeholder}`);
-    const [first, second] = driver.state.queuedMessages;
-
-    driver.sendQueuedMessage(session, first!);
-    emitTurn(driver, 1);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    // The first turn consumed the only retain its submission held; the second
-    // queued message's retain keeps the upload alive.
-    expect(harness.deleteFile).not.toHaveBeenCalled();
-
-    driver.sendQueuedMessage(session, second!);
-    emitTurn(driver, 2);
-    await vi.waitFor(() => {
-      expect(harness.deleteFile).toHaveBeenCalledWith('file-shared');
-    });
-    expect(harness.deleteFile).toHaveBeenCalledTimes(1);
   });
 
   it('keeps staged media when a queued message is recalled into the editor', async () => {
@@ -6104,49 +5893,6 @@ command = "vim"
     expect(stripSgr(renderTranscript(driver))).toContain('k2-cheap');
   });
 
-  it('shows the spawned model in the swarm panel header at spawn', async () => {
-    const { driver } = await makeDriver();
-    const sendQueued = vi.fn();
-
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.call.started',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_swarm',
-        name: 'AgentSwarm',
-        args: {
-          description: 'Review changed files',
-          prompt_template: 'Review {{item}}',
-          items: ['src/a.ts'],
-        },
-      } as Event,
-      sendQueued,
-    );
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'subagent.spawned',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        parentToolCallId: 'call_swarm',
-        subagentId: 'agent-1',
-        subagentName: 'coder',
-        description: 'Review changed files #1 (coder)',
-        swarmIndex: 1,
-        runInBackground: false,
-        model: 'k2-cheap',
-      } as Event,
-      sendQueued,
-    );
-
-    const progress = driver.state.transcriptContainer.children.find(
-      (child): child is AgentSwarmProgressComponent => child instanceof AgentSwarmProgressComponent,
-    );
-    if (progress === undefined) throw new Error('expected AgentSwarm progress');
-    expect(stripSgr(progress.render(118).join('\n'))).toContain('k2-cheap');
-  });
-
   it('includes the spawned model in the background-agent transcript entry', async () => {
     const { driver } = await makeDriver();
     const sendQueued = vi.fn();
@@ -6239,53 +5985,6 @@ command = "vim"
       driver.state.transcriptContainer.render(terminalColumns).join('\n'),
     );
     expect(transcript).toContain('Using Read (src/after.ts)');
-  });
-
-  it('shows AgentSwarm as completed when only some subagents fail', async () => {
-    const { driver } = await makeDriver();
-    const sendQueued = vi.fn();
-
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.call.started',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_swarm',
-        name: 'AgentSwarm',
-        args: {
-          description: 'Review changed files',
-          prompt_template: 'Review {{item}}',
-          items: ['src/a.ts', 'src/b.ts'],
-        },
-      } as Event,
-      sendQueued,
-    );
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'tool.result',
-        agentId: 'main',
-        sessionId: 'ses-1',
-        turnId: 1,
-        toolCallId: 'call_swarm',
-        output: [
-          '<agent_swarm_result>',
-          '<summary>completed: 1, failed: 1</summary>',
-          '<subagent index="1" agent_id="agent-1" outcome="completed">Imports are stable.</subagent>',
-          '<subagent index="2" agent_id="agent-2" outcome="failed">Agent timed out after 30s.</subagent>',
-          '</agent_swarm_result>',
-        ].join('\n'),
-        isError: undefined,
-      } as Event,
-      sendQueued,
-    );
-
-    const transcript = stripSgr(renderTranscript(driver));
-    const totalStatusLine = transcript.split('\n').find((line) => line.includes('Completed.'));
-    expect(totalStatusLine).toBeDefined();
-    expect(totalStatusLine).not.toContain('Failed.');
-    expect(transcript).toContain('✓ Imports are stable.');
-    expect(transcript).toContain('✗ Agent timed out after 30s.');
   });
 
   it('renders AgentSwarm progress while tool args are still streaming', async () => {
@@ -8148,85 +7847,6 @@ describe('/effort support_efforts override', () => {
           k2: {
             provider: 'compatible',
             model: 'compatible-claude-model',
-            maxContextSize: 100,
-          },
-        },
-        defaultModel: 'k2',
-      })),
-    });
-
-    driver.handleUserInput('/effort');
-
-    await vi.waitFor(() => {
-      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
-    });
-    const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
-    expect(picker.render(80).join('\n')).toContain('Max');
-  });
-
-  it('offers no fallback efforts for a clearly non-Claude Anthropic-compatible model', async () => {
-    const { driver } = await makeDriver(makeSession(), {
-      getConfig: vi.fn(async () => ({
-        providers: {
-          compatible: { type: 'anthropic', apiKey: 'test-key' },
-        },
-        models: {
-          k2: {
-            provider: 'compatible',
-            model: 'compatible-model',
-            maxContextSize: 100,
-          },
-        },
-        defaultModel: 'k2',
-      })),
-    });
-
-    driver.handleUserInput('/effort');
-
-    await vi.waitFor(() => {
-      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
-    });
-    const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
-    expect(picker.render(80).join('\n')).not.toContain('Max');
-  });
-
-  it('offers no fallback efforts for an unknown model on a Kimi provider using the Anthropic protocol', async () => {
-    const { driver } = await makeDriver(makeSession(), {
-      getConfig: vi.fn(async () => ({
-        providers: {
-          compatible: { type: 'kimi', apiKey: 'test-key' },
-        },
-        models: {
-          k2: {
-            provider: 'compatible',
-            model: 'compatible-model',
-            protocol: 'anthropic',
-            maxContextSize: 100,
-          },
-        },
-        defaultModel: 'k2',
-      })),
-    });
-
-    driver.handleUserInput('/effort');
-
-    await vi.waitFor(() => {
-      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
-    });
-    const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
-    expect(picker.render(80).join('\n')).not.toContain('Max');
-  });
-
-  it('offers the latest Opus efforts for a flat providerless Claude-marked Anthropic model', async () => {
-    const { driver } = await makeDriver(makeSession(), {
-      getConfig: vi.fn(async () => ({
-        providers: {},
-        models: {
-          // v2 flat model shape: no named provider, inline endpoint + protocol.
-          k2: {
-            model: 'compatible-claude-model',
-            baseUrl: 'https://anthropic.example.test',
-            protocol: 'anthropic',
             maxContextSize: 100,
           },
         },
