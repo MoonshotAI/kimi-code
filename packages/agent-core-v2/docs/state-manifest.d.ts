@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 98 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 100 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -70,6 +70,8 @@
 //     cron                                            src/session/cron/cronOps.ts
 //     dateChange.seed                                 src/features/dateChange/dateChangeService.ts
 //     externalHooks.stopHookContinuationUsed          src/agent/externalHooks/externalHooksService.ts
+//     flow                                            src/features/flow/flowOps.ts
+//     flow.gates                                      src/features/flow/flowOps.ts
 //     fullCompaction                                  src/agent/fullCompaction/compactionOps.ts
 //     fullCompaction.activeTurnId                     src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.compactionCountInTurn            src/agent/fullCompaction/fullCompactionService.ts
@@ -1575,6 +1577,35 @@ export interface AgentStateSnapshot {
     readonly timeZone: string;
     readonly renderGeneration: number;
   } | undefined;
+  // src/features/flow/flowOps.ts
+  // replayable · durable · undoable — folds: FlowRunStarted, FlowVerdict, FlowRunEnded
+  'flow': /* FlowRunState — packages/agent-core-v2/src/features/flow/flow.ts */ {
+    active: boolean;
+    flowId?: string;
+    task?: string;
+    stages?: {
+      id: string;
+      objective: string;
+      completion: string;
+      gate: 'ai' | 'human' | 'ai-then-human';
+      notes?: string;
+    }[];
+    currentStageIndex?: number;
+  };
+  // replayable · durable — folds: FlowRunStarted, FlowVerdict
+  'flow.gates': /* FlowGatesState — packages/agent-core-v2/src/features/flow/flow.ts */ {
+    records: /* FlowGateRecord — packages/agent-core-v2/src/features/flow/flow.ts */ {
+      readonly stage: string;
+      readonly result: /* FlowVerdictResult — packages/agent-core-v2/src/features/flow/flow.ts */ 'pass' | 'reject';
+      readonly decidedBy: /* FlowVerdictDecider — packages/agent-core-v2/src/features/flow/flow.ts */ 'auto' | 'ai' | 'human';
+      readonly criteria: readonly {
+        criterion: string;
+        met: boolean;
+        evidence: string;
+      }[];
+      readonly feedback?: string;
+    }[];
+  };
   // src/features/plan/injection/planModeInjection.ts
   'plan.wasActive': boolean;
   // src/features/plan/planOps.ts

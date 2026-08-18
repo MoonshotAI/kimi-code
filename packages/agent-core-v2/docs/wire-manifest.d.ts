@@ -24,55 +24,58 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (48 record types)
-//   config.update                      profile                                                               src/agent/profile/profileOps.ts
-//   context.append_loop_event          contextMemory, turn                                                   src/agent/contextMemory/contextEvents.ts
-//   context.append_message             contextMemory, goalForkNotice, plan, task.notificationDelivery, todo  src/agent/contextMemory/contextEvents.ts
-//   context.apply_compaction           contextMemory, plan, task.notificationDelivery, todo                  src/agent/contextMemory/contextEvents.ts
-//   context.clear                      contextMemory, plan, task.notificationDelivery, todo                  src/agent/contextMemory/contextEvents.ts
-//   context.undo                       contextMemory, plan, task.notificationDelivery, todo                  src/agent/contextMemory/contextEvents.ts
-//   forked                             goal, goalForkNotice                                                  src/agent/goal/goalOps.ts
-//   full_compaction.begin              fullCompaction                                                        src/agent/fullCompaction/compactionOps.ts
-//   full_compaction.cancel             fullCompaction                                                        src/agent/fullCompaction/compactionOps.ts
-//   full_compaction.complete           fullCompaction                                                        src/agent/fullCompaction/compactionOps.ts
-//   goal.clear                         goal, goalForkNotice                                                  src/agent/goal/goalOps.ts
-//   goal.create                        goal, goalForkNotice                                                  src/agent/goal/goalOps.ts
-//   goal.update                        goal                                                                  src/agent/goal/goalOps.ts
-//   interaction.request                interaction                                                           src/session/interaction/interactionOps.ts
-//   interaction.resolved               interaction                                                           src/session/interaction/interactionOps.ts
-//   interruptionReminder.recorded      interruptionReminder                                                  src/agent/interruptionReminder/interruptionReminderOps.ts
-//   llm.request                        llm.requestTrace                                                      src/agent/llmRequester/llmRequestOps.ts
-//   llm.tools_snapshot                 llm.requestTrace                                                      src/agent/llmRequester/llmRequestOps.ts
-//   mcp.tools_discovered               mcp.discovery                                                         src/agent/mcp/mcpDiscoveryOps.ts
-//   permission.record_approval_result  permissionRules                                                       src/agent/permissionRules/permissionRulesOps.ts
-//   permission.set_mode                permissionMode, permissionMode.configured                             src/agent/permissionMode/permissionModeOps.ts
-//   plan_mode.cancel                   plan                                                                  src/features/plan/planOps.ts
-//   plan_mode.enter                    plan                                                                  src/features/plan/planOps.ts
-//   plan_mode.exit                     plan                                                                  src/features/plan/planOps.ts
-//   plan.revision                      plan                                                                  src/features/plan/planOps.ts
-//   plugin.session_start               pluginSessionStartSnapshot                                            src/agent/plugin/agentPluginOps.ts
-//   profile.bind                       profile, profile.activeTools                                          src/agent/profile/profileOps.ts
-//   prompt.accepted                    promptAdmission                                                       src/agent/prompt/promptOps.ts
-//   runtime.set_binding                runtimeBinding                                                        src/agent/runtimeBinding/runtimeBindingOps.ts
-//   swarm_mode.enter                   swarm                                                                 src/features/swarm/swarmOps.ts
-//   swarm_mode.exit                    contextMemory, swarm                                                  src/features/swarm/swarmOps.ts
-//   task.started                       task                                                                  src/agent/task/taskOps.ts
-//   task.terminated                    task                                                                  src/agent/task/taskOps.ts
-//   token_counting.measured            tokenCounting                                                         src/agent/tokenCounting/tokenCountingOps.ts
-//   token_counting.rebased             tokenCounting                                                         src/agent/tokenCounting/tokenCountingOps.ts
-//   token_counting.truncated           tokenCounting                                                         src/agent/tokenCounting/tokenCountingOps.ts
-//   tools.register_user_tool           userTool                                                              src/agent/userTool/userToolOps.ts
-//   tools.reset_active_tools           profile.activeTools                                                   src/agent/profile/profileOps.ts
-//   tools.set_active_tools             profile.activeTools                                                   src/agent/profile/profileOps.ts
-//   tools.unregister_user_tool         userTool                                                              src/agent/userTool/userToolOps.ts
-//   tools.update_store                 todo                                                                  src/session/todo/todoOps.ts
-//   tower_mode.enter                   tower                                                                 src/features/tower/towerOps.ts
-//   tower_mode.exit                    tower                                                                 src/features/tower/towerOps.ts
-//   turn.cancel                        turn                                                                  src/agent/loop/turnOps.ts
-//   turn.ended                         turn                                                                  src/agent/loop/turnOps.ts
-//   turn.prompt                        turn                                                                  src/agent/loop/turnOps.ts
-//   turn.steer                         turn                                                                  src/agent/loop/turnOps.ts
-//   usage.record                       usage                                                                 src/agent/usage/usageOps.ts
+// Index (51 record types)
+//   config.update                      profile                                                                     src/agent/profile/profileOps.ts
+//   context.append_loop_event          contextMemory, turn                                                         src/agent/contextMemory/contextEvents.ts
+//   context.append_message             contextMemory, flow, goalForkNotice, plan, task.notificationDelivery, todo  src/agent/contextMemory/contextEvents.ts
+//   context.apply_compaction           contextMemory, flow, plan, task.notificationDelivery, todo                  src/agent/contextMemory/contextEvents.ts
+//   context.clear                      contextMemory, flow, plan, task.notificationDelivery, todo                  src/agent/contextMemory/contextEvents.ts
+//   context.undo                       contextMemory, flow, plan, task.notificationDelivery, todo                  src/agent/contextMemory/contextEvents.ts
+//   flow_run.ended                     flow                                                                        src/features/flow/flowOps.ts
+//   flow_run.started                   flow, flow.gates                                                            src/features/flow/flowOps.ts
+//   flow_run.verdict                   flow, flow.gates                                                            src/features/flow/flowOps.ts
+//   forked                             goal, goalForkNotice                                                        src/agent/goal/goalOps.ts
+//   full_compaction.begin              fullCompaction                                                              src/agent/fullCompaction/compactionOps.ts
+//   full_compaction.cancel             fullCompaction                                                              src/agent/fullCompaction/compactionOps.ts
+//   full_compaction.complete           fullCompaction                                                              src/agent/fullCompaction/compactionOps.ts
+//   goal.clear                         goal, goalForkNotice                                                        src/agent/goal/goalOps.ts
+//   goal.create                        goal, goalForkNotice                                                        src/agent/goal/goalOps.ts
+//   goal.update                        goal                                                                        src/agent/goal/goalOps.ts
+//   interaction.request                interaction                                                                 src/session/interaction/interactionOps.ts
+//   interaction.resolved               interaction                                                                 src/session/interaction/interactionOps.ts
+//   interruptionReminder.recorded      interruptionReminder                                                        src/agent/interruptionReminder/interruptionReminderOps.ts
+//   llm.request                        llm.requestTrace                                                            src/agent/llmRequester/llmRequestOps.ts
+//   llm.tools_snapshot                 llm.requestTrace                                                            src/agent/llmRequester/llmRequestOps.ts
+//   mcp.tools_discovered               mcp.discovery                                                               src/agent/mcp/mcpDiscoveryOps.ts
+//   permission.record_approval_result  permissionRules                                                             src/agent/permissionRules/permissionRulesOps.ts
+//   permission.set_mode                permissionMode, permissionMode.configured                                   src/agent/permissionMode/permissionModeOps.ts
+//   plan_mode.cancel                   plan                                                                        src/features/plan/planOps.ts
+//   plan_mode.enter                    plan                                                                        src/features/plan/planOps.ts
+//   plan_mode.exit                     plan                                                                        src/features/plan/planOps.ts
+//   plan.revision                      plan                                                                        src/features/plan/planOps.ts
+//   plugin.session_start               pluginSessionStartSnapshot                                                  src/agent/plugin/agentPluginOps.ts
+//   profile.bind                       profile, profile.activeTools                                                src/agent/profile/profileOps.ts
+//   prompt.accepted                    promptAdmission                                                             src/agent/prompt/promptOps.ts
+//   runtime.set_binding                runtimeBinding                                                              src/agent/runtimeBinding/runtimeBindingOps.ts
+//   swarm_mode.enter                   swarm                                                                       src/features/swarm/swarmOps.ts
+//   swarm_mode.exit                    contextMemory, swarm                                                        src/features/swarm/swarmOps.ts
+//   task.started                       task                                                                        src/agent/task/taskOps.ts
+//   task.terminated                    task                                                                        src/agent/task/taskOps.ts
+//   token_counting.measured            tokenCounting                                                               src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.rebased             tokenCounting                                                               src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.truncated           tokenCounting                                                               src/agent/tokenCounting/tokenCountingOps.ts
+//   tools.register_user_tool           userTool                                                                    src/agent/userTool/userToolOps.ts
+//   tools.reset_active_tools           profile.activeTools                                                         src/agent/profile/profileOps.ts
+//   tools.set_active_tools             profile.activeTools                                                         src/agent/profile/profileOps.ts
+//   tools.unregister_user_tool         userTool                                                                    src/agent/userTool/userToolOps.ts
+//   tools.update_store                 todo                                                                        src/session/todo/todoOps.ts
+//   tower_mode.enter                   tower                                                                       src/features/tower/towerOps.ts
+//   tower_mode.exit                    tower                                                                       src/features/tower/towerOps.ts
+//   turn.cancel                        turn                                                                        src/agent/loop/turnOps.ts
+//   turn.ended                         turn                                                                        src/agent/loop/turnOps.ts
+//   turn.prompt                        turn                                                                        src/agent/loop/turnOps.ts
+//   turn.steer                         turn                                                                        src/agent/loop/turnOps.ts
+//   usage.record                       usage                                                                       src/agent/usage/usageOps.ts
 
 /**
  * states: profile
@@ -108,7 +111,7 @@ interface ContextAppendLoopEventPayload {
 }
 
 /**
- * states: contextMemory, goalForkNotice, plan, task.notificationDelivery, todo · blobs: contextMemory
+ * states: contextMemory, flow, goalForkNotice, plan, task.notificationDelivery, todo · blobs: contextMemory
  * owner: src/agent/contextMemory/contextEvents.ts
  */
 interface ContextAppendMessagePayload {
@@ -143,14 +146,14 @@ interface ContextAppendMessagePayload {
 }
 
 /**
- * states: contextMemory, plan, task.notificationDelivery, todo · blobs: contextMemory
+ * states: contextMemory, flow, plan, task.notificationDelivery, todo · blobs: contextMemory
  * owner: src/agent/contextMemory/contextEvents.ts
  * shared base: ...contextCompactionBaseShape
  */
 type ContextApplyCompactionPayload = { _name: 'context.apply_compaction'; } & ({ summary: string, compactedCount: number, contextSummary?: string } | { contextSummary: string, compactedCount: number, summary?: string } | { summary: ContextMessage, count: number, compactedCount?: number });
 
 /**
- * states: contextMemory, plan, task.notificationDelivery, todo · blobs: contextMemory
+ * states: contextMemory, flow, plan, task.notificationDelivery, todo · blobs: contextMemory
  * owner: src/agent/contextMemory/contextEvents.ts
  */
 interface ContextClearPayload {
@@ -158,12 +161,56 @@ interface ContextClearPayload {
 }
 
 /**
- * states: contextMemory, plan, task.notificationDelivery, todo · blobs: contextMemory
+ * states: contextMemory, flow, plan, task.notificationDelivery, todo · blobs: contextMemory
  * owner: src/agent/contextMemory/contextEvents.ts
  */
 interface ContextUndoPayload {
   _name: 'context.undo';
   count: number;
+}
+
+/**
+ * states: flow
+ * owner: src/features/flow/flowOps.ts
+ */
+interface FlowRunEndedPayload {
+  _name: 'flow_run.ended';
+  reason: 'finished' | 'aborted';
+  note?: string;
+}
+
+/**
+ * states: flow, flow.gates
+ * owner: src/features/flow/flowOps.ts
+ */
+interface FlowRunStartedPayload {
+  _name: 'flow_run.started';
+  flowId: string;
+  task: string;
+  stages: {
+    id: string;
+    objective: string;
+    completion: string;
+    gate: 'ai' | 'human' | 'ai-then-human';
+    notes?: string;
+  }[];
+}
+
+/**
+ * states: flow, flow.gates
+ * owner: src/features/flow/flowOps.ts
+ */
+interface FlowRunVerdictPayload {
+  _name: 'flow_run.verdict';
+  stage: string;
+  result: 'pass' | 'reject';
+  decidedBy: 'ai' | 'human' | 'auto';
+  criteria: {
+    criterion: string;
+    met: boolean;
+    evidence: string;
+  }[];
+  feedback?: string;
 }
 
 /**
@@ -705,6 +752,9 @@ interface WirePayloadMap {
   "context.apply_compaction": ContextApplyCompactionPayload;
   "context.clear": ContextClearPayload;
   "context.undo": ContextUndoPayload;
+  "flow_run.ended": FlowRunEndedPayload;
+  "flow_run.started": FlowRunStartedPayload;
+  "flow_run.verdict": FlowRunVerdictPayload;
   "forked": ForkedPayload;
   "full_compaction.begin": FullCompactionBeginPayload;
   "full_compaction.cancel": FullCompactionCancelPayload;

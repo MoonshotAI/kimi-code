@@ -1,0 +1,59 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  FlowDefinitionParseError,
+  parseFlowDefinition,
+} from '#/features/flow/definition';
+
+const VALID = `---
+id: issue-fix
+when: GitHub issue bugs
+stages:
+  - id: triage
+    objective: Find the root cause
+    completion: Root cause located to file and line
+    gate: human
+  - id: implement
+    objective: Make the issue stop reproducing
+    completion: A reproducing test exists and passes
+---
+
+## implement
+Do not refactor unrelated code paths.
+`;
+
+describe('parseFlowDefinition', () => {
+  it('parses frontmatter stages and attaches prose notes by stage id', () => {
+    const definition = parseFlowDefinition(VALID);
+    expect(definition.id).toBe('issue-fix');
+    expect(definition.when).toBe('GitHub issue bugs');
+    expect(definition.stages.map((stage) => stage.id)).toEqual(['triage', 'implement']);
+    expect(definition.stages[0]!.gate).toBe('human');
+    expect(definition.stages[0]!.notes).toBeUndefined();
+    expect(definition.stages[1]!.gate).toBe('ai');
+    expect(definition.stages[1]!.notes).toBe('Do not refactor unrelated code paths.');
+  });
+
+  it('rejects a file without frontmatter', () => {
+    expect(() => parseFlowDefinition('# just prose')).toThrow(FlowDefinitionParseError);
+  });
+
+  it('rejects an empty stage list and invalid gate values', () => {
+    expect(() =>
+      parseFlowDefinition('---\nid: empty\nstages: []\n---\n'),
+    ).toThrow(FlowDefinitionParseError);
+    expect(() =>
+      parseFlowDefinition(
+        '---\nid: bad-gate\nstages:\n  - id: a\n    objective: x\n    completion: y\n    gate: maybe\n---\n',
+      ),
+    ).toThrow(FlowDefinitionParseError);
+  });
+
+  it('rejects duplicate stage ids', () => {
+    expect(() =>
+      parseFlowDefinition(
+        '---\nid: dup\nstages:\n  - id: a\n    objective: x\n    completion: y\n  - id: a\n    objective: x2\n    completion: y2\n---\n',
+      ),
+    ).toThrow(FlowDefinitionParseError);
+  });
+});
