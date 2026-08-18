@@ -377,8 +377,6 @@ describe('AgentLLMRequesterService completion budget sizing', () => {
 
     await service.request({});
 
-    // The tail accumulated since the last usage event must count toward the
-    // remaining-window clamp; `.measured` alone would drift optimistic.
     expect(capturedParams.at(-1)?.usedContextTokens).toBe(600);
   });
 

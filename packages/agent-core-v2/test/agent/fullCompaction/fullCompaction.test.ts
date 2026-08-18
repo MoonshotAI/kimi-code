@@ -49,8 +49,6 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
 
-// Appends a real spine transition — the carrier assistant call and its
-// accepted receipt — so the derivation rebuilds the node from the messages.
 function spineTransition(
   ctx: TestAgentContext,
   id: string,
@@ -1601,9 +1599,6 @@ describe('FullCompaction', () => {
       'RACE-NOTIFY-OUTPUT',
     );
     expect(countEvents(ctx.newEvents(), 'full_compaction.complete')).toBe(0);
-    // A history-changed race cancel is not a user abort: it must be visible in
-    // telemetry as a compaction failure instead of vanishing down the abort
-    // path (user aborts stay untracked).
     expect(telemetryRecords).toContainEqual({
       event: 'compaction_failed',
       properties: expect.objectContaining({ error_type: 'AbortError' }),
@@ -1623,9 +1618,6 @@ describe('FullCompaction', () => {
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
 
-    // beginCompaction resolves once the worker starts; the generation failure
-    // surfaces asynchronously, with telemetry recorded before the worker
-    // cancels the compaction.
     const failed = ctx.once('full_compaction.cancel');
     await ctx.rpc.beginCompaction({});
     await failed;
@@ -2098,8 +2090,6 @@ describe('FullCompaction', () => {
         max_context_tokens: 2_000,
       },
     });
-    // ~1.1K tokens of history: over the 0.5 trigger once measured, under the
-    // 0.85 block, so only the after-step path could ever fire.
     ctx.appendExchange(1, 'old user one', `old assistant one ${'x'.repeat(4_400)}`, 10);
 
     ctx.mockNextResponse({ type: 'text', text: 'Final answer, no tools needed.' });
@@ -2125,8 +2115,6 @@ describe('FullCompaction', () => {
       },
       tools: ['Bash'],
     });
-    // ~1.8K tokens of history: over the 0.85 block too, so the next step waits
-    // for the compaction that after-step kicks off — strict request ordering.
     ctx.appendExchange(1, 'old user one', `old assistant one ${'x'.repeat(7_200)}`, 10);
 
     ctx.mockNextResponse({ type: 'text', text: 'I need to run a command.' }, bashCall());
@@ -2152,9 +2140,6 @@ describe('FullCompaction', () => {
         max_context_tokens: 2_000,
       },
     });
-    // Registers the big model and selects it without going through setModel
-    // (harness update path + bind), so the setModel below is the only switch
-    // that could trigger a pre-compaction.
     ctx.configureRuntimeModel(BIG_WINDOW_PROVIDER, {
       ...CATALOGUED_MODEL_CAPABILITIES,
       max_context_tokens: 256_000,
@@ -2171,8 +2156,6 @@ describe('FullCompaction', () => {
     const records = await ctx.wireHistory();
     const beginIndex = records.findIndex((record) => record.type === 'full_compaction.begin');
     const completeIndex = records.findIndex((record) => record.type === 'full_compaction.complete');
-    // findLastIndex: the setup configure() also writes a small-model alias;
-    // the setModel switch is the last one.
     const switchIndex = records.findLastIndex(
       (record) => record.type === 'config.update' && record['modelAlias'] === 'small-model',
     );
@@ -2485,11 +2468,6 @@ describe('FullCompaction', () => {
       },
       tools: SNAPSHOT_VISIBLE_TOOLS,
     });
-    // The turn-1 exchange must outweigh the standing request overhead:
-    // post-compaction the ledger holds overhead + summaryOutputTokens, and the
-    // futile gate pauses auto compaction when that still exceeds the observed
-    // window — a tiny exchange would observe a window smaller than the
-    // overhead and latch the gate before the second turn.
     ctx.appendExchange(1, 'old user one', `old assistant one ${'x'.repeat(8_000)}`, 20);
     ctx.newEvents();
 
@@ -2596,11 +2574,6 @@ describe('FullCompaction', () => {
       },
       tools: SNAPSHOT_VISIBLE_TOOLS,
     });
-    // The turn-1 exchange must outweigh the standing request overhead:
-    // post-compaction the ledger holds overhead + summaryOutputTokens, and the
-    // futile gate pauses auto compaction when that still exceeds the observed
-    // window — a tiny exchange would observe a window smaller than the
-    // overhead and latch the gate before the second turn.
     ctx.appendExchange(1, 'old user one', `old assistant one ${'x'.repeat(8_000)}`, 20);
     ctx.newEvents();
 
@@ -3177,10 +3150,6 @@ describe('FullCompaction', () => {
   it('pauses auto compaction when the compacted shape still exceeds the threshold', async () => {
     vi.stubEnv(MASTER_ENV, '0');
     vi.stubEnv('KIMI_CODE_SPINE', '0');
-    // Reproduces the pre-fix defect: a history whose compacted shape stays
-    // above the trigger threshold (the kept real user messages alone exceed
-    // the small window) was compacted again on every turn — summarizing the
-    // summary forever.
     const generate: GenerateFn = async (_provider, _system, _tools, history) => {
       const last = history.at(-1);
       const lastText = last?.content
@@ -3214,8 +3183,6 @@ describe('FullCompaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: { ...CATALOGUED_MODEL_CAPABILITIES, max_context_tokens: 4_000 },
     });
-    // 30 real user messages ~500 est tokens each: the handoff shape keeps
-    // real user messages (20k budget) — far above this small window.
     for (let i = 0; i < 30; i++) {
       ctx.appendExchange(
         i + 1,
@@ -3237,8 +3204,6 @@ describe('FullCompaction', () => {
   it('resumes auto compaction after upshifting out of a futile window', async () => {
     vi.stubEnv(MASTER_ENV, '0');
     vi.stubEnv('KIMI_CODE_SPINE', '0');
-    // The futile pause is calibrated against the window that measured it;
-    // switching to a larger window must re-arm auto compaction.
     const generate: GenerateFn = async (_provider, _system, _tools, history) => {
       const last = history.at(-1);
       const lastText = last?.content
@@ -3276,8 +3241,6 @@ describe('FullCompaction', () => {
       ...CATALOGUED_MODEL_CAPABILITIES,
       max_context_tokens: 6_000,
     });
-    // configureRuntimeModel selects the alias it registers; bind back to the
-    // small model so the setModel below is the only window switch.
     await ctx.get(IAgentProfileService).bind({
       profile: DEFAULT_AGENT_PROFILE_NAME,
       model: 'small-model',
@@ -3296,8 +3259,6 @@ describe('FullCompaction', () => {
       (await ctx.wireHistory()).filter((record) => record.type === 'full_compaction.begin').length;
     expect(await begins()).toBe(1);
 
-    // The 6k window still cannot fit the ~15k kept shape, but the futile
-    // pause measured at 4k must not carry over.
     await ctx.get(IAgentProfileService).setModel('big-model');
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'turn 1' }] });
     await ctx.untilTurnEnd();
@@ -3311,10 +3272,6 @@ describe('FullCompaction', () => {
     });
 
     it('does not auto-compact after an undo when the folded view is small', async () => {
-      // Reproduces the "frequent compaction" defect: undo truncated the
-      // measured prefix and the rebase estimated the RAW stored history
-      // (~9k), poisoning the gauge past the threshold even though the folded
-      // view was ~1k — so the next turn blocked on a spurious compaction.
       const window = 4_000;
       const generate: GenerateFn = async () => textResult('ok');
       const ctx = testAgent({ generate });
@@ -3322,11 +3279,6 @@ describe('FullCompaction', () => {
         provider: CATALOGUED_PROVIDER,
         modelCapabilities: { ...CATALOGUED_MODEL_CAPABILITIES, max_context_tokens: window },
       });
-      // A real closed node: the open carrier rides in first, and the close
-      // carrier lands before the last two exchanges so the undo below leaves
-      // it (and the node's closed span) intact. The user prompts stay tiny so
-      // the assembled memory (which cites the span's requests) stays small and
-      // the folded view stays far below the raw history the assistants inflate.
       spineTransition(ctx, 's_open', 'spine_open', { summary: 'seed node' });
       for (let i = 0; i < 8; i++) {
         ctx.appendExchange(
@@ -3348,7 +3300,6 @@ describe('FullCompaction', () => {
 
       await ctx.rpc.undoHistory({ count: 1 });
 
-      // The rebase must be projection-caliber: folded view ~1k, far below 85%.
       expect(ctx.get(IAgentTokenCountingService).get().size).toBeLessThan(window * 0.85);
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'next question' }] });
@@ -3360,10 +3311,6 @@ describe('FullCompaction', () => {
     });
 
     it('does not treat a provider 413 as context overflow when the projected view is small', async () => {
-      // Reproduces the pre-fix defect: the 413 heuristic estimated the RAW
-      // stored history (permanently above 50% of the window in spine mode),
-      // so every 413 triggered overflow recovery — three futile compactions,
-      // then a hard CONTEXT_OVERFLOW.
       const generate: GenerateFn = async (_provider, _system, _tools, history) => {
         const last = history.at(-1);
         const lastText = last?.content
@@ -3380,8 +3327,6 @@ describe('FullCompaction', () => {
         provider: CATALOGUED_PROVIDER,
         modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
       });
-      // ~140k estimated raw tokens — above 50% of the 256k window — while the
-      // folded view (all but the last two exchanges closed) stays tiny.
       spineTransition(ctx, 's_open', 'spine_open', { summary: 'seed node' });
       for (let i = 0; i < 68; i++) {
         ctx.appendExchange(
