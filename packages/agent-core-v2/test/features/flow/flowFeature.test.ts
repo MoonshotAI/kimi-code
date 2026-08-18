@@ -89,7 +89,10 @@ describe('FlowFeature — experimental flag gating', () => {
 });
 
 describe('FlowInjection reminder', () => {
+  let flagOn = true;
+
   function makeInjection(runTask: () => string) {
+    flagOn = true;
     let handler:
       | ((ctx: { lastDisclosure?: unknown; injectedPositions: number[]; lastInjectedAt: null; isNewTurn: boolean }) => unknown)
       | undefined;
@@ -109,7 +112,11 @@ describe('FlowInjection reminder', () => {
       }),
       currentStage: () => ({ id: 'triage', objective: 'find it', completion: 'found', gate: 'human' as const }),
     };
-    const injection = new FlowInjection(injector as never, flow as never);
+    const injection = new FlowInjection(
+      injector as never,
+      flow as never,
+      { enabled: () => flagOn } as never,
+    );
     expect(injection).toBeDefined();
     const invoke = (lastDisclosure?: unknown) =>
       handler!({ lastDisclosure, injectedPositions: [], lastInjectedAt: null, isNewTurn: true }) as
@@ -134,5 +141,11 @@ describe('FlowInjection reminder', () => {
   it('re-discloses when the prior disclosure carries no fingerprint (pre-upgrade sessions)', () => {
     const invoke = makeInjection(() => 'fix #1');
     expect(invoke({ kind: 'flow_stage', flowId: 'issue-fix', stageIndex: 0 })).toBeDefined();
+  });
+
+  it('injects nothing while the flow flag is off, even with an active run left behind', () => {
+    const invoke = makeInjection(() => 'fix #1');
+    flagOn = false;
+    expect(invoke(undefined)).toBeUndefined();
   });
 });

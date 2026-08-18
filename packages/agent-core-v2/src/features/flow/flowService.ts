@@ -40,6 +40,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
   declare readonly _serviceBrand: undefined;
 
   private readonly review: FlowGateReview;
+  private activationInFlight = false;
 
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
@@ -104,6 +105,16 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     task: string | undefined,
   ): Promise<void> {
     if (flowId === undefined || flowId.length === 0 || this.run().active) return;
+    if (this.activationInFlight) return;
+    this.activationInFlight = true;
+    try {
+      await this.readAndStart(flowId, task);
+    } finally {
+      this.activationInFlight = false;
+    }
+  }
+
+  private async readAndStart(flowId: string, task: string | undefined): Promise<void> {
     let text: string;
     try {
       const view = new RuntimeWorkspaceView(inspectAgentRuntime(this.runtime), {

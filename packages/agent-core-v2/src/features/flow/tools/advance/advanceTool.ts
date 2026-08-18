@@ -36,6 +36,7 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
 
   private gateDisplay(args: FlowAdvanceInput): ToolInputDisplay | undefined {
     if (args.verdict !== 'pass') return undefined;
+    if (args.criteria.some((criterion) => !criterion.met)) return undefined;
     const run = this.flow.run();
     const stage = this.flow.currentStage();
     if (!run.active || stage === undefined || stage.id !== args.stage) return undefined;

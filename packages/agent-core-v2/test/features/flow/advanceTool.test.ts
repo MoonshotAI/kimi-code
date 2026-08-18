@@ -65,6 +65,15 @@ describe('FlowAdvanceTool', () => {
 
   it('attaches a flow_gate_review display only for a human-gated pass on the current stage', () => {
     expect(runnable(tool.resolveExecution(passArgs('triage'))).display?.kind).toBe('flow_gate_review');
+    expect(
+      runnable(
+        tool.resolveExecution({
+          stage: 'triage',
+          verdict: 'pass',
+          criteria: [{ criterion: 'found', met: false, evidence: 'not yet' }],
+        }),
+      ).display,
+    ).toBeUndefined();
     expect(runnable(tool.resolveExecution(passArgs('implement'))).display).toBeUndefined();
     stageIndex = 1;
     expect(runnable(tool.resolveExecution(passArgs('implement'))).display).toBeUndefined();

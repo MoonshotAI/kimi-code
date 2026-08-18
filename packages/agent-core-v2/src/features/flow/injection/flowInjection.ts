@@ -1,12 +1,13 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
+import { IFlagService } from '#/app/flag/flag';
 import {
   IAgentContextInjectorService,
   type ContextInjectionContext,
   type ContextInjectionResult,
 } from '#/agent/contextInjector/contextInjector';
 
-import { IAgentFlowService } from '../flow';
+import { FLOW_FLAG_ID, IAgentFlowService } from '../flow';
 
 const FLOW_STAGE_INJECTION_VARIANT = 'flow_stage';
 
@@ -29,6 +30,7 @@ export class FlowInjection extends Disposable implements IFlowInjection {
   constructor(
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentFlowService private readonly flow: IAgentFlowService,
+    @IFlagService private readonly flags: IFlagService,
   ) {
     super();
     this._register(
@@ -41,6 +43,7 @@ export class FlowInjection extends Disposable implements IFlowInjection {
   private reminder(
     ctx: ContextInjectionContext<FlowStageInjectionDisclosure>,
   ): ContextInjectionResult<FlowStageInjectionDisclosure> | undefined {
+    if (!this.flags.enabled(FLOW_FLAG_ID)) return undefined;
     const run = this.flow.run();
     if (!run.active) return undefined;
     const stage = this.flow.currentStage();

@@ -316,6 +316,28 @@ describe('AgentFlowService', () => {
       expect(service.currentStage()?.id).toBe('triage');
     });
 
+    it('starts only the first flow when two activations land together', async () => {
+      agentState.contributeState(skillKey);
+      const activate = (activationId: string, skillName: string) =>
+        dispatcher.dispatch(
+          new SkillActivate({
+            origin: {
+              kind: 'skill_activation',
+              activationId,
+              skillName,
+              trigger: 'user-slash',
+              skillType: 'flow',
+              skillPath: `/ws/.kimi-code/flows/${skillName}.md`,
+              skillArgs: 'task',
+            },
+          }),
+        );
+      await Promise.all([activate('act-a', 'issue-fix'), activate('act-b', 'other-flow')]);
+      await vi.waitFor(() => expect(service.run().active).toBe(true));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(service.run().flowId).toBe('issue-fix');
+    });
+
     it('ignores a flow activation on a non-main agent', async () => {
       agentId = 'agent-1';
       agentState.contributeState(skillKey);
