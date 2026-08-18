@@ -60,17 +60,13 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_NOTES: |
+            Built from the development branch with fork changes (visual-model command).
+
+            Platforms: darwin-x64, darwin-arm64, linux-x64, linux-arm64, win32-x64, win32-arm64
+            Source commit: ${{ github.sha }}
         run: |
           gh release create nightly \
             dist-native-release/* \
             --title "kimi-code fork nightly (${{ steps.version.outputs.version }})" \
-            --notes "Built from the development branch with fork changes (visual-model command).
-
-- Platform: darwin-x64, darwin-arm64, linux-x64, linux-arm64, win32-x64, win32-arm64
-- Source version: ${{ github.sha }}
-
-Install (macOS Intel):
-\`\`\`bash
-unzip -o kimi-code-darwin-x64.zip -d ~/.kimi-code/bin
-\`\`\`
-"
+            --notes "$RELEASE_NOTES"
