@@ -994,6 +994,29 @@ describe('WaitForTool', () => {
     ).rejects.toThrow('snapshot read failed');
     expect(tasks.waitDeliveries).toEqual([]);
   });
+
+  it('aborts the losing waits once the race resolves', async () => {
+    const tasks = new FakeTaskService();
+    tasks.add(processTask({ taskId: 'bash-win0001' }));
+    tasks.add(processTask({ taskId: 'bash-lose001' }));
+    const signals = new Map<string, AbortSignal>();
+    tasks.waitDelegate = (taskId, _timeoutMs, waitSignal) => {
+      signals.set(taskId, waitSignal!);
+      if (taskId === 'bash-win0001') {
+        tasks.settle('bash-win0001');
+        return Promise.resolve(tasks.getTask(taskId));
+      }
+      return new Promise<AgentTaskInfo | undefined>(() => {});
+    };
+
+    const result = await executeTool(
+      new WaitForTool(tasks, recordingTelemetry([])),
+      context('wait_losers', { timeout: 600 }),
+    );
+
+    expect(outputString(result)).toContain('wait_status: completed');
+    expect(signals.get('bash-lose001')?.aborted).toBe(true);
+  });
 });
 
 describe('WaitForTool (harness)', () => {

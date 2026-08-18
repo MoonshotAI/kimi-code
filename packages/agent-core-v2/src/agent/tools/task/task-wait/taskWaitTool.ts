@@ -14,6 +14,7 @@ import { formatPlainObject } from '#/agent/task/tools/format';
 import { formatTaskList } from '#/agent/tools/task/task-list/taskListTool';
 import { IFlagService } from '#/app/flag/flag';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { abortError, linkAbortSignal } from '#/_base/utils/abort';
 import { WAIT_FOR_FLAG_ID } from './flag';
 import { IWaitForTool, WaitForInputSchema, type WaitForInput } from './task-wait';
 import WAIT_FOR_DESCRIPTION from './task-wait.md?raw';
@@ -131,18 +132,25 @@ export class WaitForTool implements IWaitForTool {
     timeoutMs: number,
     signal: AbortSignal,
   ): Promise<AgentTaskInfo | undefined> {
-    const outcomes = running.map((task) =>
-      this.tasks.wait(task.taskId, timeoutMs, signal).then(
-        (info) => ({ info, error: undefined }),
-        (error: unknown) => ({
-          info: undefined,
-          error: error instanceof Error ? error : new Error(String(error)),
-        }),
-      ),
-    );
-    const first = await Promise.race(outcomes);
-    if (first.error !== undefined) throw first.error;
-    return first.info;
+    const controller = new AbortController();
+    const unlink = linkAbortSignal(signal, controller);
+    try {
+      const outcomes = running.map((task) =>
+        this.tasks.wait(task.taskId, timeoutMs, controller.signal).then(
+          (info) => ({ info, error: undefined }),
+          (error: unknown) => ({
+            info: undefined,
+            error: error instanceof Error ? error : new Error(String(error)),
+          }),
+        ),
+      );
+      const first = await Promise.race(outcomes);
+      if (first.error !== undefined) throw first.error;
+      return first.info;
+    } finally {
+      unlink();
+      controller.abort(abortError());
+    }
   }
 
   private collectExtras(
