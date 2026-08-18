@@ -1447,7 +1447,7 @@ onUnmounted(() => {
                 <div class="dw-bar">
                   <span class="dw-pill"><Icon name="target" size="md" /><span>Goal</span> <span class="dw-live">Active</span></span>
                   <span class="dw-pill"><Icon name="terminal" size="md" /><span>Bash</span></span>
-                  <span class="dw-pill on"><Icon name="sparkles" size="md" /><span>Sub Agent</span> <span class="dw-running"><StatusDot status="running" />3</span></span>
+                  <span class="dw-pill on"><Icon name="sparkles" size="md" /><span>Background Agent</span> <span class="dw-running"><StatusDot status="running" />3</span></span>
                   <span class="dw-pill"><Icon name="list" size="md" /><span>Progress</span> <span class="dw-count">3/7</span></span>
                 </div>
               </div>
@@ -1469,7 +1469,7 @@ onUnmounted(() => {
                 </div>
                 <div class="dw-panel">
                   <div class="dw-head">
-                    <span class="dw-tab"><Icon name="sparkles" size="md" />Sub Agent <span class="dw-meta">1 running</span></span>
+                    <span class="dw-tab"><Icon name="sparkles" size="md" />Background Agent <span class="dw-meta">1 running</span></span>
                     <span class="dw-chips"><span class="dw-chip on"><Icon name="clock" size="sm" />Recent</span><span class="dw-chip"><Icon name="play" size="sm" />Running</span><span class="dw-chip"><Icon name="circle-check" size="sm" />Done</span><span class="dw-chip"><Icon name="list" size="sm" />All</span></span>
                   </div>
                   <div class="dw-body grid">

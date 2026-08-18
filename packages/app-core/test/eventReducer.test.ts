@@ -355,6 +355,761 @@ describe('reduceAppEvent taskCreated replacement', () => {
     expect(task.model).toBe('provider/secondary');
     expect(task.thinkingEffort).toBe('low');
   });
+
+  it('keeps the settled terminal state when a replay re-announces the task as running', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: { ...subagentTask('agent-1', 'agent-1'), backgroundTaskId: 'task-9' },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCompleted', sessionId: SID, taskId: 'task-9', status: 'cancelled' },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: { ...subagentTask('agent-1', 'agent-1'), backgroundTaskId: 'task-9' },
+      },
+      meta(),
+    );
+    const task = state.tasksBySession[SID]![0]!;
+    expect(task.status).toBe('cancelled');
+    expect(task.completedAt).toBeDefined();
+    expect(task.completedAtEstimated).toBe(true);
+  });
+
+  it('settles a background subagent row when termination arrives under its task id', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: { ...subagentTask('agent-1', 'agent-1'), backgroundTaskId: 'task-9' },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCompleted', sessionId: SID, taskId: 'task-9', status: 'completed' },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]).toHaveLength(1);
+    expect(state.tasksBySession[SID]![0]!.status).toBe('completed');
+  });
+
+  it('keeps the polled output when a termination event carries no output fields', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          ...subagentTask('agent-1', 'agent-1'),
+          backgroundTaskId: 'task-9',
+          outputPreview: 'final result',
+          outputBytes: 128,
+        },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCompleted', sessionId: SID, taskId: 'task-9', status: 'cancelled' },
+      meta(),
+    );
+    const task = state.tasksBySession[SID]![0]!;
+    expect(task.outputPreview).toBe('final result');
+    expect(task.outputBytes).toBe(128);
+  });
+
+  it('keeps the polled output when a replayed taskCreated carries none', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          ...subagentTask('agent-1', 'agent-1'),
+          backgroundTaskId: 'task-9',
+          outputPreview: 'final result',
+          outputBytes: 128,
+        },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: { ...subagentTask('agent-1', 'agent-1'), backgroundTaskId: 'task-9' },
+      },
+      meta(),
+    );
+    const task = state.tasksBySession[SID]![0]!;
+    expect(task.outputPreview).toBe('final result');
+    expect(task.outputBytes).toBe(128);
+  });
+
+  it('rekeys a task-id skeleton row when the spawned projection carries its task id', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          id: 'task-9',
+          sessionId: SID,
+          kind: 'subagent',
+          description: 'Explore repo',
+          status: 'running',
+          createdAt: '2026-07-28T00:00:00.000Z',
+        },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: { ...subagentTask('agent-1', 'agent-1'), backgroundTaskId: 'task-9' },
+      },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]).toHaveLength(1);
+    expect(state.tasksBySession[SID]![0]).toMatchObject({
+      id: 'agent-1',
+      agentId: 'agent-1',
+      backgroundTaskId: 'task-9',
+    });
+  });
+
+  it('drops the skeleton copy when the agent-keyed row already exists at fold time', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          id: 'task-9',
+          sessionId: SID,
+          kind: 'subagent',
+          description: 'Explore repo',
+          status: 'running',
+          createdAt: '2026-07-28T00:00:00.000Z',
+        },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCreated', sessionId: SID, task: subagentTask('agent-1', 'agent-1') },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: { ...subagentTask('agent-1', 'agent-1'), backgroundTaskId: 'task-9' },
+      },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]).toHaveLength(1);
+    expect(state.tasksBySession[SID]![0]!.id).toBe('agent-1');
+  });
+
+  it('keeps the dropped skeleton terminal state when folding over a live agent row', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          id: 'task-9',
+          sessionId: SID,
+          kind: 'subagent',
+          description: 'Explore repo',
+          status: 'cancelled',
+          createdAt: '2026-07-28T00:00:00.000Z',
+          completedAt: '2026-07-28T00:05:00.000Z',
+        },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCreated', sessionId: SID, task: subagentTask('agent-1', 'agent-1') },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: { ...subagentTask('agent-1', 'agent-1'), backgroundTaskId: 'task-9' },
+      },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]).toHaveLength(1);
+    expect(state.tasksBySession[SID]![0]).toMatchObject({
+      id: 'agent-1',
+      status: 'cancelled',
+      completedAt: '2026-07-28T00:05:00.000Z',
+    });
+  });
+
+  it('lets a resumed run back to running when its task binding changed', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          ...subagentTask('agent-1', 'agent-1'),
+          status: 'completed' as const,
+          backgroundTaskId: 'task-9',
+          completedAt: '2026-07-28T00:05:00.000Z',
+        },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: { ...subagentTask('agent-1', 'agent-1'), backgroundTaskId: 'task-10' },
+      },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]![0]!.status).toBe('running');
+  });
+
+  it('clears the accumulated output even when the previous run is still marked running', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          ...subagentTask('agent-1', 'agent-1'),
+          backgroundTaskId: 'task-9',
+          outputLines: ['old line'],
+          text: 'old text',
+          outputPreview: 'old result',
+          outputBytes: 128,
+        },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: { ...subagentTask('agent-1', 'agent-1'), backgroundTaskId: 'task-10' },
+      },
+      meta(),
+    );
+    const task = state.tasksBySession[SID]![0]!;
+    expect(task.outputLines).toBeUndefined();
+    expect(task.text).toBeUndefined();
+    expect(task.outputPreview).toBeUndefined();
+    expect(task.outputBytes).toBeUndefined();
+  });
+
+  it('clears the accumulated output when a new run starts under a fresh binding', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          ...subagentTask('agent-1', 'agent-1'),
+          status: 'completed' as const,
+          backgroundTaskId: 'task-9',
+          completedAt: '2026-07-28T00:05:00.000Z',
+          outputPreview: 'old result',
+          outputBytes: 128,
+          outputLines: ['old line'],
+          text: 'old text',
+        },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: { ...subagentTask('agent-1', 'agent-1'), backgroundTaskId: 'task-10' },
+      },
+      meta(),
+    );
+    const task = state.tasksBySession[SID]![0]!;
+    expect(task.outputPreview).toBeUndefined();
+    expect(task.outputBytes).toBeUndefined();
+    expect(task.outputLines).toBeUndefined();
+    expect(task.text).toBeUndefined();
+  });
+
+  it('keeps streaming output on a binding-less running row being re-projected', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          ...subagentTask('agent-1', 'agent-1'),
+          outputLines: ['delta one'],
+          text: 'delta one',
+        },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCreated', sessionId: SID, task: subagentTask('agent-1', 'agent-1') },
+      meta(),
+    );
+    const task = state.tasksBySession[SID]![0]!;
+    expect(task.outputLines).toEqual(['delta one']);
+    expect(task.text).toBe('delta one');
+  });
+
+  it('keeps a settled bash row terminal when its task.started replays', () => {
+    const bashTask = {
+      id: 'task-1',
+      sessionId: SID,
+      kind: 'bash' as const,
+      description: 'npm test',
+      status: 'running' as const,
+      createdAt: '2026-07-28T00:00:00.000Z',
+    };
+    let state = reduceAppEvent(
+      createInitialState(),
+      { type: 'taskCreated', sessionId: SID, task: bashTask },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCompleted', sessionId: SID, taskId: 'task-1', status: 'completed' },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCreated', sessionId: SID, task: bashTask },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]![0]!.status).toBe('completed');
+  });
+
+  it('clears the stale binding on a new run so a late termination cannot kill it', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          ...subagentTask('agent-1', 'agent-1'),
+          status: 'completed' as const,
+          backgroundTaskId: 'task-9',
+          completedAt: '2026-07-28T00:05:00.000Z',
+        },
+      },
+      meta(),
+    );
+    // Resumed in the foreground: the new run ships no task binding at all.
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCreated', sessionId: SID, task: subagentTask('agent-1', 'agent-1') },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]![0]!.backgroundTaskId).toBeUndefined();
+    // A late termination for the previous run must not hit the live row.
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCompleted', sessionId: SID, taskId: 'task-9', status: 'cancelled' },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]![0]!.status).toBe('running');
+  });
+
+  it('merges the dropped skeleton output into the fold', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          id: 'task-9',
+          sessionId: SID,
+          kind: 'subagent',
+          description: 'Explore repo',
+          status: 'completed',
+          createdAt: '2026-07-28T00:00:00.000Z',
+          completedAt: '2026-07-28T00:05:00.000Z',
+          outputPreview: 'skeleton result',
+          outputBytes: 256,
+        },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCreated', sessionId: SID, task: subagentTask('agent-1', 'agent-1') },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: { ...subagentTask('agent-1', 'agent-1'), backgroundTaskId: 'task-9' },
+      },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]).toHaveLength(1);
+    expect(state.tasksBySession[SID]![0]).toMatchObject({
+      id: 'agent-1',
+      status: 'completed',
+      outputPreview: 'skeleton result',
+      outputBytes: 256,
+    });
+  });
+
+  it('treats a lone skeleton fold as the same run and keeps its terminal state and output', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          id: 'task-9',
+          sessionId: SID,
+          kind: 'subagent',
+          description: 'Explore repo',
+          status: 'cancelled',
+          createdAt: '2026-07-28T00:00:00.000Z',
+          completedAt: '2026-07-28T00:05:00.000Z',
+          outputPreview: 'skeleton result',
+          outputBytes: 256,
+        },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: { ...subagentTask('agent-1', 'agent-1'), backgroundTaskId: 'task-9' },
+      },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]).toHaveLength(1);
+    expect(state.tasksBySession[SID]![0]).toMatchObject({
+      id: 'agent-1',
+      status: 'cancelled',
+      outputPreview: 'skeleton result',
+      outputBytes: 256,
+    });
+  });
+
+  it('keeps a settled skeleton terminal when its own task.started replays', () => {
+    const skeletonTask = {
+      id: 'task-9',
+      sessionId: SID,
+      kind: 'subagent' as const,
+      description: 'Explore repo',
+      status: 'running' as const,
+      createdAt: '2026-07-28T00:00:00.000Z',
+    };
+    let state = reduceAppEvent(
+      createInitialState(),
+      { type: 'taskCreated', sessionId: SID, task: skeletonTask },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCompleted', sessionId: SID, taskId: 'task-9', status: 'cancelled' },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCreated', sessionId: SID, task: skeletonTask },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]![0]!.status).toBe('cancelled');
+  });
+
+  it('does not let a replayed completed downgrade a cancelled or failed row', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: { ...subagentTask('agent-1', 'agent-1'), backgroundTaskId: 'task-9' },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCompleted', sessionId: SID, taskId: 'task-9', status: 'cancelled' },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCompleted', sessionId: SID, taskId: 'task-9', status: 'completed' },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]![0]!.status).toBe('cancelled');
+  });
+
+  it('does not let a raced failed overwrite a user-cancelled row', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: { ...subagentTask('agent-1', 'agent-1'), backgroundTaskId: 'task-9' },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCompleted', sessionId: SID, taskId: 'task-9', status: 'cancelled' },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCompleted', sessionId: SID, taskId: 'task-9', status: 'failed' },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]![0]!.status).toBe('cancelled');
+  });
+
+  it('keeps the daemon completion stamp through a same-terminal replay', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          ...subagentTask('agent-1', 'agent-1'),
+          status: 'completed' as const,
+          backgroundTaskId: 'task-9',
+          completedAt: '2026-07-28T00:05:00.000Z',
+        },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          ...subagentTask('agent-1', 'agent-1'),
+          status: 'completed',
+          backgroundTaskId: 'task-9',
+          completedAt: '2026-08-01T00:00:00.000Z',
+          completedAtEstimated: true,
+        },
+      },
+      meta(),
+    );
+    const task = state.tasksBySession[SID]![0]!;
+    expect(task.completedAt).toBe('2026-07-28T00:05:00.000Z');
+    expect(task.completedAtEstimated).toBeUndefined();
+  });
+
+  it('keeps the kernel terminal through the projector taskCreated leg of a replayed completion', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: { ...subagentTask('agent-1', 'agent-1'), backgroundTaskId: 'task-9' },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCompleted', sessionId: SID, taskId: 'task-9', status: 'cancelled' },
+      meta(),
+    );
+    // A replayed subagent.completed always projects taskCreated first.
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          ...subagentTask('agent-1', 'agent-1'),
+          status: 'completed',
+          backgroundTaskId: 'task-9',
+          outputPreview: 'done',
+        },
+      },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]![0]!.status).toBe('cancelled');
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCompleted', sessionId: SID, taskId: 'task-9', status: 'completed' },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]![0]!.status).toBe('cancelled');
+  });
+
+  it('keeps the sticky row’s output fields when a replayed completion brings a summary', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          ...subagentTask('agent-1', 'agent-1'),
+          backgroundTaskId: 'task-9',
+          outputLines: ['cancelled tail'],
+          text: 'cancelled tail',
+        },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCompleted', sessionId: SID, taskId: 'task-9', status: 'cancelled' },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          ...subagentTask('agent-1', 'agent-1'),
+          status: 'completed',
+          backgroundTaskId: 'task-9',
+          outputPreview: 'success summary',
+          outputBytes: 512,
+        },
+      },
+      meta(),
+    );
+    const task = state.tasksBySession[SID]![0]!;
+    expect(task.status).toBe('cancelled');
+    expect(task.outputPreview).toBeUndefined();
+    expect(task.outputBytes).toBeUndefined();
+    expect(task.outputLines).toEqual(['cancelled tail']);
+    expect(task.text).toBe('cancelled tail');
+  });
+});
+
+describe('foreground subagent sweep at main turn end', () => {
+  const fgTask = (id: string): AppTask => ({
+    id,
+    agentId: id,
+    sessionId: SID,
+    kind: 'subagent',
+    description: 'Explore repo',
+    status: 'running',
+    runInBackground: false,
+    createdAt: '2026-07-28T00:00:00.000Z',
+  });
+
+  it('settles running foreground subagent rows when the main turn ends completed', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      { type: 'taskCreated', sessionId: SID, task: fgTask('agent-0') },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: { ...fgTask('agent-1'), runInBackground: true, backgroundTaskId: 'task-9' },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'turnActiveChanged', sessionId: SID, active: false, reason: 'completed' },
+      meta(),
+    );
+    const [fg, bg] = state.tasksBySession[SID]!;
+    expect(fg).toMatchObject({
+      status: 'completed',
+      subagentPhase: 'completed',
+      completedAtEstimated: true,
+    });
+    expect(fg!.completedAt).toBeDefined();
+    expect(bg!.status).toBe('running');
+  });
+
+  it('finalizes live foreground rows as failed when the turn aborts', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: { ...fgTask('agent-0'), subagentPhase: 'suspended' as const, suspendedReason: 'approval' },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'turnActiveChanged', sessionId: SID, active: false, reason: 'cancelled' },
+      meta(),
+    );
+    const row = state.tasksBySession[SID]![0]!;
+    expect(row.status).toBe('failed');
+    expect(row.subagentPhase).toBe('failed');
+    expect(row.suspendedReason).toBeUndefined();
+  });
+
+  it('leaves already-settled and other-session rows alone', () => {
+    let state = reduceAppEvent(
+      createInitialState(),
+      {
+        type: 'taskCreated',
+        sessionId: SID,
+        task: {
+          ...fgTask('agent-0'),
+          status: 'failed' as const,
+          completedAt: '2026-07-28T00:05:00.000Z',
+        },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskCreated', sessionId: 's2', task: { ...fgTask('agent-1'), sessionId: 's2' } },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'turnActiveChanged', sessionId: SID, active: false, reason: 'completed' },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]![0]).toMatchObject({
+      status: 'failed',
+      completedAt: '2026-07-28T00:05:00.000Z',
+    });
+    expect(state.tasksBySession['s2']![0]!.status).toBe('running');
+  });
 });
 
 describe('turnErrorBySession', () => {

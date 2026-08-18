@@ -21,16 +21,36 @@ import type { AppTask } from '../api/types';
  * registration). Fold the REST copy into the WS-owned row so one agent does
  * not surface as two rows; REST still corrects a terminal status the WS row
  * may have missed while disconnected.
+ *
+ * A foreground agent run briefly appears here too: the daemon registers a
+ * non-detached task record at spawn and lists it while the run is live, but
+ * the WS stream keys that agent purely by agent id (no `task.started` ever
+ * fires for it). Fold that copy by agent id — left alone it becomes a
+ * zombie: the record vanishes from the list when the run ends, never
+ * carrying a terminal status, so the folded-out copy would keep showing
+ * "running" and answer no cancel.
  */
 export function keepLiveSubagents(restBased: AppTask[], existing: AppTask[]): AppTask[] {
   const restIds = new Set(restBased.map((t) => t.id));
   const liveSubagents = existing.filter((t) => t.kind === 'subagent' && !restIds.has(t.id));
   if (liveSubagents.length === 0) return restBased;
   const restById = new Map(restBased.map((t) => [t.id, t] as const));
+  // A foreground agent run also registers a task-store record (non-detached,
+  // memory-only) that REST /tasks lists while the run is live — keyed by a
+  // task id the WS stream never references, carrying no run_in_background
+  // flag, and never settled server-side. Fold it into the agent's WS row by
+  // agent id, or it surfaces as a second dock row (defaulted to background)
+  // that stays "running" forever and answers no cancel.
+  const restByAgentId = new Map(
+    restBased
+      .filter((t) => t.kind === 'subagent' && t.agentId !== undefined)
+      .map((t) => [t.agentId!, t] as const),
+  );
   const foldedRestIds = new Set<string>();
   const merged = liveSubagents.map((live) => {
     const rest =
-      live.backgroundTaskId !== undefined ? restById.get(live.backgroundTaskId) : undefined;
+      (live.backgroundTaskId !== undefined ? restById.get(live.backgroundTaskId) : undefined) ??
+      restByAgentId.get(live.agentId ?? live.id);
     if (rest === undefined) return live;
     foldedRestIds.add(rest.id);
     // True when the fold — not the event stream — is what makes the row terminal.

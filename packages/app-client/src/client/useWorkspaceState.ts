@@ -2632,12 +2632,19 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       await api.cancelTask(sid, restTaskId ?? taskId);
       // Update task status locally — and stamp the completion time here:
       // an old daemon may never send one, and a hidden tab or session switch
-      // can stop the poll before its merge gets to preserve it.
+      // can stop the poll before its merge gets to preserve it. A targeted
+      // binding match is required: the row may have rekeyed to its agent id
+      // mid-request (fold), or RESUMED and re-bound before the response
+      // landed — a binding that moved on is a new run and must not be
+      // stamped.
       const list = rawState.tasksBySession[sid] ?? [];
       rawState.tasksBySession = {
         ...rawState.tasksBySession,
-        [sid]: list.map((t) =>
-          t.id === taskId
+        [sid]: list.map((t) => {
+          const matches = restTaskId !== undefined
+            ? t.backgroundTaskId === restTaskId
+            : t.id === taskId || t.backgroundTaskId === taskId;
+          return matches
             ? {
                 ...t,
                 status: 'cancelled' as const,
@@ -2646,8 +2653,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
                 // until the daemon's real completed_at arrives.
                 completedAtEstimated: t.completedAt === undefined ? true : t.completedAtEstimated,
               }
-            : t,
-        ),
+            : t;
+        }),
       };
     } catch (err) {
       if (isTaskAlreadyFinishedError(err)) {

@@ -134,6 +134,21 @@ interface SessionState {
   // Subagent lifecycle deltas after spawned only carry subagentId. Keep the
   // spawned metadata here so later updates can replace the full AppTask.
   subagentMeta: Map<string, AppTask>;
+  /** Agents whose `subagent.started` re-opened a settled row (the new run's
+   *  lifecycle has begun but its registration/spawned has not landed yet). */
+  restartedThisRun: Set<string>;
+  /** Agents the KERNEL terminated (task.terminated) — the reducer row settled
+   *  but the projector meta still says running, so re-opens must key on this,
+   *  not the meta's stale status. */
+  settledByKernel: Set<string>;
+  /** Bindings a new run explicitly retired (cleared at its spawned): a
+   *  replayed event for one never re-adopts it. */
+  retiredBindings: Set<string>;
+  /** Registration order per task id: a spawned's binding may reset the row
+   *  only when its own registration is confirmed and not older than the
+   *  row's current one (an outdated spawned replay never regresses it). */
+  registrationSeq: number;
+  registrationOrderByKey: Map<string, number>;
 
   // Bubble cleared by turn.step.retrying, to be reused by the retried
   // step.started (same turn) instead of stacking a new bubble.
@@ -158,6 +173,11 @@ function createSessionState(): SessionState {
     model: '',
     messages: [],
     subagentMeta: new Map(),
+    restartedThisRun: new Set(),
+    settledByKernel: new Set(),
+    retiredBindings: new Set(),
+    registrationSeq: 0,
+    registrationOrderByKey: new Map(),
     retryReuseMsgId: undefined,
     retryActive: false,
   };
@@ -1192,25 +1212,147 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
       // -----------------------------------------------------------------------
       case 'subagent.spawned': {
         const taskId = typeof p?.subagentId === 'string' && p.subagentId.length > 0 ? p.subagentId : ulid('task_');
+        // Patch-style: `subagent.started` and `task.started` can legitimately
+        // land first (the daemon emits spawned only after task registration),
+        // and a replayed spawned must never clobber a phase the stream already
+        // advanced or a terminal state the reducer already settled. A
+        // task.started that arrived with no agent id seeded a skeleton row
+        // keyed by the bare task id — fold it in too (the reducer rekeys the
+        // row via backgroundTaskId) instead of surfacing a second row.
+        const wireTaskId = typeof p?.taskId === 'string' && p.taskId.length > 0 ? p.taskId : undefined;
+        const skeleton = wireTaskId !== undefined && wireTaskId !== taskId
+          ? s.subagentMeta.get(wireTaskId)
+          : undefined;
+        const agentRow = s.subagentMeta.get(taskId);
+        if (skeleton !== undefined) s.subagentMeta.delete(wireTaskId!);
+        // A spawned-carried task id is itself a registration confirmation (on
+        // the new daemon spawned follows registration): remember its first
+        // sighting so outdated replays can be told from new bindings.
+        if (wireTaskId !== undefined && !s.registrationOrderByKey.has(wireTaskId)) {
+          s.registrationOrderByKey.set(wireTaskId, ++s.registrationSeq);
+        }
+        // Both a skeleton and the agent row can legally exist (task.started,
+        // then subagent.started, then the spawned): merge, keeping the
+        // skeleton's daemon-stamped timing, its always-true background flag,
+        // and its key as the row's task binding.
+        const prev = agentRow === undefined || skeleton === undefined
+          ? (agentRow ?? skeleton)
+          : {
+              ...agentRow,
+              createdAt: skeleton.createdAt,
+              startedAt: skeleton.startedAt ?? agentRow.startedAt,
+              runInBackground: true,
+              // Adopt the skeleton key as the binding only when the agent row
+              // has none: a DIFFERENT existing binding means the skeleton is
+              // a new registration, which the newRun check must see. The
+              // kernel's task.terminated remains the authoritative terminal
+              // for that new run, so a settled row here simply resets — an
+              // agent-side settle can never be attributed safely (a replayed
+              // old-run completion is indistinguishable from a new-run one).
+              backgroundTaskId: agentRow.backgroundTaskId ?? wireTaskId,
+            };
+        // The lone skeleton's key is its binding too — a spawned carrying
+        // that same id re-announces this run, not a new one.
+        const prevBinding = prev?.backgroundTaskId
+          ?? (prev !== undefined && wireTaskId !== undefined && prev.id === wireTaskId ? wireTaskId : undefined);
+        // A spawned over a SETTLED row is a new run unless it re-announces
+        // the SAME registered task (Agent resume registers a fresh task id;
+        // swarm resume ships none at all): reset the run-scoped fields like a
+        // fresh spawn, or the row would show the previous run's terminal
+        // state forever. The meta can lag the reducer (a local cancel never
+        // reaches it), so a changed binding counts even while the meta still
+        // says running; only a running UNBOUND row gaining its first
+        // registration is the same run and keeps its in-flight facts. A
+        // taskless spawned over a settled row, or over a bound row the
+        // re-opened started claimed, is that swarm/foreground resume — but an
+        // old daemon's bare replay over its own running row is NOT (it has no
+        // marker), so it patches instead of resetting.
+        const incomingOrder = wireTaskId !== undefined
+          ? s.registrationOrderByKey.get(wireTaskId)
+          : undefined;
+        const currentOrder = prevBinding !== undefined
+          ? s.registrationOrderByKey.get(prevBinding)
+          : undefined;
+        // Only a binding CONFIRMED-older than the row's (both registered,
+        // incoming older) is a stale replay: it neither resets nor re-binds.
+        // An unseen binding (its registration not observed yet) stays a
+        // candidate new run and binds at once. A binding this session already
+        // retired is stale by definition.
+        const confirmedStale = s.retiredBindings.has(wireTaskId ?? '')
+          || (incomingOrder !== undefined
+            && currentOrder !== undefined
+            && incomingOrder < currentOrder);
+        const newRun = prev !== undefined && (
+          (wireTaskId === undefined && (prev.status !== 'running'
+              ? true
+              : prevBinding !== undefined && s.restartedThisRun.has(taskId)))
+          || (wireTaskId !== undefined
+              && wireTaskId !== prevBinding
+              && !confirmedStale
+              && !(prev.status === 'running' && prevBinding === undefined))
+        );
+        // A started that re-opened this run (phase working + the marker it
+        // left — or simply no binding change at this spawned) owns the
+        // timing/phase facts now. Only a RE-OPENING started marks: a bare
+        // started continuing the current run needs no blessing, and a changed
+        // binding without a marker means the working phase was the old run's.
+        const startedThisRun = prev?.subagentPhase === 'working'
+          && (wireTaskId === undefined || wireTaskId === prevBinding || s.restartedThisRun.has(taskId));
+        if (newRun) {
+          s.restartedThisRun.delete(taskId);
+          // The replaced binding is retired: no replay may re-adopt it (the
+          // old run's late task.terminated would otherwise hit this row).
+          if (prevBinding !== undefined && prevBinding !== wireTaskId) {
+            s.retiredBindings.add(prevBinding);
+          }
+        }
         const task: AppTask = {
           id: taskId,
-          agentId: taskId,
+          agentId: prev?.agentId ?? taskId,
           sessionId,
           kind: 'subagent',
-          description: typeof p?.description === 'string' ? p.description : p?.subagentName ?? t('tasks.dockSubagent'),
-          status: 'running',
-          createdAt: new Date().toISOString(),
-          subagentPhase: 'queued',
-          subagentType: typeof p?.subagentName === 'string' ? p.subagentName : undefined,
+          description: typeof p?.description === 'string' ? p.description : p?.subagentName ?? prev?.description ?? t('tasks.dockSubagent'),
+          status: newRun ? 'running' : (prev?.status ?? 'running'),
+          createdAt: newRun && !startedThisRun
+            ? new Date().toISOString()
+            : (prev?.createdAt ?? new Date().toISOString()),
+          startedAt: newRun && !startedThisRun ? undefined : prev?.startedAt,
+          completedAt: newRun ? undefined : prev?.completedAt,
+          completedAtEstimated: newRun ? undefined : prev?.completedAtEstimated,
+          subagentPhase: newRun
+            ? (startedThisRun ? 'working' : 'queued')
+            : (prev?.subagentPhase ?? 'queued'),
+          subagentType: typeof p?.subagentName === 'string' ? p.subagentName : prev?.subagentType,
           // Newer cores report the display-normalized bound alias here.
-          model: typeof p?.model === 'string' && p.model.length > 0 ? p.model : undefined,
+          model: typeof p?.model === 'string' && p.model.length > 0 ? p.model : prev?.model,
           thinkingEffort:
             typeof p?.thinkingEffort === 'string' && p.thinkingEffort.length > 0
               ? p.thinkingEffort
-              : undefined,
-          parentToolCallId: typeof p?.parentToolCallId === 'string' ? p.parentToolCallId : undefined,
-          swarmIndex: typeof p?.swarmIndex === 'number' ? p.swarmIndex : undefined,
-          runInBackground: p?.runInBackground === true,
+              : prev?.thinkingEffort,
+          parentToolCallId: typeof p?.parentToolCallId === 'string' ? p.parentToolCallId : prev?.parentToolCallId,
+          swarmIndex: typeof p?.swarmIndex === 'number' ? p.swarmIndex : prev?.swarmIndex,
+          // A new run takes its background mode from the event when stated —
+          // a settled background agent resumed in the foreground must not
+          // stay pinned to the dock by the previous run's flag; an OMITTED
+          // flag falls back to the freshest registration fact (the fold
+          // already merged the new skeleton's mode into prev).
+          runInBackground: newRun
+            ? p?.runInBackground === true || (p?.runInBackground === undefined && prev?.runInBackground === true)
+            : p?.runInBackground === true || prev?.runInBackground === true,
+          outputPreview: newRun ? undefined : prev?.outputPreview,
+          outputBytes: newRun ? undefined : prev?.outputBytes,
+          outputLines: newRun ? undefined : prev?.outputLines,
+          suspendedReason: newRun ? undefined : prev?.suspendedReason,
+          text: newRun ? undefined : prev?.text,
+          // Newer daemons attach the background-task id the run registered
+          // under, so cancel works before `task.started` lands; keep the
+          // earlier binding when the field is absent — and never regress it
+          // to an outdated replayed one.
+          backgroundTaskId: confirmedStale
+            ? prev?.backgroundTaskId
+            : newRun
+              ? wireTaskId
+              : (wireTaskId ?? prev?.backgroundTaskId),
         };
         s.subagentMeta.set(task.id, task);
         out.push({
@@ -1222,11 +1364,40 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
       }
 
       case 'subagent.started': {
+        // A started over a SETTLED row opens a new lifecycle (a taskless
+        // resume fires started before its spawned) — reset the run-scoped
+        // fields or the previous run's result would show through this one.
+        // A replay keeps them: the terminal event that always follows
+        // re-settles the row.
+        const subagentId = typeof p?.subagentId === 'string' ? p.subagentId : undefined;
+        const restarting = subagentId !== undefined
+          && ((s.subagentMeta.get(subagentId)?.status !== undefined
+            && s.subagentMeta.get(subagentId)!.status !== 'running')
+            || s.settledByKernel.has(subagentId));
+        if (restarting) s.settledByKernel.delete(subagentId);
         const task = patchSubagent(t, s, sessionId, p?.subagentId, {
           subagentPhase: 'working',
           status: 'running',
           startedAt: new Date().toISOString(),
+          // Back to work: the suspension's reason is spent (a spawned REPLAY
+          // while still suspended keeps it, via the spawned patch path).
+          suspendedReason: undefined,
+          ...(restarting
+            ? {
+                createdAt: new Date().toISOString(),
+                completedAt: undefined,
+                completedAtEstimated: undefined,
+                outputPreview: undefined,
+                outputBytes: undefined,
+                outputLines: undefined,
+                text: undefined,
+              }
+            : {}),
         });
+        // A started over a settled row marks the re-opened lifecycle (a
+        // started without an observed settle is just the current run
+        // continuing — its working phase needs no blessing later).
+        if (restarting && subagentId !== undefined) s.restartedThisRun.add(subagentId);
         if (task) out.push({ type: 'taskCreated', sessionId, task });
         break;
       }
@@ -1253,6 +1424,7 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
           outputPreview,
         });
         if (task) out.push({ type: 'taskCreated', sessionId, task });
+        if (task !== null) s.restartedThisRun.delete(task.id);
         out.push({
           type: 'taskCompleted',
           sessionId,
@@ -1274,6 +1446,7 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
           outputPreview,
         });
         if (task) out.push({ type: 'taskCreated', sessionId, task });
+        if (task !== null) s.restartedThisRun.delete(task.id);
         out.push({
           type: 'taskCompleted',
           sessionId,
@@ -1389,33 +1562,138 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
               ? info.agentId
               : undefined;
           if (agentId !== undefined) {
+            const prevMeta = s.subagentMeta.get(agentId);
+            // Reject a confirmed-outdated registration replay BEFORE touching
+            // anything: it must neither re-bind the row back to the old task
+            // nor refresh the old id's order to latest. An unseen id is new
+            // (the journal never replays a pre-cursor registration).
+            const incomingOrder = s.registrationOrderByKey.get(taskId);
+            const currentOrder = prevMeta?.backgroundTaskId !== undefined
+              ? s.registrationOrderByKey.get(prevMeta.backgroundTaskId!)
+              : undefined;
+            if (
+              s.retiredBindings.has(taskId) ||
+              (incomingOrder !== undefined &&
+                currentOrder !== undefined &&
+                incomingOrder < currentOrder)
+            ) {
+              if (prevMeta !== undefined) out.push({ type: 'taskCreated', sessionId, task: prevMeta });
+              break;
+            }
+            if (!s.registrationOrderByKey.has(taskId)) {
+              s.registrationOrderByKey.set(taskId, ++s.registrationSeq);
+            }
             // Key by agent id even when the spawn event never reached this
             // client (subscribed late): later agent-scoped progress frames are
             // routed by agent id, and seeding subagentMeta here keeps them on
-            // this one row instead of synthesizing a second one.
+            // this one row instead of synthesizing a second one. A changed
+            // task binding on a settled row is a new run (the resume fires
+            // task.started before its spawned) — so is the FIRST binding of a
+            // settled row (a foreground agent resumed into the background);
+            // reset the lifecycle and outputs here or the later spawned can
+            // no longer tell it from a replay. The meta can lag the reducer
+            // (a local cancel never reaches it), so the check keys on the
+            // binding, not the possibly-stale status. A RUNNING row gaining
+            // its initial binding (spawned without a task id, registration
+            // arriving mid-run) is the same run — keep its in-flight facts.
+            const freshRegistration = prevMeta !== undefined
+              && prevMeta.backgroundTaskId !== taskId
+              && !(prevMeta.status === 'running' && prevMeta.backgroundTaskId === undefined);
             const task = patchSubagent(t, s, sessionId, agentId, {
               description,
               backgroundTaskId: taskId,
               runInBackground: true,
+              // Any registration of a LIVE row IS a started run — stamp
+              // working + the registration's start time even when the spawn
+              // events were missed (freshRegistration resets further below).
+              ...(prevMeta === undefined || prevMeta.status === 'running'
+                ? {
+                    status: 'running' as const,
+                    subagentPhase: 'working' as const,
+                    startedAt: prevMeta?.startedAt ?? startedAt,
+                  }
+                : {}),
+              ...(freshRegistration
+                ? {
+                    status: 'running' as const,
+                    // A fresh registration IS a started run (the new daemon
+                    // emits subagent.started before it) — never queue it.
+                    subagentPhase: 'working' as const,
+                    createdAt: startedAt ?? new Date().toISOString(),
+                    startedAt,
+                    completedAt: undefined,
+                    completedAtEstimated: undefined,
+                    outputPreview: undefined,
+                    outputBytes: undefined,
+                    outputLines: undefined,
+                    suspendedReason: undefined,
+                    text: undefined,
+                  }
+                : {}),
             });
             if (task) out.push({ type: 'taskCreated', sessionId, task });
+            s.restartedThisRun.delete(agentId);
           } else {
-            // No agent id — nothing to link; key the row by the background
-            // task id so the REST poll dedupes it.
+            // No agent id — nothing to link. The spawned of the new daemon
+            // order (spawned → task.started) already keyed this run by its
+            // agent id and bound THIS task id: re-emit that row instead of
+            // adding a skeleton duplicate the reducer can never fold.
+            const owner = [...s.subagentMeta.values()].find(
+              (meta) => meta.backgroundTaskId === taskId,
+            );
+            if (owner === undefined &&
+              (s.retiredBindings.has(taskId) ||
+                (s.registrationOrderByKey.has(taskId) &&
+                  s.registrationOrderByKey.get(taskId)! < s.registrationSeq))
+            ) {
+              // An already-seen, outdated id with no live owner (an old
+              // replay after the binding moved on, or a retired one) must
+              // not recreate a duplicate skeleton row.
+              break;
+            }
+            if (owner !== undefined) {
+              // Same registration facts as the agent-id branch: a registration
+              // IS a started run — stamp working, not just the binding. An
+              // omitted description stays the spawned's own instead of the
+              // generic placeholder.
+              const task = patchSubagent(t, s, sessionId, owner.agentId ?? owner.id, {
+                description:
+                  typeof info.description === 'string' || typeof info.command === 'string'
+                    ? description
+                    : owner.description,
+                status: 'running',
+                subagentPhase: 'working',
+                runInBackground: true,
+                startedAt: owner.startedAt ?? startedAt,
+              });
+              if (task) out.push({ type: 'taskCreated', sessionId, task });
+              break;
+            }
+            // Otherwise key the row by the background task id so the REST
+            // poll dedupes it. Seed subagentMeta too: a later spawned
+            // carrying this task id folds the skeleton (and its
+            // daemon-stamped timestamps) into the agent-keyed row.
+            const skeleton: AppTask = {
+              id: taskId,
+              sessionId,
+              kind: 'subagent',
+              description,
+              status: 'running',
+              createdAt: startedAt ?? new Date().toISOString(),
+              startedAt,
+              // A registration IS a started run (see the agent-id branch) —
+              // even when its started frame was missed entirely.
+              subagentPhase: 'working',
+              runInBackground: true,
+            };
+            s.subagentMeta.set(taskId, skeleton);
+            if (!s.registrationOrderByKey.has(taskId)) {
+              s.registrationOrderByKey.set(taskId, ++s.registrationSeq);
+            }
             out.push({
               type: 'taskCreated',
               sessionId,
-              task: {
-                id: taskId,
-                sessionId,
-                kind: 'subagent',
-                description,
-                status: 'running',
-                createdAt: startedAt ?? new Date().toISOString(),
-                startedAt,
-                subagentPhase: 'queued',
-                runInBackground: true,
-              },
+              task: skeleton,
             });
           }
           break;
@@ -1441,9 +1719,19 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
       case 'task.terminated':
       case 'background.task.terminated': {
         const info = (p?.info ?? {}) as Record<string, unknown>;
+        // info.status is the kernel vocabulary (completed/failed/timed_out/
+        // killed/lost): killed means the user cancelled — mapping it to
+        // 'completed' would paint a stopped task as a success.
         const failed =
           info.status === 'failed' ||
+          info.status === 'timed_out' ||
+          info.status === 'lost' ||
           (typeof info.exitCode === 'number' && info.exitCode !== 0);
+        // The kernel settles the reducer row without touching the meta — a
+        // resume must be able to tell this row is done (see restarting).
+        if (info.kind === 'agent' && typeof info.agentId === 'string' && info.agentId.length > 0) {
+          s.settledByKernel.add(info.agentId);
+        }
         out.push({
           type: 'taskCompleted',
           sessionId,
@@ -1453,7 +1741,7 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
               : typeof info.taskId === 'number'
                 ? String(info.taskId)
                 : '',
-          status: failed ? 'failed' : 'completed',
+          status: info.status === 'killed' ? 'cancelled' : failed ? 'failed' : 'completed',
           // Do NOT set outputPreview here. The command is already kept on the
           // task as `command`; setting outputPreview to `$ <command>` would
           // clobber any real output captured by polling and prevents the UI

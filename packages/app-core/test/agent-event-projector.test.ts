@@ -588,6 +588,1254 @@ describe('background subagent task registration', () => {
     });
   });
 
+  it('merges the skeleton timing when both it and the agent row exist at fold time', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          detached: true,
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+    projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          runInBackground: true,
+          backgroundTaskId: 'task-9',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          startedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    ]);
+  });
+
+  it('keeps the settled agent row when the spawned folds its skeleton afterwards', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          detached: true,
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+    projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+    projector.project(
+      'subagent.completed',
+      { subagentId: 'agent-1', resultSummary: 'done' },
+      's1',
+    );
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'completed',
+          backgroundTaskId: 'task-9',
+        }),
+      },
+    ]);
+  });
+
+  it('treats a changed old binding at fold time as a new run, not the same one', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+    projector.project('subagent.completed', { subagentId: 'agent-1' }, 's1');
+    projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-10',
+          kind: 'agent',
+          detached: true,
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-10' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          subagentPhase: 'queued',
+          backgroundTaskId: 'task-10',
+        }),
+      },
+    ]);
+  });
+
+  it('reuses the bound agent row when a registration without an agent id follows its spawned', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+
+    const events = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          detached: true,
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          agentId: 'agent-1',
+          backgroundTaskId: 'task-9',
+          runInBackground: true,
+          startedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    ]);
+  });
+
+  it('keeps the spawned description when the registration omits its own', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+
+    const events = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          detached: true,
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    expect(events[0]?.task).toMatchObject({
+      id: 'agent-1',
+      description: 'Explore repo',
+    });
+  });
+
+  it('patches a taskless replay over a BOUND running row without resetting it', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true },
+      's1',
+    );
+    projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+    projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          detached: true,
+          agentId: 'agent-1',
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          subagentPhase: 'working',
+          backgroundTaskId: 'task-9',
+        }),
+      },
+    ]);
+  });
+
+  it('resumes into the foreground after a kernel-only termination', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true, taskId: 'task-9' },
+      's1',
+    );
+    // The kernel settles the row (user cancel) without touching the meta.
+    projector.project(
+      'task.terminated',
+      { info: { taskId: 'task-9', kind: 'agent', agentId: 'agent-1', status: 'killed' } },
+      's1',
+    );
+    projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: false },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          subagentPhase: 'working',
+          runInBackground: false,
+        }),
+      },
+    ]);
+    expect(events[0]?.task.backgroundTaskId).toBeUndefined();
+  });
+
+  it('stamps working on a first registration that shares the spawned binding', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+
+    const events = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          detached: true,
+          agentId: 'agent-1',
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          subagentPhase: 'working',
+          backgroundTaskId: 'task-9',
+          startedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    ]);
+  });
+
+  it('does not recreate a skeleton for a confirmed-outdated agent-id-less registration', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true, taskId: 'task-9' },
+      's1',
+    );
+    projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-10',
+          kind: 'agent',
+          detached: true,
+          agentId: 'agent-1',
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    const events = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          detached: true,
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    expect(events).toEqual([]);
+  });
+
+  it('never re-adopts a binding the foreground resume retired', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true, taskId: 'task-9' },
+      's1',
+    );
+    projector.project('subagent.completed', { subagentId: 'agent-1' }, 's1');
+    projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+    // The resume goes foreground: the old binding is retired.
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: false },
+      's1',
+    );
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          runInBackground: false,
+        }),
+      },
+    ]);
+    expect(events[0]?.task.backgroundTaskId).toBeUndefined();
+  });
+
+  it('does not let an outdated spawned replay regress the current run’s binding', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true, taskId: 'task-9' },
+      's1',
+    );
+    projector.project('subagent.completed', { subagentId: 'agent-1' }, 's1');
+    projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+    projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-10',
+          kind: 'agent',
+          detached: true,
+          agentId: 'agent-1',
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-10' },
+      's1',
+    );
+
+    // A replayed spawned for the PREVIOUS registration must not reset the
+    // current run nor re-bind the row back to task-9.
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          subagentPhase: 'working',
+          backgroundTaskId: 'task-10',
+        }),
+      },
+    ]);
+  });
+
+  it('ignores a confirmed-outdated task.started replay entirely', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true, taskId: 'task-9' },
+      's1',
+    );
+    projector.project('subagent.completed', { subagentId: 'agent-1' }, 's1');
+    projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+    projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-10',
+          kind: 'agent',
+          detached: true,
+          agentId: 'agent-1',
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    const events = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          detached: true,
+          agentId: 'agent-1',
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          subagentPhase: 'working',
+          backgroundTaskId: 'task-10',
+        }),
+      },
+    ]);
+  });
+
+  it('keeps this run’s started state when the spawned brings its binding later', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true, taskId: 'task-9' },
+      's1',
+    );
+    projector.project('subagent.completed', { subagentId: 'agent-1' }, 's1');
+    projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-10' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          subagentPhase: 'working',
+          backgroundTaskId: 'task-10',
+        }),
+      },
+    ]);
+    expect(events[0]?.task.startedAt).toBeDefined();
+  });
+
+  it('keeps working through the registration when started already re-opened the run', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true, taskId: 'task-9' },
+      's1',
+    );
+    projector.project('subagent.completed', { subagentId: 'agent-1' }, 's1');
+    projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+
+    const registration = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-10',
+          kind: 'agent',
+          detached: true,
+          agentId: 'agent-1',
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+    expect(registration[0]?.task).toMatchObject({
+      id: 'agent-1',
+      status: 'running',
+      subagentPhase: 'working',
+      backgroundTaskId: 'task-10',
+    });
+
+    const spawned = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-10' },
+      's1',
+    );
+    expect(spawned[0]?.task).toMatchObject({
+      id: 'agent-1',
+      status: 'running',
+      subagentPhase: 'working',
+    });
+  });
+
+  it('marks the started as this run’s even when the meta never saw the cancel', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true, taskId: 'task-9' },
+      's1',
+    );
+    // A local cancel settles the reducer row but never reaches this meta:
+    // the started still counts as opening the new run's lifecycle.
+    projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+
+    const registration = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-10',
+          kind: 'agent',
+          detached: true,
+          agentId: 'agent-1',
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    expect(registration[0]?.task).toMatchObject({
+      id: 'agent-1',
+      status: 'running',
+      subagentPhase: 'working',
+      backgroundTaskId: 'task-10',
+    });
+  });
+
+  it('resets an unattributable settle at fold and lets the kernel termination settle the new run', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true, taskId: 'task-9' },
+      's1',
+    );
+    projector.project('subagent.completed', { subagentId: 'agent-1' }, 's1');
+    projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-10',
+          kind: 'agent',
+          detached: true,
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+    // An old-run completion racing the resume can never be told apart from a
+    // new-run one — the fold must not trust it either way.
+    projector.project(
+      'subagent.completed',
+      { subagentId: 'agent-1', resultSummary: 'old result' },
+      's1',
+    );
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-10' },
+      's1',
+    );
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          backgroundTaskId: 'task-10',
+        }),
+      },
+    ]);
+
+    // The kernel's task.terminated is the authoritative terminal instead.
+    const terminated = projector.project(
+      'task.terminated',
+      { info: { taskId: 'task-10', status: 'completed' } },
+      's1',
+    );
+    expect(terminated).toEqual([
+      { type: 'taskCompleted', sessionId: 's1', taskId: 'task-10', status: 'completed' },
+    ]);
+  });
+
+  it('does not attribute a settle to another agent’s concurrent skeleton', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true, taskId: 'task-9' },
+      's1',
+    );
+    // Agent B's skeleton waits while agent A's OLD run settles.
+    projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-b1',
+          kind: 'agent',
+          detached: true,
+          description: 'Agent B work',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+    projector.project('subagent.completed', { subagentId: 'agent-1' }, 's1');
+    // Agent A's own new registration, then its spawned.
+    projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-10',
+          kind: 'agent',
+          detached: true,
+          description: 'Explore repo',
+          startedAt: 1767225601000,
+        },
+      },
+      's1',
+    );
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-10' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          backgroundTaskId: 'task-10',
+        }),
+      },
+    ]);
+  });
+
+  it('does not leak the re-opened marker into a later spawned-first resume', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true, taskId: 'task-9' },
+      's1',
+    );
+    projector.project('subagent.completed', { subagentId: 'agent-1' }, 's1');
+    projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+    projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-10',
+          kind: 'agent',
+          detached: true,
+          agentId: 'agent-1',
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+    // The run ends via a local cancel — the meta still says working, but the
+    // marker was consumed at registration and must not bless the next resume.
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-11' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          subagentPhase: 'queued',
+          backgroundTaskId: 'task-11',
+        }),
+      },
+    ]);
+    expect(events[0]?.task.startedAt).toBeUndefined();
+  });
+
+  it('keeps the skeleton registration background mode when the new spawned omits it', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+    projector.project('subagent.completed', { subagentId: 'agent-1' }, 's1');
+    projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-10',
+          kind: 'agent',
+          detached: true,
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-10' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          runInBackground: true,
+          backgroundTaskId: 'task-10',
+        }),
+      },
+    ]);
+  });
+
+  it('resets stale working timing when the resume spawned lands before any started', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+    projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+    // A local cancel settles the reducer row but never reaches this meta:
+    // the leftover working phase/timing belong to the previous run.
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-10' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          subagentPhase: 'queued',
+          backgroundTaskId: 'task-10',
+        }),
+      },
+    ]);
+    expect(events[0]?.task.startedAt).toBeUndefined();
+  });
+
+  it('keeps the started-confirmed phase and timing when the resume spawned lands', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true, taskId: 'task-9' },
+      's1',
+    );
+    projector.project('subagent.completed', { subagentId: 'agent-1' }, 's1');
+    projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: false },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          subagentPhase: 'working',
+          runInBackground: false,
+        }),
+      },
+    ]);
+    expect(events[0]?.task.startedAt).toBeDefined();
+    expect(events[0]?.task.backgroundTaskId).toBeUndefined();
+  });
+
+  it('clears the old binding and background mode when a started-first resume goes foreground', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true, taskId: 'task-9' },
+      's1',
+    );
+    projector.project('subagent.completed', { subagentId: 'agent-1' }, 's1');
+    projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: false },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          runInBackground: false,
+        }),
+      },
+    ]);
+    expect(events[0]?.task.backgroundTaskId).toBeUndefined();
+  });
+
+  it('resets even when a fresh spawn lands while the meta still says running', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+    // A local cancel settles the reducer row but never reaches this meta.
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-10' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          subagentPhase: 'queued',
+          backgroundTaskId: 'task-10',
+        }),
+      },
+    ]);
+    expect(events[0]?.task.completedAt).toBeUndefined();
+  });
+
+  it('clears the suspension reason when started returns the row to work', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo' },
+      's1',
+    );
+    projector.project(
+      'subagent.suspended',
+      { subagentId: 'agent-1', reason: 'waiting for approval' },
+      's1',
+    );
+
+    const events = projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          subagentPhase: 'working',
+        }),
+      },
+    ]);
+    expect(events[0]?.task.suspendedReason).toBeUndefined();
+  });
+
+  it('treats a taskless spawned over a settled row as a new run too', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo' },
+      's1',
+    );
+    projector.project('subagent.completed', { subagentId: 'agent-1' }, 's1');
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          subagentPhase: 'queued',
+        }),
+      },
+    ]);
+  });
+
+  it('resets the run-scoped fields when started re-opens a settled row', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo' },
+      's1',
+    );
+    projector.project(
+      'subagent.completed',
+      { subagentId: 'agent-1', resultSummary: 'old result' },
+      's1',
+    );
+
+    const events = projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          subagentPhase: 'working',
+        }),
+      },
+    ]);
+    expect(events[0]?.task.completedAt).toBeUndefined();
+    expect(events[0]?.task.outputPreview).toBeUndefined();
+    expect(events[0]?.task.outputLines).toBeUndefined();
+  });
+
+  it('adopts the event background mode for a new run instead of inheriting the old one', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true, taskId: 'task-9' },
+      's1',
+    );
+    projector.project('subagent.completed', { subagentId: 'agent-1' }, 's1');
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: false },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          runInBackground: false,
+        }),
+      },
+    ]);
+  });
+
+  it('treats a spawned with a fresh task binding as a new run, not a replay', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+    projector.project('subagent.completed', { subagentId: 'agent-1' }, 's1');
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-10' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'running',
+          subagentPhase: 'queued',
+          backgroundTaskId: 'task-10',
+        }),
+      },
+    ]);
+    expect(events[0]?.task.completedAt).toBeUndefined();
+  });
+
+  it('stamps a fresh registration even when the projector meta still says running', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+    // A local cancel settles the reducer row but never reaches this meta.
+
+    const registration = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-10',
+          kind: 'agent',
+          detached: true,
+          agentId: 'agent-1',
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    expect(registration[0]?.task).toMatchObject({
+      id: 'agent-1',
+      status: 'running',
+      backgroundTaskId: 'task-10',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      startedAt: '2026-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('treats the first background registration of a settled foreground row as a new run', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo' },
+      's1',
+    );
+    projector.project('subagent.completed', { subagentId: 'agent-1' }, 's1');
+
+    const registration = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-10',
+          kind: 'agent',
+          detached: true,
+          agentId: 'agent-1',
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    expect(registration[0]?.task).toMatchObject({
+      id: 'agent-1',
+      status: 'running',
+      backgroundTaskId: 'task-10',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      startedAt: '2026-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('resets a settled row when a fresh registration lands before its spawned', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+    projector.project(
+      'subagent.completed',
+      { subagentId: 'agent-1', resultSummary: 'old result' },
+      's1',
+    );
+
+    const registration = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-10',
+          kind: 'agent',
+          detached: true,
+          agentId: 'agent-1',
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+    expect(registration[0]?.task).toMatchObject({
+      id: 'agent-1',
+      status: 'running',
+      subagentPhase: 'working',
+      backgroundTaskId: 'task-10',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      startedAt: '2026-01-01T00:00:00.000Z',
+    });
+    expect(registration[0]?.task.completedAt).toBeUndefined();
+    expect(registration[0]?.task.outputPreview).toBeUndefined();
+
+    const spawned = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-10' },
+      's1',
+    );
+    expect(spawned[0]?.task).toMatchObject({
+      id: 'agent-1',
+      status: 'running',
+      backgroundTaskId: 'task-10',
+    });
+  });
+
+  it('folds a registration-only skeleton row when the spawned frame carries its task id', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          detached: true,
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          agentId: 'agent-1',
+          kind: 'subagent',
+          description: 'Explore repo',
+          backgroundTaskId: 'task-9',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          startedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    ]);
+  });
+
+  it('keeps the suspension reason when a spawned frame replays over a suspended row', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+    projector.project(
+      'subagent.suspended',
+      { subagentId: 'agent-1', reason: 'waiting for approval' },
+      's1',
+    );
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          subagentPhase: 'suspended',
+          suspendedReason: 'waiting for approval',
+        }),
+      },
+    ]);
+  });
+
   it('does not invent an agent id when the registration carries only a task id', () => {
     const projector = createAgentProjector({ t });
     const events = projector.project(
@@ -642,6 +1890,145 @@ describe('background subagent task registration', () => {
         task: expect.objectContaining({ id: 'task-1', kind: 'bash', command: 'npm test' }),
       },
     ]);
+  });
+
+  it('binds the background task id from the spawned frame so cancel works before task.started', () => {
+    const projector = createAgentProjector({ t });
+    const events = projector.project(
+      'subagent.spawned',
+      {
+        subagentId: 'agent-1',
+        description: 'Explore repo',
+        runInBackground: true,
+        taskId: 'task-9',
+      },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          agentId: 'agent-1',
+          backgroundTaskId: 'task-9',
+        }),
+      },
+    ]);
+  });
+
+  it('patches instead of resetting the row when a spawned frame replays', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+    projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          subagentPhase: 'working',
+          backgroundTaskId: 'task-9',
+        }),
+      },
+    ]);
+  });
+
+  it('patches a taskless replay over an unbound running row (old daemon dialect)', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo' },
+      's1',
+    );
+    projector.project('subagent.started', { subagentId: 'agent-1' }, 's1');
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          subagentPhase: 'working',
+        }),
+      },
+    ]);
+  });
+
+  it('never resurrects a settled row when a spawned frame replays', () => {
+    const projector = createAgentProjector({ t });
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+    projector.project('subagent.completed', { subagentId: 'agent-1' }, 's1');
+
+    const events = projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', taskId: 'task-9' },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          status: 'completed',
+          subagentPhase: 'completed',
+        }),
+      },
+    ]);
+  });
+});
+
+describe('task termination status mapping', () => {
+  it('maps a killed termination to cancelled, not completed', () => {
+    const projector = createAgentProjector({ t });
+    const events = projector.project(
+      'task.terminated',
+      { info: { taskId: 'task-1', status: 'killed' } },
+      's1',
+    );
+
+    expect(events).toEqual([
+      { type: 'taskCompleted', sessionId: 's1', taskId: 'task-1', status: 'cancelled' },
+    ]);
+  });
+
+  it('maps timed_out and lost terminations to failed', () => {
+    const projector = createAgentProjector({ t });
+    for (const status of ['timed_out', 'lost']) {
+      const events = projector.project(
+        'task.terminated',
+        { info: { taskId: 'task-1', status } },
+        's1',
+      );
+
+      expect(events).toEqual([
+        { type: 'taskCompleted', sessionId: 's1', taskId: 'task-1', status: 'failed' },
+      ]);
+    }
   });
 });
 

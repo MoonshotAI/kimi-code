@@ -17,6 +17,7 @@ import type {
   AppMessageContent,
   AppNotice,
   AppNoticeDetail,
+  AppTaskStatus,
   AppTurnError,
   AppTurnRetry,
   AppWarning,
@@ -770,20 +771,103 @@ export function reduceAppEvent(
     case 'taskCreated': {
       const sid = event.sessionId;
       const list = next.tasksBySession[sid] ?? [];
-      const idx = list.findIndex((t) => t.id === event.task.id);
+      // A spawned that carries the registered task id folds the skeleton row
+      // an agent-id-less task.started seeded under that id — match it here so
+      // the row is rekeyed in place instead of duplicated. When the agent row
+      // already exists too (subagent.started landed first), drop the skeleton
+      // copy outright: rekeying it would leave two rows for one agent.
+      const idIdx = list.findIndex((t) => t.id === event.task.id);
+      const bgIdx = event.task.backgroundTaskId === undefined
+        ? -1
+        : list.findIndex((t) => t.id === event.task.backgroundTaskId);
+      // When the agent row already exists too (subagent.started landed first),
+      // drop the skeleton copy outright: rekeying it would leave two rows for
+      // one agent. A skeleton already settled (cancelled from its card before
+      // the fold) still feeds the terminal-stickiness below.
+      const droppedSkeleton = bgIdx !== -1 && idIdx !== -1 && bgIdx !== idIdx ? list[bgIdx] : undefined;
+      const work = droppedSkeleton !== undefined ? list.filter((_, i) => i !== bgIdx) : list;
+      const idx = work.findIndex(
+        (t) =>
+          t.id === event.task.id ||
+          (event.task.backgroundTaskId !== undefined && t.id === event.task.backgroundTaskId),
+      );
       if (idx === -1) {
-        next.tasksBySession[sid] = [...list, event.task];
+        next.tasksBySession[sid] = [...work, event.task];
       } else {
-        const patched = [...list];
-        const previous = list[idx]!;
-        // The projected task does not carry reducer-owned accumulated progress;
-        // preserve it across the replacement so subagent output keeps growing.
-        // A resync also rebuilds skeleton tasks without their identity metadata,
-        // so keep the previous value when the projected task omits it.
+        const patched = [...work];
+        const previous = work[idx]!;
+        // Terminal-stickiness: a replayed/resynced projection (a spawned or
+        // task.started re-announce of the SAME registered run) must not
+        // resurrect a row the stream already finished — the settled terminal
+        // fields win. A projection whose binding differs (a resume registers a
+        // fresh task or ships none) starts a new run and is exempt; a dropped
+        // skeleton's terminal state sticks unconditionally — the task already
+        // died before its row folded. Rows keyed by their own task id (a bash
+        // task, or an agent-id-less skeleton) are id-keyed to that single run:
+        // an id hit is always the same run. An AGENT-id-keyed row is not — it
+        // outlives runs, so only the binding speaks there.
+        const sameRun =
+          (event.task.backgroundTaskId !== undefined &&
+            (event.task.backgroundTaskId === previous.backgroundTaskId ||
+              previous.id === event.task.backgroundTaskId)) ||
+          (previous.id === event.task.id &&
+            (previous.kind !== 'subagent' || previous.agentId === undefined));
+        const sticky =
+          (sameRun && previous.status !== 'running' ? previous : undefined) ??
+          (droppedSkeleton !== undefined && droppedSkeleton.status !== 'running'
+            ? droppedSkeleton
+            : undefined);
+        // The first terminal wins for the same run: a running re-announce
+        // resurrects nothing, and a terminal of a DIFFERENT kind (a replayed
+        // subagent.completed over a kernel-cancelled/-failed row) never
+        // downgrades it either — the taskCompleted leg guards the rest.
+        const keepTerminal = sticky !== undefined
+          && (event.task.status === 'running' || event.task.status !== sticky.status);
+        // Confirmed NEW run (a settled row whose binding changed): adopt the
+        // event's run-scoped facts wholesale — outputs, background mode, task
+        // binding — instead of inheriting the previous run's. Anything else
+        // (same run replay, or a running row being re-projected) preserves
+        // accumulated output and identity metadata as before.
+        const resetOutputs = (!sameRun && previous.status !== 'running')
+          // Two DEFINED and different bindings confirm a new run even while
+          // the previous row still reads running (its terminal event was
+          // missed) — the new run must not inherit the old text/results.
+          || (event.task.backgroundTaskId !== undefined
+              && previous.backgroundTaskId !== undefined
+              && event.task.backgroundTaskId !== previous.backgroundTaskId);
+        // A replay of the same terminal must not overwrite the daemon's REAL
+        // completion stamp with a fresh client-observed (estimated) one.
+        const keepRealStamp = sameRun
+          && previous.completedAt !== undefined
+          && previous.completedAtEstimated !== true;
         patched[idx] = {
           ...event.task,
-          outputLines: previous.outputLines,
-          text: previous.text,
+          status: keepTerminal ? sticky.status : event.task.status,
+          subagentPhase: keepTerminal ? sticky.subagentPhase : event.task.subagentPhase,
+          completedAt: keepTerminal ? sticky.completedAt : (keepRealStamp ? previous.completedAt : event.task.completedAt),
+          completedAtEstimated: keepTerminal
+            ? sticky.completedAtEstimated
+            : (keepRealStamp ? previous.completedAtEstimated : event.task.completedAtEstimated),
+          outputLines: keepTerminal
+            ? sticky.outputLines
+            : resetOutputs
+              ? (droppedSkeleton?.outputLines ?? event.task.outputLines)
+              : (previous.outputLines ?? droppedSkeleton?.outputLines ?? event.task.outputLines),
+          text: keepTerminal
+            ? sticky.text
+            : resetOutputs
+              ? (droppedSkeleton?.text ?? event.task.text)
+              : (previous.text ?? droppedSkeleton?.text ?? event.task.text),
+          // A replayed projection omits the output a poll already fetched —
+          // keep it instead of blanking the final result until the next poll.
+          outputPreview: keepTerminal
+            ? sticky.outputPreview
+            : (event.task.outputPreview ??
+              (resetOutputs ? droppedSkeleton?.outputPreview : (previous.outputPreview ?? droppedSkeleton?.outputPreview))),
+          outputBytes: keepTerminal
+            ? sticky.outputBytes
+            : (event.task.outputBytes ??
+              (resetOutputs ? droppedSkeleton?.outputBytes : (previous.outputBytes ?? droppedSkeleton?.outputBytes))),
           // A post-refresh lifecycle event re-projects the task with skeleton
           // metadata; don't let its placeholder clobber the roster-seeded
           // description.
@@ -799,8 +883,15 @@ export function reduceAppEvent(
           // roster/REST-seeded model and effort across the replacement.
           model: event.task.model ?? previous.model,
           thinkingEffort: event.task.thinkingEffort ?? previous.thinkingEffort,
-          runInBackground: event.task.runInBackground ?? previous.runInBackground,
-          backgroundTaskId: event.task.backgroundTaskId ?? previous.backgroundTaskId,
+          runInBackground: resetOutputs
+            ? event.task.runInBackground
+            : (event.task.runInBackground ?? previous.runInBackground),
+          // A confirmed new run adopts the event's binding verbatim — even
+          // undefined: resurrecting the old binding would let a late/replayed
+          // task.terminated for the previous run kill THIS live row.
+          backgroundTaskId: resetOutputs
+            ? event.task.backgroundTaskId
+            : (event.task.backgroundTaskId ?? previous.backgroundTaskId),
           // The roster-seeded agent id anchors transcript resumes; a skeleton
           // re-projection (no wire agent_id) must not drop it.
           agentId: event.task.agentId ?? previous.agentId,
@@ -841,7 +932,19 @@ export function reduceAppEvent(
       const sid = event.sessionId;
       const list = next.tasksBySession[sid] ?? [];
       next.tasksBySession[sid] = list.map((t) => {
-        if (t.id !== event.taskId) return t;
+        // A background subagent's row is keyed by agent id while its
+        // task.terminated arrives under the background-task id — match both.
+        if (t.id !== event.taskId && t.backgroundTaskId !== event.taskId) return t;
+        // A late/replayed terminal must not downgrade the kernel terminal the
+        // row already carries: 'completed' never overwrites cancelled/failed,
+        // and a raced or replayed 'failed' never overwrites a user-cancelled
+        // row either.
+        if (
+          (event.status === 'completed' && (t.status === 'cancelled' || t.status === 'failed')) ||
+          (event.status === 'failed' && t.status === 'cancelled')
+        ) {
+          return t;
+        }
         return {
           ...t,
           status: event.status,
@@ -852,8 +955,10 @@ export function reduceAppEvent(
           // The fallback stamps observation time, not real completion —
           // mark it sort-only so durations never derive from it.
           completedAtEstimated: t.completedAt === undefined ? true : t.completedAtEstimated,
-          outputPreview: event.outputPreview,
-          outputBytes: event.outputBytes,
+          // A termination projected from task.terminated deliberately carries
+          // no output fields — never let it wipe output a poll already wrote.
+          outputPreview: event.outputPreview ?? t.outputPreview,
+          outputBytes: event.outputBytes ?? t.outputBytes,
         };
       });
       break;
@@ -946,6 +1051,34 @@ export function reduceAppEvent(
         delete next.turnRetryBySession[event.sessionId];
         if (event.promptId !== undefined) {
           next.turnEndedPromptIdBySession[event.sessionId] = event.promptId;
+        }
+        // Foreground subagents cannot outlive the main turn — the tool call
+        // driving them returns before the turn ends — so a foreground row
+        // still reading running here means its settle event
+        // (subagent.completed/failed) was missed; close it from the turn's
+        // outcome instead of leaving a zombie only a refresh clears.
+        // Background rows persist past the turn by design and keep their own
+        // task.* lifecycle. Mirrors the server roster's abort rule: anything
+        // but a completed turn finalizes live members as failed.
+        const endedStatus: AppTaskStatus =
+          event.reason === undefined || event.reason === 'completed' ? 'completed' : 'failed';
+        const turnRows = next.tasksBySession[event.sessionId];
+        if (turnRows !== undefined) {
+          next.tasksBySession[event.sessionId] = turnRows.map((t) => {
+            if (t.kind !== 'subagent' || t.status !== 'running' || t.runInBackground === true) {
+              return t;
+            }
+            return {
+              ...t,
+              status: endedStatus,
+              subagentPhase: endedStatus,
+              // Same observed-stamp convention as the taskCompleted leg: keep
+              // a real stamp, otherwise record observation time as sort-only.
+              completedAt: t.completedAt ?? new Date().toISOString(),
+              completedAtEstimated: t.completedAt === undefined ? true : t.completedAtEstimated,
+              suspendedReason: undefined,
+            };
+          });
         }
         // The main turn's end is one of the coarse recency moments.
         bumpSessionRecency(next, event.sessionId);
