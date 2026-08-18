@@ -86,6 +86,18 @@ export interface BackgroundTaskDisplayBlock {
   description: string;
 }
 
+/** A flow stage-gate review: per-criterion verdicts for a human-gated pass. */
+export interface FlowGateDisplayBlock {
+  type: 'flow_gate';
+  flow_id: string;
+  stage_id: string;
+  stage_index: number;
+  stage_total: number;
+  next_stage_id?: string | undefined;
+  criteria: { criterion: string; met: boolean; evidence: string }[];
+  note?: string | undefined;
+}
+
 export type DisplayBlock =
   | BriefDisplayBlock
   | DiffDisplayBlock
@@ -96,7 +108,8 @@ export type DisplayBlock =
   | SearchDisplayBlock
   | InvocationDisplayBlock
   | TodoDisplayBlock
-  | BackgroundTaskDisplayBlock;
+  | BackgroundTaskDisplayBlock
+  | FlowGateDisplayBlock;
 
 export interface ApprovalPanelChoice {
   label: string;

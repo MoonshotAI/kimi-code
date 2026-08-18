@@ -6,7 +6,6 @@ import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import {
   IAgentFlowService,
-  type FlowRunState,
   type FlowStageDefinition,
   type FlowVerdictDecider,
 } from '../../flow';
@@ -41,7 +40,21 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
     const stage = this.flow.currentStage();
     if (!run.active || stage === undefined || stage.id !== args.stage) return undefined;
     if (stage.gate === 'ai') return undefined;
-    return { kind: 'plan_review', plan: renderGateReview(run, stage, args) };
+    const stageIndex = run.currentStageIndex ?? 0;
+    return {
+      kind: 'flow_gate_review',
+      flow_id: run.flowId ?? 'unknown',
+      task: run.task,
+      stage_id: stage.id,
+      stage_index: stageIndex,
+      stage_total: run.stages?.length ?? 0,
+      gate: stage.gate,
+      objective: stage.objective,
+      completion: stage.completion,
+      next_stage_id: run.stages?.[stageIndex + 1]?.id,
+      criteria: args.criteria,
+      note: args.note,
+    };
   }
 
   private async execution(
@@ -117,32 +130,6 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
       output: `Stage \`${args.stage}\` passed.${autoNote}\n\n${renderNextStage(outcome.nextStage)}`,
     };
   }
-}
-
-function renderGateReview(
-  run: DeepReadonly<FlowRunState>,
-  stage: DeepReadonly<FlowStageDefinition>,
-  args: FlowAdvanceInput,
-): string {
-  const total = run.stages?.length ?? 0;
-  const position = (run.currentStageIndex ?? 0) + 1;
-  const lines = [
-    `# Flow gate review — stage \`${stage.id}\` (${position}/${total})`,
-    '',
-    `**Flow**: ${run.flowId ?? 'unknown'} · **Task**: ${run.task ?? ''}`,
-    `**Objective**: ${stage.objective}`,
-    `**Completion**: ${stage.completion}`,
-    '',
-    '## Criteria verdicts',
-    ...args.criteria.map(
-      (criterion) =>
-        `- ${criterion.met ? '✅' : '❌'} **${criterion.criterion}** — ${criterion.evidence}`,
-    ),
-  ];
-  if (args.note !== undefined && args.note.trim().length > 0) {
-    lines.push('', '## Note', args.note.trim());
-  }
-  return lines.join('\n');
 }
 
 function renderNextStage(stage: DeepReadonly<FlowStageDefinition> | undefined): string {

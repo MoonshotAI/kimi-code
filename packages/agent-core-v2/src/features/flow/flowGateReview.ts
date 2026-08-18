@@ -21,8 +21,7 @@ export class FlowGateReview {
     context: ResolvedToolExecutionHookContext,
   ): Promise<BeforeExecuteDecision | undefined> {
     const display = context.execution.display;
-    if (display?.kind !== 'plan_review') return undefined;
-    if (display.plan.trim().length === 0) return undefined;
+    if (display?.kind !== 'flow_gate_review') return undefined;
     return this.toolApproval.requestToolApproval(
       context,
       {

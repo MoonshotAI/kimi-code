@@ -26,6 +26,8 @@ export function describeToolDisplay(display: ToolInputDisplay): string {
       return display.task_description;
     case "plan_review":
       return display.plan;
+    case "flow_gate_review":
+      return `Stage ${display.stage_id} gate review (${display.stage_index + 1}/${display.stage_total})`;
     case "goal_start":
       return display.objective;
     case "generic":
@@ -68,6 +70,7 @@ export function toLegacyDisplay(display: ToolInputDisplay): DisplayBlock[] {
     case "task":
     case "task_stop":
     case "plan_review":
+    case "flow_gate_review":
     case "goal_start":
     case "generic":
       return [{ type: "brief", text: describeToolDisplay(display) }];

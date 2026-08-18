@@ -63,8 +63,8 @@ describe('FlowAdvanceTool', () => {
     return { stage, verdict: 'pass', criteria: MET };
   }
 
-  it('attaches a plan_review display only for a human-gated pass on the current stage', () => {
-    expect(runnable(tool.resolveExecution(passArgs('triage'))).display?.kind).toBe('plan_review');
+  it('attaches a flow_gate_review display only for a human-gated pass on the current stage', () => {
+    expect(runnable(tool.resolveExecution(passArgs('triage'))).display?.kind).toBe('flow_gate_review');
     expect(runnable(tool.resolveExecution(passArgs('implement'))).display).toBeUndefined();
     stageIndex = 1;
     expect(runnable(tool.resolveExecution(passArgs('implement'))).display).toBeUndefined();
@@ -83,7 +83,7 @@ describe('FlowAdvanceTool', () => {
 
   it('records a reviewed human-gated pass as decided by human', async () => {
     const execution = runnable(tool.resolveExecution(passArgs('triage')));
-    expect(execution.display?.kind).toBe('plan_review');
+    expect(execution.display?.kind).toBe('flow_gate_review');
     const result = await execution.execute(CTX);
     expect(result.isError).not.toBe(true);
     expect(advance).toHaveBeenCalledWith(expect.objectContaining({ result: 'pass', decidedBy: 'human' }));

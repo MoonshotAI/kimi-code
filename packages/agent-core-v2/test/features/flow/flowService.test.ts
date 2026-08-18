@@ -328,6 +328,18 @@ describe('AgentFlowService', () => {
   });
 
   describe('FlowAdvance human-gate guard', () => {
+    const GATE_DISPLAY: ToolInputDisplay = {
+      kind: 'flow_gate_review',
+      flow_id: 'issue-fix',
+      stage_id: 'triage',
+      stage_index: 0,
+      stage_total: 2,
+      gate: 'human',
+      objective: 'find it',
+      completion: 'found',
+      criteria: [{ criterion: 'found', met: true, evidence: 'yes' }],
+    };
+
     function advanceContext(display?: ToolInputDisplay): ResolvedToolExecutionHookContext {
       const call: ToolCall = {
         type: 'function',
@@ -349,29 +361,29 @@ describe('AgentFlowService', () => {
       };
     }
 
-    it('routes a plan_review pass verdict through tool approval', async () => {
+    it('routes a flow_gate_review pass verdict through tool approval', async () => {
       service.start(DEFINITION, 'task');
       await executorEvents.fireBeforeExecute(
-        advanceContext({ kind: 'plan_review', plan: 'criteria verdicts' }),
+        advanceContext(GATE_DISPLAY),
       );
       expect(requestToolApproval).toHaveBeenCalledTimes(1);
     });
 
-    it('skips approval without a plan_review display, in auto mode, and while the flag is off', async () => {
+    it('skips approval without a flow_gate_review display, in auto mode, and while the flag is off', async () => {
       service.start(DEFINITION, 'task');
       await executorEvents.fireBeforeExecute(advanceContext(undefined));
       expect(requestToolApproval).not.toHaveBeenCalled();
 
       permissionMode = 'auto';
       await executorEvents.fireBeforeExecute(
-        advanceContext({ kind: 'plan_review', plan: 'criteria verdicts' }),
+        advanceContext(GATE_DISPLAY),
       );
       expect(requestToolApproval).not.toHaveBeenCalled();
 
       permissionMode = 'default';
       flowFlagOn = false;
       await executorEvents.fireBeforeExecute(
-        advanceContext({ kind: 'plan_review', plan: 'criteria verdicts' }),
+        advanceContext(GATE_DISPLAY),
       );
       expect(requestToolApproval).not.toHaveBeenCalled();
     });

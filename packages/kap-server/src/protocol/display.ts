@@ -82,6 +82,28 @@ export const ToolInputDisplaySchema = z.discriminatedUnion('kind', [
     mode: z.enum(['manual', 'yolo']),
   }),
   z.object({
+    kind: z.literal('flow_gate_review'),
+    flow_id: z.string(),
+    task: z.string().optional(),
+    stage_id: z.string(),
+    stage_index: z.number(),
+    stage_total: z.number(),
+    gate: z.enum(['human', 'ai-then-human']),
+    objective: z.string(),
+    completion: z.string(),
+    next_stage_id: z.string().optional(),
+    criteria: z
+      .array(
+        z.object({
+          criterion: z.string(),
+          met: z.boolean(),
+          evidence: z.string(),
+        }),
+      )
+      .readonly(),
+    note: z.string().optional(),
+  }),
+  z.object({
     kind: z.literal('generic'),
     summary: z.string(),
     detail: z.unknown().optional(),

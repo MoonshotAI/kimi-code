@@ -16,6 +16,14 @@ const PLAN_REJECT_CHOICES: ApprovalPanelChoice[] = [
   { label: 'Revise', response: 'rejected', selected_label: 'Revise', requires_feedback: true },
 ];
 
+// Flow gate review: a plain rejection stops the turn and waits for the user;
+// a rejection with feedback sends the supervisor back to rework the stage.
+const FLOW_GATE_CHOICES: ApprovalPanelChoice[] = [
+  { label: 'Pass the gate', response: 'approved' },
+  { label: 'Reject with feedback', response: 'rejected', requires_feedback: true },
+  { label: 'Reject', response: 'rejected' },
+];
+
 export function adaptApprovalRequest(event: ApprovalRequest): ApprovalPanelData {
   const resolved = resolveDisplay(event.toolName, event.display, event.action);
   return {
@@ -176,6 +184,7 @@ export function adaptPanelResponse(response: ApprovalPanelResponse): ApprovalRes
 function describeApproval(display: ToolInputDisplay, action: string): string {
   switch (display.kind) {
     case 'plan_review':
+    case 'flow_gate_review':
       return '';
     case 'goal_start':
       return 'Start a goal?';
@@ -323,6 +332,19 @@ function adaptDisplay(display: ToolInputDisplay): DisplayBlock[] {
       ];
     case 'plan_review':
       return [];
+    case 'flow_gate_review':
+      return [
+        {
+          type: 'flow_gate',
+          flow_id: display.flow_id,
+          stage_id: display.stage_id,
+          stage_index: display.stage_index,
+          stage_total: display.stage_total,
+          next_stage_id: display.next_stage_id,
+          criteria: display.criteria.map((criterion) => ({ ...criterion })),
+          note: display.note,
+        },
+      ];
     case 'goal_start': {
       const lines = [`Start goal: ${display.objective}`];
       if (typeof display.completionCriterion === 'string' && display.completionCriterion.length > 0) {
@@ -342,6 +364,9 @@ function adaptDisplay(display: ToolInputDisplay): DisplayBlock[] {
 }
 
 function adaptChoices(toolName: string, display: ToolInputDisplay): ApprovalPanelChoice[] {
+  if (display.kind === 'flow_gate_review') {
+    return FLOW_GATE_CHOICES.map((choice) => cloneChoice(choice));
+  }
   if (toolName === 'ExitPlanMode' || display.kind === 'plan_review') {
     return adaptPlanReviewChoices(display);
   }

@@ -53,7 +53,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
         if (event.toolCall.name !== FLOW_ADVANCE_TOOL_NAME) return;
         if (this.modeService.mode === 'auto') return;
-        if (event.execution.display?.kind !== 'plan_review') return;
+        if (event.execution.display?.kind !== 'flow_gate_review') return;
         event.waitUntil(() => this.review.requestApproval(event));
       }),
     );

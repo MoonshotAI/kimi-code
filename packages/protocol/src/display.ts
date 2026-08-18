@@ -84,6 +84,35 @@ export const ToolInputDisplaySchema = z.discriminatedUnion('kind', [
     // auto-approves the goal without a prompt.
     mode: z.enum(['manual', 'yolo']),
   }),
+  // A flow stage-gate review: the supervisor submitted a pass verdict for a
+  // human-gated stage and the user decides whether the run advances. Carries
+  // the per-criterion verdicts so clients render a structured checklist
+  // instead of a markdown blob.
+  z.object({
+    kind: z.literal('flow_gate_review'),
+    flow_id: z.string(),
+    task: z.string().optional(),
+    stage_id: z.string(),
+    // 0-based position of the stage under review.
+    stage_index: z.number(),
+    stage_total: z.number(),
+    gate: z.enum(['human', 'ai-then-human']),
+    objective: z.string(),
+    completion: z.string(),
+    // Omitted when the stage under review is the last one — approving
+    // finishes the run.
+    next_stage_id: z.string().optional(),
+    criteria: z
+      .array(
+        z.object({
+          criterion: z.string(),
+          met: z.boolean(),
+          evidence: z.string(),
+        }),
+      )
+      .readonly(),
+    note: z.string().optional(),
+  }),
   z.object({
     kind: z.literal('generic'),
     summary: z.string(),
