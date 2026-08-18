@@ -622,22 +622,21 @@ export async function maybeRelaunchWithStagedNativeUpdate(
       return await discard();
     }
 
-    // The rollback-critical section ends here: the new exe is in place and
-    // the `.bak` is no longer needed. Release before the cosmetic cleanup so
-    // the (now deletable) staging dir does not linger behind the mutex.
-    await swapMutex.release();
-
-    // 4. Success: clean up and re-exec into the new binary.
+    // 4. Success: clean up, STILL INSIDE the mutex — a swap that acquires it
+    //    the instant we release could rename the exe we just installed to the
+    //    shared `.bak` path, and this cleanup would delete that rollback
+    //    source. Then re-exec into the new binary.
     await unlink(claimedPath).catch(() => {});
     await unlink(bakPath).catch(() => {});
     await cleanupBackups(deps.exePath, bakPath);
-    await rmdir(getNativeStagingDir(deps.exePath)).catch(() => {});
     logSwap('swap succeeded, re-launching', { version: staged.version });
   } finally {
     await swapMutex.release();
   }
-  // Re-exec OUTSIDE the critical section: the child runs the user session,
-  // so awaiting it inside the try would hold the mutex for its whole
-  // lifetime.
+  // Cosmetic, now that the release removed our mutex file: drop the staging
+  // dir when empty. And re-exec OUTSIDE the critical section: the child runs
+  // the user session, so awaiting it inside the try would hold the mutex for
+  // its whole lifetime.
+  await rmdir(getNativeStagingDir(deps.exePath)).catch(() => {});
   return reexec({ ...deps, spawnImpl });
 }
