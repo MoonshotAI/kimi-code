@@ -102,6 +102,14 @@ describe('parseFlowDefinition', () => {
     expect(definition.stages[0]!.notes).toContain('Done.');
   });
 
+  it('does not close a fence on a same-marker line carrying an info string', () => {
+    const definition = parseFlowDefinition(
+      '---\nid: infostr\nstages:\n  - id: triage\n    objective: x\n    completion: y\n---\n\n## triage\n\n````md\n```ts\n## example\n```\n````\n\nDone.\n',
+    );
+    expect(definition.stages[0]!.notes).toContain('## example');
+    expect(definition.stages[0]!.notes).toContain('Done.');
+  });
+
   it('rejects a notes heading that matches no stage id, so a typo cannot silently drop the notes', () => {
     expect(() =>
       parseFlowDefinition(

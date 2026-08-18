@@ -15,6 +15,7 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { SkillActivate, skillKey } from '#/agent/skill/skillOps';
+import { ContextUndone } from '#/agent/undo/undoService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
@@ -267,6 +268,26 @@ describe('AgentFlowService', () => {
     ]);
   });
 
+  it('republishes the flow summary after a conversation undo', async () => {
+    const seen: unknown[] = [];
+    disposables.add(
+      ix.get(IEventBus).subscribe((e) => {
+        if (e.type === 'agent.status.updated') {
+          seen.push((e as AgentStatusUpdated).flowRun);
+        }
+      }),
+    );
+    await ix.get(IEventBus).publish(new ContextUndone({ turns: 1 }));
+    expect(seen).toEqual([null]);
+
+    service.start(DEFINITION, 'fix #123');
+    seen.length = 0;
+    await ix.get(IEventBus).publish(new ContextUndone({ turns: 1 }));
+    expect(seen).toEqual([
+      { flowId: 'issue-fix', stageId: 'triage', stageIndex: 0, stageTotal: 2, gate: 'human' },
+    ]);
+  });
+
   it('conversation undo rolls back the stage pointer but keeps the gate audit trail', async () => {
     await dispatcher.dispatch(
       new ContextAppendMessage({
@@ -351,6 +372,25 @@ describe('AgentFlowService', () => {
             skillType: 'flow',
             skillPath: '/ws/.kimi-code/flows/issue-fix.md',
             skillArgs: 'worker task',
+          },
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(service.run().active).toBe(false);
+    });
+
+    it('does not auto-start an activation whose task is empty', async () => {
+      agentState.contributeState(skillKey);
+      await dispatcher.dispatch(
+        new SkillActivate({
+          origin: {
+            kind: 'skill_activation',
+            activationId: 'act-empty',
+            skillName: 'issue-fix',
+            trigger: 'user-slash',
+            skillType: 'flow',
+            skillPath: '/ws/.kimi-code/flows/issue-fix.md',
+            skillArgs: '   ',
           },
         }),
       );

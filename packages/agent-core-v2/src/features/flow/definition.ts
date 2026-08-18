@@ -99,7 +99,13 @@ function extractStageNotes(body: string): Map<string, string> {
       const marker = fenceMatch[1]![0]!;
       const length = fenceMatch[1]!.length;
       if (fence === undefined) fence = { marker, length };
-      else if (fence.marker === marker && length >= fence.length) fence = undefined;
+      else if (
+        fence.marker === marker &&
+        length >= fence.length &&
+        /^\s*(`{3,}|~{3,})\s*$/.test(line)
+      ) {
+        fence = undefined;
+      }
       if (current !== undefined) buffer.push(line);
       continue;
     }

@@ -107,6 +107,24 @@ describe('FlowAdvanceTool', () => {
     expect(advance).toHaveBeenCalledWith(expect.objectContaining({ decidedBy: 'auto' }));
   });
 
+  it('rejects an auto-prepared pass executed after the mode switched back to manual', async () => {
+    mode = 'auto';
+    const execution = runnable(tool.resolveExecution(passArgs('triage')));
+    mode = 'default';
+    const result = await execution.execute(CTX);
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('standalone call');
+    expect(advance).not.toHaveBeenCalled();
+  });
+
+  it('keeps decidedBy human when a reviewed pass executes after a switch to auto', async () => {
+    const execution = runnable(tool.resolveExecution(passArgs('triage')));
+    mode = 'auto';
+    const result = await execution.execute(CTX);
+    expect(result.isError).not.toBe(true);
+    expect(advance).toHaveBeenCalledWith(expect.objectContaining({ decidedBy: 'human' }));
+  });
+
   it('rejects a pass verdict that carries unmet criteria', async () => {
     const args: FlowAdvanceInput = {
       stage: 'triage',

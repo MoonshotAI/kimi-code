@@ -4,6 +4,8 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { SkillActivated } from '#/agent/skill/skillOps';
+import { ContextUndone } from '#/agent/undo/undoService';
+import { AgentStatusUpdated, type AgentFlowRunStatus } from '#/agent/usage/usageEvents';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
@@ -92,6 +94,12 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
       }),
     );
     this._register(
+      eventBus.subscribe(ContextUndone, () => {
+        if (!this.flags.enabled(FLOW_FLAG_ID)) return;
+        void this.dispatcher.dispatch(new AgentStatusUpdated({ flowRun: this.summary() }));
+      }),
+    );
+    this._register(
       eventBus.subscribe(SkillActivated, (event) => {
         if (event.skillType !== 'flow') return;
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
@@ -101,11 +109,25 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     );
   }
 
+  private summary(): AgentFlowRunStatus | null {
+    const run = this.run();
+    const stage = this.currentStage();
+    if (!run.active || run.flowId === undefined || stage === undefined) return null;
+    return {
+      flowId: run.flowId,
+      stageId: stage.id,
+      stageIndex: run.currentStageIndex ?? 0,
+      stageTotal: run.stages?.length ?? 0,
+      gate: stage.gate,
+    };
+  }
+
   private async startFromActivation(
     flowId: string | undefined,
     task: string | undefined,
   ): Promise<void> {
     if (flowId === undefined || flowId.length === 0 || this.run().active) return;
+    if (task === undefined || task.trim().length === 0) return;
     if (this.activationInFlight) return;
     this.activationInFlight = true;
     try {
@@ -133,7 +155,9 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
       return;
     }
     try {
-      this.start(parseFlowDefinition(text), task?.trim() ?? '');
+      const definition = parseFlowDefinition(text);
+      if (definition.id !== flowId) return;
+      this.start(definition, task?.trim() ?? '');
     } catch {
       return;
     }

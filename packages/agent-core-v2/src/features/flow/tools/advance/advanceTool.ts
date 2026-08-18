@@ -26,11 +26,12 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
 
   resolveExecution(args: FlowAdvanceInput): ToolExecution {
     const display = this.gateDisplay(args);
+    const preparedInAuto = this.modeService.mode === 'auto';
     return {
       description: `Submitting ${args.verdict} verdict for stage ${args.stage}`,
       display,
       approvalRule: this.name,
-      execute: () => this.execution(args, display !== undefined),
+      execute: () => this.execution(args, display !== undefined && !preparedInAuto),
     };
   }
 
@@ -60,7 +61,7 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
 
   private async execution(
     args: FlowAdvanceInput,
-    reviewed: boolean,
+    reviewedByUser: boolean,
   ): Promise<ExecutableToolResult> {
     const run = this.flow.run();
     if (!run.active) {
@@ -103,15 +104,15 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
       };
     }
 
-    const autoMode = this.modeService.mode === 'auto';
-    const needsReview = stage.gate !== 'ai' && !autoMode;
-    if (needsReview && !reviewed) {
+    const needsReview = stage.gate !== 'ai' && this.modeService.mode !== 'auto';
+    if (needsReview && !reviewedByUser) {
       return {
         isError: true,
-        output: `Stage \`${args.stage}\` requires the user gate review, but the run state changed between preparing and executing this call (batched tool calls), so the review was skipped. Submit FlowAdvance again as a standalone call.`,
+        output: `Stage \`${args.stage}\` requires the user gate review, but no review happened when this call was prepared (a batched call, or the permission mode changed since). Submit FlowAdvance again as a standalone call.`,
       };
     }
-    const decidedBy: FlowVerdictDecider = stage.gate === 'ai' ? 'ai' : autoMode ? 'auto' : 'human';
+    const decidedBy: FlowVerdictDecider =
+      stage.gate === 'ai' ? 'ai' : reviewedByUser ? 'human' : 'auto';
     const outcome = this.flow.advance({
       stage: args.stage,
       result: 'pass',
