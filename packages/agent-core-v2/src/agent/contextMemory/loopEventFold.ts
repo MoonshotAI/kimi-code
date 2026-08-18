@@ -81,10 +81,23 @@ export interface LoopEventFold {
 }
 
 export function createLoopEventFold(sink: LoopEventFoldSink): LoopEventFold {
-  let openStepUuid: string | undefined;
-  let openHasToolCalls = false;
-  let openVacuous = true;
-  const pending = new Set<string>();
+  return createLoopEventFoldWithState(sink);
+}
+
+interface InitialFoldState {
+  readonly openHasToolCalls: boolean;
+  readonly openVacuous: boolean;
+  readonly pendingToolCallIds: readonly string[];
+}
+
+function createLoopEventFoldWithState(
+  sink: LoopEventFoldSink,
+  initial?: InitialFoldState,
+): LoopEventFold {
+  let openStepUuid: string | null | undefined = initial === undefined ? undefined : null;
+  let openHasToolCalls = initial?.openHasToolCalls ?? false;
+  let openVacuous = initial?.openVacuous ?? true;
+  const pending = new Set(initial?.pendingToolCallIds);
   let deferred: { message: ContextMessage; time: number | undefined }[] = [];
 
   const flushDeferred = (): void => {
@@ -109,6 +122,14 @@ export function createLoopEventFold(sink: LoopEventFoldSink): LoopEventFold {
       sink.sealOpenAssistant();
     }
     openStepUuid = undefined;
+  };
+  const acceptsOpenStep = (stepUuid: string): boolean => {
+    if (openStepUuid === undefined) return false;
+    if (openStepUuid === null) {
+      openStepUuid = stepUuid;
+      return true;
+    }
+    return stepUuid === openStepUuid;
   };
 
   return {
@@ -135,13 +156,13 @@ export function createLoopEventFold(sink: LoopEventFoldSink): LoopEventFold {
           return;
         }
         case 'content.part': {
-          if (openStepUuid === undefined || event.stepUuid !== openStepUuid) return;
+          if (!acceptsOpenStep(event.stepUuid)) return;
           sink.appendOpenContent(event.part);
           openVacuous = openVacuous && isVacuousContentPart(event.part);
           return;
         }
         case 'tool.call': {
-          if (openStepUuid === undefined || event.stepUuid !== openStepUuid) return;
+          if (!acceptsOpenStep(event.stepUuid)) return;
           const call: ToolCall = {
             type: 'function',
             id: event.toolCallId,
@@ -224,7 +245,7 @@ function boundOf(state: readonly ContextMessage[]): BoundFold {
   let bound = boundFoldMap.get(key);
   if (bound === undefined || bound.sink.current() !== key) {
     const sink = createImmutableFoldSink(key);
-    bound = { fold: createLoopEventFold(sink), sink };
+    bound = { fold: createLoopEventFoldWithState(sink, recoverFoldState(key)), sink };
     boundFoldMap.set(key, bound);
   }
   return bound;
@@ -284,6 +305,26 @@ function findOpenAssistantIndex(state: readonly ContextMessage[]): number {
     if (state[i]!.partial === true) return i;
   }
   return -1;
+}
+
+function recoverFoldState(state: readonly ContextMessage[]): InitialFoldState | undefined {
+  const openIndex = findOpenAssistantIndex(state);
+  if (openIndex === -1) return undefined;
+  const open = state[openIndex]!;
+  const resolvedToolCallIds = new Set<string>();
+  for (let i = openIndex + 1; i < state.length; i++) {
+    const message = state[i]!;
+    if (message.role === 'tool' && message.toolCallId !== undefined) {
+      resolvedToolCallIds.add(message.toolCallId);
+    }
+  }
+  return {
+    openHasToolCalls: open.toolCalls.length > 0,
+    openVacuous: open.content.every(isVacuousContentPart),
+    pendingToolCallIds: open.toolCalls
+      .map((call) => call.id)
+      .filter((toolCallId) => !resolvedToolCallIds.has(toolCallId)),
+  };
 }
 
 function interruptedToolMessage(toolCallId: string): ContextMessage {
