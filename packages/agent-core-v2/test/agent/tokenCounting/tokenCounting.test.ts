@@ -4,6 +4,7 @@ import { IAgentContextMemoryService, IAgentProfileService } from '#/index';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { TokenCountingMeasured, tokenCountingKey } from '#/agent/tokenCounting/tokenCountingOps';
+import { TurnEnded } from '#/agent/loop/turnOps';
 import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import type { TokenUsage } from '#/kosong/contract/usage';
 import { IAgentUsageService } from '#/agent/usage/usage';
@@ -243,5 +244,73 @@ describe('Agent token counting', () => {
     expect(tokenCounting.statusSize()).toBe(
       Math.max(tokenCounting.get().size, tokenCounting.latestMeasured()),
     );
+  });
+
+  it('journals the reported size as a durable record at every turn end', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    const live = createTestAgent({ persistence });
+    try {
+      live.get(IAgentProfileService).update({ activeToolNames: [] });
+
+      live.mockNextResponse({ type: 'text', text: 'Hi there!' });
+      await live.rpc.prompt({ input: [{ type: 'text', text: 'hi' }] });
+      await live.untilTurnEnd();
+
+      const counting = live.get(IAgentTokenCountingService);
+      const reported = counting.statusSize();
+      expect(reported).toBeGreaterThan(0);
+      await live.get(IWireService).flush();
+
+      const records = persistence.records.filter(
+        (record) => record.type === 'token_counting.turn_recorded',
+      );
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        length: live.get(IAgentContextMemoryService).get().length,
+        tokens: reported,
+      });
+      expect(live.get(IAgentStateService).get(tokenCountingKey).anchors).toEqual([
+        { length: 2, tokens: reported, measured: true },
+      ]);
+    } finally {
+      await live.dispose();
+    }
+  });
+
+  it('pins the reported size at turn end when no measured anchor covers it', async () => {
+    ctx.appendUserMessage([{ type: 'text', text: 'unmeasured tail' }]);
+    const expected = tokenCounting.statusSize();
+    expect(expected).toBeGreaterThan(0);
+    expect(ctx.agentState.get(tokenCountingKey).anchors).toEqual([]);
+
+    await ctx.dispatcher.dispatch(new TurnEnded({ turnId: 1, reason: 'completed' }));
+
+    expect(ctx.agentState.get(tokenCountingKey).anchors).toEqual([
+      { length: 1, tokens: expected, measured: false },
+    ]);
+    expect(tokenCounting.statusSize()).toBe(expected);
+  });
+
+  it('drops the pinned turn reading on compaction', async () => {
+    ctx.appendUserMessage([{ type: 'text', text: 'unmeasured tail' }]);
+    await ctx.dispatcher.dispatch(new TurnEnded({ turnId: 1, reason: 'completed' }));
+    expect(ctx.agentState.get(tokenCountingKey).anchors).toHaveLength(1);
+
+    context.applyCompaction({
+      summary: 'summary of the tail',
+      compactedCount: 1,
+      tokensBefore: 100,
+      summaryOutputTokens: 50,
+    });
+
+    const history = context.get();
+    const anchors = ctx.agentState.get(tokenCountingKey).anchors;
+    expect(anchors).toHaveLength(1);
+    expect(anchors[0]).toEqual({
+      length: history.length,
+      tokens: tokenCounting.get().size,
+      measured: false,
+    });
+    expect(tokenCounting.statusSize()).toBe(tokenCounting.get().size);
   });
 });

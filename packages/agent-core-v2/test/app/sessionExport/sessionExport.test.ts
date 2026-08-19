@@ -890,6 +890,7 @@ function registerSessionExportServices(
     },
     resume: async () => options.lifecycleHandle,
     get: () => options.lifecycleHandle,
+    status: async () => options.summary,
     whenResumeSettled: async () => {},
     withLifecycleSerialization: async <T>(
       _sessionId: string,

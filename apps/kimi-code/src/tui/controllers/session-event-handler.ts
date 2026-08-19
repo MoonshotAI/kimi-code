@@ -663,7 +663,7 @@ export class SessionEventHandler {
     const tc = this.host.streamingUI.getToolComponent(event.toolCallId);
     if (tc === undefined) return;
     if (event.update.kind === 'status') {
-      tc.appendProgress(text);
+      tc.appendProgress(text, { replace: event.update.replace === true });
       return;
     }
     if (event.update.kind === 'stdout' || event.update.kind === 'stderr') {
