@@ -1720,6 +1720,7 @@ describe('Agent tool execution contract', () => {
       properties: {
         subagent_name: 'explore',
         run_in_background: false,
+        fork: false,
         agent_id: 'agent-child',
         parent_agent_id: 'main',
         parent_tool_call_id: 'call_agent',
