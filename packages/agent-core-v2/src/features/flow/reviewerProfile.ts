@@ -43,7 +43,7 @@ const DEFAULT_SUMMARY_POLICY = {
 export const FLOW_REVIEWER_PROFILE_DEF: AgentProfile = normalizeAgentProfile({
   name: FLOW_REVIEWER_PROFILE,
   description:
-    'Independent flow-gate reviewer — verifies one stage of a flow run against its completion criteria with read-only tools and returns a per-criterion verdict.',
+    'Independent flow-gate reviewer — verifies one stage of a flow run against its completion criteria and returns a per-criterion verdict. Shell access is for verification only (each command still goes through the approval policy); modifying the artifacts under review voids the verdict.',
   whenToUse:
     'Use for independent review of a flow stage before passing its gate: when the gate is high-stakes, when acceptance rests on your own earlier decisions, or when you are unsure. Give it only objective material; do not disclose your expected verdict.',
   tools: FLOW_REVIEWER_TOOLS,

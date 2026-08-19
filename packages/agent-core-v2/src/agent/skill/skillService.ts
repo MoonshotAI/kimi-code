@@ -208,6 +208,12 @@ export class AgentSkillService extends Service implements IAgentSkillService {
         'Flow skills can only be activated on the main agent',
       );
     }
+    try {
+      if (flowActivations.length > 0) this.rejectWhileFlowRunActive('flow');
+    } catch (error) {
+      discardPrepared();
+      throw error;
+    }
     if (this.scopeContext.agentId === MAIN_AGENT_ID) {
       await applyPromptMetadataUpdate(
         {
