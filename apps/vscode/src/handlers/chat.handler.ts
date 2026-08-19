@@ -176,6 +176,16 @@ const steerChat: Handler<{ content: string | ContentPart[] }, { ok: boolean }> =
   return { ok: true };
 };
 
+// User-driven recovery from context.overflow: by the time that error surfaces
+// the engine's auto-compaction has already exhausted its retries, so the
+// Webview's "Compact & Retry" action compacts here and then resends.
+const compactContext: Handler<void, { ok: boolean }> = async (_, ctx) => {
+  const runtime = ctx.getSession();
+  if (runtime === undefined || runtime.isBusy) return { ok: false };
+  await runtime.session.compact();
+  return { ok: true };
+};
+
 const resetSession: Handler<void, { ok: boolean }> = async (_, ctx) => {
   const runtime = ctx.getSession();
   if (runtime !== undefined) injectedEditorContextSessions.delete(runtime.id);
@@ -191,6 +201,7 @@ export const chatHandlers: Record<string, Handler<any, any>> = {
   [Methods.RespondQuestion]: respondQuestion,
   [Methods.SetPlanMode]: setPlanMode,
   [Methods.SteerChat]: steerChat,
+  [Methods.CompactContext]: compactContext,
   [Methods.ResetSession]: resetSession,
 };
 

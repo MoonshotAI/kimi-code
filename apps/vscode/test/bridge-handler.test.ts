@@ -190,6 +190,50 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
     expect(cancel).toHaveBeenCalledOnce();
   });
 
+  it("does not execute the compact handler when a payload is supplied", async () => {
+    const result = await bridge.handle(
+      { id: "rpc-1", method: Methods.CompactContext, params: {} },
+      "view-1",
+    );
+
+    expect(result).toEqual({
+      id: "rpc-1",
+      error: "Invalid bridge params for method: compactContext",
+    });
+  });
+
+  it("reports not-ok when compacting without an active session", async () => {
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.CompactContext }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { ok: false } });
+  });
+
+  it("compacts the view's session on request", async () => {
+    const compact = vi.fn(async () => undefined);
+    vi.spyOn(bridge.runtime, "getSessionForView").mockReturnValue({
+      isBusy: false,
+      session: { compact },
+    } as never);
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.CompactContext }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { ok: true } });
+    expect(compact).toHaveBeenCalledOnce();
+  });
+
+  it("refuses to compact while the session is busy", async () => {
+    const compact = vi.fn(async () => undefined);
+    vi.spyOn(bridge.runtime, "getSessionForView").mockReturnValue({
+      isBusy: true,
+      session: { compact },
+    } as never);
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.CompactContext }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { ok: false } });
+    expect(compact).not.toHaveBeenCalled();
+  });
+
   it.each(["missingMethod", "toString", "constructor", "__proto__"])(
     "does not dispatch the unknown or prototype method %s",
     async (method) => {
