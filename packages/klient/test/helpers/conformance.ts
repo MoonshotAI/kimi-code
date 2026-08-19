@@ -469,6 +469,31 @@ export function defineKlientConformance(
       }
     });
 
+    it('global mcp OAuth failures use transport-stable 50001 errors', async () => {
+      const mcp = target.klient.global.mcp;
+      const flags = target.app.accessor.get(IFlagService);
+      flags.setConfigOverrides({ mcp_management: true });
+      try {
+        await mcp.add({
+          server: {
+            name: 'conf-oauth-failure',
+            transport: 'http',
+            url: 'http://127.0.0.1:1/mcp',
+            auth: 'oauth',
+          },
+        });
+        try {
+          await expect(
+            mcp.beginAuth({ locator: { source: 'global', name: 'conf-oauth-failure' } }),
+          ).rejects.toMatchObject({ name: 'RPCError', code: 50001 });
+        } finally {
+          await mcp.remove({ name: 'conf-oauth-failure' });
+        }
+      } finally {
+        flags.setConfigOverrides(undefined);
+      }
+    });
+
     it('global mcp cancelAuth ignores an unknown flowId', async () => {
       const mcp = target.klient.global.mcp;
       const flags = target.app.accessor.get(IFlagService);

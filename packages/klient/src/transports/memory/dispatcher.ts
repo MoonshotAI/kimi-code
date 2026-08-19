@@ -69,6 +69,7 @@ const NOT_FOUND = 40404;
 const MCP_SERVER_NOT_FOUND = 40408;
 const MCP_MANAGEMENT_DISABLED = 40928;
 const PROMPT_ID_CONFLICT = 40927;
+const INTERNAL_ERROR = 50001;
 
 /** Wire name of the engine's `IMcpManagementService` decorator id. */
 const MCP_MANAGEMENT_SERVICE = 'mcpManagementService';
@@ -101,6 +102,8 @@ function rethrowMcpManagementErrorAsRpc(error: unknown): never {
       case ErrorCodes.REQUEST_INVALID:
       case ErrorCodes.CONFIG_INVALID:
         throw new RPCError(REQUEST_INVALID, error.message, error.details);
+      case ErrorCodes.MCP_OAUTH_FAILED:
+        throw new RPCError(INTERNAL_ERROR, error.message, error.details);
     }
   }
   throw error;

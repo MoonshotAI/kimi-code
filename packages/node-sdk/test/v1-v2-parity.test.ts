@@ -3750,7 +3750,7 @@ function expectSameManagedServers(
 }
 
 describe('v1↔v2 global MCP parity', () => {
-  it('classifies global MCP authorization identically from persisted credentials', async () => {
+  it('keeps v1 implicit detection while v2 classifies persisted credentials offline', async () => {
     const statusServer = await startMcpAuthStatusServer();
     const authorizedUrl = 'https://authorized.example.test/mcp';
     const pair = await makeGlobalMcpParityPair({
@@ -3798,11 +3798,21 @@ describe('v1↔v2 global MCP parity', () => {
         pair.v1.listGlobalMcpServerAuthStatuses(),
         pair.v2.listGlobalMcpServerAuthStatuses(),
       ]);
-      expect(v2Statuses).toEqual(v1Statuses);
       expect(v1Statuses).toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
         { name: 'detected', authStatus: 'oauth-required' },
+        { name: 'sse', authStatus: 'not-applicable' },
+        { name: 'sse-oauth', authStatus: 'oauth-required' },
+        { name: 'bearer', authStatus: 'bearer-token' },
+        { name: 'oauth-required', authStatus: 'oauth-required' },
+        { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
+        { name: 'disabled-oauth', authStatus: 'not-applicable' },
+      ]);
+      expect(v2Statuses).toEqual([
+        { name: 'stdio', authStatus: 'not-applicable' },
+        { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'detected', authStatus: 'not-applicable' },
         { name: 'sse', authStatus: 'not-applicable' },
         { name: 'sse-oauth', authStatus: 'oauth-required' },
         { name: 'bearer', authStatus: 'bearer-token' },
@@ -3900,18 +3910,28 @@ describe('v1↔v2 global MCP parity', () => {
         { name: 'oauth-required', authStatus: 'oauth-required' },
       ]);
 
-      // The legacy name-based list stays offline (verify is opt-in): a
-      // stored grant is `oauth-authorized` even when the server would reject
-      // it — the deliberate offline false positive.
+      // The v2 name-based list stays fully offline unless verify is requested:
+      // stored grants are classified from disk, and unpinned HTTP servers are
+      // not contacted. V1 retains its implicit no-grant detection for compatibility.
       const [v1LegacyStatuses, v2LegacyStatuses] = await Promise.all([
         pair.v1.listGlobalMcpServerAuthStatuses(),
         pair.v2.listGlobalMcpServerAuthStatuses(),
       ]);
-      expect(v2LegacyStatuses).toEqual(v1LegacyStatuses);
       expect(v1LegacyStatuses).toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
         { name: 'detected', authStatus: 'oauth-required' },
+        { name: 'bearer', authStatus: 'bearer-token' },
+        { name: 'oauth-required', authStatus: 'oauth-required' },
+        { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
+        { name: 'oauth-stale', authStatus: 'oauth-authorized' },
+        { name: 'unavailable-explicit', authStatus: 'oauth-required' },
+        { name: 'unavailable-dynamic', authStatus: 'not-applicable' },
+      ]);
+      expect(v2LegacyStatuses).toEqual([
+        { name: 'stdio', authStatus: 'not-applicable' },
+        { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'detected', authStatus: 'not-applicable' },
         { name: 'bearer', authStatus: 'bearer-token' },
         { name: 'oauth-required', authStatus: 'oauth-required' },
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
