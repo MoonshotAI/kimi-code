@@ -12,7 +12,7 @@ import {
   APIStatusError,
   isRetryableGenerateError,
 } from '#/kosong/contract/errors';
-import type { Message } from '#/kosong/contract/message';
+import type { Message, StreamedMessagePart } from '#/kosong/contract/message';
 import type {
   ChatProvider,
   GenerateOptions,
@@ -25,7 +25,10 @@ import {
   resolveDefaultMaxTokens,
 } from '#/kosong/provider/bases/anthropic/anthropic';
 import '#/kosong/provider/bases/google-genai/index';
-import { GoogleGenAIChatProvider } from '#/kosong/provider/bases/google-genai/google-genai';
+import {
+  GoogleGenAIChatProvider,
+  GoogleGenAIStreamedMessage,
+} from '#/kosong/provider/bases/google-genai/google-genai';
 import '#/kosong/provider/bases/openai/index';
 import { OpenAIResponsesChatProvider } from '#/kosong/provider/bases/openai/openai-responses';
 import { OpenAILegacyChatProvider } from '#/kosong/provider/bases/openai/openai-legacy';
@@ -361,6 +364,59 @@ describe('google-genai vertex mode (providerOptions)', () => {
       modelName: 'gemini-2.5-flash',
     });
     expect(Reflect.get(provider, '_apiKey')).toBe('google-env-key');
+  });
+});
+
+describe('GoogleGenAIStreamedMessage stream consumption', () => {
+  it('rejects with AbortError when the signal aborts while the provider iterator never yields', async () => {
+    const stuck: AsyncIterable<Record<string, unknown>> = {
+      [Symbol.asyncIterator]() {
+        return {
+          next: () => new Promise<IteratorResult<Record<string, unknown>>>(() => {}),
+        };
+      },
+    };
+    const controller = new AbortController();
+    const message = new GoogleGenAIStreamedMessage(stuck, true, controller.signal);
+
+    const failurePromise = (async () => {
+      for await (const part of message) void part;
+    })().then(
+      () => null,
+      (error: unknown) => error,
+    );
+    controller.abort();
+
+    const failure = await failurePromise;
+    expect(failure).toBeInstanceOf(DOMException);
+    expect((failure as DOMException).name).toBe('AbortError');
+  });
+
+  it('converts a healthy stream end to end', async () => {
+    const chunks: AsyncIterable<Record<string, unknown>> = {
+      async *[Symbol.asyncIterator]() {
+        yield {
+          candidates: [
+            {
+              content: { parts: [{ text: 'Hello' }], role: 'model' },
+              finishReason: 'STOP',
+            },
+          ],
+          usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 1, totalTokenCount: 4 },
+          responseId: 'resp-1',
+        };
+      },
+    };
+    const controller = new AbortController();
+    const message = new GoogleGenAIStreamedMessage(chunks, true, controller.signal);
+
+    const parts: StreamedMessagePart[] = [];
+    for await (const part of message) parts.push(part);
+
+    expect(parts).toEqual([{ type: 'text', text: 'Hello' }]);
+    expect(message.id).toBe('resp-1');
+    expect(message.finishReason).toBe('completed');
+    expect(message.usage?.output).toBe(1);
   });
 });
 

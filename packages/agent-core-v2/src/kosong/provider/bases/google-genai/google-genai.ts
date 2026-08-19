@@ -594,8 +594,14 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
     response: AsyncIterable<Record<string, unknown>>,
     signal?: AbortSignal,
   ): AsyncGenerator<StreamedMessagePart> {
+    const iterator = response[Symbol.asyncIterator]();
+    const aborted = abortPromise(signal);
+    void aborted.catch(() => {});
     try {
-      for await (const chunk of response) {
+      for (;;) {
+        const result = await Promise.race([iterator.next(), aborted]);
+        if (result.done === true) return;
+        const chunk = result.value;
         this._throwIfAborted(signal);
         this._extractUsage(chunk);
         this._extractId(chunk);
@@ -610,6 +616,10 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
         throw error;
       }
       throw convertGoogleGenAIError(error);
+    } finally {
+      try {
+        void iterator.return?.()?.catch(() => {});
+      } catch {}
     }
   }
 }

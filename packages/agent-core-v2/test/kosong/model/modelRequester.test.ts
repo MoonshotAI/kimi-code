@@ -19,6 +19,7 @@ import type { Tool } from '#/kosong/contract/tool';
 import { emptyUsage, type TokenUsage } from '#/kosong/contract/usage';
 import { ProtocolErrors } from '#/kosong/protocol/errors';
 import type { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
+import { GoogleGenAIChatProvider } from '#/kosong/provider/bases/google-genai/google-genai';
 import type { Model } from '#/kosong/model/catalog';
 import type { ModelRequestEvent } from '#/kosong/model/modelRequester';
 import { effectiveMaxCompletionTokens } from '#/kosong/model/modelRequester';
@@ -505,6 +506,39 @@ describe('ModelRequesterImpl stream stall watchdog', () => {
     const failure = await failurePromise;
     expect(isAbortError(failure)).toBe(true);
     expect(failure).not.toBeInstanceOf(LLMStreamStalledError);
+  });
+
+  it('detects a stall behind the google-genai streamed message', async () => {
+    const provider = new GoogleGenAIChatProvider({
+      model: 'gemini-2.5-flash',
+      apiKey: 'sk-probe',
+      stream: true,
+    });
+    const client = Reflect.get(provider, '_client') as {
+      models: { generateContentStream: unknown };
+    };
+    client.models.generateContentStream = () =>
+      Promise.resolve(
+        (async function* () {
+          await new Promise(() => {});
+          yield {};
+        })(),
+      );
+    const requester = new ModelRequesterImpl(modelWith(staticAuth()), registryReturning(provider));
+
+    const failurePromise = collect(
+      requester.request(INPUT, undefined, {
+        firstOutputTimeoutMs: 1000,
+        streamIdleTimeoutMs: 500,
+      }),
+    ).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1000);
+    const failure = (await failurePromise) as LLMStreamStalledError;
+
+    expect(failure).toBeInstanceOf(LLMStreamStalledError);
+    expect(failure.phase).toBe('waiting_first_output');
+    expect(failure.name).not.toBe('AbortError');
   });
 });
 
