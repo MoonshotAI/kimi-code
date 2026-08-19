@@ -345,6 +345,7 @@ export interface SubagentCreatedEvent {
   agent_id: string;
   parent_agent_id: string;
   parent_tool_call_id: string;
+  model?: string;
 }
 
 export interface McpConnectedEvent {
@@ -848,6 +849,7 @@ export const telemetryEventDefinitions = {
       agent_id: 'Child agent id',
       parent_agent_id: 'Parent (caller) agent id',
       parent_tool_call_id: "Tool call id of the launching call in the parent agent; '' when not launched from a tool call",
+      model: 'Model alias the subagent binds to (secondary-model choice or inherited caller model); omitted when no binding was resolved',
     },
   }),
   mcp_connected: defineTelemetryEvent<McpConnectedEvent>({

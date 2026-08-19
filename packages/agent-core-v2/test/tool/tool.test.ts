@@ -1532,6 +1532,7 @@ describe('Agent tool execution contract', () => {
         agent_id: 'agent-child',
         parent_agent_id: 'main',
         parent_tool_call_id: 'call_agent',
+        model: 'provider/secondary',
       },
     });
     expect(events.find((event) => event.type === 'subagent.completed')).toMatchObject({

@@ -6,6 +6,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { isProviderRateLimitError } from '#/kosong/contract/errors';
 import { type TokenUsage } from '#/kosong/contract/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { SubagentCreatedEvent } from '#/app/telemetry/events';
 import { Event2 } from '#/app/event/event2';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -114,13 +115,15 @@ export function emitAgentRunSpawned(
     }),
   );
   childProfile?.republishStatus();
-  requester.accessor.get(ITelemetryService)?.track2('subagent_created', {
+  const telemetryEvent: SubagentCreatedEvent = {
     subagent_name: meta.profileName,
     run_in_background: meta.runInBackground ?? false,
     agent_id: targetAgentId,
     parent_agent_id: requester.id,
     parent_tool_call_id: meta.parentToolCallId ?? '',
-  });
+    model: meta.model,
+  };
+  requester.accessor.get(ITelemetryService)?.track2('subagent_created', telemetryEvent);
 }
 
 export async function mirrorAgentRun(
