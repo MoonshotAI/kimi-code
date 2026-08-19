@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 98 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 99 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -127,6 +127,7 @@
 //     shellCommand.tasks                              src/agent/shellCommand/shellCommandService.ts
 //     skill                                           src/agent/skill/skillOps.ts
 //     stepRetry.failedAttempts                        src/agent/stepRetry/stepRetryService.ts
+//     stepRetry.failedStallAttempts                   src/agent/stepRetry/stepRetryService.ts
 //     stepRetry.lastFailedDriverId                    src/agent/stepRetry/stepRetryService.ts
 //     swarm                                           src/features/swarm/swarmOps.ts
 //     task                                            src/agent/task/taskOps.ts
@@ -1286,6 +1287,8 @@ export interface AgentStateSnapshot {
       readonly usedContextTokens?: number;
       readonly maxContextTokens?: number;
       readonly onTraceId?: (traceId: string | null) => void;
+      readonly firstOutputTimeoutMs?: number;
+      readonly streamIdleTimeoutMs?: number;
     };
     readonly systemPrompt: string;
   }>;
@@ -1422,6 +1425,7 @@ export interface AgentStateSnapshot {
   'skill': null;
   // src/agent/stepRetry/stepRetryService.ts
   'stepRetry.failedAttempts': number;
+  'stepRetry.failedStallAttempts': number;
   'stepRetry.lastFailedDriverId': string | undefined;
   // src/agent/task/taskOps.ts
   // replayable · durable — folds: TaskStarted, TaskTerminated

@@ -10,6 +10,12 @@ import {
 } from '#/agent/contextProjector/contextProjector';
 import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
+import {
+  DEFAULT_FIRST_OUTPUT_TIMEOUT_MS,
+  DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+  LOOP_CONTROL_SECTION,
+  type LoopControl,
+} from '#/agent/loop/configSection';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
@@ -589,12 +595,20 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           : undefined,
     });
     const requester = this.modelCatalog.getRequester(resolved.modelAlias);
+    const loopControl = this.config.get<LoopControl>(LOOP_CONTROL_SECTION);
 
     const messages = overrides.messages ?? this.context.get();
     return {
       requester,
       model: requester.model,
-      params: { ...baseParams, ...budgetParams },
+      params: {
+        ...baseParams,
+        ...budgetParams,
+        firstOutputTimeoutMs:
+          loopControl?.firstOutputTimeoutMs ?? DEFAULT_FIRST_OUTPUT_TIMEOUT_MS,
+        streamIdleTimeoutMs:
+          loopControl?.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+      },
       modelAlias: resolved.modelAlias,
       thinkingEffort: resolved.thinkingLevel,
       systemPrompt: overrides.systemPrompt ?? turnConfig?.systemPrompt ?? this.profile.getSystemPrompt(),

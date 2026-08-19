@@ -138,6 +138,9 @@ kimi
 | `KIMI_MCP_TOOL_TIMEOUT_MS` | 所有 MCP server 的全局默认单次工具调用超时（毫秒）；优先级高于 `config.toml` 的 `[mcp] tool_timeout_ms`，但低于 `mcp.json` 中单个 server 的 `toolTimeoutMs`（默认 `60000`） | `1` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_LOOP_MAX_STEPS_PER_TURN` | Agent 单轮最大步数；优先级高于 `config.toml` 的 `[loop_control] max_steps_per_turn`（不设或 `0` 表示无上限） | 非负整数；非法值被忽略 |
 | `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP` | 单步失败后的最大总尝试次数（含首次尝试）；优先级高于 `config.toml` 的 `[loop_control] max_attempts_per_step`（默认 `10`）。旧的 `KIMI_LOOP_MAX_RETRIES_PER_STEP` 已废弃，但在本变量未设置时仍生效并给出警告 | 非负整数；非法值被忽略 |
+| `KIMI_LOOP_FIRST_OUTPUT_TIMEOUT_MS` | 等待模型请求首个输出的最长时间（毫秒），超时即判定为停滞；优先级高于 `config.toml` 的 `[loop_control] first_output_timeout_ms`（默认 `180000`；`0` 表示关闭该检测） | 非负整数；非法值被忽略 |
+| `KIMI_LOOP_STREAM_IDLE_TIMEOUT_MS` | 流式模型响应允许没有任何新输出的最长时间（毫秒），超时即判定为停滞；优先级高于 `config.toml` 的 `[loop_control] stream_idle_timeout_ms`（默认 `120000`；`0` 表示关闭该检测） | 非负整数；非法值被忽略 |
+| `KIMI_LOOP_MAX_STALL_ATTEMPTS_PER_STEP` | 模型请求持续停滞时单步的最大总尝试次数（含首次尝试）；优先级高于 `config.toml` 的 `[loop_control] max_stall_attempts_per_step`（默认 `3`） | 非负整数；非法值被忽略 |
 | `KIMI_TOKEN_COUNTING_STRATEGY` | 对外上报的上下文 token 计数（上下文大小显示）；优先级高于 `config.toml` 的 `[token_counting] strategy`（默认 `measured+estimated`） | `measured+estimated`、`measured`、`estimated`（不区分大小写）；非法值被忽略 |
 | `KIMI_WEB_SEARCH_BASE_URL` | 网页搜索（`WebSearch`）服务的 API URL；优先级高于 `config.toml` 的 `[services.moonshot_search] base_url`，未写配置段时也可启用服务。文件中持久化的凭据和自定义 header 不会发送到环境变量指定的端点 | 非空字符串；空白值被忽略 |
 | `KIMI_WEB_SEARCH_API_KEY` | 网页搜索（`WebSearch`）服务的 API 密钥；设置后同时替换配置中的 API 密钥和 OAuth 凭据 | 非空字符串；空白值被忽略 |

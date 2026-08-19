@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import { isError2 } from '#/_base/errors/errors';
-import { APIStatusError, createAbortError } from '#/kosong/contract/errors';
+import {
+  APIStatusError,
+  APITimeoutError,
+  createAbortError,
+  isAbortError,
+  isRetryableGenerateError,
+  LLMStreamStalledError,
+} from '#/kosong/contract/errors';
 import type { Message, StreamedMessagePart } from '#/kosong/contract/message';
 import type {
   ChatProvider,
@@ -12,10 +19,13 @@ import type { Tool } from '#/kosong/contract/tool';
 import { emptyUsage, type TokenUsage } from '#/kosong/contract/usage';
 import { ProtocolErrors } from '#/kosong/protocol/errors';
 import type { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
+import { GoogleGenAIChatProvider } from '#/kosong/provider/bases/google-genai/google-genai';
 import type { Model } from '#/kosong/model/catalog';
 import type { ModelRequestEvent } from '#/kosong/model/modelRequester';
 import { effectiveMaxCompletionTokens } from '#/kosong/model/modelRequester';
 import { buildStreamTiming, ModelRequesterImpl } from '#/kosong/model/modelRequesterImpl';
+
+import { ManualTimeoutScheduler } from '../../_base/utils/stubs';
 
 class FakeChatProvider implements ChatProvider {
   readonly name = 'fake-base';
@@ -31,7 +41,7 @@ class FakeChatProvider implements ChatProvider {
     options?: GenerateOptions;
   }> = [];
 
-  handler: (callIndex: number) => Promise<StreamedMessage> = () =>
+  handler: (callIndex: number, options?: GenerateOptions) => Promise<StreamedMessage> = () =>
     Promise.resolve(streamOf([{ type: 'text', text: 'hello' }]));
 
   async generate(
@@ -43,7 +53,7 @@ class FakeChatProvider implements ChatProvider {
     this.calls.push({ systemPrompt, tools, history, options });
     options?.onRequestStart?.();
     options?.onRequestSent?.();
-    const stream = await this.handler(this.calls.length - 1);
+    const stream = await this.handler(this.calls.length - 1, options);
     return stream;
   }
 }
@@ -286,6 +296,281 @@ describe('ModelRequesterImpl request execution', () => {
     const part = await requester.uploadVideo('file-id');
     expect(part).toEqual({ type: 'video_url', videoUrl: { url: 'https://cdn.example.test/v.mp4' } });
     expect(uploadCalls[0]?.auth).toEqual({ apiKey: 'sk-1' });
+  });
+});
+
+describe('ModelRequesterImpl stream stall watchdog', () => {
+  function neverYieldingStream(signal: AbortSignal | undefined): StreamedMessage {
+    return {
+      id: 'msg-stall',
+      usage: emptyUsage(),
+      finishReason: null,
+      rawFinishReason: null,
+      traceId: null,
+      [Symbol.asyncIterator]() {
+        return {
+          next: () =>
+            new Promise<IteratorResult<StreamedMessagePart>>((_resolve, reject) => {
+              signal?.addEventListener('abort', () => reject(createAbortError()), {
+                once: true,
+              });
+            }),
+        };
+      },
+    };
+  }
+
+  function stallingAfterStream(
+    scheduler: ManualTimeoutScheduler,
+    steps: readonly { readonly part: StreamedMessagePart; readonly delayMs?: number }[],
+    signal: AbortSignal | undefined,
+  ): StreamedMessage {
+    return {
+      id: 'msg-stall',
+      usage: emptyUsage(),
+      finishReason: null,
+      rawFinishReason: null,
+      traceId: null,
+      async *[Symbol.asyncIterator]() {
+        for (const step of steps) {
+          const delayMs = step.delayMs;
+          if (delayMs !== undefined) {
+            await new Promise<void>((resolve) => {
+              scheduler.set(resolve, delayMs);
+            });
+          }
+          yield step.part;
+        }
+        await new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(createAbortError()), { once: true });
+        });
+      },
+    };
+  }
+
+  it('fails with LLMStreamStalledError when the first output never arrives', async () => {
+    const scheduler = new ManualTimeoutScheduler();
+    const provider = new FakeChatProvider();
+    provider.handler = (_callIndex, options) =>
+      Promise.resolve(neverYieldingStream(options?.signal));
+    const requester = new ModelRequesterImpl(
+      modelWith(staticAuth()),
+      registryReturning(provider),
+      scheduler,
+    );
+
+    const failurePromise = collect(
+      requester.request(INPUT, undefined, {
+        firstOutputTimeoutMs: 1000,
+        streamIdleTimeoutMs: 500,
+      }),
+    ).catch((error: unknown) => error);
+    await scheduler.advance(0);
+    expect(scheduler.size).toBe(1);
+
+    await scheduler.advance(1000);
+    const failure = (await failurePromise) as LLMStreamStalledError;
+
+    expect(failure).toBeInstanceOf(LLMStreamStalledError);
+    expect(failure).toBeInstanceOf(APITimeoutError);
+    expect(failure).toMatchObject({
+      name: 'LLMStreamStalledError',
+      phase: 'waiting_first_output',
+      code: ProtocolErrors.codes.PROVIDER_CONNECTION_ERROR,
+    });
+    expect(failure.name).not.toBe('AbortError');
+    expect(failure.elapsedMs).toBeGreaterThanOrEqual(1000);
+    expect(failure.idleMs).toBeGreaterThanOrEqual(1000);
+    expect(isRetryableGenerateError(failure)).toBe(true);
+    expect(scheduler.size).toBe(0);
+  });
+
+  it('cancels the first-output budget on the first part and resets the stream idle budget on every part', async () => {
+    const scheduler = new ManualTimeoutScheduler();
+    const provider = new FakeChatProvider();
+    provider.handler = (_callIndex, options) =>
+      Promise.resolve(
+        stallingAfterStream(
+          scheduler,
+          [
+            { part: { type: 'text', text: 'one' } },
+            { part: { type: 'text', text: 'two' }, delayMs: 400 },
+          ],
+          options?.signal,
+        ),
+      );
+    const requester = new ModelRequesterImpl(
+      modelWith(staticAuth()),
+      registryReturning(provider),
+      scheduler,
+    );
+
+    let settled = false;
+    const failurePromise = collect(
+      requester.request(INPUT, undefined, {
+        firstOutputTimeoutMs: 300,
+        streamIdleTimeoutMs: 500,
+      }),
+    ).catch((error: unknown) => error);
+    void failurePromise.then(() => {
+      settled = true;
+    });
+    await scheduler.advance(0);
+
+    await scheduler.advance(399);
+    expect(settled).toBe(false);
+    await scheduler.advance(1);
+    expect(settled).toBe(false);
+    await scheduler.advance(499);
+    expect(settled).toBe(false);
+
+    await scheduler.advance(1);
+    const failure = (await failurePromise) as LLMStreamStalledError;
+
+    expect(settled).toBe(true);
+    expect(failure).toBeInstanceOf(LLMStreamStalledError);
+    expect(failure.phase).toBe('streaming');
+    expect(failure.name).not.toBe('AbortError');
+    expect(isRetryableGenerateError(failure)).toBe(true);
+    expect(scheduler.size).toBe(0);
+  });
+
+  it('keeps the original cancellation when the upstream signal aborts mid-stall', async () => {
+    const scheduler = new ManualTimeoutScheduler();
+    const provider = new FakeChatProvider();
+    provider.handler = (_callIndex, options) =>
+      Promise.resolve(neverYieldingStream(options?.signal));
+    const requester = new ModelRequesterImpl(
+      modelWith(staticAuth()),
+      registryReturning(provider),
+      scheduler,
+    );
+    const controller = new AbortController();
+
+    const failurePromise = collect(
+      requester.request(INPUT, controller.signal, {
+        firstOutputTimeoutMs: 1000,
+        streamIdleTimeoutMs: 500,
+      }),
+    ).catch((error: unknown) => error);
+    await scheduler.advance(0);
+
+    controller.abort();
+    const failure = await failurePromise;
+
+    expect(isAbortError(failure)).toBe(true);
+    expect(failure).not.toBeInstanceOf(LLMStreamStalledError);
+    expect(scheduler.size).toBe(0);
+  });
+
+  it('clears the watchdog timers after a successful request', async () => {
+    const scheduler = new ManualTimeoutScheduler();
+    const provider = new FakeChatProvider();
+    const requester = new ModelRequesterImpl(
+      modelWith(staticAuth()),
+      registryReturning(provider),
+      scheduler,
+    );
+
+    await collect(
+      requester.request(INPUT, undefined, {
+        firstOutputTimeoutMs: 1000,
+        streamIdleTimeoutMs: 500,
+      }),
+    );
+
+    expect(scheduler.size).toBe(0);
+  });
+
+  it('clears the watchdog timers after a provider failure', async () => {
+    const scheduler = new ManualTimeoutScheduler();
+    const provider = new FakeChatProvider();
+    provider.handler = () => Promise.reject(new APIStatusError(500, 'boom'));
+    const requester = new ModelRequesterImpl(
+      modelWith(staticAuth()),
+      registryReturning(provider),
+      scheduler,
+    );
+
+    const failure = await collect(
+      requester.request(INPUT, undefined, {
+        firstOutputTimeoutMs: 1000,
+        streamIdleTimeoutMs: 500,
+      }),
+    ).catch((error: unknown) => error);
+
+    expect((failure as { code: string }).code).toBe(ProtocolErrors.codes.PROVIDER_API_ERROR);
+    expect(scheduler.size).toBe(0);
+  });
+
+  it('stays fully passive and passes the upstream signal through when both budgets are zero', async () => {
+    const scheduler = new ManualTimeoutScheduler();
+    const provider = new FakeChatProvider();
+    provider.handler = (_callIndex, options) =>
+      Promise.resolve(neverYieldingStream(options?.signal));
+    const requester = new ModelRequesterImpl(
+      modelWith(staticAuth()),
+      registryReturning(provider),
+      scheduler,
+    );
+    const controller = new AbortController();
+
+    const failurePromise = collect(
+      requester.request(INPUT, controller.signal, {
+        firstOutputTimeoutMs: 0,
+        streamIdleTimeoutMs: 0,
+      }),
+    ).catch((error: unknown) => error);
+    await scheduler.advance(0);
+
+    expect(scheduler.size).toBe(0);
+    expect(provider.calls[0]?.options?.signal).toBe(controller.signal);
+
+    await scheduler.advance(600_000);
+    expect(scheduler.size).toBe(0);
+
+    controller.abort();
+    const failure = await failurePromise;
+    expect(isAbortError(failure)).toBe(true);
+    expect(failure).not.toBeInstanceOf(LLMStreamStalledError);
+  });
+
+  it('detects a stall behind the google-genai streamed message', async () => {
+    const scheduler = new ManualTimeoutScheduler();
+    const provider = new GoogleGenAIChatProvider({
+      model: 'gemini-2.5-flash',
+      apiKey: 'sk-probe',
+      stream: true,
+    });
+    const client = Reflect.get(provider, '_client') as {
+      models: { generateContentStream: unknown };
+    };
+    client.models.generateContentStream = () =>
+      Promise.resolve(
+        (async function* () {
+          await new Promise(() => {});
+          yield {};
+        })(),
+      );
+    const requester = new ModelRequesterImpl(
+      modelWith(staticAuth()),
+      registryReturning(provider),
+      scheduler,
+    );
+
+    const failurePromise = collect(
+      requester.request(INPUT, undefined, {
+        firstOutputTimeoutMs: 1000,
+        streamIdleTimeoutMs: 500,
+      }),
+    ).catch((error: unknown) => error);
+    await scheduler.advance(0);
+    await scheduler.advance(1000);
+    const failure = (await failurePromise) as LLMStreamStalledError;
+
+    expect(failure).toBeInstanceOf(LLMStreamStalledError);
+    expect(failure.phase).toBe('waiting_first_output');
+    expect(failure.name).not.toBe('AbortError');
   });
 });
 

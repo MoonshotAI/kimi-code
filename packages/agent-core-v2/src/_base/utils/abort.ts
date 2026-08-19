@@ -1,3 +1,5 @@
+import { MAX_TIMER_DELAY_MS, systemTimeoutScheduler, type TimeoutScheduler } from './timer';
+
 export function abortError(message = 'Aborted'): Error {
   const error = new Error(message);
   error.name = 'AbortError';
@@ -69,6 +71,13 @@ export interface DeadlineAbortSignal {
   readonly clear: () => void;
 }
 
+export interface IdleTimeoutAbortSignal {
+  readonly signal: AbortSignal;
+  readonly idleTimedOut: () => boolean;
+  readonly touch: (timeoutMs?: number) => void;
+  readonly clear: () => void;
+}
+
 export function createDeadlineAbortSignal(
   source: AbortSignal,
   timeoutMs: number,
@@ -88,6 +97,47 @@ export function createDeadlineAbortSignal(
       if (timeout !== undefined) clearTimeout(timeout);
       timeout = undefined;
       unlinkAbortSignal();
+    },
+  };
+}
+
+export function createIdleTimeoutAbortSignal(
+  source: AbortSignal | undefined,
+  timeoutMs: number,
+  scheduler: TimeoutScheduler = systemTimeoutScheduler,
+): IdleTimeoutAbortSignal {
+  const controller = new AbortController();
+  const unlinkAbortSignal =
+    source === undefined ? undefined : linkAbortSignal(source, controller);
+  let didIdleTimeout = false;
+  let cleared = false;
+  let currentTimeoutMs = timeoutMs;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  const arm = () => {
+    if (timeout !== undefined) scheduler.clear(timeout);
+    timeout = undefined;
+    if (cleared || didIdleTimeout || controller.signal.aborted || currentTimeoutMs <= 0) return;
+    timeout = scheduler.set(() => {
+      timeout = undefined;
+      didIdleTimeout = true;
+      controller.abort(abortError());
+    }, Math.min(currentTimeoutMs, MAX_TIMER_DELAY_MS));
+  };
+  arm();
+
+  return {
+    signal: controller.signal,
+    idleTimedOut: () => didIdleTimeout,
+    touch: (nextTimeoutMs?: number) => {
+      if (nextTimeoutMs !== undefined) currentTimeoutMs = nextTimeoutMs;
+      arm();
+    },
+    clear: () => {
+      cleared = true;
+      if (timeout !== undefined) scheduler.clear(timeout);
+      timeout = undefined;
+      unlinkAbortSignal?.();
     },
   };
 }

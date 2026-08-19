@@ -55,9 +55,12 @@ import {
 import '#/agent/loop/configSection';
 import {
   LOOP_CONTROL_SECTION,
+  LOOP_FIRST_OUTPUT_TIMEOUT_MS_ENV,
   LOOP_MAX_ATTEMPTS_PER_STEP_ENV,
   LOOP_MAX_RETRIES_PER_STEP_ENV,
+  LOOP_MAX_STALL_ATTEMPTS_PER_STEP_ENV,
   LOOP_MAX_STEPS_PER_TURN_ENV,
+  LOOP_STREAM_IDLE_TIMEOUT_MS_ENV,
   type LoopControl,
 } from '#/agent/loop/configSection';
 import {
@@ -893,6 +896,56 @@ describe('loopControl config section', () => {
     ).toEqual({ maxStepsPerTurn: 100, maxAttemptsPerStep: 3 });
     expect(() => registry.validate(LOOP_CONTROL_SECTION, { maxStepsPerTurn: -1 })).toThrow();
     expect(() => registry.validate(LOOP_CONTROL_SECTION, { maxAttemptsPerStep: 1.5 })).toThrow();
+    expect(() => registry.validate(LOOP_CONTROL_SECTION, { streamIdleTimeoutMs: -1 })).toThrow();
+    expect(
+      registry.validate(LOOP_CONTROL_SECTION, {
+        firstOutputTimeoutMs: 0,
+        streamIdleTimeoutMs: 1500,
+        maxStallAttemptsPerStep: 2,
+      }),
+    ).toEqual({ firstOutputTimeoutMs: 0, streamIdleTimeoutMs: 1500, maxStallAttemptsPerStep: 2 });
+  });
+
+  it('rejects timeout values beyond the timer ceiling', () => {
+    const registry = new ConfigRegistry();
+
+    expect(
+      registry.validate(LOOP_CONTROL_SECTION, { streamIdleTimeoutMs: 2_147_483_647 }),
+    ).toEqual({ streamIdleTimeoutMs: 2_147_483_647 });
+    expect(() =>
+      registry.validate(LOOP_CONTROL_SECTION, { firstOutputTimeoutMs: 2_147_483_648 }),
+    ).toThrow();
+    expect(() =>
+      registry.validate(LOOP_CONTROL_SECTION, { streamIdleTimeoutMs: Number.MAX_SAFE_INTEGER }),
+    ).toThrow();
+  });
+
+  it('ignores env timeout values beyond the timer ceiling without dropping other fields', async () => {
+    const env: Record<string, string> = {
+      [LOOP_MAX_STEPS_PER_TURN_ENV]: '100',
+      [LOOP_FIRST_OUTPUT_TIMEOUT_MS_ENV]: '2147483648',
+      [LOOP_STREAM_IDLE_TIMEOUT_MS_ENV]: '99999999999999999999',
+    };
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxStepsPerTurn: 100 });
+
+    env[LOOP_STREAM_IDLE_TIMEOUT_MS_ENV] = '2147483647';
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({
+      maxStepsPerTurn: 100,
+      streamIdleTimeoutMs: 2_147_483_647,
+    });
+
+    disposables.dispose();
   });
 
   it('re-applies loopControl env bindings on every get() and ignores invalid env', async () => {
@@ -919,6 +972,17 @@ describe('loopControl config section', () => {
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({
       maxStepsPerTurn: 100,
       maxAttemptsPerStep: 3,
+    });
+
+    env[LOOP_FIRST_OUTPUT_TIMEOUT_MS_ENV] = '0';
+    env[LOOP_STREAM_IDLE_TIMEOUT_MS_ENV] = '1500';
+    env[LOOP_MAX_STALL_ATTEMPTS_PER_STEP_ENV] = '2';
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({
+      maxStepsPerTurn: 100,
+      maxAttemptsPerStep: 3,
+      firstOutputTimeoutMs: 0,
+      streamIdleTimeoutMs: 1500,
+      maxStallAttemptsPerStep: 2,
     });
 
     env[LOOP_MAX_STEPS_PER_TURN_ENV] = '50';

@@ -47,9 +47,11 @@ export interface StepTiming {
 }
 
 /**
- * A retry in flight on a running step. Set while retrying; the step's
- * terminal upsert simply carries no `retry`, which clears it (step.upsert
- * replaces the whole header).
+ * Retry detail of a failed step attempt. The engine runs each retry as a
+ * fresh step ordinal, so `turn.step.retrying` is the failed attempt's
+ * terminal signal: the projection marks that step interrupted and keeps this
+ * annotation on its header as historical detail (which attempt failed, what
+ * is scheduled next).
  */
 export interface StepRetry {
   readonly failedAttempt: number;

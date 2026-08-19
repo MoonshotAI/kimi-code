@@ -10,7 +10,7 @@ import {
   retryErrorFields,
   sleepForRetry,
 } from '#/_base/utils/retry';
-import { isRetryableGenerateError } from '#/kosong/contract/errors';
+import { isRetryableGenerateError, LLMStreamStalledError } from '#/kosong/contract/errors';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { Event2 } from '#/app/event/event2';
@@ -19,7 +19,11 @@ import {
   IAgentLoopService,
   type LoopErrorContext,
 } from '#/agent/loop/loop';
-import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
+import {
+  DEFAULT_MAX_STALL_ATTEMPTS_PER_STEP,
+  LOOP_CONTROL_SECTION,
+  type LoopControl,
+} from '#/agent/loop/configSection';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -53,6 +57,10 @@ export const stepRetryFailedAttemptsKey = defineState<number>(
   'stepRetry.failedAttempts',
   () => 0,
 );
+export const stepRetryFailedStallAttemptsKey = defineState<number>(
+  'stepRetry.failedStallAttempts',
+  () => 0,
+);
 
 export class AgentStepRetryService extends Disposable implements IAgentStepRetryService {
   declare readonly _serviceBrand: undefined;
@@ -67,6 +75,7 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
     super();
     this.states.contributeState(stepRetryLastFailedDriverIdKey);
     this.states.contributeState(stepRetryFailedAttemptsKey);
+    this.states.contributeState(stepRetryFailedStallAttemptsKey);
     this._register(
       this.loopService.registerLoopErrorHandler({
         id: 'step-retry',
@@ -99,9 +108,18 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
     this.states.set(stepRetryFailedAttemptsKey, value);
   }
 
+  private get failedStallAttempts(): number {
+    return this.states.get(stepRetryFailedStallAttemptsKey);
+  }
+
+  private set failedStallAttempts(value: number) {
+    this.states.set(stepRetryFailedStallAttemptsKey, value);
+  }
+
   private resetAttempts(): void {
     this.lastFailedDriverId = undefined;
     this.failedAttempts = 0;
+    this.failedStallAttempts = 0;
   }
 
   private async recover(context: LoopErrorContext): Promise<boolean> {
@@ -111,30 +129,38 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
     if (this.lastFailedDriverId !== driver.id) {
       this.lastFailedDriverId = driver.id;
       this.failedAttempts = 0;
+      this.failedStallAttempts = 0;
     }
     this.failedAttempts += 1;
 
-    const maxAttempts = Math.max(
-      this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxAttemptsPerStep ??
-        DEFAULT_MAX_RETRY_ATTEMPTS,
-      1,
-    );
-    if (this.failedAttempts >= maxAttempts) {
+    const error = unwrapErrorCause(context.error);
+    const loopControl = this.config.get<LoopControl>(LOOP_CONTROL_SECTION);
+    const maxAttempts = Math.max(loopControl?.maxAttemptsPerStep ?? DEFAULT_MAX_RETRY_ATTEMPTS, 1);
+    let failedAttempt = this.failedAttempts;
+    let attemptBudget = maxAttempts;
+    if (error instanceof LLMStreamStalledError) {
+      this.failedStallAttempts += 1;
+      failedAttempt = this.failedStallAttempts;
+      attemptBudget = Math.max(
+        loopControl?.maxStallAttemptsPerStep ?? DEFAULT_MAX_STALL_ATTEMPTS_PER_STEP,
+        1,
+      );
+    }
+    if (this.failedAttempts >= maxAttempts || failedAttempt >= attemptBudget) {
       this.resetAttempts();
       return false;
     }
 
-    const error = unwrapErrorCause(context.error);
     const delayMs =
-      readRetryAfterMs(error) ?? retryBackoffDelays(maxAttempts)[this.failedAttempts - 1] ?? 0;
+      readRetryAfterMs(error) ?? retryBackoffDelays(failedAttempt + 1)[failedAttempt - 1] ?? 0;
     void this.dispatcher.dispatch(
       new TurnStepRetrying({
         turnId: context.turnId,
         step: context.step,
         stepId: context.stepId,
-        failedAttempt: this.failedAttempts,
-        nextAttempt: this.failedAttempts + 1,
-        maxAttempts,
+        failedAttempt,
+        nextAttempt: failedAttempt + 1,
+        maxAttempts: attemptBudget,
         delayMs,
         ...retryErrorFields(error),
       }),

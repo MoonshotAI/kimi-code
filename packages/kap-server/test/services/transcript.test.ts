@@ -579,14 +579,16 @@ describe('AgentTranscriptProjector', () => {
     expect(step.endMessage).toBe('user cancelled');
   });
 
-  it('sets retry on turn.step.retrying and clears it at the terminal upsert', () => {
+  it('terminates the failed attempt on turn.step.retrying and runs the retry as a fresh step', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
-    const step = (): TranscriptTurn['steps'][number] => turnOps('t1', tx.getItems()).steps[0]!;
+    const steps = (): readonly TranscriptTurn['steps'][number][] =>
+      turnOps('t1', tx.getItems()).steps;
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    feed(ev({ type: 'assistant.delta', turnId: 1, delta: 'partial out' }));
     feed(
       ev({
         type: 'turn.step.retrying',
@@ -596,26 +598,44 @@ describe('AgentTranscriptProjector', () => {
         nextAttempt: 2,
         maxAttempts: 3,
         delayMs: 2000,
-        errorName: 'ProviderRateLimitError',
-        errorMessage: '429 too many requests',
-        statusCode: 429,
+        errorName: 'LLMStreamStalledError',
+        errorMessage: 'no output for 120000ms',
       }),
     );
 
-    expect(step().state).toBe('running');
-    expect(step().retry).toEqual({
+    const failed = steps()[0]!;
+    expect(failed.state).toBe('interrupted');
+    expect(failed.endReason).toBe('error');
+    expect(failed.endMessage).toBe('no output for 120000ms');
+    expect(failed.retry).toEqual({
       failedAttempt: 1,
       nextAttempt: 2,
       maxAttempts: 3,
       delayMs: 2000,
-      errorName: 'ProviderRateLimitError',
-      errorMessage: '429 too many requests',
-      statusCode: 429,
+      errorName: 'LLMStreamStalledError',
+      errorMessage: 'no output for 120000ms',
+      statusCode: undefined,
     });
+    expect(failed.frames).toEqual([
+      expect.objectContaining({ kind: 'text', text: 'partial out' }),
+    ]);
 
-    feed(ev({ type: 'turn.step.completed', turnId: 1, step: 1 }));
-    expect(step().state).toBe('completed');
-    expect(step().retry).toBeUndefined();
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 2 }));
+    feed(ev({ type: 'assistant.delta', turnId: 1, delta: 'recovered' }));
+    feed(ev({ type: 'turn.step.completed', turnId: 1, step: 2 }));
+
+    expect(steps()).toHaveLength(2);
+    expect(steps()[0]).toMatchObject({
+      state: 'interrupted',
+      endReason: 'error',
+      retry: { failedAttempt: 1, nextAttempt: 2 },
+    });
+    expect(steps()[1]).toMatchObject({ state: 'completed', ordinal: 2 });
+    expect(steps()[1]!.retry).toBeUndefined();
+    expect(steps()[1]!.frames).toEqual([
+      expect.objectContaining({ kind: 'text', text: 'recovered' }),
+    ]);
+    expect(steps().every((step) => step.state !== 'running')).toBe(true);
   });
 
   it('fills durationMs / error / accumulated step usage on turn.ended', () => {

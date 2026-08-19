@@ -9,6 +9,20 @@ export function setClampedTimeout(
   return setTimeout(callback, Math.min(timeoutMs, MAX_TIMER_DELAY_MS));
 }
 
+export interface TimeoutScheduler {
+  now(): number;
+  set(callback: () => void, timeoutMs: number): ReturnType<typeof setTimeout>;
+  clear(handle: ReturnType<typeof setTimeout>): void;
+}
+
+export const systemTimeoutScheduler: TimeoutScheduler = {
+  now: () => Date.now(),
+  set: (callback, timeoutMs) => setTimeout(callback, timeoutMs),
+  clear: (handle) => {
+    clearTimeout(handle);
+  },
+};
+
 export interface IntervalTimerOptions {
   readonly unref?: boolean;
 }

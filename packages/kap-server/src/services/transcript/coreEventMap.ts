@@ -517,10 +517,13 @@ export class AgentTranscriptProjector {
   }
 
   /**
-   * `turn.step.retrying` — a claimed provider failure is being retried on the
-   * same step. The step stays 'running' with the retry detail on the header;
-   * the terminal step upsert simply carries no `retry`, which clears it
-   * (step.upsert replaces the whole header).
+   * `turn.step.retrying` — a claimed provider failure is being retried. The
+   * engine runs the retry as a fresh step ordinal, so this event is the failed
+   * attempt's terminal signal: converge its open frames and mark the step
+   * interrupted, keeping the retry detail on the header as historical context
+   * (which attempt failed, what is scheduled next). Without the terminal
+   * upsert the attempt would linger as a forever-running step beside the
+   * retried output.
    */
   private onStepRetrying(event: {
     turnId: number;
@@ -534,6 +537,7 @@ export class AgentTranscriptProjector {
     statusCode?: number;
   }): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
+    this.flushOpenFrames(ops);
     const turnId = `t${event.turnId}`;
     const stepId = `${turnId}.${event.step}`;
     const prev = this.currentStep?.stepId === stepId ? this.currentStep : undefined;
@@ -542,8 +546,11 @@ export class AgentTranscriptProjector {
       stepId,
       turnId,
       ordinal: event.step,
-      state: 'running',
+      state: 'interrupted',
       startedAt: prev?.startedAt,
+      endedAt: nowIso(),
+      endReason: 'error',
+      endMessage: event.errorMessage,
       retry: {
         failedAttempt: event.failedAttempt,
         nextAttempt: event.nextAttempt,

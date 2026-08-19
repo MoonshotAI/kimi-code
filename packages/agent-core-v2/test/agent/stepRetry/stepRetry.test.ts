@@ -4,6 +4,7 @@ import {
   APIConnectionError,
   APIProviderRateLimitError,
   APIStatusError,
+  LLMStreamStalledError,
 } from '#/kosong/contract/errors';
 import { emptyUsage } from '#/kosong/contract/usage';
 import { IEventBus } from '#/app/event/eventBus';
@@ -212,6 +213,203 @@ describe('stepRetry plugin', () => {
     expect(result.type).toBe('failed');
     expect(calls).toBe(1);
     expect(rpcEvents('turn.step.retrying')).toEqual([]);
+  });
+
+  it('caps stream stall retries at the stall budget instead of maxAttemptsPerStep', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        throw new LLMStreamStalledError('stalled', {
+          phase: 'waiting_first_output',
+          elapsedMs: 180_000,
+          idleMs: 180_000,
+        });
+      }),
+    );
+
+    const result = await runTurn(1);
+
+    expect(result.type).toBe('failed');
+    expect(calls).toBe(3);
+    expect(rpcEvents('turn.step.retrying')).toHaveLength(2);
+    expect(rpcEvents('turn.step.retrying')[0]?.args).toMatchObject({
+      maxAttempts: 3,
+      errorName: 'LLMStreamStalledError',
+    });
+  });
+
+  it('honors loop_control.max_stall_attempts_per_step', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        throw new LLMStreamStalledError('stalled', {
+          phase: 'streaming',
+          elapsedMs: 60_000,
+          idleMs: 60_000,
+        });
+      }),
+      { initialConfig: { loopControl: { maxStallAttemptsPerStep: 1 } } },
+    );
+
+    const result = await runTurn(1);
+
+    expect(result.type).toBe('failed');
+    expect(calls).toBe(1);
+    expect(rpcEvents('turn.step.retrying')).toEqual([]);
+  });
+
+  it('gives stream stalls a fresh budget after other retryable failures', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        if (calls <= 2) throw new APIConnectionError('terminated');
+        throw new LLMStreamStalledError('stalled', {
+          phase: 'streaming',
+          elapsedMs: 60_000,
+          idleMs: 60_000,
+        });
+      }),
+    );
+
+    const result = await runTurn(1);
+
+    expect(result.type).toBe('failed');
+    expect(calls).toBe(5);
+    const retrying = rpcEvents('turn.step.retrying');
+    expect(retrying).toHaveLength(4);
+    expect(retrying[0]?.args).toMatchObject({
+      failedAttempt: 1,
+      maxAttempts: 10,
+      errorName: 'APIConnectionError',
+    });
+    expect(retrying[2]?.args).toMatchObject({
+      failedAttempt: 1,
+      maxAttempts: 3,
+      errorName: 'LLMStreamStalledError',
+    });
+    expect(retrying[3]?.args).toMatchObject({
+      failedAttempt: 2,
+      maxAttempts: 3,
+      errorName: 'LLMStreamStalledError',
+    });
+  });
+
+  it('still counts stall attempts toward the total attempt budget', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        if (calls <= 9) throw new APIConnectionError('terminated');
+        throw new LLMStreamStalledError('stalled', {
+          phase: 'streaming',
+          elapsedMs: 60_000,
+          idleMs: 60_000,
+        });
+      }),
+    );
+
+    const result = await runTurn(1);
+
+    expect(result.type).toBe('failed');
+    expect(calls).toBe(10);
+    const retrying = rpcEvents('turn.step.retrying');
+    expect(retrying).toHaveLength(9);
+    expect(retrying[8]?.args).toMatchObject({
+      failedAttempt: 9,
+      maxAttempts: 10,
+      errorName: 'APIConnectionError',
+    });
+  });
+
+  it('retries a stall with a huge stall budget while computing only the needed delay', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new LLMStreamStalledError('stalled', {
+            phase: 'streaming',
+            elapsedMs: 60_000,
+            idleMs: 60_000,
+          });
+        }
+        return {
+          id: 'huge-stall-budget-response',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'recovered' }],
+            toolCalls: [],
+          },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      }),
+      { initialConfig: { loopControl: { maxStallAttemptsPerStep: 1_000_000_000 } } },
+    );
+
+    const result = await runTurn(1);
+
+    expect(result).toEqual({ type: 'completed', steps: 2, truncated: false });
+    expect(calls).toBe(2);
+    const retrying = rpcEvents('turn.step.retrying');
+    expect(retrying).toHaveLength(1);
+    expect(retrying[0]?.args).toMatchObject({
+      failedAttempt: 1,
+      nextAttempt: 2,
+      maxAttempts: 1_000_000_000,
+      errorName: 'LLMStreamStalledError',
+    });
+    const delayMs = (retrying[0]?.args as { delayMs: number }).delayMs;
+    expect(delayMs).toBeGreaterThanOrEqual(500);
+    expect(delayMs).toBeLessThanOrEqual(625);
+  });
+
+  it('retries a generic error with a huge attempts budget while computing only the needed delay', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        if (calls === 1) throw new APIConnectionError('terminated');
+        return {
+          id: 'huge-attempts-budget-response',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'recovered' }],
+            toolCalls: [],
+          },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      }),
+      { initialConfig: { loopControl: { maxAttemptsPerStep: 1_000_000_000 } } },
+    );
+
+    const result = await runTurn(1);
+
+    expect(result).toEqual({ type: 'completed', steps: 2, truncated: false });
+    expect(calls).toBe(2);
+    const retrying = rpcEvents('turn.step.retrying');
+    expect(retrying).toHaveLength(1);
+    expect(retrying[0]?.args).toMatchObject({
+      failedAttempt: 1,
+      nextAttempt: 2,
+      maxAttempts: 1_000_000_000,
+      errorName: 'APIConnectionError',
+    });
+    const delayMs = (retrying[0]?.args as { delayMs: number }).delayMs;
+    expect(delayMs).toBeGreaterThanOrEqual(500);
+    expect(delayMs).toBeLessThanOrEqual(625);
   });
 
   it('starts a fresh attempt budget on the next turn', async () => {
