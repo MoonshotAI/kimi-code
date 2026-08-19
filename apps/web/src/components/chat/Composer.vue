@@ -950,9 +950,12 @@ onUnmounted(() => {
   addScrollObserver = null;
 });
 const modelMenuRight = ref('');
+const modelMenuMaxHeight = ref('');
+const modelMenuDropDown = ref(false);
 const modelMenuStyle = computed<Record<string, string>>(() => {
   const style: Record<string, string> = {};
   if (modelMenuRight.value) style.right = modelMenuRight.value;
+  if (modelMenuMaxHeight.value) style.maxHeight = modelMenuMaxHeight.value;
   return style;
 });
 
@@ -1398,13 +1401,75 @@ const starredOtherModels = computed(() => {
 // then ArrowUp / ArrowDown cycle through the rows (Esc already closes).
 const modelDropdownRef = ref<HTMLElement | null>(null);
 
+// Viewport clamp: the menu normally grows upward from the toolbar, but in
+// layouts where the composer sits high in the pane (workspace home) there is
+// not enough room above — flip below the toolbar when it fits better there,
+// and cap the height either way so the scrollable model list (.md-list)
+// absorbs the overflow while the controls below stay pinned. The gap and
+// margin read the same spacing tokens the CSS anchor uses, so the two sides
+// never drift; a window resize while open closes the menu (see the watcher).
+// Bounds come from the VISUAL viewport — on iOS the software keyboard and
+// pinch zoom shrink it without touching window.innerHeight (the App.vue
+// --app-height recipe).
+function clampModelMenuToViewport(): void {
+  const menu = modelDropdownRef.value;
+  const toolbar = toolbarRef.value;
+  if (!menu || !toolbar) return;
+  const style = getComputedStyle(menu);
+  const gap = cssPx(style.getPropertyValue('--space-1')) || 4; // menu ↔ toolbar offset
+  const margin = cssPx(style.getPropertyValue('--space-2')) || 8; // viewport breathing room
+  const vv = window.visualViewport;
+  const viewportTop = vv?.offsetTop ?? 0;
+  const viewportBottom = viewportTop + (vv?.height ?? window.innerHeight);
+  const rect = toolbar.getBoundingClientRect();
+  const above = rect.top - viewportTop - gap - margin;
+  const below = viewportBottom - rect.bottom - gap - margin;
+  if (menu.offsetHeight > above && below > above) {
+    modelMenuDropDown.value = true;
+    modelMenuMaxHeight.value = `${Math.max(Math.floor(below), 0)}px`;
+  } else {
+    modelMenuDropDown.value = false;
+    modelMenuMaxHeight.value = `${Math.max(Math.floor(above), 0)}px`;
+  }
+}
+
+// A resize / rotation while the menu is open invalidates the clamp — close
+// the menu, the same convention as the app's other anchored menus.
+function onViewportResize(): void {
+  closeDropdown();
+}
+
+function addModelMenuViewportListeners(): void {
+  window.addEventListener('resize', onViewportResize);
+  window.visualViewport?.addEventListener('resize', onViewportResize);
+  window.visualViewport?.addEventListener('scroll', onViewportResize);
+}
+
+function removeModelMenuViewportListeners(): void {
+  window.removeEventListener('resize', onViewportResize);
+  window.visualViewport?.removeEventListener('resize', onViewportResize);
+  window.visualViewport?.removeEventListener('scroll', onViewportResize);
+}
+
 watch(dropdownOpen, async (open) => {
-  if (!open) return;
+  if (!open) {
+    removeModelMenuViewportListeners();
+    return;
+  }
+  addModelMenuViewportListeners();
+  // Reset the previous open's clamp so the natural height is measured.
+  modelMenuDropDown.value = false;
+  modelMenuMaxHeight.value = '';
   await nextTick();
+  clampModelMenuToViewport();
   const current =
     modelDropdownRef.value?.querySelector<HTMLElement>('.md-row.is-current') ??
     modelDropdownRef.value?.querySelector<HTMLElement>('.md-row');
   current?.focus();
+});
+
+onUnmounted(() => {
+  removeModelMenuViewportListeners();
 });
 
 function onModelDropdownKeydown(event: KeyboardEvent): void {
@@ -1780,6 +1845,7 @@ function selectModel(modelId: string): void {
           v-if="dropdownOpen && status"
           ref="modelDropdownRef"
           class="model-dropdown"
+          :class="{ 'flip-down': modelMenuDropDown }"
           :style="modelMenuStyle"
           role="menu"
           @click.stop
@@ -2634,7 +2700,7 @@ function selectModel(modelId: string): void {
 /* Model dropdown — runtime positioning aligns it to the trigger pill. */
 .model-dropdown {
   position: absolute;
-  bottom: calc(100% + 4px);
+  bottom: calc(100% + var(--space-1));
   right: calc(var(--composer-control-inset) + var(--composer-send-size) + var(--space-1));
   z-index: var(--z-dropdown);
   min-width: 200px;
@@ -2650,6 +2716,19 @@ function selectModel(modelId: string): void {
   gap: 1px;
   font-family: var(--font-ui);
   transform-origin: bottom right;
+  /* Last-resort scroll: when the viewport cap leaves less room than the
+     pinned controls (thinking / note / more), the whole menu scrolls —
+     normal cases shrink .md-list first and never reach this. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Flipped below the toolbar when the menu doesn't fit above it (see
+   clampModelMenuToViewport). */
+.model-dropdown.flip-down {
+  top: calc(100% + var(--space-1));
+  bottom: auto;
+  transform-origin: top right;
 }
 
 /* Match SessionRow context menus: grow from the trigger corner and exit faster. */
@@ -2668,6 +2747,13 @@ function selectModel(modelId: string): void {
 .composer-menu-pop-leave-to {
   opacity: 0;
   transform: scale(0.97) translateY(2px);
+}
+/* The pop nudge follows the anchoring (§03): the default upward menu grows
+   toward the trigger below it; a flipped menu hangs under the toolbar, so
+   its nudge inverts. */
+.model-dropdown.flip-down.composer-menu-pop-enter-from,
+.model-dropdown.flip-down.composer-menu-pop-leave-to {
+  transform: scale(0.97) translateY(-2px);
 }
 
 /* Model rows live in this capped scroll container; the controls below

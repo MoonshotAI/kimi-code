@@ -2383,13 +2383,16 @@ defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone
             <!-- Backdrop must live outside the composer card (container-type
                  captures position:fixed). -->
             <div v-if="wsPickOpen" class="ws-backdrop" @click="wsPickOpen = false" />
-            <WorkspaceRecentSessions
-              v-if="showWorkspaceHome && (recentSessions?.length ?? 0) > 0"
-              :sessions="recentSessions ?? []"
-              @select-session="(id) => emit('selectSession', id)"
-              @open-session-admin="emit('openSessionAdmin', activeWorkspaceId ?? undefined)"
-            />
-            <div class="empty-spacer" />
+            <!-- The lower spacer hosts the recent sessions: the hero keeps its
+                 fixed vertical middle whether or not the list exists. -->
+            <div class="empty-spacer empty-tail">
+              <WorkspaceRecentSessions
+                v-if="showWorkspaceHome && (recentSessions?.length ?? 0) > 0"
+                :sessions="recentSessions ?? []"
+                @select-session="(id) => emit('selectSession', id)"
+                @open-session-admin="emit('openSessionAdmin', activeWorkspaceId ?? undefined)"
+              />
+            </div>
           </template>
           <template v-else>
             <ChatPane
@@ -2656,8 +2659,18 @@ defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone
   }
 }
 
-/* Empty-workspace spacers: push the centred Composer to the vertical middle. */
+/* Empty-session spacers: split the free pane space evenly around the content,
+   keeping the composer at a fixed vertical middle. The lower spacer also
+   hosts the workspace home's recent sessions — the list scrolls inside that
+   lower half instead of pushing the composer up or pinning the column to the
+   bottom edge (and stays invisible-empty for the classic doodle hero). */
 .empty-spacer { flex: 1; }
+.empty-tail {
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: var(--space-4);
+  box-sizing: border-box;
+}
 
 /* Empty-session hint above the centred composer */
 .empty-hint {

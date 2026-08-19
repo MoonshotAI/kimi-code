@@ -53,6 +53,7 @@ function rowDir(path: string): string {
 // Scroll-linked edge fades (the dock work panel's alpha-mask vocabulary):
 // dissolve toward an edge only while more content exists beyond it.
 const scrollEl = ref<HTMLElement | null>(null);
+const menuEl = ref<HTMLElement | null>(null);
 const scrolledUp = ref(false);
 const canScrollDown = ref(false);
 let resizeObserver: ResizeObserver | null = null;
@@ -145,17 +146,66 @@ const maskImage = computed(() => {
   return undefined;
 });
 
+// Viewport clamp: the frame hangs above the input area with a fixed token cap
+// on the scrollport, but layouts where the composer sits high in the pane
+// (workspace home) leave less room than the cap — shrink the scrollport to
+// the space actually available above the positioning parent, so rows scroll
+// instead of the frame overflowing the window's top edge. The menu always
+// opens upward (autocomplete convention); recomputed on window resize and
+// whenever the parent resizes (composer auto-grow). Bounds come from the
+// VISUAL viewport — on iOS the software keyboard shifts and shrinks it
+// without touching window.innerHeight (the App.vue --app-height recipe).
+const scrollMaxHeight = ref('');
+
+function clampScrollToViewport(): void {
+  const menu = menuEl.value;
+  const scroll = scrollEl.value;
+  const parent = menu?.offsetParent as HTMLElement | null;
+  if (!menu || !scroll || !parent) return;
+  const menuStyle = getComputedStyle(menu);
+  const gap = parseFloat(menuStyle.getPropertyValue('--space-2')) || 8; // frame ↔ composer offset
+  const margin = parseFloat(menuStyle.getPropertyValue('--space-2')) || 8; // viewport breathing room
+  const chrome = (parseFloat(menuStyle.paddingTop) || 0) + (parseFloat(menuStyle.paddingBottom) || 0);
+  const cap = parseFloat(getComputedStyle(scroll).getPropertyValue('--p-mention-menu-h')) || Number.POSITIVE_INFINITY;
+  const viewportTop = window.visualViewport?.offsetTop ?? 0;
+  const available = parent.getBoundingClientRect().top - viewportTop - gap - margin - chrome;
+  scrollMaxHeight.value = `${Math.max(Math.floor(Math.min(cap, available)), 0)}px`;
+  void nextTick(() => {
+    updateScrollState();
+    scrollActiveIntoView();
+  });
+}
+
 onMounted(() => {
+  clampScrollToViewport();
   updateScrollState();
   if (typeof ResizeObserver === 'function' && scrollEl.value) {
-    resizeObserver = new ResizeObserver(updateScrollState);
+    resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        // The positioning parent (.cin-wrap) grows with the composer's content
+        // and shifts with window-driven layout — re-clamp the scrollport cap;
+        // the scrollport itself only needs the scroll-state refresh.
+        if (entry.target === scrollEl.value) updateScrollState();
+        else clampScrollToViewport();
+      }
+    });
     resizeObserver.observe(scrollEl.value);
+    const parent = menuEl.value?.offsetParent;
+    if (parent) resizeObserver.observe(parent);
   }
+  window.addEventListener('resize', clampScrollToViewport);
+  // The visual viewport's own events (iOS keyboard, pinch pan) don't surface
+  // as window resize — the clamp must recompute on both.
+  window.visualViewport?.addEventListener('resize', clampScrollToViewport);
+  window.visualViewport?.addEventListener('scroll', clampScrollToViewport);
 });
 onUnmounted(() => {
   resizeObserver?.disconnect();
   resizeObserver = null;
   activeThumbCleanup?.();
+  window.removeEventListener('resize', clampScrollToViewport);
+  window.visualViewport?.removeEventListener('resize', clampScrollToViewport);
+  window.visualViewport?.removeEventListener('scroll', clampScrollToViewport);
 });
 
 // Keep the active row inside the scrollport: arrow-key navigation (and the
@@ -193,7 +243,7 @@ watch(
 </script>
 
 <template>
-  <div class="mention-menu" data-menu-frame>
+  <div ref="menuEl" class="mention-menu" data-menu-frame>
     <!-- The full-area loading note only appears when there is nothing to
          show; with rows visible, searching gets a corner spinner instead and
          the current candidates stay on screen. -->
@@ -206,7 +256,7 @@ watch(
       ref="scrollEl"
       class="mention-scroll"
       role="listbox"
-      :style="{ maskImage }"
+      :style="{ maskImage, maxHeight: scrollMaxHeight }"
       @scroll="onScroll"
     >
       <!-- Files / folders (flat indices 0..fileRows.length-1) -->
