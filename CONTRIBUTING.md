@@ -26,9 +26,11 @@ We only merge PRs aligned with the roadmap. Drive-by refactors without context a
 This is a pnpm monorepo. The most relevant entry points are:
 
 - `apps/kimi-code` — CLI / TUI
-- `apps/vis` — session replay & debugging visualizer
+- `apps/vscode` — VS Code extension
+- `apps/vis` — session debug visualizer
 - `packages/node-sdk` — public TypeScript SDK (`@moonshot-ai/kimi-code-sdk`)
-- `packages/agent-core`, `kosong`, `kaos`, `oauth`, `telemetry` — internal engine packages
+- `packages/agent-core-v2` — the agent engine (v2, DI Scope architecture); `packages/agent-core` is v1 and being phased out
+- `packages/klient`, `kap-server`, `protocol`, `transcript`, `kosong`, `kaos`, `oauth`, `telemetry` — internal engine packages
 - `docs/` — VitePress bilingual docs site
 
 For the full project map, see [AGENTS.md](AGENTS.md).
