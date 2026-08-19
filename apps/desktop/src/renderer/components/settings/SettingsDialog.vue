@@ -16,7 +16,7 @@ import { usePlugins } from '../../composables/usePlugins';
 import ProvidersPanel from './ProvidersPanel.vue';
 import { canOpenInNative, listNativeOpenInApps, openInAppIcon, saveDefaultOpenInTarget, useDefaultOpenInTarget } from '../../lib/nativeOpenIn';
 import { canSetDockIconChoice, useDockIconChoice, type DockIconChoice } from '../../lib/dockIconChoice';
-import { logWarn } from '@moonshot-ai/app-core/lib';
+import { copyTextToClipboard, logWarn } from '@moonshot-ai/app-core/lib';
 import { track } from '../../lib/track';
 import DockIconPicker from './DockIconPicker.vue';
 import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
@@ -192,6 +192,29 @@ watch(
 );
 
 const daemonEndpoint = serverEndpointLabel();
+
+// About-row copy buttons (server version / address): the icon flips to a
+// check for ~1.5s after a successful copy — same interaction as the
+// FilePreview copy button.
+const copiedServerVersion = ref(false);
+const copiedServerAddress = ref(false);
+
+function copyServerVersion(): void {
+  if (!props.serverVersion) return;
+  void copyTextToClipboard(props.serverVersion).then((ok) => {
+    if (!ok) return;
+    copiedServerVersion.value = true;
+    setTimeout(() => { copiedServerVersion.value = false; }, 1500);
+  });
+}
+
+function copyServerAddress(): void {
+  void copyTextToClipboard(daemonEndpoint).then((ok) => {
+    if (!ok) return;
+    copiedServerAddress.value = true;
+    setTimeout(() => { copiedServerAddress.value = false; }, 1500);
+  });
+}
 // Escalating autonomy order, matching the Composer's permission menu and the
 // protocol's PermissionMode enum: manual < yolo (auto-approves tools) < auto
 // (fully autonomous, never asks).
@@ -909,14 +932,37 @@ function archiveTime(iso: string): string {
                 {{ t('settings.serverVersion') }}
                 <span class="hint">{{ t('settings.serverVersionHint') }}</span>
               </span>
-              <span class="rvalue">{{ serverVersion || '-' }}</span>
+              <span class="rvalue-wrap">
+                <span class="rvalue">{{ serverVersion || '-' }}</span>
+                <IconButton
+                  v-if="serverVersion"
+                  size="sm"
+                  :label="copiedServerVersion ? t('settings.copied') : t('settings.copyServerVersion')"
+                  :tooltip="copiedServerVersion ? t('settings.copied') : t('settings.copyServerVersion')"
+                  @click="copyServerVersion"
+                >
+                  <Icon v-if="!copiedServerVersion" name="copy" size="md" />
+                  <Icon v-else class="sd-check" name="check" size="md" />
+                </IconButton>
+              </span>
             </div>
             <div class="row">
               <span class="rlabel">
                 {{ t('settings.serverAddress') }}
                 <span class="hint">{{ t('settings.serverAddressHint') }}</span>
               </span>
-              <span class="rvalue">{{ daemonEndpoint }}</span>
+              <span class="rvalue-wrap">
+                <span class="rvalue">{{ daemonEndpoint }}</span>
+                <IconButton
+                  size="sm"
+                  :label="copiedServerAddress ? t('settings.copied') : t('settings.copyServerAddress')"
+                  :tooltip="copiedServerAddress ? t('settings.copied') : t('settings.copyServerAddress')"
+                  @click="copyServerAddress"
+                >
+                  <Icon v-if="!copiedServerAddress" name="copy" size="md" />
+                  <Icon v-else class="sd-check" name="check" size="md" />
+                </IconButton>
+              </span>
             </div>
             <div v-if="updateTracker.canCheck" class="row">
               <span class="rlabel">
@@ -1304,6 +1350,17 @@ function archiveTime(iso: string): string {
   white-space: nowrap;
 }
 .rvalue.mono { font-family: var(--font-mono); font-size: var(--text-xs); }
+/* Value + trailing copy button (about rows): the wrap takes over the 60%
+   width cap so the inner value can ellipsize next to the button. */
+.rvalue-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 60%;
+  min-width: 0;
+}
+.rvalue-wrap .rvalue { max-width: none; }
+.sd-check { color: var(--color-success); }
 .hint { font-family: var(--font-ui); font-size: var(--text-xs); line-height: var(--leading-tight); color: var(--color-text-faint); }
 
 /* Settings controls use the same fine hairline as the dialog's surrounding
