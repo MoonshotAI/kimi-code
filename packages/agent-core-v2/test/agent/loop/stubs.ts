@@ -1,6 +1,6 @@
 import { toDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
-import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, Step, Turn } from '#/agent/loop/loop';
+import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, Step, Turn, TurnResult } from '#/agent/loop/loop';
 import type { StepRequest } from '#/agent/loop/stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from '#/agent/loop/stepRequestQueue';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -10,12 +10,13 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { createHooks } from '#/hooks';
 import type { IWireService } from '#/wire/wire';
 
-export interface StubLoopOptions { readonly hasActiveTurn?: boolean; readonly currentId?: string | number; readonly pendingTurnResult?: boolean }
+export interface StubLoopOptions { readonly hasActiveTurn?: boolean; readonly currentId?: string | number; readonly pendingTurnResult?: boolean; readonly manualTurnResult?: boolean }
 export type StubLoop = IAgentLoopService & {
   readonly queue: StepRequestQueue;
   readonly launches: readonly number[];
   readonly cancels: readonly { readonly turnId?: number; readonly reason?: unknown }[];
   startTurn(): Turn;
+  settleActive(result?: TurnResult): void;
   drainNextBatch(context: { append(...messages: ContextMessage[]): void }): StepRequestBatch | undefined;
 };
 const turnControllers = new WeakMap<Turn, AbortController>();
@@ -44,14 +45,18 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
   const hooks = createHooks(['onWillBeginStep', 'onDidFinishStep']) as IAgentLoopService['hooks'];
   const queue = new StepRequestQueue(); const errorHandlers = registry(); const launches: number[] = []; const cancels: { turnId?: number; reason?: unknown }[] = [];
   let active: Turn | undefined; let nextId = typeof options.currentId === 'number' ? options.currentId : 0;
+  let releaseActiveResult: ((result: TurnResult) => void) | undefined;
   const startTurn = () => {
     const turn = makeTurn(nextId++);
-    const result = options.pendingTurnResult === true ? new Promise<never>(() => {}) : turn.result;
+    const result = options.manualTurnResult === true
+      ? new Promise<TurnResult>((resolve) => { releaseActiveResult = resolve; })
+      : options.pendingTurnResult === true ? new Promise<never>(() => {}) : turn.result;
     const configured = { ...turn, result };
     launches.push(configured.id); active = configured; return configured;
   };
   const stub: StubLoop = {
     _serviceBrand: undefined, hooks, queue, launches, cancels, startTurn,
+    settleActive(result = { type: 'completed', steps: 0, truncated: false }) { releaseActiveResult?.(result); },
     enqueue(request, enqueueOptions) {
       let turn = active;
       if (request.admission === 'newTurn' || (request.admission === 'activeOrNewTurn' && turn === undefined)) turn = startTurn();

@@ -10,6 +10,12 @@ import {
 export { promptPermissionModeSchema, promptThinkingSchema };
 export type { PromptPermissionMode, PromptThinking } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
+export const promptSkillActivationSchema = z.object({
+  name: z.string().min(1),
+  args: z.string().optional(),
+});
+export type PromptSkillActivation = z.infer<typeof promptSkillActivationSchema>;
+
 export const promptSubmissionSchema = z.object({
   content: z.array(messageContentSchema).min(1),
   metadata: z.record(z.string(), z.unknown()).optional(),
@@ -24,6 +30,7 @@ export const promptSubmissionSchema = z.object({
   goal_control: z.enum(['pause', 'resume', 'cancel']).optional(),
   disabled_tools: z.array(z.string()).optional(),
   prompt_id: z.string().min(1).optional(),
+  skills: z.array(promptSkillActivationSchema).min(1).optional(),
 });
 export type PromptSubmission = z.infer<typeof promptSubmissionSchema>;
 

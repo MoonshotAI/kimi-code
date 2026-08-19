@@ -279,6 +279,7 @@ describe('OpenAILegacyChatProvider', () => {
         { role: 'user', content: 'Run bash' },
         {
           role: 'assistant',
+          content: null,
           tool_calls: [
             {
               type: 'function',
@@ -289,6 +290,76 @@ describe('OpenAILegacyChatProvider', () => {
         },
         { role: 'tool', content: '/tmp', tool_call_id: 'Bash_7' },
       ]);
+    });
+
+    it('serializes a tool-call-only assistant message with content: null (issue #3017)', async () => {
+      // Regression: an assistant message carrying only tool_calls used to be
+      // serialized without a `content` key (JSON.stringify drops undefined),
+      // which strict validators like LiteLLM reject with a 422. OpenAI's own
+      // responses echo `content: null` alongside tool_calls, so emit that.
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'call_abc123',
+              name: 'add',
+              arguments: '{"a": 2, "b": 3}',
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: '5' }],
+          toolCallId: 'call_abc123',
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['messages']).toEqual([
+        { role: 'user', content: 'Add 2 and 3' },
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              type: 'function',
+              id: 'call_abc123',
+              function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+            },
+          ],
+        },
+        { role: 'tool', content: '5', tool_call_id: 'call_abc123' },
+      ]);
+    });
+
+    it('serializes a think-only assistant message with content: null', async () => {
+      // Pinning the accepted #3017 delta: a think-only assistant message (no
+      // tool calls) also used to lose its `content` key on the wire; it now
+      // carries `content: null` while reasoning keeps round-tripping under
+      // `reasoning_content`.
+      const provider = createProvider();
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'think', think: 'Thinking...' }],
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const messages = body['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({
+        role: 'assistant',
+        content: null,
+        reasoning_content: 'Thinking...',
+      });
     });
 
     it('tool call with image result keeps the tool result textual and reattaches images as user input', async () => {

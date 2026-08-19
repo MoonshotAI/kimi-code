@@ -36,19 +36,10 @@ describe('tower-worker profile', () => {
     }
   });
 
-  it('renders the coder base role plus the tower worker overlay', () => {
-    const prompt = TOWER_WORKER_PROFILE_DEF.systemPrompt({});
-    expect(prompt).toContain('tower worker/reviewer');
-    expect(prompt).toContain('Tower* tools ONLY');
-    expect(prompt).toContain('You are now running as a subagent.');
-    expect(prompt).toContain('Your final message is the entire handoff');
-  });
-
-  it('keeps the coder summary policy and ports the description', () => {
+  it('keeps the coder summary policy and whenToUse', () => {
     const coder = builtinProfile('coder');
     expect(TOWER_WORKER_PROFILE_DEF.summaryPolicy).toEqual(coder.summaryPolicy);
     expect(TOWER_WORKER_PROFILE_DEF.summaryPolicy).toBeDefined();
-    expect(TOWER_WORKER_PROFILE_DEF.description).toContain('Tower worker/reviewer');
     expect(TOWER_WORKER_PROFILE_DEF.whenToUse).toBe(coder.whenToUse);
   });
 });

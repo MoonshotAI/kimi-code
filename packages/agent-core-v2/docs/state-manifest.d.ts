@@ -1516,7 +1516,7 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly timeoutMs?: number;
   }>;
-  // replayable · durable · undoable — folds: ContextAppendMessage
+  // replayable · durable · undoable — folds: ContextAppendMessage, TaskWaitDelivered
   'task.notificationDelivery': readonly string[];
   'task.scheduledNotificationKeys': Set<string>;
   // src/agent/tokenCounting/tokenCountingOps.ts

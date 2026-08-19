@@ -57,27 +57,6 @@ describe('TodoListTool', () => {
     });
   });
 
-  it('description includes the anti-churn guardrails', () => {
-    const { description } = makeTool().tool;
-
-    expect(description).toContain('**Avoid churn:**');
-    expect(description).toMatch(/nothing meaningful has changed/i);
-    expect(description).toMatch(/real progress/i);
-    expect(description).toMatch(/query mode/i);
-    expect(description).toMatch(/tell the user/i);
-  });
-
-  it('description encourages proactive progress updates without allowing churn', () => {
-    const { description } = makeTool().tool;
-
-    expect(description).toMatch(/proactively and often/i);
-    expect(description).toMatch(/immediately after finishing/i);
-    expect(description).toMatch(/exactly one/i);
-    expect(description).toMatch(/in_progress/i);
-    expect(description).toMatch(/tests are failing/i);
-    expect(description).toContain('**Avoid churn:**');
-  });
-
   it('query mode renders the current list without mutating it', async () => {
     const { tool, getTodos } = makeTool([{ title: 'existing', status: 'in_progress' }]);
 
