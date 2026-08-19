@@ -186,6 +186,9 @@ extra_skill_dirs = []
 #   env:
 #     max_steps_per_turn <- KIMI_LOOP_MAX_STEPS_PER_TURN (custom parse)
 #     max_attempts_per_step <- KIMI_LOOP_MAX_ATTEMPTS_PER_STEP (custom parse; deprecated fallback KIMI_LOOP_MAX_RETRIES_PER_STEP)
+#     first_output_timeout_ms <- KIMI_LOOP_FIRST_OUTPUT_TIMEOUT_MS (custom parse)
+#     stream_idle_timeout_ms <- KIMI_LOOP_STREAM_IDLE_TIMEOUT_MS (custom parse)
+#     max_stall_attempts_per_step <- KIMI_LOOP_MAX_STALL_ATTEMPTS_PER_STEP (custom parse)
 # ##########################################################################
 
 [loop_control]
@@ -194,6 +197,9 @@ extra_skill_dirs = []
 # max_ralph_iterations: integer
 # reserved_context_size: integer
 # compaction_trigger_ratio: number
+# first_output_timeout_ms: integer
+# stream_idle_timeout_ms: integer
+# max_stall_attempts_per_step: integer
 
 # ##########################################################################
 # mcp

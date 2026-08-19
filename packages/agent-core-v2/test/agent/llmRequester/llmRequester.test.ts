@@ -1,4 +1,10 @@
-import { APIConnectionError, APIStatusError } from '#/kosong/contract/errors';
+import {
+  APIConnectionError,
+  APIStatusError,
+  createAbortError,
+  isAbortError,
+  LLMStreamStalledError,
+} from '#/kosong/contract/errors';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import { type StreamedMessagePart } from '#/kosong/contract/message';
 import type { Tool } from '#/kosong/contract/tool';
@@ -632,6 +638,90 @@ describe('LLMRequester service migration coverage', () => {
       await llmRequester.request();
 
       expect(capturedCacheKey).toBe('test-session');
+    });
+  });
+
+  describe('stream stall watchdog', () => {
+    let ctx: TestAgentContext;
+
+    afterEach(async () => {
+      vi.useRealTimers();
+      try {
+        await ctx.expectResumeMatches();
+      } finally {
+        await ctx.dispose();
+      }
+    });
+
+    it('fails a hung request with LLMStreamStalledError once the configured first-output budget elapses', async () => {
+      vi.useFakeTimers();
+      ctx = createTestAgent(
+        llmGenerateServices(
+          async (_provider, _systemPrompt, _tools, _messages, _callbacks, options) => {
+            await new Promise((_resolve, reject) => {
+              options?.signal?.addEventListener('abort', () => reject(createAbortError()), {
+                once: true,
+              });
+            });
+            throw new Error('unreachable');
+          },
+        ),
+        {
+          initialConfig: {
+            loopControl: { firstOutputTimeoutMs: 1000, streamIdleTimeoutMs: 500 },
+          },
+        },
+      );
+      const llmRequester = ctx.get(IAgentLLMRequesterService);
+
+      const failurePromise = llmRequester.request().catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(1000);
+      const failure = (await failurePromise) as LLMStreamStalledError;
+
+      expect(failure).toBeInstanceOf(LLMStreamStalledError);
+      expect(failure.phase).toBe('waiting_first_output');
+      expect(failure.name).not.toBe('AbortError');
+    });
+
+    it('leaves a hung request under user control when the configured budgets are zero', async () => {
+      vi.useFakeTimers();
+      ctx = createTestAgent(
+        llmGenerateServices(
+          async (_provider, _systemPrompt, _tools, _messages, _callbacks, options) => {
+            await new Promise((_resolve, reject) => {
+              options?.signal?.addEventListener('abort', () => reject(createAbortError()), {
+                once: true,
+              });
+            });
+            throw new Error('unreachable');
+          },
+        ),
+        {
+          initialConfig: {
+            loopControl: { firstOutputTimeoutMs: 0, streamIdleTimeoutMs: 0 },
+          },
+        },
+      );
+      const llmRequester = ctx.get(IAgentLLMRequesterService);
+      const controller = new AbortController();
+
+      let settled = false;
+      const failurePromise = llmRequester
+        .request(undefined, undefined, controller.signal)
+        .catch((error: unknown) => error)
+        .then((error: unknown) => {
+          settled = true;
+          return error;
+        });
+
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(settled).toBe(false);
+
+      controller.abort();
+      const failure = await failurePromise;
+      expect(isAbortError(failure)).toBe(true);
+      expect(failure).not.toBeInstanceOf(LLMStreamStalledError);
     });
   });
 

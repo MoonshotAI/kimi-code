@@ -283,17 +283,20 @@ Configuration errors fail loudly instead of falling back silently: session creat
 
 ## `loop_control`
 
-`loop_control` governs the step count limit, the per-step attempt limit, and the threshold that triggers automatic context compaction in the Agent execution loop.
+`loop_control` governs the step count limit, the per-step attempt limits, the stall detection timeouts for model requests, and the threshold that triggers automatic context compaction in the Agent execution loop.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `max_steps_per_turn` | `integer` | — | Maximum steps per turn; unset or `0` means unlimited |
 | `max_attempts_per_step` | `integer` | `10` | Maximum total attempts for a failing step, including the initial attempt |
+| `first_output_timeout_ms` | `integer` | `180000` | Maximum time in milliseconds to wait for the first output of a model request; a request that still has no output past this limit is treated as stalled and retried. `0` disables the check |
+| `stream_idle_timeout_ms` | `integer` | `120000` | Maximum time in milliseconds a streaming model response may produce no new output before it is treated as stalled and retried. `0` disables the check |
+| `max_stall_attempts_per_step` | `integer` | `3` | Maximum total attempts for a step whose model request keeps stalling, including the initial attempt |
 | `reserved_context_size` | `integer` | — | Number of tokens reserved for model output; automatic compaction is triggered when the remaining context window falls below this value |
 
-`max_steps_per_turn` can be overridden by the `KIMI_LOOP_MAX_STEPS_PER_TURN` environment variable, and `max_attempts_per_step` by `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP`; both take higher priority than the config file. The former `KIMI_LOOP_MAX_RETRIES_PER_STEP` variable is deprecated but still honored (with a startup warning) when the new one is unset.
+`max_steps_per_turn` can be overridden by the `KIMI_LOOP_MAX_STEPS_PER_TURN` environment variable, and `max_attempts_per_step` by `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP`; both take higher priority than the config file. The same applies to `first_output_timeout_ms` (`KIMI_LOOP_FIRST_OUTPUT_TIMEOUT_MS`), `stream_idle_timeout_ms` (`KIMI_LOOP_STREAM_IDLE_TIMEOUT_MS`), and `max_stall_attempts_per_step` (`KIMI_LOOP_MAX_STALL_ATTEMPTS_PER_STEP`). The former `KIMI_LOOP_MAX_RETRIES_PER_STEP` variable is deprecated but still honored (with a startup warning) when the new one is unset.
 
-Retries only apply to transient failures — connection errors, timeouts, HTTP 429 rate limits, and 5xx server errors. A 429 caused by an exhausted quota or insufficient account balance is not retried and fails immediately, since it cannot succeed until the account is recharged.
+Retries only apply to transient failures — connection errors, timeouts, HTTP 429 rate limits, and 5xx server errors. A 429 caused by an exhausted quota or insufficient account balance is not retried and fails immediately, since it cannot succeed until the account is recharged. A model request that stops making progress — no first output within `first_output_timeout_ms`, or a stream that stays idle beyond `stream_idle_timeout_ms` — fails as a stall and is retried with the separate `max_stall_attempts_per_step` budget instead of `max_attempts_per_step`.
 
 ## `token_counting`
 

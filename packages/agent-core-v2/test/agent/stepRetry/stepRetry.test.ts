@@ -4,6 +4,7 @@ import {
   APIConnectionError,
   APIProviderRateLimitError,
   APIStatusError,
+  LLMStreamStalledError,
 } from '#/kosong/contract/errors';
 import { emptyUsage } from '#/kosong/contract/usage';
 import { IEventBus } from '#/app/event/eventBus';
@@ -206,6 +207,53 @@ describe('stepRetry plugin', () => {
     }), {
       initialConfig: { loopControl: { maxAttemptsPerStep: 1 } },
     });
+
+    const result = await runTurn(1);
+
+    expect(result.type).toBe('failed');
+    expect(calls).toBe(1);
+    expect(rpcEvents('turn.step.retrying')).toEqual([]);
+  });
+
+  it('caps stream stall retries at the stall budget instead of maxAttemptsPerStep', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        throw new LLMStreamStalledError('stalled', {
+          phase: 'waiting_first_output',
+          elapsedMs: 180_000,
+          idleMs: 180_000,
+        });
+      }),
+    );
+
+    const result = await runTurn(1);
+
+    expect(result.type).toBe('failed');
+    expect(calls).toBe(3);
+    expect(rpcEvents('turn.step.retrying')).toHaveLength(2);
+    expect(rpcEvents('turn.step.retrying')[0]?.args).toMatchObject({
+      maxAttempts: 3,
+      errorName: 'LLMStreamStalledError',
+    });
+  });
+
+  it('honors loop_control.max_stall_attempts_per_step', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        throw new LLMStreamStalledError('stalled', {
+          phase: 'streaming',
+          elapsedMs: 60_000,
+          idleMs: 60_000,
+        });
+      }),
+      { initialConfig: { loopControl: { maxStallAttemptsPerStep: 1 } } },
+    );
 
     const result = await runTurn(1);
 

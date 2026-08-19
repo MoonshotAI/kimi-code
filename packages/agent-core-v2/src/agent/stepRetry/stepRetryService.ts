@@ -10,7 +10,7 @@ import {
   retryErrorFields,
   sleepForRetry,
 } from '#/_base/utils/retry';
-import { isRetryableGenerateError } from '#/kosong/contract/errors';
+import { isRetryableGenerateError, LLMStreamStalledError } from '#/kosong/contract/errors';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { Event2 } from '#/app/event/event2';
@@ -19,7 +19,11 @@ import {
   IAgentLoopService,
   type LoopErrorContext,
 } from '#/agent/loop/loop';
-import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
+import {
+  DEFAULT_MAX_STALL_ATTEMPTS_PER_STEP,
+  LOOP_CONTROL_SECTION,
+  type LoopControl,
+} from '#/agent/loop/configSection';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -114,9 +118,12 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
     }
     this.failedAttempts += 1;
 
+    const error = unwrapErrorCause(context.error);
+    const loopControl = this.config.get<LoopControl>(LOOP_CONTROL_SECTION);
     const maxAttempts = Math.max(
-      this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxAttemptsPerStep ??
-        DEFAULT_MAX_RETRY_ATTEMPTS,
+      error instanceof LLMStreamStalledError
+        ? loopControl?.maxStallAttemptsPerStep ?? DEFAULT_MAX_STALL_ATTEMPTS_PER_STEP
+        : loopControl?.maxAttemptsPerStep ?? DEFAULT_MAX_RETRY_ATTEMPTS,
       1,
     );
     if (this.failedAttempts >= maxAttempts) {
@@ -124,7 +131,6 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
       return false;
     }
 
-    const error = unwrapErrorCause(context.error);
     const delayMs =
       readRetryAfterMs(error) ?? retryBackoffDelays(maxAttempts)[this.failedAttempts - 1] ?? 0;
     void this.dispatcher.dispatch(

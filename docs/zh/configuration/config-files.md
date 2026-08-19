@@ -282,17 +282,20 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 
 ## `loop_control`
 
-`loop_control` 控制 Agent 执行循环的步数上限、单步尝试次数上限，以及触发上下文自动压缩的阈值。
+`loop_control` 控制 Agent 执行循环的步数上限、单步尝试次数上限、模型请求的停滞检测超时，以及触发上下文自动压缩的阈值。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `max_steps_per_turn` | `integer` | — | 单轮最大步数；不设或设为 `0` 则无上限 |
 | `max_attempts_per_step` | `integer` | `10` | 单步失败后的最大总尝试次数（含首次尝试） |
+| `first_output_timeout_ms` | `integer` | `180000` | 等待模型请求首个输出的最长时间（毫秒）；超过此时间仍无任何输出的请求会被判定为停滞并重试。设为 `0` 关闭该检测 |
+| `stream_idle_timeout_ms` | `integer` | `120000` | 流式模型响应允许没有任何新输出的最长时间（毫秒），超时即判定为停滞并重试。设为 `0` 关闭该检测 |
+| `max_stall_attempts_per_step` | `integer` | `3` | 模型请求持续停滞时单步的最大总尝试次数（含首次尝试） |
 | `reserved_context_size` | `integer` | — | 预留给模型输出的 token 数；上下文窗口剩余量低于此值时触发自动压缩 |
 
-`max_steps_per_turn` 可被环境变量 `KIMI_LOOP_MAX_STEPS_PER_TURN` 覆盖，`max_attempts_per_step` 可被 `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP` 覆盖，优先级均高于配置文件。旧的 `KIMI_LOOP_MAX_RETRIES_PER_STEP` 已废弃，但在新变量未设置时仍生效（启动时会给出警告）。
+`max_steps_per_turn` 可被环境变量 `KIMI_LOOP_MAX_STEPS_PER_TURN` 覆盖，`max_attempts_per_step` 可被 `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP` 覆盖，优先级均高于配置文件。`first_output_timeout_ms`、`stream_idle_timeout_ms`、`max_stall_attempts_per_step` 同理，分别对应 `KIMI_LOOP_FIRST_OUTPUT_TIMEOUT_MS`、`KIMI_LOOP_STREAM_IDLE_TIMEOUT_MS`、`KIMI_LOOP_MAX_STALL_ATTEMPTS_PER_STEP`。旧的 `KIMI_LOOP_MAX_RETRIES_PER_STEP` 已废弃，但在新变量未设置时仍生效（启动时会给出警告）。
 
-重试仅针对瞬时故障——连接错误、超时、HTTP 429 限流和 5xx 服务端错误。账户额度耗尽或余额不足导致的 429 不会重试，会立即失败：在充值之前重试不可能成功。
+重试仅针对瞬时故障——连接错误、超时、HTTP 429 限流和 5xx 服务端错误。账户额度耗尽或余额不足导致的 429 不会重试，会立即失败：在充值之前重试不可能成功。模型请求停止推进——超过 `first_output_timeout_ms` 仍无首个输出，或流式响应超过 `stream_idle_timeout_ms` 没有新输出——会按停滞失败，并使用独立的 `max_stall_attempts_per_step` 预算重试，而不是 `max_attempts_per_step`。
 
 ## `token_counting`
 

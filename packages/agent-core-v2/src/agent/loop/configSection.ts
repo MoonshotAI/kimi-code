@@ -10,6 +10,13 @@ export const LOOP_MAX_STEPS_PER_TURN_ENV = 'KIMI_LOOP_MAX_STEPS_PER_TURN';
 export const LOOP_MAX_ATTEMPTS_PER_STEP_ENV = 'KIMI_LOOP_MAX_ATTEMPTS_PER_STEP';
 /** Deprecated former name of {@link LOOP_MAX_ATTEMPTS_PER_STEP_ENV}. */
 export const LOOP_MAX_RETRIES_PER_STEP_ENV = 'KIMI_LOOP_MAX_RETRIES_PER_STEP';
+export const LOOP_FIRST_OUTPUT_TIMEOUT_MS_ENV = 'KIMI_LOOP_FIRST_OUTPUT_TIMEOUT_MS';
+export const LOOP_STREAM_IDLE_TIMEOUT_MS_ENV = 'KIMI_LOOP_STREAM_IDLE_TIMEOUT_MS';
+export const LOOP_MAX_STALL_ATTEMPTS_PER_STEP_ENV = 'KIMI_LOOP_MAX_STALL_ATTEMPTS_PER_STEP';
+
+export const DEFAULT_FIRST_OUTPUT_TIMEOUT_MS = 180_000;
+export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 120_000;
+export const DEFAULT_MAX_STALL_ATTEMPTS_PER_STEP = 3;
 
 export const LoopControlSchema = z.object({
   maxStepsPerTurn: z.number().int().min(0).optional(),
@@ -17,6 +24,9 @@ export const LoopControlSchema = z.object({
   maxRalphIterations: z.number().int().min(-1).optional(),
   reservedContextSize: z.number().int().min(0).optional(),
   compactionTriggerRatio: z.number().min(0.5).max(0.99).optional(),
+  firstOutputTimeoutMs: z.number().int().min(0).optional(),
+  streamIdleTimeoutMs: z.number().int().min(0).optional(),
+  maxStallAttemptsPerStep: z.number().int().min(0).optional(),
 });
 
 export type LoopControl = z.infer<typeof LoopControlSchema>;
@@ -33,6 +43,12 @@ export const loopControlEnvBindings: EnvBindings<LoopControl> = envBindings(Loop
   maxAttemptsPerStep: {
     env: LOOP_MAX_ATTEMPTS_PER_STEP_ENV,
     deprecatedEnv: LOOP_MAX_RETRIES_PER_STEP_ENV,
+    parse: parseNonNegativeInt,
+  },
+  firstOutputTimeoutMs: { env: LOOP_FIRST_OUTPUT_TIMEOUT_MS_ENV, parse: parseNonNegativeInt },
+  streamIdleTimeoutMs: { env: LOOP_STREAM_IDLE_TIMEOUT_MS_ENV, parse: parseNonNegativeInt },
+  maxStallAttemptsPerStep: {
+    env: LOOP_MAX_STALL_ATTEMPTS_PER_STEP_ENV,
     parse: parseNonNegativeInt,
   },
 });

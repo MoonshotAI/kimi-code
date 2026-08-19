@@ -69,6 +69,13 @@ export interface DeadlineAbortSignal {
   readonly clear: () => void;
 }
 
+export interface IdleTimeoutAbortSignal {
+  readonly signal: AbortSignal;
+  readonly idleTimedOut: () => boolean;
+  readonly touch: (timeoutMs?: number) => void;
+  readonly clear: () => void;
+}
+
 export function createDeadlineAbortSignal(
   source: AbortSignal,
   timeoutMs: number,
@@ -88,6 +95,46 @@ export function createDeadlineAbortSignal(
       if (timeout !== undefined) clearTimeout(timeout);
       timeout = undefined;
       unlinkAbortSignal();
+    },
+  };
+}
+
+export function createIdleTimeoutAbortSignal(
+  source: AbortSignal | undefined,
+  timeoutMs: number,
+): IdleTimeoutAbortSignal {
+  const controller = new AbortController();
+  const unlinkAbortSignal =
+    source === undefined ? undefined : linkAbortSignal(source, controller);
+  let didIdleTimeout = false;
+  let cleared = false;
+  let currentTimeoutMs = timeoutMs;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  const arm = () => {
+    if (timeout !== undefined) clearTimeout(timeout);
+    timeout = undefined;
+    if (cleared || didIdleTimeout || controller.signal.aborted || currentTimeoutMs <= 0) return;
+    timeout = setTimeout(() => {
+      timeout = undefined;
+      didIdleTimeout = true;
+      controller.abort(abortError());
+    }, currentTimeoutMs);
+  };
+  arm();
+
+  return {
+    signal: controller.signal,
+    idleTimedOut: () => didIdleTimeout,
+    touch: (nextTimeoutMs?: number) => {
+      if (nextTimeoutMs !== undefined) currentTimeoutMs = nextTimeoutMs;
+      arm();
+    },
+    clear: () => {
+      cleared = true;
+      if (timeout !== undefined) clearTimeout(timeout);
+      timeout = undefined;
+      unlinkAbortSignal?.();
     },
   };
 }

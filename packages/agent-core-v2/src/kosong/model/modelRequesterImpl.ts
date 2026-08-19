@@ -1,6 +1,13 @@
 import { AsyncEventQueue } from '#/_base/asyncEventQueue';
+import { createIdleTimeoutAbortSignal } from '#/_base/utils/abort';
 import type { VideoURLPart } from '#/kosong/contract/message';
-import { APIStatusError, isAbortError, VideoUploadUnsupportedError } from '#/kosong/contract/errors';
+import {
+  APIStatusError,
+  isAbortError,
+  LLMStreamStalledError,
+  VideoUploadUnsupportedError,
+  type LLMStreamStallPhase,
+} from '#/kosong/contract/errors';
 import { generate, type GenerateResult } from '#/kosong/contract/generate';
 import type {
   ChatProvider,
@@ -112,23 +119,63 @@ export class ModelRequesterImpl implements ModelRequester {
       responseFormat: input.responseFormat,
     };
 
+    const firstOutputTimeoutMs = params?.firstOutputTimeoutMs ?? 0;
+    const streamIdleTimeoutMs = params?.streamIdleTimeoutMs ?? 0;
+    const stallWatchdogEnabled = firstOutputTimeoutMs > 0 || streamIdleTimeoutMs > 0;
+
     let result: GenerateResult;
     try {
-      result = await this.runWithAuthRefresh((auth) => {
+      result = await this.runWithAuthRefresh(async (auth) => {
         requestStartedAt = Date.now();
-        return generate(
-          provider,
-          input.systemPrompt,
-          [...input.tools],
-          [...input.messages],
-          {
-            onMessagePart: (part) => {
-              firstChunkAt ??= Date.now();
-              queue.push({ type: 'part', part });
+        const watchdog = stallWatchdogEnabled
+          ? createIdleTimeoutAbortSignal(signal, firstOutputTimeoutMs)
+          : undefined;
+        let stallPhase: LLMStreamStallPhase = 'waiting_first_output';
+        let lastActivityAt = Date.now();
+        try {
+          return await generate(
+            provider,
+            input.systemPrompt,
+            [...input.tools],
+            [...input.messages],
+            {
+              onMessagePart: (part) => {
+                firstChunkAt ??= Date.now();
+                stallPhase = 'streaming';
+                lastActivityAt = Date.now();
+                watchdog?.touch(streamIdleTimeoutMs);
+                queue.push({ type: 'part', part });
+              },
             },
-          },
-          { ...options, auth },
-        );
+            {
+              ...options,
+              auth,
+              signal: watchdog?.signal ?? signal,
+              onRequestSent: () => {
+                requestSentAt = Date.now();
+                lastActivityAt = Date.now();
+                watchdog?.touch();
+              },
+            },
+          );
+        } catch (error) {
+          if (watchdog?.idleTimedOut() === true && signal?.aborted !== true && isAbortError(error)) {
+            const stalledAt = Date.now();
+            throw new LLMStreamStalledError(
+              `LLM stream stalled while ${stallPhase === 'waiting_first_output' ? 'waiting for the first output' : 'streaming'}: ` +
+                `no output for ${String(stalledAt - lastActivityAt)}ms ` +
+                `(elapsed ${String(stalledAt - requestStartedAt)}ms, provider: ${provider.name}, model: ${provider.modelName}).`,
+              {
+                phase: stallPhase,
+                elapsedMs: stalledAt - requestStartedAt,
+                idleMs: stalledAt - lastActivityAt,
+              },
+            );
+          }
+          throw error;
+        } finally {
+          watchdog?.clear();
+        }
       });
     } catch (error) {
       if (isAbortError(error) || signal?.aborted === true) throw error;

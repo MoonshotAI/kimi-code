@@ -1286,6 +1286,8 @@ export interface AgentStateSnapshot {
       readonly usedContextTokens?: number;
       readonly maxContextTokens?: number;
       readonly onTraceId?: (traceId: string | null) => void;
+      readonly firstOutputTimeoutMs?: number;
+      readonly streamIdleTimeoutMs?: number;
     };
     readonly systemPrompt: string;
   }>;

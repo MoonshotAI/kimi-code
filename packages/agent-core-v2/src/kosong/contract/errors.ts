@@ -59,9 +59,34 @@ export class VideoUploadUnsupportedError extends ChatProviderError {
 }
 
 export class APITimeoutError extends ChatProviderError {
-  constructor(message: string) {
-    super(message, PROVIDER_CONNECTION_ERROR_CODE);
+  constructor(message: string, options?: Error2Options) {
+    super(message, PROVIDER_CONNECTION_ERROR_CODE, options);
     this.name = 'APITimeoutError';
+  }
+}
+
+export type LLMStreamStallPhase = 'waiting_first_output' | 'streaming';
+
+export class LLMStreamStalledError extends APITimeoutError {
+  readonly phase: LLMStreamStallPhase;
+  readonly elapsedMs: number;
+  readonly idleMs: number;
+
+  constructor(
+    message: string,
+    options: {
+      readonly phase: LLMStreamStallPhase;
+      readonly elapsedMs: number;
+      readonly idleMs: number;
+    },
+  ) {
+    super(message, {
+      details: { phase: options.phase, elapsedMs: options.elapsedMs, idleMs: options.idleMs },
+    });
+    this.name = 'LLMStreamStalledError';
+    this.phase = options.phase;
+    this.elapsedMs = options.elapsedMs;
+    this.idleMs = options.idleMs;
   }
 }
 
