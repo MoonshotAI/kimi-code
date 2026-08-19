@@ -1,9 +1,11 @@
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
-import { newTowerStore, runTowerTool } from '../support';
+import { newTowerStore, runTowerTool, TOWER_MAIN_AGENT_ONLY } from '../support';
 import DESCRIPTION from './teardown.md?raw';
 import {
   ITowerTeardownTool,
@@ -20,9 +22,16 @@ export class TowerTeardownTool implements ITowerTeardownTool {
   constructor(
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentTowerService private readonly tower: IAgentTowerService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {}
 
   resolveExecution(args: TowerTeardownToolInput): ToolExecution {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) {
+      return {
+        isError: true,
+        output: TOWER_MAIN_AGENT_ONLY,
+      };
+    }
     return {
       description: `Tearing down tower workspace${args.force === true ? ' (force)' : ''}`,
       approvalRule: this.name,
