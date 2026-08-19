@@ -121,9 +121,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   exit(): void {
     if (!this.isActive) return;
     void this.dispatcher.dispatch(new TowerModeExit({}));
-    if (this.agentCtx.agentId === 'main') {
-      for (const name of TOWER_TOOL_NAMES) this.profile.removeActiveTool(name);
-    }
   }
 
   get isActive(): boolean {

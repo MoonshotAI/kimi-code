@@ -339,7 +339,7 @@ describe('AgentTowerService', () => {
     expect(tower.isActive).toBe(true);
   });
 
-  it('enter activates the tower tool set on the main agent; exit removes it', () => {
+  it('enter activates the tower tool set on the main agent; exit keeps it', () => {
     ix.stub(IAgentScopeContext, {
       agentId: 'main',
       scope: (subKey?: string) => subKey ?? '',
@@ -351,7 +351,7 @@ describe('AgentTowerService', () => {
     expect(removedTools).toEqual([]);
 
     tower.exit();
-    expect(removedTools).toEqual([...TOWER_TOOL_NAMES]);
+    expect(removedTools).toEqual([]);
   });
 
   it('enter / exit do not touch the profile tool overlay on a non-main agent', () => {

@@ -4,6 +4,10 @@ import type { Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { handleTowerCommand } from '#/tui/commands/index';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
+import {
+  TOWER_STATUS_PROMPT,
+  TOWER_TEARDOWN_PROMPT,
+} from '#/tui/constant/kimi-tui';
 
 function makeHost(
   overrides: {
@@ -42,59 +46,32 @@ function makeHost(
 }
 
 describe('handleTowerCommand', () => {
-  it('shows an error when no session is active on the legacy engine', async () => {
-    const { host, session } = makeHost({ hasSession: false, engineV2: false });
-
-    await handleTowerCommand(host, 'on');
-
-    expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('session'));
-    expect(host.ensureSession).not.toHaveBeenCalled();
-    expect(session.setTowerMode).not.toHaveBeenCalled();
-    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
-  });
-
-  it('lazy-creates the session on the v2 engine when none exists', async () => {
-    const { host, session } = makeHost({ hasSession: false });
-
-    await handleTowerCommand(host, 'on');
-
-    expect(host.ensureSession).toHaveBeenCalled();
-    expect(session.setTowerMode).toHaveBeenCalledWith(true);
-    expect(host.showNotice).toHaveBeenCalledWith('Tower mode: ON');
-    expect(host.showError).not.toHaveBeenCalled();
-  });
-
-  it('returns quietly when lazy session creation fails', async () => {
-    const { host, session } = makeHost({ hasSession: false });
-    host.ensureSession = vi.fn(async () => undefined);
-
-    await handleTowerCommand(host, 'on');
-
-    expect(session.setTowerMode).not.toHaveBeenCalled();
-    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
-  });
-
-  it('turns tower mode on when called without args while tower mode is off', async () => {
+  it('reports tower status when called without args, without touching the mode', async () => {
     const { host, session } = makeHost({ towerMode: false });
 
     await handleTowerCommand(host, '');
 
-    expect(session.setTowerMode).toHaveBeenCalledWith(true);
-    expect(host.setAppState).toHaveBeenCalledWith({ towerMode: true });
-    expect(host.showNotice).toHaveBeenCalledWith('Tower mode: ON');
-    expect(host.showError).not.toHaveBeenCalled();
-    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+    expect(host.sendNormalUserInput).toHaveBeenCalledWith(TOWER_STATUS_PROMPT);
+    expect(session.setTowerMode).not.toHaveBeenCalled();
+    expect(host.ensureSession).not.toHaveBeenCalled();
   });
 
-  it('turns tower mode off when called without args while tower mode is on', async () => {
+  it('reports tower status for the status subcommand, without touching the mode', async () => {
     const { host, session } = makeHost({ towerMode: true });
 
-    await handleTowerCommand(host, '');
+    await handleTowerCommand(host, 'status');
 
-    expect(session.setTowerMode).toHaveBeenCalledWith(false);
-    expect(host.setAppState).toHaveBeenCalledWith({ towerMode: false });
-    expect(host.showNotice).toHaveBeenCalledWith('Tower mode: OFF');
-    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+    expect(host.sendNormalUserInput).toHaveBeenCalledWith(TOWER_STATUS_PROMPT);
+    expect(session.setTowerMode).not.toHaveBeenCalled();
+  });
+
+  it('sends the teardown instruction for the teardown subcommand, without touching the mode', async () => {
+    const { host, session } = makeHost({ towerMode: true });
+
+    await handleTowerCommand(host, 'teardown');
+
+    expect(host.sendNormalUserInput).toHaveBeenCalledWith(TOWER_TEARDOWN_PROMPT);
+    expect(session.setTowerMode).not.toHaveBeenCalled();
   });
 
   it('turns tower mode on with an explicit on subcommand', async () => {
@@ -104,7 +81,19 @@ describe('handleTowerCommand', () => {
 
     expect(session.setTowerMode).toHaveBeenCalledWith(true);
     expect(host.setAppState).toHaveBeenCalledWith({ towerMode: true });
-    expect(host.showStatus).not.toHaveBeenCalled();
+    expect(host.showNotice).toHaveBeenCalledWith('Tower mode: ON');
+    expect(host.showError).not.toHaveBeenCalled();
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+  });
+
+  it('turns tower mode off with an explicit off subcommand', async () => {
+    const { host, session } = makeHost({ towerMode: true });
+
+    await handleTowerCommand(host, 'off');
+
+    expect(session.setTowerMode).toHaveBeenCalledWith(false);
+    expect(host.setAppState).toHaveBeenCalledWith({ towerMode: false });
+    expect(host.showNotice).toHaveBeenCalledWith('Tower mode: OFF');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
@@ -114,7 +103,6 @@ describe('handleTowerCommand', () => {
     await handleTowerCommand(host, 'on');
 
     expect(session.setTowerMode).not.toHaveBeenCalled();
-    expect(host.setAppState).not.toHaveBeenCalledWith({ towerMode: true });
     expect(host.showStatus).toHaveBeenCalledWith('Tower mode is already on.');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
@@ -125,7 +113,6 @@ describe('handleTowerCommand', () => {
     await handleTowerCommand(host, 'off');
 
     expect(session.setTowerMode).not.toHaveBeenCalled();
-    expect(host.setAppState).not.toHaveBeenCalledWith({ towerMode: false });
     expect(host.showStatus).toHaveBeenCalledWith('Tower mode is already off.');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
@@ -173,5 +160,37 @@ describe('handleTowerCommand', () => {
       expect.stringContaining('Failed to disable tower mode'),
     );
     expect(host.setAppState).not.toHaveBeenCalledWith({ towerMode: false });
+  });
+
+  it('shows an error when no session is active on the legacy engine', async () => {
+    const { host, session } = makeHost({ hasSession: false, engineV2: false });
+
+    await handleTowerCommand(host, 'on');
+
+    expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('session'));
+    expect(host.ensureSession).not.toHaveBeenCalled();
+    expect(session.setTowerMode).not.toHaveBeenCalled();
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+  });
+
+  it('lazy-creates the session on the v2 engine when none exists', async () => {
+    const { host, session } = makeHost({ hasSession: false });
+
+    await handleTowerCommand(host, 'on');
+
+    expect(host.ensureSession).toHaveBeenCalled();
+    expect(session.setTowerMode).toHaveBeenCalledWith(true);
+    expect(host.showNotice).toHaveBeenCalledWith('Tower mode: ON');
+    expect(host.showError).not.toHaveBeenCalled();
+  });
+
+  it('returns quietly when lazy session creation fails', async () => {
+    const { host, session } = makeHost({ hasSession: false });
+    host.ensureSession = vi.fn(async () => undefined);
+
+    await handleTowerCommand(host, 'on');
+
+    expect(session.setTowerMode).not.toHaveBeenCalled();
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 });

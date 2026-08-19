@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Add tower mode as a mode parallel to plan mode: run /tower to toggle it, or /tower <objective> to start multi-agent orchestration on an objective. Enable it with KIMI_CODE_EXPERIMENTAL_TOWER=1.
+Add tower mode as a mode parallel to plan mode: /tower reports status, /tower on|off toggles the mode with a footer indicator, and /tower <objective> starts multi-agent orchestration. Enable it with KIMI_CODE_EXPERIMENTAL_TOWER=1.
