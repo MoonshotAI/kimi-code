@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   IAgentLifecycleService,
   IAgentLoopService,
+  IAgentTaskService,
   IEventBus,
   ISessionIndex,
   ISessionInteractionService,
@@ -970,6 +971,124 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
+  it('keys an Agent-tool subagent row by its registered task id and folds the lifecycle', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        parentToolCallId: 'call-1',
+        description: 'Inspect files',
+        runInBackground: true,
+        taskId: 'task-9',
+      }),
+    );
+    feed(
+      ev({
+        type: 'task.started',
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          description: 'Inspect files',
+          status: 'running',
+          detached: true,
+          agentId: 'agent-1',
+          startedAt: 1_700_000_000_000,
+          endedAt: null,
+        },
+      }),
+    );
+    feed(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
+    feed(
+      ev({
+        type: 'task.terminated',
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          description: 'Inspect files',
+          status: 'completed',
+          detached: true,
+          agentId: 'agent-1',
+          startedAt: 1_700_000_000_000,
+          endedAt: 1_700_000_001_000,
+        },
+      }),
+    );
+
+    expect(tx.getTask('task-9')).toMatchObject({
+      kind: 'subagent',
+      state: 'completed',
+      agentId: 'agent-1',
+      description: 'Inspect files',
+      detached: true,
+      resultSummary: 'done',
+    });
+    expect(tx.getTask('agent-1')).toBeUndefined();
+  });
+
+  it('drops the stale task mapping when a child respawns without a task id', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        parentToolCallId: 'call-1',
+        description: 'Inspect files',
+        runInBackground: true,
+        taskId: 'task-9',
+      }),
+    );
+    feed(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
+    feed(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'worker',
+        parentToolCallId: 'call-2',
+        description: 'scan again',
+        runInBackground: false,
+      }),
+    );
+    feed(ev({ type: 'subagent.started', subagentId: 'agent-1' }));
+
+    expect(tx.getTask('task-9')).toMatchObject({ state: 'completed', resultSummary: 'done' });
+    expect(tx.getTask('agent-1')).toMatchObject({ kind: 'subagent', state: 'running' });
+  });
+
+  it('recovers the agent → task association from a backfilled task.started', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(
+      ev({
+        type: 'task.started',
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          description: 'Inspect files',
+          status: 'running',
+          detached: true,
+          agentId: 'agent-1',
+          startedAt: 1_700_000_000_000,
+          endedAt: null,
+        },
+      }),
+    );
+    feed(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
+
+    expect(tx.getTask('task-9')).toMatchObject({ state: 'completed', resultSummary: 'done' });
+    expect(tx.getTask('agent-1')).toBeUndefined();
+  });
+
   it('projects goal updates into meta.goal plus an inline marker', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
@@ -1811,7 +1930,7 @@ describe('bindSessionTranscript', () => {
       this.disposeHandlers.add(cb);
       return { dispose: () => this.disposeHandlers.delete(cb) };
     }
-    add(id: string, opts?: { loopStatus?: unknown }): FakeAgentHandle {
+    add(id: string, opts?: { loopStatus?: unknown; tasks?: readonly unknown[] }): FakeAgentHandle {
       const bus = new FakeBus();
       const handle: FakeAgentHandle = {
         id,
@@ -1821,6 +1940,9 @@ describe('bindSessionTranscript', () => {
             if (token === IEventBus) return bus;
             if (token === IAgentLoopService) {
               return { status: () => opts?.loopStatus ?? { state: 'idle' } };
+            }
+            if (token === IAgentTaskService) {
+              return { list: () => opts?.tasks ?? [] };
             }
             return undefined;
           },
@@ -1908,6 +2030,46 @@ describe('bindSessionTranscript', () => {
     expect(descriptor).toBeDefined();
     expect(typeof descriptor?.disposedAt).toBe('string');
     expect(store.agents().find((a) => a.agentId === 'main')?.disposedAt).toBeUndefined();
+    binding.dispose();
+  });
+
+  it('seeds pre-attach Agent task mappings so a late-bound projector folds the lifecycle', () => {
+    const agents = new FakeAgents();
+    agents.add('main', {
+      tasks: [
+        {
+          taskId: 'task-9',
+          kind: 'agent',
+          agentId: 'agent-1',
+          status: 'running',
+          description: 'Inspect',
+          detached: false,
+          startedAt: 1_700_000_000_000,
+        },
+      ],
+    });
+    const store = new TranscriptStore('s1');
+    const binding = bindSessionTranscript(
+      store,
+      fakeSession(new SessionInteractionService(new TestSessionStateService()), agents),
+    );
+
+    expect(store.getAgent('main')?.getTask('task-9')).toMatchObject({
+      kind: 'subagent',
+      state: 'running',
+      detached: false,
+      description: 'Inspect',
+      agentId: 'agent-1',
+    });
+
+    agents.get('main')!.bus.emit(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
+
+    expect(store.getAgent('main')?.getTask('task-9')).toMatchObject({
+      state: 'completed',
+      resultSummary: 'done',
+      detached: false,
+    });
+    expect(store.getAgent('main')?.getTask('agent-1')).toBeUndefined();
     binding.dispose();
   });
 
