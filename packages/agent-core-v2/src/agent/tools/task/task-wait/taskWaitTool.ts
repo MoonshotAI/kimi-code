@@ -69,6 +69,31 @@ export function waitForProgressUpdate(
   };
 }
 
+export interface WaitForProgressHandle {
+  readonly stop: () => void;
+  readonly tick: () => void;
+}
+
+export function startWaitProgress(
+  args: WaitForInput,
+  tasks: Pick<IAgentTaskService, 'list'>,
+  onUpdate: ((update: ToolUpdate) => void) | undefined,
+  startedAt: number,
+): WaitForProgressHandle {
+  if (onUpdate === undefined) return { stop: () => {}, tick: () => {} };
+  const tick = (): void => {
+    onUpdate(waitForProgressUpdate(args, tasks.list(true).length, startedAt, Date.now()));
+  };
+  const interval = setInterval(tick, PROGRESS_INTERVAL_MS);
+  interval.unref?.();
+  return {
+    stop: () => {
+      clearInterval(interval);
+    },
+    tick,
+  };
+}
+
 export class WaitForTool implements IWaitForTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'WaitFor' as const;
@@ -124,7 +149,7 @@ export class WaitForTool implements IWaitForTool {
     }
 
     let waited: AgentTaskInfo | undefined;
-    const progress = this.startProgress(args, ctx, startedAt);
+    const progress = startWaitProgress(args, this.tasks, ctx.onUpdate, startedAt);
     try {
       waited =
         args.task_id === undefined
@@ -180,26 +205,6 @@ export class WaitForTool implements IWaitForTool {
       unlink();
       controller.abort(abortError());
     }
-  }
-
-  private startProgress(
-    args: WaitForInput,
-    ctx: ExecutableToolContext,
-    startedAt: number,
-  ): { readonly stop: () => void; readonly tick: () => void } {
-    const onUpdate = ctx.onUpdate;
-    if (onUpdate === undefined) return { stop: () => {}, tick: () => {} };
-    const tick = (): void => {
-      onUpdate(waitForProgressUpdate(args, this.tasks.list(true).length, startedAt, Date.now()));
-    };
-    const interval = setInterval(tick, PROGRESS_INTERVAL_MS);
-    interval.unref?.();
-    return {
-      stop: () => {
-        clearInterval(interval);
-      },
-      tick,
-    };
   }
 
   private collectExtras(

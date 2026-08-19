@@ -22,7 +22,7 @@ import { TaskOutputTool } from '#/agent/tools/task/task-output/taskOutputTool';
 import { TaskStopInputSchema } from '#/agent/tools/task/task-stop/task-stop';
 import { TaskStopTool } from '#/agent/tools/task/task-stop/taskStopTool';
 import { WaitForInputSchema } from '#/agent/tools/task/task-wait/task-wait';
-import { WaitForTool, waitForProgressUpdate } from '#/agent/tools/task/task-wait/taskWaitTool';
+import { WaitForTool, startWaitProgress, waitForProgressUpdate } from '#/agent/tools/task/task-wait/taskWaitTool';
 import { abortError } from '#/_base/utils/abort';
 import type { ITaskHandle } from '#/app/task/task';
 import type { IHostProcess } from '#/os/interface/hostProcess';
@@ -1052,17 +1052,8 @@ describe('WaitForTool', () => {
     const tasks = new FakeTaskService();
     tasks.add(processTask({ taskId: 'bash-prog002' }));
     const onUpdate = vi.fn();
-    const tool = new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true));
-    const progress = (
-      tool as unknown as {
-        startProgress(
-          args: { timeout: number },
-          ctx: { onUpdate?: (update: unknown) => void },
-          startedAt: number,
-        ): { stop(): void; tick(): void };
-      }
-    ).startProgress({ timeout: 600 }, { onUpdate }, Date.now() - 30_000);
 
+    const progress = startWaitProgress({ timeout: 600 }, tasks, onUpdate, Date.now() - 30_000);
     progress.tick();
     progress.stop();
 
