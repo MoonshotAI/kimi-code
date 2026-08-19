@@ -110,6 +110,7 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     const turn = await this.recordActivation(origin, content);
     if (turn === undefined) {
       this.activationData.take(origin.activationId);
+      this.flow.discardPendingActivation(origin.activationId);
       throw new Error2(
         ErrorCodes.TURN_AGENT_BUSY,
         'Cannot activate skill while another turn is active',
@@ -139,7 +140,15 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       );
     }
     await this.skillCatalog.ready;
-    const prepared = input.skills.map((skill) => this.prepareBundled(skill));
+    const prepared: PromptSkillActivation[] = [];
+    try {
+      for (const skill of input.skills) prepared.push(this.prepareBundled(skill));
+    } catch (error) {
+      for (const activation of prepared) {
+        this.activationData.take(activation.origin.activationId);
+      }
+      throw error;
+    }
     const flowActivations = prepared.filter((activation) => activation.origin.skillType === 'flow');
     const discardPrepared = (): void => {
       for (const activation of prepared) {
@@ -160,12 +169,6 @@ export class AgentSkillService extends Service implements IAgentSkillService {
         'Flow skills can only be activated on the main agent',
       );
     }
-    try {
-      if (flowActivations.length > 0) this.rejectWhileFlowRunActive('flow');
-    } catch (error) {
-      discardPrepared();
-      throw error;
-    }
     if (this.scopeContext.agentId === MAIN_AGENT_ID) {
       await applyPromptMetadataUpdate(
         {
@@ -175,6 +178,12 @@ export class AgentSkillService extends Service implements IAgentSkillService {
         },
         promptMetadataTextFromContentParts(input.input),
       );
+    }
+    try {
+      if (flowActivations.length > 0) this.rejectWhileFlowRunActive('flow');
+    } catch (error) {
+      discardPrepared();
+      throw error;
     }
     for (const activation of prepared) {
       void this.recordActivation(activation.origin);
@@ -190,6 +199,16 @@ export class AgentSkillService extends Service implements IAgentSkillService {
           skillActivations: prepared.map((activation) => activation.entry),
         },
       });
+      if (flowActivations.length > 0) {
+        const flowIds = flowActivations.map((activation) => activation.origin.activationId);
+        void handle.completion.then((completion) => {
+          if (completion.state !== 'cancelled' && completion.state !== 'failed') return;
+          for (const id of flowIds) {
+            this.flow.discardPendingActivation(id);
+            this.activationData.take(id);
+          }
+        });
+      }
       if (handle.state === 'pending') {
         return { prompt_id: handle.id, created_at: handle.createdAt, state: 'queued' };
       }

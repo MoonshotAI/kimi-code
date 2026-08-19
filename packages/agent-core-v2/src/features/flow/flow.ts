@@ -125,6 +125,9 @@ export interface IAgentFlowService {
    *  activation entry points reject a new flow activation while one is
    *  pending, exactly as they do while a run is active. */
   hasPendingActivation(): boolean;
+  /** Drop a queued activation start whose prompt will never land (aborted or
+   *  failed before reaching a step head), releasing the reserved capacity. */
+  discardPendingActivation(activationId: string): void;
   /** Record the current epoch for a prepared FlowAdvance call (keyed by its
    *  args object), so the gate review can bind approval to the run the
    *  verdict was prepared against. */

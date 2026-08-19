@@ -11,6 +11,7 @@ import {
   type AgentProfileRegistration,
 } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
+import { AGENT_PROFILE_SOURCE_PRIORITY } from '#/app/agentProfileCatalog/agentProfileContribution';
 
 import { ISessionAgentProfileCatalogSeed } from './agentProfileCatalogSeed';
 import {
@@ -102,15 +103,19 @@ export class SessionAgentProfileCatalogService
     const inspections = new Map<string, AgentProfileInspection>();
     const entries = this.relevantEntries();
 
-    const builtinEntry = entries.find((e) => e.sourceId === BUILTIN_AGENT_PROFILE_SOURCE_ID);
-    if (builtinEntry !== undefined) {
-      for (const profile of builtinEntry.contribution.profiles) {
+    const protectedEntries = entries.filter(
+      (e) =>
+        e.sourceId === BUILTIN_AGENT_PROFILE_SOURCE_ID ||
+        e.priority === AGENT_PROFILE_SOURCE_PRIORITY.builtin,
+    );
+    for (const protectedEntry of protectedEntries) {
+      for (const profile of protectedEntry.contribution.profiles) {
         merged.set(profile.name, profile);
         inspections.set(profile.name, {
           name: profile.name,
           profile,
-          sourceId: builtinEntry.sourceId,
-          priority: builtinEntry.priority,
+          sourceId: protectedEntry.sourceId,
+          priority: protectedEntry.priority,
           suppressed: [],
         });
       }
@@ -118,7 +123,7 @@ export class SessionAgentProfileCatalogService
 
     const fileCandidates = new Map<string, ProfileCandidate[]>();
     const ordered = entries
-      .filter((e) => e.sourceId !== BUILTIN_AGENT_PROFILE_SOURCE_ID)
+      .filter((e) => !protectedEntries.includes(e))
       .toSorted((a, b) => b.priority - a.priority);
     for (const entry of ordered) {
       const entryProfiles = new Map<string, AgentProfile>();
