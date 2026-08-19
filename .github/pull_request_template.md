@@ -8,7 +8,7 @@ See https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md for more.
 
 ## Related Issue
 
-<!-- Link the issue this feature came from. If there is no issue, explain the problem in the next section instead. -->
+<!-- Link the issue this change came from. External PRs must link an issue approved by a maintainer (an `/approve` comment) — PRs without one may be closed. -->
 
 Resolve #(issue_number)
 
@@ -23,7 +23,7 @@ Resolve #(issue_number)
 ## Checklist
 
 - [ ] I have read the [CONTRIBUTING](https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md) document.
-- [ ] I have linked a related issue, or explained the problem above.
+- [ ] I have linked a related issue (external PRs: the issue must have a maintainer's `/approve`).
 - [ ] I have added tests that prove my feature works.
 - [ ] Ran `gen-changesets` skill, or this PR needs no changeset.
 - [ ] Ran `gen-docs` skill, or this PR needs no doc update.
