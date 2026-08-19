@@ -24,7 +24,7 @@ const OUTPUT_PREVIEW_BYTES = 32 * 1024;
 
 const PAGING_HINT_LINES = 300;
 
-const PROGRESS_INTERVAL_MS = 10_000;
+const PROGRESS_INTERVAL_MS = 1_000;
 
 type WaitForOutcome = 'completed' | 'timed_out' | 'task_not_found' | 'aborted';
 
@@ -84,6 +84,7 @@ export function startWaitProgress(
   const tick = (): void => {
     onUpdate(waitForProgressUpdate(args, tasks.list(true).length, startedAt, Date.now()));
   };
+  tick();
   const interval = setInterval(tick, PROGRESS_INTERVAL_MS);
   interval.unref?.();
   return {
