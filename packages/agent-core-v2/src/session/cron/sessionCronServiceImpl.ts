@@ -229,12 +229,22 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
 
   private async migrateLegacyTasks(): Promise<void> {
     const legacyTasks = await listLegacyCronTasks(this.atomicDocs, this.ctx.workspaceId);
+    const imported: CronTask[] = [];
     for (const task of legacyTasks) {
       const owner = task.tags?.[CRON_SESSION_TAG];
       if (owner !== undefined && owner !== this.ctx.sessionId) continue;
-      if (!this.tasks.has(task.id)) {
-        this.dispatchCron(new CronAdd({ task }));
+      if (this.tasks.has(task.id)) {
+        await deleteLegacyCronTask(this.atomicDocs, this.ctx.workspaceId, task.id);
+        continue;
       }
+      this.dispatchCron(new CronAdd({ task }));
+      imported.push(task);
+    }
+    if (imported.length === 0) return;
+    const mainHandle = this.agentLifecycle.get('main');
+    if (mainHandle === undefined) return;
+    await mainHandle.accessor.get(IEventDispatcher).flush();
+    for (const task of imported) {
       await deleteLegacyCronTask(this.atomicDocs, this.ctx.workspaceId, task.id);
     }
   }

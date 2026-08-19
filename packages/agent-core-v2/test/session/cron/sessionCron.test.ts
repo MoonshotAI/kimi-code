@@ -126,7 +126,8 @@ describe('session cron wire persistence', () => {
   });
 
   it('migrates legacy cron task files into the wire on first restore', async () => {
-    const { ctx, onDidCreate } = await bootCronContext();
+    const persistence = new InMemoryWireRecordPersistence();
+    const { ctx, onDidCreate } = await bootCronContext({ persistence });
     try {
       const atomicDocs = ctx.get(IAtomicDocumentStore);
       const scope = 'cron/test-workspace';
@@ -158,6 +159,11 @@ describe('session cron wire persistence', () => {
 
       const cron = ctx.get(ISessionCronService);
       expect(cron.list().map((task) => task.id).sort()).toEqual(['aa11bb22', 'bb22cc33']);
+      const migratedIds = persistence.records
+        .filter((record) => record.type === 'cron.add')
+        .map((record) => (record['task'] as { id: string }).id)
+        .sort();
+      expect(migratedIds).toEqual(['aa11bb22', 'bb22cc33']);
       expect(await atomicDocs.get(scope, 'aa11bb22.json')).toBeUndefined();
       expect(await atomicDocs.get(scope, 'bb22cc33.json')).toBeUndefined();
       expect(await atomicDocs.get(scope, 'cc33dd44.json')).toBeDefined();
