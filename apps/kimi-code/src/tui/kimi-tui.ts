@@ -115,7 +115,7 @@ import {
   SESSION_LIST_PAGE_SIZE,
   SESSIONLESS_STARTUP_NOTICE,
 } from './constant/kimi-tui';
-import { IMAGE_INGESTION_SUBMIT_WAIT_MS } from './constant/media';
+import { MEDIA_INGESTION_SUBMIT_WAIT_MS } from './constant/media';
 import { CHROME_GUTTER } from './constant/rendering';
 import { MAX_TERMINAL_TITLE_LENGTH } from './constant/terminal';
 import { AuthFlowController } from './controllers/auth-flow';
@@ -160,11 +160,10 @@ import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attach
 import {
   extractMediaAttachments,
   originalsDirForSession,
-  pendingImageIngestions,
+  pendingMediaIngestions,
   refreshExpiringImageFileRefs,
   resolveOriginalCaptions,
   rewriteMediaPlaceholders,
-  videoAttachmentIdsInText,
 } from './utils/image-placeholder';
 import type { ExtractionResult } from './utils/image-placeholder';
 import { installInputLatencyProbe } from './utils/input-latency';
@@ -290,12 +289,12 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
 interface SendMessageOptions {
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
-  readonly stagingPaths?: readonly string[];
+  readonly videoAttachmentIds?: readonly number[];
   readonly hasMedia?: boolean;
   /**
    * Lease pre-created at extraction time by `sendNormalUserInput`. Dispatch
    * reuses it (carrying its exact-binding submission id); enqueueing defers
-   * it — the queue item owns the raw ids/paths and re-leases at dequeue.
+   * it — the queue item owns the raw ids and re-leases at dequeue.
    */
   readonly lease?: StagingLease;
 }
@@ -1330,23 +1329,20 @@ export class KimiTUI {
     }
     let extraction: ReturnType<typeof extractMediaAttachments>;
     if (preExtracted === undefined) {
-      // A just-pasted image may still be finishing its background ingestion
-      // (compression/daemon upload): give it a bounded moment so the submit
-      // can use the compressed/daemon-ref form — a slower ingestion extracts
-      // to the inline fallback instead. Undefined when nothing is pending,
+      // A just-pasted image/video may still be finishing its background
+      // ingestion (compression/daemon upload): give it a bounded moment so
+      // the submit can use the daemon-ref form — a slower image ingestion
+      // extracts to the inline fallback instead, a slower video upload
+      // refuses the submission below. Undefined when nothing is pending,
       // keeping the media-free send path synchronous.
-      const ingestionWait = pendingImageIngestions(
+      const ingestionWait = pendingMediaIngestions(
         text,
         this.imageStore,
-        IMAGE_INGESTION_SUBMIT_WAIT_MS,
+        MEDIA_INGESTION_SUBMIT_WAIT_MS,
       );
       if (ingestionWait !== undefined) await ingestionWait;
     }
     try {
-      // Pasted videos are copied into the cache and expand to a `file://`
-      // `video_url` part; the engine resolves (uploads or degrades) them
-      // inside the turn, so submission stays fully synchronous.
-      //
       // A cache-hint-swallowed resend passes its pre-dialog extraction back
       // in: the image store may already be cleared (e.g. after "Start a new
       // session"), so re-extracting from the text would lose the media.
@@ -1360,13 +1356,13 @@ export class KimiTUI {
         if (parts !== extraction.parts) extraction = { ...extraction, parts };
       }
     } catch (error) {
-      // A video cache copy failed (unwritable cache dir, vanished source…);
-      // nothing was dispatched.
+      // A pasted video's daemon upload was unusable (still in flight,
+      // failed, expired); nothing was dispatched.
       this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
       return;
     }
     // Create the staging lease right after extraction, so every exit below
-    // releases through the tracker instead of open-coding ids/paths — a
+    // releases through the tracker instead of open-coding ids — a
     // forgotten exit degrades to an unclaimed lease (swept by `releaseAll`)
     // instead of a permanently retained upload. The lease carries the
     // exact-binding submission id: the consuming turn's `turn.started` echoes
@@ -1375,8 +1371,8 @@ export class KimiTUI {
     const stagingLease = this.staging.create(
       // One retain per unique id per extraction: dedupe repeated placeholder
       // occurrences so the lease's id multiplicity matches the retain count.
-      [...new Set(extraction.imageAttachmentIds)],
-      extraction.stagingPaths,
+      [...new Set([...extraction.imageAttachmentIds, ...extraction.videoAttachmentIds])],
+      [],
       'user',
       extraction.hasMedia && this.state.appState.goal?.status !== 'active'
         ? randomUUID()
@@ -1414,7 +1410,7 @@ export class KimiTUI {
         hasMedia: true,
         parts: extraction.parts,
         imageAttachmentIds: extraction.imageAttachmentIds,
-        stagingPaths: extraction.stagingPaths,
+        videoAttachmentIds: extraction.videoAttachmentIds,
         lease: stagingLease,
       });
     } else {
@@ -1463,7 +1459,7 @@ export class KimiTUI {
               hasMedia: true,
               parts: extraction.parts,
               imageAttachmentIds: extraction.imageAttachmentIds,
-              stagingPaths: extraction.stagingPaths,
+              videoAttachmentIds: extraction.videoAttachmentIds,
               inlineSkillActivations: activations,
             }
           : { inlineSkillActivations: activations },
@@ -1587,38 +1583,27 @@ export class KimiTUI {
     const last = this.state.queuedMessages.at(-1)!;
     this.state.queuedMessages = this.state.queuedMessages.slice(0, -1);
     // A recall restores the draft into the editor — it is not a discard:
-    // consumes the retains only, keeping staged files alive (see
-    // `releaseRecalled`), and rebases recalled videos onto their staged cache
-    // copies so a vanished original source cannot lose the media.
-    this.staging.releaseRecalled(last);
-    this.rebaseRecalledVideoSources(last.text, last.stagingPaths);
+    // consumes the retains only, keeping the staged daemon uploads alive
+    // (see `releaseRecalled`) so the restored draft resubmits them.
+    this.staging.releaseRecalled([
+      ...(last.imageAttachmentIds ?? []),
+      ...(last.videoAttachmentIds ?? []),
+    ]);
     return last;
   }
 
   /**
    * Cache-hint restore: a dismissed/hand-back interception returns its draft
    * to the editor — same semantics as a queue recall (consume the stash
-   * extraction's retains, retire its staged copies, rebase videos onto them).
+   * extraction's retains; the staged daemon uploads stay alive for the
+   * restored draft).
    */
-  recallStashedMedia(text: string, extraction: ExtractionResult | undefined): void {
+  recallStashedMedia(extraction: ExtractionResult | undefined): void {
     if (extraction === undefined) return;
-    this.staging.releaseRecalled({
-      imageAttachmentIds: extraction.imageAttachmentIds,
-      stagingPaths: extraction.stagingPaths,
-    });
-    this.rebaseRecalledVideoSources(text, extraction.stagingPaths);
-  }
-
-  private rebaseRecalledVideoSources(
-    text: string,
-    stagingPaths: readonly string[] | undefined,
-  ): void {
-    if (stagingPaths === undefined || stagingPaths.length === 0) return;
-    const videoIds = videoAttachmentIdsInText(text, this.imageStore);
-    stagingPaths.forEach((path, index) => {
-      const id = videoIds[index];
-      if (id !== undefined) this.imageStore.rebaseVideoSource(id, path);
-    });
+    this.staging.releaseRecalled([
+      ...extraction.imageAttachmentIds,
+      ...extraction.videoAttachmentIds,
+    ]);
   }
 
   // =========================================================================
@@ -1640,9 +1625,9 @@ export class KimiTUI {
         options?.imageAttachmentIds !== undefined && options.imageAttachmentIds.length > 0
           ? options.imageAttachmentIds
           : undefined,
-      stagingPaths:
-        options?.stagingPaths !== undefined && options.stagingPaths.length > 0
-          ? options.stagingPaths
+      videoAttachmentIds:
+        options?.videoAttachmentIds !== undefined && options.videoAttachmentIds.length > 0
+          ? options.videoAttachmentIds
           : undefined,
       mode,
       inlineSkillActivations: options?.inlineSkillActivations,
@@ -1709,9 +1694,8 @@ export class KimiTUI {
           parts: refreshed,
           hasMedia: refreshed.length > 0,
           imageAttachmentIds: item.imageAttachmentIds !== undefined ? [...item.imageAttachmentIds] : [],
-          videoAttachmentIds: [],
+          videoAttachmentIds: item.videoAttachmentIds !== undefined ? [...item.videoAttachmentIds] : [],
           imageSnapshots: [],
-          stagingPaths: item.stagingPaths !== undefined ? [...item.stagingPaths] : [],
         },
       ).catch((error: unknown) => {
         this.failSessionRequest(`Skill activation failed: ${formatErrorMessage(error)}`);
@@ -1730,7 +1714,7 @@ export class KimiTUI {
       this.sendMessageInternal(session, item.text, {
         parts,
         imageAttachmentIds: item.imageAttachmentIds,
-        stagingPaths: item.stagingPaths,
+        videoAttachmentIds: item.videoAttachmentIds,
       });
     });
   }
@@ -1743,8 +1727,8 @@ export class KimiTUI {
     this.staging.handleTurnEnded(event);
   }
 
-  releaseStagingMedia(imageAttachmentIds: readonly number[], paths: readonly string[]): void {
-    this.staging.releaseMedia(imageAttachmentIds, paths);
+  releaseStagingMedia(mediaAttachmentIds: readonly number[]): void {
+    this.staging.releaseMedia(mediaAttachmentIds, []);
   }
 
   requestQueuedGoalPromotion(): void {
@@ -1791,22 +1775,24 @@ export class KimiTUI {
     const goalActive = this.state.appState.goal?.status === 'active';
     // The lease normally arrives pre-created by sendNormalUserInput (carrying
     // its exact-binding submission id). Queued dispatches and steer batches
-    // arrive with raw ids/paths instead: a prompt submission carrying staged
+    // arrive with raw ids instead: a prompt submission carrying staged
     // media gets a client-chosen prompt id minted here — the engine echoes it
     // on the consuming turn's `turn.started` (`promptId`), so the lease binds
     // exactly instead of through the origin heuristic. The goal-steer path
     // binds its lease explicitly below, so it gets no id.
+    const stagingIds = [
+      ...(options?.imageAttachmentIds ?? []),
+      ...(options?.videoAttachmentIds ?? []),
+    ];
     const stagingLease =
       options?.lease ??
       this.staging.create(
         // One retain per unique id per extraction: dedupe repeated placeholder
         // occurrences so the lease's id multiplicity matches the retain count.
-        imageAttachmentIds === undefined ? [] : [...new Set(imageAttachmentIds)],
-        options?.stagingPaths ?? [],
+        [...new Set(stagingIds)],
+        [],
         'user',
-        !goalActive && (imageAttachmentIds !== undefined || (options?.stagingPaths?.length ?? 0) > 0)
-          ? randomUUID()
-          : undefined,
+        !goalActive && stagingIds.length > 0 ? randomUUID() : undefined,
       );
     const submissionId = stagingLease?.submissionId;
     // While a goal is being pursued the engine holds its active turn across the
@@ -1870,10 +1856,7 @@ export class KimiTUI {
         skillName,
         skillArgs: rewrite.text,
       });
-      this.staging.releaseRecalled({
-        imageAttachmentIds: rewrite.imageAttachmentIds,
-        stagingPaths: rewrite.stagingPaths,
-      });
+      this.staging.releaseRecalled([...rewrite.imageAttachmentIds], rewrite.stagingPaths);
       this.track('input_queue');
       this.updateQueueDisplay();
       this.state.ui.requestRender();
@@ -1938,7 +1921,7 @@ export class KimiTUI {
       this.state.appState.isCompacting
     ) {
       // A queued message re-leases its staged media at dequeue dispatch; the
-      // pre-dispatch lease defers to the queue item's raw ids/paths.
+      // pre-dispatch lease defers to the queue item's raw ids.
       this.staging.defer(options?.lease);
       this.enqueueMessage(input, options);
       return;
@@ -1975,12 +1958,11 @@ export class KimiTUI {
     }
 
     // Dedupe per item, not across the batch: each queued message retained a
-    // shared image once, so the batch's id multiplicity is the retain count.
-    const imageAttachmentIds = input.flatMap((item) => [
-      ...new Set(item.imageAttachmentIds ?? []),
+    // shared medium once, so the batch's id multiplicity is the retain count.
+    const mediaAttachmentIds = input.flatMap((item) => [
+      ...new Set([...(item.imageAttachmentIds ?? []), ...(item.videoAttachmentIds ?? [])]),
     ]);
-    const stagingPaths = input.flatMap((item) => item.stagingPaths ?? []);
-    const stagingLease = this.staging.create(imageAttachmentIds, stagingPaths, 'user');
+    const stagingLease = this.staging.create(mediaAttachmentIds, [], 'user');
     const currentTurnId = this.streamingUI.getTurnContext().turnId;
     if (currentTurnId !== undefined) this.staging.bindToTurn(stagingLease, currentTurnId);
     // Same dispatch-time caption resolution as sendMessageInternal — the

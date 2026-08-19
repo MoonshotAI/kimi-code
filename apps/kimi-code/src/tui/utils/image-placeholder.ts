@@ -15,12 +15,14 @@
  *     so `resolveOriginalCaptions` adds them at dispatch time, persisting the
  *     in-memory original (`ImageAttachment.original`) into the session's
  *     media-originals dir first;
- *   - video placeholders are copied into the shared cache (`getCacheDir()`)
- *     and expand to a `video_url` part pointing at the cache copy with a
- *     `file://` url. The v1 engine resolves that local reference inside the
- *     turn — uploading it (the `ms://` inline form) or degrading to a
- *     `<video path>` tag the model reads with `ReadMediaFile` — before the
- *     prompt lands in history.
+ *   - video placeholders expand to a bare `kimi-file://<id>` video part:
+ *     the paste was uploaded to the daemon file store in the background
+ *     (`VideoAttachment.fileId`), and the engine's prompt intake
+ *     materializes the session copy and rewrites the reference with its
+ *     `?path=`, exactly like an uploaded image. A video without a usable
+ *     upload — still in flight after the bounded submit wait, failed, or
+ *     expired — aborts extraction with an error: video bytes have no
+ *     inline fallback form.
  *
  * `rewriteMediaPlaceholders` is the separate text channel for slash-command
  * args (`/skill`, plugin commands): those are plain text, so media is rendered
@@ -41,7 +43,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { copyFileSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 import type { PromptPart, Session } from '@moonshot-ai/kimi-code-sdk';
 import {
@@ -53,7 +54,7 @@ import {
 
 import { getCacheDir } from '#/utils/paths';
 
-import { IMAGE_FILE_REF_MIN_REMAINING_MS } from '../constant/media';
+import { MEDIA_FILE_REF_MIN_REMAINING_MS } from '../constant/media';
 import type {
   ImageAttachment,
   ImageAttachmentStore,
@@ -80,13 +81,6 @@ export interface ExtractionResult {
    * snapshots to rebuild the image parts as inline data URLs.
    */
   imageSnapshots: ImageResendSnapshot[];
-  /**
-   * Cache copies staged by this submission. Lifecycle is owned by the
-   * StagingLeaseTracker: deleted immediately when the submission is
-   * abandoned, retired to session lifetime once a turn consumes them
-   * (persisted history may still reference their paths).
-   */
-  stagingPaths: string[];
 }
 
 export interface ImageResendSnapshot {
@@ -116,118 +110,96 @@ export function extractMediaAttachments(
   const imageAttachmentIds: number[] = [];
   const videoAttachmentIds: number[] = [];
   const imageSnapshots: ImageResendSnapshot[] = [];
-  const stagingPaths: string[] = [];
   let cursor = 0;
   let hasMedia = false;
 
-  try {
-    PLACEHOLDER_REGEX.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = PLACEHOLDER_REGEX.exec(text)) !== null) {
-      const [literal, kind, idStr] = match;
-      if (kind !== 'image' && kind !== 'video') continue;
-      if (idStr === undefined) continue;
-      const id = Number.parseInt(idStr, 10);
-      const attachment = store.get(id);
-      if (attachment === undefined) continue; // stale / user-typed — leave as text
-      if (attachment.kind !== kind) continue;
-      const before = text.slice(cursor, match.index);
-      pushText(parts, before);
-      if (attachment.kind === 'video') {
-        // Copy the paste into the shared cache and reference it by a `file://`
-        // url; the engine resolves (uploads or degrades) it inside the turn.
-        const cachePath = materializeVideoToCache(attachment);
-        stagingPaths.push(cachePath);
-        parts.push(videoPartForCachePath(cachePath));
-        videoAttachmentIds.push(id);
-      } else {
-        const original = attachment.original;
-        imageSnapshots.push({
-          bytes: attachment.bytes,
-          mime: attachment.mime,
-          width: attachment.width,
-          height: attachment.height,
-          original:
-            original?.bytes === undefined
-              ? undefined
-              : {
-                  bytes: original.bytes,
-                  width: original.width,
-                  height: original.height,
-                  mime: original.mime,
-                },
-        });
-        // No compression caption here: `resolveOriginalCaptions` authors it
-        // at dispatch time, once the session (and its media-originals dir)
-        // is known.
-        if (attachment.fileId !== undefined) {
-          // The bytes were uploaded to the daemon file store at paste time
-          // (v2): reference them by a bare `kimi-file://` url — the engine's
-          // prompt intake materializes the session copy and rewrites the
-          // reference with its `?path=`, so the edge stages no local copy.
-          parts.push({
-            type: 'image_url',
-            imageUrl: { url: buildDaemonFileUrl(attachment.fileId) },
-          });
-        } else {
-          parts.push(imagePartForAttachment(attachment));
-        }
-        imageAttachmentIds.push(id);
-      }
-      hasMedia = true;
-      cursor = match.index + literal.length;
-    }
-    const tail = text.slice(cursor);
-    pushText(parts, tail);
-
-    store.retainFileIds(imageAttachmentIds);
-    const freshParts = refreshExpiringImageFileRefs(parts, imageAttachmentIds, store);
-    return {
-      // Text-only submissions drop the synthesised parts array — the
-      // caller's contract is "parts is meaningful iff hasMedia", and
-      // emitting a stray TextPart confuses consumers that branch on
-      // `parts.length > 0`.
-      parts: hasMedia ? freshParts : [],
-      hasMedia,
-      imageAttachmentIds,
-      videoAttachmentIds,
-      imageSnapshots,
-      stagingPaths,
-    };
-  } catch (error) {
-    cleanupStagingPaths(stagingPaths);
-    throw error;
-  }
-}
-
-/**
- * The video attachment ids referenced by `text`, in placeholder order — the
- * same order extraction staged their cache copies in, so callers can zip the
- * result with a submission's `stagingPaths`.
- */
-export function videoAttachmentIdsInText(text: string, store: ImageAttachmentStore): number[] {
-  const ids: number[] = [];
   PLACEHOLDER_REGEX.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = PLACEHOLDER_REGEX.exec(text)) !== null) {
-    const [, kind, idStr] = match;
-    if (kind !== 'video' || idStr === undefined) continue;
+    const [literal, kind, idStr] = match;
+    if (kind !== 'image' && kind !== 'video') continue;
+    if (idStr === undefined) continue;
     const id = Number.parseInt(idStr, 10);
-    if (store.get(id)?.kind === 'video') ids.push(id);
+    const attachment = store.get(id);
+    if (attachment === undefined) continue; // stale / user-typed — leave as text
+    if (attachment.kind !== kind) continue;
+    const before = text.slice(cursor, match.index);
+    pushText(parts, before);
+    if (attachment.kind === 'video') {
+      // The paste was uploaded to the daemon file store in the background:
+      // reference it by a bare `kimi-file://` url — the engine's prompt
+      // intake materializes the session copy, so the edge stages no local
+      // copy. Throws when the upload is unusable (still in flight, failed,
+      // expired): a video has no inline fallback.
+      parts.push(videoPartForAttachment(attachment));
+      videoAttachmentIds.push(id);
+    } else {
+      const original = attachment.original;
+      imageSnapshots.push({
+        bytes: attachment.bytes,
+        mime: attachment.mime,
+        width: attachment.width,
+        height: attachment.height,
+        original:
+          original?.bytes === undefined
+            ? undefined
+            : {
+                bytes: original.bytes,
+                width: original.width,
+                height: original.height,
+                mime: original.mime,
+              },
+      });
+      // No compression caption here: `resolveOriginalCaptions` authors it
+      // at dispatch time, once the session (and its media-originals dir)
+      // is known.
+      if (attachment.fileId !== undefined) {
+        // The bytes were uploaded to the daemon file store at paste time
+        // (v2): reference them by a bare `kimi-file://` url — the engine's
+        // prompt intake materializes the session copy and rewrites the
+        // reference with its `?path=`, so the edge stages no local copy.
+        parts.push({
+          type: 'image_url',
+          imageUrl: { url: buildDaemonFileUrl(attachment.fileId) },
+        });
+      } else {
+        parts.push(imagePartForAttachment(attachment));
+      }
+      imageAttachmentIds.push(id);
+    }
+    hasMedia = true;
+    cursor = match.index + literal.length;
   }
-  return ids;
+  const tail = text.slice(cursor);
+  pushText(parts, tail);
+
+  store.retainFileIds([...imageAttachmentIds, ...videoAttachmentIds]);
+  const freshParts = refreshExpiringImageFileRefs(parts, imageAttachmentIds, store);
+  return {
+    // Text-only submissions drop the synthesised parts array — the
+    // caller's contract is "parts is meaningful iff hasMedia", and
+    // emitting a stray TextPart confuses consumers that branch on
+    // `parts.length > 0`.
+    parts: hasMedia ? freshParts : [],
+    hasMedia,
+    imageAttachmentIds,
+    videoAttachmentIds,
+    imageSnapshots,
+  };
 }
 
 /**
- * Give images referenced by `text` a bounded moment to finish their
- * background paste ingestion (compression/upload — see `ImageAttachment.pending`)
- * before extraction, so a paste-then-immediately-submit still expands to the
- * compressed/daemon-ref form. The returned promise resolves after `timeoutMs`
- * at the latest; whatever has not landed by then simply extracts to the
- * inline fallback form. Returns undefined when nothing is pending, so the
- * submit path stays synchronous for media-free prompts.
+ * Give media referenced by `text` a bounded moment to finish its background
+ * paste ingestion (image compression/upload, video daemon upload — see
+ * `ImageAttachment.pending` / `VideoAttachment.pending`) before extraction,
+ * so a paste-then-immediately-submit still expands to the daemon-ref form.
+ * The returned promise resolves after `timeoutMs` at the latest; an image
+ * whose ingestion has not landed by then extracts to the inline fallback
+ * form, a video refuses the submission (no inline form exists). Returns
+ * undefined when nothing is pending, so the submit path stays synchronous
+ * for media-free prompts.
  */
-export function pendingImageIngestions(
+export function pendingMediaIngestions(
   text: string,
   store: ImageAttachmentStore,
   timeoutMs: number,
@@ -237,9 +209,10 @@ export function pendingImageIngestions(
   let match: RegExpExecArray | null;
   while ((match = PLACEHOLDER_REGEX.exec(text)) !== null) {
     const [, kind, idStr] = match;
-    if (kind !== 'image' || idStr === undefined) continue;
+    if (kind !== 'image' && kind !== 'video') continue;
+    if (idStr === undefined) continue;
     const attachment = store.get(Number.parseInt(idStr, 10));
-    if (attachment?.kind === 'image' && attachment.pending !== undefined) {
+    if (attachment?.kind === kind && attachment.pending !== undefined) {
       pendings.push(attachment.pending);
     }
   }
@@ -280,7 +253,7 @@ export function refreshExpiringImageFileRefs(
     const expiresAt = attachment.fileExpiresAt;
     const usable =
       fileId !== undefined &&
-      (expiresAt === undefined || expiresAt - now > IMAGE_FILE_REF_MIN_REMAINING_MS);
+      (expiresAt === undefined || expiresAt - now > MEDIA_FILE_REF_MIN_REMAINING_MS);
     if (usable) {
       const url = buildDaemonFileUrl(fileId);
       if (url === part.imageUrl.url) return part;
@@ -298,10 +271,12 @@ export function refreshExpiringImageFileRefs(
 
 /**
  * Make an extraction safe to resend after a session reset. The reset clears
- * the image store and deletes daemon file ids, so uploaded image refs must be
- * replaced with the bytes captured during the original extraction. Cache
- * paths are intentionally preserved: they are carried by the resend's new
- * staging lease and remain available to any path tag in the prompt.
+ * the image store and deletes unretained daemon file ids, so uploaded image
+ * refs must be replaced with the bytes captured during the original
+ * extraction. Video refs pass through unchanged: their uploads were retained
+ * by the stash, and `ImageAttachmentStore.clear` keeps retained uploads
+ * alive for exactly this resend (unclaimed survivors fall to the daemon's
+ * staging TTL).
  *
  * Snapshots of compressed pastes also carry the pre-compression original: the
  * cleared store took the attachment with it, so dispatch-time caption
@@ -507,17 +482,39 @@ function imagePartMatchesAttachment(
 }
 
 /**
- * A `video_url` prompt part pointing at a cache copy by `file://` url. The v1
- * engine resolves the local reference in-turn (upload → `ms://`, or degrade to
- * a `<video path>` tag) before it reaches the model or the persisted history.
+ * A `video_url` prompt part referencing the paste's daemon upload by a bare
+ * `kimi-file://` url — the engine's prompt intake materializes the session
+ * copy before the part reaches the model or the persisted history. Throws
+ * when the upload is unusable: video bytes have no inline fallback, so the
+ * submission is refused with an actionable message instead.
  */
-function videoPartForCachePath(cachePath: string): PromptPart {
-  return {
-    type: 'video_url',
-    videoUrl: { url: pathToFileURL(cachePath).href },
-  };
+function videoPartForAttachment(att: VideoAttachment): PromptPart {
+  const fileId = att.fileId;
+  const expired =
+    att.fileExpiresAt !== undefined &&
+    att.fileExpiresAt - Date.now() <= MEDIA_FILE_REF_MIN_REMAINING_MS;
+  if (fileId !== undefined && !expired) {
+    return {
+      type: 'video_url',
+      videoUrl: { url: buildDaemonFileUrl(fileId) },
+    };
+  }
+  if (att.pending !== undefined) {
+    throw new Error(`Video "${att.label}" is still uploading; try again in a moment.`);
+  }
+  throw new Error(
+    expired
+      ? `Video "${att.label}" expired before it was sent; paste it again.`
+      : `Video "${att.label}" could not be uploaded; paste it again.`,
+  );
 }
 
+/**
+ * Copy a pasted video into the shared cache for the slash-command args
+ * channel (`rewriteMediaPlaceholders`): command args are plain text, so the
+ * model reaches the video through `ReadMediaFile` on the cache copy — the
+ * prompt-part channel never stages one (see `videoPartForAttachment`).
+ */
 function materializeVideoToCache(att: VideoAttachment, escapeProofName = false): string {
   const cacheDir = getCacheDir();
   mkdirSync(cacheDir, { recursive: true });

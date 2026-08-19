@@ -8,7 +8,11 @@ import GOAL_PAUSED_REMINDER from './goal-paused-reminder.md?raw';
 
 export interface GoalInjectionOptions {
   readonly getGoal: () => GoalSnapshot | null;
+  readonly isWaitForEnabled?: () => boolean;
 }
+
+export const GOAL_WAIT_FOR_GUIDANCE =
+  'If you are waiting for background sub-agents or bash tasks to finish, call WaitFor to wait for them inside this turn instead of ending the turn; ending the turn just gets you re-invoked again and again. You can also use the waiting time to do useful parallel work. Either way, make sure every goal turn is productive.';
 
 export class GoalInjection extends Service {
   constructor(
@@ -24,7 +28,9 @@ export class GoalInjection extends Service {
   private reminder(): string | undefined {
     const goal = this.options.getGoal();
     if (goal === null) return undefined;
-    if (goal.status === 'active') return buildGoalReminder(goal);
+    if (goal.status === 'active') {
+      return buildGoalReminder(goal, this.options.isWaitForEnabled?.() === true);
+    }
     if (goal.status === 'blocked') return buildBlockedNote(goal);
     if (goal.status === 'paused') return buildPausedNote(goal);
     return undefined;
@@ -52,7 +58,7 @@ function buildPausedNote(goal: GoalSnapshot): string {
   });
 }
 
-function buildGoalReminder(goal: GoalSnapshot): string {
+function buildGoalReminder(goal: GoalSnapshot, waitForEnabled: boolean): string {
   const budgets = formatBudgets(goal);
   return renderPrompt(GOAL_ACTIVE_REMINDER, {
     objective: escapeUntrustedText(goal.objective),
@@ -61,6 +67,7 @@ function buildGoalReminder(goal: GoalSnapshot): string {
     progress: `${goal.turnsUsed} continuation turns, ${goal.tokensUsed} tokens, ${formatElapsed(goal.wallClockMs)} elapsed`,
     budgets_block: budgets.length > 0 ? `Budgets: ${budgets}.\n` : '',
     budget_guidance: isNearingBudget(goal) ? BUDGET_GUIDANCE_NEARING : BUDGET_GUIDANCE_WITHIN,
+    wait_for_guidance: waitForEnabled ? ` ${GOAL_WAIT_FOR_GUIDANCE}` : '',
   });
 }
 

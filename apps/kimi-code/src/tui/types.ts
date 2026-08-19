@@ -270,7 +270,7 @@ export interface QueuedMessage {
   readonly agentId?: string;
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
-  readonly stagingPaths?: readonly string[];
+  readonly videoAttachmentIds?: readonly number[];
   /** `bash` for a `!` shell command queued while another command is running;
    *  `skill` for a slash-skill activation queued while the session is busy;
    *  undefined (=`prompt`) for a normal message. */
@@ -294,7 +294,7 @@ export interface SteerInputItem {
   readonly text: string;
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
-  readonly stagingPaths?: readonly string[];
+  readonly videoAttachmentIds?: readonly number[];
 }
 
 export const INITIAL_LIVE_PANE: LivePaneState = {

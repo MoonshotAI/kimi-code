@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { ContextApplyCompaction } from '#/agent/contextMemory/contextEvents';
+import type { TaskOrigin } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
@@ -10,6 +11,8 @@ import { turnKey } from '#/agent/loop/turnOps';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { planKey } from '#/features/plan/planOps';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { IAgentTaskService, type AgentTask } from '#/agent/task/task';
+import { taskNotificationDeliveryKey } from '#/agent/task/taskService';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
@@ -500,5 +503,42 @@ describe('AgentConversationUndoService', () => {
       .map((event) => event.event);
     expect(wireEvents).toContain('context.undo');
     expect(wireEvents).not.toContain('log.cut');
+  });
+
+  it('re-delivers wait-reported task notifications after conversation undo', async () => {
+    setup();
+    const undo = ctx.get(IAgentConversationUndoService);
+    const tasks = ctx.get(IAgentTaskService);
+    ctx.appendTurnExchange('u1', 'a1');
+
+    const completingTask = (output: string): AgentTask => ({
+      idPrefix: 'test',
+      kind: 'process',
+      description: 'fake process task',
+      start: async (sink) => {
+        sink.appendOutput(output);
+        await sink.settle({ status: 'completed' });
+      },
+      toInfo: (base) => ({ ...base, kind: 'process', command: 'echo', pid: 0, exitCode: null }),
+    });
+
+    const taskA = tasks.registerTask(completingTask('a\n'));
+    const taskB = tasks.registerTask(completingTask('b\n'));
+    tasks.markTasksDeliveredViaWait([
+      { taskId: taskA, status: 'completed' },
+      { taskId: taskB, status: 'completed' },
+    ]);
+    await tasks.wait(taskA, 1000);
+    await tasks.wait(taskB, 1000);
+
+    expect(ctx.context.get().some((message) => message.origin?.kind === 'task')).toBe(false);
+    expect(ctx.agentState.get(taskNotificationDeliveryKey)).toHaveLength(2);
+
+    await undo.undo(1);
+
+    const redelivered = ctx.context.get().filter((message) => message.origin?.kind === 'task');
+    expect(redelivered.map((message) => (message.origin as TaskOrigin).taskId).sort()).toEqual(
+      [taskA, taskB].sort(),
+    );
   });
 });
