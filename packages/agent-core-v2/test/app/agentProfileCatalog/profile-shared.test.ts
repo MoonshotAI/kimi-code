@@ -12,6 +12,7 @@ import {
   registerAgentProfile,
 } from '#/app/agentProfileCatalog/contribution';
 import {
+  DEFAULT_REPLY_STYLE_GUIDE,
   renderPromptTemplateResult,
   renderSystemPromptResult,
   systemPromptVars,
@@ -104,7 +105,7 @@ describe('systemPromptVars', () => {
     const vars = systemPromptVars({}, { skillActive: true });
 
     expect(vars['product_name']).toBe('Kimi Code CLI');
-    expect(vars['reply_style_guide']).toContain("render as Markdown in the user's terminal");
+    expect(vars['reply_style_guide']).toBe(DEFAULT_REPLY_STYLE_GUIDE);
   });
 
   it('lets the context override host-identity variables', () => {
@@ -281,15 +282,15 @@ describe('renderSystemPromptResult', () => {
 
   it('renders the host identity from the context, defaulting to the CLI text', () => {
     const fallback = renderSystemPromptResult('', {}, { skillActive: true }).text;
-    expect(fallback).toContain('You are Kimi Code CLI,');
-    expect(fallback).toContain("render as Markdown in the user's terminal");
+    expect(fallback).toContain('Kimi Code CLI');
+    expect(fallback).toContain(DEFAULT_REPLY_STYLE_GUIDE);
 
     const overridden = renderSystemPromptResult(
       '',
       { productName: 'Kimi Desktop', replyStyleGuide: 'GUI_STYLE' },
       { skillActive: true },
     ).text;
-    expect(overridden).toContain('You are Kimi Desktop,');
+    expect(overridden).toContain('Kimi Desktop');
     expect(overridden).toContain('GUI_STYLE');
     expect(overridden).not.toContain('Kimi Code CLI');
   });

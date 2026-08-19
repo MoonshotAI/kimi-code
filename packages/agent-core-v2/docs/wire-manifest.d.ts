@@ -24,7 +24,7 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (52 record types)
+// Index (53 record types)
 //   config.update                      profile                                                                     src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory, turn                                                         src/agent/contextMemory/contextEvents.ts
 //   context.append_message             contextMemory, flow, goalForkNotice, plan, task.notificationDelivery, todo  src/agent/contextMemory/contextEvents.ts
@@ -62,6 +62,7 @@
 //   swarm_mode.exit                    contextMemory, swarm                                                        src/features/swarm/swarmOps.ts
 //   task.started                       task                                                                        src/agent/task/taskOps.ts
 //   task.terminated                    task                                                                        src/agent/task/taskOps.ts
+//   task.waitDelivered                 task.notificationDelivery                                                   src/agent/task/taskOps.ts
 //   token_counting.measured            tokenCounting                                                               src/agent/tokenCounting/tokenCountingOps.ts
 //   token_counting.rebased             tokenCounting                                                               src/agent/tokenCounting/tokenCountingOps.ts
 //   token_counting.truncated           tokenCounting                                                               src/agent/tokenCounting/tokenCountingOps.ts
@@ -564,6 +565,15 @@ interface TaskTerminatedPayload {
 }
 
 /**
+ * states: task.notificationDelivery
+ * owner: src/agent/task/taskOps.ts
+ */
+interface TaskWaitDeliveredPayload {
+  _name: 'task.waitDelivered';
+  keys: string[];
+}
+
+/**
  * states: tokenCounting
  * owner: src/agent/tokenCounting/tokenCountingOps.ts
  */
@@ -804,6 +814,7 @@ interface WirePayloadMap {
   "swarm_mode.exit": SwarmModeExitPayload;
   "task.started": TaskStartedPayload;
   "task.terminated": TaskTerminatedPayload;
+  "task.waitDelivered": TaskWaitDeliveredPayload;
   "token_counting.measured": TokenCountingMeasuredPayload;
   "token_counting.rebased": TokenCountingRebasedPayload;
   "token_counting.truncated": TokenCountingTruncatedPayload;

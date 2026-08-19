@@ -181,18 +181,14 @@ async function* decodedLines(lines: readonly string[]): AsyncGenerator<string> {
 }
 
 function notReadableFileOutput(path: string): string {
-  return (
-    `"${path}" is not readable as UTF-8 text. ` +
-    'If it is an image or video, use ReadMediaFile. ' +
-    'For other binary formats, use Bash or an MCP tool if available.'
-  );
+  return `"${path}" is not readable as UTF-8 text. Only text files can be read.`;
 }
 
 function notUtf8DecodableFileOutput(path: string): string {
   return (
     `"${path}" is not valid UTF-8 or UTF-16 text. ` +
     'Only UTF-8 and UTF-16 text files can be read; ' +
-    'for other encodings (e.g. GBK), convert the file to UTF-8 first (e.g. `iconv` via Bash).'
+    'for other encodings (e.g. GBK), convert the file to UTF-8 first (e.g. with `iconv`).'
   );
 }
 
@@ -275,7 +271,7 @@ export class ReadTool implements IReadTool {
       if (fileType.kind === 'image' || fileType.kind === 'video') {
         return {
           isError: true,
-          output: `"${args.path}" is a ${fileType.kind} file. Use ReadMediaFile to read image or video files.`,
+          output: `"${args.path}" is ${fileType.kind === 'image' ? 'an' : 'a'} ${fileType.kind} file. Only text files can be read.`,
         };
       }
 
@@ -289,7 +285,7 @@ export class ReadTool implements IReadTool {
             output:
               `"${args.path}" is ${encodingDisplayName(detection.encoding)} text but too large to transcode ` +
               `(${String(stat.size)} bytes > ${String(TRANSCODE_MAX_BYTES)}). ` +
-              'Convert it to UTF-8 first (e.g. `iconv` via Bash).',
+              'Convert it to UTF-8 first (e.g. with `iconv`).',
           };
         }
         const decoded = decodeUtfText(await fs.readBytes(safePath), detection.encoding);

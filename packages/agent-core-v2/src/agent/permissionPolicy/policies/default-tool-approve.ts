@@ -14,6 +14,7 @@ const DEFAULT_APPROVE_TOOLS = new Set([
   'TodoList',
   'TaskList',
   'TaskOutput',
+  'WaitFor',
   'CronList',
   'WebSearch',
   'FetchURL',

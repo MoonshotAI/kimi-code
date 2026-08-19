@@ -25,6 +25,7 @@ export interface SubagentSpawnedPayload {
   readonly runInBackground: boolean;
   readonly model?: string;
   readonly thinkingEffort?: string;
+  readonly taskId?: string;
 }
 
 export class SubagentSpawned extends Event2<SubagentSpawnedPayload> {
@@ -75,6 +76,7 @@ export interface AgentRunSpawnedMeta {
   readonly swarmIndex?: number;
   readonly runInBackground?: boolean;
   readonly model?: string;
+  readonly taskId?: string;
 }
 
 export interface MirrorAgentRunOptions {
@@ -83,6 +85,7 @@ export interface MirrorAgentRunOptions {
   readonly suppressRateLimitFailureEvent?: boolean;
   readonly signal: AbortSignal;
   readonly cancel?: (reason?: unknown) => void;
+  readonly deferStarted?: boolean;
 }
 
 export function emitAgentRunSpawned(
@@ -107,6 +110,7 @@ export function emitAgentRunSpawned(
       runInBackground: meta.runInBackground ?? false,
       model: meta.model,
       thinkingEffort: childProfile?.getEffectiveThinkingLevel(),
+      taskId: meta.taskId,
     }),
   );
   childProfile?.republishStatus();
@@ -127,7 +131,9 @@ export async function mirrorAgentRun(
   const dispatcher = requester.accessor.get(IEventDispatcher);
   const subagents = requester.accessor.get(ISessionSubagentService);
   const agentLifecycle = requester.accessor.get(IAgentLifecycleService);
-  void dispatcher?.dispatch(new SubagentStarted({ subagentId: run.agentId }));
+  if (options.deferStarted !== true) {
+    void dispatcher?.dispatch(new SubagentStarted({ subagentId: run.agentId }));
+  }
   if (options.prompt !== undefined) {
     const cancelAndRethrow = (reason: unknown): never => {
       options.cancel?.(reason);

@@ -40,6 +40,10 @@ export interface ScopedEntry {
 
 const _scopedRegistry: ScopedEntry[] = [];
 
+function findScopedEntryIndex(scope: ScopeKind, id: ServiceIdentifier<unknown>): number {
+  return _scopedRegistry.findIndex((entry) => entry.scope === scope && entry.id === id);
+}
+
 export function registerScopedService<T>(
   scope: ScopeKind,
   id: ServiceIdentifier<T>,
@@ -47,6 +51,12 @@ export function registerScopedService<T>(
   activation: ScopeActivation = ScopeActivation.OnScopeCreated,
   domain: string = 'unknown',
 ): void {
+  const existing = findScopedEntryIndex(scope, id as ServiceIdentifier<unknown>);
+  if (existing !== -1) {
+    throw new BugIndicatingError(
+      `duplicate scoped service registration for '${String(id)}' in scope '${scope}' (registered domain '${_scopedRegistry[existing]?.domain}', attempted domain '${domain}'); use overrideScopedService for intentional replacement`,
+    );
+  }
   const descriptor = new SyncDescriptor<T>(ctor);
   _scopedRegistry.push({
     scope,
@@ -55,6 +65,29 @@ export function registerScopedService<T>(
     domain,
     activation,
   });
+}
+
+export function overrideScopedService<T>(
+  scope: ScopeKind,
+  id: ServiceIdentifier<T>,
+  ctor: new (...args: any[]) => T,
+  activation: ScopeActivation = ScopeActivation.OnScopeCreated,
+  domain: string = 'unknown',
+): void {
+  const index = findScopedEntryIndex(scope, id as ServiceIdentifier<unknown>);
+  if (index === -1) {
+    throw new BugIndicatingError(
+      `overrideScopedService found no registration for '${String(id)}' in scope '${scope}' (domain '${domain}'); use registerScopedService for the initial registration`,
+    );
+  }
+  const descriptor = new SyncDescriptor<T>(ctor);
+  _scopedRegistry[index] = {
+    scope,
+    id: id as ServiceIdentifier<unknown>,
+    descriptor: descriptor as SyncDescriptor<unknown>,
+    domain,
+    activation,
+  };
 }
 
 export function getScopedServiceDescriptors(scope: ScopeKind): ReadonlyArray<ScopedEntry> {

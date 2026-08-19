@@ -7,7 +7,7 @@
 
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import {
   KIMI_CODE_BANNER_DIR_NAME,
@@ -18,6 +18,8 @@ import {
   KIMI_CODE_HOME_ENV,
   KIMI_CODE_INPUT_HISTORY_DIR_NAME,
   KIMI_CODE_LOG_DIR_NAME,
+  KIMI_CODE_NATIVE_STAGED_STATE_FILE_NAME,
+  KIMI_CODE_NATIVE_STAGING_DIR_NAME,
   KIMI_CODE_PLUGIN_UPDATE_NOTICE_STATE_FILE_NAME,
   KIMI_CODE_UPDATE_INSTALL_LOCK_FILE_NAME,
   KIMI_CODE_UPDATE_INSTALL_STATE_FILE_NAME,
@@ -97,6 +99,24 @@ export function getPluginUpdateNoticeStateFile(): string {
     KIMI_CODE_UPDATE_DIR_NAME,
     KIMI_CODE_PLUGIN_UPDATE_NOTICE_STATE_FILE_NAME,
   );
+}
+
+/**
+ * Return the native staged-update directory: `<exe dir>/.staging/`.
+ *
+ * Anchored on the running executable (not `~/.kimi-code/bin`) because the
+ * Windows installer honors `KIMI_INSTALL_DIR`, and the swap's atomic renames
+ * require the staged binary to sit on the same volume as the exe.
+ */
+export function getNativeStagingDir(exePath: string): string {
+  return join(dirname(exePath), KIMI_CODE_NATIVE_STAGING_DIR_NAME);
+}
+
+/**
+ * Return the staged-update metadata file: `<exe dir>/.staging/staged.json`.
+ */
+export function getNativeStagedStateFile(exePath: string): string {
+  return join(getNativeStagingDir(exePath), KIMI_CODE_NATIVE_STAGED_STATE_FILE_NAME);
 }
 
 /**

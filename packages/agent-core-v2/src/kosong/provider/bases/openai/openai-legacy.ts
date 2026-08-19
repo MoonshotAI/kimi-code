@@ -119,7 +119,7 @@ export interface OpenAILegacyGenerationKwargs {
 
 interface OpenAIMessage {
   role: string;
-  content?: string | OpenAIContentPart[] | undefined;
+  content?: string | OpenAIContentPart[] | null | undefined;
   tool_calls?: OpenAIToolCallOut[] | undefined;
   tool_call_id?: string | undefined;
   name?: string | undefined;
@@ -248,6 +248,10 @@ function convertMessage(
     result.tool_calls === undefined
   ) {
     result.content = '';
+  }
+
+  if (message.role === 'assistant' && result.content === undefined) {
+    result.content = null;
   }
 
   if (hasReasoningPart || (preserveThinking && message.role === 'assistant')) {
