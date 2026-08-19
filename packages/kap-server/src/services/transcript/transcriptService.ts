@@ -507,7 +507,15 @@ export class TranscriptService {
       throw error;
     }
     const messages = [...reduceContextTranscript(records).entries];
-    const base = groupMessagesIntoSnapshot(messages);
+    const taskOriginTurnTaskIds = new Set<string>();
+    for (const record of records) {
+      if (record.type !== 'turn.started') continue;
+      const origin = (record as { origin?: { kind?: unknown; taskId?: unknown } }).origin;
+      if (origin?.kind === 'task' && typeof origin.taskId === 'string') {
+        taskOriginTurnTaskIds.add(origin.taskId);
+      }
+    }
+    const base = groupMessagesIntoSnapshot(messages, { taskOriginTurnTaskIds });
     return foldWireRecordFacts(records, base);
   }
 

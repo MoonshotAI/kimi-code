@@ -444,7 +444,8 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
   });
 
   it('folds task-notification user messages into the current turn instead of opening their own', () => {
-    const snapshot = groupMessagesIntoSnapshot([
+    const snapshot = groupMessagesIntoSnapshot(
+      [
       { role: 'user', content: [{ type: 'text', text: 'run it' }], toolCalls: [], origin: { kind: 'user' } },
       {
         role: 'assistant',
@@ -462,7 +463,9 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         content: [{ type: 'text', text: 'continuing' }],
         toolCalls: [],
       },
-    ]);
+      ],
+      { taskOriginTurnTaskIds: new Set() },
+    );
 
     const turns = snapshot.items.filter((i) => i.kind === 'turn');
     expect(turns).toHaveLength(1);
@@ -828,6 +831,30 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(snapshot.items).toHaveLength(2);
     const cronTurn = snapshot.items[1];
     expect(cronTurn?.kind === 'turn' && cronTurn.origin.kind).toBe('cron');
+  });
+
+  it('opens a task turn for a notification with a task-origin turn.started in the wire', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'answer' }],
+          toolCalls: [],
+        },
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'task done' }],
+          toolCalls: [],
+          origin: { kind: 'task', taskId: 'task-9' } as { kind: string },
+        },
+      ],
+      { taskOriginTurnTaskIds: new Set(['task-9']) },
+    );
+
+    const taskTurn = snapshot.items[1];
+    if (taskTurn?.kind !== 'turn') throw new Error('expected turn');
+    expect(taskTurn.origin).toMatchObject({ kind: 'task', taskId: 'task-9' });
   });
 
   it('maps legacy background_task origins to task turns, preserving the taskId', () => {

@@ -65,6 +65,9 @@ const FALLBACK_ORIGIN: TurnOrigin = { kind: 'other' };
 
 export function groupMessagesIntoSnapshot(
   messages: readonly HistoryMessage[],
+  options?: {
+    readonly taskOriginTurnTaskIds?: ReadonlySet<string>;
+  },
 ): AgentTranscriptSnapshot {
   const items: TranscriptItem[] = [];
   const attachments: TranscriptAttachment[] = [];
@@ -175,13 +178,16 @@ export function groupMessagesIntoSnapshot(
         continue;
       }
       if (originKind === 'task' || originKind === 'background_task' || originKind === 'task_notification') {
-        if (prevRoleAtEntry !== 'assistant' && prevRoleAtEntry !== 'tool') {
+        const origin = message.origin as { taskId?: unknown } | undefined;
+        const taskId = typeof origin?.taskId === 'string' ? origin.taskId : undefined;
+        const opensOwn = options?.taskOriginTurnTaskIds === undefined
+          ? prevRoleAtEntry !== 'assistant' && prevRoleAtEntry !== 'tool'
+          : taskId === undefined || options.taskOriginTurnTaskIds.has(taskId);
+        if (opensOwn) {
           const opening = foldTurnOpeningInput(message);
           startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
           continue;
         }
-        const origin = message.origin as { taskId?: unknown } | undefined;
-        const taskId = typeof origin?.taskId === 'string' ? origin.taskId : undefined;
         const current = ensureTurn(mapOrigin(message));
         let step = current.steps.at(-1);
         if (step === undefined) {
