@@ -1277,10 +1277,10 @@ onUnmounted(() => {
                     <svg class="tg-car" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="m13.172 12l-4.95-4.95l1.414-1.413L16 12l-6.364 6.364l-1.414-1.415z"/></svg>
                   </div>
                 </div>
-                <span class="stage-label">③ Sub Agent identity card · one per delegation — task title + agent type; the whole card opens the side panel (no in-stream expansion, never grouped)</span>
+                <span class="stage-label">③ Sub Agent identity card · one per delegation — task title + a meta line leading with the 前台/后台 mode then agent type · model · effort; the whole card opens the side panel (no in-stream expansion, never grouped)</span>
                 <div class="p-agent-card">
                   <span class="pa-ic"><svg viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M13.5 2c0 .444-.193.843-.5 1.118V5h5a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3h5V3.118A1.5 1.5 0 1 1 13.5 2M6 7a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zm-4 3H0v6h2zm20 0h2v6h-2zM9 14.5a1.5 1.5 0 1 0 0-3a1.5 1.5 0 0 0 0 3m6 0a1.5 1.5 0 1 0 0-3a1.5 1.5 0 0 0 0 3"/></svg></span>
-                  <span class="pa-main"><span class="pa-task">分析双引擎架构</span><span class="pa-type">Explore</span></span>
+                  <span class="pa-main"><span class="pa-task">分析双引擎架构</span><span class="pa-type">前台 · Explore</span></span>
                   <span class="pa-ok">✓</span>
                   <span class="pa-go">→</span>
                 </div>

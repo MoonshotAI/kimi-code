@@ -44,6 +44,10 @@ export default {
     expand: '展开详情',
     collapse: '收起详情',
   },
+  agent: {
+    foreground: '前台',
+    background: '后台',
+  },
   output: {
     waiting: '等待输出…',
     empty: '（无输出）',

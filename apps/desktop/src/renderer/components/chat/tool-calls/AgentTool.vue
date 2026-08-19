@@ -31,6 +31,7 @@ const emit = defineEmits<{
 interface AgentInput {
   description?: string;
   subagentType?: string;
+  runInBackground?: boolean;
 }
 
 function parseAgentInput(arg: string): AgentInput {
@@ -40,6 +41,7 @@ function parseAgentInput(arg: string): AgentInput {
     return {
       description: typeof obj['description'] === 'string' ? obj['description'] : undefined,
       subagentType: typeof obj['subagent_type'] === 'string' ? obj['subagent_type'] : undefined,
+      runInBackground: obj['run_in_background'] === true,
     };
   } catch {
     return {};
@@ -63,13 +65,19 @@ const agentTarget = computed(
 );
 const canOpenAgent = computed(() => agentTarget.value !== undefined);
 
-// Meta line: agent type · bound model (friendly name) · effort (concrete
-// levels only; boolean on/off hidden). Absent for history rows whose
+// Meta line: 前台/后台 · agent type · bound model (friendly name) · effort
+// (concrete levels only; boolean on/off hidden). The run_in_background arg
+// defaults to foreground when omitted. Absent for history rows whose
 // lifecycle events predate the session load. The resolved agent id goes
 // along so restored rows keyed by agent id still resolve.
 const boundModel = computed(() => resolveAgentModel?.(props.tool.id, agentTarget.value));
 const meta = computed(() =>
-  [agentType.value, boundModel.value?.display, boundModel.value?.effort]
+  [
+    input.value.runInBackground ? t('tools.agent.background') : t('tools.agent.foreground'),
+    agentType.value,
+    boundModel.value?.display,
+    boundModel.value?.effort,
+  ]
     .filter((part) => part)
     .join(' · '),
 );

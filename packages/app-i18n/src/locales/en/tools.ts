@@ -44,6 +44,10 @@ export default {
     expand: 'Expand details',
     collapse: 'Collapse details',
   },
+  agent: {
+    foreground: 'Foreground',
+    background: 'Background',
+  },
   output: {
     waiting: 'Waiting for output…',
     empty: 'No output',
