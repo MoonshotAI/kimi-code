@@ -36,6 +36,7 @@ import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
 import { buildGoalToolHeader } from './tool-renderers/goal';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
+import { buildWaitForHeader } from './tool-renderers/wait-for';
 
 const MAX_ARG_LENGTH = 60;
 const MAX_SUB_TOOL_CALLS_SHOWN = 4;
@@ -1502,6 +1503,14 @@ export class ToolCallComponent extends Container {
       chip: isFinished && result !== undefined ? this.buildHeaderChip(result) : '',
     });
     if (goalHeader !== undefined) return goalHeader;
+
+    const waitForHeader = buildWaitForHeader({
+      toolCall,
+      result,
+      bullet,
+      chip: isFinished && result !== undefined ? this.buildHeaderChip(result) : '',
+    });
+    if (waitForHeader !== undefined) return waitForHeader;
 
     if (this.isSingleSubagentView()) {
       return this.buildSingleSubagentHeader();

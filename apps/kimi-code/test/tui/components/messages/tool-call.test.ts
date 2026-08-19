@@ -1933,4 +1933,106 @@ describe('ToolCallComponent', () => {
       stderr.restore();
     }
   });
+
+  describe('WaitFor header', () => {
+    const waitForCompletedOutput = [
+      'wait_status: completed',
+      'task_id: question-80w0h7nw',
+      'waited_ms: 9607',
+      'timeout_ms: 300000',
+      '',
+      '[finished]',
+      'task_id: question-80w0h7nw',
+      'description: demo question',
+      'status: completed',
+      'kind: question',
+    ].join('\n');
+
+    it('shows the waiting tense with the task id while pending', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_wait_pending',
+          name: 'WaitFor',
+          args: { task_id: 'question-80w0h7nw', timeout: 300 },
+        },
+        undefined,
+        stubTui(30),
+      );
+
+      expect(strip(component.render(100).join('\n'))).toContain(
+        'Waiting for background task (question-80w0h7nw)',
+      );
+
+      component.dispose();
+    });
+
+    it('falls back to "any background task" when no task id is given', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_wait_any', name: 'WaitFor', args: { timeout: 300 } },
+        undefined,
+        stubTui(30),
+      );
+
+      expect(strip(component.render(100).join('\n'))).toContain('Waiting for any background task');
+
+      component.dispose();
+    });
+
+    it('shows the waited tense with the elapsed chip once completed', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_wait_done',
+          name: 'WaitFor',
+          args: { task_id: 'question-80w0h7nw', timeout: 300 },
+        },
+        {
+          tool_call_id: 'call_wait_done',
+          output: waitForCompletedOutput,
+          is_error: false,
+        },
+      );
+
+      const out = strip(component.render(100).join('\n'));
+      expect(out).toContain('Waited for background task (question-80w0h7nw)');
+      expect(out).toContain('10s');
+    });
+
+    it('renders a timeout as its own non-error header', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_wait_timeout',
+          name: 'WaitFor',
+          args: { task_id: 'question-80w0h7nw', timeout: 1 },
+        },
+        {
+          tool_call_id: 'call_wait_timeout',
+          output: 'wait_status: timed_out\ntask_id: question-80w0h7nw\nwaited_ms: 1000\ntimeout_ms: 1000',
+          is_error: false,
+        },
+      );
+
+      expect(strip(component.render(100).join('\n'))).toContain(
+        'Wait timed out (question-80w0h7nw)',
+      );
+    });
+
+    it('renders errors with the failure tense', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_wait_error',
+          name: 'WaitFor',
+          args: { task_id: 'bash-x', timeout: 300 },
+        },
+        {
+          tool_call_id: 'call_wait_error',
+          output: 'Task not found: bash-x',
+          is_error: true,
+        },
+      );
+
+      expect(strip(component.render(100).join('\n'))).toContain(
+        'Could not wait for background task (bash-x)',
+      );
+    });
+  });
 });
