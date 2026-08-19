@@ -31,7 +31,10 @@ registerFeature(PlanFeature);   // import = register
 
 `Feature extends Service`, so every contribution runs through the normal two-phase
 construction protocol (declare contributions in the constructor; they are buffered and
-flushed by the kernel). The helpers are thin compositions over the existing seams:
+flushed by the kernel). A feature may also declare `static readonly meta = { ... }` —
+free-form self-description that `IFeatureManager.units()` introspection carries (and
+kap-server surfaces via `GET /api/v1/meta`); it defaults to `{}`. The helpers are thin
+compositions over the existing seams:
 
 | Helper | Composition | Semantics |
 |---|---|---|

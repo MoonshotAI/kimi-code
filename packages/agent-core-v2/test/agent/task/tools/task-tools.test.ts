@@ -22,7 +22,7 @@ import { TaskOutputTool } from '#/agent/tools/task/task-output/taskOutputTool';
 import { TaskStopInputSchema } from '#/agent/tools/task/task-stop/task-stop';
 import { TaskStopTool } from '#/agent/tools/task/task-stop/taskStopTool';
 import { WaitForInputSchema } from '#/agent/tools/task/task-wait/task-wait';
-import { WaitForTool } from '#/agent/tools/task/task-wait/taskWaitTool';
+import { WaitForTool, startWaitProgress, waitForProgressUpdate } from '#/agent/tools/task/task-wait/taskWaitTool';
 import { abortError } from '#/_base/utils/abort';
 import type { ITaskHandle } from '#/app/task/task';
 import type { IHostProcess } from '#/os/interface/hostProcess';
@@ -1031,6 +1031,45 @@ describe('WaitForTool', () => {
     expect(result.isError).toBe(true);
     expect(outputString(result)).toContain('wait_for experimental flag is off');
     expect(tasks.waitCalls).toEqual([]);
+  });
+
+  it('emits status progress updates while the wait is pending', async () => {
+    const update = waitForProgressUpdate({ timeout: 600 }, 2, 1_000, 31_000);
+    expect(update).toMatchObject({
+      kind: 'status',
+      replace: true,
+      text: 'Waiting 30s / 10m · 2 background tasks still running',
+    });
+    expect(waitForProgressUpdate({ timeout: 600 }, 1, 1_000, 31_000).text).toContain(
+      '1 background task still running',
+    );
+    expect(waitForProgressUpdate({ timeout: 600 }, 0, 1_000, 31_000).text).toContain(
+      '0 background tasks still running',
+    );
+    expect(waitForProgressUpdate({ timeout: 600 }, 1, 1_000, 76_000).text).toContain(
+      'Waiting 1m 15s / 10m',
+    );
+    expect(waitForProgressUpdate({ timeout: 180 }, 1, 1_000, 61_000).text).toContain(
+      'Waiting 1m / 3m',
+    );
+  });
+
+  it('routes the composed progress update through onUpdate on a manual tick', () => {
+    const tasks = new FakeTaskService();
+    tasks.add(processTask({ taskId: 'bash-prog002' }));
+    const onUpdate = vi.fn();
+
+    const progress = startWaitProgress({ timeout: 600 }, tasks, onUpdate, Date.now() - 30_000);
+    progress.tick();
+    progress.stop();
+
+    expect(onUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'status',
+        replace: true,
+        text: expect.stringMatching(/^Waiting 3\ds \/ 10m · 1 background task still running$/),
+      }),
+    );
   });
 });
 

@@ -18,8 +18,8 @@ import {
   DefaultCompactionStrategy,
 } from '#/agent/fullCompaction/strategy';
 import { COMPACTION_SUMMARY_PREFIX } from '#/agent/contextMemory/compactionHandoff';
-import { makeHookRunner } from '../externalHooks/runner-stub';
-import type { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
+import { makeHookRunner } from '../../features/externalHooks/runner-stub';
+import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { MASTER_ENV } from '#/app/flag/flagService';
 import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';

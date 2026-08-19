@@ -26,9 +26,9 @@ import {
   HOOKS_SECTION,
   hooksFromToml,
   hooksToToml,
-} from '#/agent/externalHooks/configSection';
-import { IAgentExternalHooksService } from '#/agent/externalHooks/externalHooks';
-import { AgentExternalHooksService } from '#/agent/externalHooks/externalHooksService';
+} from '#/features/externalHooks/configSection';
+import { IAgentExternalHooksService } from '#/features/externalHooks/agent/agentExternalHooks';
+import { AgentExternalHooksService } from '#/features/externalHooks/agent/agentExternalHooksService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
@@ -43,9 +43,9 @@ import {
   PermissionApprovalResolved,
 } from '#/agent/toolApproval/toolApprovalService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
-import { ExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunnerService';
-import { makeHookRunner } from '../../agent/externalHooks/runner-stub';
+import { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
+import { ExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunnerService';
+import { makeHookRunner } from './runner-stub';
 import type { AgentTaskInfo } from '#/agent/task/task';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -69,15 +69,15 @@ import {
   type AgentTaskStopHookContext,
   ISessionSubagentService,
 } from '#/session/subagent/subagent';
-import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
-import { SessionExternalHooksService } from '#/session/externalHooks/externalHooksService';
+import { ISessionExternalHooksService } from '#/features/externalHooks/session/sessionExternalHooks';
+import { SessionExternalHooksService } from '#/features/externalHooks/session/sessionExternalHooksService';
 import {
   ISessionAgentProfileCatalog,
 } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IModelService } from '#/kosong/model/model';
 
-import { stubBootstrap } from '../bootstrap/stubs';
+import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from '../../agent/loop/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';

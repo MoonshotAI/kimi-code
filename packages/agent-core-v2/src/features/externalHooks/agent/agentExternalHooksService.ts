@@ -1,8 +1,6 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -39,13 +37,13 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
-import { IAgentExternalHooksService } from './externalHooks';
-import { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
-import type { HookMatcherValue } from './types';
+import { IAgentExternalHooksService } from './agentExternalHooks';
+import { IExternalHooksRunnerService } from '../app/externalHooksRunner';
+import type { HookMatcherValue } from '../internal/types';
 import {
   renderUserPromptHookBlockResult,
   renderUserPromptHookResult,
-} from './user-prompt';
+} from '../internal/userPrompt';
 
 export interface HookResultPayload {
   readonly turnId?: number;
@@ -471,11 +469,3 @@ function toolOutputText(output: ExecutableToolResult['output']): string {
     .map((part) => part.text)
     .join('');
 }
-
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentExternalHooksService,
-  AgentExternalHooksService,
-  ScopeActivation.OnScopeCreated,
-  'externalHooks',
-);

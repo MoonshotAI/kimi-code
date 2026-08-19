@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import type { ContentPart } from '#/kosong/contract/message';
 import { describe, expect, it, vi } from 'vitest';
 
-import { makeHookRunner } from '../../agent/externalHooks/runner-stub';
+import { makeHookRunner } from './runner-stub';
 
 function nodeCommand(source: string): string {
   return `node -e ${JSON.stringify(source.replaceAll(/\s*\n\s*/g, ' '))}`;

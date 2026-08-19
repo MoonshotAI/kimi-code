@@ -19,7 +19,7 @@ import type {
   UserPromptOrigin,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import { messageContentSchema } from './message';
-import type { HookResultPayload } from '@moonshot-ai/agent-core-v2/agent/externalHooks/externalHooksService';
+import type { HookResultPayload } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {
   CompactionBlockedPayload,
   CompactionCompletedPayload,
@@ -469,6 +469,7 @@ export const toolUpdateSchema = z.object({
   percent: z.number().optional(),
   customKind: z.string().optional(),
   customData: z.unknown().optional(),
+  replace: z.boolean().optional(),
 }) satisfies z.ZodType<ToolUpdate>;
 
 export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
@@ -844,6 +845,7 @@ export const subagentSpawnedEventSchema = z.object({
   runInBackground: z.boolean(),
   model: z.string().optional(),
   thinkingEffort: z.string().optional(),
+  taskId: z.string().optional(),
 }) satisfies z.ZodType<SubagentSpawnedPayload>;
 
 export const subagentStartedEventSchema = z.object({

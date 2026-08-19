@@ -18,7 +18,7 @@ import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInj
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
-import { makeHookRunner } from '../agent/externalHooks/runner-stub';
+import { makeHookRunner } from '../features/externalHooks/runner-stub';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
@@ -1724,6 +1724,7 @@ describe('Agent tool execution contract', () => {
         agent_id: 'agent-child',
         parent_agent_id: 'main',
         parent_tool_call_id: 'call_agent',
+        model: 'provider/secondary',
       },
     });
     expect(events.find((event) => event.type === 'subagent.completed')).toMatchObject({
@@ -1970,6 +1971,36 @@ describe('Agent tool execution contract', () => {
     completion.resolve({ summary: 'finished later' });
   });
 
+  it('emits spawned with the registered task id ahead of started', async () => {
+    const completion = deferred<{ readonly summary: string }>();
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: () => completion.promise,
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      run_in_background: true,
+    });
+
+    if (typeof result.output !== 'string') throw new TypeError('expected string output');
+    const taskId = result.output.match(/task_id: (agent-[0-9a-z]{8})/)?.[1];
+    expect(taskId).toBeDefined();
+    expect(lifecycle.publishedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'subagent.spawned',
+        subagentId: 'agent-child',
+        taskId,
+      }),
+    );
+    const eventOrder = lifecycle.publishedEvents.map((event) => event.type);
+    expect(eventOrder.indexOf('subagent.spawned')).toBeGreaterThanOrEqual(0);
+    expect(eventOrder.indexOf('subagent.started')).toBeGreaterThan(eventOrder.indexOf('subagent.spawned'));
+    completion.resolve({ summary: 'finished later' });
+  });
+
   it('rejects background subagents when background execution is disabled', async () => {
     const lifecycle = createAgentLifecycleStub();
     const context = createAgentToolContext(lifecycle);
@@ -2070,6 +2101,11 @@ describe('Agent tool execution contract', () => {
       output: 'Too many background tasks are already running.',
     });
     expect(lifecycle.create).toHaveBeenCalledTimes(2);
+    expect(
+      lifecycle.publishedEvents.filter(
+        (event) => (event as { subagentId?: string }).subagentId === 'agent-second',
+      ),
+    ).toEqual([]);
     completions[0]?.resolve({ summary: 'finished later' });
   });
 

@@ -45,6 +45,7 @@ export interface ToolUpdate {
   percent?: number | undefined;
   customKind?: string | undefined;
   customData?: unknown;
+  replace?: boolean;
 }
 
 export interface ExecutableToolContext {

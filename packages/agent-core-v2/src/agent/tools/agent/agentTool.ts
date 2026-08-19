@@ -41,7 +41,8 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
-import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
+import { emitAgentRunSpawned, mirrorAgentRun, SubagentStarted } from '#/session/subagent/mirrorAgentRun';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { forkIncompatibility } from '#/session/subagent/spawn';
 import {
@@ -263,16 +264,6 @@ export class SubagentTool implements ISubagentTool {
       promptText = spawned.promptText;
     }
 
-    const runInBackground = args.run_in_background === true;
-    emitAgentRunSpawned(requester, agentId, {
-      profileName,
-      parentToolCallId: toolCallId,
-      description: args.description,
-      runInBackground,
-      fork: args.fork === true,
-      model: displayModel,
-    });
-
     const run = await this.subagents.run(
       agentId,
       { kind: 'prompt', prompt: promptText },
@@ -282,6 +273,7 @@ export class SubagentTool implements ISubagentTool {
       profileName,
       prompt: promptText,
       signal: controller.signal,
+      deferStarted: true,
       cancel: (reason) => {
         controller.abort(reason);
       },
@@ -407,6 +399,22 @@ export class SubagentTool implements ISubagentTool {
               : message,
           isError: true,
         };
+      }
+
+      const requester = this.lifecycle.get(this.callerAgentId);
+      if (requester !== undefined) {
+        emitAgentRunSpawned(requester, handle.agentId, {
+          profileName: handle.profileName,
+          parentToolCallId: toolCallId,
+          description: args.description,
+          runInBackground,
+          fork: args.fork === true,
+          model: handle.model,
+          taskId,
+        });
+        void requester.accessor
+          .get(IEventDispatcher)
+          ?.dispatch(new SubagentStarted({ subagentId: handle.agentId }));
       }
 
       if (runInBackground) {

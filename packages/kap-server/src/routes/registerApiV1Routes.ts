@@ -1,9 +1,12 @@
 import { IConfigService, type Scope } from '@moonshot-ai/agent-core-v2';
+import { FiberState } from '@moonshot-ai/agent-core-v2/_base/di/fiber';
+import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 import { ulid } from 'ulid';
 
 import { okEnvelope } from '../envelope';
+import type { MetaFeature } from '../protocol/rest-meta';
 import { type IConnectionRegistry } from '../transport/ws/connectionRegistry';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
 import type { TranscriptService } from '../services/transcript/transcriptService';
@@ -110,6 +113,15 @@ export async function registerApiV1Routes(
           await core.accessor.get(IConfigService).ready;
           return core.accessor.get(IFlagService).snapshot();
         },
+        getFeatures: () =>
+          core.accessor
+            .get(IFeatureManager)
+            .units()
+            .map((unit) => ({
+              name: unit.name,
+              state: FiberState[unit.state] as MetaFeature['state'],
+              meta: unit.meta,
+            })),
       });
 
       registerAuthRoute(apiV1 as unknown as Parameters<typeof registerAuthRoute>[0], core);
