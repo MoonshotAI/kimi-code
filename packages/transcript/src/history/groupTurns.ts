@@ -192,20 +192,16 @@ export function groupMessagesIntoSnapshot(
           startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
           continue;
         }
-        const current = ensureTurn(mapOrigin(message));
-        let step = current.steps.at(-1);
-        if (step === undefined) {
-          step = { stepId: `${current.turnId}.1`, ordinal: 1, frames: [] };
-          current.steps.push(step);
-        }
+        const step = turn?.steps.at(-1);
+        if (turn === undefined || step === undefined) continue;
         step.frames.push({
           kind: 'text',
           frameId: `${step.stepId}.f${step.frames.length + 1}`,
           role: 'user',
           text: notificationFrameText(textOf(message)),
-          ...(taskId !== undefined ? { taskId } : {}),
+          taskId,
         });
-        syncTurnItem(items, current);
+        syncTurnItem(items, turn);
         continue;
       }
       const bundled = bundledSkillActivations(message);
@@ -301,7 +297,10 @@ function notificationFrameText(text: string): string {
     }
   }
   const bodyLines = lines.slice(lastHeaderIndex + 1);
-  const childStart = bodyLines.findIndex((line) => line.trimStart().startsWith('<'));
+  const childStart = bodyLines.findIndex((line) => {
+    const trimmed = line.trimStart();
+    return trimmed.startsWith('<output-file') || trimmed.startsWith('<output-preview');
+  });
   const body = (childStart === -1 ? bodyLines : bodyLines.slice(0, childStart)).join('\n').trim();
   if (title.length > 0 && body.length > 0) return `${title}\n${body}`;
   return title.length > 0 ? title : body.length > 0 ? body : text;
