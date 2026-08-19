@@ -1,7 +1,5 @@
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
@@ -182,103 +180,34 @@ async function* decodedLines(lines: readonly string[]): AsyncGenerator<string> {
   yield* lines;
 }
 
-function binaryToolPhrase(bashAvailable: boolean, mcpAvailable: boolean): string | undefined {
-  if (bashAvailable && mcpAvailable) return 'Bash or an MCP tool';
-  if (bashAvailable) return 'Bash';
-  if (mcpAvailable) return 'an MCP tool';
-  return undefined;
-}
-
-function notReadableFileOutput(
-  path: string,
-  mediaReadable: boolean,
-  bashAvailable: boolean,
-  mcpAvailable: boolean,
-): string {
-  const phrase = binaryToolPhrase(bashAvailable, mcpAvailable);
-  const binary =
-    phrase === undefined
-      ? 'No tool for binary formats is available to this agent.'
-      : `For ${mediaReadable ? 'other ' : ''}binary formats, use ${phrase}.`;
-  if (mediaReadable) {
-    return (
-      `"${path}" is not readable as UTF-8 text. ` +
-      'If it is an image or video, use ReadMediaFile. ' +
-      binary
-    );
-  }
-  return `"${path}" is not readable as UTF-8 text. ${binary}`;
+function notReadableFileOutput(path: string): string {
+  return `"${path}" is not readable as UTF-8 text. Only text files can be read.`;
 }
 
 function notUtf8DecodableFileOutput(path: string): string {
   return (
     `"${path}" is not valid UTF-8 or UTF-16 text. ` +
     'Only UTF-8 and UTF-16 text files can be read; ' +
-    'for other encodings (e.g. GBK), convert the file to UTF-8 first (e.g. `iconv` via Bash).'
+    'for other encodings (e.g. GBK), convert the file to UTF-8 first (e.g. with `iconv`).'
   );
 }
 
-function binaryFormatsHint(mediaReadable: boolean, bashAvailable: boolean, mcpAvailable: boolean): string {
-  const phrase = binaryToolPhrase(bashAvailable, mcpAvailable);
-  if (mediaReadable) {
-    return phrase === undefined
-      ? 'use `ReadMediaFile` for images or video; no tool for other binary formats is available to this agent.'
-      : `use \`ReadMediaFile\` for images or video, and ${phrase} for other binary formats.`;
-  }
-  return phrase === undefined
-    ? 'no tool for binary formats is available to this agent.'
-    : `use ${phrase} for binary formats.`;
-}
+const READ_DESCRIPTION = renderPrompt(readDescriptionTemplate, {
+  MAX_LINES,
+  MAX_BYTES_KB: MAX_BYTES / 1024,
+  MAX_LINE_LENGTH,
+});
 
 export class ReadTool implements IReadTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'Read' as const;
+  readonly description = READ_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
   constructor(
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
-    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
   ) {}
-
-  get description(): string {
-    return renderPrompt(readDescriptionTemplate, {
-      MAX_LINES,
-      MAX_BYTES_KB: MAX_BYTES / 1024,
-      MAX_LINE_LENGTH,
-      BINARY_FORMATS_HINT: binaryFormatsHint(this.mediaReadable(), this.bashAvailable(), this.mcpAvailable()),
-    });
-  }
-
-  private mediaReadable(): boolean {
-    return this.mediaRegistered() && this.toolPolicy.isToolActive('ReadMediaFile');
-  }
-
-  private mediaRegistered(): boolean {
-    return this.toolRegistry.resolve('ReadMediaFile') !== undefined;
-  }
-
-  private bashAvailable(): boolean {
-    return (
-      this.toolRegistry.resolve('Bash') !== undefined && this.toolPolicy.isToolActive('Bash')
-    );
-  }
-
-  private mcpAvailable(): boolean {
-    return this.toolRegistry
-      .listReferences()
-      .some((tool) => tool.source === 'mcp' && this.toolPolicy.isToolActive(tool.name, tool.source));
-  }
-
-  private mediaUnavailableOutput(path: string, kind: string): string {
-    const reason = this.mediaRegistered()
-      ? 'The ReadMediaFile tool is disabled by the active tool policy, so image and video reading is unavailable.'
-      : 'Image and video reading is unavailable for this agent.';
-    const phrase = binaryToolPhrase(this.bashAvailable(), this.mcpAvailable());
-    const fallback = phrase === undefined ? '' : ` Use ${phrase} to inspect or convert it.`;
-    return `"${path}" is a ${kind} file. ${reason}${fallback}`;
-  }
 
   private workspaceConfig(view: RuntimeWorkspaceView): WorkspaceConfig {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
@@ -342,9 +271,7 @@ export class ReadTool implements IReadTool {
       if (fileType.kind === 'image' || fileType.kind === 'video') {
         return {
           isError: true,
-          output: this.mediaReadable()
-            ? `"${args.path}" is a ${fileType.kind} file. Use ReadMediaFile to read image or video files.`
-            : this.mediaUnavailableOutput(args.path, fileType.kind),
+          output: `"${args.path}" is ${fileType.kind === 'image' ? 'an' : 'a'} ${fileType.kind} file. Only text files can be read.`,
         };
       }
 
@@ -358,7 +285,7 @@ export class ReadTool implements IReadTool {
             output:
               `"${args.path}" is ${encodingDisplayName(detection.encoding)} text but too large to transcode ` +
               `(${String(stat.size)} bytes > ${String(TRANSCODE_MAX_BYTES)}). ` +
-              'Convert it to UTF-8 first (e.g. `iconv` via Bash).',
+              'Convert it to UTF-8 first (e.g. with `iconv`).',
           };
         }
         const decoded = decodeUtfText(await fs.readBytes(safePath), detection.encoding);
@@ -367,7 +294,7 @@ export class ReadTool implements IReadTool {
       } else if (fileType.kind === 'unknown') {
         return {
           isError: true,
-          output: notReadableFileOutput(args.path, this.mediaReadable(), this.bashAvailable(), this.mcpAvailable()),
+          output: notReadableFileOutput(args.path),
         };
       } else {
         lines = fs.readLines(safePath, { errors: 'strict' });
@@ -422,7 +349,7 @@ export class ReadTool implements IReadTool {
 
     for await (const rawLine of lines) {
       if (containsNulByte(rawLine)) {
-        return { isError: true, output: notReadableFileOutput(displayPath, this.mediaReadable(), this.bashAvailable(), this.mcpAvailable()) };
+        return { isError: true, output: notReadableFileOutput(displayPath) };
       }
       currentLineNo += 1;
       updateLineEndingFlags(flags, rawLine);
@@ -480,7 +407,7 @@ export class ReadTool implements IReadTool {
 
     for await (const rawLine of lines) {
       if (containsNulByte(rawLine)) {
-        return { isError: true, output: notReadableFileOutput(displayPath, this.mediaReadable(), this.bashAvailable(), this.mcpAvailable()) };
+        return { isError: true, output: notReadableFileOutput(displayPath) };
       }
       currentLineNo += 1;
       updateLineEndingFlags(flags, rawLine);
