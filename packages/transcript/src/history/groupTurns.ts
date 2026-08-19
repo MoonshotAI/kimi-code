@@ -151,9 +151,12 @@ export function groupMessagesIntoSnapshot(
     items.push(item);
   };
 
+  let prevRole: string | undefined;
   for (const message of messages) {
     if (message.role === 'system') continue;
     const originKind = message.origin?.kind;
+    const prevRoleAtEntry = prevRole;
+    prevRole = message.role;
 
     if (message.role === 'user') {
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
@@ -169,6 +172,30 @@ export function groupMessagesIntoSnapshot(
         if (opening !== undefined) {
           startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
         }
+        continue;
+      }
+      if (originKind === 'task' || originKind === 'background_task' || originKind === 'task_notification') {
+        if (prevRoleAtEntry !== 'assistant' && prevRoleAtEntry !== 'tool') {
+          const opening = foldTurnOpeningInput(message);
+          startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+          continue;
+        }
+        const origin = message.origin as { taskId?: unknown } | undefined;
+        const taskId = typeof origin?.taskId === 'string' ? origin.taskId : undefined;
+        const current = ensureTurn(mapOrigin(message));
+        let step = current.steps.at(-1);
+        if (step === undefined) {
+          step = { stepId: `${current.turnId}.1`, ordinal: 1, frames: [] };
+          current.steps.push(step);
+        }
+        step.frames.push({
+          kind: 'text',
+          frameId: `${step.stepId}.f${step.frames.length + 1}`,
+          role: 'user',
+          text: textOf(message),
+          ...(taskId !== undefined ? { taskId } : {}),
+        });
+        syncTurnItem(items, current);
         continue;
       }
       const bundled = bundledSkillActivations(message);

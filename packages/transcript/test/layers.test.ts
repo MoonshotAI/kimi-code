@@ -443,6 +443,43 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(marker?.kind === 'marker' && marker.marker).toBe('compaction');
   });
 
+  it('folds task-notification user messages into the current turn instead of opening their own', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'run it' }], toolCalls: [], origin: { kind: 'user' } },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'starting' }],
+        toolCalls: [{ id: 'c1', name: 'Bash', arguments: '{"command":"ls"}' }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '<notification id="task:task-9:completed"></notification>' }],
+        toolCalls: [],
+        origin: { kind: 'task', taskId: 'task-9' } as { kind: string },
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'continuing' }],
+        toolCalls: [],
+      },
+    ]);
+
+    const turns = snapshot.items.filter((i) => i.kind === 'turn');
+    expect(turns).toHaveLength(1);
+    const turn = turns[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    const userFrames = turn.steps
+      .flatMap((step) => step.frames)
+      .filter((f) => f.kind === 'text' && f.role === 'user');
+    expect(userFrames).toHaveLength(1);
+    expect(userFrames[0]).toMatchObject({ taskId: 'task-9' });
+    const assistantTexts = turn.steps
+      .flatMap((step) => step.frames)
+      .filter((f) => f.kind === 'text' && f.role === 'assistant')
+      .map((f) => f.kind === 'text' && f.text);
+    expect(assistantTexts).toEqual(['starting', 'continuing']);
+  });
+
   it('expands a bundled prompt into per-skill markers and a caller-text turn', () => {
     const snapshot = groupMessagesIntoSnapshot([
       {
