@@ -1,12 +1,12 @@
-import { LifecycleScope } from '#/app/scopes';
-
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import type { ToolExecution } from '#/tool/toolContract';
+import { type ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 
 import { ICronDeleteTool, CronDeleteInputSchema, type CronDeleteInput } from './cron-delete';
+import { CRON_MAIN_AGENT_ONLY } from '../mainAgentOnly';
 import CRON_DELETE_DESCRIPTION from './cron-delete.md?raw';
 
 const ID_PATTERN = /^(?:[0-9a-f]{8}|[0-9A-HJKMNP-TV-Z]{26})$/i;
@@ -26,6 +26,12 @@ export class CronDeleteTool implements ICronDeleteTool {
   ) {}
 
   resolveExecution(args: CronDeleteInput): ToolExecution {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) {
+      return {
+        isError: true,
+        output: CRON_MAIN_AGENT_ONLY,
+      };
+    }
     if (!ID_PATTERN.test(args.id)) {
       return {
         isError: true,
@@ -58,10 +64,7 @@ export class CronDeleteTool implements ICronDeleteTool {
   }
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  ICronDeleteTool,
-  CronDeleteTool,
-  ScopeActivation.OnScopeCreated,
-  'cron',
-);
+registerAgentToolService(ICronDeleteTool, CronDeleteTool, {
+  name: 'CronDelete',
+  domain: 'cron',
+});

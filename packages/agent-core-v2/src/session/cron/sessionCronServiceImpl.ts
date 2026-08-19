@@ -13,7 +13,7 @@ import { IConfigService } from '#/app/config/config';
 import type { CronDeletedEvent, CronScheduledEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { type ClockSources, resolveClockSources, SYSTEM_CLOCKS } from '#/app/cron/clock';
-import { type CronConfig, CRON_SECTION } from '#/app/cron/configSection';
+import { type CronConfig, CRON_SECTION, DEFAULT_CRON_CONFIG } from '#/app/cron/configSection';
 import { computeNextCronRun, parseCronExpression, type ParsedCronExpression } from '#/app/cron/cron-expr';
 import { CRON_SESSION_TAG, type CronTask, type CronTaskInit } from '#/app/cron/cronTask';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
@@ -26,13 +26,8 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { BugIndicatingError } from '#/errors';
-
-import { ICronCreateTool } from '#/agent/tools/cron/cron-create/cron-create';
-import { ICronListTool } from '#/agent/tools/cron/cron-list/cron-list';
-import { ICronDeleteTool } from '#/agent/tools/cron/cron-delete/cron-delete';
 
 import { CronAdd, CronDelete, CronCursor, CronFired, cronKey } from './cronOps';
 import { ISessionCronService, type CronLoadOptions } from './sessionCronService';
@@ -153,20 +148,6 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
         await next();
       }),
     );
-
-    this.registerCronTools(handle);
-  }
-
-  private registerCronTools(handle: IAgentScopeHandle): void {
-    const registry = handle.accessor.get(IAgentToolRegistryService);
-    const tools = [
-      handle.accessor.get(ICronCreateTool),
-      handle.accessor.get(ICronListTool),
-      handle.accessor.get(ICronDeleteTool),
-    ];
-    for (const tool of tools) {
-      this._register(registry.register(tool, { source: 'builtin' }));
-    }
   }
 
   now(): number {
@@ -179,7 +160,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
   }
 
   private getCronConfig(): CronConfig {
-    return this.config.get<CronConfig>(CRON_SECTION);
+    return this.config.get<CronConfig>(CRON_SECTION) ?? DEFAULT_CRON_CONFIG;
   }
 
   isDisabled(): boolean {
