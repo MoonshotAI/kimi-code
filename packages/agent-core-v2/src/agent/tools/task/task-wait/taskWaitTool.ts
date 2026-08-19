@@ -180,6 +180,7 @@ export class WaitForTool implements IWaitForTool {
         text:
           `Waiting ${String(elapsedS)}s / ${String(args.timeout)}s · ` +
           `${String(running)} background task${running === 1 ? '' : 's'} still running`,
+        replace: true,
       });
     }, PROGRESS_INTERVAL_MS);
     interval.unref?.();

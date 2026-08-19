@@ -1056,6 +1056,7 @@ describe('WaitForTool', () => {
         expect.objectContaining({
           kind: 'status',
           text: expect.stringContaining('1 background task still running'),
+          replace: true,
         }),
       );
 

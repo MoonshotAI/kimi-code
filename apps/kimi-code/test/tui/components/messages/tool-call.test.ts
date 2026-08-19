@@ -2034,5 +2034,43 @@ describe('ToolCallComponent', () => {
         'Could not wait for background task (bash-x)',
       );
     });
+
+    it('replaces the previous status block when progress arrives with replace', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_wait_replace', name: 'WaitFor', args: { timeout: 600 } },
+        undefined,
+        stubTui(30),
+      );
+
+      component.appendProgress('Waiting 10s / 600s · 2 background tasks still running', {
+        replace: true,
+      });
+      component.appendProgress('Waiting 20s / 600s · 1 background task still running', {
+        replace: true,
+      });
+
+      const out = strip(component.render(100).join('\n'));
+      expect(out).toContain('Waiting 20s / 600s');
+      expect(out).not.toContain('Waiting 10s / 600s');
+
+      component.dispose();
+    });
+
+    it('keeps appending status rows when replace is not set', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_wait_append', name: 'WaitFor', args: { timeout: 600 } },
+        undefined,
+        stubTui(30),
+      );
+
+      component.appendProgress('first status');
+      component.appendProgress('second status');
+
+      const out = strip(component.render(100).join('\n'));
+      expect(out).toContain('first status');
+      expect(out).toContain('second status');
+
+      component.dispose();
+    });
   });
 });
