@@ -184,7 +184,9 @@ export function groupMessagesIntoSnapshot(
         const taskId = typeof origin?.taskId === 'string' ? origin.taskId : undefined;
         const opensOwn = options?.taskOriginTurnTaskIds === undefined
           ? prevRoleAtEntry !== 'assistant' && prevRoleAtEntry !== 'tool'
-          : taskId === undefined || options.taskOriginTurnTaskIds.has(taskId);
+          : taskId === undefined ||
+            options.taskOriginTurnTaskIds.has(taskId) ||
+            originKind === 'background_task';
         if (opensOwn) {
           const opening = foldTurnOpeningInput(message);
           startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
@@ -298,7 +300,11 @@ function notificationFrameText(text: string): string {
       lastHeaderIndex = i;
     }
   }
-  const body = lines.slice(lastHeaderIndex + 1).join('\n').trim();
+  const body = lines
+    .slice(lastHeaderIndex + 1)
+    .filter((line) => !line.trimStart().startsWith('<'))
+    .join('\n')
+    .trim();
   if (title.length > 0 && body.length > 0) return `${title}\n${body}`;
   return title.length > 0 ? title : body.length > 0 ? body : text;
 }
