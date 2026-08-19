@@ -239,7 +239,7 @@ describe('runUpdatePreflight', () => {
     // Tests that exercise the bypass opt back in with `vi.stubEnv(..., '1')`.
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
     // Pin the region to cn so address assertions don't follow the dev
-    // machine's own login/marker state; overseas tests override below.
+    // machine's own login/marker state; global tests override below.
     vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.com');
     refreshKimiRegion();
     mocks.readUpdateInstallState.mockResolvedValue(emptyUpdateInstallState());
@@ -551,7 +551,7 @@ describe('runUpdatePreflight', () => {
     }
   });
 
-  it('overseas region: derives install commands and site links from the .ai profile', async () => {
+  it('global region: derives install commands and site links from the .ai profile', async () => {
     vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.ai');
     refreshKimiRegion();
     mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));

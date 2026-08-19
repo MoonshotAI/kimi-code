@@ -564,7 +564,7 @@ describe('server-v2 /api/v1/sessions', () => {
       getManagedUserInfo: async () => ({ kind: 'error', message: 'unused' }),
       resolveTokenProvider: () => ({ getAccessToken: async () => 'test-token' }),
       getCachedAccessToken: async () => 'test-token',
-      getRegion: () => 'cn',
+      getRegion: () => 'mainland-cn',
     };
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,

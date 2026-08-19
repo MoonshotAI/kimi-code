@@ -14,8 +14,8 @@ import { currentKimiRegion, persistedKimiOAuthRef } from '#/utils/region';
 
 /** Parse a `--region` CLI flag; exits with an actionable message on bad input. */
 export function parseRegionFlag(value: string): KimiRegion {
-  if (value !== 'cn' && value !== 'overseas') {
-    process.stderr.write(`Invalid --region "${value}" (expected "cn" or "overseas").\n`);
+  if (value !== 'mainland-cn' && value !== 'global') {
+    process.stderr.write(`Invalid --region "${value}" (expected "mainland-cn" or "global").\n`);
     process.exit(1);
   }
   return value;
@@ -24,8 +24,8 @@ export function parseRegionFlag(value: string): KimiRegion {
 export async function runLoginFlow(options: { region?: KimiRegion } = {}): Promise<never> {
   // No flag: a fresh install (no persisted login) follows the resolved region
   // (env/marker/default); an existing login keeps its own environment. A
-  // default-slot (cn) login persists no host, so it takes the resolved region
-  // too — which the default slot's key pins to 'cn'.
+  // default-slot (mainland-cn) login persists no host, so it takes the
+  // resolved region too — which the default slot's key pins to 'mainland-cn'.
   const region =
     options.region ??
     (persistedKimiOAuthRef()?.oauthHost === undefined ? currentKimiRegion() : undefined);

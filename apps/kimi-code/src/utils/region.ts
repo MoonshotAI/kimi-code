@@ -27,8 +27,8 @@ import {
 // module, so this module must not import back from it).
 const MANAGED_KIMI_CODE_PROVIDER_KEY = 'managed:kimi-code';
 
-/** Platform-selector value for the international OAuth login entry. */
-export const KIMI_CODE_OVERSEAS_PLATFORM_VALUE = 'kimi-code-overseas';
+/** Platform-selector value for the global OAuth login entry. */
+export const KIMI_CODE_GLOBAL_PLATFORM_VALUE = 'kimi-code-global';
 
 let cached: KimiRegion | undefined;
 

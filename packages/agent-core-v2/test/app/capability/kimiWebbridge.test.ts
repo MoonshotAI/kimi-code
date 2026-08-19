@@ -275,7 +275,7 @@ describe('kimi-webbridge entry', () => {
     expect(reports.some(([step]) => step === 'skill')).toBe(true);
   });
 
-  it('installs the plugin zip from the overseas CDN when the region is overseas', async () => {
+  it('installs the plugin zip from the global CDN when the region is global', async () => {
     const plugins = fakePlugins([]);
     const host = fakeHostProcess();
     const { fetchImpl } = fakeFetch({
@@ -286,7 +286,7 @@ describe('kimi-webbridge entry', () => {
         plugins: plugins.service,
         hostProcess: host.service,
         fetchImpl,
-        resolveRegion: () => 'overseas',
+        resolveRegion: () => 'global',
       }),
     );
 

@@ -187,7 +187,7 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
       method: 'GET',
       path: '/oauth/region',
       success: { data: oauthRegionResultSchema },
-      description: 'Resolve the client region (cn/overseas)',
+      description: 'Resolve the client region (mainland-cn/global)',
       tags: ['auth'],
     },
     async (req, reply) => {

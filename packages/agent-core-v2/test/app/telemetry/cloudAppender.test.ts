@@ -118,7 +118,7 @@ describe('CloudAppender', () => {
     expect(typeof event?.['timestamp']).toBe('number');
   });
 
-  it('derives the overseas endpoint when the env pins the overseas region', async () => {
+  it('derives the global endpoint when the env pins the global region', async () => {
     process.env['KIMI_CODE_OAUTH_HOST'] = 'https://auth.kimi.ai';
     const requests: CapturedRequest[] = [];
     const appender = new CloudAppender(
@@ -139,7 +139,7 @@ describe('CloudAppender', () => {
   });
 
   it('honors KIMI_CODE_REGION_MARKER=off so embedded servers ignore the install marker', async () => {
-    writeFileSync(join(homeDir, 'region'), 'overseas\n');
+    writeFileSync(join(homeDir, 'region'), 'global\n');
     const savedMarkerFlag = process.env['KIMI_CODE_REGION_MARKER'];
     process.env['KIMI_CODE_REGION_MARKER'] = 'off';
     try {

@@ -15,7 +15,7 @@ import type { ChoiceOption } from '../components/dialogs/choice-picker';
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import {
-  KIMI_CODE_OVERSEAS_PLATFORM_VALUE,
+  KIMI_CODE_GLOBAL_PLATFORM_VALUE,
   refreshKimiRegion,
 } from '#/utils/region';
 import type { LoginProgressSpinnerHandle } from '../types';
@@ -35,8 +35,8 @@ export async function handleLoginCommand(host: SlashCommandHost): Promise<void> 
   const platformId = await promptPlatformSelection(host);
   if (platformId === undefined) return;
 
-  if (platformId === 'kimi-code' || platformId === KIMI_CODE_OVERSEAS_PLATFORM_VALUE) {
-    const region: KimiRegion = platformId === KIMI_CODE_OVERSEAS_PLATFORM_VALUE ? 'overseas' : 'cn';
+  if (platformId === 'kimi-code' || platformId === KIMI_CODE_GLOBAL_PLATFORM_VALUE) {
+    const region: KimiRegion = platformId === KIMI_CODE_GLOBAL_PLATFORM_VALUE ? 'global' : 'mainland-cn';
     await handleKimiCodeOAuthLogin(host, region);
     return;
   }
@@ -63,8 +63,8 @@ async function handleKimiCodeOAuthLogin(
   host.cancelInFlight = cancelLogin;
   try {
     // The facade maps region → profile hosts (env overrides keep priority);
-    // 'cn' is passed explicitly too so switching back overrides a persisted
-    // overseas login.
+    // 'mainland-cn' is passed explicitly too so switching back overrides a
+    // persisted global login.
     await host.harness.auth.login(DEFAULT_OAUTH_PROVIDER_NAME, {
       signal: controller.signal,
       region,

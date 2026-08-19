@@ -366,14 +366,14 @@ describe('OAuthService', () => {
     );
   });
 
-  it('startLogin with region overseas resolves the overseas login environment', async () => {
+  it('startLogin with region global resolves the global login environment', async () => {
     stubManagedModelsFetch();
     toolkit.login.mockImplementation((_provider, options) => {
       options.onDeviceCode(deviceAuth);
       return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
     });
     const svc = createService();
-    await svc.startLogin(OAUTH_PROVIDER, { region: 'overseas' });
+    await svc.startLogin(OAUTH_PROVIDER, { region: 'global' });
 
     expect(toolkit.login).toHaveBeenCalledWith(
       OAUTH_PROVIDER,
@@ -402,7 +402,7 @@ describe('OAuthService', () => {
       return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
     });
     const svc = createService();
-    await svc.startLogin(OAUTH_PROVIDER, { region: 'overseas' });
+    await svc.startLogin(OAUTH_PROVIDER, { region: 'global' });
 
     expect(toolkit.login).toHaveBeenCalledWith(
       OAUTH_PROVIDER,
@@ -413,45 +413,45 @@ describe('OAuthService', () => {
     );
   });
 
-  it('getRegion resolves cn by default and overseas from the persisted login host', () => {
+  it('getRegion resolves cn by default and global from the persisted login host', () => {
     vi.stubEnv('KIMI_CODE_REGION_MARKER', 'off');
     const svc = createService();
-    expect(svc.getRegion()).toBe('cn');
+    expect(svc.getRegion()).toBe('mainland-cn');
 
     providers[OAUTH_PROVIDER] = {
       type: 'kimi',
       oauth: { storage: 'file', key: OVERSEAS_SCOPED_REF.key, oauthHost: 'https://auth.kimi.ai' },
     };
-    expect(svc.getRegion()).toBe('overseas');
+    expect(svc.getRegion()).toBe('global');
   });
 
   it('getRegion reads the install marker unless KIMI_CODE_REGION_MARKER=off', async () => {
     const home = await mkdtemp(join(tmpdir(), 'kimi-v2-auth-region-'));
     try {
-      await writeFile(join(home, 'region'), 'overseas\n', 'utf-8');
+      await writeFile(join(home, 'region'), 'global\n', 'utf-8');
       vi.stubEnv('KIMI_CODE_HOME', home);
       vi.stubEnv('KIMI_CODE_OAUTH_HOST', '');
       providers[OAUTH_PROVIDER] = { type: 'kimi' };
-      expect(createService().getRegion()).toBe('overseas');
+      expect(createService().getRegion()).toBe('global');
 
       vi.stubEnv('KIMI_CODE_REGION_MARKER', 'off');
-      expect(createService().getRegion()).toBe('cn');
+      expect(createService().getRegion()).toBe('mainland-cn');
     } finally {
       await rm(home, { recursive: true, force: true });
     }
   });
 
-  it('getRegion resolves cn from the default-slot oauth ref despite an overseas marker', async () => {
+  it('getRegion resolves cn from the default-slot oauth ref despite an global marker', async () => {
     const home = await mkdtemp(join(tmpdir(), 'kimi-v2-auth-region-'));
     try {
-      await writeFile(join(home, 'region'), 'overseas\n', 'utf-8');
+      await writeFile(join(home, 'region'), 'global\n', 'utf-8');
       vi.stubEnv('KIMI_CODE_HOME', home);
       vi.stubEnv('KIMI_CODE_OAUTH_HOST', '');
       providers[OAUTH_PROVIDER] = {
         type: 'kimi',
         oauth: { storage: 'file', key: 'oauth/kimi-code' },
       };
-      expect(createService().getRegion()).toBe('cn');
+      expect(createService().getRegion()).toBe('mainland-cn');
     } finally {
       await rm(home, { recursive: true, force: true });
     }

@@ -45,7 +45,7 @@ export interface CloudTransportOptions {
   readonly now?: () => number;
 }
 
-export const TELEMETRY_ENDPOINT = KIMI_REGION_PROFILES.cn.telemetryEndpoint;
+export const TELEMETRY_ENDPOINT = KIMI_REGION_PROFILES['mainland-cn'].telemetryEndpoint;
 export const SERVER_EVENT_PREFIX = 'kfc_';
 export const USER_ID_PREFIX = 'kfc_device_id_';
 export const DISK_EVENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;

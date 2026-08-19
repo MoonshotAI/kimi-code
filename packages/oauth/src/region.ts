@@ -1,5 +1,5 @@
 /**
- * Region profiles for the mainland-China (.com) and international (.ai)
+ * Region profiles for the mainland-China (.com) and global (.ai)
  * Kimi Code deployments, plus the resolver that decides which region a
  * client belongs to.
  *
@@ -12,11 +12,11 @@
  *   2. persisted login (the `oauthHost` stored in config.toml's oauth ref)
  *   3. persisted default-slot login (the oauth ref's key equals
  *      `KIMI_CODE_OAUTH_KEY` — a mainland-China login persists no
- *      `oauthHost`, so the default slot's presence is an explicit-cn signal
- *      that outranks the marker)
+ *      `oauthHost`, so the default slot's presence is an explicit-mainland-cn
+ *      signal that outranks the marker)
  *   4. install-channel marker file (`<home>/region`, written by install
  *      scripts; consultable only before the first login)
- *   5. default 'cn'
+ *   5. default 'mainland-cn'
  */
 
 import { readFileSync } from 'node:fs';
@@ -29,10 +29,10 @@ import { DEFAULT_KIMI_CODE_OAUTH_HOST } from './constants';
 import { DEFAULT_KIMI_CODE_BASE_URL } from './managed-usage';
 import { kimiCodeEnvBaseUrl, kimiCodeEnvOAuthHost, KIMI_CODE_OAUTH_KEY } from './managed-kimi-code';
 
-export type KimiRegion = 'cn' | 'overseas';
+export type KimiRegion = 'mainland-cn' | 'global';
 
 /** Zod schema for the wire/domain contract; parses to {@link KimiRegion}. */
-export const kimiRegionSchema = z.enum(['cn', 'overseas']);
+export const kimiRegionSchema = z.enum(['mainland-cn', 'global']);
 
 export interface KimiRegionProfile {
   /** OAuth host the device flow talks to (authorize/token derive from it). */
@@ -47,14 +47,14 @@ export interface KimiRegionProfile {
 }
 
 export const KIMI_REGION_PROFILES: Record<KimiRegion, KimiRegionProfile> = {
-  cn: {
+  'mainland-cn': {
     oauthHost: DEFAULT_KIMI_CODE_OAUTH_HOST,
     baseUrl: DEFAULT_KIMI_CODE_BASE_URL,
     cdnBase: 'https://code.kimi.com/kimi-code',
     siteBase: 'https://www.kimi.com',
     telemetryEndpoint: 'https://telemetry-logs.kimi.com/v1/event',
   },
-  overseas: {
+  global: {
     oauthHost: 'https://auth.kimi.ai',
     baseUrl: 'https://api.kimi.ai/coding/v1',
     cdnBase: 'https://code.kimi.ai/kimi-code',
@@ -84,9 +84,10 @@ export function kimiCdnContentUrl(path: string): string {
  * smuggle profile hosts past it (requested hosts outrank env in
  * `resolveKimiCodeLoginAuth`).
  *
- * When returned, both hosts are always set — including for 'cn', whose values
- * equal the defaults. Passing them explicitly is what lets "switch back to
- * China" override a previously persisted overseas login in config.toml.
+ * When returned, both hosts are always set — including for 'mainland-cn',
+ * whose values equal the defaults. Passing them explicitly is what lets
+ * "switch back to mainland China" override a previously persisted global
+ * login in config.toml.
  */
 export function kimiRegionLoginHosts(
   region: KimiRegion,
@@ -101,9 +102,10 @@ export function kimiRegionLoginHosts(
 
 /**
  * Marker file name under the Kimi home dir. Install scripts write a single
- * line (`cn` or `overseas`) here so a fresh client can default to the region
- * matching the channel it was installed from. It is only consulted while the
- * user has never logged in; a persisted login (config.toml) always wins.
+ * line (`mainland-cn` or `global`) here so a fresh client can default to the
+ * region matching the channel it was installed from. It is only consulted
+ * while the user has never logged in; a persisted login (config.toml) always
+ * wins.
  */
 export const KIMI_REGION_MARKER_FILENAME = 'region';
 
@@ -115,8 +117,9 @@ export interface ResolveKimiRegionOptions {
   /**
    * The credential key persisted in config.toml's oauth ref, if any. The
    * default slot ({@link KIMI_CODE_OAUTH_KEY}) only ever holds a
-   * mainland-China login — cn persists no `oauthHost` — so its presence is
-   * an explicit-cn signal that outranks the install-channel marker.
+   * mainland-China login — mainland-cn persists no `oauthHost` — so its
+   * presence is an explicit-mainland-cn signal that outranks the
+   * install-channel marker.
    */
   readonly configuredOAuthKey?: string;
   /** Kimi home dir; defaults to `KIMI_CODE_HOME` or `~/.kimi-code`. */
@@ -149,7 +152,7 @@ function readRegionMarker(homeDir: string): KimiRegion | undefined {
     return undefined;
   }
   const value = raw.trim();
-  return value === 'cn' || value === 'overseas' ? value : undefined;
+  return value === 'mainland-cn' || value === 'global' ? value : undefined;
 }
 
 // Mirrors `defaultKimiHome` in ./toolkit; keep the two in sync so the marker
@@ -168,17 +171,17 @@ export function resolveKimiRegion(options: ResolveKimiRegionOptions = {}): KimiR
   // instead of letting a stale config/marker point CDN links somewhere odd.
   const envHost = env['KIMI_CODE_OAUTH_HOST'] ?? env['KIMI_OAUTH_HOST'];
   if (envHost !== undefined && envHost.length > 0) {
-    return regionForOAuthHost(envHost) ?? 'cn';
+    return regionForOAuthHost(envHost) ?? 'mainland-cn';
   }
   const configured = options.configuredOAuthHost;
   if (configured !== undefined && configured.length > 0) {
     const configuredRegion = regionForOAuthHost(configured);
     if (configuredRegion !== undefined) return configuredRegion;
   }
-  if (options.configuredOAuthKey === KIMI_CODE_OAUTH_KEY) return 'cn';
+  if (options.configuredOAuthKey === KIMI_CODE_OAUTH_KEY) return 'mainland-cn';
   if (options.readMarker !== false) {
     const markerRegion = readRegionMarker(options.homeDir ?? defaultHomeDir(env));
     if (markerRegion !== undefined) return markerRegion;
   }
-  return 'cn';
+  return 'mainland-cn';
 }

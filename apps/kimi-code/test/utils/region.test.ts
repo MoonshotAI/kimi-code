@@ -27,19 +27,19 @@ afterEach(() => {
 
 describe('currentKimiRegion', () => {
   it('follows the install-channel marker before the first login', () => {
-    writeFileSync(join(home, 'region'), 'overseas\n');
-    expect(refreshKimiRegion()).toBe('overseas');
-    expect(currentKimiRegion()).toBe('overseas');
+    writeFileSync(join(home, 'region'), 'global\n');
+    expect(refreshKimiRegion()).toBe('global');
+    expect(currentKimiRegion()).toBe('global');
   });
 
   it('ignores the marker when KIMI_CODE_REGION_MARKER=off (embedded server)', () => {
-    writeFileSync(join(home, 'region'), 'overseas\n');
+    writeFileSync(join(home, 'region'), 'global\n');
     process.env['KIMI_CODE_REGION_MARKER'] = 'off';
-    expect(refreshKimiRegion()).toBe('cn');
+    expect(refreshKimiRegion()).toBe('mainland-cn');
   });
 
-  it('still honors a persisted overseas login when the marker is opted out', () => {
-    writeFileSync(join(home, 'region'), 'overseas\n');
+  it('still honors a persisted global login when the marker is opted out', () => {
+    writeFileSync(join(home, 'region'), 'global\n');
     writeFileSync(
       join(home, 'config.toml'),
       [
@@ -54,6 +54,6 @@ describe('currentKimiRegion', () => {
       ].join('\n'),
     );
     process.env['KIMI_CODE_REGION_MARKER'] = 'off';
-    expect(refreshKimiRegion()).toBe('overseas');
+    expect(refreshKimiRegion()).toBe('global');
   });
 });

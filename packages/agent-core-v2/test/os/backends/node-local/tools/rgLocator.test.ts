@@ -316,7 +316,7 @@ describe('ensureRgPath download branch', () => {
     expect(new URL(url).protocol).toBe('https:');
   });
 
-  it('downloads from the overseas CDN when the env pins the overseas region', async () => {
+  it('downloads from the global CDN when the env pins the global region', async () => {
     const savedHost = process.env['KIMI_CODE_OAUTH_HOST'];
     process.env['KIMI_CODE_OAUTH_HOST'] = 'https://auth.kimi.ai';
     try {

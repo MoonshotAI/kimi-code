@@ -346,7 +346,7 @@ oauth = { storage = "file", key = "${oauthKey}", oauth_host = "${oauthHost}" }
     ]);
   });
 
-  it('logs in against the overseas region hosts when region is overseas', async () => {
+  it('logs in against the global region hosts when region is global', async () => {
     const baseUrl = 'https://api.kimi.ai/coding/v1';
     const oauthHost = 'https://auth.kimi.ai';
     const oauthKey = resolveKimiCodeOAuthKey({ oauthHost, baseUrl });
@@ -354,8 +354,8 @@ oauth = { storage = "file", key = "${oauthKey}", oauth_host = "${oauthHost}" }
     const storage = new FileTokenStorage(join(homeDir, 'credentials'));
     await storage.save(storageName, {
       ...freshToken(),
-      accessToken: 'expired-overseas-access-token',
-      refreshToken: 'overseas-refresh-token',
+      accessToken: 'expired-global-access-token',
+      refreshToken: 'global-refresh-token',
       expiresAt: 1,
     });
     const fetchMock = vi.fn<FetchMock>(async (input, init) => {
@@ -364,11 +364,11 @@ oauth = { storage = "file", key = "${oauthKey}", oauth_host = "${oauthHost}" }
         if (typeof init?.body !== 'string') throw new TypeError('expected form body');
         const body = new URLSearchParams(init.body);
         expect(body.get('grant_type')).toBe('refresh_token');
-        expect(body.get('refresh_token')).toBe('overseas-refresh-token');
+        expect(body.get('refresh_token')).toBe('global-refresh-token');
         return new Response(
           JSON.stringify({
-            access_token: 'rotated-overseas-access-token',
-            refresh_token: 'rotated-overseas-refresh-token',
+            access_token: 'rotated-global-access-token',
+            refresh_token: 'rotated-global-refresh-token',
             expires_in: 3600,
             scope: '',
             token_type: 'Bearer',
@@ -378,7 +378,7 @@ oauth = { storage = "file", key = "${oauthKey}", oauth_host = "${oauthHost}" }
       }
       if (url === `${baseUrl}/models`) {
         expect(new Headers(init?.headers).get('authorization')).toBe(
-          'Bearer rotated-overseas-access-token',
+          'Bearer rotated-global-access-token',
         );
         return new Response(
           JSON.stringify({
@@ -392,7 +392,7 @@ oauth = { storage = "file", key = "${oauthKey}", oauth_host = "${oauthHost}" }
     vi.stubGlobal('fetch', fetchMock);
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
-    await expect(harness.auth.login(undefined, { region: 'overseas' })).resolves.toMatchObject({
+    await expect(harness.auth.login(undefined, { region: 'global' })).resolves.toMatchObject({
       providerName: KIMI_CODE_PROVIDER_NAME,
       ok: true,
       defaultModel: 'kimi-code/kimi-for-coding',
@@ -410,21 +410,21 @@ oauth = { storage = "file", key = "${oauthKey}", oauth_host = "${oauthHost}" }
     ).toBeUndefined();
   });
 
-  it('logs back into the China region over a persisted overseas login', async () => {
-    const overseasBaseUrl = 'https://api.kimi.ai/coding/v1';
-    const overseasOauthHost = 'https://auth.kimi.ai';
-    const overseasKey = resolveKimiCodeOAuthKey({
-      oauthHost: overseasOauthHost,
-      baseUrl: overseasBaseUrl,
+  it('logs back into the mainland-cn region over a persisted global login', async () => {
+    const globalBaseUrl = 'https://api.kimi.ai/coding/v1';
+    const globalOauthHost = 'https://auth.kimi.ai';
+    const globalKey = resolveKimiCodeOAuthKey({
+      oauthHost: globalOauthHost,
+      baseUrl: globalBaseUrl,
     });
     await writeFile(
       join(homeDir, 'config.toml'),
       `
 [providers."managed:kimi-code"]
 type = "kimi"
-base_url = "${overseasBaseUrl}"
+base_url = "${globalBaseUrl}"
 api_key = ""
-oauth = { storage = "file", key = "${overseasKey}", oauth_host = "${overseasOauthHost}" }
+oauth = { storage = "file", key = "${globalKey}", oauth_host = "${globalOauthHost}" }
 `,
     );
     const storage = new FileTokenStorage(join(homeDir, 'credentials'));
@@ -465,7 +465,7 @@ oauth = { storage = "file", key = "${overseasKey}", oauth_host = "${overseasOaut
     vi.stubGlobal('fetch', fetchMock);
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
-    await expect(harness.auth.login(undefined, { region: 'cn' })).resolves.toMatchObject({
+    await expect(harness.auth.login(undefined, { region: 'mainland-cn' })).resolves.toMatchObject({
       providerName: KIMI_CODE_PROVIDER_NAME,
       ok: true,
     });

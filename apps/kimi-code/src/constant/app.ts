@@ -89,8 +89,8 @@ export const FEEDBACK_VERSION_PREFIX = 'kimi-code-';
 export const FEEDBACK_TELEMETRY_EVENT = 'feedback_submitted';
 
 // CDN source of truth: all version checks and native install scripts pull from here.
-// The off-session endpoints derive from the current region profile so an
-// overseas login points at the .ai deployment; they are resolved per call so
+// The off-session endpoints derive from the current region profile so a
+// global login points at the .ai deployment; they are resolved per call so
 // a region switch (login/logout + refreshKimiRegion) takes effect immediately.
 export function kimiCodeCdnBase(): string {
   return currentKimiProfile().cdnBase;

@@ -65,7 +65,7 @@ describe('server-v2 GET /api/v1/oauth/usage', () => {
       getManagedUserInfo: async () => ({ kind: 'error' as const, message: 'unused' }),
       resolveTokenProvider: () => undefined,
       getCachedAccessToken: async () => undefined,
-      getRegion: () => 'cn',
+      getRegion: () => 'mainland-cn',
     };
   }
 
@@ -196,7 +196,7 @@ describe('server-v2 GET /api/v1/oauth/userinfo', () => {
       getManagedUserInfo,
       resolveTokenProvider: () => undefined,
       getCachedAccessToken: async () => undefined,
-      getRegion: () => 'cn',
+      getRegion: () => 'mainland-cn',
     };
   }
 

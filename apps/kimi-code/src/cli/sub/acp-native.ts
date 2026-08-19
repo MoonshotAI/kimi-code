@@ -36,7 +36,7 @@ export function registerNativeAcpCommand(parent: Command): void {
       'Run the device-code login flow then exit (entry point for ACP terminal-auth).',
       false,
     )
-    .option('--region <region>', 'Login region used together with --login: "cn" or "overseas".')
+    .option('--region <region>', 'Login region used together with --login: "mainland-cn" (中国大陆, https://api.kimi.com/coding/v1) or "global" (全球, https://api.kimi.ai/coding/v1).')
     .action(async (opts: { login?: boolean; region?: string }) => {
       if (opts.login === true) {
         await runLoginFlow({

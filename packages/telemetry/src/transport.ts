@@ -13,8 +13,9 @@ import { join } from 'node:path';
 import type { EnrichedTelemetryEvent, TelemetryPrimitive } from './types';
 import { isTelemetryPrimitive } from './types';
 
-// cn telemetry endpoint, mirroring `KIMI_REGION_PROFILES.cn.telemetryEndpoint`
-// in `@moonshot-ai/kimi-code-oauth` (the region source of truth). This package
+// Mainland-China telemetry endpoint, mirroring
+// `KIMI_REGION_PROFILES['mainland-cn'].telemetryEndpoint` in
+// `@moonshot-ai/kimi-code-oauth` (the region source of truth). This package
 // deliberately has no dependency on it — region-aware callers pass `endpoint`
 // explicitly (e.g. through `initializeTelemetry`).
 export const TELEMETRY_ENDPOINT = 'https://telemetry-logs.kimi.com/v1/event';

@@ -312,7 +312,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       getManagedUserInfo: async () => ({ kind: 'error' as const, message: 'unused' }),
       resolveTokenProvider: () => undefined,
       getCachedAccessToken: async () => undefined,
-      getRegion: () => 'cn',
+      getRegion: () => 'mainland-cn',
     };
   }
 
