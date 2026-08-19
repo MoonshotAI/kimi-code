@@ -13,7 +13,7 @@ import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
-import { GoalInjection } from '#/agent/goal/injection/goalInjection';
+import { GoalInjection, GOAL_WAIT_FOR_GUIDANCE } from '#/agent/goal/injection/goalInjection';
 import {
   IAgentLoopService,
   type AfterStepContext,
@@ -31,11 +31,14 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
 import { IAgentUsageService, type UsageRecordedContext } from '#/agent/usage/usage';
 import type { GoalBudgetProperties } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import {
   ErrorCodes,
   Error2,
@@ -47,6 +50,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { defineState } from '#/state/state';
 
 import { IAgentGoalService, type GoalReasonInput, type ResumeGoalInput } from './goal';
+import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import { IGoalDeadlineScheduler } from './goalDeadlineScheduler';
 import {
   GoalClear,
@@ -263,10 +267,13 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IAgentUsageService usageService: IAgentUsageService,
     @IConfigService private readonly config: IConfigService,
+    @IFlagService private readonly flags: IFlagService,
     @IGoalDeadlineScheduler private readonly deadlineScheduler: IGoalDeadlineScheduler,
     @IAgentScopeContext private readonly agentContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -291,6 +298,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       new GoalInjection(
         {
           getGoal: () => this.getGoal().goal,
+          isWaitForEnabled: () => this.isWaitForAvailable(),
         },
         injector,
       ),
@@ -895,15 +903,26 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     } catch {}
   }
 
+  private isWaitForAvailable(): boolean {
+    return (
+      this.flags.enabled(WAIT_FOR_FLAG_ID) &&
+      this.toolRegistry.resolve('WaitFor') !== undefined &&
+      this.toolPolicy.isToolActive('WaitFor')
+    );
+  }
+
   private launchContinuationTurn(goalId: string, stepCapped = false): void {
     if (!this.isActiveGoal(goalId)) return;
     if (this.pendingContinuation !== undefined) return;
+    const prompt = stepCapped ? GOAL_STEP_CAP_CONTINUATION_PROMPT : GOAL_CONTINUATION_PROMPT;
     const message: ContextMessage = {
       role: 'user',
       content: [
         {
           type: 'text',
-          text: stepCapped ? GOAL_STEP_CAP_CONTINUATION_PROMPT : GOAL_CONTINUATION_PROMPT,
+          text: this.isWaitForAvailable()
+            ? `${prompt} ${GOAL_WAIT_FOR_GUIDANCE}`
+            : prompt,
         },
       ],
       toolCalls: [],

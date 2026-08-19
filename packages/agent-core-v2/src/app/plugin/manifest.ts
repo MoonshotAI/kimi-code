@@ -1,7 +1,7 @@
 import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import { HookDefSchema, type HookDefConfig } from '#/agent/externalHooks/configSection';
+import { HookDefSchema, type HookDefConfig } from '#/features/externalHooks/configSection';
 import { McpServerConfigSchema, type McpServerConfig } from '#/mcpCore/config-schema';
 
 import {

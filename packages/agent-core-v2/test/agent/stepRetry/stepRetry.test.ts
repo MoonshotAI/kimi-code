@@ -33,6 +33,17 @@ describe('stepRetry plugin', () => {
     return ctx.allEvents.filter((event) => event.type === '[rpc]' && event.event === name);
   }
 
+  function wireLoopEvents(eventType: string): Array<Record<string, unknown>> {
+    return ctx.allEvents
+      .filter(
+        (entry) =>
+          entry.type === '[wire]' &&
+          entry.event === 'context.append_loop_event' &&
+          (entry.args as { event?: { type?: string } }).event?.type === eventType,
+      )
+      .map((entry) => (entry.args as { event: Record<string, unknown> }).event);
+  }
+
   async function runTurn(turnId: number, signal?: AbortSignal) {
     void ctx.dispatcher.dispatch(new TurnStarted({ turnId, origin: { kind: 'user' } }));
     const loop = ctx.get(IAgentLoopService);
@@ -106,6 +117,37 @@ describe('stepRetry plugin', () => {
         content: [{ type: 'text', text: 'recovered' }],
       }),
     ]);
+  });
+
+  it('pairs every retried step.begin with a step.end in the wire', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        if (calls === 1) throw new APIConnectionError('terminated');
+        return {
+          id: 'retry-response',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'recovered' }],
+            toolCalls: [],
+          },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      }),
+    );
+
+    const result = await runTurn(1);
+
+    expect(result).toEqual({ type: 'completed', steps: 2, truncated: false });
+    const begins = wireLoopEvents('step.begin');
+    const ends = wireLoopEvents('step.end');
+    expect(begins).toHaveLength(2);
+    expect(ends.map((event) => event['finishReason'])).toEqual(['error', 'end_turn']);
+    expect(ends.map((event) => event['uuid'])).toEqual(begins.map((event) => event['uuid']));
   });
 
   it('fails the turn after maxAttempts and reports the interruption only then', async () => {

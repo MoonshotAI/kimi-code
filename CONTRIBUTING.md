@@ -1,5 +1,7 @@
 # Contributing to kimi-code
 
+[中文版](CONTRIBUTING.zh-CN.md)
+
 Thanks for taking the time to contribute! This project moves quickly, and thoughtful contributions from the community are what keep it sharp. The guide below walks you through how we work so your PR has the best chance of landing smoothly.
 
 ## Before You Start
@@ -10,27 +12,25 @@ We hold AI-assisted contributions to the same standard as hand-written ones. **Y
 
 We only merge PRs aligned with the roadmap. Drive-by refactors without context are unlikely to land.
 
-**Discuss first** — open an issue before coding. PRs without prior discussion may be closed without review:
+**External PRs are accepted for approved bug fixes only.** Open an issue first and wait for a maintainer to approve it with an `/approve` comment, then link that issue in your PR. PRs without an approved linked issue may be closed without review; once the issue is approved, ask a maintainer to reopen your PR.
 
-- New features or user-visible behavior changes (regardless of size)
+**Discuss first** — open an issue before coding:
+
+- Bug fixes, including small or typo-level ones: open a bug issue and wait for a maintainer's `/approve` before opening the PR
+- New features or user-visible behavior changes (regardless of size): external feature PRs are not accepted — features are discussed and decided in issues, and accepted features are implemented by the team or by explicit maintainer invitation
 - Refactors or other changes larger than ~100 lines
 - Public API or compatibility changes
-- Bug fixes where the cause or fix approach is still unclear
-
-**Can open a PR directly** — link an existing issue when there is one:
-
-- Clear, reproducible bug fixes with a focused diff
-- Typos, documentation-only changes, and small CI/build fixes
-- Small changes that clearly match an existing issue or maintainer request
 
 ## Project Layout
 
 This is a pnpm monorepo. The most relevant entry points are:
 
 - `apps/kimi-code` — CLI / TUI
-- `apps/vis` — session replay & debugging visualizer
+- `apps/vscode` — VS Code extension
+- `apps/vis` — session debug visualizer
 - `packages/node-sdk` — public TypeScript SDK (`@moonshot-ai/kimi-code-sdk`)
-- `packages/agent-core`, `kosong`, `kaos`, `oauth`, `telemetry` — internal engine packages
+- `packages/agent-core-v2` — the agent engine (v2, DI Scope architecture); `packages/agent-core` is v1 and being phased out
+- `packages/klient`, `kap-server`, `protocol`, `transcript`, `kosong`, `kaos`, `oauth`, `telemetry` — internal engine packages
 - `docs/` — VitePress bilingual docs site
 
 For the full project map, see [AGENTS.md](AGENTS.md).
@@ -84,9 +84,7 @@ This repo uses [changesets](https://github.com/changesets/changesets) to manage 
 
 ## Pull Requests
 
-Use the [PR template](.github/pull_request_template.md) when opening a feature pull request.
-
-PR titles must follow [Conventional Commits](#commit-convention); CI runs `pnpm lint`, `pnpm typecheck`, and `pnpm test` on every PR. Update user-facing docs in `docs/` when behavior changes — use the `gen-docs` skill when working with coding agents.
+Every PR opens with the [PR template](.github/pull_request_template.md). PR titles must follow [Conventional Commits](#commit-convention); CI runs `pnpm lint`, `pnpm typecheck`, and `pnpm test` on every PR. Update user-facing docs in `docs/` when behavior changes — use the `gen-docs` skill when working with coding agents.
 
 ## Code Style
 

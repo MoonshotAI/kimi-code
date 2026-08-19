@@ -18,8 +18,8 @@ import {
   DefaultCompactionStrategy,
 } from '#/agent/fullCompaction/strategy';
 import { COMPACTION_SUMMARY_PREFIX } from '#/agent/contextMemory/compactionHandoff';
-import { makeHookRunner } from '../externalHooks/runner-stub';
-import type { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
+import { makeHookRunner } from '../../features/externalHooks/runner-stub';
+import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { MASTER_ENV } from '#/app/flag/flagService';
 import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -291,7 +291,7 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         agent_id: 'main',
         source: 'manual',
-        tokens_before: 3_297,
+        tokens_before: 3_302,
         tokens_after: expect.any(Number),
         duration_ms: expect.any(Number),
         compacted_count: 6,
@@ -570,7 +570,7 @@ describe('FullCompaction', () => {
       session_id: 'test-session',
       cwd: dir,
       trigger: 'auto',
-      token_count: 3_297,
+      token_count: 3_302,
     });
     expect(post).toMatchObject({
       hook_event_name: 'PostCompact',
@@ -656,7 +656,7 @@ describe('FullCompaction', () => {
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'manual',
-        tokens_before: 14_363,
+        tokens_before: 14_980,
         retry_count: 1,
         trace_id: 'trace-compact-1',
       }),
@@ -1039,7 +1039,7 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         agent_id: 'main',
         source: 'manual',
-        tokens_before: 14_363,
+        tokens_before: 14_980,
         duration_ms: expect.any(Number),
         round: 1,
         retry_count: 0,
@@ -1264,7 +1264,7 @@ describe('FullCompaction', () => {
       event: 'compaction_failed',
       properties: expect.objectContaining({
         source: 'manual',
-        tokens_before: 14_363,
+        tokens_before: 14_980,
         duration_ms: expect.any(Number),
         retry_count: 4,
         error_type: 'APIConnectionError',
@@ -1637,8 +1637,8 @@ describe('FullCompaction', () => {
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'auto',
-        tokens_before: 3_304,
-        tokens_after: 3_288,
+        tokens_before: 3_309,
+        tokens_after: 3_293,
         compacted_count: 7,
         retry_count: 0,
       }),

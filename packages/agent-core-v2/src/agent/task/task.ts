@@ -65,6 +65,11 @@ export interface AgentTaskNotificationContext {
   readonly sourceId: string;
 }
 
+export interface AgentTaskWaitDelivery {
+  readonly taskId: string;
+  readonly status: AgentTaskStatus;
+}
+
 export interface IAgentTaskService {
   readonly _serviceBrand: undefined;
 
@@ -79,6 +84,7 @@ export interface IAgentTaskService {
   ): Promise<AgentTaskOutputSnapshot>;
   readOutput(taskId: string, tail?: number): Promise<string>;
   suppressTerminalNotification(taskId: string): Promise<void>;
+  markTasksDeliveredViaWait(tasks: readonly AgentTaskWaitDelivery[]): void;
   detach(taskId: string): AgentTaskInfo | undefined;
   stop(taskId: string, reason?: string): Promise<AgentTaskInfo | undefined>;
   stopByUser(taskId: string): Promise<AgentTaskInfo | undefined>;

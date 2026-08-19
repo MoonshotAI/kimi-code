@@ -3,6 +3,7 @@ import { Emitter, type Event } from '#/_base/event';
 import type {
   FiberHandle,
   FiberProvideOptions,
+  RecipeStatics,
   ServiceClassRecipe,
   ServiceRecipe,
 } from '#/_base/di/fiber';
@@ -22,7 +23,10 @@ import {
 export class FeatureManagerService extends Service implements IFeatureManager {
   declare readonly _serviceBrand: undefined;
 
-  private readonly _units = new Map<string, FiberHandle>();
+  private readonly _units = new Map<
+    string,
+    { handle: FiberHandle; meta: Record<string, unknown> }
+  >();
   private readonly _onDidChangeUnits = new Emitter<void>();
   readonly onDidChangeUnits: Event<void> = this._onDidChangeUnits.event;
 
@@ -50,46 +54,47 @@ export class FeatureManagerService extends Service implements IFeatureManager {
       : this.provide(first as ServiceRecipe, second as FiberProvideOptions | undefined);
     const name = handle.name;
     const previous = this._units.get(name);
-    if (previous !== undefined && previous !== handle) {
-      void previous.dispose();
+    if (previous !== undefined && previous.handle !== handle) {
+      void previous.handle.dispose();
     }
-    this._units.set(name, handle);
+    const statics = (isServiceIdentifier(first) ? second : first) as RecipeStatics;
+    this._units.set(name, { handle, meta: Object.freeze({ ...statics.meta }) });
     this._onDidChangeUnits.fire();
     return handle;
   }
 
   async unprovideUnit(name: string): Promise<void> {
-    const handle = this._units.get(name);
-    if (handle === undefined) {
+    const entry = this._units.get(name);
+    if (entry === undefined) {
       return;
     }
     this._units.delete(name);
     try {
-      await handle.dispose();
+      await entry.handle.dispose();
     } finally {
       this._onDidChangeUnits.fire();
     }
   }
 
   async updateUnit(name: string, config?: unknown): Promise<void> {
-    const handle = this._units.get(name);
-    if (handle === undefined) {
+    const entry = this._units.get(name);
+    if (entry === undefined) {
       throw new Error(`feature unit '${name}' is not managed by this FeatureManager`);
     }
-    await handle.update(config);
+    await entry.handle.update(config);
     this._onDidChangeUnits.fire();
   }
 
   units(): readonly ManagedUnitInfo[] {
     const infos: ManagedUnitInfo[] = [];
-    for (const [name, handle] of this._units) {
+    for (const [name, entry] of this._units) {
       let uid: number | undefined;
       try {
-        uid = handle.uid;
+        uid = entry.handle.uid;
       } catch {
         uid = undefined;
       }
-      infos.push({ name, state: handle.state, uid });
+      infos.push({ name, state: entry.handle.state, uid, meta: entry.meta });
     }
     return infos;
   }

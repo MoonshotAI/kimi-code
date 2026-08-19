@@ -250,4 +250,125 @@ describe('tool-result registry', () => {
     expect(out).not.toContain(longLine);
     expect(out).toContain('... (');
   });
+
+  const waitForCompletedOutput = [
+    'wait_status: completed',
+    'task_id: question-80w0h7nw',
+    'waited_ms: 9607',
+    'timeout_ms: 300000',
+    '',
+    '[finished]',
+    'task_id: question-80w0h7nw',
+    'description: Pick one so I can demonstrate WaitFor with background questions?',
+    'status: completed',
+    'kind: question',
+    '',
+    '[output]',
+    '{"answers":{"Pick one":"Beta"}}',
+  ].join('\n');
+
+  it('WaitFor completed renders the finished task instead of raw fields', () => {
+    const renderer = pickResultRenderer('WaitFor');
+    const out = strip(
+      joinRender(
+        renderer(call('WaitFor', { task_id: 'question-80w0h7nw' }), result(waitForCompletedOutput), ctx),
+      ),
+    );
+    expect(out).toContain('✓ question-80w0h7nw completed');
+    expect(out).toContain('Pick one so I can demonstrate');
+    expect(out).not.toContain('waited_ms');
+    expect(out).not.toContain('[finished]');
+  });
+
+  it('WaitFor completed expands to the raw timeline output', () => {
+    const renderer = pickResultRenderer('WaitFor');
+    const out = strip(
+      joinRender(
+        renderer(
+          call('WaitFor', { task_id: 'question-80w0h7nw' }),
+          result(waitForCompletedOutput),
+          expandedCtx,
+        ),
+      ),
+    );
+    expect(out).toContain('[finished]');
+    expect(out).toContain('waited_ms: 9607');
+  });
+
+  it('WaitFor completed mentions extras and still-running counts', () => {
+    const output = [
+      'wait_status: completed',
+      'task_id: bash-a1',
+      'waited_ms: 1200',
+      'timeout_ms: 30000',
+      '',
+      '[finished]',
+      'task_id: bash-a1',
+      'description: main wait',
+      'status: failed',
+      '',
+      '[completed_during_wait]',
+      'task_id: bash-b2',
+      'description: side task',
+      'status: completed',
+      '',
+      '[still_running]',
+      'active_background_tasks: 2',
+      'task_id: bash-c3',
+      'description: slow one',
+      'status: running',
+      '---',
+      'task_id: agent-d4',
+      'description: another slow one',
+      'status: running',
+    ].join('\n');
+    const renderer = pickResultRenderer('WaitFor');
+    const out = strip(joinRender(renderer(call('WaitFor', { task_id: 'bash-a1' }), result(output), ctx)));
+    expect(out).toContain('✗ bash-a1 failed');
+    expect(out).toContain('+1 more finished during wait');
+    expect(out).toContain('2 background tasks still running');
+  });
+
+  it('WaitFor timed_out lists the still-running tasks without an error tone', () => {
+    const output = [
+      'wait_status: timed_out',
+      'task_id: bash-a1',
+      'waited_ms: 30000',
+      'timeout_ms: 30000',
+      'The wait ended before the task finished.',
+      '',
+      '[still_running]',
+      'active_background_tasks: 2',
+      'task_id: bash-a1',
+      'description: bg sleep',
+      'status: running',
+      '---',
+      'task_id: agent-b2',
+      'description: investigate flaky test',
+      'status: running',
+    ].join('\n');
+    const renderer = pickResultRenderer('WaitFor');
+    const out = strip(joinRender(renderer(call('WaitFor', { task_id: 'bash-a1' }), result(output), ctx)));
+    expect(out).toContain('2 background tasks still running');
+    expect(out).toContain('bg sleep');
+    expect(out).toContain('investigate flaky test');
+    expect(out).not.toContain('waited_ms');
+  });
+
+  it('WaitFor no_tasks renders no body in collapsed state', () => {
+    const renderer = pickResultRenderer('WaitFor');
+    const output = 'wait_status: no_tasks\nwaited_ms: 0\ntimeout_ms: 30000';
+    const out = joinRender(renderer(call('WaitFor', { timeout: 30 }), result(output), ctx));
+    expect(out.trim()).toBe('');
+  });
+
+  it('WaitFor errors fall back to the truncated renderer', () => {
+    const renderer = pickResultRenderer('WaitFor');
+    const out = strip(
+      joinRender(
+        renderer(call('WaitFor', { task_id: 'bash-x' }), result('Task not found: bash-x', true), ctx),
+      ),
+    );
+    expect(out).toContain('Task not found: bash-x');
+  });
 });

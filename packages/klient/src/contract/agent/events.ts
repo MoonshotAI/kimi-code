@@ -100,6 +100,7 @@ export const toolProgressEventSchema = z.object({
     percent: z.number().optional(),
     customKind: z.string().optional(),
     customData: z.unknown().optional(),
+    replace: z.boolean().optional(),
   }),
 });
 

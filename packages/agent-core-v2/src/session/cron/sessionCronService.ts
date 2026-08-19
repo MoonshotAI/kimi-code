@@ -5,10 +5,6 @@ import type { Turn } from '#/agent/loop/loop';
 import type { CronTask, CronTaskInit } from '#/app/cron/cronTask';
 import type { ParsedCronExpression } from '#/app/cron/cron-expr';
 
-export interface CronLoadOptions {
-  readonly replace?: boolean;
-}
-
 export interface ISessionCronService {
   readonly _serviceBrand: undefined;
 
@@ -27,11 +23,9 @@ export interface ISessionCronService {
     parsed: ParsedCronExpression,
     idealMs: number,
   ): number | null;
-  loadFromStore(options?: CronLoadOptions): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
   tick(): Promise<void>;
-  flushPersist(): Promise<void>;
   handleMissed(
     tasks: readonly CronTask[],
     renderMissedNotification: (tasks: readonly CronTask[]) => readonly ContentPart[],

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 import { isPlainObject, plainObjectToToml, transformPlainObject } from '#/app/config/toml';
 
-import { HOOK_EVENT_TYPES } from './types';
+import { HOOK_EVENT_TYPES } from './internal/types';
 
 export const HOOKS_SECTION = 'hooks';
 
