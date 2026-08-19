@@ -16,7 +16,7 @@ export function registerLoginCommand(parent: Command): void {
     .description('Authenticate with Kimi Code CLI via the device-code flow.')
     .option(
       '--region <region>',
-      'Login region: "mainland-cn" (中国大陆, https://api.kimi.com/coding/v1) or "global" (全球, https://api.kimi.ai/coding/v1).',
+      'Login region: "mainland-cn" (Mainland China, https://api.kimi.com/coding/v1) or "global" (Global, https://api.kimi.ai/coding/v1).',
     )
     .action(async (opts: { region?: string }) => {
       await runLoginFlow({
