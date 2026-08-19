@@ -33,7 +33,9 @@ import { ErrorCodes, Error2 } from '#/errors';
 import { McpOAuthService, type McpOAuthEvent } from '#/mcpCore/oauth/service';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IHostProcessService } from '#/os/interface/hostProcess';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -76,6 +78,7 @@ describe('McpManagementService', () => {
   let identitySnapshot: AgentIdentitySnapshot;
   let trusted: boolean;
   let getOrCreate: Mock<IWorkspaceInstanceManager['getOrCreate']>;
+  let findByRoot: Mock<IWorkspaceInstanceManager['findByRoot']>;
   let management: IMcpManagementService;
 
   beforeEach(() => {
@@ -95,12 +98,14 @@ describe('McpManagementService', () => {
     getOrCreate = vi.fn<IWorkspaceInstanceManager['getOrCreate']>(async () =>
       ({ id: 'test-workspace' }) as unknown as WorkspaceInstance,
     );
+    findByRoot = vi.fn<IWorkspaceInstanceManager['findByRoot']>(() => undefined);
+    const hostProcess = new HostProcessService();
     const runtime = Object.assign(
       new FakeRuntime(
         { workspaceId: 'test-workspace', runtimeId: 'local', generation: 'test-generation' },
         { capabilities: ['process'] },
       ),
-      { process: new HostProcessService() },
+      { process: hostProcess },
     );
     const ix = createServices(disposables, {
       additionalServices: (reg) => {
@@ -114,6 +119,18 @@ describe('McpManagementService', () => {
           },
         });
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
+        reg.defineInstance(IHostEnvironment, {
+          _serviceBrand: undefined,
+          osKind: 'Linux',
+          osArch: 'x64',
+          osVersion: 'test',
+          shellName: 'bash',
+          shellPath: '/bin/bash',
+          pathClass: 'posix',
+          homeDir: home,
+          ready: Promise.resolve(),
+        });
+        reg.defineInstance(IHostProcessService, hostProcess);
         reg.definePartialInstance(IAtomicDocumentStore, {
           get: async <T>() => (trusted ? ({} as T) : undefined),
         });
@@ -135,7 +152,7 @@ describe('McpManagementService', () => {
           inspect: () => runtime,
           acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
         });
-        reg.definePartialInstance(IWorkspaceInstanceManager, { getOrCreate });
+        reg.definePartialInstance(IWorkspaceInstanceManager, { findByRoot, getOrCreate });
         reg.defineInstance(ILogService, stubLog());
         reg.define(IMcpManagementService, McpManagementService);
       },
@@ -593,7 +610,7 @@ describe('McpManagementService', () => {
       await expect(store.list()).resolves.toEqual([]);
     }, 20000);
 
-    it('probes an inline stdio config, materializing the probe cwd workspace', async () => {
+    it('probes an inline stdio config without retaining the probe cwd workspace', async () => {
       const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-cwd-'));
       tempDirs.push(cwd);
 
@@ -610,7 +627,8 @@ describe('McpManagementService', () => {
       expect(result.success).toBe(true);
       expect(result.output).toContain('Available tools: 4');
       expect(result.output).toContain('- echo: Echoes input text');
-      expect(getOrCreate).toHaveBeenCalledWith({ root: cwd });
+      expect(findByRoot).toHaveBeenCalledWith(cwd);
+      expect(getOrCreate).not.toHaveBeenCalled();
     }, 20000);
 
     it('rejects an inline probe whose name disagrees with the server config', async () => {
@@ -675,15 +693,16 @@ describe('McpManagementService', () => {
         cwd,
       });
       await Promise.resolve();
-      expect(getOrCreate).not.toHaveBeenCalled();
+      expect(findByRoot).not.toHaveBeenCalled();
 
       releaseConfig();
       await Promise.resolve();
-      expect(getOrCreate).not.toHaveBeenCalled();
+      expect(findByRoot).not.toHaveBeenCalled();
 
       releaseIdentity();
       await expect(probe).resolves.toMatchObject({ success: true });
-      expect(getOrCreate).toHaveBeenCalledWith({ root: cwd });
+      expect(findByRoot).toHaveBeenCalledWith(cwd);
+      expect(getOrCreate).not.toHaveBeenCalled();
     }, 20000);
 
     it('rejects a name-only probe under an enabled runtime-name collision', async () => {
