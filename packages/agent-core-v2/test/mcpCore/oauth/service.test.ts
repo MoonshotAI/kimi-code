@@ -141,6 +141,50 @@ function authServerState(authServerUrl: string) {
   };
 }
 
+async function blockedRefreshFixture(): Promise<{
+  readonly fixture: Fixture;
+  readonly authServer: FakeAuthServer;
+  readonly writeStarted: Promise<void>;
+  readonly releaseWrite: () => void;
+}> {
+  const memory = createMemoryMcpOAuthStore();
+  let signalWriteStarted: () => void = () => undefined;
+  const writeStarted = new Promise<void>((resolve) => {
+    signalWriteStarted = resolve;
+  });
+  let releaseWrite: () => void = () => undefined;
+  const writeReleased = new Promise<void>((resolve) => {
+    releaseWrite = resolve;
+  });
+  const store: McpOAuthStore = {
+    ...memory,
+    async write(key: string, value: unknown): Promise<void> {
+      const accessToken =
+        typeof value === 'object' && value !== null
+          ? (value as { readonly access_token?: unknown }).access_token
+          : undefined;
+      if (accessToken === 'fresh-token') {
+        signalWriteStarted();
+        await writeReleased;
+      }
+      await memory.write(key, value);
+    },
+  };
+  const fixture = makeFixture(store);
+  cleanups.push(() => fixture.service.dispose());
+  const authServer = await startFakeAuthServer({ refreshExpiresIn: 60 });
+  const provider = await readyProvider(fixture);
+  const state = authServerState(authServer.url);
+  await provider.saveDiscoveryState(state.discovery);
+  await provider.saveClientInformation(state.client);
+  await provider.saveTokens({
+    access_token: 'stale-access-token',
+    refresh_token: 'stale-refresh-token',
+    token_type: 'Bearer',
+  });
+  return { fixture, authServer, writeStarted, releaseWrite };
+}
+
 async function deliverCallback(flow: BeginAuthorizationResult): Promise<void> {
   const redirectUri = flow.authorizationUrl.searchParams.get('redirect_uri');
   const state = flow.authorizationUrl.searchParams.get('state');
@@ -650,9 +694,7 @@ describe('McpOAuthService proactive refresh scheduling', () => {
 
   it('waits another midpoint after refreshing into another 60-second grant', async () => {
     const fixture = makeFixture();
-    cleanups.push(() => {
-      fixture.service.dispose();
-    });
+    cleanups.push(() => fixture.service.dispose());
     const authServer = await startFakeAuthServer({ refreshExpiresIn: 60 });
 
     const provider = await readyProvider(fixture);
@@ -723,6 +765,37 @@ describe('McpOAuthService proactive refresh scheduling', () => {
 });
 
 describe('McpOAuthService shutdown', () => {
+  it('keeps shutdown pending while a token refresh is in flight', async () => {
+    const { fixture, writeStarted, releaseWrite } = await blockedRefreshFixture();
+    const refresh = fixture.service.refresh(SERVER_NAME, SERVER_URL);
+    await writeStarted;
+
+    const shutdown = fixture.service.shutdown();
+    let shutdownSettled = false;
+    void shutdown.then(() => {
+      shutdownSettled = true;
+    });
+    await Promise.resolve();
+    const pendingWhileRefreshInFlight = !shutdownSettled;
+
+    releaseWrite();
+    await Promise.all([refresh, shutdown]);
+    expect(pendingWhileRefreshInFlight).toBe(true);
+  }, 15000);
+
+  it('prevents a completing refresh from scheduling work after shutdown', async () => {
+    const { fixture, authServer, writeStarted, releaseWrite } = await blockedRefreshFixture();
+    const refresh = fixture.service.refresh(SERVER_NAME, SERVER_URL);
+    await writeStarted;
+
+    const shutdown = fixture.service.shutdown();
+    releaseWrite();
+    await Promise.all([refresh, shutdown]);
+    await fixture.scheduler.advanceBy(30_000);
+
+    expect(authServer.counts.refresh).toBe(1);
+  }, 15000);
+
   it('cancels active flows on shutdown', async () => {
     const fixture = makeFixture();
     cleanups.push(() => fixture.service.dispose());

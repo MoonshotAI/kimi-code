@@ -1,6 +1,5 @@
 import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 
-import { Disposable } from '#/_base/di/lifecycle';
 import type { ILogger as Logger } from '#/_base/log/log';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 
@@ -112,7 +111,7 @@ const defaultScheduler: McpOAuthScheduler = {
   },
 };
 
-export class McpOAuthService extends Disposable {
+export class McpOAuthService {
   private readonly store: McpOAuthStore;
   private readonly clientLabel: string | undefined;
   private readonly resolveClientName: (() => string | undefined) | undefined;
@@ -123,19 +122,19 @@ export class McpOAuthService extends Disposable {
   private readonly refreshes = new Map<string, Promise<void>>();
   private readonly refreshTimers = new Map<string, McpOAuthScheduledTask>();
   private readonly activeAuthorizations = new Map<string, Promise<SharedAuthorizationFlow>>();
+  private shuttingDown = false;
+  private shutdownPromise: Promise<void> | undefined;
 
   constructor(options: McpOAuthServiceOptions) {
-    super();
     this.store = options.store;
     this.clientLabel = options.clientLabel;
     this.resolveClientName = options.resolveClientName;
     this.log = options.log ?? defaultLog;
     this.scheduler = options.scheduler ?? defaultScheduler;
-    this._register({
-      dispose: () => {
-        void this.shutdown();
-      },
-    });
+  }
+
+  dispose(): Promise<void> {
+    return this.shutdown();
   }
 
   /** Returns the cached provider for `serverName` + `serverUrl`, constructing it on first use. */
@@ -196,6 +195,9 @@ export class McpOAuthService extends Disposable {
     const storeKey = mcpOAuthStoreKey(serverName, serverUrl);
     const existing = this.refreshes.get(storeKey);
     if (existing !== undefined) return existing;
+    if (this.shuttingDown) {
+      throw new Error2(ErrorCodes.MCP_OAUTH_FAILED, 'MCP OAuth service is shutting down');
+    }
     const task = this.refreshNow(serverName, serverUrl).finally(() => {
       this.refreshes.delete(storeKey);
     });
@@ -237,21 +239,33 @@ export class McpOAuthService extends Disposable {
 
   /**
    * Release everything the service owns: pending proactive-refresh timers,
-   * in-flight interactive flows (closing their callback listeners), event
-   * listeners, and cached providers. Idempotent.
+   * in-flight refreshes and interactive flows (closing their callback
+   * listeners), event listeners, and cached providers. Idempotent.
    */
-  async shutdown(): Promise<void> {
+  shutdown(): Promise<void> {
+    if (this.shutdownPromise !== undefined) return this.shutdownPromise;
+    this.shuttingDown = true;
     this.stopProactiveRefresh();
-    const inFlight = [...this.activeAuthorizations.values()];
+    const authorizations = [...this.activeAuthorizations.values()];
+    const refreshes = [...this.refreshes.values()];
     this.activeAuthorizations.clear();
-    await Promise.all(
-      inFlight.map(async (started) => {
-        const flow = await started.catch(() => undefined);
-        await flow?.cancelUnderlying();
-      }),
-    );
-    this.listeners.clear();
-    this.providers.clear();
+    this.shutdownPromise = (async () => {
+      try {
+        await Promise.all([
+          Promise.all(
+            authorizations.map(async (started) => {
+              const flow = await started.catch(() => undefined);
+              await flow?.cancelUnderlying();
+            }),
+          ),
+          Promise.allSettled(refreshes),
+        ]);
+      } finally {
+        this.listeners.clear();
+        this.providers.clear();
+      }
+    })();
+    return this.shutdownPromise;
   }
 
   /**
@@ -270,6 +284,9 @@ export class McpOAuthService extends Disposable {
     serverUrl: string | URL,
     options: BeginAuthorizationOptions = {},
   ): Promise<BeginAuthorizationResult> {
+    if (this.shuttingDown) {
+      throw new Error2(ErrorCodes.MCP_OAUTH_FAILED, 'MCP OAuth service is shutting down');
+    }
     const storeKey = mcpOAuthStoreKey(serverName, serverUrl);
     const inFlight = this.activeAuthorizations.get(storeKey);
     if (inFlight !== undefined) {
@@ -503,6 +520,7 @@ export class McpOAuthService extends Disposable {
   }
 
   private scheduleRefresh(serverName: string, serverUrl: string | URL, expiresAt: number): void {
+    if (this.shuttingDown) return;
     const canonicalUrl = canonicalMcpOAuthResource(serverUrl);
     const storeKey = mcpOAuthStoreKey(serverName, canonicalUrl);
     this.cancelScheduledRefresh(serverName, canonicalUrl);

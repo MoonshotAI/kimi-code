@@ -93,7 +93,7 @@ describe('WorkspaceMcpService', () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     await manager?.shutdown();
-    oauthService.dispose();
+    await oauthService.dispose();
     disposables.dispose();
     await rm(cwd, { recursive: true, force: true });
   });

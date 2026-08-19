@@ -163,7 +163,7 @@ describe('McpManagementService', () => {
 
   afterEach(async () => {
     disposables.dispose();
-    oauth.dispose();
+    await oauth.dispose();
     vi.unstubAllEnvs();
     await Promise.all(httpServers.map((server) => server.close()));
     await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
