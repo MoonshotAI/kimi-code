@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PassThrough, Readable, type Writable } from 'node:stream';
 
 import { isUserCancellation } from '#/_base/utils/abort';
+import { Event } from '#/_base/event';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 
@@ -11,6 +13,10 @@ import { IAgentGoalService } from '#/agent/goal/goal';
 import { IGoalDeadlineScheduler } from '#/agent/goal/goalDeadlineScheduler';
 import { type AgentGoalService } from '#/agent/goal/goalService';
 import { GoalUpdated } from '#/agent/goal/goalOps';
+import { IAgentTaskService } from '#/agent/task/task';
+import { ProcessTask } from '#/agent/tools/os/bash/process-task';
+import { SubagentTask } from '#/agent/tools/agent/subagent-task';
+import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { UpdateGoalToolInputSchema } from '#/agent/tools/goal/update-goal/update-goal';
 import { UpdateGoalTool } from '#/agent/tools/goal/update-goal/updateGoalTool';
 import {
@@ -48,7 +54,9 @@ import {
   appService,
   agentService,
   createTestAgent as createHarnessTestAgent,
+  execEnvServices,
   permissionModeServices,
+  sessionService,
   telemetryServices,
   wireRecordPersistenceServices,
   type TestAgentContext,
@@ -56,6 +64,10 @@ import {
   type TestAgentServiceOverride,
 } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { stubFlag } from '../../app/flag/stubs';
+import { IFlagService } from '#/app/flag/flag';
+import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
+import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { stubAgentSwarm } from './stubs';
@@ -1294,6 +1306,7 @@ describe('AgentGoalService core workflow hooks', () => {
       name: 'goal_continuation',
     });
     expect(JSON.stringify(context.get().at(-1)?.content)).toContain('Continue working toward');
+    expect(JSON.stringify(context.get().at(-1)?.content)).toContain('WaitFor');
   });
 
   it('blocks the next continuation only after the final allowed turn ends', async () => {
@@ -2358,5 +2371,497 @@ describe('AgentGoalService fork boundaries', () => {
     ]);
 
     expect(context.get()).toEqual([]);
+  });
+});
+
+describe('AgentGoalService WaitFor regression', () => {
+  it('does not launch a goal continuation while WaitFor is pending, and the continuation prompt mentions WaitFor', async () => {
+    const ctx = createTestAgent();
+    try {
+      ctx.configure({ tools: ['WaitFor', 'UpdateGoal'] });
+      const tasks = ctx.get(IAgentTaskService);
+
+      const stdout = new PassThrough();
+      let resolveWait!: (code: number) => void;
+      const waitPromise = new Promise<number>((resolve) => {
+        resolveWait = resolve;
+      });
+      const proc = {
+        _serviceBrand: undefined,
+        stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+        stdout,
+        stderr: Readable.from([]),
+        pid: 10098,
+        exitCode: null,
+        wait: vi.fn(() => waitPromise) as IHostProcess['wait'],
+        kill: vi.fn(async () => {
+          stdout.destroy();
+          resolveWait(143);
+        }) as IHostProcess['kill'],
+        dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
+      } as IHostProcess;
+      tasks.registerTask(new ProcessTask(proc, 'sleep 30', 'bg work'));
+      await ctx.rpc.createGoal({ objective: 'finish bounded work' });
+
+      const continuationTurnIds: number[] = [];
+      ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
+        if (event.origin.kind === 'system_trigger' && event.origin.name === 'goal_continuation') {
+          continuationTurnIds.push(event.turnId);
+        }
+      });
+
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'wait_1',
+        name: 'WaitFor',
+        arguments: JSON.stringify({ timeout: 30 }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'slice done' });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'ug_1',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(continuationTurnIds).toEqual([]);
+
+      stdout.end();
+      resolveWait(0);
+
+      await vi.waitFor(() => expect(continuationTurnIds).toHaveLength(1));
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(4));
+      const continuationHistory = JSON.stringify(ctx.llmCalls[2]?.history);
+      expect(continuationHistory).toContain('Continue working toward the active goal');
+      expect(continuationHistory).toContain('WaitFor');
+    } finally {
+      await ctx.dispose();
+    }
+  });
+});
+
+describe('AgentGoalService WaitFor background scenarios', () => {
+  function controllableSpawn(): {
+    spawn: IHostProcessService['spawn'];
+    pushOutput: (text: string) => void;
+    finish: (code: number) => void;
+  } {
+    const stdout = new PassThrough();
+    let resolveWait!: (code: number) => void;
+    const waitPromise = new Promise<number>((resolve) => {
+      resolveWait = resolve;
+    });
+    const proc: IHostProcess = {
+      _serviceBrand: undefined,
+      stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+      stdout,
+      stderr: Readable.from([]),
+      pid: 10097,
+      exitCode: null,
+      wait: vi.fn(() => waitPromise) as IHostProcess['wait'],
+      kill: vi.fn(async () => {
+        stdout.destroy();
+        resolveWait(143);
+      }) as IHostProcess['kill'],
+      dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
+    };
+    return {
+      spawn: vi.fn(async () => proc),
+      pushOutput: (text) => {
+        stdout.write(text);
+      },
+      finish: (code) => {
+        stdout.end();
+        resolveWait(code);
+      },
+    };
+  }
+
+  function watchTurns(ctx: TestAgentContext): {
+    continuationTurnIds: number[];
+    endedReasons: string[];
+  } {
+    const continuationTurnIds: number[] = [];
+    const endedReasons: string[] = [];
+    const eventBus = ctx.get(IEventBus);
+    eventBus.subscribe(TurnStarted, (event) => {
+      if (event.origin.kind === 'system_trigger' && event.origin.name === 'goal_continuation') {
+        continuationTurnIds.push(event.turnId);
+      }
+    });
+    eventBus.subscribe(TurnEnded, (event) => {
+      endedReasons.push(event.reason);
+    });
+    return { continuationTurnIds, endedReasons };
+  }
+
+  it('dispatches a background bash task, waits for it, and completes the goal in one turn', async () => {
+    const sh = controllableSpawn();
+    const ctx = createTestAgent(
+      execEnvServices({ processRunner: { spawn: sh.spawn } }),
+      permissionModeServices('yolo'),
+    );
+    try {
+      ctx.configure();
+      await ctx.rpc.createGoal({ objective: 'finish bounded work' });
+      const { continuationTurnIds, endedReasons } = watchTurns(ctx);
+
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'bash_1',
+        name: 'Bash',
+        arguments: JSON.stringify({ command: 'sleep 30', run_in_background: true, description: 'bg sleep' }),
+      });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'wait_1',
+        name: 'WaitFor',
+        arguments: JSON.stringify({ timeout: 30 }),
+      });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'ug_1',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(2));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(continuationTurnIds).toEqual([]);
+
+      sh.pushOutput('BG-OUTPUT\n');
+      sh.finish(0);
+
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(4));
+      expect(continuationTurnIds).toEqual([]);
+      const history = JSON.stringify(ctx.llmCalls[2]?.history);
+      expect(history).toContain('wait_status: completed');
+      expect(history).toContain('BG-OUTPUT');
+      expect((await ctx.rpc.getGoal({})).goal).toBeNull();
+      expect(endedReasons).toEqual(['completed']);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('waits for a dispatched background subagent and completes the goal in one turn', async () => {
+    const ctx = createTestAgent();
+    try {
+      ctx.configure();
+      const tasks = ctx.get(IAgentTaskService);
+      let settle!: (value: { result: string }) => void;
+      const completion = new Promise<{ result: string }>((resolve) => {
+        settle = resolve;
+      });
+      tasks.registerTask(
+        new SubagentTask(
+          { agentId: 'agent-child', profileName: 'coder', completion },
+          'investigate flaky test',
+          new AbortController(),
+        ),
+      );
+      await ctx.rpc.createGoal({ objective: 'finish bounded work' });
+      const { continuationTurnIds, endedReasons } = watchTurns(ctx);
+
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'wait_1',
+        name: 'WaitFor',
+        arguments: JSON.stringify({ timeout: 30 }),
+      });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'ug_1',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(continuationTurnIds).toEqual([]);
+
+      settle({ result: 'SUBAGENT-FINDINGS: the test is order-dependent' });
+
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
+      expect(continuationTurnIds).toEqual([]);
+      const history = JSON.stringify(ctx.llmCalls[1]?.history);
+      expect(history).toContain('wait_status: completed');
+      expect(history).toContain('kind: agent');
+      expect(history).toContain('SUBAGENT-FINDINGS');
+      expect((await ctx.rpc.getGoal({})).goal).toBeNull();
+      expect(endedReasons).toEqual(['completed']);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('waits again after a WaitFor timeout and still completes the goal without continuations', async () => {
+    const sh = controllableSpawn();
+    const ctx = createTestAgent(
+      execEnvServices({ processRunner: { spawn: sh.spawn } }),
+      permissionModeServices('yolo'),
+    );
+    try {
+      ctx.configure();
+      await ctx.rpc.createGoal({ objective: 'finish bounded work' });
+      const { continuationTurnIds, endedReasons } = watchTurns(ctx);
+
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'bash_1',
+        name: 'Bash',
+        arguments: JSON.stringify({ command: 'sleep 30', run_in_background: true, description: 'bg sleep' }),
+      });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'wait_1',
+        name: 'WaitFor',
+        arguments: JSON.stringify({ timeout: 1 }),
+      });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'wait_2',
+        name: 'WaitFor',
+        arguments: JSON.stringify({ timeout: 30 }),
+      });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'ug_1',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3), { timeout: 5000 });
+
+      expect(continuationTurnIds).toEqual([]);
+      const timedOutHistory = JSON.stringify(ctx.llmCalls[2]?.history);
+      expect(timedOutHistory).toContain('wait_status: timed_out');
+      expect(timedOutHistory).toContain('[still_running]');
+
+      sh.pushOutput('BG-OUTPUT\n');
+      sh.finish(0);
+
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(5));
+      expect(continuationTurnIds).toEqual([]);
+      const completedHistory = JSON.stringify(ctx.llmCalls[3]?.history);
+      expect(completedHistory).toContain('wait_status: completed');
+      expect(completedHistory).toContain('BG-OUTPUT');
+      expect((await ctx.rpc.getGoal({})).goal).toBeNull();
+      expect(endedReasons).toEqual(['completed']);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('runs a ten-turn goal chain with WaitFor in a continuation turn', async () => {
+    const sh = controllableSpawn();
+    const ctx = createTestAgent(
+      execEnvServices({ processRunner: { spawn: sh.spawn } }),
+      permissionModeServices('yolo'),
+    );
+    try {
+      ctx.configure();
+      await ctx.rpc.createGoal({ objective: 'finish bounded work' });
+      const { continuationTurnIds, endedReasons } = watchTurns(ctx);
+
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'bash_1',
+        name: 'Bash',
+        arguments: JSON.stringify({ command: 'sleep 30', run_in_background: true, description: 'bg sleep' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'slice 1 done' });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'wait_1',
+        name: 'WaitFor',
+        arguments: JSON.stringify({ timeout: 30 }),
+      });
+      for (let round = 2; round <= 9; round++) {
+        ctx.mockNextResponse({ type: 'text', text: `slice ${String(round)} done` });
+      }
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'ug_1',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
+
+      sh.pushOutput('BG-OUTPUT\n');
+      sh.finish(0);
+
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(13), { timeout: 5000 });
+
+      expect(continuationTurnIds).toHaveLength(9);
+      expect(endedReasons).toEqual(Array<string>(10).fill('completed'));
+      const waitResultHistory = JSON.stringify(ctx.llmCalls[3]?.history);
+      expect(waitResultHistory).toContain('wait_status: completed');
+      expect(waitResultHistory).toContain('BG-OUTPUT');
+      expect((await ctx.rpc.getGoal({})).goal).toBeNull();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+});
+
+describe('AgentGoalService WaitFor guidance gating', () => {
+  it('shows the WaitFor guidance in the active-goal reminder when the flag is on', async () => {
+    const ctx = createTestAgent();
+    try {
+      ctx.configure();
+      await ctx.rpc.createGoal({ objective: 'finish bounded work' });
+
+      ctx.mockNextResponse({ type: 'text', text: 'slice done' });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'ug_1',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
+
+      expect(JSON.stringify(ctx.llmCalls[0])).toContain('re-invoked again and again');
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('hides WaitFor from the reminder, the continuation prompt, and the tools when the flag is off', async () => {
+    const ctx = createTestAgent(appService(IFlagService, stubFlag(false)));
+    try {
+      ctx.configure();
+      await ctx.rpc.createGoal({ objective: 'finish bounded work' });
+
+      ctx.mockNextResponse({ type: 'text', text: 'slice done' });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'ug_1',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
+
+      const allCalls = JSON.stringify(ctx.llmCalls);
+      expect(allCalls).not.toContain('re-invoked again and again');
+      for (const call of ctx.llmCalls) {
+        expect(call.tools.map((tool) => tool.name)).not.toContain('WaitFor');
+      }
+      expect((await ctx.rpc.getGoal({})).goal).toBeNull();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('hides WaitFor guidance when a tool policy disables WaitFor even though the flag is on', async () => {
+    const ctx = createTestAgent(
+      sessionService(ISessionToolPolicyGate, {
+        _serviceBrand: undefined,
+        disabledTools: ['WaitFor'],
+        onDidChange: Event.None as Event<void>,
+      }),
+    );
+    try {
+      ctx.configure();
+      await ctx.rpc.createGoal({ objective: 'finish bounded work' });
+
+      ctx.mockNextResponse({ type: 'text', text: 'slice done' });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'ug_1',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
+
+      const allCalls = JSON.stringify(ctx.llmCalls);
+      expect(allCalls).not.toContain('WaitFor');
+      expect(allCalls).not.toContain('re-invoked again and again');
+      expect((await ctx.rpc.getGoal({})).goal).toBeNull();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('hides WaitFor guidance once the session tool policy disables it mid-goal', async () => {
+    const ctx = createTestAgent();
+    try {
+      ctx.configure({ tools: ['WaitFor', 'UpdateGoal'] });
+      const tasks = ctx.get(IAgentTaskService);
+      let settle!: (value: { result: string }) => void;
+      const completion = new Promise<{ result: string }>((resolve) => {
+        settle = resolve;
+      });
+      tasks.registerTask(
+        new SubagentTask(
+          { agentId: 'agent-child', profileName: 'coder', completion },
+          'bg work',
+          new AbortController(),
+        ),
+      );
+      await ctx.rpc.createGoal({ objective: 'finish bounded work' });
+
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'wait_1',
+        name: 'WaitFor',
+        arguments: JSON.stringify({ timeout: 30 }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'slice done' });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'ug_1',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(1));
+      expect(JSON.stringify(ctx.llmCalls[0])).toContain('re-invoked again and again');
+
+      await ctx.get(ISessionToolPolicy).setDisabledTools(['WaitFor']);
+      settle({ result: 'bg result' });
+
+      await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(4));
+      const continuationCall = ctx.llmCalls[2]!;
+      const continuationPrompt = continuationCall.history.find((message) =>
+        JSON.stringify(message).includes('Continue working toward the active goal'),
+      );
+      expect(continuationPrompt).toBeDefined();
+      expect(JSON.stringify(continuationPrompt)).not.toContain('re-invoked again and again');
+      const freshReminder = continuationCall.history.at(-1);
+      expect(JSON.stringify(freshReminder)).toContain('active goal');
+      expect(JSON.stringify(freshReminder)).not.toContain('re-invoked again and again');
+      expect((await ctx.rpc.getGoal({})).goal).toBeNull();
+      expect((await ctx.rpc.getGoal({})).goal).toBeNull();
+    } finally {
+      await ctx.dispose();
+    }
   });
 });

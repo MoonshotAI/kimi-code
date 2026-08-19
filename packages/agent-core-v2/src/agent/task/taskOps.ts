@@ -47,6 +47,15 @@ export class TaskNotified extends Event2<AgentTaskNotificationContext> {
 }
 export interface TaskNotified extends AgentTaskNotificationContext {}
 
+const taskWaitDeliveredSchema = z.object({ keys: z.array(z.string()) });
+
+export class TaskWaitDelivered extends Event2<z.infer<typeof taskWaitDeliveredSchema>> {
+  static override readonly type = 'task.waitDelivered';
+  static override readonly durable = true;
+  static override readonly schema = taskWaitDeliveredSchema;
+}
+export interface TaskWaitDelivered extends z.infer<typeof taskWaitDeliveredSchema> {}
+
 export const taskKey = defineState('task', (): TaskModelState => new Map()).replayable({
   schema: z.custom<TaskModelState>(),
 })
