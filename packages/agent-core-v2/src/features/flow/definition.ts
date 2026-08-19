@@ -4,7 +4,12 @@ import { CoreErrors } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
 import { FrontmatterError, parseFrontmatter } from '#/_base/text/frontmatter';
 
-import { FlowGateKindSchema, type FlowDefinition, type FlowStageDefinition } from './flow';
+import {
+  FlowGateKindSchema,
+  FlowJumpPolicySchema,
+  type FlowDefinition,
+  type FlowStageDefinition,
+} from './flow';
 
 export class FlowDefinitionParseError extends Error2 {
   constructor(message: string, cause?: unknown) {
@@ -30,6 +35,7 @@ const FlowFrontmatterSchema = z
   .object({
     id: z.string().regex(FLOW_ID_PATTERN, 'flow id must be kebab-case'),
     when: z.string().optional(),
+    jumps: FlowJumpPolicySchema.optional(),
     stages: z.array(FlowStageFrontmatterSchema).min(1),
   })
   .strict();
@@ -79,7 +85,7 @@ export function parseFlowDefinition(text: string): FlowDefinition {
     notes: notes.get(stage.id),
   }));
 
-  return { id: result.data.id, when: result.data.when, stages };
+  return { id: result.data.id, when: result.data.when, jumps: result.data.jumps, stages };
 }
 
 function extractStageNotes(body: string): Map<string, string> {

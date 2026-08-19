@@ -28,6 +28,8 @@ export function describeToolDisplay(display: ToolInputDisplay): string {
       return display.plan;
     case "flow_gate_review":
       return `Stage ${display.stage_id} gate review (${display.stage_index + 1}/${display.stage_total})`;
+    case "flow_jump_review":
+      return `Stage jump review: ${display.from_stage_id} → ${display.to_stage_id}`;
     case "goal_start":
       return display.objective;
     case "generic":
@@ -80,6 +82,15 @@ export function toLegacyDisplay(display: ToolInputDisplay): DisplayBlock[] {
           ? "passing finishes the run"
           : `passing advances to stage ${display.next_stage_id}`,
       );
+      return [{ type: "brief", text: lines.join("\n") }];
+    }
+    case "flow_jump_review": {
+      const lines = [
+        describeToolDisplay(display),
+        `flow ${display.flow_id}${display.task ? ` — ${display.task}` : ""}`,
+        `jump ${display.from_stage_id} (${display.from_index + 1}/${display.stage_total}) → ${display.to_stage_id} (${display.to_index + 1}/${display.stage_total})`,
+        `reason: ${display.reason}`,
+      ];
       return [{ type: "brief", text: lines.join("\n") }];
     }
     case "search":

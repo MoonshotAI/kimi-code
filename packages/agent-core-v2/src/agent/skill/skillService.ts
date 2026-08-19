@@ -140,7 +140,11 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       );
     }
     await this.skillCatalog.ready;
-    const prepared: PromptSkillActivation[] = [];
+    const prepared: {
+      origin: SkillActivationOrigin;
+      part: ContentPart;
+      entry: BundledSkillActivation;
+    }[] = [];
     try {
       for (const skill of input.skills) prepared.push(this.prepareBundled(skill));
     } catch (error) {

@@ -24,6 +24,14 @@ const FLOW_GATE_CHOICES: ApprovalPanelChoice[] = [
   { label: 'Reject', response: 'rejected', selected_label: 'Reject' },
 ];
 
+// Flow jump review: same shape as the gate — a plain rejection stops the turn,
+// feedback sends the supervisor back to continue at the current stage.
+const FLOW_JUMP_CHOICES: ApprovalPanelChoice[] = [
+  { label: 'Approve the jump', response: 'approved' },
+  { label: 'Reject with feedback', response: 'rejected', requires_feedback: true },
+  { label: 'Reject', response: 'rejected', selected_label: 'Reject' },
+];
+
 export function adaptApprovalRequest(event: ApprovalRequest): ApprovalPanelData {
   const resolved = resolveDisplay(event.toolName, event.display, event.action);
   return {
@@ -185,6 +193,8 @@ function describeApproval(display: ToolInputDisplay, action: string): string {
   switch (display.kind) {
     case 'plan_review':
     case 'flow_gate_review':
+      return '';
+    case 'flow_jump_review':
       return '';
     case 'goal_start':
       return 'Start a goal?';
@@ -348,6 +358,19 @@ function adaptDisplay(display: ToolInputDisplay): DisplayBlock[] {
           note: display.note,
         },
       ];
+    case 'flow_jump_review': {
+      const direction = display.to_index < display.from_index ? 'back' : 'forward';
+      return [
+        {
+          type: 'brief',
+          text: [
+            `Flow \`${display.flow_id}\`${display.task === undefined ? '' : ` — ${display.task}`}`,
+            `Jump ${direction}: \`${display.from_stage_id}\` (${String(display.from_index + 1)}/${String(display.stage_total)}) → \`${display.to_stage_id}\` (${String(display.to_index + 1)}/${String(display.stage_total)})`,
+            `Reason: ${display.reason}`,
+          ].join('\n'),
+        },
+      ];
+    }
     case 'goal_start': {
       const lines = [`Start goal: ${display.objective}`];
       if (typeof display.completionCriterion === 'string' && display.completionCriterion.length > 0) {
@@ -369,6 +392,9 @@ function adaptDisplay(display: ToolInputDisplay): DisplayBlock[] {
 function adaptChoices(toolName: string, display: ToolInputDisplay): ApprovalPanelChoice[] {
   if (display.kind === 'flow_gate_review') {
     return FLOW_GATE_CHOICES.map((choice) => cloneChoice(choice));
+  }
+  if (display.kind === 'flow_jump_review') {
+    return FLOW_JUMP_CHOICES.map((choice) => cloneChoice(choice));
   }
   if (toolName === 'ExitPlanMode' || display.kind === 'plan_review') {
     return adaptPlanReviewChoices(display);

@@ -82,6 +82,7 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'tower_mode.exit',
   'flow_run.started',
   'flow_run.verdict',
+  'flow_run.jumped',
   'flow_run.ended',
   'task.started',
   'task.terminated',

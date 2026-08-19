@@ -77,21 +77,32 @@ export function registerFlowRoutes(app: FlowRouteHost, deps: FlowRouteDeps): voi
             notes: stage.notes,
           })),
           current_stage_index: run.currentStageIndex,
+          jump_policy: run.active ? (run.jumpPolicy ?? 'approval') : undefined,
           ended_reason: run.active ? undefined : run.endedReason,
           ended_note: run.active ? undefined : run.endedNote,
           run_id: run.runId,
         },
-        gates: flow.gates().records.map((record) => ({
-          stage: record.stage,
-          result: record.result,
-          decided_by: record.decidedBy,
-          criteria: record.criteria.map((criterion) => ({
-            criterion: criterion.criterion,
-            met: criterion.met,
-            evidence: criterion.evidence,
-          })),
-          feedback: record.feedback,
-        })),
+        gates: flow.gates().records.map((record) =>
+          record.kind === 'jump'
+            ? {
+                kind: 'jump' as const,
+                from_stage: record.fromStage,
+                to_stage: record.toStage,
+                reason: record.reason,
+                decided_by: record.decidedBy,
+              }
+            : {
+                stage: record.stage,
+                result: record.result,
+                decided_by: record.decidedBy,
+                criteria: record.criteria.map((criterion) => ({
+                  criterion: criterion.criterion,
+                  met: criterion.met,
+                  evidence: criterion.evidence,
+                })),
+                feedback: record.feedback,
+              },
+        ),
         gates_flow_id: gates.flowId,
         gates_task: gates.task,
         gates_run_id: gates.runId,

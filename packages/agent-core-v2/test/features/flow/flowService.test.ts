@@ -296,6 +296,45 @@ describe('AgentFlowService', () => {
     ]);
   });
 
+  it('jump moves the pointer, records the audit entry, and bumps the epoch', () => {
+    service.start(DEFINITION, 'task');
+    const epochBefore = service.runEpoch();
+    expect(service.jumpPolicy()).toBe('approval');
+    const outcome = service.jump({ to: 'implement', reason: 'triage already known', decidedBy: 'human' });
+    expect(outcome.recorded).toBe(true);
+    expect(outcome.stage?.id).toBe('implement');
+    expect(service.currentStage()?.id).toBe('implement');
+    expect(service.runEpoch()).toBe(epochBefore + 1);
+    const records = service.gates().records;
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      kind: 'jump',
+      fromStage: 'triage',
+      toStage: 'implement',
+      reason: 'triage already known',
+      decidedBy: 'human',
+    });
+
+    const back = service.jump({ to: 'triage', reason: 'implement invalidated triage', decidedBy: 'human' });
+    expect(back.recorded).toBe(true);
+    expect(service.currentStage()?.id).toBe('triage');
+    expect(service.gates().records).toHaveLength(2);
+  });
+
+  it('jump rejects the current stage, unknown stages, and inactive runs', () => {
+    expect(service.jump({ to: 'triage', reason: 'x', decidedBy: 'ai' }).recorded).toBe(false);
+    service.start(DEFINITION, 'task');
+    expect(service.jump({ to: 'triage', reason: 'x', decidedBy: 'ai' }).recorded).toBe(false);
+    expect(service.jump({ to: 'missing', reason: 'x', decidedBy: 'ai' }).recorded).toBe(false);
+    expect(service.gates().records).toHaveLength(0);
+  });
+
+  it('snapshots the definition jump policy at start', () => {
+    service.start({ ...DEFINITION, jumps: 'free' }, 'task');
+    expect(service.jumpPolicy()).toBe('free');
+    expect(service.run().jumpPolicy).toBe('free');
+  });
+
   it('starts a new audit segment when a restored run records a verdict over retained records', async () => {
     service.start(DEFINITION, 'task B');
     service.advance({ stage: 'triage', result: 'pass', decidedBy: 'human', criteria: CRITERIA });

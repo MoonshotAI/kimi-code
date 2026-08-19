@@ -40,6 +40,87 @@ export class FlowGateReview {
     );
   }
 
+  async requestJumpApproval(
+    context: ResolvedToolExecutionHookContext,
+  ): Promise<BeforeExecuteDecision | undefined> {
+    const display = context.execution.display;
+    if (display?.kind !== 'flow_jump_review') return undefined;
+    const stage = this.flow.currentStage();
+    if (!this.flow.run().active || stage === undefined || stage.id !== display.from_stage_id) {
+      return undefined;
+    }
+    const epochAtRequest = this.flow.preparedEpochOf(context.args as object) ?? this.runEpoch();
+    if (epochAtRequest !== this.runEpoch()) return undefined;
+    return this.toolApproval.requestToolApproval(
+      context,
+      {
+        kind: 'ask',
+        resolveApproval: (result) => this.jumpApprovalResult(result, context, epochAtRequest),
+      },
+      'flow-jump-review-ask',
+    );
+  }
+
+  private jumpApprovalResult(
+    result: ApprovalResponse,
+    context: ResolvedToolExecutionHookContext,
+    epochAtRequest: number,
+  ): PermissionPolicyResolution | undefined {
+    if (this.runEpoch() !== epochAtRequest) {
+      return {
+        kind: 'result',
+        result: {
+          isError: true,
+          output:
+            'The flow run changed while this jump review was open (undo, abort, or a new run); this stale review is void. Submit FlowJump again against the current run.',
+        },
+      };
+    }
+    if (result.decision === 'approved') {
+      this.onApproved(context.toolCall.id);
+      return undefined;
+    }
+    if (result.decision === 'cancelled') {
+      return {
+        kind: 'result',
+        result: {
+          isError: false,
+          output: 'Jump approval dismissed. The flow stays at the current stage.',
+        },
+      };
+    }
+    const feedback = result.feedback ?? '';
+    if (feedback.length === 0 && (result.selectedLabel === undefined || result.selectedLabel.length === 0)) {
+      return {
+        kind: 'result',
+        result: {
+          isError: true,
+          stopTurn: true,
+          output:
+            'The jump review ended without an observed user decision (transport failure or dismissal). No jump happened; the flow stays at the current stage — wait for the user.',
+        },
+      };
+    }
+    if (feedback.length > 0) {
+      return {
+        kind: 'result',
+        result: {
+          isError: false,
+          output: `The user rejected the stage jump. Feedback:\n\n${feedback}\n\nAddress the feedback and continue at the current stage (or propose a different jump).`,
+        },
+      };
+    }
+    return {
+      kind: 'result',
+      result: {
+        isError: true,
+        stopTurn: true,
+        output:
+          "The user rejected the stage jump. The flow stays at the current stage; wait for the user's direction.",
+      },
+    };
+  }
+
   private approvalResult(
     result: ApprovalResponse,
     context: ResolvedToolExecutionHookContext,

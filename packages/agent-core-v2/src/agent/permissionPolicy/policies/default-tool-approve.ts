@@ -25,6 +25,7 @@ const DEFAULT_APPROVE_TOOLS = new Set([
   'FlowStart',
   'FlowAdvance',
   'FlowAbort',
+  'FlowJump',
   'CreateGoal',
   'GetGoal',
   'SetGoalBudget',

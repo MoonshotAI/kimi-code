@@ -294,6 +294,14 @@ export function displayBlockToAcpContent(block: ToolInputDisplay): ToolCallConte
   if (block.kind === 'flow_gate_review') {
     return { type: 'content', content: { type: 'text', text: composeFlowGateContent(block) } };
   }
+  if (block.kind === 'flow_jump_review') {
+    const lines = [
+      `Flow \`${block.flow_id}\`${block.task === undefined ? '' : ` — ${block.task}`}`,
+      `Jump: \`${block.from_stage_id}\` (${block.from_index + 1}/${block.stage_total}) → \`${block.to_stage_id}\` (${block.to_index + 1}/${block.stage_total})`,
+      `Reason: ${block.reason}`,
+    ];
+    return { type: 'content', content: { type: 'text', text: lines.join('\n') } };
+  }
   return null;
 }
 

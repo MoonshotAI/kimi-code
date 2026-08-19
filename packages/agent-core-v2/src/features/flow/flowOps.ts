@@ -7,6 +7,7 @@ import { defineState } from '#/state/state';
 
 import {
   FlowCriterionVerdictSchema,
+  FlowJumpPolicySchema,
   FlowStageDefinitionSchema,
   type FlowGatesState,
   type FlowRunState,
@@ -19,6 +20,7 @@ const flowRunStartedSchema = z.object({
   task: z.string(),
   stages: z.array(FlowStageDefinitionSchema),
   runId: z.string().optional(),
+  jumpPolicy: FlowJumpPolicySchema.optional(),
 });
 
 export class FlowRunStarted extends Event2<z.infer<typeof flowRunStartedSchema>> {
@@ -45,6 +47,23 @@ export class FlowVerdict extends Event2<z.infer<typeof flowVerdictSchema>> {
   static override readonly schema = flowVerdictSchema;
 }
 export interface FlowVerdict extends z.infer<typeof flowVerdictSchema> {}
+
+const flowJumpedSchema = z.object({
+  fromStage: z.string(),
+  toStage: z.string(),
+  reason: z.string(),
+  decidedBy: z.enum(['ai', 'human', 'auto']),
+  flowId: z.string().optional(),
+  task: z.string().optional(),
+  runId: z.string().optional(),
+});
+
+export class FlowJumped extends Event2<z.infer<typeof flowJumpedSchema>> {
+  static override readonly type = 'flow_run.jumped';
+  static override readonly durable = true;
+  static override readonly schema = flowJumpedSchema;
+}
+export interface FlowJumped extends z.infer<typeof flowJumpedSchema> {}
 
 const flowRunEndedSchema = z.object({
   reason: z.enum(['finished', 'aborted']),
@@ -84,8 +103,17 @@ export const flowKey = defineState('flow', (): FlowRunState => ({ active: false 
     else s.runId = e.runId;
     s.stages = e.stages;
     s.currentStageIndex = 0;
+    if (e.jumpPolicy === undefined) delete s.jumpPolicy;
+    else s.jumpPolicy = e.jumpPolicy;
     delete s.endedReason;
     delete s.endedNote;
+    ctx.emit(new AgentStatusUpdated({ flowRun: flowRunStatus(s) }));
+  })
+  .on(FlowJumped, (s, e, ctx) => {
+    if (!s.active) return;
+    const target = s.stages?.findIndex((stage) => stage.id === e.toStage) ?? -1;
+    if (target < 0) return;
+    s.currentStageIndex = target;
     ctx.emit(new AgentStatusUpdated({ flowRun: flowRunStatus(s) }));
   })
   .on(FlowVerdict, (s, e, ctx) => {
@@ -116,19 +144,7 @@ export const flowGatesKey = defineState('flow.gates', (): FlowGatesState => ({ r
     else s.runId = e.runId;
   })
   .on(FlowVerdict, (s, e) => {
-    const identityDiffers =
-      e.runId !== undefined && s.runId !== undefined
-        ? e.runId !== s.runId
-        : e.flowId !== undefined && s.flowId !== undefined && e.flowId !== s.flowId;
-    if (identityDiffers) {
-      s.records = [];
-      if (e.flowId === undefined) delete s.flowId;
-      else s.flowId = e.flowId;
-      if (e.task === undefined) delete s.task;
-      else s.task = e.task;
-      if (e.runId === undefined) delete s.runId;
-      else s.runId = e.runId;
-    }
+    openAuditSegment(s, e);
     s.records.push({
       stage: e.stage,
       result: e.result,
@@ -136,4 +152,32 @@ export const flowGatesKey = defineState('flow.gates', (): FlowGatesState => ({ r
       criteria: e.criteria,
       feedback: e.feedback,
     });
+  })
+  .on(FlowJumped, (s, e) => {
+    openAuditSegment(s, e);
+    s.records.push({
+      kind: 'jump',
+      fromStage: e.fromStage,
+      toStage: e.toStage,
+      reason: e.reason,
+      decidedBy: e.decidedBy,
+    });
   });
+
+function openAuditSegment(
+  s: FlowGatesState,
+  e: { readonly flowId?: string; readonly task?: string; readonly runId?: string },
+): void {
+  const identityDiffers =
+    e.runId !== undefined && s.runId !== undefined
+      ? e.runId !== s.runId
+      : e.flowId !== undefined && s.flowId !== undefined && e.flowId !== s.flowId;
+  if (!identityDiffers) return;
+  s.records = [];
+  if (e.flowId === undefined) delete s.flowId;
+  else s.flowId = e.flowId;
+  if (e.task === undefined) delete s.task;
+  else s.task = e.task;
+  if (e.runId === undefined) delete s.runId;
+  else s.runId = e.runId;
+}

@@ -95,6 +95,13 @@ export function approvalRequestToPermissionOptions(
       { optionId: REJECT_OPTION_ID, name: 'Reject', kind: 'reject_once' },
     ];
   }
+  if (req.display.kind === 'flow_jump_review') {
+    // Same sovereignty rule as the gate: each jump is its own decision.
+    return [
+      { optionId: APPROVE_ONCE_OPTION_ID, name: 'Approve jump', kind: 'allow_once' },
+      { optionId: REJECT_OPTION_ID, name: 'Reject', kind: 'reject_once' },
+    ];
+  }
   if (req.display.kind !== 'plan_review') {
     return CANONICAL_OPTIONS;
   }
@@ -162,9 +169,12 @@ export function permissionResponseToApprovalResponse(
     // allow-always optionId. Same backward-compatibility rationale as the
     // 'approve' branch above.
     case 'approve_for_session':
-      // A flow gate never installs a session rule — the option is not offered
-      // for it, so an id arriving anyway degrades to a one-shot approval.
-      if (req.display.kind === 'flow_gate_review') return { decision: 'approved' };
+      // A flow gate or jump never installs a session rule — the option is not
+      // offered for them, so an id arriving anyway degrades to a one-shot
+      // approval.
+      if (req.display.kind === 'flow_gate_review' || req.display.kind === 'flow_jump_review') {
+        return { decision: 'approved' };
+      }
       return { decision: 'approved', scope: 'session' };
     case REJECT_OPTION_ID:
       return { decision: 'rejected' };

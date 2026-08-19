@@ -91,6 +91,17 @@ export type ToolInputDisplay =
       note?: string;
     }
   | {
+      kind: 'flow_jump_review';
+      flow_id: string;
+      task?: string;
+      from_stage_id: string;
+      to_stage_id: string;
+      from_index: number;
+      to_index: number;
+      stage_total: number;
+      reason: string;
+    }
+  | {
       kind: 'generic';
       summary: string;
       detail?: unknown;

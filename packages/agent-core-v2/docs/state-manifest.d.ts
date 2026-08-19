@@ -1594,7 +1594,7 @@ export interface AgentStateSnapshot {
     readonly renderGeneration: number;
   } | undefined;
   // src/features/flow/flowOps.ts
-  // replayable · durable · undoable — folds: FlowRunStarted, FlowVerdict, FlowRunEnded
+  // replayable · durable · undoable — folds: FlowRunStarted, FlowJumped, FlowVerdict, FlowRunEnded
   'flow': /* FlowRunState — packages/agent-core-v2/src/features/flow/flow.ts */ {
     active: boolean;
     flowId?: string;
@@ -1608,12 +1608,14 @@ export interface AgentStateSnapshot {
       notes?: string;
     }[];
     currentStageIndex?: number;
+    jumpPolicy?: 'approval' | 'disabled' | 'free';
     endedReason?: 'aborted' | 'finished';
     endedNote?: string;
   };
-  // replayable · durable — folds: FlowRunStarted, FlowVerdict
+  // replayable · durable — folds: FlowRunStarted, FlowVerdict, FlowJumped
   'flow.gates': /* FlowGatesState — packages/agent-core-v2/src/features/flow/flow.ts */ {
-    records: /* FlowGateRecord — packages/agent-core-v2/src/features/flow/flow.ts */ {
+    records: (/* FlowAuditRecord — packages/agent-core-v2/src/features/flow/flow.ts */ /* FlowGateRecord — packages/agent-core-v2/src/features/flow/flow.ts */ {
+      readonly kind?: 'verdict';
       readonly stage: string;
       readonly result: /* FlowVerdictResult — packages/agent-core-v2/src/features/flow/flow.ts */ 'pass' | 'reject';
       readonly decidedBy: /* FlowVerdictDecider — packages/agent-core-v2/src/features/flow/flow.ts */ 'auto' | 'ai' | 'human';
@@ -1623,7 +1625,13 @@ export interface AgentStateSnapshot {
         evidence: string;
       }[];
       readonly feedback?: string;
-    }[];
+    } | /* FlowJumpRecord — packages/agent-core-v2/src/features/flow/flow.ts */ {
+      readonly kind: 'jump';
+      readonly fromStage: string;
+      readonly toStage: string;
+      readonly reason: string;
+      readonly decidedBy: /* FlowVerdictDecider — packages/agent-core-v2/src/features/flow/flow.ts */ 'auto' | 'ai' | 'human';
+    })[];
     flowId?: string;
     task?: string;
     runId?: string;

@@ -40,6 +40,7 @@ const AGENT_TOOLS = [
   'FlowStart',
   'FlowAdvance',
   'FlowAbort',
+  'FlowJump',
   'mcp__*',
 ] as const;
 

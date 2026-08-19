@@ -102,7 +102,7 @@ describe('FlowFeature — experimental flag gating', () => {
     const tools = collectionViewOf(agent, AgentToolContribution).items.map(
       (record) => record.options.name,
     );
-    expect(tools.toSorted()).toEqual(['FlowAbort', 'FlowAdvance', 'FlowStart']);
+    expect(tools.toSorted()).toEqual(['FlowAbort', 'FlowAdvance', 'FlowJump', 'FlowStart']);
     host.dispose();
   });
 
@@ -122,7 +122,7 @@ describe('FlowFeature — experimental flag gating', () => {
     const agent = host.child(LifecycleScope.Agent, 'agent-on');
     expect(
       collectionViewOf(agent, AgentToolContribution).items.map((record) => record.options.name).toSorted(),
-    ).toEqual(['FlowAbort', 'FlowAdvance', 'FlowStart']);
+    ).toEqual(['FlowAbort', 'FlowAdvance', 'FlowJump', 'FlowStart']);
 
     flagOn = false;
     configChanged.fire({ affects: () => true } as unknown as ConfigChangedEvent);

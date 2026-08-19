@@ -113,6 +113,20 @@ export const ToolInputDisplaySchema = z.discriminatedUnion('kind', [
       .readonly(),
     note: z.string().optional(),
   }),
+  // A pending stage jump awaiting the user's approval: where the run is,
+  // where the supervisor wants to move it, and why.
+  z.object({
+    kind: z.literal('flow_jump_review'),
+    flow_id: z.string(),
+    task: z.string().optional(),
+    from_stage_id: z.string(),
+    to_stage_id: z.string(),
+    // 0-based stage positions of the jump's endpoints.
+    from_index: z.number(),
+    to_index: z.number(),
+    stage_total: z.number(),
+    reason: z.string(),
+  }),
   z.object({
     kind: z.literal('generic'),
     summary: z.string(),

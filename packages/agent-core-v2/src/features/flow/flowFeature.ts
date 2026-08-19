@@ -11,6 +11,7 @@ import {
   FLOW_ABORT_TOOL_NAME,
   FLOW_ADVANCE_TOOL_NAME,
   FLOW_FLAG_ID,
+  FLOW_JUMP_TOOL_NAME,
   FLOW_START_TOOL_NAME,
 } from './flow';
 import { FlowInjection, IFlowInjection } from './injection/flowInjection';
@@ -19,6 +20,8 @@ import { FlowAbortTool } from './tools/abort/abortTool';
 import { IFlowAbortTool } from './tools/abort/abort';
 import { FlowAdvanceTool } from './tools/advance/advanceTool';
 import { IFlowAdvanceTool } from './tools/advance/advance';
+import { FlowJumpTool } from './tools/jump/jumpTool';
+import { IFlowJumpTool } from './tools/jump/jump';
 import { FlowStartTool } from './tools/start/startTool';
 import { IFlowStartTool } from './tools/start/start';
 
@@ -67,6 +70,11 @@ export class FlowFeature extends Feature {
       }),
       ...this.contributeTool(IFlowAbortTool, FlowAbortTool, {
         name: FLOW_ABORT_TOOL_NAME,
+        domain: 'flow',
+        when: supervisorOnly,
+      }),
+      ...this.contributeTool(IFlowJumpTool, FlowJumpTool, {
+        name: FLOW_JUMP_TOOL_NAME,
         domain: 'flow',
         when: supervisorOnly,
       }),

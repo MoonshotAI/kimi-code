@@ -24,7 +24,7 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (51 record types)
+// Index (52 record types)
 //   config.update                      profile                                                                     src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory, turn                                                         src/agent/contextMemory/contextEvents.ts
 //   context.append_message             contextMemory, flow, goalForkNotice, plan, task.notificationDelivery, todo  src/agent/contextMemory/contextEvents.ts
@@ -32,6 +32,7 @@
 //   context.clear                      contextMemory, flow, plan, task.notificationDelivery, todo                  src/agent/contextMemory/contextEvents.ts
 //   context.undo                       contextMemory, flow, plan, task.notificationDelivery, todo                  src/agent/contextMemory/contextEvents.ts
 //   flow_run.ended                     flow                                                                        src/features/flow/flowOps.ts
+//   flow_run.jumped                    flow, flow.gates                                                            src/features/flow/flowOps.ts
 //   flow_run.started                   flow, flow.gates                                                            src/features/flow/flowOps.ts
 //   flow_run.verdict                   flow, flow.gates                                                            src/features/flow/flowOps.ts
 //   forked                             goal, goalForkNotice                                                        src/agent/goal/goalOps.ts
@@ -183,6 +184,21 @@ interface FlowRunEndedPayload {
  * states: flow, flow.gates
  * owner: src/features/flow/flowOps.ts
  */
+interface FlowRunJumpedPayload {
+  _name: 'flow_run.jumped';
+  fromStage: string;
+  toStage: string;
+  reason: string;
+  decidedBy: 'ai' | 'human' | 'auto';
+  flowId?: string;
+  task?: string;
+  runId?: string;
+}
+
+/**
+ * states: flow, flow.gates
+ * owner: src/features/flow/flowOps.ts
+ */
 interface FlowRunStartedPayload {
   _name: 'flow_run.started';
   flowId: string;
@@ -195,6 +211,7 @@ interface FlowRunStartedPayload {
     notes?: string;
   }[];
   runId?: string;
+  jumpPolicy?: 'disabled' | 'approval' | 'free';
 }
 
 /**
@@ -757,6 +774,7 @@ interface WirePayloadMap {
   "context.clear": ContextClearPayload;
   "context.undo": ContextUndoPayload;
   "flow_run.ended": FlowRunEndedPayload;
+  "flow_run.jumped": FlowRunJumpedPayload;
   "flow_run.started": FlowRunStartedPayload;
   "flow_run.verdict": FlowRunVerdictPayload;
   "forked": ForkedPayload;

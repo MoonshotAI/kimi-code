@@ -131,6 +131,32 @@ describe('server-v2 /api/v1/sessions/{sid}/flow', () => {
     expect(body.data.gates_run_id).toBe(body.data.run.run_id);
   });
 
+  it('serves jump audit records and the jump policy', async () => {
+    process.env[FLOW_ENV] = 'true';
+    const sessionId = await createSession();
+    await startRun(sessionId);
+    const handle = getLiveSessionById(server!.core.accessor, sessionId);
+    const main = await ensureMainAgent(handle!);
+    const flow = main.accessor.get(IAgentFlowService);
+    expect(
+      flow.jump({ to: 'implement', reason: 'triage already known', decidedBy: 'human' }).recorded,
+    ).toBe(true);
+
+    const { body } = await getFlow(sessionId);
+    expect(body.code).toBe(0);
+    expect(body.data.run.jump_policy).toBe('approval');
+    expect(body.data.run.current_stage_index).toBe(1);
+    expect(body.data.gates).toEqual([
+      {
+        kind: 'jump',
+        from_stage: 'triage',
+        to_stage: 'implement',
+        reason: 'triage already known',
+        decided_by: 'human',
+      },
+    ]);
+  });
+
   it('reports the termination outcome of an ended run', async () => {
     process.env[FLOW_ENV] = 'true';
     const sessionId = await createSession();

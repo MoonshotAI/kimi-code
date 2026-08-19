@@ -26,7 +26,12 @@ export class ReverseRpcController {
   requestApproval(request: ApprovalRequest): Promise<CoreApprovalResponse> {
     const id = randomUUID();
     return new Promise((resolve) => {
-      this.approvals.set(id, { resolve, flowGate: request.display?.kind === "flow_gate_review" });
+      this.approvals.set(id, {
+        resolve,
+        flowGate:
+          request.display?.kind === "flow_gate_review" ||
+          request.display?.kind === "flow_jump_review",
+      });
       this.emit({ type: "ApprovalRequest", payload: approvalPayload(id, request) });
     });
   }

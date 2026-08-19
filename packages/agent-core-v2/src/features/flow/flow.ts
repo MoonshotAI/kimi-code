@@ -10,11 +10,17 @@ export const FLOW_REVIEWER_PROFILE = 'flow-reviewer';
 export const FLOW_START_TOOL_NAME = 'FlowStart';
 export const FLOW_ADVANCE_TOOL_NAME = 'FlowAdvance';
 export const FLOW_ABORT_TOOL_NAME = 'FlowAbort';
+export const FLOW_JUMP_TOOL_NAME = 'FlowJump';
 
 export const FLOWS_PROJECT_DIR = '.kimi-code/flows';
 
 export const FlowGateKindSchema = z.enum(['ai', 'human', 'ai-then-human']);
 export type FlowGateKind = z.infer<typeof FlowGateKindSchema>;
+
+export const FlowJumpPolicySchema = z.enum(['disabled', 'approval', 'free']);
+export type FlowJumpPolicy = z.infer<typeof FlowJumpPolicySchema>;
+
+export const DEFAULT_FLOW_JUMP_POLICY: FlowJumpPolicy = 'approval';
 
 export const FlowStageDefinitionSchema = z.object({
   id: z.string(),
@@ -28,6 +34,7 @@ export type FlowStageDefinition = z.infer<typeof FlowStageDefinitionSchema>;
 export interface FlowDefinition {
   readonly id: string;
   readonly when?: string;
+  readonly jumps?: FlowJumpPolicy;
   readonly stages: readonly FlowStageDefinition[];
 }
 
@@ -39,6 +46,7 @@ export interface FlowDefinition {
 export const FlowDefinitionSchema = z.object({
   id: z.string().min(1),
   when: z.string().optional(),
+  jumps: FlowJumpPolicySchema.optional(),
   stages: z.array(FlowStageDefinitionSchema).min(1),
 });
 
@@ -49,6 +57,7 @@ export interface FlowRunState {
   runId?: string;
   stages?: FlowStageDefinition[];
   currentStageIndex?: number;
+  jumpPolicy?: FlowJumpPolicy;
   endedReason?: 'finished' | 'aborted';
   endedNote?: string;
 }
@@ -74,6 +83,7 @@ export type FlowVerdictResult = 'pass' | 'reject';
 export type FlowVerdictDecider = 'ai' | 'human' | 'auto';
 
 export interface FlowGateRecord {
+  readonly kind?: 'verdict';
   readonly stage: string;
   readonly result: FlowVerdictResult;
   readonly decidedBy: FlowVerdictDecider;
@@ -81,8 +91,18 @@ export interface FlowGateRecord {
   readonly feedback?: string;
 }
 
+export interface FlowJumpRecord {
+  readonly kind: 'jump';
+  readonly fromStage: string;
+  readonly toStage: string;
+  readonly reason: string;
+  readonly decidedBy: FlowVerdictDecider;
+}
+
+export type FlowAuditRecord = FlowGateRecord | FlowJumpRecord;
+
 export interface FlowGatesState {
-  records: FlowGateRecord[];
+  records: FlowAuditRecord[];
   flowId?: string;
   task?: string;
   runId?: string;
@@ -102,6 +122,17 @@ export interface FlowAdvanceResult {
   readonly nextStage?: DeepReadonly<FlowStageDefinition>;
 }
 
+export interface FlowJumpOutcome {
+  readonly to: string;
+  readonly reason: string;
+  readonly decidedBy: FlowVerdictDecider;
+}
+
+export interface FlowJumpResult {
+  readonly recorded: boolean;
+  readonly stage?: DeepReadonly<FlowStageDefinition>;
+}
+
 export interface IAgentFlowService {
   readonly _serviceBrand: undefined;
 
@@ -110,6 +141,14 @@ export interface IAgentFlowService {
   currentStage(): DeepReadonly<FlowStageDefinition> | undefined;
   start(definition: FlowDefinition, task: string): boolean;
   advance(outcome: FlowAdvanceOutcome): FlowAdvanceResult;
+  /** Move the run to another stage (backward to redo, forward to skip),
+   *  recording the jump in the audit trail and bumping the run epoch so
+   *  every verdict and reminder prepared before the jump is void. */
+  jump(outcome: FlowJumpOutcome): FlowJumpResult;
+  /** The jump policy snapshotted at run start (definition `jumps`, default
+   *  approval): disabled = strictly linear, approval = jumps need the user
+   *  gate, free = the supervisor may jump on its own. */
+  jumpPolicy(): FlowJumpPolicy;
   abort(note?: string): void;
   /** Monotonic run generation — bumped on start, abort, and conversation
    *  undo. Lets consumers (stage reminders, gate reviews) tell a restarted

@@ -22,12 +22,17 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { DeepReadonly } from '#/state/state';
 
 import {
+  DEFAULT_FLOW_JUMP_POLICY,
   FLOW_ADVANCE_TOOL_NAME,
   FLOW_FLAG_ID,
+  FLOW_JUMP_TOOL_NAME,
   FlowDefinitionSchema,
   IAgentFlowService,
   type FlowAdvanceOutcome,
   type FlowAdvanceResult,
+  type FlowJumpOutcome,
+  type FlowJumpPolicy,
+  type FlowJumpResult,
   type FlowDefinition,
   type FlowGatesState,
   type FlowRunState,
@@ -37,9 +42,14 @@ import { FlowGateReview } from './flowGateReview';
 import { FLOW_SKILL_NAME_PREFIX, flowDefinitionPath } from './flowsSkillSource';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
-import { FlowRunEnded, FlowRunStarted, FlowVerdict, flowGatesKey, flowKey } from './flowOps';
+import { FlowJumped, FlowRunEnded, FlowRunStarted, FlowVerdict, flowGatesKey, flowKey } from './flowOps';
 
-const FLOW_TOOL_NAMES: ReadonlySet<string> = new Set(['FlowStart', 'FlowAdvance', 'FlowAbort']);
+const FLOW_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'FlowStart',
+  'FlowAdvance',
+  'FlowAbort',
+  'FlowJump',
+]);
 
 export class AgentFlowService extends Disposable implements IAgentFlowService {
   declare readonly _serviceBrand: undefined;
@@ -89,6 +99,20 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
               'Another flow call precedes this one in the same response, so this call was prepared against a stale run state. Submit flow calls one response at a time.',
             ),
           );
+          return;
+        }
+        if (event.toolCall.name === FLOW_JUMP_TOOL_NAME) {
+          if (event.toolCalls.length > 1) {
+            event.veto(
+              denyToolExecution(
+                'A stage jump must be the only call in its response: siblings would run against a stage the jump is about to leave. Submit FlowJump alone.',
+              ),
+            );
+            return;
+          }
+          if (event.execution.display?.kind !== 'flow_jump_review') return;
+          if (this.modeService.mode === 'auto') return;
+          event.waitUntil(() => this.review.requestJumpApproval(event));
           return;
         }
         if (event.toolCall.name !== FLOW_ADVANCE_TOOL_NAME) return;
@@ -256,6 +280,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         task,
         stages: definition.stages.map((stage) => ({ ...stage })),
         runId: randomUUID(),
+        jumpPolicy: definition.jumps ?? DEFAULT_FLOW_JUMP_POLICY,
       }),
     );
     this.epoch += 1;
@@ -288,6 +313,32 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
       return { recorded: true, runFinished: true };
     }
     return { recorded: true, runFinished: false, nextStage: this.currentStage() };
+  }
+
+  jump(outcome: FlowJumpOutcome): FlowJumpResult {
+    if (!this.flags.enabled(FLOW_FLAG_ID)) return { recorded: false };
+    const run = this.run();
+    const current = this.currentStage();
+    if (!run.active || current === undefined) return { recorded: false };
+    if (outcome.to === current.id) return { recorded: false };
+    if (!(run.stages ?? []).some((stage) => stage.id === outcome.to)) return { recorded: false };
+    void this.dispatcher.dispatch(
+      new FlowJumped({
+        fromStage: current.id,
+        toStage: outcome.to,
+        reason: outcome.reason,
+        decidedBy: outcome.decidedBy,
+        flowId: run.flowId,
+        task: run.task,
+        runId: run.runId,
+      }),
+    );
+    this.epoch += 1;
+    return { recorded: true, stage: this.currentStage() };
+  }
+
+  jumpPolicy(): FlowJumpPolicy {
+    return this.run().jumpPolicy ?? DEFAULT_FLOW_JUMP_POLICY;
   }
 
   runEpoch(): number {
