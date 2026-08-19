@@ -139,7 +139,7 @@ describe('AgentProfileService.bind', () => {
     expect(svc.isRunnable()).toBe(true);
   });
 
-  it('renders the prompt and disclosure from the injected host clock', async () => {
+  it('keeps the rendered prompt and disclosure free of clock-dependent content', async () => {
     const hostClock: IHostClock = {
       _serviceBrand: undefined,
       now: () => new Date('2026-07-29T04:00:00.000Z'),
@@ -150,12 +150,9 @@ describe('AgentProfileService.bind', () => {
 
     await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
 
-    expect(svc.getSystemPrompt()).toContain('2026-07-29T04:00:00.000Z');
+    expect(svc.getSystemPrompt()).not.toContain('2026-07-29');
     expect(svc.data().environmentDisclosure).toMatchObject({
-      date: {
-        disclosed: true,
-        value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
-      },
+      date: { disclosed: false },
     });
   });
 

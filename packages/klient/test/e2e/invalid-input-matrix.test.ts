@@ -476,7 +476,17 @@ async function promptAndWait(ctx: CaseContext, input: readonly ContentPart[]): P
 function openAiMessages(callIndex: number): Record<string, unknown>[] {
   const body = requests[callIndex]?.json as { messages?: Record<string, unknown>[] } | undefined;
   expect(body?.messages, `request #${callIndex} should carry a messages array`).toBeDefined();
-  return body!.messages!;
+  return body!.messages!.filter((message) => !isDateReminderMessage(message));
+}
+
+const DATE_REMINDER_MARKERS = [
+  'The current date is restated in a reminder whenever it changes',
+  'Rely on this reminder over any earlier date statement',
+];
+
+function isDateReminderMessage(message: Record<string, unknown>): boolean {
+  const serialized = JSON.stringify(message);
+  return DATE_REMINDER_MARKERS.some((marker) => serialized.includes(marker));
 }
 
 // ---------------------------------------------------------------------------

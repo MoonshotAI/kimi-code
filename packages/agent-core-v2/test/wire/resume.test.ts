@@ -206,6 +206,7 @@ describe('Agent resume', () => {
         messages:
           user: text "Historical compacted summary."
           user: text "Fresh prompt after resume"
+          user: text <date-reminder>
           user: text <plan-mode-reminder>
     `);
   });
@@ -422,6 +423,7 @@ describe('Agent resume', () => {
           tool[call_resume_skill]: text "skill loaded"
           user: text "<system-reminder>\\nresume skill body\\n</system-reminder>"
           user: text "Fresh prompt after deferred resume"
+          user: text <date-reminder>
     `);
     await ctx.expectResumeMatches();
   });
