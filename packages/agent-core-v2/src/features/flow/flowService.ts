@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -107,8 +108,9 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => {
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
-        if (!this.run().active) return;
         if (event.toolCall.name !== 'TodoList') return;
+        const startsInBatch = event.toolCalls.some((call) => call.name === 'FlowStart');
+        if (!this.run().active && !startsInBatch) return;
         event.veto(
           denyToolExecution(
             this.toolApproval.formatDenyMessage(
@@ -248,6 +250,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         flowId: definition.id,
         task,
         stages: definition.stages.map((stage) => ({ ...stage })),
+        runId: randomUUID(),
       }),
     );
     this.epoch += 1;
@@ -270,6 +273,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         feedback: outcome.feedback,
         flowId: activeRun.flowId,
         task: activeRun.task,
+        runId: activeRun.runId,
       }),
     );
     if (outcome.result !== 'pass') return { recorded: true, runFinished: false };

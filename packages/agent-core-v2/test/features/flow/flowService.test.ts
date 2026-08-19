@@ -310,6 +310,7 @@ describe('AgentFlowService', () => {
         criteria: [{ criterion: 'cause located', met: false, evidence: 'regressed' }],
         flowId: 'restored-flow',
         task: 'task A',
+        runId: 'run-a',
       }),
     );
     const gates = agentState.get(flowGatesKey);
@@ -317,6 +318,30 @@ describe('AgentFlowService', () => {
     expect(gates.task).toBe('task A');
     expect(gates.records).toHaveLength(1);
     expect(gates.records[0]).toMatchObject({ stage: 'triage', result: 'reject' });
+  });
+
+  it('segments repeated runs with the same flow id and task by their unique run id', async () => {
+    service.start(DEFINITION, 'same task');
+    const firstRunId = agentState.get(flowGatesKey).runId;
+    expect(firstRunId).toBeDefined();
+    service.advance({ stage: 'triage', result: 'pass', decidedBy: 'human', criteria: CRITERIA });
+    expect(agentState.get(flowGatesKey).records).toHaveLength(1);
+
+    await dispatcher.dispatch(
+      new FlowVerdict({
+        stage: 'triage',
+        result: 'reject',
+        decidedBy: 'human',
+        criteria: [{ criterion: 'cause located', met: false, evidence: 'regressed' }],
+        flowId: 'issue-fix',
+        task: 'same task',
+        runId: 'restored-run-id',
+      }),
+    );
+    const gates = agentState.get(flowGatesKey);
+    expect(gates.runId).toBe('restored-run-id');
+    expect(gates.records).toHaveLength(1);
+    expect(gates.records[0]).toMatchObject({ result: 'reject' });
   });
 
   it('conversation undo rolls back the stage pointer but keeps the gate audit trail', async () => {
@@ -599,6 +624,32 @@ describe('AgentFlowService', () => {
       sub.dispose();
     });
 
+
+    it('vetoes TodoList batched with a FlowStart even before the run is active', async () => {
+      const todoCall: ToolCall = {
+        type: 'function',
+        id: 'call_todo_batched',
+        name: 'TodoList',
+        arguments: '{}',
+      };
+      const startCall: ToolCall = {
+        type: 'function',
+        id: 'call_start',
+        name: 'FlowStart',
+        arguments: '{}',
+      };
+      const context: ResolvedToolExecutionHookContext = {
+        turnId: 0,
+        signal,
+        toolCall: todoCall,
+        toolCalls: [startCall, todoCall],
+        args: {},
+        execution: { approvalRule: 'TodoList', execute: async () => ({ output: '' }) },
+      };
+      const decision = await executorEvents.fireBeforeExecute(context);
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('flow run');
+    });
 
     it('vetoes TodoList while a run is active, and only then', async () => {
       const todoCall: ToolCall = {

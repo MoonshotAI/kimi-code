@@ -1599,6 +1599,7 @@ export interface AgentStateSnapshot {
     active: boolean;
     flowId?: string;
     task?: string;
+    runId?: string;
     stages?: {
       id: string;
       objective: string;
@@ -1625,6 +1626,7 @@ export interface AgentStateSnapshot {
     }[];
     flowId?: string;
     task?: string;
+    runId?: string;
   };
   // src/features/plan/injection/planModeInjection.ts
   'plan.wasActive': boolean;

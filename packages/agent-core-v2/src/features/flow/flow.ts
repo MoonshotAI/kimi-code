@@ -46,6 +46,7 @@ export interface FlowRunState {
   active: boolean;
   flowId?: string;
   task?: string;
+  runId?: string;
   stages?: FlowStageDefinition[];
   currentStageIndex?: number;
   endedReason?: 'finished' | 'aborted';
@@ -84,6 +85,7 @@ export interface FlowGatesState {
   records: FlowGateRecord[];
   flowId?: string;
   task?: string;
+  runId?: string;
 }
 
 export interface FlowAdvanceOutcome {

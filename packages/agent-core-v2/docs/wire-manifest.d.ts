@@ -194,6 +194,7 @@ interface FlowRunStartedPayload {
     gate: 'ai' | 'human' | 'ai-then-human';
     notes?: string;
   }[];
+  runId?: string;
 }
 
 /**
@@ -213,6 +214,7 @@ interface FlowRunVerdictPayload {
   feedback?: string;
   flowId?: string;
   task?: string;
+  runId?: string;
 }
 
 /**

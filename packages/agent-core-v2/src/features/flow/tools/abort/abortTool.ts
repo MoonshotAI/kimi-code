@@ -22,7 +22,15 @@ export class FlowAbortTool implements IFlowAbortTool {
     };
   }
 
-  private async execution(args: FlowAbortInput): Promise<ExecutableToolResult> {
+  private async execution(rawArgs: FlowAbortInput): Promise<ExecutableToolResult> {
+    const parsed = FlowAbortInputSchema.safeParse(rawArgs);
+    if (!parsed.success) {
+      return {
+        isError: true,
+        output: `Invalid FlowAbort input: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`,
+      };
+    }
+    const args = parsed.data;
     const run = this.flow.run();
     if (!run.active) {
       return { isError: true, output: 'No active flow run.' };

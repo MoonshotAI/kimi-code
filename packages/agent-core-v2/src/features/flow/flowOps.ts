@@ -18,6 +18,7 @@ const flowRunStartedSchema = z.object({
   flowId: z.string(),
   task: z.string(),
   stages: z.array(FlowStageDefinitionSchema),
+  runId: z.string().optional(),
 });
 
 export class FlowRunStarted extends Event2<z.infer<typeof flowRunStartedSchema>> {
@@ -35,6 +36,7 @@ const flowVerdictSchema = z.object({
   feedback: z.string().optional(),
   flowId: z.string().optional(),
   task: z.string().optional(),
+  runId: z.string().optional(),
 });
 
 export class FlowVerdict extends Event2<z.infer<typeof flowVerdictSchema>> {
@@ -78,6 +80,8 @@ export const flowKey = defineState('flow', (): FlowRunState => ({ active: false 
     s.active = true;
     s.flowId = e.flowId;
     s.task = e.task;
+    if (e.runId === undefined) delete s.runId;
+    else s.runId = e.runId;
     s.stages = e.stages;
     s.currentStageIndex = 0;
     delete s.endedReason;
@@ -108,13 +112,22 @@ export const flowGatesKey = defineState('flow.gates', (): FlowGatesState => ({ r
     s.records = [];
     s.flowId = e.flowId;
     s.task = e.task;
+    if (e.runId === undefined) delete s.runId;
+    else s.runId = e.runId;
   })
   .on(FlowVerdict, (s, e) => {
-    if (e.flowId !== undefined && s.flowId !== undefined && e.flowId !== s.flowId) {
+    const identityDiffers =
+      e.runId !== undefined && s.runId !== undefined
+        ? e.runId !== s.runId
+        : e.flowId !== undefined && s.flowId !== undefined && e.flowId !== s.flowId;
+    if (identityDiffers) {
       s.records = [];
-      s.flowId = e.flowId;
+      if (e.flowId === undefined) delete s.flowId;
+      else s.flowId = e.flowId;
       if (e.task === undefined) delete s.task;
       else s.task = e.task;
+      if (e.runId === undefined) delete s.runId;
+      else s.runId = e.runId;
     }
     s.records.push({
       stage: e.stage,
