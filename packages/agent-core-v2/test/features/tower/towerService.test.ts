@@ -21,8 +21,8 @@ import type {
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 import { TowerStore } from '#/features/tower/protocol/index';
-import { IAgentTowerService, TOWER_FLAG_ID, TOWER_TOOL_NAMES } from '#/features/tower/tower';
-import { AgentTowerService } from '#/features/tower/towerService';
+import { IAgentTowerService, TOWER_FLAG_ID } from '#/features/tower/tower';
+import { AgentTowerService, TOWER_MODE_TOOLS } from '#/features/tower/towerService';
 import { towerKey } from '#/features/tower/towerOps';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
@@ -336,7 +336,7 @@ describe('AgentTowerService', () => {
     expect(decision).toBeUndefined();
     expect(permissionGateRan).toBe(true);
     expect(formatDenyMessage).not.toHaveBeenCalled();
-    expect(tower.isActive).toBe(true);
+    expect(tower.isActive).toBe(false);
   });
 
   it('enter activates the tower tool set on the main agent; exit keeps it', () => {
@@ -347,7 +347,7 @@ describe('AgentTowerService', () => {
     const tower = ix.get(IAgentTowerService);
 
     tower.enter();
-    expect(addedTools).toEqual([...TOWER_TOOL_NAMES]);
+    expect(addedTools).toEqual([...TOWER_MODE_TOOLS]);
     expect(removedTools).toEqual([]);
 
     tower.exit();
@@ -433,7 +433,7 @@ describe('AgentTowerService', () => {
       records,
     );
 
-    expect(restoredAdded).toEqual([...TOWER_TOOL_NAMES]);
+    expect(restoredAdded).toEqual([...TOWER_MODE_TOOLS]);
     expect(events).toContainEqual({ type: 'agent.status.updated', towerMode: true });
   });
 
@@ -504,7 +504,7 @@ describe('AgentTowerService', () => {
       records,
     );
 
-    expect(restored.isActive).toBe(true);
+    expect(restored.isActive).toBe(false);
     expect(restoredAdded).toEqual([]);
     expect(events).toEqual([]);
   });

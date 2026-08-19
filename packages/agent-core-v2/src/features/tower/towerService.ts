@@ -31,6 +31,8 @@ import {
 } from './tower';
 import { TowerModeEnter, TowerModeExit, towerKey } from './towerOps';
 
+export const TOWER_MODE_TOOLS: readonly string[] = ['TowerInit', ...TOWER_TOOL_NAMES];
+
 export class AgentTowerService extends Disposable implements IAgentTowerService {
   declare readonly _serviceBrand: undefined;
 
@@ -114,7 +116,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (this.isActive) return;
     void this.dispatcher.dispatch(new TowerModeEnter({}));
     if (this.agentCtx.agentId === 'main') {
-      for (const name of TOWER_TOOL_NAMES) this.profile.addActiveTool(name);
+      for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
     }
   }
 
@@ -124,14 +126,14 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   }
 
   get isActive(): boolean {
-    return this.agentState.get(towerKey);
+    return this.flags.enabled(TOWER_FLAG_ID) && this.agentState.get(towerKey);
   }
 
   private restoreTowerTools(): void {
     if (!this.flags.enabled(TOWER_FLAG_ID)) return;
     if (!this.isActive) return;
     if (this.agentCtx.agentId !== 'main') return;
-    for (const name of TOWER_TOOL_NAMES) this.profile.addActiveTool(name);
+    for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
     void this.dispatcher.dispatch(new AgentStatusUpdated({ towerMode: true }));
   }
 }
