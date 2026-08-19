@@ -4,8 +4,6 @@ import { Emitter, Event } from '#/_base/event';
 import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle } from '#/_base/di/scope';
-import type { CronTask } from '#/app/cron/cronTask';
-import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { CronCursor } from '#/session/cron/cronOps';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
@@ -122,54 +120,6 @@ describe('session cron wire persistence', () => {
     } finally {
       await second.ctx.dispose();
       second.onDidCreate.dispose();
-    }
-  });
-
-  it('migrates legacy cron task files into the wire on first restore', async () => {
-    const persistence = new InMemoryWireRecordPersistence();
-    const { ctx, onDidCreate } = await bootCronContext({ persistence });
-    try {
-      const atomicDocs = ctx.get(IAtomicDocumentStore);
-      const scope = 'cron/test-workspace';
-      const owned: CronTask = {
-        id: 'aa11bb22',
-        cron: '0 9 * * *',
-        prompt: 'legacy owned',
-        createdAt: 1,
-        tags: { sessionId: 'test-session' },
-      };
-      const ownerless: CronTask = {
-        id: 'bb22cc33',
-        cron: '0 10 * * *',
-        prompt: 'legacy ownerless',
-        createdAt: 2,
-      };
-      const foreign: CronTask = {
-        id: 'cc33dd44',
-        cron: '0 11 * * *',
-        prompt: 'legacy foreign',
-        createdAt: 3,
-        tags: { sessionId: 'other-session' },
-      };
-      await atomicDocs.set(scope, 'aa11bb22.json', owned);
-      await atomicDocs.set(scope, 'bb22cc33.json', ownerless);
-      await atomicDocs.set(scope, 'cc33dd44.json', foreign);
-
-      await ctx.restorePersisted();
-
-      const cron = ctx.get(ISessionCronService);
-      expect(cron.list().map((task) => task.id).sort()).toEqual(['aa11bb22', 'bb22cc33']);
-      const migratedIds = persistence.records
-        .filter((record) => record.type === 'cron.add')
-        .map((record) => (record['task'] as { id: string }).id)
-        .sort();
-      expect(migratedIds).toEqual(['aa11bb22', 'bb22cc33']);
-      expect(await atomicDocs.get(scope, 'aa11bb22.json')).toBeUndefined();
-      expect(await atomicDocs.get(scope, 'bb22cc33.json')).toBeUndefined();
-      expect(await atomicDocs.get(scope, 'cc33dd44.json')).toBeDefined();
-    } finally {
-      await ctx.dispose();
-      onDidCreate.dispose();
     }
   });
 });

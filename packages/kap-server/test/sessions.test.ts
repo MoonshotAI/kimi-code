@@ -971,44 +971,6 @@ describe('server-v2 /api/v1/sessions', () => {
     ]);
   });
 
-  it('fork of a cold session inherits its legacy cron task files', async () => {
-    const cwd = home as string;
-    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
-    const parentId = parent.body.data.id;
-    const workspaceId = parent.body.data.workspace_id;
-    const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
-    expect(session).toBeDefined();
-    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
-    await closeSessionById((server as RunningServer).core.accessor, parentId);
-    expect(getLiveSessionById((server as RunningServer).core.accessor, parentId)).toBeUndefined();
-
-    const legacyDir = join(home as string, 'cron', workspaceId);
-    await mkdir(legacyDir, { recursive: true });
-    await writeFile(
-      join(legacyDir, 'aa11bb22.json'),
-      JSON.stringify({
-        id: 'aa11bb22',
-        cron: '0 9 * * *',
-        prompt: 'cold legacy',
-        createdAt: 1,
-        tags: { sessionId: parentId },
-      }),
-    );
-
-    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
-    expect(forked.body.code).toBe(0);
-
-    const forkedSession = getLiveSessionById(
-      (server as RunningServer).core.accessor,
-      forked.body.data.id,
-    );
-    expect(forkedSession).toBeDefined();
-    const forkedCron = forkedSession!.accessor.get(ISessionCronService);
-    expect(forkedCron.list().map((t) => ({ id: t.id, prompt: t.prompt }))).toEqual([
-      { id: 'aa11bb22', prompt: 'cold legacy' },
-    ]);
-  });
-
   it('returns 40401 when listing children of a missing parent', async () => {
     const { body } = await getJson<null>('/api/v1/sessions/sess_missing_parent/children');
     expect(body.code).toBe(40401);

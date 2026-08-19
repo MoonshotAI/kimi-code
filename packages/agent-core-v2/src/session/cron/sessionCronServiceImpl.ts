@@ -15,12 +15,9 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { type ClockSources, resolveClockSources, SYSTEM_CLOCKS } from '#/app/cron/clock';
 import { type CronConfig, CRON_SECTION } from '#/app/cron/configSection';
 import { computeNextCronRun, parseCronExpression, type ParsedCronExpression } from '#/app/cron/cron-expr';
-import { CRON_SESSION_TAG, type CronTask, type CronTaskInit } from '#/app/cron/cronTask';
-import { deleteLegacyCronTask, listLegacyCronTasks } from '#/app/cron/legacyCronTasks';
+import { type CronTask, type CronTaskInit } from '#/app/cron/cronTask';
 import { renderCronFireXml } from '#/app/cron/format';
 import { jitteredNextCronRunMs, oneShotJitteredNextCronRunMs } from '#/app/cron/jitter';
-import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -70,8 +67,6 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
 
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
-    @ISessionContext private readonly ctx: ISessionContext,
-    @IAtomicDocumentStore private readonly atomicDocs: IAtomicDocumentStore,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IConfigService private readonly config: IConfigService,
@@ -143,7 +138,6 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
       dispatcher.hooks.onDidRestore.register('cron', async (_ctx, next) => {
         await this.config.ready;
         this.resolveClocks();
-        await this.migrateLegacyTasks();
         await this.start();
         await next();
       }),
@@ -225,28 +219,6 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     const task = this.tasks.get(taskId);
     if (task === undefined) return null;
     return this.nextFireFor(task);
-  }
-
-  private async migrateLegacyTasks(): Promise<void> {
-    const legacyTasks = await listLegacyCronTasks(this.atomicDocs, this.ctx.workspaceId);
-    const imported: CronTask[] = [];
-    for (const task of legacyTasks) {
-      const owner = task.tags?.[CRON_SESSION_TAG];
-      if (owner !== undefined && owner !== this.ctx.sessionId) continue;
-      if (this.tasks.has(task.id)) {
-        await deleteLegacyCronTask(this.atomicDocs, this.ctx.workspaceId, task.id);
-        continue;
-      }
-      this.dispatchCron(new CronAdd({ task }));
-      imported.push(task);
-    }
-    if (imported.length === 0) return;
-    const mainHandle = this.agentLifecycle.get('main');
-    if (mainHandle === undefined) return;
-    await mainHandle.accessor.get(IEventDispatcher).flush();
-    for (const task of imported) {
-      await deleteLegacyCronTask(this.atomicDocs, this.ctx.workspaceId, task.id);
-    }
   }
 
   async start(): Promise<void> {

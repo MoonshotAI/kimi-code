@@ -14,8 +14,6 @@ import { DEFAULT_PLAN_MODE_SECTION } from '#/features/plan/configSection';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { LifecycleScope } from '#/app/scopes';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { CRON_SESSION_TAG } from '#/app/cron/cronTask';
-import { listLegacyCronTasks } from '#/app/cron/legacyCronTasks';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
 import {
@@ -32,8 +30,6 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
-import { CronAdd, cronKey } from '#/session/cron/cronOps';
-import { IAgentStateService } from '#/agent/state/agentState';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
 import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
@@ -548,10 +544,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         });
       }
 
-      if (turnSlice === undefined) {
-        await this.inheritLegacyCronTasks(sourceId, target);
-      }
-
       await targetMeta.update({
         title,
         titleKind: opts.title !== undefined ? 'custom' : 'replaceable',
@@ -717,25 +709,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         await this.hostFs.writeBytes(targetPath, data);
       }
     }
-  }
-
-  private async inheritLegacyCronTasks(sourceId: string, target: ISessionScopeHandle): Promise<void> {
-    const legacyTasks = await listLegacyCronTasks(this.docs, this.workspaceId);
-    const inherited = legacyTasks.filter(
-      (task) => task.tags?.[CRON_SESSION_TAG] === sourceId,
-    );
-    if (inherited.length === 0) return;
-    const main = target.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
-    if (main === undefined) return;
-    const agentState = main.accessor.get(IAgentStateService);
-    const dispatcher = main.accessor.get(IEventDispatcher);
-    let dispatched = false;
-    for (const task of inherited) {
-      if (agentState.get(cronKey).has(task.id)) continue;
-      await dispatcher.dispatch(new CronAdd({ task }));
-      dispatched = true;
-    }
-    if (dispatched) await dispatcher.flush();
   }
 
   private async readMetaFromDisk(sessionId: string): Promise<SessionMeta | undefined> {
