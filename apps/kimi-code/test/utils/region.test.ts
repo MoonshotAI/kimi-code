@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { currentKimiRegion, refreshKimiRegion } from '#/utils/region';
+import { currentKimiRegion, refreshKimiRegion, regionForBareLogin } from '#/utils/region';
 
 const originalEnv = { ...process.env };
 
@@ -55,5 +55,31 @@ describe('currentKimiRegion', () => {
     );
     process.env['KIMI_CODE_REGION_MARKER'] = 'off';
     expect(refreshKimiRegion()).toBe('global');
+  });
+});
+
+describe('regionForBareLogin', () => {
+  it('follows the resolved region for a fresh install (no persisted ref)', () => {
+    expect(regionForBareLogin(undefined)).toBe('mainland-cn');
+    writeFileSync(join(home, 'region'), 'global\n');
+    refreshKimiRegion();
+    expect(regionForBareLogin(undefined)).toBe('global');
+  });
+
+  it('re-pins mainland-cn for the default slot', () => {
+    expect(regionForBareLogin({ key: 'oauth/kimi-code' })).toBe('mainland-cn');
+  });
+
+  it('keeps the configured environment for a scoped slot without a persisted host', () => {
+    expect(regionForBareLogin({ key: 'oauth/kimi-code-env-0123456789abcdef' })).toBeUndefined();
+  });
+
+  it('keeps the persisted environment for a global login', () => {
+    expect(
+      regionForBareLogin({
+        key: 'oauth/kimi-code-env-0123456789abcdef',
+        oauthHost: 'https://auth.kimi.ai',
+      }),
+    ).toBeUndefined();
   });
 });

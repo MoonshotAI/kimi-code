@@ -16,6 +16,7 @@
 
 import { loadRuntimeConfigSafe, resolveConfigPath } from '@moonshot-ai/kimi-code-sdk';
 import {
+  KIMI_CODE_OAUTH_KEY,
   KIMI_REGION_PROFILES,
   resolveKimiRegion,
   type KimiRegion,
@@ -45,6 +46,16 @@ export function persistedKimiOAuthRef(): PersistedKimiOAuthRef | undefined {
   const oauth = result.config.providers?.[MANAGED_KIMI_CODE_PROVIDER_KEY]?.oauth;
   if (oauth === undefined) return undefined;
   return { key: oauth.key, oauthHost: oauth.oauthHost };
+}
+
+/** Region for a no-flag `kimi login` / `kimi acp --login`: a fresh install
+    follows the resolved region (env/marker/default); the default slot (only
+    ever a mainland-cn login) re-pins the profile explicitly; a scoped slot —
+    a global login, or a custom env persisted with only KIMI_CODE_BASE_URL and
+    no oauthHost — keeps its configured hosts (`undefined`). */
+export function regionForBareLogin(ref: PersistedKimiOAuthRef | undefined): KimiRegion | undefined {
+  if (ref === undefined) return currentKimiRegion();
+  return ref.key === KIMI_CODE_OAUTH_KEY ? 'mainland-cn' : undefined;
 }
 
 export function currentKimiRegion(): KimiRegion {
