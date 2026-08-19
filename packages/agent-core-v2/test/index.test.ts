@@ -97,6 +97,7 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'cron.add',
   'cron.delete',
   'cron.cursor',
+  'token_counting.turn_recorded',
 ]);
 
 describe('v1 wire vocabulary', () => {

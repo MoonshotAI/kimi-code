@@ -1508,7 +1508,7 @@ export interface AgentStateSnapshot {
   'task.notificationDelivery': readonly string[];
   'task.scheduledNotificationKeys': Set<string>;
   // src/agent/tokenCounting/tokenCountingOps.ts
-  // replayable · durable — folds: TokenCountingMeasured, TokenCountingTruncated, TokenCountingRebased
+  // replayable · durable — folds: TokenCountingMeasured, TokenCountingTruncated, TokenCountingRebased, TokenCountingTurnRecorded
   'tokenCounting': /* TokenCountingState — packages/agent-core-v2/src/agent/tokenCounting/tokenCountingOps.ts */ {
     readonly anchors: readonly /* TokenAnchor — packages/agent-core-v2/src/agent/tokenCounting/tokenCountingOps.ts */ {
       readonly length: number;

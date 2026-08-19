@@ -24,7 +24,7 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (52 record types)
+// Index (53 record types)
 //   config.update                      profile                                                               src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory, turn                                                   src/agent/contextMemory/contextEvents.ts
 //   context.append_message             contextMemory, goalForkNotice, plan, task.notificationDelivery, todo  src/agent/contextMemory/contextEvents.ts
@@ -65,6 +65,7 @@
 //   token_counting.measured            tokenCounting                                                         src/agent/tokenCounting/tokenCountingOps.ts
 //   token_counting.rebased             tokenCounting                                                         src/agent/tokenCounting/tokenCountingOps.ts
 //   token_counting.truncated           tokenCounting                                                         src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.turn_recorded       tokenCounting                                                         src/agent/tokenCounting/tokenCountingOps.ts
 //   tools.register_user_tool           userTool                                                              src/agent/userTool/userToolOps.ts
 //   tools.reset_active_tools           profile.activeTools                                                   src/agent/profile/profileOps.ts
 //   tools.set_active_tools             profile.activeTools                                                   src/agent/profile/profileOps.ts
@@ -576,6 +577,17 @@ interface TokenCountingTruncatedPayload {
 }
 
 /**
+ * states: tokenCounting
+ * owner: src/agent/tokenCounting/tokenCountingOps.ts
+ */
+interface TokenCountingTurnRecordedPayload {
+  _name: 'token_counting.turn_recorded';
+  length: number;
+  tokens: number;
+  turnId: number;
+}
+
+/**
  * states: userTool
  * owner: src/agent/userTool/userToolOps.ts
  * payload type: UserToolRegistration
@@ -788,6 +800,7 @@ interface WirePayloadMap {
   "token_counting.measured": TokenCountingMeasuredPayload;
   "token_counting.rebased": TokenCountingRebasedPayload;
   "token_counting.truncated": TokenCountingTruncatedPayload;
+  "token_counting.turn_recorded": TokenCountingTurnRecordedPayload;
   "tools.register_user_tool": ToolsRegisterUserToolPayload;
   "tools.reset_active_tools": ToolsResetActiveToolsPayload;
   "tools.set_active_tools": ToolsSetActiveToolsPayload;
