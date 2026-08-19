@@ -50,7 +50,7 @@ The format mirrors `ANTHROPIC_CUSTOM_HEADERS`: newline-separated `Name: Value` l
 Added in 0.20.2.
 :::
 
-> This is the lowest-precedence header layer — a header with the exact same name is overridden by the Kimi identity headers (`User-Agent`, `X-Msh-*`), by a provider's `custom_headers` in `config.toml` (see [Config files](./config-files.md#providers)), and by request auth (`Authorization`). Do not use this variable for authentication or other reserved headers: a case variant such as `authorization` is not recognized as the same name and ends up combined with the real `Authorization` header, which can break requests. Use `custom_headers` when headers need to differ per provider.
+> Precedence: the Kimi identity headers (`User-Agent`, `X-Msh-*`) and a provider's `custom_headers` in `config.toml` (see [Config files](./config-files.md#providers)) override same-named entries here. Authentication is protocol-dependent: on the `kimi`, `openai`, and `openai_responses` protocols an exact `Authorization` entry replaces the generated bearer token, while `/models` listing requests keep their own authentication. A case variant such as `authorization` is never treated as the same name — it is combined with the real header, which can break requests. Do not use this variable for authentication or other reserved headers. Use `custom_headers` when headers need to differ per provider.
 
 ## Provider credential key names (written in config.toml)
 
