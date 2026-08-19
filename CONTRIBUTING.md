@@ -1,5 +1,7 @@
 # Contributing to kimi-code
 
+[中文版](CONTRIBUTING.zh-CN.md)
+
 Thanks for taking the time to contribute! This project moves quickly, and thoughtful contributions from the community are what keep it sharp. The guide below walks you through how we work so your PR has the best chance of landing smoothly.
 
 ## Before You Start
