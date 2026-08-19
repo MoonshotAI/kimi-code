@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Add a second OAuth login choice: /login now offers Kimi Code (kimi.com/code) and Kimi Code (kimi.ai/code) entries, and kimi login / kimi acp --login accept a --region flag to pick the endpoint non-interactively. Updates, plugin marketplace, and site links follow the chosen login.
+Support two OAuth login methods — kimi.ai and kimi.com. /login now offers Kimi Code (kimi.ai/code) and Kimi Code (kimi.com/code) entries, kimi login / kimi acp --login accept a --region flag to pick the endpoint non-interactively, and updates, the plugin marketplace, and site links follow the chosen login.
