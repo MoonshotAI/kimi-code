@@ -29,6 +29,8 @@ import {
 } from './skill';
 import { SkillActivate, skillKey } from './skillOps';
 import { ISkillActivationDataService } from './skillActivationData';
+import { IFlagService } from '#/app/flag/flag';
+import { FLOW_FLAG_ID, IAgentFlowService } from '#/features/flow/flow';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { IEventService } from '#/app/event/event';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -51,6 +53,8 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService agentState: IAgentStateService,
     @ISkillActivationDataService private readonly activationData: ISkillActivationDataService,
+    @IFlagService private readonly flags: IFlagService,
+    @IAgentFlowService private readonly flow: IAgentFlowService,
   ) {
     super();
     agentState.contributeState(skillKey);
@@ -74,6 +78,7 @@ export class AgentSkillService extends Service implements IAgentSkillService {
         `Flow skill "${skill.name}" can only be activated on the main agent`,
       );
     }
+    this.rejectWhileFlowRunActive(skill.metadata.type);
 
     const skillArgs = input.args ?? '';
     const skillContent = this.renderSkillPrompt(skill, skillArgs);
@@ -147,6 +152,7 @@ export class AgentSkillService extends Service implements IAgentSkillService {
         'Flow skills can only be activated on the main agent',
       );
     }
+    if (flowActivations.length > 0) this.rejectWhileFlowRunActive('flow');
     if (this.scopeContext.agentId === MAIN_AGENT_ID) {
       await applyPromptMetadataUpdate(
         {
@@ -243,6 +249,16 @@ export class AgentSkillService extends Service implements IAgentSkillService {
         skillSource: origin.skillSource,
       },
     };
+  }
+
+  private rejectWhileFlowRunActive(skillType: string | undefined): void {
+    if (skillType !== 'flow') return;
+    if (!this.flags.enabled(FLOW_FLAG_ID)) return;
+    if (!this.flow.run().active) return;
+    throw new Error2(
+      ErrorCodes.REQUEST_INVALID,
+      'A flow run is already active in this session. Finish or abort it (FlowAbort) before starting another flow.',
+    );
   }
 
   private async recordActivation(
