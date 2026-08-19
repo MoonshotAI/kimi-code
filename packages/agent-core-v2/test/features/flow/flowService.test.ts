@@ -296,6 +296,29 @@ describe('AgentFlowService', () => {
     ]);
   });
 
+  it('starts a new audit segment when a restored run records a verdict over retained records', async () => {
+    service.start(DEFINITION, 'task B');
+    service.advance({ stage: 'triage', result: 'pass', decidedBy: 'human', criteria: CRITERIA });
+    expect(agentState.get(flowGatesKey).flowId).toBe('issue-fix');
+    expect(agentState.get(flowGatesKey).records).toHaveLength(1);
+
+    await dispatcher.dispatch(
+      new FlowVerdict({
+        stage: 'triage',
+        result: 'reject',
+        decidedBy: 'human',
+        criteria: [{ criterion: 'cause located', met: false, evidence: 'regressed' }],
+        flowId: 'restored-flow',
+        task: 'task A',
+      }),
+    );
+    const gates = agentState.get(flowGatesKey);
+    expect(gates.flowId).toBe('restored-flow');
+    expect(gates.task).toBe('task A');
+    expect(gates.records).toHaveLength(1);
+    expect(gates.records[0]).toMatchObject({ stage: 'triage', result: 'reject' });
+  });
+
   it('conversation undo rolls back the stage pointer but keeps the gate audit trail', async () => {
     await dispatcher.dispatch(
       new ContextAppendMessage({
@@ -423,6 +446,30 @@ describe('AgentFlowService', () => {
       } as unknown as ContextMessage);
       service.reconcilePendingActivation();
       expect(service.run().active).toBe(true);
+    });
+
+    it('derives the task from the bundled prompt text for an argument-less inline activation', async () => {
+      await activateFlowSkill({ task: '', appendPrompt: false, reconcile: false });
+      contextMessages.push({
+        role: 'user',
+        content: [
+          { type: 'text', text: 'bundled skill block' },
+          { type: 'text', text: 'Fix the paste bug in the editor' },
+        ],
+        toolCalls: [],
+        origin: {
+          kind: 'user',
+          skillActivations: [{ activationId: 'act-1', skillName: 'issue-fix' }],
+        },
+      } as unknown as ContextMessage);
+      service.reconcilePendingActivation();
+      expect(service.run().active).toBe(true);
+      expect(service.run().task).toBe('Fix the paste bug in the editor');
+    });
+
+    it('does not start an argument-less single activation with no prompt text to derive from', async () => {
+      await activateFlowSkill({ task: '' });
+      expect(service.run().active).toBe(false);
     });
 
     it('serves only the latest pending activation', async () => {

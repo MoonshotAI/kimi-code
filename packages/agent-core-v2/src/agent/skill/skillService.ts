@@ -68,6 +68,12 @@ export class AgentSkillService extends Service implements IAgentSkillService {
         `Skill "${skill.name}" cannot be activated by the user`,
       );
     }
+    if (skill.metadata.type === 'flow' && this.scopeContext.agentId !== MAIN_AGENT_ID) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        `Flow skill "${skill.name}" can only be activated on the main agent`,
+      );
+    }
 
     const skillArgs = input.args ?? '';
     const skillContent = this.renderSkillPrompt(skill, skillArgs);
@@ -128,6 +134,19 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     }
     await this.skillCatalog.ready;
     const prepared = input.skills.map((skill) => this.prepareBundled(skill));
+    const flowActivations = prepared.filter((activation) => activation.origin.skillType === 'flow');
+    if (flowActivations.length > 1) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        'A prompt can bundle at most one flow skill: each flow run needs its own prompt.',
+      );
+    }
+    if (flowActivations.length > 0 && this.scopeContext.agentId !== MAIN_AGENT_ID) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        'Flow skills can only be activated on the main agent',
+      );
+    }
     if (this.scopeContext.agentId === MAIN_AGENT_ID) {
       await applyPromptMetadataUpdate(
         {

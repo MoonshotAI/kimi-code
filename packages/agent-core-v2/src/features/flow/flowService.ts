@@ -163,7 +163,6 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     skillPath: string | undefined,
   ): void {
     if (flowId === undefined || flowId.length === 0 || this.run().active) return;
-    if (task === undefined || task.trim().length === 0) return;
     if (
       skillPath === undefined ||
       resolve(skillPath) !== resolve(flowDefinitionPath(this.workspaceCtx.workDir, flowId))
@@ -172,7 +171,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     }
     const parsed = FlowDefinitionSchema.safeParse(this.activationData.take(activationId));
     if (!parsed.success || parsed.data.id !== flowId) return;
-    this.pendingActivation = { activationId, definition: parsed.data, task: task.trim() };
+    this.pendingActivation = { activationId, definition: parsed.data, task: task?.trim() ?? '' };
   }
 
   reconcilePendingActivation(): void {
@@ -197,7 +196,17 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
           );
     if (!matches) return;
     this.pendingActivation = undefined;
-    this.start(pending.definition, pending.task);
+    let task = pending.task;
+    if (task.length === 0 && origin.kind === 'user' && last !== undefined) {
+      task = last.content
+        .slice((origin.skillActivations ?? []).length)
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n')
+        .trim();
+    }
+    if (task.length === 0) return;
+    this.start(pending.definition, task);
   }
 
   stampPreparedEpoch(args: object): void {
@@ -242,6 +251,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     if (current === undefined || current.id !== outcome.stage) {
       return { recorded: false, runFinished: false };
     }
+    const activeRun = this.run();
     void this.dispatcher.dispatch(
       new FlowVerdict({
         stage: outcome.stage,
@@ -249,6 +259,8 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         decidedBy: outcome.decidedBy,
         criteria: outcome.criteria.map((criterion) => ({ ...criterion })),
         feedback: outcome.feedback,
+        flowId: activeRun.flowId,
+        task: activeRun.task,
       }),
     );
     if (outcome.result !== 'pass') return { recorded: true, runFinished: false };

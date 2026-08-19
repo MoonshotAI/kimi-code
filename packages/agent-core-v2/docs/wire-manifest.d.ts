@@ -211,6 +211,8 @@ interface FlowRunVerdictPayload {
     evidence: string;
   }[];
   feedback?: string;
+  flowId?: string;
+  task?: string;
 }
 
 /**

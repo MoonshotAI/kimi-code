@@ -33,6 +33,8 @@ const flowVerdictSchema = z.object({
   decidedBy: z.enum(['ai', 'human', 'auto']),
   criteria: z.array(FlowCriterionVerdictSchema),
   feedback: z.string().optional(),
+  flowId: z.string().optional(),
+  task: z.string().optional(),
 });
 
 export class FlowVerdict extends Event2<z.infer<typeof flowVerdictSchema>> {
@@ -108,6 +110,12 @@ export const flowGatesKey = defineState('flow.gates', (): FlowGatesState => ({ r
     s.task = e.task;
   })
   .on(FlowVerdict, (s, e) => {
+    if (e.flowId !== undefined && s.flowId !== undefined && e.flowId !== s.flowId) {
+      s.records = [];
+      s.flowId = e.flowId;
+      if (e.task === undefined) delete s.task;
+      else s.task = e.task;
+    }
     s.records.push({
       stage: e.stage,
       result: e.result,

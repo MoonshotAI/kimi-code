@@ -178,7 +178,7 @@ function toFlowSkill(definition: FlowDefinition, path: string, dir: string): Ski
     '',
     "The user's input for this activation is the task: `$ARGUMENTS`",
     '',
-    'If the task is empty, the engine does NOT start the run: ask the user what this run should accomplish, then start it yourself with FlowStart (flow: "' +
+    'The task is the argument text above; when this activation is inline in a larger prompt, the surrounding prompt text becomes the task. If both are empty, the engine does NOT start the run: ask the user what this run should accomplish, then start it yourself with FlowStart (flow: "' +
       id +
       '", task: <the task>). Likewise, if no current-stage reminder appears in your context, the automatic start failed — recover by calling FlowStart yourself.',
   ].join('\n');
