@@ -341,6 +341,10 @@ describe('ready banner reflects the bind class', () => {
 });
 
 describe('`kimi web` opens the browser', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('opens the Web UI URL with the #token= fragment by default', async () => {
     const { handleWebCommand } = await import('#/cli/sub/web/run');
     const { runner } = makeRunner();
@@ -405,6 +409,7 @@ describe('`kimi web` opens the browser', () => {
   });
 
   it('rejects Remote Control on a non-loopback host', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '1');
     const { handleWebCommand } = await import('#/cli/sub/web/run');
     const { runner } = makeRunner();
     const { stdout, stderr } = makeIo();
@@ -418,13 +423,14 @@ describe('`kimi web` opens the browser', () => {
   });
 
   it('opens only the public Remote Control URL without the local server token', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '1');
     const { handleWebCommand } = await import('#/cli/sub/web/run');
     const { runner } = makeRunner();
     const { stdout, stderr, readStdout } = makeIo();
     const openUrl = vi.fn();
     const startRemoteControl = vi.fn(async () => ({
       deviceId: 'device-1',
-      url: 'https://api.kimi.com/coding-relay/code/rc/devices/device-1/?rc=1&from=kimi_code_cli',
+      url: 'https://code-rc.kimi.com/devices/device-1/?rc=1&from=kimi_code_cli',
       close: vi.fn(async () => {}),
     }));
 
@@ -447,10 +453,39 @@ describe('`kimi web` opens the browser', () => {
       }),
     );
     expect(openUrl).toHaveBeenCalledWith(
-      'https://api.kimi.com/coding-relay/code/rc/devices/device-1/?rc=1&from=kimi_code_cli',
+      'https://code-rc.kimi.com/devices/device-1/?rc=1&from=kimi_code_cli',
     );
+    expect(readStdout()).toContain('Kimi Remote Control (experimental):');
     expect(readStdout()).not.toContain('local-server-token');
     expect(readStdout()).not.toContain('#token=');
+  });
+
+  it('rejects --remote-control while the experimental flag is off', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '0');
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const { runner } = makeRunner();
+    const { stdout, stderr } = makeIo();
+
+    await expect(
+      handleWebCommand(
+        { remoteControl: true, open: false },
+        { startServerForeground: runner, openUrl: vi.fn(), stdout, stderr },
+      ),
+    ).rejects.toThrow('--remote-control is experimental:');
+  });
+
+  it('hides --remote-control from help unless the experimental flag is on', () => {
+    const remoteControlOption = () =>
+      makeProgram()
+        .commands.find((command) => command.name() === 'web')!
+        .options.find((option) => option.long === '--remote-control');
+
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '0');
+    expect(remoteControlOption()?.hidden).toBe(true);
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '1');
+    expect(remoteControlOption()?.hidden).toBe(false);
   });
 });
 

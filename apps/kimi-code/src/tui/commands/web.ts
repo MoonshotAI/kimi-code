@@ -53,7 +53,7 @@ export async function handleRemoteControlCommand(host: SlashCommandHost): Promis
           });
           const url = buildRemoteControlUrl(remoteControl.deviceId, session.id);
           process.stdout.write(formatReadyBanner(origin, options.host));
-          process.stdout.write(`\n  ${sessionLine(url)}\n`);
+          process.stdout.write(`\n  ${sessionLine(url, 'Remote Control (experimental): ')}\n`);
           openUrl(url);
         },
         onShutdown: async () => {
@@ -101,12 +101,12 @@ function startNewServerAfterExit(host: SlashCommandHost, sessionId: string): voi
 
 /** Styled `Session:` line for the foreground handoff; the token fragment is
  * dimmed like in the ready banner so the host/path stands out. */
-function sessionLine(url: string): string {
+function sessionLine(url: string, labelText = 'Session:  '): string {
   const label = (text: string): string => chalk.bold.hex(darkColors.textDim)(text);
   const accent = (text: string): string => chalk.hex(darkColors.accent)(text);
   const dim = (text: string): string => chalk.hex(darkColors.textDim)(text);
   const [base, frag] = splitTokenFragment(url);
-  return `${label('Session:  ')}${accent(base)}${frag === '' ? '' : dim(frag)}`;
+  return `${label(labelText)}${accent(base)}${frag === '' ? '' : dim(frag)}`;
 }
 
 /**

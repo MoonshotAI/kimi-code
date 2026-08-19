@@ -179,6 +179,7 @@ export * from '#/kosong/provider/providerService';
 export * from '#/kosong/provider/providerDefinition';
 export * from '#/kosong/provider/protocolAdapterRegistry';
 import '#/features/skill/catalog/configSection';
+import '#/app/remoteControl/flag';
 import '#/app/agentIdentity/configSection';
 export * from '#/app/agentIdentity/configSection';
 export * from '#/app/agentIdentity/agentIdentity';

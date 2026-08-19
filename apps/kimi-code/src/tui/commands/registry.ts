@@ -434,9 +434,10 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'remote-control',
     aliases: ['rc'],
-    description: 'Open the current session through Kimi Remote Control',
+    description: 'Open the current session through Kimi Remote Control (experimental)',
     priority: 40,
     availability: 'always',
+    experimentalFlag: 'remote-control',
   },
   {
     name: 'exit',
