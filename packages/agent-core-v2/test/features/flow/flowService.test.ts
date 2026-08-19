@@ -417,6 +417,29 @@ describe('AgentFlowService', () => {
       if (options.reconcile !== false) service.reconcilePendingActivation();
     }
 
+    it('reports a pending activation until it is consumed', async () => {
+      expect(service.hasPendingActivation()).toBe(false);
+      await activateFlowSkill({ appendPrompt: false, reconcile: false });
+      expect(service.hasPendingActivation()).toBe(true);
+      contextMessages.push({
+        role: 'user',
+        content: [{ type: 'text', text: 'activation prompt' }],
+        toolCalls: [],
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act-1',
+          skillName: 'flow:issue-fix',
+          trigger: 'user-slash',
+          skillType: 'flow',
+          skillPath: '/ws/.kimi-code/flows/issue-fix.md',
+          skillArgs: 'fix the paste bug',
+        },
+      } as unknown as ContextMessage);
+      service.reconcilePendingActivation();
+      expect(service.hasPendingActivation()).toBe(false);
+      expect(service.run().active).toBe(true);
+    });
+
     it('starts the run once the activation prompt is in context and a step reconciles', async () => {
       await activateFlowSkill();
       const run = service.run();

@@ -19,8 +19,6 @@ export interface ISkillActivationDataService {
 export const ISkillActivationDataService: ServiceIdentifier<ISkillActivationDataService> =
   createDecorator<ISkillActivationDataService>('skillActivationData');
 
-const MAX_ENTRIES = 32;
-
 export class SkillActivationDataService extends Disposable implements ISkillActivationDataService {
   declare readonly _serviceBrand: undefined;
 
@@ -29,11 +27,6 @@ export class SkillActivationDataService extends Disposable implements ISkillActi
   put(activationId: string, data: unknown): void {
     if (data === undefined) return;
     this.entries.set(activationId, data);
-    while (this.entries.size > MAX_ENTRIES) {
-      const oldest = this.entries.keys().next().value;
-      if (oldest === undefined) break;
-      this.entries.delete(oldest);
-    }
   }
 
   take(activationId: string): unknown {

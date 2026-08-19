@@ -109,6 +109,7 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     this.activationData.put(origin.activationId, skill.data);
     const turn = await this.recordActivation(origin, content);
     if (turn === undefined) {
+      this.activationData.take(origin.activationId);
       throw new Error2(
         ErrorCodes.TURN_AGENT_BUSY,
         'Cannot activate skill while another turn is active',
@@ -140,19 +141,31 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     await this.skillCatalog.ready;
     const prepared = input.skills.map((skill) => this.prepareBundled(skill));
     const flowActivations = prepared.filter((activation) => activation.origin.skillType === 'flow');
+    const discardPrepared = (): void => {
+      for (const activation of prepared) {
+        this.activationData.take(activation.origin.activationId);
+      }
+    };
     if (flowActivations.length > 1) {
+      discardPrepared();
       throw new Error2(
         ErrorCodes.REQUEST_INVALID,
         'A prompt can bundle at most one flow skill: each flow run needs its own prompt.',
       );
     }
     if (flowActivations.length > 0 && this.scopeContext.agentId !== MAIN_AGENT_ID) {
+      discardPrepared();
       throw new Error2(
         ErrorCodes.REQUEST_INVALID,
         'Flow skills can only be activated on the main agent',
       );
     }
-    if (flowActivations.length > 0) this.rejectWhileFlowRunActive('flow');
+    try {
+      if (flowActivations.length > 0) this.rejectWhileFlowRunActive('flow');
+    } catch (error) {
+      discardPrepared();
+      throw error;
+    }
     if (this.scopeContext.agentId === MAIN_AGENT_ID) {
       await applyPromptMetadataUpdate(
         {
@@ -254,10 +267,10 @@ export class AgentSkillService extends Service implements IAgentSkillService {
   private rejectWhileFlowRunActive(skillType: string | undefined): void {
     if (skillType !== 'flow') return;
     if (!this.flags.enabled(FLOW_FLAG_ID)) return;
-    if (!this.flow.run().active) return;
+    if (!this.flow.run().active && !this.flow.hasPendingActivation()) return;
     throw new Error2(
       ErrorCodes.REQUEST_INVALID,
-      'A flow run is already active in this session. Finish or abort it (FlowAbort) before starting another flow.',
+      'A flow run is already active or queued in this session. Finish or abort it (FlowAbort) before starting another flow.',
     );
   }
 

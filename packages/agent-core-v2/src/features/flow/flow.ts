@@ -121,6 +121,10 @@ export interface IAgentFlowService {
    *  reminder so the run begins after the activation prompt's undo anchor
    *  and is already active when the first step is built. */
   reconcilePendingActivation(): void;
+  /** Whether an activation-triggered start is queued but not yet consumed —
+   *  activation entry points reject a new flow activation while one is
+   *  pending, exactly as they do while a run is active. */
+  hasPendingActivation(): boolean;
   /** Record the current epoch for a prepared FlowAdvance call (keyed by its
    *  args object), so the gate review can bind approval to the run the
    *  verdict was prepared against. */

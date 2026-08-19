@@ -59,7 +59,12 @@ export class ReverseRpcController {
     if (!pending) return false;
     this.approvals.delete(id);
     if (response === "approve_for_session") {
-      pending.resolve({ decision: "approved", scope: "session" });
+      // A flow gate never installs a session rule: the engine re-asks every
+      // human gate regardless, so a session-scope answer degrades to a
+      // one-shot approval instead of recording a rule it will not honor.
+      pending.resolve(
+        pending.flowGate ? { decision: "approved" } : { decision: "approved", scope: "session" },
+      );
     } else if (response === "approve") {
       pending.resolve({ decision: "approved" });
     } else if (pending.flowGate) {

@@ -216,6 +216,10 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     this.start(pending.definition, task);
   }
 
+  hasPendingActivation(): boolean {
+    return this.pendingActivations.size > 0;
+  }
+
   stampPreparedEpoch(args: object): void {
     this.preparedEpochs.set(args, this.epoch);
   }
