@@ -896,7 +896,7 @@ export class AgentTranscriptProjector {
       };
       return [{ op: 'frame.upsert', turnId: turn.turnId, stepId: step.stepId, frame }];
     }
-    if (turn.origin?.kind === 'task') return [];
+    if (turn.origin?.kind === 'task' && (turn.origin.taskId === undefined || turn.origin.taskId === event.sourceId)) return [];
     this.pendingTaskNotifications.push({ text, taskId: event.sourceId });
     return [];
   }

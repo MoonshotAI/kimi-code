@@ -1514,6 +1514,28 @@ describe('AgentTranscriptProjector', () => {
     expect(turnOps('t1', tx.getItems()).steps[0]!.frames).toHaveLength(0);
   });
 
+  it('keeps a different task’s notification in a task-origin turn', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'task', taskId: 'task_1' } }));
+    feed(
+      ev({
+        type: 'task.notified',
+        notificationType: 'task.completed',
+        title: 'Background agent completed',
+        body: 'second task done.',
+        severity: 'info',
+        sourceKind: 'background_task',
+        sourceId: 'task_2',
+      }),
+    );
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    const frames = turnOps('t1', tx.getItems()).steps[0]!.frames;
+    expect(frames.map((f) => f.kind === 'text' && f.taskId)).toEqual(['task_2']);
+  });
+
   it('drops a buffered task notification when the turn ends before the next step', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
