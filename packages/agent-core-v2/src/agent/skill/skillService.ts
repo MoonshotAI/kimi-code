@@ -32,6 +32,7 @@ import { ISkillActivationDataService } from './skillActivationData';
 import { IFlagService } from '#/app/flag/flag';
 import { IConfigService } from '#/app/config/config';
 import { FLOW_FLAG_ID, IAgentFlowService } from '#/features/flow/flow';
+import { FLOW_SKILL_NAME_PREFIX } from '#/features/flow/flowsSkillSource';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { IEventService } from '#/app/event/event';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -100,13 +101,15 @@ export class AgentSkillService extends Service implements IAgentSkillService {
         `Skill "${skill.name}" cannot be activated by the user`,
       );
     }
-    if (skill.metadata.type === 'flow' && this.scopeContext.agentId !== MAIN_AGENT_ID) {
-      throw new Error2(
-        ErrorCodes.REQUEST_INVALID,
-        `Flow skill "${skill.name}" can only be activated on the main agent`,
-      );
+    if (isProjectedFlowSkill(skill.name, skill.metadata.type)) {
+      if (this.scopeContext.agentId !== MAIN_AGENT_ID) {
+        throw new Error2(
+          ErrorCodes.REQUEST_INVALID,
+          `Flow skill "${skill.name}" can only be activated on the main agent`,
+        );
+      }
+      this.rejectWhileFlowRunActive();
     }
-    this.rejectWhileFlowRunActive(skill.metadata.type);
 
     const skillArgs = input.args ?? '';
     const skillContent = this.renderSkillPrompt(skill, skillArgs);
@@ -188,7 +191,9 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       }
       throw error;
     }
-    const flowActivations = prepared.filter((activation) => activation.origin.skillType === 'flow');
+    const flowActivations = prepared.filter((activation) =>
+      isProjectedFlowSkill(activation.origin.skillName, activation.origin.skillType),
+    );
     const discardPrepared = (): void => {
       for (const activation of prepared) {
         this.activationData.take(activation.origin.activationId);
@@ -209,23 +214,23 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       );
     }
     try {
-      if (flowActivations.length > 0) this.rejectWhileFlowRunActive('flow');
+      if (flowActivations.length > 0) this.rejectWhileFlowRunActive();
     } catch (error) {
       discardPrepared();
       throw error;
     }
-    if (this.scopeContext.agentId === MAIN_AGENT_ID) {
-      await applyPromptMetadataUpdate(
-        {
-          metadata: this.metadata,
-          eventService: this.eventService,
-          sessionId: this.sessionContext.sessionId,
-        },
-        promptMetadataTextFromContentParts(input.input),
-      );
-    }
     try {
-      if (flowActivations.length > 0) this.rejectWhileFlowRunActive('flow');
+      if (this.scopeContext.agentId === MAIN_AGENT_ID) {
+        await applyPromptMetadataUpdate(
+          {
+            metadata: this.metadata,
+            eventService: this.eventService,
+            sessionId: this.sessionContext.sessionId,
+          },
+          promptMetadataTextFromContentParts(input.input),
+        );
+      }
+      if (flowActivations.length > 0) this.rejectWhileFlowRunActive();
     } catch (error) {
       discardPrepared();
       throw error;
@@ -335,8 +340,7 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     };
   }
 
-  private rejectWhileFlowRunActive(skillType: string | undefined): void {
-    if (skillType !== 'flow') return;
+  private rejectWhileFlowRunActive(): void {
     if (!this.flags.enabled(FLOW_FLAG_ID)) {
       throw new Error2(
         ErrorCodes.REQUEST_INVALID,
@@ -398,3 +402,7 @@ registerScopedService(
   ScopeActivation.OnScopeCreated,
   'skill',
 );
+
+function isProjectedFlowSkill(name: string | undefined, type: string | undefined): boolean {
+  return type === 'flow' && name !== undefined && name.startsWith(FLOW_SKILL_NAME_PREFIX);
+}
