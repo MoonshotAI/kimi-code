@@ -25,8 +25,8 @@ export interface AgentToolContributionOptions {
    * inherit the caller's conversation, so a divergent tool surface forfeits
    * prompt prefix-cache parity and leaves the inherited history referencing
    * tools the fork does not offer. Where that cost matters, restrict what a
-   * tool may DO at execution time instead (a service-level authority check,
-   * see `AgentGoalService.assertSupportedAgent`).
+   * tool may DO at execution time instead (see `mainAgentOnlyExecution` in
+   * `agent/tools/mainAgentOnly.ts`).
    */
   readonly when?: (accessor: ServicesAccessor) => boolean;
   readonly requiredRuntimeCapabilities?: readonly RuntimeCapability[];
