@@ -28,6 +28,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { Turn } from '#/agent/loop/loop';
 import { executeTool } from '../../tools/fixtures/execute-tool';
 import { stubSkill } from '../../app/skillCatalog/stubs';
+import { ISkillActivationDataService } from '#/agent/skill/skillActivationData';
 import { registerTestAgentWireServices } from '../../wire/stubs';
 import {
   createTestAgent,
@@ -101,6 +102,10 @@ describe('AgentSkillService', () => {
         reg.definePartialInstance(IEventService, { publish: () => {} });
         reg.defineInstance(ISessionContext, stubSessionContext());
         reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+        reg.definePartialInstance(ISkillActivationDataService, {
+          put: () => {},
+          take: () => undefined,
+        });
       },
     });
     skills = new InMemorySkillCatalog();
@@ -204,6 +209,10 @@ describe('SkillTool', () => {
         reg.definePartialInstance(IEventService, { publish: () => {} });
         reg.defineInstance(ISessionContext, stubSessionContext());
         reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+        reg.definePartialInstance(ISkillActivationDataService, {
+          put: () => {},
+          take: () => undefined,
+        });
       },
     });
     skills = new InMemorySkillCatalog();

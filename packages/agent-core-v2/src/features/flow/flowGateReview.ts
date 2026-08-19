@@ -28,7 +28,8 @@ export class FlowGateReview {
     if (!this.flow.run().active || stage === undefined || stage.id !== display.stage_id) {
       return undefined;
     }
-    const epochAtRequest = this.runEpoch();
+    const epochAtRequest = this.flow.preparedEpochOf(context.args as object) ?? this.runEpoch();
+    if (epochAtRequest !== this.runEpoch()) return undefined;
     return this.toolApproval.requestToolApproval(
       context,
       {

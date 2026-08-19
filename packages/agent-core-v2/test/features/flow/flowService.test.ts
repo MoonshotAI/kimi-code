@@ -16,6 +16,10 @@ import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/tool
 import { SkillActivate, skillKey } from '#/agent/skill/skillOps';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ISkillActivationDataService } from '#/agent/skill/skillActivationData';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IConfigService, type ConfigChangedEvent } from '#/app/config/config';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
@@ -64,6 +68,9 @@ describe('AgentFlowService', () => {
   let agentState: IAgentStateService;
   let dispatcher: IEventDispatcher;
   let agentId: string;
+  let activationDataStore: Map<string, unknown>;
+  let contextMessages: ContextMessage[];
+  let configHandlers: ((e: ConfigChangedEvent) => void)[];
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -82,6 +89,27 @@ describe('AgentFlowService', () => {
       workDir: '/ws',
       additionalDirs: [],
     } as unknown as ISessionWorkspaceContext);
+    activationDataStore = new Map();
+    contextMessages = [];
+    configHandlers = [];
+    ix.stub(ISkillActivationDataService, {
+      put: (id: string, data: unknown) => activationDataStore.set(id, data),
+      take: (id: string) => {
+        const data = activationDataStore.get(id);
+        activationDataStore.delete(id);
+        return data;
+      },
+    } as unknown as ISkillActivationDataService);
+    ix.stub(IAgentContextMemoryService, {
+      get: () => contextMessages,
+    } as unknown as IAgentContextMemoryService);
+    ix.stub(IConfigService, {
+      get: () => undefined,
+      onDidChangeConfiguration: (handler: (e: ConfigChangedEvent) => void) => {
+        configHandlers.push(handler);
+        return { dispose: () => {} };
+      },
+    } as unknown as IConfigService);
 
     flowFlagOn = true;
     ix.stub(IFlagService, stubFlag((id) => flowFlagOn && id === FLOW_FLAG_ID));
@@ -291,26 +319,57 @@ describe('AgentFlowService', () => {
   });
 
   describe('flow skill activation auto-start', () => {
-    async function activateFlowSkill(): Promise<void> {
-      agentState.contributeState(skillKey);
-      await dispatcher.dispatch(
-        new SkillActivate({
-          origin: {
-            kind: 'skill_activation',
-            activationId: 'act-1',
-            skillName: 'issue-fix',
-            trigger: 'user-slash',
-            skillType: 'flow',
-            skillPath: '/ws/.kimi-code/flows/issue-fix.md',
-            skillArgs: 'fix the paste bug',
-            skillData: DEFINITION,
-          },
-        }),
-      );
-      await vi.waitFor(() => expect(service.run().active).toBe(true));
+    interface ActivateOptions {
+      activationId?: string;
+      skillName?: string;
+      task?: string;
+      skillPath?: string;
+      data?: unknown;
+      appendPrompt?: boolean;
+      reconcile?: boolean;
     }
 
-    it('starts the run from a flow-typed skill activation', async () => {
+    let skillKeyContributed = false;
+    beforeEach(() => {
+      skillKeyContributed = false;
+    });
+
+    async function activateFlowSkill(options: ActivateOptions = {}): Promise<void> {
+      const activationId = options.activationId ?? 'act-1';
+      const skillName = options.skillName ?? 'issue-fix';
+      const task = options.task ?? 'fix the paste bug';
+      const skillPath = options.skillPath ?? `/ws/.kimi-code/flows/${skillName}.md`;
+      if (!skillKeyContributed) {
+        agentState.contributeState(skillKey);
+        skillKeyContributed = true;
+      }
+      if (!('data' in options)) {
+        activationDataStore.set(activationId, { ...DEFINITION, id: skillName });
+      } else if (options.data !== undefined) {
+        activationDataStore.set(activationId, options.data);
+      }
+      const origin = {
+        kind: 'skill_activation',
+        activationId,
+        skillName,
+        trigger: 'user-slash',
+        skillType: 'flow',
+        skillPath,
+        skillArgs: task,
+      } as const;
+      await dispatcher.dispatch(new SkillActivate({ origin }));
+      if (options.appendPrompt !== false) {
+        contextMessages.push({
+          role: 'user',
+          content: [{ type: 'text', text: 'activation prompt' }],
+          toolCalls: [],
+          origin,
+        } as unknown as ContextMessage);
+      }
+      if (options.reconcile !== false) service.reconcilePendingActivation();
+    }
+
+    it('starts the run once the activation prompt is in context and a step reconciles', async () => {
       await activateFlowSkill();
       const run = service.run();
       expect(run.flowId).toBe('issue-fix');
@@ -318,196 +377,136 @@ describe('AgentFlowService', () => {
       expect(service.currentStage()?.id).toBe('triage');
     });
 
-    it('starts only the first flow when two activations land together', async () => {
-      agentState.contributeState(skillKey);
-      const activate = (activationId: string, skillName: string) =>
-        dispatcher.dispatch(
-          new SkillActivate({
-            origin: {
-              kind: 'skill_activation',
-              activationId,
-              skillName,
-              trigger: 'user-slash',
-              skillType: 'flow',
-              skillPath: `/ws/.kimi-code/flows/${skillName}.md`,
-              skillArgs: 'task',
-              skillData: { ...DEFINITION, id: skillName },
-            },
-          }),
-        );
-      await Promise.all([activate('act-a', 'issue-fix'), activate('act-b', 'other-flow')]);
-      await vi.waitFor(() => expect(service.run().active).toBe(true));
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    it('does not start before the activation prompt lands in context', async () => {
+      await activateFlowSkill({ appendPrompt: false });
+      expect(service.run().active).toBe(false);
+      contextMessages.push({
+        role: 'user',
+        content: [{ type: 'text', text: 'activation prompt' }],
+        toolCalls: [],
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act-1',
+          skillName: 'issue-fix',
+          trigger: 'user-slash',
+          skillType: 'flow',
+          skillPath: '/ws/.kimi-code/flows/issue-fix.md',
+          skillArgs: 'fix the paste bug',
+        },
+      } as unknown as ContextMessage);
+      service.reconcilePendingActivation();
+      expect(service.run().active).toBe(true);
+    });
+
+    it('does not start when a different prompt is the latest in context', async () => {
+      await activateFlowSkill({ appendPrompt: false });
+      contextMessages.push({
+        role: 'user',
+        content: [{ type: 'text', text: 'unrelated prompt' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      } as unknown as ContextMessage);
+      service.reconcilePendingActivation();
+      expect(service.run().active).toBe(false);
+    });
+
+    it('starts a bundled activation from the user prompt entry', async () => {
+      await activateFlowSkill({ appendPrompt: false, reconcile: false });
+      contextMessages.push({
+        role: 'user',
+        content: [{ type: 'text', text: 'bundled prompt' }],
+        toolCalls: [],
+        origin: {
+          kind: 'user',
+          skillActivations: [{ activationId: 'act-1', skillName: 'issue-fix' }],
+        },
+      } as unknown as ContextMessage);
+      service.reconcilePendingActivation();
+      expect(service.run().active).toBe(true);
+    });
+
+    it('serves only the latest pending activation', async () => {
+      await activateFlowSkill({ activationId: 'act-a' });
+      expect(service.run().flowId).toBe('issue-fix');
+      await activateFlowSkill({ activationId: 'act-b', skillName: 'other-flow' });
       expect(service.run().flowId).toBe('issue-fix');
     });
 
     it('ignores a flow activation on a non-main agent', async () => {
       agentId = 'agent-1';
-      agentState.contributeState(skillKey);
-      await dispatcher.dispatch(
-        new SkillActivate({
-          origin: {
-            kind: 'skill_activation',
-            activationId: 'act-worker',
-            skillName: 'issue-fix',
-            trigger: 'user-slash',
-            skillType: 'flow',
-            skillPath: '/ws/.kimi-code/flows/issue-fix.md',
-            skillArgs: 'worker task',
-            skillData: DEFINITION,
-          },
-        }),
-      );
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await activateFlowSkill({ activationId: 'act-worker', task: 'worker task' });
       expect(service.run().active).toBe(false);
     });
 
     it('does not auto-start an activation whose task is empty', async () => {
-      agentState.contributeState(skillKey);
-      await dispatcher.dispatch(
-        new SkillActivate({
-          origin: {
-            kind: 'skill_activation',
-            activationId: 'act-empty',
-            skillName: 'issue-fix',
-            trigger: 'user-slash',
-            skillType: 'flow',
-            skillPath: '/ws/.kimi-code/flows/issue-fix.md',
-            skillArgs: '   ',
-            skillData: DEFINITION,
-          },
-        }),
-      );
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(service.run().active).toBe(false);
-    });
-
-    it('ignores a flow-typed activation whose path is not the projected flows definition', async () => {
-      agentState.contributeState(skillKey);
-      await dispatcher.dispatch(
-        new SkillActivate({
-          origin: {
-            kind: 'skill_activation',
-            activationId: 'act-foreign',
-            skillName: 'issue-fix',
-            trigger: 'user-slash',
-            skillType: 'flow',
-            skillPath: '/ws/.kimi-code/skills/issue-fix/SKILL.md',
-            skillArgs: 'task',
-            skillData: DEFINITION,
-          },
-        }),
-      );
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await activateFlowSkill({ activationId: 'act-empty', task: '   ' });
       expect(service.run().active).toBe(false);
     });
 
     it('accepts an activation path that normalizes to the projected definition', async () => {
-      agentState.contributeState(skillKey);
-      await dispatcher.dispatch(
-        new SkillActivate({
-          origin: {
-            kind: 'skill_activation',
-            activationId: 'act-lexical',
-            skillName: 'issue-fix',
-            trigger: 'user-slash',
-            skillType: 'flow',
-            skillPath: '/ws/./.kimi-code//flows/issue-fix.md',
-            skillArgs: 'task',
-            skillData: DEFINITION,
-          },
-        }),
-      );
-      await vi.waitFor(() => {
-        expect(service.run().active).toBe(true);
+      await activateFlowSkill({
+        activationId: 'act-lexical',
+        skillPath: '/ws/./.kimi-code//flows/issue-fix.md',
       });
+      expect(service.run().active).toBe(true);
       expect(service.run().flowId).toBe('issue-fix');
     });
 
+    it('ignores a flow-typed activation whose path is not the projected flows definition', async () => {
+      await activateFlowSkill({
+        activationId: 'act-foreign',
+        skillPath: '/ws/.kimi-code/skills/issue-fix/SKILL.md',
+      });
+      expect(service.run().active).toBe(false);
+    });
+
     it('ignores an activation whose carried definition does not match the flow id', async () => {
-      agentState.contributeState(skillKey);
-      await dispatcher.dispatch(
-        new SkillActivate({
-          origin: {
-            kind: 'skill_activation',
-            activationId: 'act-mismatch',
-            skillName: 'issue-fix',
-            trigger: 'user-slash',
-            skillType: 'flow',
-            skillPath: '/ws/.kimi-code/flows/issue-fix.md',
-            skillArgs: 'task',
-            skillData: { ...DEFINITION, id: 'other-flow' },
-          },
-        }),
-      );
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await activateFlowSkill({
+        activationId: 'act-mismatch',
+        data: { ...DEFINITION, id: 'other-flow' },
+      });
       expect(service.run().active).toBe(false);
     });
 
     it('ignores an activation that carries no definition', async () => {
-      agentState.contributeState(skillKey);
-      await dispatcher.dispatch(
-        new SkillActivate({
-          origin: {
-            kind: 'skill_activation',
-            activationId: 'act-bare',
-            skillName: 'issue-fix',
-            trigger: 'user-slash',
-            skillType: 'flow',
-            skillPath: '/ws/.kimi-code/flows/issue-fix.md',
-            skillArgs: 'task',
-          },
-        }),
-      );
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await activateFlowSkill({ activationId: 'act-bare', data: undefined });
       expect(service.run().active).toBe(false);
     });
 
     it('starts from the activation-carried definition rather than any on-disk state', async () => {
-      agentState.contributeState(skillKey);
-      await dispatcher.dispatch(
-        new SkillActivate({
-          origin: {
-            kind: 'skill_activation',
-            activationId: 'act-pinned',
-            skillName: 'issue-fix',
-            trigger: 'user-slash',
-            skillType: 'flow',
-            skillPath: '/ws/.kimi-code/flows/issue-fix.md',
-            skillArgs: 'task',
-            skillData: {
-              id: 'issue-fix',
-              stages: [{ id: 'solo', objective: 'do it', completion: 'done', gate: 'ai' }],
-            },
-          },
-        }),
-      );
-      await vi.waitFor(() => {
-        expect(service.run().active).toBe(true);
+      await activateFlowSkill({
+        activationId: 'act-pinned',
+        data: {
+          id: 'issue-fix',
+          stages: [{ id: 'solo', objective: 'do it', completion: 'done', gate: 'ai' }],
+        },
       });
+      expect(service.run().active).toBe(true);
       expect(service.currentStage()?.id).toBe('solo');
     });
 
     it('does not restart an already-active run', async () => {
       service.start(DEFINITION, 'original task');
-      agentState.contributeState(skillKey);
-      await dispatcher.dispatch(
-        new SkillActivate({
-          origin: {
-            kind: 'skill_activation',
-            activationId: 'act-2',
-            skillName: 'issue-fix',
-            trigger: 'user-slash',
-            skillType: 'flow',
-            skillPath: '/ws/.kimi-code/flows/issue-fix.md',
-            skillArgs: 'another task',
-            skillData: DEFINITION,
-          },
-        }),
-      );
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await activateFlowSkill({ activationId: 'act-2', task: 'another task' });
       expect(service.run().task).toBe('original task');
     });
+
+    it('publishes a null flow status when the live flag turns off, and the summary when it returns', async () => {
+      service.start(DEFINITION, 'task');
+      const seen: unknown[] = [];
+      const bus = ix.get(IEventBus);
+      const sub = bus.subscribe(AgentStatusUpdated, (event) => {
+        if (event.flowRun !== undefined) seen.push(event.flowRun);
+      });
+      flowFlagOn = false;
+      for (const handler of configHandlers) handler({} as ConfigChangedEvent);
+      expect(seen.at(-1)).toBeNull();
+      flowFlagOn = true;
+      for (const handler of configHandlers) handler({} as ConfigChangedEvent);
+      expect(seen.at(-1)).toMatchObject({ flowId: 'issue-fix', stageId: 'triage' });
+      sub.dispose();
+    });
+
 
     it('vetoes TodoList while a run is active, and only then', async () => {
       const todoCall: ToolCall = {

@@ -45,6 +45,7 @@ export class FlowInjection extends Disposable implements IFlowInjection {
     ctx: ContextInjectionContext<FlowStageInjectionDisclosure>,
   ): ContextInjectionResult<FlowStageInjectionDisclosure> | undefined {
     if (!this.flags.enabled(FLOW_FLAG_ID)) return undefined;
+    this.flow.reconcilePendingActivation();
     const run = this.flow.run();
     if (!run.active) return undefined;
     const stage = this.flow.currentStage();

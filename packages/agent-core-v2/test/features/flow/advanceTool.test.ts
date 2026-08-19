@@ -56,6 +56,8 @@ describe('FlowAdvanceTool', () => {
       advance,
       consumeGateApproval: (toolCallId: string) => approvedCalls.delete(toolCallId),
       runEpoch: () => epoch,
+      stampPreparedEpoch: () => {},
+      preparedEpochOf: () => undefined,
     } as unknown as IAgentFlowService);
     ix.stub(IAgentPermissionModeService, {
       get mode() {

@@ -114,6 +114,17 @@ export interface IAgentFlowService {
    *  run apart from the one they observed, even when every rendered field
    *  matches. */
   runEpoch(): number;
+  /** Consume a pending activation-triggered start if the latest user prompt
+   *  in context is that activation — called from the step-head stage
+   *  reminder so the run begins after the activation prompt's undo anchor
+   *  and is already active when the first step is built. */
+  reconcilePendingActivation(): void;
+  /** Record the current epoch for a prepared FlowAdvance call (keyed by its
+   *  args object), so the gate review can bind approval to the run the
+   *  verdict was prepared against. */
+  stampPreparedEpoch(args: object): void;
+  /** The epoch recorded by stampPreparedEpoch for this args object. */
+  preparedEpochOf(args: object): number | undefined;
   /** One-shot check that the user actually approved this call's gate review
    *  (set by the gate hook when the approval resolves approved; consumed by
    *  FlowAdvance's execution so the verdict provenance cannot be inferred

@@ -27,6 +27,7 @@ export class FlowAdvanceTool implements IFlowAdvanceTool {
   resolveExecution(args: FlowAdvanceInput): ToolExecution {
     const display = this.gateDisplay(args);
     const epochAtPrepare = this.flow.runEpoch();
+    this.flow.stampPreparedEpoch(args);
     return {
       description: `Submitting ${args.verdict} verdict for stage ${args.stage}`,
       display,

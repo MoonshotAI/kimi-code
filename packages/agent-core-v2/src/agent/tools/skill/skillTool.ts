@@ -105,7 +105,6 @@ export async function executeModelSkill(
     skillType: skill.metadata.type,
     skillPath: skill.path,
     skillSource: skill.source,
-    skillData: skill.data,
   };
   const skillContent = catalog.catalog.renderSkillPrompt(skill, skillArgs, { sessionId });
   const message: ToolDeliveryMessage = {

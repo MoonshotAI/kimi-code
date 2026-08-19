@@ -1,10 +1,12 @@
 import { resolve } from 'node:path';
 
 import { Disposable } from '#/_base/di/lifecycle';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { SkillActivated } from '#/agent/skill/skillOps';
+import { ISkillActivationDataService } from '#/agent/skill/skillActivationData';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { AgentStatusUpdated, type AgentFlowRunStatus } from '#/agent/usage/usageEvents';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -12,6 +14,7 @@ import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
+import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -42,6 +45,8 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
 
   private readonly review: FlowGateReview;
   private readonly approvedGateCalls = new Map<string, number>();
+  private readonly preparedEpochs = new WeakMap<object, number>();
+  private pendingActivation: { activationId: string; definition: FlowDefinition; task: string } | undefined;
   private epoch = Date.now();
 
   constructor(
@@ -54,6 +59,9 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     @IEventBus eventBus: IEventBus,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @ISkillActivationDataService private readonly activationData: ISkillActivationDataService,
+    @IAgentContextMemoryService private readonly contextMemory: IAgentContextMemoryService,
+    @IConfigService config: IConfigService,
   ) {
     super();
     this.agentState.contributeState(flowKey);
@@ -119,7 +127,18 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         if (event.skillType !== 'flow') return;
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
         if (this.scopeContext.agentId !== 'main') return;
-        this.startFromActivation(event.skillName, event.skillArgs, event.skillPath, event.skillData);
+        this.prepareActivationStart(event.activationId, event.skillName, event.skillArgs, event.skillPath);
+      }),
+    );
+    let flagWas = this.flags.enabled(FLOW_FLAG_ID);
+    this._register(
+      config.onDidChangeConfiguration(() => {
+        const flagNow = this.flags.enabled(FLOW_FLAG_ID);
+        if (flagNow === flagWas) return;
+        flagWas = flagNow;
+        void this.dispatcher.dispatch(
+          new AgentStatusUpdated({ flowRun: flagNow ? this.summary() : null }),
+        );
       }),
     );
   }
@@ -137,11 +156,11 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     };
   }
 
-  private startFromActivation(
+  private prepareActivationStart(
+    activationId: string,
     flowId: string | undefined,
     task: string | undefined,
     skillPath: string | undefined,
-    skillData: unknown,
   ): void {
     if (flowId === undefined || flowId.length === 0 || this.run().active) return;
     if (task === undefined || task.trim().length === 0) return;
@@ -151,9 +170,42 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     ) {
       return;
     }
-    const parsed = FlowDefinitionSchema.safeParse(skillData);
+    const parsed = FlowDefinitionSchema.safeParse(this.activationData.take(activationId));
     if (!parsed.success || parsed.data.id !== flowId) return;
-    this.start(parsed.data, task.trim());
+    this.pendingActivation = { activationId, definition: parsed.data, task: task.trim() };
+  }
+
+  reconcilePendingActivation(): void {
+    const pending = this.pendingActivation;
+    if (pending === undefined) return;
+    if (!this.flags.enabled(FLOW_FLAG_ID)) return;
+    if (this.run().active) {
+      this.pendingActivation = undefined;
+      return;
+    }
+    const last = this.contextMemory
+      .get()
+      .findLast((message) => message.role === 'user' && message.origin?.kind !== 'injection');
+    const origin = last?.origin;
+    if (origin === undefined) return;
+    const matches =
+      origin.kind === 'skill_activation'
+        ? origin.activationId === pending.activationId
+        : origin.kind === 'user' &&
+          (origin.skillActivations ?? []).some(
+            (entry) => entry.activationId === pending.activationId,
+          );
+    if (!matches) return;
+    this.pendingActivation = undefined;
+    this.start(pending.definition, pending.task);
+  }
+
+  stampPreparedEpoch(args: object): void {
+    this.preparedEpochs.set(args, this.epoch);
+  }
+
+  preparedEpochOf(args: object): number | undefined {
+    return this.preparedEpochs.get(args);
   }
 
   run(): DeepReadonly<FlowRunState> {

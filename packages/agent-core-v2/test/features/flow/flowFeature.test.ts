@@ -157,6 +157,7 @@ describe('FlowInjection reminder', () => {
       }),
       currentStage: () => ({ id: 'triage', objective: 'find it', completion: 'found', gate: 'human' as const }),
       runEpoch: () => epoch,
+      reconcilePendingActivation: () => {},
     };
     const injection = new FlowInjection(
       injector as never,
