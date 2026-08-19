@@ -7,6 +7,8 @@ import { loadMcpServersDetailed } from '#/app/mcpConfig/configLoader';
 import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import { IPluginService } from '#/app/plugin/plugin';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { readWorkspaceTrust } from '#/workspace/workspaceTrust/trustRecord';
 
 import {
   IMcpRegistryService,
@@ -22,6 +24,7 @@ export class McpRegistryService implements IMcpRegistryService {
     @IPluginService private readonly plugins: IPluginService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
   ) {}
 
   async list(query: McpRegistryQuery = {}): Promise<readonly McpRegistryEntry[]> {
@@ -40,20 +43,34 @@ export class McpRegistryService implements IMcpRegistryService {
         });
       }
     } else {
-      const detailed = await loadMcpServersDetailed({
-        fs: this.fs,
-        cwd: query.cwd,
-        homeDir: this.bootstrap.homeDir,
-      });
-      for (const [name, config] of Object.entries(detailed.servers)) {
-        const origin = detailed.origins[name] ?? this.store.path;
-        out.push({
-          name,
-          config,
-          source: 'global',
-          origin,
-          mutable: origin === this.store.path,
+      if (!(await readWorkspaceTrust(this.docs, query.cwd))) {
+        const userEntries = await this.store.list();
+        for (const server of userEntries) {
+          const { name, ...config } = server;
+          out.push({
+            name,
+            config,
+            source: 'global',
+            origin: this.store.path,
+            mutable: true,
+          });
+        }
+      } else {
+        const detailed = await loadMcpServersDetailed({
+          fs: this.fs,
+          cwd: query.cwd,
+          homeDir: this.bootstrap.homeDir,
         });
+        for (const [name, config] of Object.entries(detailed.servers)) {
+          const origin = detailed.origins[name] ?? this.store.path;
+          out.push({
+            name,
+            config,
+            source: 'global',
+            origin,
+            mutable: origin === this.store.path,
+          });
+        }
       }
     }
 

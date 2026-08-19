@@ -12,6 +12,10 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import {
+  IAgentIdentity,
+  type AgentIdentitySnapshot,
+} from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
 import { IMcpConfigStore, McpConfigStore } from '#/app/mcpConfig/configStore';
 import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
@@ -31,6 +35,7 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceInstance';
@@ -45,7 +50,7 @@ import {
   startInProcessHttpMcpServer,
   stdioFixture,
 } from '../../mcpCore/stubs';
-import { registerAgentIdentityStub } from '../agentIdentity/stubs';
+import { stubAgentIdentity } from '../agentIdentity/stubs';
 
 function stdioServer(name: string, command = 'npx'): GlobalMcpServerConfig {
   return { name, transport: 'stdio', command };
@@ -66,6 +71,10 @@ describe('McpManagementService', () => {
   let pluginEntries: PluginMcpServerEntry[];
   let pluginError: Error | undefined;
   let oauth: McpOAuthService;
+  let configReady: Promise<void>;
+  let identityReady: Promise<AgentIdentitySnapshot>;
+  let identitySnapshot: AgentIdentitySnapshot;
+  let trusted: boolean;
   let getOrCreate: Mock<IWorkspaceInstanceManager['getOrCreate']>;
   let management: IMcpManagementService;
 
@@ -79,6 +88,10 @@ describe('McpManagementService', () => {
     pluginEntries = [];
     pluginError = undefined;
     oauth = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    configReady = Promise.resolve();
+    identitySnapshot = stubAgentIdentity({ slug: 'test-agent' }).current();
+    identityReady = Promise.resolve(identitySnapshot);
+    trusted = true;
     getOrCreate = vi.fn<IWorkspaceInstanceManager['getOrCreate']>(async () =>
       ({ id: 'test-workspace' }) as unknown as WorkspaceInstance,
     );
@@ -101,12 +114,22 @@ describe('McpManagementService', () => {
           },
         });
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
+        reg.definePartialInstance(IAtomicDocumentStore, {
+          get: async <T>() => (trusted ? ({} as T) : undefined),
+        });
         reg.define(IMcpRegistryService, McpRegistryService);
         reg.defineInstance(IMcpOAuthService, oauth);
         reg.definePartialInstance(IConfigService, {
+          get ready() {
+            return configReady;
+          },
           get: (<T = unknown,>(_domain: string): T => undefined as T) as IConfigService['get'],
         });
-        registerAgentIdentityStub(reg);
+        reg.defineInstance(IAgentIdentity, {
+          _serviceBrand: undefined,
+          resolved: () => identityReady,
+          current: () => identitySnapshot,
+        });
         reg.defineInstance(IRuntimeResolver, {
           _serviceBrand: undefined,
           inspect: () => runtime,
@@ -133,6 +156,29 @@ describe('McpManagementService', () => {
     const server = await startInProcessHttpMcpServer();
     httpServers.push(server);
     return server;
+  }
+
+  async function startCountingServer(): Promise<{
+    url: string;
+    requestCount: () => number;
+  }> {
+    let requests = 0;
+    const httpServer: HttpServer = createHttpServer((_req, res) => {
+      requests += 1;
+      res.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+    httpServers.push({
+      close: () =>
+        new Promise<void>((resolve, reject) => {
+          httpServer.close((err) => (err === undefined || err === null ? resolve() : reject(err)));
+        }),
+    });
+    const port = (httpServer.address() as HttpAddress).port;
+    return {
+      url: `http://127.0.0.1:${port}/mcp`,
+      requestCount: () => requests,
+    };
   }
 
   async function startGatedServer(): Promise<{ origin: string; url: string }> {
@@ -493,6 +539,27 @@ describe('McpManagementService', () => {
       expect(got.mutable).toBe(false);
       expect(got.config).not.toHaveProperty('headers');
     });
+
+    it('hides project-layer entries when the workspace is untrusted', async () => {
+      const project = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-untrusted-'));
+      tempDirs.push(project);
+      await mkdir(join(project, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(project, '.kimi-code', 'mcp.json'),
+        JSON.stringify({ mcpServers: { local: { command: process.execPath } } }),
+        'utf8',
+      );
+      await store.add(stdioServer('user', process.execPath));
+      trusted = false;
+
+      const list = await management.listServers({ cwd: project });
+
+      expect(list.map((entry) => entry.name)).toEqual(['user']);
+      await expect(management.getServer('local', { cwd: project })).rejects.toMatchObject({
+        code: ErrorCodes.MCP_SERVER_NOT_FOUND,
+      });
+      expect(getOrCreate).not.toHaveBeenCalled();
+    });
   });
 
   describe('testServer', () => {
@@ -565,6 +632,59 @@ describe('McpManagementService', () => {
         message: 'MCP server "ghost" was not found',
       });
     });
+
+    it('does not execute a project server while the workspace is untrusted', async () => {
+      const project = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-untrusted-probe-'));
+      tempDirs.push(project);
+      await mkdir(join(project, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(project, '.kimi-code', 'mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            local: { command: process.execPath, args: [stdioFixture] },
+          },
+        }),
+        'utf8',
+      );
+      trusted = false;
+
+      await expect(management.testServer({ name: 'local', cwd: project })).rejects.toMatchObject({
+        code: ErrorCodes.MCP_SERVER_NOT_FOUND,
+      });
+    });
+
+    it('waits for config and identity readiness before starting a probe', async () => {
+      let releaseConfig: () => void = () => undefined;
+      configReady = new Promise<void>((resolve) => {
+        releaseConfig = resolve;
+      });
+      let releaseIdentity: () => void = () => undefined;
+      identityReady = new Promise<AgentIdentitySnapshot>((resolve) => {
+        releaseIdentity = () => resolve(identitySnapshot);
+      });
+      const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-ready-'));
+      tempDirs.push(cwd);
+
+      const probe = management.testServer({
+        server: {
+          name: 'stdio-probe',
+          transport: 'stdio',
+          command: process.execPath,
+          args: [stdioFixture],
+        },
+        cwd,
+      });
+      await Promise.resolve();
+      expect(getOrCreate).not.toHaveBeenCalled();
+
+      releaseConfig();
+      await Promise.resolve();
+      expect(getOrCreate).not.toHaveBeenCalled();
+
+      releaseIdentity();
+      await expect(probe).resolves.toMatchObject({ success: true });
+      expect(getOrCreate).toHaveBeenCalledWith({ root: cwd });
+    }, 20000);
 
     it('rejects a name-only probe under an enabled runtime-name collision', async () => {
       pluginEntries = [
@@ -693,8 +813,8 @@ describe('McpManagementService', () => {
       ]);
     });
 
-    it('probes unpinned servers without a stored grant and classifies oauth-marked ones offline', async () => {
-      const server = await startHttpServer();
+    it('classifies unpinned servers without a stored grant offline', async () => {
+      const server = await startCountingServer();
       await management.addServer({ name: 'plain', transport: 'http', url: server.url });
       await management.addServer({
         name: 'challenged',
@@ -707,6 +827,7 @@ describe('McpManagementService', () => {
         { name: 'plain', authStatus: 'not-applicable' },
         { name: 'challenged', authStatus: 'oauth-required' },
       ]);
+      expect(server.requestCount()).toBe(0);
     }, 20000);
 
     it('verify settles a stored-but-rejected grant as oauth-expired through a real probe', async () => {

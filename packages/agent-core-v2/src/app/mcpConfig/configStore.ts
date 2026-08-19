@@ -45,7 +45,6 @@ export class McpConfigStore extends Disposable implements IMcpConfigStore {
 
   private readonly writeEmitter = this._register(new Emitter<void>());
   readonly onDidWrite: Event<void> = this.writeEmitter.event;
-  /** Serializes the read-modify-write mutations so concurrent writes cannot lose updates. */
   private mutationTail: Promise<void> = Promise.resolve();
 
   constructor(

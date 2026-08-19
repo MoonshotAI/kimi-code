@@ -17,7 +17,7 @@ import {
 } from '#/mcpCore/oauth/service';
 import { mcpOAuthStoreKey, type McpOAuthStore } from '#/mcpCore/oauth/store';
 
-import { createMemoryMcpOAuthStore } from '../stubs';
+import { createMemoryMcpOAuthStore, ManualMcpOAuthScheduler } from '../stubs';
 
 const SERVER_NAME = 'notion';
 const SERVER_URL = 'https://mcp.example.test/mcp';
@@ -26,13 +26,15 @@ interface Fixture {
   readonly service: McpOAuthService;
   readonly store: McpOAuthStore;
   readonly events: McpOAuthEvent[];
+  readonly scheduler: ManualMcpOAuthScheduler;
 }
 
 function makeFixture(store: McpOAuthStore = createMemoryMcpOAuthStore()): Fixture {
   const events: McpOAuthEvent[] = [];
-  const service = new McpOAuthService({ store });
+  const scheduler = new ManualMcpOAuthScheduler(1_000_000);
+  const service = new McpOAuthService({ store, scheduler });
   service.onEvent((event) => events.push(event));
-  return { service, store, events };
+  return { service, store, events, scheduler };
 }
 
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -147,20 +149,11 @@ async function deliverCallback(flow: BeginAuthorizationResult): Promise<void> {
   await response.text();
 }
 
-async function waitFor(condition: () => boolean, description: string): Promise<void> {
-  const deadline = Date.now() + 5000;
-  while (!condition()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${description}`);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
-
 describe('McpOAuthService credential bookkeeping', () => {
   it('stamps token writes with obtained_at and a name/url meta record', async () => {
     const fixture = makeFixture();
     cleanups.push(() => fixture.service.dispose());
 
-    const before = Date.now();
     await fixture.service
       .getProvider(SERVER_NAME, SERVER_URL)
       .saveTokens({ access_token: 'a', token_type: 'Bearer', expires_in: 3600 });
@@ -168,9 +161,7 @@ describe('McpOAuthService credential bookkeeping', () => {
     const state = await fixture.service.tokenState(SERVER_NAME, SERVER_URL);
     expect(state.hasTokens).toBe(true);
     expect(state.expired).toBe(false);
-    expect(state.expiresAt).toBeDefined();
-    expect(state.expiresAt!).toBeGreaterThanOrEqual(before + 3600_000);
-    expect(state.expiresAt!).toBeLessThanOrEqual(Date.now() + 3600_000);
+    expect(state.expiresAt).toBe(4_600_000);
 
     const metaFiles = await listMetaKeys(fixture.store);
     expect(metaFiles).toHaveLength(1);
@@ -610,7 +601,7 @@ describe('McpOAuthService sweepProactiveRefresh resilience', () => {
       refresh_token: 'stale-refresh-token',
       token_type: 'Bearer',
       expires_in: 60,
-      obtained_at: Date.now(),
+      obtained_at: fixture.scheduler.now(),
     });
     await fixture.store.write(`${storeKey}-meta.json`, {
       serverName: SERVER_NAME,
@@ -623,10 +614,8 @@ describe('McpOAuthService sweepProactiveRefresh resilience', () => {
     await fixture.store.write('corrupt-meta.json', '{not json');
 
     await expect(fixture.service.sweepProactiveRefresh()).resolves.toBeUndefined();
-    await waitFor(
-      () => authServer.counts.refresh === 1,
-      'the swept credential to refresh immediately',
-    );
+    await fixture.scheduler.advanceBy(0);
+    expect(authServer.counts.refresh).toBe(1);
   }, 15000);
 });
 
@@ -647,17 +636,14 @@ describe('McpOAuthService proactive refresh scheduling', () => {
       expires_in: 60,
     });
 
-    await waitFor(() => authServer.counts.refresh === 1, 'an immediate proactive refresh');
+    await fixture.scheduler.advanceBy(0);
+    expect(authServer.counts.refresh).toBe(1);
     expect(fixture.events.filter((event) => event.type === 'tokens-saved')).toHaveLength(2);
   }, 15000);
 
   it('re-arms scheduling for expiries beyond the setTimeout limit', async () => {
     const fixture = makeFixture();
-    cleanups.push(() => {
-      vi.useRealTimers();
-    });
     cleanups.push(() => fixture.service.dispose());
-    vi.useFakeTimers();
     const maxTimerDelayMs = 0x7fffffff;
     const refreshSpy = vi
       .spyOn(fixture.service, 'refresh')
@@ -671,10 +657,10 @@ describe('McpOAuthService proactive refresh scheduling', () => {
     });
     const expiresAt = (await fixture.service.tokenState(SERVER_NAME, SERVER_URL)).expiresAt!;
 
-    await vi.advanceTimersByTimeAsync(maxTimerDelayMs);
+    await fixture.scheduler.advanceBy(maxTimerDelayMs);
     expect(refreshSpy).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(expiresAt - Date.now() - 120_000);
+    await fixture.scheduler.advanceBy(expiresAt - fixture.scheduler.now() - 120_000);
     expect(refreshSpy).toHaveBeenCalledTimes(1);
     expect(fixture.events).toContainEqual({
       type: 'refresh-failed',
@@ -686,11 +672,7 @@ describe('McpOAuthService proactive refresh scheduling', () => {
 
   it('does not proactively refresh an already-expired grant', async () => {
     const fixture = makeFixture();
-    cleanups.push(() => {
-      vi.useRealTimers();
-    });
     cleanups.push(() => fixture.service.dispose());
-    vi.useFakeTimers();
     const refreshSpy = vi.spyOn(fixture.service, 'refresh');
 
     await fixture.service.getProvider(SERVER_NAME, SERVER_URL).saveTokens({
@@ -700,7 +682,7 @@ describe('McpOAuthService proactive refresh scheduling', () => {
       expires_in: -60,
     });
 
-    await vi.advanceTimersByTimeAsync(10_000);
+    await fixture.scheduler.advanceBy(10_000);
     expect(refreshSpy).not.toHaveBeenCalled();
   });
 });
@@ -746,11 +728,7 @@ describe('McpOAuthService shutdown', () => {
 
   it('clears pending proactive-refresh timers', async () => {
     const fixture = makeFixture();
-    cleanups.push(() => {
-      vi.useRealTimers();
-    });
     cleanups.push(() => fixture.service.dispose());
-    vi.useFakeTimers();
 
     await fixture.service.getProvider(SERVER_NAME, SERVER_URL).saveTokens({
       access_token: 'a',
@@ -761,7 +739,7 @@ describe('McpOAuthService shutdown', () => {
     const refreshSpy = vi.spyOn(fixture.service, 'refresh');
 
     await fixture.service.shutdown();
-    await vi.advanceTimersByTimeAsync(3600_000);
+    await fixture.scheduler.advanceBy(3600_000);
     expect(refreshSpy).not.toHaveBeenCalled();
   });
 });

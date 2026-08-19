@@ -26,6 +26,16 @@ export interface McpOAuthServiceOptions {
   readonly clientLabel?: string;
   readonly resolveClientName?: () => string | undefined;
   readonly log?: Logger;
+  readonly scheduler?: McpOAuthScheduler;
+}
+
+export interface McpOAuthScheduledTask {
+  cancel(): void;
+}
+
+export interface McpOAuthScheduler {
+  now(): number;
+  schedule(delayMs: number, task: () => void | Promise<void>): McpOAuthScheduledTask;
 }
 
 export interface BeginAuthorizationOptions {
@@ -93,16 +103,25 @@ export interface McpOAuthTokenState {
 const REFRESH_AHEAD_MS = 120_000;
 const MAX_TIMER_DELAY_MS = 0x7fffffff;
 
+const defaultScheduler: McpOAuthScheduler = {
+  now: () => Date.now(),
+  schedule: (delayMs, task) => {
+    const timer = setTimeout(() => void task(), delayMs);
+    timer.unref();
+    return { cancel: () => clearTimeout(timer) };
+  },
+};
+
 export class McpOAuthService extends Disposable {
   private readonly store: McpOAuthStore;
   private readonly clientLabel: string | undefined;
   private readonly resolveClientName: (() => string | undefined) | undefined;
   private readonly log: Logger;
+  private readonly scheduler: McpOAuthScheduler;
   private readonly providers = new Map<string, McpOAuthClientProvider>();
   private readonly listeners = new Set<McpOAuthEventListener>();
   private readonly refreshes = new Map<string, Promise<void>>();
-  private readonly refreshTimers = new Map<string, NodeJS.Timeout>();
-  /** In-flight interactive flows by credential store key; values resolve to the shared flow. */
+  private readonly refreshTimers = new Map<string, McpOAuthScheduledTask>();
   private readonly activeAuthorizations = new Map<string, Promise<SharedAuthorizationFlow>>();
 
   constructor(options: McpOAuthServiceOptions) {
@@ -111,6 +130,7 @@ export class McpOAuthService extends Disposable {
     this.clientLabel = options.clientLabel;
     this.resolveClientName = options.resolveClientName;
     this.log = options.log ?? defaultLog;
+    this.scheduler = options.scheduler ?? defaultScheduler;
     this._register({
       dispose: () => {
         void this.shutdown();
@@ -154,7 +174,7 @@ export class McpOAuthService extends Disposable {
       hasTokens: true,
       hasRefreshToken: typeof tokens.refresh_token === 'string' && tokens.refresh_token.length > 0,
       expiresAt,
-      expired: expiresAt !== undefined && Date.now() >= expiresAt,
+      expired: expiresAt !== undefined && this.scheduler.now() >= expiresAt,
     };
   }
 
@@ -211,7 +231,7 @@ export class McpOAuthService extends Disposable {
 
   /** Clear every pending proactive-refresh timer (engine shutdown, tests). */
   stopProactiveRefresh(): void {
-    for (const timer of this.refreshTimers.values()) clearTimeout(timer);
+    for (const timer of this.refreshTimers.values()) timer.cancel();
     this.refreshTimers.clear();
   }
 
@@ -288,12 +308,6 @@ export class McpOAuthService extends Disposable {
     };
   }
 
-  /**
-   * The initiating side of an interactive flow: start the callback listener,
-   * point the provider at it, and run `auth()` until it surfaces an
-   * authorization URL. The returned flow owns the single wait-for-callback +
-   * code exchange shared by every handle for this credential.
-   */
   private async startAuthorizationFlow(
     serverName: string,
     serverUrl: string | URL,
@@ -440,6 +454,7 @@ export class McpOAuthService extends Disposable {
       store: this.store,
       clientLabel: clientLabel ?? this.clientLabel,
       clientName: this.resolveClientName?.(),
+      now: () => this.scheduler.now(),
       onTokensSaved: (tokens) => {
         this.emit({ type: 'tokens-saved', serverName, serverUrl: canonicalUrl });
         if (typeof tokens.obtained_at === 'number' && typeof tokens.expires_in === 'number') {
@@ -491,39 +506,35 @@ export class McpOAuthService extends Disposable {
     const canonicalUrl = canonicalMcpOAuthResource(serverUrl);
     const storeKey = mcpOAuthStoreKey(serverName, canonicalUrl);
     this.cancelScheduledRefresh(serverName, canonicalUrl);
-    const now = Date.now();
+    const now = this.scheduler.now();
     if (expiresAt <= now) return;
     const delay = expiresAt - now - REFRESH_AHEAD_MS;
-    let timer: NodeJS.Timeout;
+    let timer: McpOAuthScheduledTask;
     if (delay > MAX_TIMER_DELAY_MS) {
-      timer = setTimeout(() => {
+      timer = this.scheduler.schedule(MAX_TIMER_DELAY_MS, () => {
         this.refreshTimers.delete(storeKey);
         this.scheduleRefresh(serverName, canonicalUrl, expiresAt);
-      }, MAX_TIMER_DELAY_MS);
+      });
     } else {
-      timer = setTimeout(
-        () => {
-          this.refreshTimers.delete(storeKey);
-          void this.refresh(serverName, canonicalUrl).catch((error: unknown) => {
-            this.emit({
-              type: 'refresh-failed',
-              serverName,
-              serverUrl: canonicalUrl,
-              error: error instanceof Error ? error.message : String(error),
-            });
+      timer = this.scheduler.schedule(Math.max(delay, 0), async () => {
+        this.refreshTimers.delete(storeKey);
+        await this.refresh(serverName, canonicalUrl).catch((error: unknown) => {
+          this.emit({
+            type: 'refresh-failed',
+            serverName,
+            serverUrl: canonicalUrl,
+            error: error instanceof Error ? error.message : String(error),
           });
-        },
-        Math.max(delay, 0),
-      );
+        });
+      });
     }
-    timer.unref();
     this.refreshTimers.set(storeKey, timer);
   }
 
   private cancelScheduledRefresh(serverName: string, serverUrl: string | URL): void {
     const storeKey = mcpOAuthStoreKey(serverName, serverUrl);
     const timer = this.refreshTimers.get(storeKey);
-    if (timer !== undefined) clearTimeout(timer);
+    timer?.cancel();
     this.refreshTimers.delete(storeKey);
   }
 

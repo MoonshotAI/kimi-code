@@ -46,7 +46,12 @@ import {
 
 import { stubLog } from '../../_base/log/stubs';
 import { registerAgentIdentityStub } from '../../app/agentIdentity/stubs';
-import { createMemoryMcpOAuthStore, startInProcessHttpMcpServer, stdioFixture } from '../../mcpCore/stubs';
+import {
+  createMemoryMcpOAuthStore,
+  ManualMcpOAuthScheduler,
+  startInProcessHttpMcpServer,
+  stdioFixture,
+} from '../../mcpCore/stubs';
 
 function stdioServer(): McpServerConfig {
   return {
@@ -66,6 +71,7 @@ describe('WorkspaceMcpService', () => {
   let configChanges: Emitter<McpServersChange>;
   let assemblyEvents: Emitter<SessionWillCreateEvent>;
   let oauthService: McpOAuthService;
+  let oauthScheduler: ManualMcpOAuthScheduler;
   let manager: InstanceType<typeof McpConnectionManager> | undefined;
 
   beforeEach(() => {
@@ -76,7 +82,11 @@ describe('WorkspaceMcpService', () => {
     tunablesFn = vi.fn(() => tunablesValue);
     configChanges = new Emitter<McpServersChange>();
     assemblyEvents = disposables.add(new Emitter<SessionWillCreateEvent>());
-    oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    oauthScheduler = new ManualMcpOAuthScheduler();
+    oauthService = new McpOAuthService({
+      store: createMemoryMcpOAuthStore(),
+      scheduler: oauthScheduler,
+    });
     manager = undefined;
   });
 
@@ -176,9 +186,14 @@ describe('WorkspaceMcpService', () => {
   it('queues change events until the initial connect settles', async () => {
     current = { alpha: stdioServer() };
     let settleConnectAll: () => void = () => undefined;
+    let signalConnectAllStarted: () => void = () => undefined;
+    const connectAllStarted = new Promise<void>((resolve) => {
+      signalConnectAllStarted = resolve;
+    });
     vi.spyOn(McpConnectionManager.prototype, 'connectAll').mockImplementation(
       () =>
         new Promise<void>((resolve) => {
+          signalConnectAllStarted();
           settleConnectAll = resolve;
         }),
     );
@@ -193,7 +208,7 @@ describe('WorkspaceMcpService', () => {
     manager = service.connectionManager();
 
     configChanges.fire({ upsert: { beta: stdioServer() }, remove: ['alpha'] });
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 300));
+    await connectAllStarted;
     expect(connect).not.toHaveBeenCalled();
     expect(markRemoved).not.toHaveBeenCalled();
 
@@ -544,7 +559,6 @@ describe('WorkspaceMcpService', () => {
       await oauthService
         .getProvider('notion', SERVER_URL)
         .saveTokens({ access_token: 'a', token_type: 'Bearer' });
-      await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(reconnectAndJoin).not.toHaveBeenCalled();
     });
@@ -574,7 +588,6 @@ describe('WorkspaceMcpService', () => {
       await oauthService
         .getProvider('notion', SERVER_URL)
         .saveTokens({ access_token: 'a', token_type: 'Bearer' });
-      await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(reconnectAndJoin).not.toHaveBeenCalled();
       expect(forgetProvider).not.toHaveBeenCalled();
@@ -599,7 +612,6 @@ describe('WorkspaceMcpService', () => {
       await oauthService
         .getProvider('notion', SERVER_URL)
         .saveTokens({ access_token: 'a', token_type: 'Bearer' });
-      await new Promise((resolve) => setTimeout(resolve, 20));
       expect(reconnectAfterCurrent).not.toHaveBeenCalled();
 
       notifyStatus?.({ name: 'notion', transport: 'http', status: 'connected', toolCount: 0 });
@@ -618,7 +630,6 @@ describe('WorkspaceMcpService', () => {
       const provider = oauthService.getProvider('notion', SERVER_URL);
       await provider.ready;
       await provider.clearCredentials('client');
-      await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(reconnectAndJoin).not.toHaveBeenCalled();
       expect(forgetProvider).not.toHaveBeenCalled();
@@ -634,7 +645,6 @@ describe('WorkspaceMcpService', () => {
       const provider = oauthService.getProvider('notion', SERVER_URL);
       await provider.ready;
       await provider.clearCredentials('discovery');
-      await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(reconnectAndJoin).not.toHaveBeenCalled();
       expect(forgetProvider).not.toHaveBeenCalled();
@@ -655,9 +665,8 @@ describe('WorkspaceMcpService', () => {
       });
       const reconnectAndJoin = mockManagerEntry('connected');
 
-      await vi.waitFor(() => {
-        expect(reconnectAndJoin).toHaveBeenCalledWith('notion');
-      });
+      await oauthScheduler.advanceBy(0);
+      expect(reconnectAndJoin).toHaveBeenCalledWith('notion');
       expect(authServer.counts.refresh).toBe(1);
     });
 
@@ -678,10 +687,8 @@ describe('WorkspaceMcpService', () => {
       });
       const reconnectAndJoin = mockManagerEntry('needs-auth');
 
-      await vi.waitFor(() => {
-        expect(events.some((event) => event.type === 'refresh-failed')).toBe(true);
-      });
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await oauthScheduler.advanceBy(0);
+      expect(events.some((event) => event.type === 'refresh-failed')).toBe(true);
       expect(reconnectAndJoin).not.toHaveBeenCalled();
     });
 
@@ -694,7 +701,6 @@ describe('WorkspaceMcpService', () => {
       await oauthService
         .getProvider('notion', SERVER_URL)
         .saveTokens({ access_token: 'a', token_type: 'Bearer' });
-      await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(reconnectAndJoin).not.toHaveBeenCalled();
     });
@@ -708,7 +714,6 @@ describe('WorkspaceMcpService', () => {
       await oauthService
         .getProvider('notion', SERVER_URL)
         .saveTokens({ access_token: 'a', token_type: 'Bearer' });
-      await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(reconnectAndJoin).not.toHaveBeenCalled();
     });

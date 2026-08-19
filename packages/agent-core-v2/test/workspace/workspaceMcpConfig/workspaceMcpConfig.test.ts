@@ -224,18 +224,32 @@ describe('WorkspaceMcpConfigService', () => {
   }, 20000);
 
   it('keeps the winning plugin server when the same-named file entry vanishes', async () => {
-    const file = await writeProjectConfig({ shared: stdioConfig('file-version') });
+    await writeProjectConfig({ shared: stdioConfig('file-version') });
     pluginServers = { shared: stdioConfig('plugin-version') };
     const service = createService();
     await service.ready;
     expect(service.servers()).toEqual({ shared: stdioConfig('plugin-version') });
 
     await writeProjectConfig({});
-    watchFires.get(cwd)?.fire({ path: file, action: 'modified', kind: 'file' });
+    storeWrites.fire();
+    pluginServers = {
+      shared: stdioConfig('plugin-version'),
+      pluginOnly: stdioConfig('plugin'),
+    };
+    pluginReloads.fire({ added: [], removed: [], errors: [] });
 
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
-    expect(changes).toEqual([]);
-    expect(service.servers()).toEqual({ shared: stdioConfig('plugin-version') });
+    await vi.waitFor(
+      () => {
+        expect(changes).toEqual([
+          { upsert: { pluginOnly: stdioConfig('plugin') }, remove: [] },
+        ]);
+      },
+      { timeout: 10000, interval: 50 },
+    );
+    expect(service.servers()).toEqual({
+      shared: stdioConfig('plugin-version'),
+      pluginOnly: stdioConfig('plugin'),
+    });
   }, 20000);
 
   it('publishes a plugin server that appears on plugin reload', async () => {

@@ -41,6 +41,7 @@ export interface McpOAuthProviderOptions {
   readonly store: McpOAuthStore;
   readonly clientLabel?: string;
   readonly clientName?: string;
+  readonly now?: () => number;
   /** Called after tokens are persisted (login, exchange, or refresh). */
   readonly onTokensSaved?: (tokens: StoredMcpOAuthTokens) => void;
   /** Called after any credential invalidation, including SDK-driven ones. */
@@ -58,6 +59,7 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
   private readonly clientLabel: string;
   private readonly onTokensSaved: McpOAuthProviderOptions['onTokensSaved'];
   private readonly onCredentialsInvalidated: McpOAuthProviderOptions['onCredentialsInvalidated'];
+  private readonly now: () => number;
   private _redirectUrl: URL | undefined;
   private _codeVerifier: string | undefined;
   private _state: string | undefined;
@@ -77,6 +79,7 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
       `${options.clientName ?? KIMI_MCP_CLIENT_NAME} (${options.serverName})`;
     this.onTokensSaved = options.onTokensSaved;
     this.onCredentialsInvalidated = options.onCredentialsInvalidated;
+    this.now = options.now ?? Date.now;
     const tokensFile = `${this.storeKey}${TOKENS_SUFFIX}`;
     this.tokenTransaction = new OAuthTokenTransaction({
       key: this.storeKey,
@@ -85,7 +88,7 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
         const incoming = tokens as StoredMcpOAuthTokens;
         await this.store.write(tokensFile, {
           ...incoming,
-          obtained_at: incoming.obtained_at ?? Date.now(),
+          obtained_at: incoming.obtained_at ?? this.now(),
         });
       },
       remove: async () => {
@@ -165,7 +168,7 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
     await this.store.write(`${this.storeKey}${META_SUFFIX}`, meta);
     const stamped: StoredMcpOAuthTokens = {
       ...tokens,
-      obtained_at: (tokens as StoredMcpOAuthTokens).obtained_at ?? Date.now(),
+      obtained_at: (tokens as StoredMcpOAuthTokens).obtained_at ?? this.now(),
     };
     this.onTokensSaved?.(stamped);
   }

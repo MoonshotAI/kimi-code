@@ -21,6 +21,7 @@ import { ErrorCodes } from '#/errors';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 function stdioServer(name: string, command = 'npx'): GlobalMcpServerConfig {
@@ -47,6 +48,7 @@ describe('McpRegistryService', () => {
   let store: IMcpConfigStore;
   let pluginEntries: PluginMcpServerEntry[];
   let pluginError: Error | undefined;
+  let trusted: boolean;
   let registry: IMcpRegistryService;
 
   beforeEach(() => {
@@ -56,6 +58,7 @@ describe('McpRegistryService', () => {
     tempDirs = [home];
     pluginEntries = [];
     pluginError = undefined;
+    trusted = true;
     const ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IFileSystemStorageService, new InMemoryStorageService());
@@ -68,6 +71,9 @@ describe('McpRegistryService', () => {
           },
         });
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
+        reg.definePartialInstance(IAtomicDocumentStore, {
+          get: async <T>() => (trusted ? ({} as T) : undefined),
+        });
         reg.define(IMcpRegistryService, McpRegistryService);
       },
     });
@@ -168,6 +174,28 @@ describe('McpRegistryService', () => {
         mutable: false,
         origin: join(sub, '.kimi-code', 'mcp.json'),
       });
+    });
+
+    it('loads only user and plugin entries when the workspace is untrusted', async () => {
+      await store.add(stdioServer('userOnly', 'user-only'));
+      const { project, sub } = await makeProject();
+      await writeJson(join(project, '.mcp.json'), {
+        mcpServers: { repoOnly: { command: 'repo-only' } },
+      });
+      await writeJson(join(sub, '.kimi-code', 'mcp.json'), {
+        mcpServers: { localOnly: { command: 'local-only' } },
+      });
+      pluginEntries = [
+        pluginEntry('demo', 'api', { transport: 'stdio', command: 'plugin-only' }),
+      ];
+      trusted = false;
+
+      const entries = await registry.list({ cwd: sub });
+
+      expect(entries.map((entry) => entry.name).toSorted()).toEqual([
+        'plugin-demo:api',
+        'userOnly',
+      ]);
     });
 
     it('exposes plugin servers as read-only entries with their effective config', async () => {

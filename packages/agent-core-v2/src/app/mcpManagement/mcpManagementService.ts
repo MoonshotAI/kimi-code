@@ -54,7 +54,6 @@ const DEFAULT_AUTH_TIMEOUT_MS = 15 * 60_000;
 export class McpManagementService extends Disposable implements IMcpManagementService {
   declare readonly _serviceBrand: undefined;
 
-  /** In-flight management-plane OAuth flows by flowId. */
   private readonly authFlows = new Map<string, { flow: BeginAuthorizationResult }>();
 
   constructor(
@@ -109,18 +108,13 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
   }
 
   async testServer(target: McpServerTestTarget): Promise<McpServerTestResult> {
+    await this.waitForReadiness();
     const resolved = await this.resolveTestTarget(target);
     return this.withProbe(resolved, target.cwd, (manager) =>
       standaloneTestResult(resolved.name, manager),
     );
   }
 
-  /**
-   * Mutation guard lookup: only a genuine not-found reads as "no collision".
-   * A plugin-state or config failure must abort the write — a user-level
-   * mutation guarded on a degraded view could shadow a read-only plugin
-   * server while the plugin contributions are unknown.
-   */
   private async guardLookup(name: string): Promise<McpRegistryEntry | undefined> {
     try {
       return await this.registry.get(name);
@@ -130,11 +124,6 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     }
   }
 
-  /**
-   * Test target resolution: an inline `server` config probes as-is (nothing
-   * has to be saved first); a bare `name` goes through the unified registry,
-   * so plugin and project-layer servers are testable too.
-   */
   private async resolveTestTarget(target: McpServerTestTarget): Promise<GlobalMcpServerConfig> {
     const { name, server, cwd } = target;
     if (server !== undefined) {
@@ -179,6 +168,7 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     cwd: string | undefined,
     inspect: (manager: McpConnectionManager) => T,
   ): Promise<T> {
+    await this.waitForReadiness();
     const section = this.config.get<McpSection | undefined>(MCP_SECTION);
     let workspaceId: string | undefined;
     let stdioCwd = cwd;
@@ -209,6 +199,7 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
   }
 
   async listAuthStatuses(query: McpAuthStatusQuery = {}): Promise<readonly McpServerAuthStatus[]> {
+    await this.waitForReadiness();
     const entries = await this.registry.list({ cwd: query.cwd });
     const verify = query.verify === true;
     return Promise.all(
@@ -222,6 +213,7 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
   async inspectServers(
     targets?: readonly McpServerLocator[],
   ): Promise<readonly McpServerInspection[]> {
+    await this.waitForReadiness();
     const catalog = await this.serverDescriptors();
     const descriptors = selectServerDescriptors(catalog, targets);
     const inspections = await this.inspectServerDescriptors(descriptors, catalog);
@@ -241,6 +233,7 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
   }
 
   async beginServerAuth(locator: McpServerLocator): Promise<McpServerAuthBeginResult> {
+    await this.waitForReadiness();
     const server = await this.resolveServer(locator);
     const config = requireOAuthMcpConfig(server.runtimeName, server.config);
     try {
@@ -286,12 +279,12 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
   }
 
   async resetServerAuth(locator: McpServerLocator): Promise<void> {
+    await this.waitForReadiness();
     const server = await this.resolveServer(locator);
     const config = requireRemoteMcpConfig(server.runtimeName, server.config);
     await this.oauth.invalidate(server.runtimeName, config.url);
   }
 
-  /** The registry catalog in the locator-addressed shape, with full configs. */
   private async serverDescriptors(): Promise<readonly McpServerRuntimeDescriptor[]> {
     return (await this.registry.list()).map((entry) => serverDescriptor(entry));
   }
@@ -305,10 +298,6 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     return server;
   }
 
-  /**
-   * A runtime name shared by another enabled entry makes the OAuth credential
-   * identity ambiguous; refuse to guess.
-   */
   private requireUnambiguousRuntimeName(
     catalog: readonly McpServerRuntimeDescriptor[],
     server: McpServerRuntimeDescriptor,
@@ -327,10 +316,6 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     }
   }
 
-  /**
-   * States decidable without connecting: anything pinned (stdio, bearer token,
-   * static non-OAuth headers) or disabled never enters the OAuth probe.
-   */
   private async serverAuthState(
     entry: McpRegistryEntry,
     cwd: string | undefined,
@@ -358,22 +343,9 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
         return offline();
       });
 
-    if (verify) {
-      return probe();
-    }
-    if (tokens.hasTokens) return offline();
-    if (server.auth === 'oauth') return 'oauth-required';
-    return this.withProbe({ name: entry.name, ...server }, cwd, (manager) =>
-      manager.get(entry.name)?.status === 'needs-auth' ? 'oauth-required' : 'not-applicable',
-    );
+    return verify ? probe() : offline();
   }
 
-  /**
-   * Inspection = registry catalog + a batched real-connection probe of every
-   * OAuth candidate (one throwaway manager for all). A runtime name shared by
-   * a global and a plugin entry cannot be probed unambiguously and is
-   * reported `unavailable`; a stored-but-rejected grant is `oauth-expired`.
-   */
   private async inspectServerDescriptors(
     descriptors: readonly McpServerRuntimeDescriptor[],
     catalog: readonly McpServerRuntimeDescriptor[],
@@ -448,6 +420,11 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     } finally {
       await manager?.shutdown();
     }
+  }
+
+  private async waitForReadiness(): Promise<void> {
+    await this.config.ready;
+    await this.identity.resolved();
   }
 }
 

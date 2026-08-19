@@ -153,13 +153,6 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     };
   }
 
-  /**
-   * Subscribe a manager to the shared OAuth service's credential events,
-   * returning the unsubscribe. A completed login reconnects a `needs-auth` /
-   * `failed` entry; a reset or a failed proactive refresh flips a live
-   * connection back to `needs-auth` (the reconnect hits a 401) instead of
-   * leaving it doomed-but-connected.
-   */
   private oauthEventSubscription(manager: McpConnectionManager): () => void {
     return this.oauthService.onEvent((event) => {
       void this.handleMcpOAuthEvent(manager, event).catch((error: unknown) => {
