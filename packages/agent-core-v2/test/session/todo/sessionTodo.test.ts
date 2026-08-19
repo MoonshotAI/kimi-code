@@ -29,6 +29,7 @@ import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 
+import { IFlagService } from '#/app/flag/flag';
 import { IAgentFlowService } from '#/features/flow/flow';
 
 import { stubWireJournal } from '../../wire/stubs';
@@ -62,6 +63,10 @@ function makeFakeAgent(agentId: string): FakeAgent {
   const flowStub = {
     _serviceBrand: undefined,
     run: () => ({ active: flowActive }),
+  };
+  const flagStub = {
+    _serviceBrand: undefined,
+    enabled: () => true,
   };
 
   const registryStub = {
@@ -124,6 +129,7 @@ function makeFakeAgent(agentId: string): FakeAgent {
       if (id === IEventDispatcher) return dispatcher as unknown as T;
       if (id === IAgentStateService) return ix.get(IAgentStateService) as unknown as T;
       if (id === IAgentFlowService) return flowStub as unknown as T;
+      if (id === IFlagService) return flagStub as unknown as T;
       throw new Error(`unexpected service request in fake agent: ${String(id)}`);
     },
   };

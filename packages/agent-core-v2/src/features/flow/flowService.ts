@@ -122,8 +122,8 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     );
     this._register(
       eventBus.subscribe(ContextUndone, () => {
-        if (!this.flags.enabled(FLOW_FLAG_ID)) return;
         this.epoch += 1;
+        if (!this.flags.enabled(FLOW_FLAG_ID)) return;
         void this.dispatcher.dispatch(new AgentStatusUpdated({ flowRun: this.summary() }));
       }),
     );
