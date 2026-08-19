@@ -9,6 +9,7 @@ import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { CreateGoalTool } from '#/agent/tools/goal/create-goal/createGoalTool';
 import { GetGoalTool } from '#/agent/tools/goal/get-goal/getGoalTool';
+import { GOAL_MAIN_AGENT_ONLY } from '#/agent/tools/mainAgentOnly';
 import { SetGoalBudgetTool } from '#/agent/tools/goal/set-goal-budget/setGoalBudgetTool';
 import { UpdateGoalToolInputSchema } from '#/agent/tools/goal/update-goal/update-goal';
 import { UpdateGoalTool } from '#/agent/tools/goal/update-goal/updateGoalTool';
@@ -54,8 +55,9 @@ describe('goal tools', () => {
     goals = ctx.get(IAgentGoalService);
     eventBus = ctx.get(IEventBus);
     toolExecutor = ctx.get(IAgentToolExecutorService);
-    setGoalBudgetTool = new SetGoalBudgetTool(goals);
-    updateGoalTool = new UpdateGoalTool(goals);
+    const scopeContext = ctx.get(IAgentScopeContext);
+    setGoalBudgetTool = new SetGoalBudgetTool(goals, scopeContext);
+    updateGoalTool = new UpdateGoalTool(goals, scopeContext);
   });
 
   afterEach(async () => {
@@ -470,7 +472,7 @@ describe('goal tool registration surface', () => {
       }
       expect(results).toHaveLength(1);
       expect(results[0]?.result.isError).toBe(true);
-      expect(results[0]?.result.output).toContain('Goals are only supported by the main agent');
+      expect(results[0]?.result.output).toBe(GOAL_MAIN_AGENT_ONLY);
     } finally {
       await subCtx.dispose();
     }

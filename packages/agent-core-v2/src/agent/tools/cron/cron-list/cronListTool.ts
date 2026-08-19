@@ -1,6 +1,5 @@
 import { type ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
@@ -8,8 +7,8 @@ import { cronToHuman, parseCronExpression } from '#/app/cron/cron-expr';
 import { type CronTask } from '#/app/cron/cronTask';
 import { formatLocalIsoWithOffset } from '#/app/cron/format';
 
+import { CRON_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '../../mainAgentOnly';
 import { ICronListTool, CronListInputSchema, type CronListInput } from './cron-list';
-import { CRON_MAIN_AGENT_ONLY } from '../mainAgentOnly';
 import CRON_LIST_DESCRIPTION from './cron-list.md?raw';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -39,12 +38,8 @@ export class CronListTool implements ICronListTool {
   ) {}
 
   resolveExecution(_args: CronListInput): ToolExecution {
-    if (this.scopeContext.agentId !== MAIN_AGENT_ID) {
-      return {
-        isError: true,
-        output: CRON_MAIN_AGENT_ONLY,
-      };
-    }
+    const denied = mainAgentOnlyExecution(this.scopeContext, CRON_MAIN_AGENT_ONLY);
+    if (denied !== undefined) return denied;
     return {
       description: 'Listing scheduled cron jobs',
       approvalRule: this.name,

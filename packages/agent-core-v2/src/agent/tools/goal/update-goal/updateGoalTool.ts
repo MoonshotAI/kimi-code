@@ -1,6 +1,7 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { type ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 
 import { IAgentGoalService } from '#/agent/goal/goal';
 import {
@@ -8,6 +9,7 @@ import {
   buildGoalCompletionSummaryPrompt,
 } from '#/agent/goal/tools/outcome-prompts';
 
+import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '../../mainAgentOnly';
 import DESCRIPTION from './update-goal.md?raw';
 import {
   UpdateGoalToolInputSchema,
@@ -21,9 +23,14 @@ export class UpdateGoalTool implements IUpdateGoalTool {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(UpdateGoalToolInputSchema);
 
-  constructor(@IAgentGoalService private readonly goal: IAgentGoalService) {}
+  constructor(
+    @IAgentGoalService private readonly goal: IAgentGoalService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+  ) {}
 
   resolveExecution(args: UpdateGoalToolInput): ToolExecution {
+    const denied = mainAgentOnlyExecution(this.scopeContext, GOAL_MAIN_AGENT_ONLY);
+    if (denied !== undefined) return denied;
     if (!isUpdateGoalStatus(args.status)) {
       return {
         isError: true,

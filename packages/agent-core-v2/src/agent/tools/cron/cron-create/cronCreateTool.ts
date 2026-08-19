@@ -1,7 +1,6 @@
 import { type ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern } from '#/tool/rule-match';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
@@ -16,7 +15,7 @@ import {
   type CronCreateInput,
   type CronCreateOutput,
 } from './cron-create';
-import { CRON_MAIN_AGENT_ONLY } from '../mainAgentOnly';
+import { CRON_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '../../mainAgentOnly';
 import CRON_CREATE_DESCRIPTION from './cron-create.md?raw';
 
 const ONE_SHOT_MAX_FUTURE_MS = 350 * 24 * 60 * 60 * 1000;
@@ -36,12 +35,8 @@ export class CronCreateTool implements ICronCreateTool {
   ) {}
 
   resolveExecution(args: CronCreateInput): ToolExecution {
-    if (this.scopeContext.agentId !== MAIN_AGENT_ID) {
-      return {
-        isError: true,
-        output: CRON_MAIN_AGENT_ONLY,
-      };
-    }
+    const denied = mainAgentOnlyExecution(this.scopeContext, CRON_MAIN_AGENT_ONLY);
+    if (denied !== undefined) return denied;
     if (this.cron.isDisabled()) {
       return {
         isError: true,
