@@ -33,13 +33,6 @@ export * from './types';
 /** Foreground timeout (seconds) for a user-initiated `!` shell command. */
 const SHELL_FOREGROUND_TIMEOUT_S = 2 * 60;
 
-/**
- * Undo-anchor store snapshots kept (baseline plus the newest anchors). Todos
- * are tiny, so this only bounds worst-case memory; an undo deeper than the
- * retained window floors at the baseline snapshot.
- */
-const TOOL_STORE_CHECKPOINT_LIMIT = 100;
-
 interface McpToolEntry {
   readonly tool: ExecutableTool;
   readonly serverName: string;
@@ -84,7 +77,12 @@ export class ToolManager {
    * history, oldest first. Index 0 is the baseline seeded at construction,
    * compaction, and clear; `rollbackStore` pops from the top on undo.
    * Shallow copies suffice: writers replace values wholesale (TodoList swaps
-   * the whole array), never mutate in place.
+   * the whole array), never mutate in place, so snapshots share the values.
+   * The stack length is exactly 1 + the live anchor count in history —
+   * pushes are 1:1 with anchor appends, undo pops what it removed, and
+   * clear/compaction reseed — so it is bounded by history itself and undo
+   * can never request a depth the stack does not cover. Do not add trimming:
+   * a capped window would restore the store of a turn the undo just removed.
    */
   private storeCheckpoints: Array<Partial<ToolStoreData>> = [{}];
   private mcpToolStatusUnsubscribe: (() => void) | undefined;
@@ -151,11 +149,6 @@ export class ToolManager {
   /** Snapshot the store for a just-appended undo anchor (real user input). */
   snapshotToolStore(): void {
     this.storeCheckpoints.push({ ...this.store });
-    if (this.storeCheckpoints.length > TOOL_STORE_CHECKPOINT_LIMIT) {
-      // Trim from above the baseline so an undo past the retained depth still
-      // floors at the baseline.
-      this.storeCheckpoints.splice(1, this.storeCheckpoints.length - TOOL_STORE_CHECKPOINT_LIMIT);
-    }
   }
 
   /**

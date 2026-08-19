@@ -1455,6 +1455,25 @@ describe('Agent context', () => {
     expect(ctx.agent.tools.storeData()['todo']).toEqual(todosA);
   });
 
+  it('undo deeper than a hundred anchors restores the oldest anchor snapshot', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    const anchorCount = 120;
+    const todosBeforeAnchor = (i: number) => [{ title: `todos before anchor ${String(i)}`, status: 'pending' as const }];
+
+    // A distinct store value per anchor so a wrong checkpoint target shows up
+    // as the wrong value, not just a stale one.
+    for (let i = 1; i <= anchorCount; i++) {
+      ctx.agent.tools.updateStore('todo', todosBeforeAnchor(i));
+      ctx.agent.context.appendUserMessage([{ type: 'text', text: `prompt ${String(i)}` }]);
+    }
+    ctx.agent.tools.updateStore('todo', [{ title: 'final write', status: 'pending' }]);
+
+    ctx.agent.context.undo(anchorCount);
+
+    expect(ctx.agent.tools.storeData()['todo']).toEqual(todosBeforeAnchor(1));
+  });
+
 });
 
 describe('Agent context notification projection', () => {
