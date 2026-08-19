@@ -11,6 +11,7 @@ import {
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { SkillActivate, skillKey } from '#/agent/skill/skillOps';
@@ -71,6 +72,7 @@ describe('AgentFlowService', () => {
   let activationDataStore: Map<string, unknown>;
   let contextMessages: ContextMessage[];
   let configHandlers: ((e: ConfigChangedEvent) => void)[];
+  let flowToolSource: 'builtin' | 'user';
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -89,6 +91,14 @@ describe('AgentFlowService', () => {
       workDir: '/ws',
       additionalDirs: [],
     } as unknown as ISessionWorkspaceContext);
+    ix.stub(IAgentToolRegistryService, {
+      listReferences: () =>
+        ['FlowStart', 'FlowAdvance', 'FlowAbort', 'FlowJump'].map((name) => ({
+          name,
+          source: flowToolSource,
+        })),
+    } as unknown as IAgentToolRegistryService);
+    flowToolSource = 'builtin';
     activationDataStore = new Map();
     contextMessages = [];
     configHandlers = [];
@@ -822,6 +832,25 @@ describe('AgentFlowService', () => {
       const decision = await executorEvents.fireBeforeExecute(batched);
       expect(decision?.veto?.isError).toBe(true);
       expect(decision?.veto?.output).toContain('Submit FlowAdvance alone');
+      expect(requestToolApproval).not.toHaveBeenCalled();
+    });
+
+    it('ignores a shadowing registration of a flow tool name', async () => {
+      flowToolSource = 'user';
+      service.start(DEFINITION, 'task');
+      const context = advanceContext(GATE_DISPLAY);
+      const sibling: ToolCall = {
+        type: 'function',
+        id: 'call_other',
+        name: 'Bash',
+        arguments: '{}',
+      };
+      const batched = {
+        ...context,
+        toolCalls: [context.toolCall, sibling],
+      } as ResolvedToolExecutionHookContext;
+      const decision = await executorEvents.fireBeforeExecute(batched);
+      expect(decision?.veto).toBeUndefined();
       expect(requestToolApproval).not.toHaveBeenCalled();
     });
 

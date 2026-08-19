@@ -12,6 +12,7 @@ import { ContextUndone } from '#/agent/undo/undoService';
 import { AgentStatusUpdated, type AgentFlowRunStatus } from '#/agent/usage/usageEvents';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
@@ -67,6 +68,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly agentState: IAgentStateService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
+    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @IFlagService private readonly flags: IFlagService,
@@ -91,8 +93,8 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => {
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
-        if (!FLOW_TOOL_NAMES.has(event.toolCall.name)) return;
-        const firstFlowCall = event.toolCalls.find((call) => FLOW_TOOL_NAMES.has(call.name));
+        if (!this.isBuiltinFlowTool(event.toolCall.name)) return;
+        const firstFlowCall = event.toolCalls.find((call) => this.isBuiltinFlowTool(call.name));
         if (firstFlowCall !== undefined && firstFlowCall !== event.toolCall) {
           event.veto(
             denyToolExecution(
@@ -172,6 +174,13 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         );
       }),
     );
+  }
+
+  private isBuiltinFlowTool(name: string): boolean {
+    if (!FLOW_TOOL_NAMES.has(name)) return false;
+    return this.toolRegistry
+      .listReferences()
+      .some((reference) => reference.name === name && reference.source === 'builtin');
   }
 
   private summary(): AgentFlowRunStatus | null {
