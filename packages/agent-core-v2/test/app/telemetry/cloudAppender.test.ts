@@ -50,7 +50,10 @@ function baseOptions(
   const { homeDir: dir = '', storage, ...rest } = overrides;
   return {
     storage: storage ?? new FileStorageService(dir),
-    bootstrap: { ...stubBootstrap(), clientIdentity: { ...stubClientIdentity, version: '1.0.0' } },
+    bootstrap: {
+      ...stubBootstrap(dir === '' ? undefined : dir),
+      clientIdentity: { ...stubClientIdentity, version: '1.0.0' },
+    },
     deviceId: 'dev',
     appName: 'test-app',
     sleep: async () => {},
@@ -120,6 +123,26 @@ describe('CloudAppender', () => {
 
   it('derives the global endpoint when the env pins the global region', async () => {
     process.env['KIMI_CODE_OAUTH_HOST'] = 'https://auth.kimi.ai';
+    const requests: CapturedRequest[] = [];
+    const appender = new CloudAppender(
+      baseOptions({
+        homeDir,
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+
+    appender.track('tool.call', { name: 'bash' });
+    await appender.flush();
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe('https://telemetry-logs.kimi.ai/v1/event');
+  });
+
+  it('reads the install marker from the bootstrapped home for the default endpoint', async () => {
+    writeFileSync(join(homeDir, 'region'), 'global\n');
     const requests: CapturedRequest[] = [];
     const appender = new CloudAppender(
       baseOptions({

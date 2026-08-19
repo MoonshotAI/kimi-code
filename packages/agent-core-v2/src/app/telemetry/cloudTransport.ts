@@ -37,6 +37,9 @@ export interface CloudTransportOptions {
   readonly storage: IFileSystemStorageService;
   readonly deviceId: string;
   readonly endpoint?: string;
+  /** Bootstrapped home for the default endpoint's region resolution (the
+      install marker lives there, not necessarily under KIMI_CODE_HOME). */
+  readonly homeDir?: string;
   readonly getAccessToken?: () => string | null | Promise<string | null>;
   readonly fetchImpl?: typeof fetch;
   readonly retryBackoffsMs?: readonly number[];
@@ -59,9 +62,12 @@ const JSONL_SUFFIX = '.jsonl';
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-function defaultTelemetryEndpoint(): string {
+function defaultTelemetryEndpoint(homeDir?: string): string {
   return kimiRegionProfile(
-    resolveKimiRegion({ readMarker: process.env['KIMI_CODE_REGION_MARKER'] !== 'off' }),
+    resolveKimiRegion({
+      readMarker: process.env['KIMI_CODE_REGION_MARKER'] !== 'off',
+      homeDir,
+    }),
   ).telemetryEndpoint;
 }
 
@@ -79,7 +85,7 @@ export class CloudTransport {
   constructor(options: CloudTransportOptions) {
     this.storage = options.storage;
     this.deviceId = options.deviceId;
-    this.endpoint = options.endpoint ?? defaultTelemetryEndpoint();
+    this.endpoint = options.endpoint ?? defaultTelemetryEndpoint(options.homeDir);
     this.getAccessToken = options.getAccessToken ?? null;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.retryBackoffsMs = options.retryBackoffsMs ?? RETRY_BACKOFFS_MS;

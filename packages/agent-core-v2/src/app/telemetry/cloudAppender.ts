@@ -84,6 +84,7 @@ export class CloudAppender implements ITelemetryAppender {
       storage: options.storage,
       deviceId: options.deviceId,
       endpoint: options.endpoint,
+      homeDir: options.bootstrap.homeDir,
       getAccessToken: options.getAccessToken,
       fetchImpl: options.fetchImpl,
       retryBackoffsMs: options.retryBackoffsMs,
