@@ -234,6 +234,9 @@ function formatText(text: string): string {
   if (isPlanModeReminder(text)) {
     return '<plan-mode-reminder>';
   }
+  if (isDateReminder(text)) {
+    return '<date-reminder>';
+  }
   if (text.includes('first-person handoff note')) {
     return '<compaction-instruction>';
   }
@@ -263,6 +266,7 @@ function normalizeValue(value: unknown, labels: SnapshotLabels): unknown {
     if (isAutoModeEnterReminder(value)) return '<auto-mode-enter-reminder>';
     if (isAutoModeExitReminder(value)) return '<auto-mode-exit-reminder>';
     if (isPlanModeReminder(value)) return '<plan-mode-reminder>';
+    if (isDateReminder(value)) return '<date-reminder>';
     const interactionKind = interactionIdKind(value);
     if (interactionKind !== undefined) {
       return labelFor(value, labels.interactionLabels, interactionKind);
@@ -299,6 +303,8 @@ function normalizeObjectField(key: string, value: unknown, labels: SnapshotLabel
     return '<protocol-version>';
   }
   if (key === 'cwd' && typeof value === 'string') return '<cwd>';
+  if (key === 'localDate' && typeof value === 'string') return '<date>';
+  if (key === 'timeZone' && typeof value === 'string') return '<time-zone>';
   return normalizeValue(value, labels);
 }
 
@@ -367,4 +373,11 @@ function isAutoModeEnterReminder(value: string): boolean {
 
 function isAutoModeExitReminder(value: string): boolean {
   return value.includes('Auto permission mode is no longer active.');
+}
+
+function isDateReminder(value: string): boolean {
+  return (
+    value.includes('The current date is restated in a reminder whenever it changes') ||
+    value.includes('Rely on this reminder over any earlier date statement')
+  );
 }
