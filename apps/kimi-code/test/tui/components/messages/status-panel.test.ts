@@ -70,6 +70,36 @@ describe('status panel report lines', () => {
     expect(output).not.toContain('Runtime');
   });
 
+  it('prefers the fetched status tower mode over the cached value', () => {
+    const lines = buildStatusReportLines({
+      version: '1.2.3',
+      model: 'k2',
+      workDir: '/tmp/project',
+      sessionId: 'ses-1',
+      sessionTitle: null,
+      thinkingEffort: 'off',
+      permissionMode: 'manual',
+      planMode: false,
+      towerMode: false,
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      availableModels: {},
+      status: {
+        model: 'k2',
+        thinkingEffort: 'off',
+        permission: 'manual',
+        planMode: false,
+        towerMode: true,
+        contextTokens: 0,
+        maxContextTokens: 0,
+        contextUsage: 0,
+      },
+    }).map(strip);
+
+    expect(lines.join('\n')).toContain('Tower mode   on');
+  });
+
   it('formats extra usage section in status report', () => {
     const lines = buildStatusReportLines({
       version: '1.2.3',

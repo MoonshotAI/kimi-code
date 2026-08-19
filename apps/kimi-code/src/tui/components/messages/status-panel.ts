@@ -107,13 +107,14 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
 
   const permission = options.status?.permission ?? options.permissionMode;
   const planMode = options.status?.planMode ?? options.planMode;
+  const towerMode = options.status?.towerMode ?? options.towerMode;
   const sessionId = options.sessionId.trim().length > 0 ? options.sessionId : 'none';
   const rows: FieldRow[] = [
     { label: 'Model', value: formatModelStatus(options) },
     { label: 'Directory', value: options.workDir },
     { label: 'Permissions', value: permission },
     { label: 'Plan mode', value: planMode ? 'on' : 'off' },
-    { label: 'Tower mode', value: options.towerMode ? 'on' : 'off' },
+    { label: 'Tower mode', value: towerMode ? 'on' : 'off' },
     { label: 'Session', value: sessionId },
   ];
   const title = options.sessionTitle?.trim();

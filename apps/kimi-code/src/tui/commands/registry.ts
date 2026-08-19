@@ -196,8 +196,17 @@ export const BUILTIN_SLASH_COMMANDS = [
     priority: 100,
     argumentHint: '[status|teardown|on|off] | <objective>',
     completeArgs: towerArgumentCompletions,
-    availability: 'always',
+    availability: (args) => {
+      const sub = args.trim().toLowerCase();
+      // Objective args enable the mode and queue the prompt: they must wait
+      // for idle so the running turn is not hijacked mid-flight. Pure reads
+      // (status/teardown) and deliberate toggles stay always-available.
+      return sub === '' || sub === 'on' || sub === 'off' || sub === 'status' || sub === 'teardown'
+        ? 'always'
+        : 'idle-only';
+    },
     experimentalFlag: 'tower',
+    requiresEngineV2: true,
   },
   {
     name: 'model',

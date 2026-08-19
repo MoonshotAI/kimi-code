@@ -271,6 +271,7 @@ function dispatchInlineSkillCombo(host: SlashCommandHost, text: string): boolean
     pluginCommandMap: host.pluginCommandMap,
     isStreaming: false,
     isCompacting: false,
+    engineV2: host.engineV2,
   });
   if (intent.kind !== 'skill' && intent.kind !== 'message') return false;
 
@@ -308,6 +309,7 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
     pluginCommandMap: host.pluginCommandMap,
     isStreaming: host.state.appState.streamingPhase !== 'idle',
     isCompacting: host.state.appState.isCompacting,
+    engineV2: host.engineV2,
   });
 
   switch (intent.kind) {

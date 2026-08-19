@@ -216,12 +216,21 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
   });
 
-  it('gates tower behind the tower experiment, always available', () => {
+  it('gates tower behind the tower experiment and the v2 engine', () => {
     const command = findBuiltInSlashCommand('tower');
     expect(command).toBeDefined();
     expect((command as KimiSlashCommand).experimentalFlag).toBe('tower');
+    expect((command as KimiSlashCommand).requiresEngineV2).toBe(true);
+  });
+
+  it('keeps tower reads and toggles always available but defers objectives to idle', () => {
+    const command = findBuiltInSlashCommand('tower');
+    expect(command).toBeDefined();
     expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
     expect(resolveSlashCommandAvailability(command!, 'on')).toBe('always');
-    expect(resolveSlashCommandAvailability(command!, 'Ship feature X')).toBe('always');
+    expect(resolveSlashCommandAvailability(command!, 'off')).toBe('always');
+    expect(resolveSlashCommandAvailability(command!, 'status')).toBe('always');
+    expect(resolveSlashCommandAvailability(command!, 'teardown')).toBe('always');
+    expect(resolveSlashCommandAvailability(command!, 'Ship feature X')).toBe('idle-only');
   });
 });
