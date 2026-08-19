@@ -1,5 +1,4 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
@@ -32,5 +31,4 @@ export class GetGoalTool implements IGetGoalTool {
 registerAgentToolService(IGetGoalTool, GetGoalTool, {
   name: 'GetGoal',
   domain: 'goal',
-  when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',
 });

@@ -17,6 +17,15 @@ export interface AgentToolContributionOptions {
   readonly name: string;
   readonly source?: ToolSource;
   readonly disclosure?: ToolDisclosure;
+  /**
+   * Extra activation predicate, re-evaluated at every activation wave. Must be a
+   * pure function of facts every agent in the session recomputes identically
+   * (runtime capabilities, provider availability, config). Never gate on
+   * per-agent identity (e.g. `agentId === 'main'`): forked agents inherit the
+   * caller's conversation and must rebuild an identical tool surface for prompt
+   * prefix-cache parity. Restrict what a tool may DO at execution time instead
+   * (a service-level authority check that rejects the call).
+   */
   readonly when?: (accessor: ServicesAccessor) => boolean;
   readonly requiredRuntimeCapabilities?: readonly RuntimeCapability[];
   readonly domain?: string;

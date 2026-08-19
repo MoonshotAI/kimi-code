@@ -1,5 +1,4 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
@@ -97,5 +96,4 @@ function changedGoalOutput(status: UpdateGoalToolInput['status']): string {
 registerAgentToolService(IUpdateGoalTool, UpdateGoalTool, {
   name: 'UpdateGoal',
   domain: 'goal',
-  when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',
 });

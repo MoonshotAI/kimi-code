@@ -1,5 +1,4 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
@@ -89,7 +88,6 @@ export class SetGoalBudgetTool implements ISetGoalBudgetTool {
 registerAgentToolService(ISetGoalBudgetTool, SetGoalBudgetTool, {
   name: 'SetGoalBudget',
   domain: 'goal',
-  when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',
 });
 
 function normalizeBudgetInput(input: SetGoalBudgetToolInput): SetGoalBudgetToolInput {

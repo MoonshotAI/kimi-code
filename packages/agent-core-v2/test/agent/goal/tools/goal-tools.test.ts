@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { ServicesAccessor } from '#/_base/di/instantiation';
 import type { ToolCall } from '#/kosong/contract/message';
 import {
   compileToolArgsValidator,
@@ -422,29 +421,58 @@ describe('goal tools', () => {
   }
 });
 
-describe('goal tool main-agent gating', () => {
-  const gatedTools = [
+describe('goal tool registration surface', () => {
+  const surfaceTools = [
     ['CreateGoalTool', CreateGoalTool],
     ['GetGoalTool', GetGoalTool],
     ['SetGoalBudgetTool', SetGoalBudgetTool],
     ['UpdateGoalTool', UpdateGoalTool],
   ] as const;
 
-  function accessorFor(agentId: string): ServicesAccessor {
-    const scopeContext: IAgentScopeContext = {
-      _serviceBrand: undefined,
-      agentId,
-      scope: () => '',
-    };
-    return { get: () => scopeContext } as unknown as ServicesAccessor;
-  }
-
-  it.each(gatedTools)('%s is contributed with a main-agent-only guard', (name, ctor) => {
+  it.each(surfaceTools)('%s is contributed without an agent-identity gate', (name, ctor) => {
     const contribution = getAgentToolContributions().find((c) => c.ctor === ctor);
     expect(contribution, `${name} contribution`).toBeDefined();
-    const when = contribution?.options.when;
-    expect(when, `${name} must gate on agent identity`).toBeDefined();
-    expect(when?.(accessorFor('main'))).toBe(true);
-    expect(when?.(accessorFor('sub-1'))).toBe(false);
+    expect(
+      contribution?.options.when,
+      `${name} must not gate registration on agent identity: forked agents inherit the caller's ` +
+        'context and must rebuild an identical tool surface; subagent authority is rejected at execution time',
+    ).toBeUndefined();
   });
+
+  it('registers goal tools for a subagent and rejects them at execution time', async () => {
+    const subCtx = createTestAgent(
+      agentService(IAgentScopeContext, {
+        _serviceBrand: undefined,
+        agentId: 'sub-1',
+        scope: (subKey?: string) =>
+          subKey === undefined ? 'test/agents/sub-1' : `test/agents/sub-1/${subKey}`,
+      }),
+    );
+    try {
+      const tool = subCtx.get(IAgentToolRegistryService).resolve('CreateGoal');
+      expect(tool, 'CreateGoal should be registered for a subagent').toBeDefined();
+      const results: ToolExecutionResult[] = [];
+      for await (const result of subCtx
+        .get(IAgentToolExecutorService)
+        .execute([goalToolCall('call_1', 'CreateGoal', { objective: 'work' })], {
+          turnId: 0,
+          signal,
+        })) {
+        results.push(result);
+      }
+      expect(results).toHaveLength(1);
+      expect(results[0]?.result.isError).toBe(true);
+      expect(results[0]?.result.output).toContain('Goals are only supported by the main agent');
+    } finally {
+      await subCtx.dispose();
+    }
+  });
+
+  function goalToolCall(
+    id: string,
+    name: 'CreateGoal' | 'GetGoal' | 'SetGoalBudget' | 'UpdateGoal',
+    args: Record<string, unknown>,
+  ): ToolCall {
+    return { type: 'function', id, name, arguments: JSON.stringify(args) };
+  }
 });
