@@ -447,8 +447,6 @@ describe('OAuthService', () => {
     try {
       await mkdir(bootstrapHome, { recursive: true });
       await writeFile(join(bootstrapHome, 'region'), 'global\n', 'utf-8');
-      // A divergent KIMI_CODE_HOME must not distract the resolver: the host
-      // was bootstrapped with an explicit home, so the marker lives there.
       vi.stubEnv('KIMI_CODE_HOME', envHome);
       vi.stubEnv('KIMI_CODE_OAUTH_HOST', '');
       providers[OAUTH_PROVIDER] = { type: 'kimi' };
