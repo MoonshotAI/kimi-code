@@ -2,7 +2,7 @@
 
 [English version](CONTRIBUTING.md)
 
-感谢你花时间贡献！本项目迭代很快，来自社区的用心贡献让它保持锋利。下面的指南介绍了我们的工作方式，让你的 PR 更顺利地合入。
+感谢你花时间参与贡献！这个项目迭代很快，离不开社区认真的贡献。下面的指南介绍我们的工作方式，帮助你的 PR 顺利合入。
 
 ## 开始之前
 
@@ -82,9 +82,7 @@ PR 标题由 `pr-title-checker` 工作流强制校验——不合规的标题会
 
 ## Pull Requests
 
-提 feature PR 时请使用 [PR 模板](.github/pull_request_template.md)。
-
-PR 标题必须遵循 [Conventional Commits](#提交规范)；每个 PR 的 CI 会运行 `pnpm lint`、`pnpm typecheck` 和 `pnpm test`。行为变更时请同步更新 `docs/` 下的用户文档——使用编程 agent 时使用 `gen-docs` 技能。
+PR 会自动套用 [PR 模板](.github/pull_request_template.md)。PR 标题必须遵循 [Conventional Commits](#提交规范)；每个 PR 的 CI 会运行 `pnpm lint`、`pnpm typecheck` 和 `pnpm test`。行为变更时请同步更新 `docs/` 下的用户文档——使用编程 agent 时使用 `gen-docs` 技能。
 
 ## 代码风格
 
