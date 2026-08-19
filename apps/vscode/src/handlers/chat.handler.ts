@@ -182,8 +182,11 @@ const steerChat: Handler<{ content: string | ContentPart[] }, { ok: boolean }> =
 const compactContext: Handler<void, { ok: boolean }> = async (_, ctx) => {
   const runtime = ctx.getSession();
   if (runtime === undefined || runtime.isBusy) return { ok: false };
-  await runtime.session.compact();
-  return { ok: true };
+  // Session.compact() only launches the background compaction worker on the
+  // v2 runtime; wait for the completed/cancelled event so a retry never
+  // resends into a still-full context.
+  const result = await runtime.runCompaction();
+  return { ok: result === "completed" };
 };
 
 const resetSession: Handler<void, { ok: boolean }> = async (_, ctx) => {

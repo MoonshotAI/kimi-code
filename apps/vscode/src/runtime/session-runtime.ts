@@ -56,8 +56,9 @@ interface SuppressedError {
   readonly message: string;
 }
 
-interface PendingHostCompaction {
-  readonly actionId: number;
+interface PendingCompaction {
+  /** Set when the compaction is driven by a host action (e.g. `/compact`). */
+  readonly actionId?: number;
   readonly resolve: (result: "completed" | "cancelled") => void;
   readonly reject: (error: unknown) => void;
 }
@@ -82,7 +83,7 @@ export class SessionRuntime {
   private hostActionSequence = 0;
   private activeHostActionId: number | undefined;
   private readonly cancelledHostActions = new Set<number>();
-  private pendingHostCompaction: PendingHostCompaction | undefined;
+  private pendingCompaction: PendingCompaction | undefined;
   private readonly activeWorkSettledWaiters = new Set<() => void>();
   private exclusiveActionActive = false;
   private readonly terminalKeys = new Set<string>();
@@ -295,7 +296,31 @@ export class SessionRuntime {
     if (!this.hostActionActive || actionId !== this.activeHostActionId) {
       throw new Error("The host action is no longer active.");
     }
-    if (this.pendingHostCompaction !== undefined) {
+    const result = await this.startCompaction(actionId, instruction);
+    if (result === "cancelled") {
+      throw new Error("Context compaction was cancelled.");
+    }
+  }
+
+  /**
+   * Compact outside a host action (the Webview's "Compact & Retry" recovery).
+   * On the v2 runtime `Session.compact()` only launches the background
+   * summarizer and returns immediately, so this resolves only when the
+   * engine reports the compaction completed or was cancelled.
+   */
+  async runCompaction(): Promise<"completed" | "cancelled"> {
+    this.ensureOpen();
+    if (this.isBusy) {
+      throw new Error(ALREADY_GENERATING_MESSAGE);
+    }
+    return this.startCompaction(undefined);
+  }
+
+  private async startCompaction(
+    actionId: number | undefined,
+    instruction?: string,
+  ): Promise<"completed" | "cancelled"> {
+    if (this.pendingCompaction !== undefined) {
       throw new Error("A context compaction is already running.");
     }
 
@@ -305,7 +330,7 @@ export class SessionRuntime {
       resolveCompletion = resolve;
       rejectCompletion = reject;
     });
-    this.pendingHostCompaction = {
+    this.pendingCompaction = {
       actionId,
       resolve: resolveCompletion,
       reject: rejectCompletion,
@@ -314,16 +339,13 @@ export class SessionRuntime {
     try {
       await this.session.compact(instruction === undefined ? {} : { instruction });
     } catch (error) {
-      if (this.pendingHostCompaction?.actionId === actionId) {
-        this.pendingHostCompaction = undefined;
+      if (this.pendingCompaction?.actionId === actionId) {
+        this.pendingCompaction = undefined;
         rejectCompletion(error);
       }
     }
 
-    const result = await completion;
-    if (result === "cancelled") {
-      throw new Error("Context compaction was cancelled.");
-    }
+    return completion;
   }
 
   async cancel(): Promise<void> {
@@ -395,8 +417,8 @@ export class SessionRuntime {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    this.pendingHostCompaction?.reject(new Error("Session closed during context compaction."));
-    this.pendingHostCompaction = undefined;
+    this.pendingCompaction?.reject(new Error("Session closed during context compaction."));
+    this.pendingCompaction = undefined;
     this.reverseRpc.cancelAll("Session closed");
     this.unsubscribe();
     this.session.setApprovalHandler(undefined);
@@ -440,9 +462,9 @@ export class SessionRuntime {
     if (this.closed) return;
 
     if (event.type === "compaction.completed" || event.type === "compaction.cancelled") {
-      const pending = this.pendingHostCompaction;
+      const pending = this.pendingCompaction;
       if (pending !== undefined) {
-        this.pendingHostCompaction = undefined;
+        this.pendingCompaction = undefined;
         pending.resolve(event.type === "compaction.completed" ? "completed" : "cancelled");
       }
     }
