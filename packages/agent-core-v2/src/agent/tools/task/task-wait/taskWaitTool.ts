@@ -63,10 +63,19 @@ export function waitForProgressUpdate(
   return {
     kind: 'status',
     text:
-      `Waiting ${String(elapsedS)}s / ${String(args.timeout)}s · ` +
+      `Waiting ${formatWaitSeconds(elapsedS)} / ${formatWaitSeconds(args.timeout)} · ` +
       `${String(runningCount)} background task${runningCount === 1 ? '' : 's'} still running`,
     replace: true,
   };
+}
+
+function formatWaitSeconds(totalSeconds: number): string {
+  if (totalSeconds < 60) return `${String(totalSeconds)}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return `${String(minutes)}m ${seconds.toString().padStart(2, '0')}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${String(hours)}h ${(minutes % 60).toString().padStart(2, '0')}m`;
 }
 
 export interface WaitForProgressHandle {

@@ -1038,13 +1038,16 @@ describe('WaitForTool', () => {
     expect(update).toMatchObject({
       kind: 'status',
       replace: true,
-      text: 'Waiting 30s / 600s · 2 background tasks still running',
+      text: 'Waiting 30s / 10m 00s · 2 background tasks still running',
     });
     expect(waitForProgressUpdate({ timeout: 600 }, 1, 1_000, 31_000).text).toContain(
       '1 background task still running',
     );
     expect(waitForProgressUpdate({ timeout: 600 }, 0, 1_000, 31_000).text).toContain(
       '0 background tasks still running',
+    );
+    expect(waitForProgressUpdate({ timeout: 600 }, 1, 1_000, 76_000).text).toContain(
+      'Waiting 1m 15s / 10m 00s',
     );
   });
 
@@ -1061,7 +1064,7 @@ describe('WaitForTool', () => {
       expect.objectContaining({
         kind: 'status',
         replace: true,
-        text: 'Waiting 30s / 600s · 1 background task still running',
+        text: expect.stringMatching(/^Waiting 3\ds \/ 10m 00s · 1 background task still running$/),
       }),
     );
   });
