@@ -7,13 +7,13 @@ import {
   CapabilityChanged,
   IConfigService,
   IEventService,
+  IOAuthService,
   IProviderDiscoveryService,
   ISessionIndex,
   ISessionIndexMirror,
   ICapabilityService,
   IPluginService,
   IWorkspaceService,
-  KIMI_CODE_PLUGIN_MARKETPLACE_URL,
   PluginChanged,
   logSeed,
   resolveConfigPath,
@@ -25,6 +25,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import {
   createKimiDefaultHeaders,
+  kimiRegionProfile,
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
 import { createAsyncApiDocument } from './protocol/asyncapi';
@@ -451,10 +452,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     enableShutdown,
     enableTerminals,
     guiStore,
-    pluginMarketplaceUrl:
-      opts.pluginMarketplaceUrl ??
-      process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] ??
-      KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+    pluginMarketplaceUrl: (() => {
+      const configured = opts.pluginMarketplaceUrl ?? process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'];
+      if (configured !== undefined) return () => configured;
+      return () =>
+        `${kimiRegionProfile(core.accessor.get(IOAuthService).getRegion()).cdnBase}/plugins/marketplace.json`;
+    })(),
     pluginMarketplaceIsDefault:
       opts.pluginMarketplaceUrl === undefined &&
       (process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] === undefined ||
