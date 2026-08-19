@@ -36,6 +36,11 @@ import SWARM_MODE_ENTER_REMINDER from '../../../src/features/swarm/agent/enter-r
 import { swarmKey } from '#/features/swarm/swarmOps';
 import { AgentSwarmToolInputSchema } from '#/features/swarm/tools/agent-swarm/agent-swarm';
 import { AgentSwarmTool } from '#/features/swarm/tools/agent-swarm/agentSwarmTool';
+import {
+  FORK_WITH_MODEL_UNAVAILABLE,
+  FORK_WITH_RESUME_UNAVAILABLE,
+  FORK_WITH_TYPE_UNAVAILABLE,
+} from '#/session/subagent/spawn';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -1272,5 +1277,96 @@ describe('AgentSwarmTool', () => {
       ].join('\n'),
     );
     expect(result.isError).toBeUndefined();
+  });
+
+  it('rejects fork combined with resume_agent_ids', async () => {
+    const host = mockSwarmHost();
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubFlag(true), stubCallerProfile()), stubCallerProfile());
+
+    const result = await executeTool(
+      tool,
+      context({
+        description: 'Continue review',
+        resume_agent_ids: { 'agent-old-1': 'Continue previous review A' },
+        fork: true,
+      }),
+    );
+
+    expect(result).toMatchObject({ isError: true, output: FORK_WITH_RESUME_UNAVAILABLE });
+    expect(host.swarmService.run).not.toHaveBeenCalled();
+  });
+
+  it('rejects fork with a different subagent type', async () => {
+    const host = mockSwarmHost();
+    const callerProfile = stubCallerProfile({ profileName: 'orchestrator' });
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubFlag(true), callerProfile), callerProfile);
+
+    const result = await executeTool(
+      tool,
+      context({
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+        subagent_type: 'coder',
+        fork: true,
+      }),
+    );
+
+    expect(result).toMatchObject({ isError: true, output: FORK_WITH_TYPE_UNAVAILABLE });
+    expect(host.swarmService.run).not.toHaveBeenCalled();
+  });
+
+  it('rejects fork with a model override', async () => {
+    const host = mockSwarmHost();
+    const callerProfile = stubCallerProfile({ profileName: 'orchestrator', modelAlias: 'main-model' });
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubFlag(true), callerProfile), callerProfile);
+
+    const result = await executeTool(
+      tool,
+      context({
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+        model: 'provider/fast',
+        fork: true,
+      }),
+    );
+
+    expect(result).toMatchObject({ isError: true, output: FORK_WITH_MODEL_UNAVAILABLE });
+    expect(host.swarmService.run).not.toHaveBeenCalled();
+  });
+
+  it('spawns item subagents with a fork plan when fork is true', async () => {
+    const host = mockSwarmHost();
+    const callerProfile = stubCallerProfile({
+      profileName: 'orchestrator',
+      modelAlias: 'main-model',
+      thinkingLevel: 'high',
+    });
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubFlag(true), callerProfile), callerProfile);
+
+    const result = await executeTool(
+      tool,
+      context({
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+        fork: true,
+      }),
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(host.swarmService.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tasks: [
+          expect.objectContaining({
+            plan: { profileName: 'orchestrator', model: 'main-model', thinking: 'high', fork: true },
+          }),
+          expect.objectContaining({
+            plan: { profileName: 'orchestrator', model: 'main-model', thinking: 'high', fork: true },
+          }),
+        ],
+      }),
+    );
   });
 });

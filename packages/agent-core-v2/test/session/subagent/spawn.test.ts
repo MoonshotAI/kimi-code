@@ -30,6 +30,8 @@ import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import {
   FORK_CONTEXT_NOTICE,
+  type SpawnedSubagent,
+  type SpawnSubagentOptions,
   type SubagentSpawnPlan,
   type SubagentSpawnPlanInput,
 } from '#/session/subagent/spawn';
@@ -213,6 +215,37 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     throw new Error('planSpawn did not throw');
   }
 
+  async function spawnError(
+    svc: ISessionSubagentService,
+    options: SpawnSubagentOptions,
+  ): Promise<Error2> {
+    try {
+      await svc.spawn(options);
+    } catch (error) {
+      if (!isError2(error)) throw error;
+      return error;
+    }
+    throw new Error('spawn did not throw');
+  }
+
+  function spawnNonForkChild(svc: ISessionSubagentService): Promise<SpawnedSubagent> {
+    return svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'coder', model: 'provider/fast', thinking: 'low', fork: false },
+      labels: { parentAgentId: 'main' },
+      prompt: 'Review the file',
+    });
+  }
+
+  function spawnForkChild(svc: ISessionSubagentService): Promise<SpawnedSubagent> {
+    return svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'orchestrator', model: 'main-model', thinking: 'high', fork: true },
+      labels: { parentAgentId: 'main' },
+      prompt: 'Continue the analysis',
+    });
+  }
+
   it('rejects an unknown subagent type', async () => {
     const svc = service();
 
@@ -262,8 +295,25 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(error.message).toContain('comes from [secondary_model.models]');
   });
 
-  it('fork skips the allowlist and unknown-profile checks and inherits the caller binding', async () => {
-    callerData = { ...callerData, subagents: [] };
+  it('skips the allowlist check when forking', async () => {
+    callerData = { ...callerData, profileName: 'coder', subagents: ['explore'] };
+    const svc = service();
+
+    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, fork: true });
+
+    expect(plan.profileName).toBe('coder');
+  });
+
+  it('skips the unknown-profile check when forking', async () => {
+    callerData = { ...callerData, profileName: 'ghost' };
+    const svc = service();
+
+    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, fork: true });
+
+    expect(plan.profileName).toBe('ghost');
+  });
+
+  it('returns the caller binding when forking', async () => {
     const svc = service();
 
     const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, fork: true });
@@ -276,7 +326,47 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     });
   });
 
-  it('spawn creates the child with the plan binding, labels, and the lease runtime id', async () => {
+  it('creates the child with the plan binding when the plan is not a fork', async () => {
+    const svc = service();
+
+    await spawnNonForkChild(svc);
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: { profile: 'coder', model: 'provider/fast', thinking: 'low' },
+      }),
+    );
+    expect(forkAgent).not.toHaveBeenCalled();
+  });
+
+  it('creates the child with the task labels when the plan is not a fork', async () => {
+    const svc = service();
+
+    await spawnNonForkChild(svc);
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ labels: { parentAgentId: 'main' } }),
+    );
+  });
+
+  it('creates the child on the acquired runtime lease', async () => {
+    const svc = service();
+
+    await spawnNonForkChild(svc);
+
+    expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ runtimeId: 'acp:s1' }));
+  });
+
+  it('inherits the caller permission mode and user tools', async () => {
+    const svc = service();
+
+    await spawnNonForkChild(svc);
+
+    expect(createdPermissionMode.setMode).toHaveBeenCalledWith('auto');
+    expect(createdUserTools.inheritUserTools).toHaveBeenCalledWith(callerUserTools);
+  });
+
+  it('applies the profile prompt prefix to the spawned prompt', async () => {
     profiles = [
       normalizeAgentProfile({
         name: 'coder',
@@ -286,63 +376,74 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       }),
     ];
     const svc = service();
-    const plan: SubagentSpawnPlan = {
-      profileName: 'coder',
-      model: 'provider/fast',
-      thinking: 'low',
-      fork: false,
-    };
 
-    const spawned = await svc.spawn({
-      callerAgentId: CALLER_ID,
-      plan,
-      labels: { parentAgentId: 'main' },
-      prompt: 'Review the file',
-    });
+    const spawned = await spawnNonForkChild(svc);
 
-    expect(acquireRuntime).toHaveBeenCalledWith(['process']);
-    expect(createAgent).toHaveBeenCalledWith({
-      binding: { profile: 'coder', model: 'provider/fast', thinking: 'low' },
-      labels: { parentAgentId: 'main' },
-      runtimeId: 'acp:s1',
-    });
-    expect(forkAgent).not.toHaveBeenCalled();
-    expect(createdPermissionMode.setMode).toHaveBeenCalledWith('auto');
-    expect(createdUserTools.inheritUserTools).toHaveBeenCalledWith(callerUserTools);
     expect(spawned).toEqual({
       agentId: 'agent-child',
       profileName: 'coder',
       model: 'provider/fast',
       promptText: 'FIXED-PREFIX\n\nReview the file',
     });
+  });
+
+  it('releases the runtime lease after spawn', async () => {
+    const svc = service();
+
+    await spawnNonForkChild(svc);
+
     expect(lease.dispose).toHaveBeenCalled();
   });
 
-  it('spawn fork delegates to lifecycle.fork and prefixes the prompt with the fork notice', async () => {
+  it('delegates to lifecycle.fork with the caller labels when the plan is a fork', async () => {
     const svc = service();
-    const plan: SubagentSpawnPlan = {
-      profileName: 'orchestrator',
-      model: 'main-model',
-      thinking: 'high',
-      fork: true,
-    };
 
-    const spawned = await svc.spawn({
-      callerAgentId: CALLER_ID,
-      plan,
-      labels: { parentAgentId: 'main' },
-      prompt: 'Continue the analysis',
-    });
+    await spawnForkChild(svc);
 
     expect(forkAgent).toHaveBeenCalledWith('main', { labels: { parentAgentId: 'main' } });
     expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it('prefixes the prompt with the fork notice when the plan is a fork', async () => {
+    const svc = service();
+
+    const spawned = await spawnForkChild(svc);
+
     expect(spawned).toEqual({
       agentId: 'agent-fork',
       profileName: 'orchestrator',
       model: 'main-model',
       promptText: `${FORK_CONTEXT_NOTICE}\n\nContinue the analysis`,
     });
+  });
+
+  it('releases the runtime lease after a fork spawn', async () => {
+    const svc = service();
+
+    await spawnForkChild(svc);
+
     expect(lease.dispose).toHaveBeenCalled();
+  });
+
+  it('wraps a create rejection with the secondary-model config hint', async () => {
+    createAgent.mockRejectedValueOnce(
+      new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        'Model "provider/bad" is not configured in config.toml.',
+        { details: { model: 'provider/bad' } },
+      ),
+    );
+    const svc = service();
+
+    const error = await spawnError(svc, {
+      callerAgentId: CALLER_ID,
+      plan: { profileName: 'coder', model: 'provider/bad', thinking: 'low', fork: false },
+      prompt: 'Review the file',
+    });
+
+    expect(error.code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect(error.message).toContain('Model "provider/bad" is not configured in config.toml.');
+    expect(error.message).toContain('comes from [secondary_model.models]');
   });
 
   it('spawn throws before creating anything when the caller runtime lease fails', async () => {

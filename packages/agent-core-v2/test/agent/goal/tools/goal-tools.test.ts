@@ -439,22 +439,30 @@ describe('goal tool registration surface', () => {
     ).toBeUndefined();
   });
 
-  it('registers goal tools for a subagent and rejects them at execution time', async () => {
-    const subCtx = createTestAgent(
-      agentService(IAgentScopeContext, {
-        _serviceBrand: undefined,
-        agentId: 'sub-1',
-        scope: (subKey?: string) =>
-          subKey === undefined ? 'test/agents/sub-1' : `test/agents/sub-1/${subKey}`,
-      }),
-    );
+  it('registers the goal tool surface for a subagent', async () => {
+    const subCtx = createSubagentContext();
     try {
-      const tool = subCtx.get(IAgentToolRegistryService).resolve('CreateGoal');
-      expect(tool, 'CreateGoal should be registered for a subagent').toBeDefined();
+      const registry = subCtx.get(IAgentToolRegistryService);
+      for (const name of ['CreateGoal', 'GetGoal', 'SetGoalBudget', 'UpdateGoal']) {
+        expect(registry.resolve(name), `${name} should be registered for a subagent`).toBeDefined();
+      }
+    } finally {
+      await subCtx.dispose();
+    }
+  });
+
+  it.each([
+    ['CreateGoal', { objective: 'work' }],
+    ['GetGoal', {}],
+    ['SetGoalBudget', { value: 20, unit: 'turns' }],
+    ['UpdateGoal', { status: 'complete' }],
+  ] as const)('rejects %s execution when the agent is a subagent', async (name, args) => {
+    const subCtx = createSubagentContext();
+    try {
       const results: ToolExecutionResult[] = [];
       for await (const result of subCtx
         .get(IAgentToolExecutorService)
-        .execute([goalToolCall('call_1', 'CreateGoal', { objective: 'work' })], {
+        .execute([goalToolCall('call_1', name, args)], {
           turnId: 0,
           signal,
         })) {
@@ -467,6 +475,17 @@ describe('goal tool registration surface', () => {
       await subCtx.dispose();
     }
   });
+
+  function createSubagentContext(): TestAgentContext {
+    return createTestAgent(
+      agentService(IAgentScopeContext, {
+        _serviceBrand: undefined,
+        agentId: 'sub-1',
+        scope: (subKey?: string) =>
+          subKey === undefined ? 'test/agents/sub-1' : `test/agents/sub-1/${subKey}`,
+      }),
+    );
+  }
 
   function goalToolCall(
     id: string,

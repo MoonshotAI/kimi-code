@@ -552,10 +552,10 @@ describe('SubagentToolInputSchema', () => {
   });
 
   it('exposes the fork parameter in the JSON schema', () => {
-    const properties = agentSchemaProperties<{ description?: string }>();
+    const properties = agentSchemaProperties<{ type?: string }>();
 
     expect(properties).toHaveProperty('fork');
-    expect(properties['fork']?.description).toContain('snapshot');
+    expect(properties['fork']?.type).toBe('boolean');
   });
 
   it('does not default subagent_type when forking', () => {
@@ -1260,6 +1260,27 @@ describe('Agent tool execution contract', () => {
     expect(lifecycle.run).not.toHaveBeenCalled();
   });
 
+  it('accepts fork with the primary model choice', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => ({ summary: 'child result' }),
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue the analysis',
+      description: 'Fork context',
+      model: 'primary',
+      fork: true,
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('child result');
+    expect(lifecycle.fork).toHaveBeenCalledWith('main', {
+      labels: expect.objectContaining({ parentAgentId: 'main' }),
+    });
+  });
+
   it('launches a fork through the agent lifecycle with subagent labels', async () => {
     const lifecycle = createAgentLifecycleStub({
       createAgentIds: ['agent-child'],
@@ -1279,22 +1300,12 @@ describe('Agent tool execution contract', () => {
     expect(lifecycle.fork).toHaveBeenCalledWith('main', {
       labels: expect.objectContaining({ parentAgentId: 'main' }),
     });
-    expect(lifecycle.run).toHaveBeenCalledWith(
-      'agent-child',
-      {
-        kind: 'prompt',
-        prompt: expect.stringContaining(FORK_CONTEXT_NOTICE),
-      },
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-    expect(lifecycle.run).toHaveBeenCalledWith(
-      'agent-child',
-      {
-        kind: 'prompt',
-        prompt: expect.stringContaining('Continue the analysis'),
-      },
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
+    expect(lifecycle.run).toHaveBeenCalledOnce();
+    const [runAgentId, runRequest] = lifecycle.run.mock.calls[0]!;
+    expect(runAgentId).toBe('agent-child');
+    const runPrompt = runRequest.kind === 'prompt' ? runRequest.prompt : '';
+    expect(runPrompt).toContain(FORK_CONTEXT_NOTICE);
+    expect(runPrompt).toContain('Continue the analysis');
   });
 
   it('forks without requiring the caller profile in the catalog', async () => {
