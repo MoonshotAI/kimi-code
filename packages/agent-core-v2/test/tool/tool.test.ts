@@ -262,6 +262,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
             update: () => {},
             republishStatus: () => {},
             getEffectiveThinkingLevel: () => 'off',
+            getActiveToolNames: () => [],
             isToolActive: () => false,
           } as never;
         }
