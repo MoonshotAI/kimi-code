@@ -82,9 +82,7 @@ This repo uses [changesets](https://github.com/changesets/changesets) to manage 
 
 ## Pull Requests
 
-Use the [PR template](.github/pull_request_template.md) when opening a feature pull request.
-
-PR titles must follow [Conventional Commits](#commit-convention); CI runs `pnpm lint`, `pnpm typecheck`, and `pnpm test` on every PR. Update user-facing docs in `docs/` when behavior changes — use the `gen-docs` skill when working with coding agents.
+Every PR opens with the [PR template](.github/pull_request_template.md). PR titles must follow [Conventional Commits](#commit-convention); CI runs `pnpm lint`, `pnpm typecheck`, and `pnpm test` on every PR. Update user-facing docs in `docs/` when behavior changes — use the `gen-docs` skill when working with coding agents.
 
 ## Code Style
 
