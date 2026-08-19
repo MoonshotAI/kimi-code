@@ -19,6 +19,7 @@ export interface TurnStartedPayload {
   readonly turnId: number;
   readonly origin: PromptOrigin;
   readonly prompt?: string;
+  readonly promptAttachments?: readonly { kind: 'image' | 'video' | 'audio'; fileId: string }[];
 }
 
 export class TurnStarted extends Event2<TurnStartedPayload> {
@@ -38,6 +39,25 @@ export function turnPromptText(
     .map((part) => part.text)
     .join('');
   return text.length > 0 ? text : undefined;
+}
+
+/** Media parts carrying a session-media id become the turn's transcript
+ *  attachments; parts without one (inline base64, bare URLs) cannot be
+ *  referenced back and are skipped. */
+export function turnPromptAttachments(
+  input: readonly ContentPart[],
+): TurnStartedPayload['promptAttachments'] {
+  const attachments: { kind: 'image' | 'video' | 'audio'; fileId: string }[] = [];
+  for (const part of input) {
+    if (part.type === 'image_url' && part.imageUrl.id !== undefined) {
+      attachments.push({ kind: 'image', fileId: part.imageUrl.id });
+    } else if (part.type === 'video_url' && part.videoUrl.id !== undefined) {
+      attachments.push({ kind: 'video', fileId: part.videoUrl.id });
+    } else if (part.type === 'audio_url' && part.audioUrl.id !== undefined) {
+      attachments.push({ kind: 'audio', fileId: part.audioUrl.id });
+    }
+  }
+  return attachments.length > 0 ? attachments : undefined;
 }
 
 export function isDisplayablePromptOrigin(origin: PromptOrigin): boolean {

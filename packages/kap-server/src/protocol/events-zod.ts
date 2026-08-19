@@ -696,6 +696,9 @@ export const turnStartedEventSchema = z.object({
   origin: promptOriginSchema,
   prompt: z.string().optional(),
   promptId: z.string().optional(),
+  promptAttachments: z
+    .array(z.object({ kind: z.enum(['image', 'video', 'audio']), fileId: z.string() }))
+    .optional(),
 });
 
 export const turnEndedEventSchema = z.object({
