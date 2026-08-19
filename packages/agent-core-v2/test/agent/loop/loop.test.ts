@@ -758,15 +758,16 @@ describe('Agent loop', () => {
     );
   });
 
-  it('omits the turn.started prompt for system-triggered turns', async () => {
+  it('omits the turn.started prompt for system-triggered turns except goal continuations', async () => {
     const prompts: Array<string | undefined> = [];
     const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
       prompts.push(event.prompt);
     });
     ctx.mockNextResponse({ type: 'text', text: 'continued' });
+    ctx.mockNextResponse({ type: 'text', text: 'subagent work' });
     ctx.mockNextResponse({ type: 'text', text: 'hi there' });
 
-    const system = (
+    const goal = (
       await loop.enqueue(
         new MessageStepRequest(
           {
@@ -779,12 +780,28 @@ describe('Agent loop', () => {
         ),
       ).assigned
     ).turn;
-    await system.result;
+    await goal.result;
+    const subagent = (
+      await loop.enqueue(
+        new MessageStepRequest(
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'subagent hidden prompt' }],
+            toolCalls: [],
+            origin: { kind: 'system_trigger', name: 'subagent' },
+          },
+          { admission: 'newTurn' },
+        ),
+      ).assigned
+    ).turn;
+    await subagent.result;
     const user = (await loop.enqueue(nextTurnMessage('hi')).assigned).turn;
     await user.result;
     subscription.dispose();
 
-    expect(prompts).toEqual([undefined, 'hi']);
+    // Goal continuations carry their prompt (chat UIs render it as a visible
+    // bubble, like a cron fire); other system triggers stay hidden.
+    expect(prompts).toEqual(['continue the goal', undefined, 'hi']);
   });
 });
 
