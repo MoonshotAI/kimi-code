@@ -13,7 +13,19 @@ import { WebSocket, type RawData } from 'ws';
 
 import { getVersion } from '../../version';
 
-export const REMOTE_CONTROL_RELAY_ORIGIN = 'https://api.kimi.com/coding-relay';
+export const REMOTE_CONTROL_RELAY_ORIGIN = 'https://code-rc.kimi.com';
+
+export const REMOTE_CONTROL_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL';
+
+const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
+
+export function isRemoteControlEnabled(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  const truthy = (key: string): boolean =>
+    TRUTHY_ENV_VALUES.has((env[key] ?? '').trim().toLowerCase());
+  return truthy('KIMI_CODE_EXPERIMENTAL_FLAG') || truthy(REMOTE_CONTROL_FLAG_ENV);
+}
 
 const MAX_HTTP_HEADER_BYTES = 64 * 1024;
 const MAX_HTTP_REQUEST_BYTES = 10 * 1024 * 1024;
@@ -94,7 +106,7 @@ export function buildRemoteControlUrl(
 ): string {
   const url = new URL(relayOrigin);
   const relayPath = url.pathname.replace(/\/+$/, '');
-  const devicePath = `${relayPath}/code/rc/devices/${encodeURIComponent(deviceId)}`;
+  const devicePath = `${relayPath}/devices/${encodeURIComponent(deviceId)}`;
   url.pathname =
     sessionId === undefined
       ? `${devicePath}/`
@@ -188,6 +200,7 @@ export function rewriteRemoteControlResponse(
     text = text.replaceAll("'/assets/", `'${normalizedPrefix}/assets/`);
     text = text.replaceAll('(/assets/', `(${normalizedPrefix}/assets/`);
     text = text.replaceAll('"/sessions/"', `"${normalizedPrefix}/sessions/"`);
+    text = text.replaceAll('return"/"+', `return"${normalizedPrefix}/"+`);
     return Buffer.from(text);
   }
   return body;
@@ -479,20 +492,27 @@ class RemoteControlClient {
 
     let local: WebSocket | undefined;
     let tunnel: WebSocket | undefined;
+    const earlyLocalFrames: [RawData, boolean][] = [];
     try {
       local = await connectWebSocket(
         localWebSocketUrl(this.localOrigin, path),
         this.localServerToken,
         relayHeaders(payload['headers']),
+        earlyLocalFrames,
       );
       tunnel = await this.connectRelay(`/v1/remote/stream/${encodeURIComponent(streamId)}`);
       if (this.stopped || this.management?.readyState !== WebSocket.OPEN) {
         throw new Error('management connection closed');
       }
       this.streams.set(streamId, { local, tunnel });
-      bridgeSockets(local, tunnel, () => {
-        if (this.streams.get(streamId)?.local === local) this.streams.delete(streamId);
-      });
+      bridgeSockets(
+        local,
+        tunnel,
+        () => {
+          if (this.streams.get(streamId)?.local === local) this.streams.delete(streamId);
+        },
+        earlyLocalFrames,
+      );
       this.sendOpenStreamResult(streamId, true);
     } catch (error) {
       local?.close();
@@ -553,7 +573,7 @@ class RemoteControlClient {
 
   private publicPrefix(): string {
     const relayPath = new URL(this.relayOrigin).pathname.replace(/\/+$/, '');
-    return `${relayPath}/code/rc/devices/${encodeURIComponent(this.deviceId)}`;
+    return `${relayPath}/devices/${encodeURIComponent(this.deviceId)}`;
   }
 
   private async waitForReconnect(ms: number): Promise<void> {
@@ -574,29 +594,41 @@ async function connectWebSocket(
   url: string,
   token: string,
   headers: Record<string, string> = {},
+  earlyFrames?: [RawData, boolean][],
 ): Promise<WebSocket> {
   const protocol = `kimi-code.bearer.${token}`;
   if (isWebSocketProtocolToken(protocol)) {
     try {
-      return await connectWebSocketAttempt(url, [protocol], headers);
+      return await connectWebSocketAttempt(url, [protocol], headers, earlyFrames);
     } catch {}
   }
-  return connectWebSocketAttempt(url, undefined, {
-    ...headers,
-    Authorization: `Bearer ${token}`,
-  });
+  return connectWebSocketAttempt(
+    url,
+    undefined,
+    {
+      ...headers,
+      Authorization: `Bearer ${token}`,
+    },
+    earlyFrames,
+  );
 }
 
 function connectWebSocketAttempt(
   url: string,
   protocols: string[] | undefined,
   headers: Record<string, string>,
+  earlyFrames?: [RawData, boolean][],
 ): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url, protocols, {
       headers,
       handshakeTimeout: REGISTER_TIMEOUT_MS,
     });
+    if (earlyFrames !== undefined) {
+      socket.on('message', (data, isBinary) => {
+        earlyFrames.push([data, isBinary]);
+      });
+    }
     let settled = false;
     const cleanup = (): void => {
       socket.off('open', onOpen);
@@ -700,7 +732,9 @@ function requestLocalHttp(
             response.headers['content-encoding'] === undefined
               ? rewriteRemoteControlResponse(contentType, receivedBody, publicPrefix)
               : receivedBody;
-          const headers = filterResponseHeaders(response.rawHeaders);
+          const rewritten = body !== receivedBody;
+          const headers = filterResponseHeaders(response.rawHeaders, rewritten);
+          if (rewritten) headers.push('Cache-Control', 'no-cache');
           headers.push('Content-Length', String(body.length));
           const statusCode = response.statusCode ?? 502;
           const statusMessage = response.statusMessage ?? 'Bad Gateway';
@@ -719,7 +753,7 @@ function requestLocalHttp(
   });
 }
 
-function filterResponseHeaders(rawHeaders: readonly string[]): string[] {
+function filterResponseHeaders(rawHeaders: readonly string[], blockCacheControl = false): string[] {
   const connectionHeaders = new Set<string>();
   for (let index = 0; index < rawHeaders.length; index += 2) {
     if (rawHeaders[index]!.toLowerCase() === 'connection') {
@@ -731,9 +765,11 @@ function filterResponseHeaders(rawHeaders: readonly string[]): string[] {
   const result: string[] = [];
   for (let index = 0; index < rawHeaders.length; index += 2) {
     const name = rawHeaders[index]!;
-    if (BLOCKED_RESPONSE_HEADERS.has(name.toLowerCase()) || connectionHeaders.has(name.toLowerCase())) {
+    const lower = name.toLowerCase();
+    if (BLOCKED_RESPONSE_HEADERS.has(lower) || connectionHeaders.has(lower)) {
       continue;
     }
+    if (blockCacheControl && lower === 'cache-control') continue;
     result.push(name, rawHeaders[index + 1]!);
   }
   return result;
@@ -755,7 +791,12 @@ function relayHeaders(value: unknown): Record<string, string> {
   return Object.fromEntries(entries);
 }
 
-function bridgeSockets(left: WebSocket, right: WebSocket, onClose: () => void): void {
+function bridgeSockets(
+  left: WebSocket,
+  right: WebSocket,
+  onClose: () => void,
+  earlyLeftFrames?: [RawData, boolean][],
+): void {
   let closed = false;
   const closeBoth = (code = 1000, reason = Buffer.alloc(0)): void => {
     if (closed) return;
@@ -765,6 +806,12 @@ function bridgeSockets(left: WebSocket, right: WebSocket, onClose: () => void): 
     if (left.readyState === WebSocket.OPEN) left.close(safeCode, reason);
     if (right.readyState === WebSocket.OPEN) right.close(safeCode, reason);
   };
+  if (earlyLeftFrames !== undefined) {
+    left.removeAllListeners('message');
+    for (const [data, isBinary] of earlyLeftFrames) {
+      if (right.readyState === WebSocket.OPEN) right.send(data, { binary: isBinary });
+    }
+  }
   left.on('message', (data, isBinary) => {
     if (right.readyState === WebSocket.OPEN) right.send(data, { binary: isBinary });
   });

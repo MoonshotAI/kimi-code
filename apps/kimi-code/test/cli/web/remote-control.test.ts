@@ -15,6 +15,7 @@ import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import {
   buildRemoteControlUrl,
   filterForwardRequestHeaders,
+  isRemoteControlEnabled,
   parseRawHttpRequest,
   rewriteRemoteControlResponse,
   startRemoteControl,
@@ -36,18 +37,33 @@ afterEach(async () => {
   while (cleanups.length > 0) await cleanups.pop()!();
 });
 
+describe('Remote Control experimental flag', () => {
+  it('is off unless the per-feature env or the master switch is truthy', () => {
+    expect(isRemoteControlEnabled({})).toBe(false);
+    expect(isRemoteControlEnabled({ KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL: '0' })).toBe(false);
+    expect(isRemoteControlEnabled({ KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL: '1' })).toBe(true);
+    expect(isRemoteControlEnabled({ KIMI_CODE_EXPERIMENTAL_FLAG: 'true' })).toBe(true);
+    expect(
+      isRemoteControlEnabled({
+        KIMI_CODE_EXPERIMENTAL_FLAG: '0',
+        KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL: 'yes',
+      }),
+    ).toBe(true);
+  });
+});
+
 describe('Remote Control URLs', () => {
   it('builds the public device entry without a local token', () => {
     const url = buildRemoteControlUrl('device/one');
     expect(url).toBe(
-      'https://api.kimi.com/coding-relay/code/rc/devices/device%2Fone/?rc=1&from=kimi_code_cli',
+      'https://code-rc.kimi.com/devices/device%2Fone/?rc=1&from=kimi_code_cli',
     );
     expect(url).not.toContain('token');
   });
 
   it('builds an encoded session deep link before the query', () => {
     expect(buildRemoteControlUrl('device-1', 'session/a b')).toBe(
-      'https://api.kimi.com/coding-relay/code/rc/devices/device-1/sessions/session%2Fa%20b?rc=1&from=kimi_code_cli',
+      'https://code-rc.kimi.com/devices/device-1/sessions/session%2Fa%20b?rc=1&from=kimi_code_cli',
     );
   });
 });
@@ -81,7 +97,7 @@ describe('Remote Control HTTP forwarding', () => {
   });
 
   it('rewrites HTML, JavaScript, and CSS under the device prefix', () => {
-    const prefix = '/coding-relay/code/rc/devices/device-1';
+    const prefix = '/coding-relay/devices/device-1';
     const html = rewriteRemoteControlResponse(
       'text/html; charset=utf-8',
       Buffer.from('<html><head></head><body><script src="/boot.js"></script><a href="/x">x</a></body></html>'),
@@ -94,10 +110,14 @@ describe('Remote Control HTTP forwarding', () => {
 
     const js = rewriteRemoteControlResponse(
       'text/javascript',
-      Buffer.from('const a="/assets/a.js";const s="/sessions/";'),
+      Buffer.from(
+        'const a="/assets/a.js";const s="/sessions/";const p=function(e){return"/"+e};',
+      ),
       prefix,
     ).toString();
-    expect(js).toBe(`const a="${prefix}/assets/a.js";const s="${prefix}/sessions/";`);
+    expect(js).toBe(
+      `const a="${prefix}/assets/a.js";const s="${prefix}/sessions/";const p=function(e){return"${prefix}/"+e};`,
+    );
 
     const css = rewriteRemoteControlResponse(
       'text/css',
@@ -247,6 +267,7 @@ describe('Remote Control tunnel', () => {
       localHttpRequest = request;
       response.writeHead(200, {
         'Content-Type': 'text/html',
+        'Cache-Control': 'public, max-age=31536000, immutable',
         Connection: 'X-Remove',
         'X-Remove': 'gone',
       });
@@ -268,6 +289,7 @@ describe('Remote Control tunnel', () => {
     const streamConnections: WebSocket[] = [];
     const registrations: unknown[] = [];
     const managementMessages: unknown[] = [];
+    const streamMessages: string[] = [];
     let localWs: WebSocket | undefined;
 
     managementServer.on('connection', (ws) => {
@@ -282,9 +304,13 @@ describe('Remote Control tunnel', () => {
       });
     });
     httpTunnelServer.on('connection', (ws) => httpConnections.push(ws));
-    streamServer.on('connection', (ws) => streamConnections.push(ws));
+    streamServer.on('connection', (ws) => {
+      streamConnections.push(ws);
+      ws.on('message', (data) => streamMessages.push(rawDataText(data)));
+    });
     localWsServer.on('connection', (ws) => {
       localWs = ws;
+      ws.send('server-hello-frame');
     });
     relayServer.on('upgrade', (request, socket, head) => {
       const pathname = new URL(request.url!, 'http://relay.test').pathname;
@@ -309,7 +335,7 @@ describe('Remote Control tunnel', () => {
     });
 
     expect(registrations).toHaveLength(1);
-    expect(handle.url).toContain('/coding-relay/code/rc/devices/');
+    expect(handle.url).toContain('/coding-relay/devices/');
     expect(handle.url).toContain('?rc=1&from=kimi_code_cli');
 
     const rawRequest = Buffer.from(
@@ -344,7 +370,9 @@ describe('Remote Control tunnel', () => {
     expect(localHttpRequest?.headers['x-hop']).toBeUndefined();
     expect(localHttpRequest?.headers['x-keep']).toBe('yes');
     expect(response).not.toContain('X-Remove');
-    expect(response).toContain(`/coding-relay/code/rc/devices/${handle.deviceId}/boot.js`);
+    expect(response).not.toContain('immutable');
+    expect(response).toContain('Cache-Control: no-cache');
+    expect(response).toContain(`/coding-relay/devices/${handle.deviceId}/boot.js`);
 
     managementConnections[0]!.send(
       JSON.stringify({
@@ -372,6 +400,7 @@ describe('Remote Control tunnel', () => {
       ),
     );
 
+    await waitFor(() => streamMessages.includes('server-hello-frame'));
     const localMessage = nextTextMessage(localWs!);
     streamConnections[0]!.send('from-relay');
     await expect(localMessage).resolves.toBe('from-relay');

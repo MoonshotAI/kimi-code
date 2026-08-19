@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { createServerLogger, startServer, type ServerLogger } from '@moonshot-ai/kap-server';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
-import { type Command } from 'commander';
+import { type Command, Option } from 'commander';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, WEB_USER_AGENT_SUFFIX } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
@@ -36,6 +36,8 @@ import {
 } from './access-urls';
 import { type NetworkAddress } from './networks';
 import {
+  isRemoteControlEnabled,
+  REMOTE_CONTROL_FLAG_ENV,
   startRemoteControl,
   type RemoteControlHandle,
   type RemoteControlOptions,
@@ -161,7 +163,14 @@ export function buildWebCommand(cmd: Command): Command {
       '--web-title <title>',
       'Set a custom browser tab title for this web UI instance (default: "<workspace dir> | Kimi Code").',
     )
-    .option('--rc, --remote-control', 'Expose the web UI through Kimi Remote Control.', false)
+    .addOption(
+      new Option(
+        '--rc, --remote-control',
+        'Expose the web UI through Kimi Remote Control (experimental).',
+      )
+        .default(false)
+        .hideHelp(!isRemoteControlEnabled()),
+    )
     .option('--no-open', 'Do not open the web UI in the default browser.', true)
     .action(async (opts: WebCliOptions) => {
       try {
@@ -178,6 +187,11 @@ export async function handleWebCommand(
   deps: WebCommandDeps = DEFAULT_WEB_COMMAND_DEPS,
 ): Promise<void> {
   const parsed = parseServerOptions(opts);
+  if (opts.remoteControl === true && !isRemoteControlEnabled()) {
+    throw new Error(
+      `--remote-control is experimental: set ${REMOTE_CONTROL_FLAG_ENV}=1 (or KIMI_CODE_EXPERIMENTAL_FLAG=1) to enable it.`,
+    );
+  }
   if (opts.remoteControl === true && parsed.dangerousBypassAuth) {
     throw new Error('--remote-control cannot be combined with --dangerous-bypass-auth.');
   }
@@ -211,7 +225,7 @@ export async function handleWebCommand(
               })
             : formatReadyLine(origin, undefined),
         );
-        deps.stdout.write(`Kimi Remote Control: ${remoteControl.url}\n`);
+        deps.stdout.write(`Kimi Remote Control (experimental): ${remoteControl.url}\n`);
         if (opts.open === true) deps.openUrl(remoteControl.url);
         return;
       }

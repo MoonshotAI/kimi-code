@@ -145,7 +145,7 @@ describe('handleRemoteControlCommand', () => {
     const close = vi.fn(async () => {});
     mocks.startRemoteControl.mockResolvedValue({
       deviceId: 'device-1',
-      url: 'https://api.kimi.com/coding-relay/code/rc/devices/device-1/?rc=1&from=kimi_code_cli',
+      url: 'https://code-rc.kimi.com/devices/device-1/?rc=1&from=kimi_code_cli',
       close,
     });
     mocks.startServerForeground.mockImplementation(
@@ -173,9 +173,10 @@ describe('handleRemoteControlCommand', () => {
       localServerToken: 'local-server-token',
     });
     expect(mocks.openUrl).toHaveBeenCalledWith(
-      'https://api.kimi.com/coding-relay/code/rc/devices/device-1/sessions/ses-1?rc=1&from=kimi_code_cli',
+      'https://code-rc.kimi.com/devices/device-1/sessions/ses-1?rc=1&from=kimi_code_cli',
     );
     const written = writeSpy.mock.calls.map((call) => String(call[0])).join('');
+    expect(written).toContain('Remote Control (experimental):');
     expect(written).not.toContain('local-server-token');
     expect(written).not.toContain('#token=');
     expect(close).toHaveBeenCalledOnce();
