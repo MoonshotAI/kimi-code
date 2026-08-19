@@ -46,6 +46,9 @@ export const STORAGE_KEYS = {
   sidebarCollapsed: 'kimi-web.sidebar-collapsed',
   sidebarWidth: 'kimi-web.sidebar-width',
   sidebarViewMode: 'kimi-web.sidebar-view-mode',
+  // Draggable height cap of the sidebar's pinned section (PinnedSessionList,
+  // useResizable raw px) — UI-only, same family as sidebarWidth.
+  sidebarPinnedHeight: 'kimi-web.sidebar-pinned-height',
   // Desktop-only custom keyboard shortcuts (docs/native-todos.md): action id →
   // canonical binding (null = unassigned; absent = default). lib/keymap.ts.
   shortcutOverrides: 'kimi-web.shortcut-overrides',

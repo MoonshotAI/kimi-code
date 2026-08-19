@@ -2098,7 +2098,7 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 0;
   right: 0;
-  height: 13px;
+  height: var(--p-sidebar-seam-h);
   pointer-events: none;
   opacity: 0;
   transition: opacity var(--duration-base) var(--ease-out);
@@ -2390,7 +2390,7 @@ onBeforeUnmount(() => {
 /* Sessions — scrolling group list. The top gap to the action rows lives on
    the fixed .sessions-head (which carries the seam); this container keeps the
    side inset and the bottom breathing room. Scrolled content clips at the
-   .sessions-head seam. Scrollbar: the 4px ::-webkit-scrollbar below; standard
+   .sessions-head seam. Scrollbar: the thin ::-webkit-scrollbar below; standard
    scrollbar-width would kill it on Chromium (see the global scrollbar block
    in style.css). */
 .sessions {
@@ -2399,7 +2399,7 @@ onBeforeUnmount(() => {
   padding: 0 var(--sb-inset) var(--space-3);
   min-height: 0;
 }
-.sessions::-webkit-scrollbar { width: 4px; }
+.sessions::-webkit-scrollbar { width: var(--space-1); }
 .sessions::-webkit-scrollbar-track { background: transparent; }
 .sessions::-webkit-scrollbar-thumb {
   /* Hidden until the list is scrolled (.scrolling) — an always-visible thumb
@@ -2457,9 +2457,13 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Breathing room between the pinned section and the list label below it. */
+/* Breathing room between the pinned section and the list label below it —
+   matches the label's own padding-bottom (--space-1) so the label sits
+   centred in the gap: the same distance to the pinned rows' bottom edge as
+   to the first session row's top edge. The resize handle straddles the
+   pinned block's bottom edge on its own negative margins and is unaffected. */
 .sessions-head .pinned + .side-section-label {
-  margin-top: var(--space-2);
+  margin-top: var(--space-1);
 }
 /* Section actions (collapse-all, display switcher) are always visible — they
    are the only way to reach the flat/grouped switch and group folding. */

@@ -525,6 +525,10 @@ html[data-color-scheme="dark"] {
      everywhere; the negative margin that lifts it out of the layout flow
      derives from it. */
   --p-scroll-seam-h: 18px;
+  /* The SIDEBAR session list's seam (Sidebar's head/footer veils and the
+     pinned section's edge veils) runs shorter than the chat scroller seam
+     above — a 13px wash that stays subtle against the compact list rows. */
+  --p-sidebar-seam-h: 13px;
 
   /* -- IconButton box sizes (design-system §03) ----------------------------- */
   --icon-button-sm: 26px;

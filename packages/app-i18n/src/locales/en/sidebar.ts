@@ -68,6 +68,7 @@ export default {
   pinned: 'Pinned',
   collapsePinned: 'Collapse pinned',
   expandPinned: 'Expand pinned',
+  resizePinnedAria: 'Resize pinned section height',
   delete: 'Delete',
   removeWorkspace: 'Remove workspace',
   brand: 'Kimi Code',

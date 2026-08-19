@@ -9,11 +9,28 @@
      in Sidebar/WorkspaceGroup). State and persistence live in the client —
      this component renders the list and forwards every intent back up. -->
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../types';
+import type { SessionListRowMeasure } from '@moonshot-ai/app-core/lib';
 import { SESSION_ROW_DRAG_MIME } from '@moonshot-ai/app-core/lib';
-import { loadPinnedCollapsed, savePinnedCollapsed } from '@moonshot-ai/app-core/lib';
+import {
+  loadPinnedCollapsed,
+  isNoopGesture,
+  measureSessionsListRows,
+  pinnedRowsDefaultHeight,
+  pinnedRowsKeyboardTarget,
+  pinnedRowsMaxHeight,
+  pinnedRowsMinHeight,
+  pinnedRowsResizeCeiling,
+  pinnedSectionResizable,
+  safeGetString,
+  savePinnedCollapsed,
+  sessionsListMinHeight,
+  STORAGE_KEYS,
+} from '@moonshot-ai/app-core/lib';
+import { useAppearance } from '@moonshot-ai/app-core';
+import { useResizable } from '@moonshot-ai/app-client/composables';
 import SessionRow from './SessionRow.vue';
 import { Icon, IconButton } from '@moonshot-ai/app-ui';
 
@@ -71,6 +88,438 @@ function expand(): void {
   savePinnedCollapsed(false);
 }
 defineExpose({ expand });
+
+// Height split between the pinned rows and the session list below. While the
+// pinned content fits in a few rows the section keeps its natural height and
+// no handle renders (the CSS 40vh cap governs); past the threshold
+// (pinnedSectionResizable, lib/pinnedSectionLayout) a drag handle appears
+// under the rows and the rows container is capped by the draggable height,
+// persisted per device like the sidebar width. The list below simply takes
+// the space that remains (Sidebar's .sessions is flex:1).
+const resizable = computed(() => !collapsed.value && pinnedSectionResizable(props.sessions.length));
+
+// The drag cap tracks the viewport: a one-time innerHeight read would go stale
+// on window resize (same reactive-window pattern as the terminal panel height
+// in App.vue).
+const viewportHeight = ref(window.innerHeight);
+
+function onWindowResize(): void {
+  viewportHeight.value = window.innerHeight;
+}
+
+onMounted(() => window.addEventListener('resize', onWindowResize));
+onBeforeUnmount(() => window.removeEventListener('resize', onWindowResize));
+
+const pinnedRootEl = ref<HTMLElement | null>(null);
+const pinnedRowsEl = ref<HTMLElement | null>(null);
+
+// The session-list scroller (Sidebar's .sessions): the pinned root's parent
+// is the fixed .sessions-head, whose next sibling is the list.
+function sessionsListEl(): HTMLElement | null {
+  return (pinnedRootEl.value?.parentElement?.nextElementSibling as HTMLElement | null) ?? null;
+}
+
+// Budget (px) shared by the pinned rows and the session list — the sum of the
+// two rendered heights, which is invariant to the split: growing the rows cap
+// shrinks the list by exactly that amount. The drag cap subtracts the list's
+// minimum keep from it (pinnedRowsMaxHeight), so a short window's fixed
+// sidebar chrome can never let the rows squeeze the list away. Undefined
+// until measured / while the rows are unmounted (section folded); the plain
+// viewport cap governs then.
+const splitBudget = ref<number | undefined>(undefined);
+
+function measureSplitBudget(): void {
+  const rows = pinnedRowsEl.value;
+  const sessions = sessionsListEl();
+  if (!rows || !sessions) {
+    splitBudget.value = undefined;
+    return;
+  }
+  splitBudget.value = rows.getBoundingClientRect().height + sessions.getBoundingClientRect().height;
+}
+
+// Rendered metrics of the SESSION list: the first VISIBLE .se row's height,
+// the vertical span to the THIRD visible row's bottom edge, and the
+// container's bottom padding. They feed the list's minimum keep
+// (sessionsListMinHeight) — the span tier naturally includes grouped mode's
+// workspace headers, which a bare row height × 3 would miss. Keeps the last
+// good row measurement when the list renders no rows (empty states).
+const sessionRowHeight = ref<number | null>(null);
+const sessionsRowSpan = ref<number | null>(null);
+const sessionsPaddingY = ref<number | null>(null);
+
+function measureSessionList(): void {
+  const sessions = sessionsListEl();
+  if (!sessions) return;
+  // Collapsed groups keep their rows MOUNTED (height:0 + overflow:hidden for
+  // the fold transition), so DOM presence ≠ visible — flag those rows and let
+  // measureSessionsListRows skip them when picking the first/third row. Rects
+  // are read only for visible rows, and only up to the third one — no per-row
+  // getBoundingClientRect loop.
+  const rows = sessions.querySelectorAll('.se');
+  const measures: SessionListRowMeasure[] = [];
+  let visibleCount = 0;
+  for (let i = 0; i < rows.length && visibleCount < 3; i++) {
+    const row = rows.item(i) as HTMLElement;
+    if (row.closest('.group-sessions.collapsed') !== null) {
+      measures.push({ visible: false, height: 0, viewportBottom: 0 });
+      continue;
+    }
+    visibleCount += 1;
+    const rect = row.getBoundingClientRect();
+    measures.push({ visible: true, height: rect.height, viewportBottom: rect.bottom });
+  }
+  // The list's top padding is 0, so the border-box top IS the content top;
+  // the span is measured in content coordinates (the scroll offset would
+  // otherwise shrink it by scrollTop).
+  const measured = measureSessionsListRows(measures, sessions.getBoundingClientRect().top, sessions.scrollTop);
+  if (measured.firstRowHeight !== null) sessionRowHeight.value = measured.firstRowHeight;
+  sessionsRowSpan.value = measured.spanToThirdRow;
+  // Read the live padding instead of assuming --space-3, so a spacing-scale
+  // retune can't fork the keep from the stylesheet.
+  const pad = Number.parseFloat(globalThis.getComputedStyle(sessions).paddingBottom);
+  sessionsPaddingY.value = Number.isFinite(pad) ? pad : null;
+}
+
+// Any chrome change above the list (window resize, status tabs, font scale)
+// shifts the list's box — observing it keeps the budget current. Split drags
+// fire it too, but the sum is invariant there, so the cap stays stable. The
+// display switch (grouped ↔ flat) REPLACES the rows (single-line ↔ two-line)
+// without moving that box, so a childList+subtree MutationObserver covers
+// what the ResizeObserver can't — subtree because grouped rows live inside
+// each WorkspaceGroup's wrapper, and a group's first session inserts deep;
+// class watching because a workspace fold toggles .group-sessions.collapsed
+// in place, adding and removing no node. The callback only re-measures the
+// list (a few row rects and one padding), so the per-mutation cost stays
+// trivial.
+let budgetObserver: ResizeObserver | null = null;
+let sessionsMutationObserver: MutationObserver | null = null;
+
+// A workspace fold animates .group-sessions' height (WorkspaceGroup's fold
+// transition): the class-flip mutation fires at the animation's START while
+// the groups below are still sliding, and nothing fires at its end — the
+// span would keep the start-of-animation positions. Re-measure once when the
+// height transition settles (never per frame; transitionend bubbles, so one
+// delegated listener on the scroller covers every group).
+function onSessionsTransitionEnd(event: TransitionEvent): void {
+  if (event.propertyName !== 'height') return;
+  if (!(event.target as HTMLElement).classList.contains('group-sessions')) return;
+  measureSessionList();
+}
+
+onMounted(() => {
+  void nextTick(() => {
+    measureSplitBudget();
+    measureSessionList();
+    const sessions = sessionsListEl();
+    if (typeof ResizeObserver === 'function' && sessions) {
+      budgetObserver = new ResizeObserver(measureSplitBudget);
+      budgetObserver.observe(sessions);
+    }
+    if (typeof MutationObserver === 'function' && sessions) {
+      sessionsMutationObserver = new MutationObserver(measureSessionList);
+      sessionsMutationObserver.observe(sessions, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class'],
+      });
+    }
+    sessions?.addEventListener('transitionend', onSessionsTransitionEnd);
+  });
+});
+onBeforeUnmount(() => {
+  budgetObserver?.disconnect();
+  sessionsMutationObserver?.disconnect();
+  sessionsListEl()?.removeEventListener('transitionend', onSessionsTransitionEnd);
+});
+
+// The cap is written imperatively, never via a bound style: Vue rewrites every
+// bound style key on each patch, so an unrelated mid-drag re-render would
+// clobber the live drag value with the stale pre-drag one (the same rule as
+// --preview-w / --terminal-h in App.vue). During a drag useResizable's
+// applyLive writes each frame straight to the DOM; the committed height
+// re-applies once on pointerup via the watch below.
+//
+// liveRowsHeight tracks the per-frame drag value (null off-gesture): on the
+// applyLive path the committed rowsHeight only updates on pointerup, so the
+// handle's aria-valuenow reads the live value to follow the drag.
+const liveRowsHeight = ref<number | null>(null);
+
+function applyRowsHeightLive(height: number): void {
+  liveRowsHeight.value = height;
+  // A frame past the gesture's start point = a real adjustment: freeze the
+  // cap as user-chosen so the end-of-drag commit actually persists.
+  if (gestureStartHeight !== null && height !== gestureStartHeight) {
+    userAdjusted.value = true;
+  }
+  pinnedRowsEl.value?.style.setProperty('max-height', `${height}px`);
+}
+
+// Natural height (px) of the rows content, maintained by
+// updateRowsScrollState below (null before measurement / while folded). A
+// resize gesture never targets positions past it — see the max getter.
+const contentHeight = ref<number | null>(null);
+// Rendered heights (px) of the first TWO pinned rows, same maintenance. The
+// drag floor sums the real boxes (pinnedRowsMinHeight): the second row can
+// be taller (approval/question badges, a PR pill), and rows track the font
+// scale — a fixed default-scale px would do neither.
+const firstRowHeights = ref<(number | null)[]>([]);
+// True while a pointer gesture runs (set/cleared by the handle's pointerdown
+// and the gesture-end watch). Deliberately NOT reactive: the max getter only
+// reads it mid-gesture, where no watcher needs to re-fire on the flip.
+let gestureActive = false;
+
+// Has the user EXPLICITLY chosen a cap? True from the start when a persisted
+// preference exists; flips true mid-gesture on the first frame with real
+// displacement and on a real keyboard step — never on a plain click, a
+// net-zero gesture, or an automatic bounds clamp. While false the cap keeps
+// following the viewport's 40vh default (see the viewportHeight watch) and
+// the persist gate below holds back every storage write, so an unchosen
+// value can neither freeze nor leak into the next session.
+const userAdjusted = ref(safeGetString(STORAGE_KEYS.sidebarPinnedHeight) !== null);
+
+// The two bounds every resize path shares: the floor (two full rows at the
+// current font scale) and the layout cap (viewport/budget). Both bounds
+// computations take the floor as a parameter so min ≤ max always holds — a
+// short window at a large font scale must never invert them. The list's keep
+// is likewise measured (three session rows at the current scale/mode plus
+// the list's bottom padding).
+const rowsMinHeight = computed(() => pinnedRowsMinHeight(firstRowHeights.value));
+const sessionsKeep = computed(() =>
+  sessionsListMinHeight(sessionsRowSpan.value, sessionsPaddingY.value, sessionRowHeight.value),
+);
+const layoutCap = computed(() =>
+  pinnedRowsMaxHeight(viewportHeight.value, splitBudget.value, rowsMinHeight.value, sessionsKeep.value),
+);
+
+const {
+  width: rowsHeight,
+  dragging: resizeDragging,
+  cursor: resizeCursor,
+  clamp: clampRowsHeight,
+  setWidth: setRowsHeight,
+  onPointerDown: onResizePointerDown,
+} = useResizable({
+  storageKey: STORAGE_KEYS.sidebarPinnedHeight,
+  defaultWidth: pinnedRowsDefaultHeight(window.innerHeight),
+  // A getter so the floor tracks font-scale changes after the handle mounts.
+  min: () => rowsMinHeight.value,
+  // Getters so the cap keeps tracking window resizes and sidebar chrome
+  // changes after the handle mounts. While a gesture runs the ceiling also
+  // narrows to the content's natural height: positions past it render
+  // nothing (the rows box is max-height-capped), so the separator, the
+  // persisted cap and aria-valuenow would diverge from what is on screen.
+  // Off-gesture the plain layout cap governs — the committed value must
+  // never be auto-pulled-down just because the content shrank.
+  max: () => {
+    if (!gestureActive) return layoutCap.value;
+    return pinnedRowsResizeCeiling(layoutCap.value, contentHeight.value, rowsMinHeight.value);
+  },
+  axis: 'y',
+  applyLive: applyRowsHeightLive,
+  // Hold back every write while the cap is still the untouched default.
+  persist: () => userAdjusted.value,
+});
+
+// Unadjusted only: the cap tracks the viewport's 40vh default in BOTH
+// directions (a taller window grows the section again), session-only. The
+// composable's own bound watchers keep governing the adjusted state.
+// layoutCap is a trigger too: on a viewport/chrome change this watch can run
+// BEFORE the ResizeObserver refreshes splitBudget, and the fresh default
+// would clamp against the stale cap — re-applying when the cap settles lets
+// the default catch up (same for a font-scale shrink).
+watch([viewportHeight, layoutCap], () => {
+  if (userAdjusted.value) return;
+  rowsHeight.value = clampRowsHeight(pinnedRowsDefaultHeight(viewportHeight.value));
+});
+
+// A drag starts from the rows' RENDERED height, not the stored/default cap:
+// right after the handle appears, the content can be shorter than the resting
+// 40vh cap, and dragging from the stale cap would first cross an invisible
+// dead zone and then jump. The re-anchor is only the gesture's START basis:
+// gestureCommittedHeight remembers the pre-gesture cap so a plain click
+// (no effective displacement) can restore it — useResizable skips its
+// end-of-drag commit then, so a click moves neither the session cap nor the
+// persisted one.
+let gestureCommittedHeight: number | null = null;
+let gestureStartHeight: number | null = null;
+// Pre-gesture in-memory adjustment flag, restored by the zero-displacement
+// branch below instead of re-deriving it from storage: with storage
+// unwritable (private mode / quota) a real adjustment lives ONLY in memory,
+// and re-reading storage would silently drop it.
+let gestureStartAdjusted = false;
+
+function onResizeHandlePointerDown(event: PointerEvent): void {
+  const el = pinnedRowsEl.value;
+  if (el) {
+    // Refresh the list's keep at the gesture start — a flat/grouped switch
+    // changes the session row height without moving any observed box.
+    measureSessionList();
+    gestureActive = true;
+    gestureCommittedHeight = rowsHeight.value;
+    gestureStartAdjusted = userAdjusted.value;
+    gestureStartHeight = clampRowsHeight(el.getBoundingClientRect().height);
+    rowsHeight.value = gestureStartHeight;
+  }
+  onResizePointerDown(event);
+}
+
+watch(resizeDragging, (dragging) => {
+  if (dragging) return;
+  // Gesture over — clear the flag FIRST so the restore below clamps against
+  // the plain layout cap, not the gesture's content ceiling.
+  gestureActive = false;
+  // No effective displacement (a click, a zero-delta move, a drag back to
+  // the exact start, or a downward drag with the content already at the
+  // ceiling): restore the pre-gesture cap AND the pre-gesture adjustment
+  // flag, so the gesture counts as nothing — the cap keeps following the
+  // viewport unless an earlier real adjustment already froze it. The flag
+  // is the in-memory one booked at the gesture start: with storage
+  // unwritable (private mode / quota) that is the only place a real
+  // adjustment lives.
+  const live = liveRowsHeight.value;
+  if (gestureCommittedHeight !== null && isNoopGesture(gestureStartHeight, live)) {
+    rowsHeight.value = clampRowsHeight(gestureCommittedHeight);
+    userAdjusted.value = gestureStartAdjusted;
+  }
+  gestureCommittedHeight = null;
+  gestureStartHeight = null;
+  liveRowsHeight.value = null;
+});
+
+// The handle stays mounted while a drag is in progress even when the section
+// drops below the threshold mid-drag (e.g. another window unpins or archives
+// a row): unmounting the element that holds pointer capture would orphan the
+// gesture. The gate closes — and the cap is stripped — once the drag ends.
+const handleVisible = computed(() => resizable.value || resizeDragging.value);
+
+// Applies the committed cap while the gate is open and strips it when the
+// gate closes (few rows again / the section is folded), where the CSS 40vh
+// cap of the natural-height layout governs instead.
+watch(
+  [pinnedRowsEl, handleVisible, rowsHeight],
+  ([el, active, height]) => {
+    if (!el) return;
+    if (active) el.style.setProperty('max-height', `${height}px`);
+    else el.style.removeProperty('max-height');
+  },
+  { immediate: true },
+);
+
+// Keyboard model for role="separator" (§08): focusable, value exposed, and
+// ↑/↓ resize in steps (⇧ = larger) — ArrowDown grows the section (it extends
+// downward, the opposite of the bottom terminal panel's handle). The step
+// anchors to the rows' RENDERED height like the pointer path: right after
+// the handle appears the content can be shorter than the resting cap, and
+// stepping the stale cap would change nothing visibly while aria-valuenow
+// claims otherwise. The target is clamped to BOTH bounds (the content's
+// natural height above, the two-row floor below) before the no-op check, so
+// a key press that would move nothing is exactly that — nothing. Unlike the
+// pointer gesture a real step is an explicit adjustment, so the stepped
+// value commits (persists) immediately.
+function onResizeKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+  event.preventDefault();
+  measureSessionList(); // same refresh as the pointer gesture start
+  const el = pinnedRowsEl.value;
+  const ceiling = pinnedRowsResizeCeiling(
+    layoutCap.value,
+    el?.scrollHeight ?? null,
+    rowsMinHeight.value,
+  );
+  const base = el ? clampRowsHeight(el.getBoundingClientRect().height) : rowsHeight.value;
+  const step = (event.key === 'ArrowDown' ? 1 : -1) * (event.shiftKey ? 48 : 16);
+  const target = pinnedRowsKeyboardTarget(base, step, ceiling, rowsMinHeight.value);
+  // Clamped to where the separator already is — a true no-op: do NOT mark
+  // the cap as user-chosen and do NOT commit (a zero-displacement key press
+  // must never disable the follow-the-viewport default).
+  if (target === base) return;
+  // An explicit step IS an adjustment: freeze the cap as user-chosen before
+  // the commit so the persist gate lets it through.
+  userAdjusted.value = true;
+  setRowsHeight(target);
+}
+
+// The separator position assistive tech should hear: the live value while
+// dragging, else the rows' rendered height (the committed cap can exceed the
+// content — the visual separator sits at the smaller of the two).
+const separatorPosition = computed(() => {
+  if (liveRowsHeight.value !== null) return liveRowsHeight.value;
+  const content = contentHeight.value;
+  return content === null ? rowsHeight.value : Math.min(rowsHeight.value, content);
+});
+
+// Scroll-linked edge veils on the rows scroller — the same seam language as
+// the session list's (Sidebar's .sessions-head / .side-footer): a soft fade
+// at an edge, shown only while more row content exists beyond that edge.
+// When the content fits the cap nothing is scrollable and both stay off.
+const rowsScrolled = ref(false);
+const rowsCanScrollDown = ref(false);
+
+function updateRowsScrollState(el = pinnedRowsEl.value): void {
+  if (!el) return;
+  contentHeight.value = el.scrollHeight;
+  // The first two .pin-row wrappers' boxes — rows are uniform except that a
+  // later row can be taller (badges / PR pill), so measure both. onUpdated
+  // re-runs this after EVERY render, so the array is replaced only on a real
+  // change: a fresh identity each pass would retrigger dependents
+  // (rowsMinHeight → layoutCap → re-render) in an update loop.
+  const next = [el.children.item(0), el.children.item(1)].map((child) =>
+    child ? (child as HTMLElement).getBoundingClientRect().height : null,
+  );
+  if (
+    next.length !== firstRowHeights.value.length ||
+    next.some((height, index) => height !== firstRowHeights.value[index])
+  ) {
+    firstRowHeights.value = next;
+  }
+  rowsScrolled.value = el.scrollTop > 0;
+  rowsCanScrollDown.value = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+}
+
+function onRowsScroll(): void {
+  updateRowsScrollState();
+}
+
+// The box and the content can each change without a scroll event (a drag
+// resizes the cap, a new pin grows the content under a fixed cap), so the
+// state re-reads on every update and on box resizes. The rows element
+// unmounts with the section fold, hence the re-observing watch.
+let rowsObserver: ResizeObserver | null = null;
+
+watch(pinnedRowsEl, (el, prev) => {
+  if (prev) rowsObserver?.disconnect();
+  rowsObserver = null;
+  if (el && typeof ResizeObserver === 'function') {
+    rowsObserver = new ResizeObserver(() => updateRowsScrollState());
+    rowsObserver.observe(el);
+  }
+  if (el) {
+    updateRowsScrollState(el);
+  } else {
+    contentHeight.value = null;
+    firstRowHeights.value = [];
+    rowsScrolled.value = false;
+    rowsCanScrollDown.value = false;
+  }
+});
+onUpdated(() => updateRowsScrollState());
+onBeforeUnmount(() => rowsObserver?.disconnect());
+
+// A font-scale change resizes every row WITHOUT moving the rows' (capped)
+// border box, so neither the ResizeObserver above nor a re-render fires and
+// the measurements would go stale (handle draggable past the content end at
+// a smaller scale, unreachable content at a larger one, a lying
+// aria-valuemax). Subscribe to the appearance singleton and re-measure once
+// the new sizes apply.
+const { fontScale } = useAppearance();
+watch(fontScale, () => {
+  void nextTick(() => {
+    updateRowsScrollState();
+    measureSessionList();
+  });
+});
 
 // Row dragging exists for the drag-OUT (unpin) gesture — there is no
 // in-section reorder (the section renders in recency order). We only track
@@ -140,6 +589,7 @@ function onContainerDragLeave(event: DragEvent): void {
 
 <template>
   <div
+    ref="pinnedRootEl"
     class="pinned"
     :class="{ 'drop-active': dropActive }"
     @dragover="onContainerDragOver"
@@ -162,35 +612,72 @@ function onContainerDragLeave(event: DragEvent): void {
         <Icon v-else name="chevron-down" />
       </IconButton>
     </div>
-    <div v-if="!collapsed" class="pinned-rows">
-      <div
-        v-for="s in sessions"
-        :key="s.id"
-        class="pin-row"
-        :class="{ dragging: draggingId === s.id }"
-        :draggable="renamingSessionId !== s.id"
-        @dragstart="onDragStart(s.id, $event)"
-        @dragend="onDragEnd"
-      >
-        <SessionRow
-          :session="s"
-          :active="s.id === activeId"
-          :approval-count="pendingBySession[s.id]?.approvals ?? 0"
-          :question-count="pendingBySession[s.id]?.questions ?? 0"
-          :unread="unreadBySession[s.id] ?? false"
-          :state-tag="props.stateTag"
-          :data-session-id="s.id"
-          :class="{ 'se-locate-flash': flashSessionId === s.id }"
-          @rename-state-change="renamingSessionId = $event ? s.id : null"
-          @select="emit('selectSession', $event)"
-          @rename="(id, title) => emit('renameSession', id, title)"
-          @generate-title="(id, done) => emit('generateSessionTitle', id, done)"
-          @archive="emit('archiveSession', $event)"
-          @fork="emit('forkSession', $event)"
-          @export="emit('exportSession', $event)"
-          @pin="emit('pinSession', $event)"
-        />
+    <!-- The wrapper anchors the scroll-linked edge veils so they overlay the
+         rows' edges without scrolling with the content (and never shift
+         layout). -->
+    <div
+      v-if="!collapsed"
+      class="pinned-rows-wrap"
+      :class="{ scrolled: rowsScrolled, 'more-below': rowsCanScrollDown }"
+    >
+      <div ref="pinnedRowsEl" class="pinned-rows" @scroll="onRowsScroll">
+        <div
+          v-for="s in sessions"
+          :key="s.id"
+          class="pin-row"
+          :class="{ dragging: draggingId === s.id }"
+          :draggable="renamingSessionId !== s.id"
+          @dragstart="onDragStart(s.id, $event)"
+          @dragend="onDragEnd"
+        >
+          <SessionRow
+            :session="s"
+            :active="s.id === activeId"
+            :approval-count="pendingBySession[s.id]?.approvals ?? 0"
+            :question-count="pendingBySession[s.id]?.questions ?? 0"
+            :unread="unreadBySession[s.id] ?? false"
+            :state-tag="props.stateTag"
+            :data-session-id="s.id"
+            :class="{ 'se-locate-flash': flashSessionId === s.id }"
+            @rename-state-change="renamingSessionId = $event ? s.id : null"
+            @select="emit('selectSession', $event)"
+            @rename="(id, title) => emit('renameSession', id, title)"
+            @generate-title="(id, done) => emit('generateSessionTitle', id, done)"
+            @archive="emit('archiveSession', $event)"
+            @fork="emit('forkSession', $event)"
+            @export="emit('exportSession', $event)"
+            @pin="emit('pinSession', $event)"
+          />
+        </div>
       </div>
+      <!-- Edge veils: top shows once scrolled away from the first row, bottom
+           while more rows exist below. -->
+      <span class="pinned-seam pinned-seam--top" aria-hidden="true"></span>
+      <span class="pinned-seam pinned-seam--bottom" aria-hidden="true"></span>
+    </div>
+    <!-- Height-split handle: rendered only while the pinned content overflows
+         the compact threshold (see `resizable`) — dragging down grows the
+         section, the session list below takes what remains. It stays mounted
+         for the duration of an in-progress drag even if the section drops
+         below the threshold mid-drag (`handleVisible`), so the pointer
+         capture is never orphaned. Negative margins centre the strip on the
+         inter-section gap so its appearance shifts nothing. -->
+    <div
+      v-if="handleVisible"
+      class="pinned-resize"
+      :class="{ dragging: resizeDragging }"
+      :style="{ cursor: resizeCursor }"
+      role="separator"
+      aria-orientation="horizontal"
+      :aria-label="t('sidebar.resizePinnedAria')"
+      :aria-valuenow="Math.round(separatorPosition)"
+      :aria-valuemin="rowsMinHeight"
+      :aria-valuemax="pinnedRowsResizeCeiling(layoutCap, contentHeight, rowsMinHeight)"
+      tabindex="0"
+      @pointerdown="onResizeHandlePointerDown"
+      @keydown="onResizeKeydown"
+    >
+      <span class="pinned-resize-bar" aria-hidden="true"></span>
     </div>
   </div>
 </template>
@@ -265,12 +752,20 @@ function onContainerDragLeave(event: DragEvent): void {
 
 /* Cap the expanded rows so a long pinned set can't push the workspace list
    (and the footer) out of the column — the labels stay fixed, the rows
-   scroll internally. Thin overlay scrollbar mirroring the sidebar's. */
+   scroll internally. Thin overlay scrollbar mirroring the sidebar's. The
+   40vh cap is the resting/natural-height layout; once the resize handle is
+   offered, the draggable cap is written imperatively (inline max-height
+   overrides this — see the script's resizable block). The horizontal inset
+   lives INSIDE the scroller (paired with the wrapper's negative margins) so
+   the rows' right edge and the scrollbar track land exactly where the
+   session list's do — .sessions carries the same inset inside its own
+   scroll container. */
 .pinned-rows {
   max-height: 40vh;
   overflow-y: auto;
+  padding: 0 var(--sb-inset);
 }
-.pinned-rows::-webkit-scrollbar { width: 4px; }
+.pinned-rows::-webkit-scrollbar { width: var(--space-1); }
 .pinned-rows::-webkit-scrollbar-track { background: transparent; }
 .pinned-rows::-webkit-scrollbar-thumb {
   background: transparent;
@@ -282,6 +777,91 @@ function onContainerDragLeave(event: DragEvent): void {
 }
 .pinned-rows::-webkit-scrollbar-thumb:hover {
   background: color-mix(in srgb, var(--color-text) 25%, transparent);
+}
+
+/* Scroll-linked edge veils for the rows scroller — the same seam language as
+   the session list's (Sidebar's .sessions-head::after / .side-footer::before):
+   a --p-sidebar-seam-h three-layer text-tint wash plus a 0.5px --line
+   hairline at the content edge, transparent at rest and fading in only while
+   more row content exists beyond that edge (the sessions-head seam gates its
+   hairline on the same condition). Absolutely positioned overlays anchored
+   by the wrapper — no layout shift, and they never scroll with the content.
+   The gradient stacks ride component-local custom properties (a §06-accepted
+   edge-veil primitive, same as the sidebar's). */
+.pinned-rows-wrap {
+  position: relative;
+  /* Stretch to the column's full width: the sessions-head horizontal inset
+     lives OUTSIDE this wrap, so the veils/hairlines span edge to edge like
+     the session list's seams, and the scroller inside owns its own inset
+     (see .pinned-rows). */
+  margin: 0 calc(var(--sb-inset) * -1);
+  --pinned-seam-down: linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.5%, transparent), transparent 35%), linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1%, transparent), transparent 65%), linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 0.75%, transparent), transparent);
+  --pinned-seam-up: linear-gradient(to top, color-mix(in srgb, var(--color-text) 1.5%, transparent), transparent 35%), linear-gradient(to top, color-mix(in srgb, var(--color-text) 1%, transparent), transparent 65%), linear-gradient(to top, color-mix(in srgb, var(--color-text) 0.75%, transparent), transparent);
+}
+.pinned-seam {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--p-sidebar-seam-h);
+  pointer-events: none;
+  opacity: 0;
+  /* Above the rows (their .se boxes are positioned) but below the resize
+     handle (--z-dropdown): hovering/dragging the handle paints its bar over
+     the bottom veil's edge instead of fighting it. */
+  z-index: var(--z-raised);
+  transition: opacity var(--duration-slow) var(--ease-out);
+}
+.pinned-seam--top {
+  top: 0;
+  border-top: var(--p-hairline) solid var(--line);
+  background: var(--pinned-seam-down);
+}
+.pinned-seam--bottom {
+  bottom: 0;
+  border-bottom: var(--p-hairline) solid var(--line);
+  background: var(--pinned-seam-up);
+}
+.pinned-rows-wrap.scrolled .pinned-seam--top,
+.pinned-rows-wrap.more-below .pinned-seam--bottom {
+  opacity: 1;
+}
+
+/* Height-split handle between the pinned rows and the session-list label —
+   a horizontal twin of the app ResizeHandle: 4px grab strip with a centred
+   2px indicator bar, the neutral ramp one step up (f2 hover, f3 drag), never
+   accent. Negative margins centre the strip on the inter-section gap, so the
+   strip appearing/disappearing at the threshold shifts nothing; the
+   horizontal ones stretch it to the column's full width so the indicator bar
+   spans exactly the edge veils' / hairline's range (the session list's seams
+   share that range — see .pinned-rows-wrap). */
+.pinned-resize {
+  height: var(--space-1);
+  position: relative;
+  background: transparent;
+  touch-action: none;
+  margin: calc(var(--space-05) * -1) calc(var(--sb-inset) * -1);
+  /* Above the rows' scroll container so the 2px overhang stays grabbable. */
+  z-index: var(--z-dropdown);
+}
+.pinned-resize-bar {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: var(--space-05);
+  translate: 0 -50%;
+  background: transparent;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.pinned-resize:hover .pinned-resize-bar {
+  background: var(--color-selected);
+}
+.pinned-resize.dragging .pinned-resize-bar {
+  background: var(--color-line-strong);
+}
+.pinned-resize:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
 }
 
 /* Drag affordance: the dragged row fades (the workspace group's .dragging),

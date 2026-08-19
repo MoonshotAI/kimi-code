@@ -107,6 +107,38 @@ describe('useResizable', () => {
     expect(store.get('k')).toBe('300');
   });
 
+  it('clamps the committed width when a reactive floor grows', async () => {
+    const floor = ref(170);
+    const r = useResizable({ ...OPTIONS, min: floor });
+    r.setWidth(200);
+    expect(r.width.value).toBe(200);
+    floor.value = 250;
+    await nextTick();
+    expect(r.width.value).toBe(250);
+    expect(store.get('k')).toBe('250');
+    // The live floor also binds drag frames.
+    const handle = fakeHandle();
+    r.onPointerDown(pointerDown(handle.el, 100));
+    handle.fire('pointermove', -1000);
+    flushFrame();
+    expect(r.width.value).toBe(250);
+    handle.fire('pointerup', -1000);
+  });
+
+  it('re-clamps the session width on a no-move drag end after the bounds changed mid-drag', async () => {
+    const cap = ref(480);
+    const r = useResizable({ ...OPTIONS, max: cap });
+    r.setWidth(400); // commits and persists 400
+    const handle = fakeHandle();
+    r.onPointerDown(pointerDown(handle.el, 100));
+    cap.value = 300; // the cap shrinks while the handle is held…
+    await nextTick();
+    expect(r.width.value).toBe(400); // …the watcher skips mid-drag updates
+    handle.fire('pointerup', 100); // zero displacement
+    expect(r.width.value).toBe(300); // session value re-clamped to the live cap
+    expect(store.get('k')).toBe('400'); // persisted preference untouched
+  });
+
   it('coalesces a burst of pointermove events into one update per frame', () => {
     const r = useResizable(OPTIONS);
     const handle = fakeHandle();
@@ -186,6 +218,28 @@ describe('useResizable', () => {
     expect(store.get('k')).toBe('480');
   });
 
+  it('persist gate: the session value updates but nothing is stored while gated off', () => {
+    const allowed = ref(false);
+    const r = useResizable({ ...OPTIONS, persist: () => allowed.value });
+    r.setWidth(300);
+    expect(r.width.value).toBe(300); // session value applies…
+    expect(store.has('k')).toBe(false); // …but nothing is persisted
+    allowed.value = true;
+    r.setWidth(320);
+    expect(store.get('k')).toBe('320'); // gate open again → writes resume
+  });
+
+  it('persist gate: a drag commit is held back while gated off', () => {
+    const r = useResizable({ ...OPTIONS, persist: () => false });
+    const handle = fakeHandle();
+    r.onPointerDown(pointerDown(handle.el, 100));
+    handle.fire('pointermove', 160);
+    flushFrame();
+    handle.fire('pointerup', 160);
+    expect(r.width.value).toBe(330); // drag still lands in-session
+    expect(store.has('k')).toBe(false);
+  });
+
   it('applyLive: drag frames bypass the ref and commit once on pointerup', () => {
     const live: number[] = [];
     const r = useResizable({ ...OPTIONS, applyLive: (w: number) => live.push(w) });
@@ -226,6 +280,30 @@ describe('useResizable', () => {
     expect(live).toEqual([]);
     expect(r.width.value).toBe(170); // unchanged start width
     expect(store.get('k')).toBe('170');
+  });
+
+  it('a click without effective displacement commits nothing (ref path)', () => {
+    const r = useResizable(OPTIONS);
+    const handle = fakeHandle();
+    r.onPointerDown(pointerDown(handle.el, 100));
+    handle.fire('pointermove', 100); // zero-delta move
+    flushFrame();
+    handle.fire('pointerup', 100);
+    expect(r.width.value).toBe(270);
+    expect(store.has('k')).toBe(false); // no persistence without a real drag
+  });
+
+  it('applyLive: a click without effective displacement commits nothing', () => {
+    const live: number[] = [];
+    const r = useResizable({ ...OPTIONS, applyLive: (w: number) => live.push(w) });
+    const handle = fakeHandle();
+    r.onPointerDown(pointerDown(handle.el, 100));
+    handle.fire('pointermove', 100); // zero-delta move
+    flushFrame();
+    expect(live).toEqual([270]); // frame ran, value unchanged
+    handle.fire('pointerup', 100);
+    expect(r.width.value).toBe(270);
+    expect(store.has('k')).toBe(false); // no persistence without a real drag
   });
 
   it('cursor hints the one direction that still resizes at a limit', () => {

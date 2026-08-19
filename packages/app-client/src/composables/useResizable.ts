@@ -20,8 +20,10 @@ export interface UseResizableOptions {
   storageKey: string;
   /** Width to fall back to when nothing is stored / value is invalid. */
   defaultWidth: number;
-  /** Smallest allowed width (px). */
-  min: number;
+  /** Smallest allowed width (px). Accepts a ref/getter (like max) so a floor
+   *  derived from rendered content — e.g. a row height that tracks the font
+   *  scale — keeps working after it changes. */
+  min: MaybeRefOrGetter<number>;
   /** Largest allowed width (px). Accepts a ref/getter so a cap derived from the
    *  viewport keeps working as the window is resized after the handle mounts. */
   max: MaybeRefOrGetter<number>;
@@ -36,6 +38,12 @@ export interface UseResizableOptions {
    *  of the per-frame loop. The ref (and localStorage) commit once on drag
    *  end, so `update:width` watchers only fire then. */
   applyLive?: (width: number) => void;
+  /** Optional persistence gate, consulted before EVERY storage write (drag
+   *  commits, setWidth, the bound watchers' clamps). While it returns false
+   *  the session value keeps updating and clamping but nothing is written —
+   *  for callers whose default should keep following the viewport until the
+   *  user explicitly picks a value. */
+  persist?: () => boolean;
 }
 
 export interface UseResizable {
@@ -74,11 +82,11 @@ function writeStored(key: string, value: number): void {
 }
 
 export function useResizable(options: UseResizableOptions): UseResizable {
-  const { storageKey, defaultWidth, min, max, reverse = false, axis = 'x', applyLive } = options;
+  const { storageKey, defaultWidth, min, max, reverse = false, axis = 'x', applyLive, persist } = options;
 
   function clamp(value: number): number {
     if (!Number.isFinite(value)) return defaultWidth;
-    return Math.min(toValue(max), Math.max(min, Math.round(value)));
+    return Math.min(toValue(max), Math.max(toValue(min), Math.round(value)));
   }
 
   const width = ref<number>(clamp(readStored(storageKey) ?? defaultWidth));
@@ -89,7 +97,7 @@ export function useResizable(options: UseResizableOptions): UseResizable {
   // flips which direction grows the width. On the y axis the pairs are
   // n/s-resize with a row-resize neutral.
   function cursorFor(w: number): string {
-    const atMin = w <= min;
+    const atMin = w <= toValue(min);
     const atMax = w >= toValue(max);
     const neutral = axis === 'x' ? 'col-resize' : 'row-resize';
     if (atMin && atMax) return neutral; // no room to move at all
@@ -113,19 +121,33 @@ export function useResizable(options: UseResizableOptions): UseResizable {
     document.body.style.cursor = cursorFor(w);
   }
 
+  // Every storage write funnels through here so the `persist` gate can hold
+  // back writes while the caller keeps the default unpersisted.
+  function write(value: number): void {
+    if (persist && !persist()) return;
+    writeStored(storageKey, value);
+  }
+
   function setWidth(value: number): void {
     const next = clamp(value);
     width.value = next;
-    writeStored(storageKey, next);
+    write(next);
   }
 
   // A shrinking cap (window resize) pulls the committed width down with it —
   // otherwise the stale over-cap value resurfaces on the next drag/keyboard
-  // step and jumps the panel back above the clamp.
+  // step and jumps the panel back above the clamp. A growing floor (e.g. a
+  // content-derived min tracking the font scale) pulls it up the same way.
   watch(
     () => toValue(max),
     (cap) => {
       if (!dragging.value && width.value > cap) setWidth(cap);
+    },
+  );
+  watch(
+    () => toValue(min),
+    (floor) => {
+      if (!dragging.value && width.value < floor) setWidth(floor);
     },
   );
 
@@ -178,12 +200,26 @@ export function useResizable(options: UseResizableOptions): UseResizable {
       applyDragWidth();
     }
     dragging.value = false;
-    if (applyLive) {
-      // The live path kept the ref (and Vue) out of the per-frame loop —
-      // commit the final width once, now that the drag is over.
-      setWidth(latestDragWidth);
+    // Commit only an effective displacement: a plain click on the handle
+    // (latestDragWidth === startWidth, zero-delta moves included) must not
+    // rewrite storage — the caller may have re-anchored the drag start to a
+    // measured value that should persist only once the user actually drags.
+    if (latestDragWidth !== startWidth) {
+      if (applyLive) {
+        // The live path kept the ref (and Vue) out of the per-frame loop —
+        // commit the final width once, now that the drag is over.
+        setWidth(latestDragWidth);
+      } else {
+        write(width.value);
+      }
     } else {
-      writeStored(storageKey, width.value);
+      // No displacement: the persisted preference stays untouched, but the
+      // bounds may have CHANGED while the handle was held (the min/max
+      // watchers above skip mid-drag updates and won't re-fire afterwards).
+      // Re-clamp the session value to the bounds in effect now — otherwise a
+      // stale over-cap width resurrects the next time the cap grows again.
+      // Session-only by design: no storage write.
+      width.value = clamp(width.value);
     }
     dragWidth.value = null; // cursor falls back to the committed width
     if (typeof document !== 'undefined') {

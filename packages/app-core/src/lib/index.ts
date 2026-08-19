@@ -17,6 +17,7 @@ export * from './parseSwarmResult';
 export * from './pathBasename';
 export * from './pathDirname';
 export * from './pathRelativeTo';
+export * from './pinnedSectionLayout';
 export * from './pinnedSessions';
 export * from './planUsage';
 export * from './providerForm';
