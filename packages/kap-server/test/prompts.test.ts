@@ -730,6 +730,7 @@ describe('server-v2 /api/v1 prompts', () => {
         type: 'image_url',
         imageUrl: {
           url: `kimi-file://${uploaded.id}`,
+          id: uploaded.id,
         },
       });
     });
