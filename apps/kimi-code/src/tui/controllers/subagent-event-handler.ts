@@ -126,7 +126,7 @@ export class SubAgentEventHandler {
     ) {
       toolCall.appendSubToolLiveOutput(
         `${childAgentId}:${event.toolCallId}`,
-        event.update.kind === 'status' ? `${event.update.text}\n` : event.update.text,
+        event.update.text,
         { replace: event.update.replace === true },
       );
     } else if (event.type === 'tool.result') {
