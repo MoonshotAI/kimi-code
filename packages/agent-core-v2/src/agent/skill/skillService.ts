@@ -202,7 +202,13 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       if (flowActivations.length > 0) {
         const flowIds = flowActivations.map((activation) => activation.origin.activationId);
         void handle.completion.then((completion) => {
-          if (completion.state !== 'cancelled' && completion.state !== 'failed') return;
+          if (
+            completion.state !== 'cancelled' &&
+            completion.state !== 'failed' &&
+            completion.state !== 'blocked'
+          ) {
+            return;
+          }
           for (const id of flowIds) {
             this.flow.discardPendingActivation(id);
             this.activationData.take(id);

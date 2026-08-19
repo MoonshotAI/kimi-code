@@ -141,6 +141,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         const flagNow = this.flags.enabled(FLOW_FLAG_ID);
         if (flagNow === flagWas) return;
         flagWas = flagNow;
+        if (!flagNow) this.pendingActivations.clear();
         if (this.scopeContext.agentId !== 'main') return;
         void this.dispatcher.dispatch(
           new AgentStatusUpdated({ flowRun: flagNow ? this.summary() : null }),
