@@ -1,5 +1,6 @@
 import { ApiError as GoogleApiError, GoogleGenAI as GenAIClient } from '@google/genai';
 
+import { isAbortError } from '#/_base/utils/abort';
 import {
   APIConnectionError,
   APITimeoutError,
@@ -188,6 +189,10 @@ function convertMediaUrl(
 
 function createAbortError(): DOMException {
   return new DOMException('The operation was aborted.', 'AbortError');
+}
+
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
 }
 
 async function abortPromise(signal: AbortSignal | undefined): Promise<never> {
@@ -612,8 +617,8 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
         }
       }
     } catch (error: unknown) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        throw error;
+      if (signal?.aborted === true || isAbortError(error)) {
+        throw createAbortError();
       }
       throw convertGoogleGenAIError(error);
     } finally {
@@ -790,6 +795,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
     const config: Record<string, unknown> = {
       ...kwargs,
       systemInstruction: systemPrompt,
+      abortSignal: options?.signal,
       ...(tools.length > 0 ? { tools: tools.map((t) => toolToGoogleGenAI(t)) } : {}),
     };
     applyResponseFormat(config, options?.responseFormat);
@@ -826,8 +832,8 @@ export class GoogleGenAIChatProvider implements ChatProvider {
         options?.signal,
       );
     } catch (error: unknown) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        throw error;
+      if (isAborted(options?.signal) || isAbortError(error)) {
+        throw createAbortError();
       }
       throw convertGoogleGenAIError(error);
     }
