@@ -2072,5 +2072,40 @@ describe('ToolCallComponent', () => {
 
       component.dispose();
     });
+
+    it('replaces a sub-tool status row when child progress arrives with replace', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_agent_wait', name: 'Agent', args: { description: 'child wait' } },
+        undefined,
+        stubTui(30),
+      );
+      component.onSubagentSpawned({
+        agentId: 'sub_wait_1',
+        agentName: 'coder',
+        runInBackground: false,
+      });
+      component.appendSubToolCall({
+        id: 'sub_wait_1:wait',
+        name: 'WaitFor',
+        args: { timeout: 600 },
+      });
+
+      component.appendSubToolLiveOutput(
+        'sub_wait_1:wait',
+        'Waiting 10s / 600s · 2 background tasks still running\n',
+        { replace: true },
+      );
+      component.appendSubToolLiveOutput(
+        'sub_wait_1:wait',
+        'Waiting 20s / 600s · 1 background task still running\n',
+        { replace: true },
+      );
+
+      const out = strip(component.render(120).join('\n'));
+      expect(out).toContain('Waiting 20s / 600s');
+      expect(out).not.toContain('Waiting 10s / 600s');
+
+      component.dispose();
+    });
   });
 });

@@ -1393,14 +1393,14 @@ export class ToolCallComponent extends Container {
     this.ui?.requestRender();
   }
 
-  appendSubToolLiveOutput(id: string, text: string): void {
+  appendSubToolLiveOutput(id: string, text: string, options?: { readonly replace?: boolean }): void {
     if (text.length === 0) return;
     const activity = this.subToolActivities.get(id);
     const ongoing = this.ongoingSubCalls.get(id);
     if (activity === undefined && ongoing === undefined) return;
     const name = activity?.name ?? ongoing?.name ?? 'Tool';
     const args = activity?.args ?? ongoing?.args ?? {};
-    const existingOutput = activity?.output ?? '';
+    const existingOutput = options?.replace === true ? '' : (activity?.output ?? '');
     let output = existingOutput + text;
     if (output.length > MAX_LIVE_OUTPUT_CHARS) {
       output = `[...truncated]\n${output.slice(output.length - MAX_LIVE_OUTPUT_CHARS)}`;
@@ -1902,7 +1902,7 @@ export class ToolCallComponent extends Container {
       current?.phase === 'ongoing' &&
       current.output !== undefined &&
       current.output.trim().length > 0 &&
-      (current.name === 'Bash' || isGenericToolResult(current.name))
+      (current.name === 'Bash' || current.name === 'WaitFor' || isGenericToolResult(current.name))
     ) {
       return { text: current.output, tone: 'text' };
     }
