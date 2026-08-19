@@ -15,7 +15,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { Service } from '#/_base/di/service';
 import { ErrorCodes, Error2 } from '#/errors';
 import { isUserActivatableSkillType, type SkillDefinition } from '#/app/skillCatalog/types';
-import { IAgentPromptService, reservePrompt, type PromptLaunchResult } from '#/agent/prompt/prompt';
+import { IAgentPromptService, reservePrompt, type PromptHandle, type PromptLaunchResult } from '#/agent/prompt/prompt';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -30,6 +30,7 @@ import {
 import { SkillActivate, skillKey } from './skillOps';
 import { ISkillActivationDataService } from './skillActivationData';
 import { IFlagService } from '#/app/flag/flag';
+import { IConfigService } from '#/app/config/config';
 import { FLOW_FLAG_ID, IAgentFlowService } from '#/features/flow/flow';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { IEventService } from '#/app/event/event';
@@ -55,9 +56,36 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     @ISkillActivationDataService private readonly activationData: ISkillActivationDataService,
     @IFlagService private readonly flags: IFlagService,
     @IAgentFlowService private readonly flow: IAgentFlowService,
+    @IConfigService configService: IConfigService,
   ) {
     super();
     agentState.contributeState(skillKey);
+    let flowFlagWas = this.flags.enabled(FLOW_FLAG_ID);
+    this._register(
+      configService.onDidChangeConfiguration(() => {
+        const flagNow = this.flags.enabled(FLOW_FLAG_ID);
+        if (flagNow === flowFlagWas) return;
+        flowFlagWas = flagNow;
+        if (flagNow) return;
+        const queued = Array.from(this.queuedFlowPrompts);
+        for (const promptId of queued) {
+          try {
+            this.prompt.abort(promptId);
+          } catch {
+            this.queuedFlowPrompts.delete(promptId);
+          }
+        }
+      }),
+    );
+  }
+
+  private readonly queuedFlowPrompts = new Set<string>();
+
+  private trackQueuedFlowPrompt(handle: PromptHandle): void {
+    this.queuedFlowPrompts.add(handle.id);
+    void handle.completion.then(() => {
+      this.queuedFlowPrompts.delete(handle.id);
+    });
   }
 
   async activate(input: SkillActivationInput): Promise<PromptLaunchResult> {
@@ -204,6 +232,7 @@ export class AgentSkillService extends Service implements IAgentSkillService {
         },
       });
       if (flowActivations.length > 0) {
+        this.trackQueuedFlowPrompt(handle);
         const flowIds = flowActivations.map((activation) => activation.origin.activationId);
         void handle.completion.then((completion) => {
           if (
@@ -295,7 +324,12 @@ export class AgentSkillService extends Service implements IAgentSkillService {
 
   private rejectWhileFlowRunActive(skillType: string | undefined): void {
     if (skillType !== 'flow') return;
-    if (!this.flags.enabled(FLOW_FLAG_ID)) return;
+    if (!this.flags.enabled(FLOW_FLAG_ID)) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        'The flow feature is disabled ([experimental].flow); enable it before activating a flow skill.',
+      );
+    }
     if (!this.flow.run().active && !this.flow.hasPendingActivation()) return;
     throw new Error2(
       ErrorCodes.REQUEST_INVALID,
@@ -320,7 +354,9 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     if (this.loop.status().state === 'running') {
       return this.prompt.inject(message);
     }
-    return (await this.prompt.enqueue({ message })).launched;
+    const handle = await this.prompt.enqueue({ message });
+    if (origin.skillType === 'flow') this.trackQueuedFlowPrompt(handle);
+    return handle.launched;
   }
 
   private renderSkillPrompt(skill: SkillDefinition, rawArgs: string): string {

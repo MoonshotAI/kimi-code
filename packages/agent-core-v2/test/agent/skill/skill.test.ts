@@ -29,6 +29,8 @@ import type { Turn } from '#/agent/loop/loop';
 import { executeTool } from '../../tools/fixtures/execute-tool';
 import { stubSkill } from '../../app/skillCatalog/stubs';
 import { ISkillActivationDataService } from '#/agent/skill/skillActivationData';
+import { IFlagService } from '#/app/flag/flag';
+import { IConfigService } from '#/app/config/config';
 import { registerTestAgentWireServices } from '../../wire/stubs';
 import {
   createTestAgent,
@@ -105,6 +107,11 @@ describe('AgentSkillService', () => {
         reg.definePartialInstance(ISkillActivationDataService, {
           put: () => {},
           take: () => undefined,
+        });
+        reg.definePartialInstance(IFlagService, { enabled: () => false });
+        reg.definePartialInstance(IConfigService, {
+          get: () => undefined,
+          onDidChangeConfiguration: () => ({ dispose: () => {} }),
         });
       },
     });
@@ -212,6 +219,11 @@ describe('SkillTool', () => {
         reg.definePartialInstance(ISkillActivationDataService, {
           put: () => {},
           take: () => undefined,
+        });
+        reg.definePartialInstance(IFlagService, { enabled: () => false });
+        reg.definePartialInstance(IConfigService, {
+          get: () => undefined,
+          onDidChangeConfiguration: () => ({ dispose: () => {} }),
         });
       },
     });
