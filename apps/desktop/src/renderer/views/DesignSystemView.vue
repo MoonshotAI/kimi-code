@@ -710,7 +710,7 @@ onUnmounted(() => {
 
             <!-- ===== Input ===== -->
             <h3 class="sub">Input / Select / Textarea</h3>
-            <p>Unified 38px height (32px small), <code>--radius-md</code> radius, <code>--color-surface-overlay</code> background, and a unified blue focus ring (<code>0 0 0 3px accent-soft</code>). Select is a custom combobox and listbox, not a native <code>&lt;select&gt;</code>; opening it centres the selected option in the scrollable menu. Open Select roots enter the dropdown layer; containing settings groups temporarily release clipping and join that layer so later sections cannot cover the menu.</p>
+            <p>Unified 38px height (32px small), <code>--radius-md</code> radius, <code>--color-surface-overlay</code> background, and a unified blue focus ring (<code>0 0 0 3px accent-soft</code>). Select is a custom combobox and listbox, not a native <code>&lt;select&gt;</code>; opening it centres the selected option in the scrollable menu. The listbox teleports to <code>&lt;body&gt;</code> with <code>position: fixed</code> — anchored to the trigger (opening toward the roomier side: flipping upward near the viewport bottom and shrinking its max-height to fit when neither side has room; re-anchoring on scroll/resize; closing when focus tabs away) on the <code>--z-modal-dropdown</code> rung, so it floats above modal dialogs and no scrolling container can clip it; while it is open, scroll gestures outside the menu are swallowed so the surface behind it cannot scroll.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Form primitives</span></div>
               <div class="stage p col">

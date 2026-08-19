@@ -263,13 +263,6 @@ function onDeleted(): void {
   border-radius: var(--radius-xl);
   background: var(--color-surface-raised);
 }
-/* Let an open protocol-type dropdown escape the group's clipping (same trick
-   as SettingsDialog's .settings-group). */
-.pp-group:has(.ui-select.is-open) {
-  position: relative;
-  z-index: var(--z-dropdown);
-  overflow: visible;
-}
 .pp-group > * + * { border-top: 0.5px solid var(--color-line); }
 
 .pp-row {

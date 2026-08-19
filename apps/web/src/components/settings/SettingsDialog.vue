@@ -1093,11 +1093,6 @@ function archiveTime(iso: string): string {
   border-radius: var(--radius-xl);
   background: var(--color-surface);
 }
-.settings-group:has(.ui-select.is-open) {
-  position: relative;
-  z-index: var(--z-dropdown);
-  overflow: visible;
-}
 .settings-group > .row {
   min-height: 52px;
   padding: var(--space-4);

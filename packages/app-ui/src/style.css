@@ -350,7 +350,7 @@ html[data-color-scheme="dark"] {
   --z-overlay: 300;
   --z-modal: 400;
   /* Menus / popovers that open ABOVE a modal dialog (teleported to <body>,
-     e.g. the settings SecondaryModelPicker cascade). */
+     e.g. the Select listbox and the settings SecondaryModelPicker cascade). */
   --z-modal-dropdown: 500;
   --z-toast: 600;
   /* Tooltips sit above everything else — they are transient, pointer-events
