@@ -166,10 +166,8 @@ function toSnapshotUsage(status: LegacyStatusSnapshot | undefined): SessionUsage
     output_tokens: total?.output ?? 0,
     cache_read_tokens: total?.inputCacheRead ?? 0,
     cache_creation_tokens: total?.inputCacheCreation ?? 0,
-    total_cost_usd: 0,
     context_tokens: status.contextTokens,
     context_limit: status.maxContextTokens,
-    turn_count: 0,
   };
 }
 

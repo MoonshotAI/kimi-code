@@ -209,10 +209,8 @@ describe('server-v2 snapshot route enrichment', () => {
       output_tokens: 34,
       cache_read_tokens: 56,
       cache_creation_tokens: 7,
-      total_cost_usd: 0,
       context_tokens: 4321,
       context_limit: 262144,
-      turn_count: 0,
     });
     expect(snap.session.agent_config.model).toBe('kimi-for-test');
     expect(snap.subagents).toEqual([
