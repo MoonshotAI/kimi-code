@@ -1,43 +1,3 @@
-/**
- * `/api/v2/mcp` — the unified MCP management plane.
- *
- * Thin REST edge over the App-scope `IMcpManagementService` (agent-core-v2
- * `mcpManagement` domain): CRUD on the user-level `mcp.json`, a connection
- * test probe, the locator-addressed inspection catalog, the auth-status
- * surface, and the locator-addressed OAuth flow operations.
- *
- * The whole plane is gated by the `mcp_management` experimental flag: every
- * route runs a preHandler gate that answers the `40928
- * mcp.management_disabled` envelope while the flag is off (the engine service
- * itself stays ungated — only the edge hides it). The gate awaits
- * `IConfigService.ready` before reading the flag so a config-enabled flag is
- * honored from the very first request (the same startup race the
- * `/api/v1/meta` flags projection guards against), and the check runs per
- * request so a config-flipped flag takes effect without a reboot.
- *
- * Wire conventions follow `/api/v2/sessions`: the `{ code, msg, data,
- * request_id }` envelope carries the business outcome — `40001` for invalid
- * params/body (zod issues ride `details`) and for the engine's
- * `request.invalid` / `config.invalid` rejections, `40408` for an unknown
- * server name (`mcp.server_not_found`), `40928` while the plane is disabled —
- * and the HTTP status only reports transport-level outcomes.
- *
- * REST shape notes:
- *  - CRUD lives on `/mcp/servers[/{name}]`. `PUT` takes the config body
- *    WITHOUT `name` (the path owns the identity) and the handler reattaches
- *    it; `POST` takes the named config (`GlobalMcpServerConfig`) verbatim.
- *  - Unlike the config files, the wire requires an explicit `transport`
- *    discriminant (the engine's `McpServerConfigSchema` preprocess that
- *    infers it from `command`/`url` is a file-format convenience, not part of
- *    the API contract — same strictness as klient's `mcpServerConfigSchema`).
- *  - Non-CRUD operations use colon actions (`/mcp/servers::test`,
- *    `/mcp/auth::begin`, …) declared with a doubled colon so find-my-way
- *    serves the literal colon on the wire (same convention as
- *    `/workspace/fs::search` in v1).
- *  - `verify` on `/mcp/auth-statuses` is a string query param
- *    (`?verify=true`) mapped onto the engine's boolean flag.
- */
-
 import {
   ErrorCodes,
   IConfigService,
@@ -93,15 +53,10 @@ interface V2McpRouteHost {
   ): unknown;
 }
 
-// ---------------------------------------------------------------------------
-// Request contract
-// ---------------------------------------------------------------------------
-
 const serverNameSchema = z.string().min(1);
 
 const serverNameParamSchema = z.object({ name: serverNameSchema });
 
-/** `?cwd=` joins the project layers into the resolution (engine `McpRegistryQuery`). */
 const serverScopedQuerySchema = z.object({ cwd: z.string().min(1).optional() });
 
 const authStatusesQuerySchema = z.object({
@@ -109,14 +64,12 @@ const authStatusesQuerySchema = z.object({
   verify: z.enum(['true', 'false']).optional(),
 });
 
-/** `GlobalMcpServerConfig` — a named full config (POST body, inline test target). */
 const globalMcpServerConfigSchema = z.discriminatedUnion('transport', [
   McpServerStdioConfigSchema.extend({ name: serverNameSchema }),
   McpServerHttpConfigSchema.extend({ name: serverNameSchema }),
   McpServerSseConfigSchema.extend({ name: serverNameSchema }),
 ]);
 
-/** `McpServerConfig` — PUT body; the path `{name}` owns the identity. */
 const mcpServerConfigBodySchema = z.discriminatedUnion('transport', [
   McpServerStdioConfigSchema,
   McpServerHttpConfigSchema,
@@ -149,10 +102,6 @@ const authCompleteBodySchema = z.object({
 
 const authCancelBodySchema = z.object({ flowId: z.string().min(1) });
 
-// ---------------------------------------------------------------------------
-// Response contract (OpenAPI documentation; serialization is pass-through)
-// ---------------------------------------------------------------------------
-
 const mcpServerSourceSchema = z.enum(['global', 'plugin', 'caller']);
 
 const mcpServerAuthStateSchema = z.enum([
@@ -164,12 +113,6 @@ const mcpServerAuthStateSchema = z.enum([
   'unavailable',
 ]);
 
-/**
- * Managed/inspected server config on the wire: mutable entries carry the full
- * config (edit UIs prefill from it); read-only entries are redacted — `env` /
- * `headers` values never cross, only the sorted key lists (`envKeys` /
- * `headerKeys`). One schema covers both shapes.
- */
 const mcpServerConfigDataSchema = z.union([
   McpServerStdioConfigSchema.extend({ envKeys: z.array(z.string()).optional() }),
   McpServerHttpConfigSchema.extend({ headerKeys: z.array(z.string()).optional() }),
@@ -218,31 +161,18 @@ const mcpServerAuthBeginResultSchema = z.union([
   z.object({ status: z.literal('already-authorized') }),
 ]);
 
-/** `40001 validation.failed` carries the offending fields (REST.md §1.4). */
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-/** Errors every route in this file can return. */
 const baseErrorSchemas = {
   [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
   [ErrorCode.MCP_MANAGEMENT_DISABLED]: {},
 };
 
-/** Plus `40408` — routes that address one server by name / locator. */
 const namedServerErrorSchemas = {
   ...baseErrorSchemas,
   [ErrorCode.MCP_SERVER_NOT_FOUND]: {},
 };
 
-// ---------------------------------------------------------------------------
-// Error mapping
-// ---------------------------------------------------------------------------
-
-/**
- * Map the engine's coded rejections onto the wire envelope: an unknown server
- * is `40408`, a rejected request/config is `40001` (the v1 `transport/errors.ts`
- * precedent for both codes), a disabled plane is `40928`. Anything else
- * rethrows into the catch-all `50001` hook.
- */
 function sendMappedError(
   reply: { send(payload: unknown): unknown },
   requestId: string,
@@ -267,14 +197,9 @@ function sendMappedError(
   throw err;
 }
 
-// ---------------------------------------------------------------------------
-// Routes
-// ---------------------------------------------------------------------------
-
 export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
   const management = (): IMcpManagementService => core.accessor.get(IMcpManagementService);
 
-  // The flag gate shared by every route in this file (see the header).
   const gate = (
     req: { id: string },
     reply: { send(payload: unknown): unknown },

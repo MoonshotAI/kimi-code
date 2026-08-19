@@ -192,10 +192,6 @@ export class PluginService extends Service implements IPluginService {
   }
 
   mcpServerEntries(): Promise<readonly PluginMcpServerEntry[]> {
-    // Management-plane read: a corrupt plugin state must fail loudly here
-    // instead of degrading to an empty list — a management mutation guarded
-    // on this view could otherwise shadow a read-only plugin server while
-    // the plugin contributions are unknown.
     return this.runManagementRead(async () => {
       const entries = this.manager.mcpServerEntries();
       if (!entries.some((entry) => entry.config.transport === 'stdio')) {

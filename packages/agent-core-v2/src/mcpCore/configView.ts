@@ -1,13 +1,3 @@
-/**
- * `mcpCore` domain — wire-facing view of an MCP server's effective config.
- *
- * The literal values of secret-bearing fields — stdio `env` and remote
- * `headers` — are replaced by their sorted key lists: they may carry API keys
- * or Authorization tokens, and status/list payloads (session MCP entries,
- * the app-level inspection surface) must never disclose them to SDK
- * consumers. Internal reconciliation keeps using the full `McpServerConfig`.
- */
-
 import type { McpServerConfig } from './config-schema';
 
 export type McpServerConfigView =

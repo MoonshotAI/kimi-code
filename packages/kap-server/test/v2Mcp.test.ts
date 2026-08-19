@@ -1,13 +1,3 @@
-/**
- * Scenario: `/api/v2/mcp` — the unified MCP management plane.
- * Responsibilities: the `mcp_management` flag gate (off → every route answers
- * the `40928 mcp.management_disabled` envelope without touching the service;
- * on → the full surface), the envelope wire shape of every route, and the
- * domain-code → wire-code mapping (`mcp.server_not_found` → 40408,
- * `request.invalid` / `config.invalid` → 40001).
- * Wiring: real kap-server; `IMcpManagementService` stubbed via DI seeds.
- * Run: `pnpm --filter @moonshot-ai/kap-server exec vitest run test/v2Mcp.test.ts`.
- */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,7 +18,6 @@ import { type RunningServer, startServer } from '../src/start';
 import { authedFetch } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
-/** The shared REST envelope: business outcome in `code`, payload in `data`. */
 interface EnvelopeWire<T = unknown> {
   code: number;
   msg: string;
@@ -45,7 +34,6 @@ const STDIO_A: GlobalMcpServerConfig = {
   env: { TOKEN: 'secret' },
 };
 
-/** Recording stub: user-level servers held in a Map, every call logged. */
 interface McpStub {
   readonly service: IMcpManagementService;
   readonly calls: string[];
@@ -174,9 +162,6 @@ describe('server /api/v2/mcp', () => {
   let base: string;
 
   beforeEach(() => {
-    // Neutralize flag env vars leaking from the developer shell (same pattern
-    // as meta.test.ts): the per-flag env must be fully ABSENT for the
-    // flag-off baseline, and is pinned per describe below.
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
   });
 
@@ -265,8 +250,6 @@ describe('server /api/v2/mcp', () => {
       const added = await call<McpManagedServer[]>('POST', '/api/v2/mcp/servers', STDIO_A);
       expect(added.status).toBe(200);
       expect(added.body.code).toBe(0);
-      // Mutable (user-level) entries carry the FULL config — edit UIs prefill
-      // from it, so `env` values are present here by design.
       expect(added.body.data).toEqual([
         {
           name: 'a',
@@ -292,8 +275,6 @@ describe('server /api/v2/mcp', () => {
       });
       expect(updated.body.code).toBe(0);
       expect(updated.body.data).toHaveLength(1);
-      // The path owns the identity: the body carried no `name`, the route
-      // reattached the path param before delegating.
       expect(stub.state.lastUpdate).toEqual({ transport: 'stdio', command: 'run-b', name: 'a' });
 
       const removed = await call<McpManagedServer[]>('DELETE', '/api/v2/mcp/servers/a');
@@ -322,24 +303,19 @@ describe('server /api/v2/mcp', () => {
       const stub = makeMcpStub();
       await boot(stub);
 
-      // Missing the `transport` discriminant.
       const badAdd = await call('POST', '/api/v2/mcp/servers', { name: 'a', command: 'run-a' });
       expect(badAdd.body.code).toBe(40001);
       expect(Array.isArray(badAdd.body.details)).toBe(true);
 
-      // Locator missing the server name.
       const badBegin = await call('POST', '/api/v2/mcp/auth:begin', { source: 'global' });
       expect(badBegin.body.code).toBe(40001);
 
-      // The service never saw either request.
       expect(stub.calls).toEqual([]);
     });
 
     it('maps the engine request.invalid rejection to 40001', async () => {
       const stub = makeMcpStub();
       await boot(stub);
-      // Zod-valid (both fields optional) but rejected by the engine: a test
-      // target needs a name or an inline server.
       const res = await call('POST', '/api/v2/mcp/servers:test', {});
       expect(res.body.code).toBe(40001);
       expect(res.body.data).toBeNull();
@@ -348,8 +324,6 @@ describe('server /api/v2/mcp', () => {
 
     it('maps the engine config.invalid rejection to 40001', async () => {
       const stub = makeMcpStub();
-      // A zod-valid body whose engine-side write then fails the config layer
-      // (e.g. a corrupt user mcp.json) surfaces as config.invalid.
       stub.service.addServer = async () => {
         throw new Error2(
           ErrorCodes.CONFIG_INVALID,
@@ -366,8 +340,6 @@ describe('server /api/v2/mcp', () => {
 
     it('maps a delete rejected with mcp.server_not_found to 40408', async () => {
       const stub = makeMcpStub();
-      // The engine's removeServer no-ops on unknown names today; drive the
-      // route's documented 40408 leg with the domain error directly.
       stub.service.removeServer = async (name) => {
         throw new Error2(ErrorCodes.MCP_SERVER_NOT_FOUND, `MCP server "${name}" was not found`);
       };

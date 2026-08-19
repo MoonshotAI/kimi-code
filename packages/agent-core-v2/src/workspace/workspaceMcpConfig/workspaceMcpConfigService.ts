@@ -68,8 +68,6 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     );
     this._register(
       mcpConfigStore.onDidWrite(() => {
-        // A management-plane write is already durable here, so skip the
-        // watch debounce and reload immediately.
         void this.reloadFileServers().catch((error) => {
           this.log.warn(`mcp config reload after management write failed: ${String(error)}`);
         });
@@ -114,9 +112,6 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   }
 
   private merged(): Record<string, McpServerConfig> {
-    // An enabled plugin entry wins over the file layers, matching the
-    // management plane's runtime resolution; when the plugin entry vanishes
-    // (disable / remove) the same-named file entry takes back over.
     return { ...Object.fromEntries(this.fileServers), ...Object.fromEntries(this.pluginServers) };
   }
 
@@ -184,8 +179,6 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
 
   private publishIfChanged(): void {
     const next = this.merged();
-    // Null-prototype accumulator: a server literally named `__proto__` would
-    // otherwise hit the prototype setter and silently vanish from the diff.
     const upsert: Record<string, McpServerConfig> = Object.create(null);
     const remove: string[] = [];
     for (const [name, config] of Object.entries(next)) {

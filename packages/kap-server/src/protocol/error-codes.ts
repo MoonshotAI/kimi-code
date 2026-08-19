@@ -61,7 +61,6 @@ export const ErrorCode = {
   CAPABILITY_UNSUPPORTED: 40925,
   RUNTIME_UNAVAILABLE: 40926,
   PROMPT_ID_CONFLICT: 40927,
-  /** MCP 管理面未启用（mcp_management flag 关闭），同 40923 的 flag-未开先例 */
   MCP_MANAGEMENT_DISABLED: 40928,
 
   APPROVAL_EXPIRED: 41001,

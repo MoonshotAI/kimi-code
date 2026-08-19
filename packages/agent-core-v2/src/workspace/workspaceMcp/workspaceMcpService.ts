@@ -172,19 +172,14 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     manager: McpConnectionManager,
     event: McpOAuthEvent,
   ): Promise<void> {
-    // Client/verifier/discovery invalidations are flow-local; only token-level
-    // changes move connections.
     if (event.type === 'tokens-invalidated' && event.scope !== 'tokens' && event.scope !== 'all') {
       return;
     }
     const entry = manager.get(event.serverName);
     if (entry === undefined) return;
-    // The credential is keyed by name + canonical URL: if this manager's
-    // entry points at a different URL now, the event is not about it.
     const serverUrl = manager.getRemoteServerUrl(event.serverName);
     if (serverUrl === undefined || canonicalMcpOAuthResource(serverUrl) !== event.serverUrl) return;
     if (event.type === 'tokens-invalidated') {
-      // Drop the cached provider so the reconnect starts from clean state.
       this.oauthService.forgetProvider(event.serverName, event.serverUrl);
     }
     if (entry.status === 'disabled' || entry.status === 'removed') return;
@@ -209,7 +204,6 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     ) {
       return;
     }
-    // A failed proactive refresh only matters to a live connection.
     if (event.type === 'refresh-failed' && entry.status !== 'connected') return;
     await manager.reconnectAndJoin(event.serverName);
   }

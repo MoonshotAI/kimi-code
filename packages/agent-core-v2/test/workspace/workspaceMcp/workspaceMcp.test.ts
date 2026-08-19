@@ -461,14 +461,6 @@ describe('WorkspaceMcpService', () => {
       );
     });
 
-    /**
-     * Intentional seam: fabricate the manager's view of one entry instead of
-     * running a real connection. The credential-event handler reads the
-     * manager only through `get` / `getRemoteServerUrl` and acts only through
-     * `reconnectAndJoin` / `reconnectAfterCurrent` / `onStatusChange`, so
-     * stubbing those prototype methods stands in for any real entry in this
-     * status while keeping these tests off the network/process boundary.
-     */
     function mockManagerEntry(
       status: McpServerStatus,
       url: string = SERVER_URL,
@@ -485,12 +477,6 @@ describe('WorkspaceMcpService', () => {
         .mockResolvedValue(undefined);
     }
 
-    /**
-     * A token endpoint that 500s every refresh. The SDK maps a 5xx to a
-     * ServerError (not invalid_grant), so the service reports
-     * `refresh-failed` WITHOUT invalidating the stored grant — the cleanest
-     * way to attribute what follows to the refresh-failed event alone.
-     */
     async function startRefreshFailingServer(): Promise<{
       origin: string;
       counts: { refresh: number };
@@ -511,7 +497,6 @@ describe('WorkspaceMcpService', () => {
       return { origin: `http://127.0.0.1:${port}`, counts };
     }
 
-    /** Discovery + registered client for the fake auth server; tokens are saved by the test itself. */
     async function seedOAuthServerState(authServerOrigin: string): Promise<void> {
       const provider = oauthService.getProvider('notion', SERVER_URL);
       await provider.ready;
@@ -559,10 +544,6 @@ describe('WorkspaceMcpService', () => {
       await oauthService
         .getProvider('notion', SERVER_URL)
         .saveTokens({ access_token: 'a', token_type: 'Bearer' });
-      // Negative wait, not wall-clock work: the handler's decision path has
-      // no await before the reconnect call, so the outcome is already decided
-      // when saveTokens returns; 20ms only drains the surrounding promise
-      // chain.
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(reconnectAndJoin).not.toHaveBeenCalled();
@@ -593,9 +574,6 @@ describe('WorkspaceMcpService', () => {
       await oauthService
         .getProvider('notion', SERVER_URL)
         .saveTokens({ access_token: 'a', token_type: 'Bearer' });
-      // Same negative-wait rationale as the connected-entry case above: the
-      // handler's synchronous part already ran when the event fired, so 20ms
-      // only drains the microtask/promise chain.
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(reconnectAndJoin).not.toHaveBeenCalled();
@@ -621,13 +599,9 @@ describe('WorkspaceMcpService', () => {
       await oauthService
         .getProvider('notion', SERVER_URL)
         .saveTokens({ access_token: 'a', token_type: 'Bearer' });
-      // The handler parked on the status wait instead of reconnecting
-      // mid-connect (same drain rationale as the connected-entry case).
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(reconnectAfterCurrent).not.toHaveBeenCalled();
 
-      // The initial connect settling (any non-pending status) releases the
-      // deferral.
       notifyStatus?.({ name: 'notion', transport: 'http', status: 'connected', toolCount: 0 });
       await vi.waitFor(() => {
         expect(reconnectAfterCurrent).toHaveBeenCalledWith('notion');
@@ -644,7 +618,6 @@ describe('WorkspaceMcpService', () => {
       const provider = oauthService.getProvider('notion', SERVER_URL);
       await provider.ready;
       await provider.clearCredentials('client');
-      // Same drain rationale as the connected-entry case above.
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(reconnectAndJoin).not.toHaveBeenCalled();
@@ -661,7 +634,6 @@ describe('WorkspaceMcpService', () => {
       const provider = oauthService.getProvider('notion', SERVER_URL);
       await provider.ready;
       await provider.clearCredentials('discovery');
-      // Same drain rationale as the connected-entry case above.
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(reconnectAndJoin).not.toHaveBeenCalled();
@@ -675,9 +647,6 @@ describe('WorkspaceMcpService', () => {
       manager = service.connectionManager();
       await service.ready;
 
-      // expires_in inside the proactive window arms an immediate refresh. The
-      // tokens-saved event fires while no entry is mocked — the manager
-      // lookup misses — so only the later refresh-failed reaches the entry.
       await oauthService.getProvider('notion', SERVER_URL).saveTokens({
         access_token: 'stale-access-token',
         refresh_token: 'stale-refresh-token',
@@ -701,8 +670,6 @@ describe('WorkspaceMcpService', () => {
       manager = service.connectionManager();
       await service.ready;
 
-      // Same trick as the connected case: tokens-saved misses the unmocked
-      // entry; only refresh-failed reaches it.
       await oauthService.getProvider('notion', SERVER_URL).saveTokens({
         access_token: 'stale-access-token',
         refresh_token: 'stale-refresh-token',
@@ -711,9 +678,6 @@ describe('WorkspaceMcpService', () => {
       });
       const reconnectAndJoin = mockManagerEntry('needs-auth');
 
-      // Wait until the failure was definitely reported, then drain: the
-      // handler's decision for a needs-auth entry runs synchronously off the
-      // event.
       await vi.waitFor(() => {
         expect(events.some((event) => event.type === 'refresh-failed')).toBe(true);
       });
@@ -730,7 +694,6 @@ describe('WorkspaceMcpService', () => {
       await oauthService
         .getProvider('notion', SERVER_URL)
         .saveTokens({ access_token: 'a', token_type: 'Bearer' });
-      // Same drain rationale as the connected-entry case above.
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(reconnectAndJoin).not.toHaveBeenCalled();
@@ -745,7 +708,6 @@ describe('WorkspaceMcpService', () => {
       await oauthService
         .getProvider('notion', SERVER_URL)
         .saveTokens({ access_token: 'a', token_type: 'Bearer' });
-      // Same drain rationale as the connected-entry case above.
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(reconnectAndJoin).not.toHaveBeenCalled();

@@ -134,10 +134,6 @@ function manager(
     update: async () => undefined,
     delete: async () => {},
   };
-  // Positional mirror of the WorkspaceInstanceManager constructor signature —
-  // adding or removing a constructor parameter shifts every slot here and the
-  // mismatch fails silently (a stub landing on the wrong dep), so keep the
-  // slot count and indices in sync with the signature.
   const args: unknown[] = [
     {},
     { scope: () => 'sessions' },

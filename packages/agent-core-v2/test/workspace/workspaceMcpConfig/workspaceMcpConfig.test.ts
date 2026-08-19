@@ -233,8 +233,6 @@ describe('WorkspaceMcpConfigService', () => {
     await writeProjectConfig({});
     watchFires.get(cwd)?.fire({ path: file, action: 'modified', kind: 'file' });
 
-    // The plugin entry already owned the runtime name, so the merged view
-    // does not change when its file-layer shadow vanishes.
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
     expect(changes).toEqual([]);
     expect(service.servers()).toEqual({ shared: stdioConfig('plugin-version') });

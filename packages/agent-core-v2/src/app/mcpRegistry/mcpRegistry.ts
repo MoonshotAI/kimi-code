@@ -1,22 +1,3 @@
-/**
- * `mcpRegistry` domain — `IMcpRegistryService` contract.
- *
- * The unified read view over every MCP server source the management plane
- * knows about: the layered config files (`global` — the user-level
- * `mcp.json` plus, when a `cwd` is supplied, the project-root `.mcp.json`
- * and project-local `.kimi-code/mcp.json`) and plugin manifests (`plugin`,
- * the final effective config after the plugin contributor's transforms;
- * read-only, config ownership lives in the manifest). Only user-level
- * entries are `mutable` through the management API (writes keep landing in
- * the user-level file). A runtime-name collision keeps both entries — the
- * management plane must show the collision instead of hiding one side —
- * while {@link IMcpRegistryService.resolveRuntimeTarget} picks the entry a
- * live session should actually run (an enabled plugin entry wins over the
- * file layers; a disabled plugin descriptor is treated as absent). Caller
- * (SDK-injected) entries are session-scoped and never appear here. Bound at
- * App scope.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 import type { McpServerConfig } from '#/mcpCore/config-schema';

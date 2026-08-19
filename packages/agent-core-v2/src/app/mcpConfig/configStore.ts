@@ -1,20 +1,3 @@
-/**
- * `mcpConfig` domain — `IMcpConfigStore`, the App-scope write plane for the
- * user-level MCP server catalog.
- *
- * Owns the user `mcp.json` (`<kimi home>/mcp.json`): `list` / `get` reads and
- * `add` / `update` / `remove` mutations, persisted as bytes through the
- * `storage` filesystem byte store (`IFileSystemStorageService`) at the
- * home-root scope (`''`) with atomic replacement. The on-disk format is a
- * port of the v1 `GlobalMcpConfigStore` — two-space JSON with a trailing
- * newline that preserves unknown top-level keys — so both engines emit
- * byte-identical files; `path` (resolved through the bootstrap home
- * resolution) is the origin identity shown by management surfaces, not the
- * persistence locator. Server entries are validated one by one against the
- * `mcpCore` `McpServerConfigSchema`, and every successful mutation fires
- * `onDidWrite`. Bound at App scope.
- */
-
 import { join } from 'pathe';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

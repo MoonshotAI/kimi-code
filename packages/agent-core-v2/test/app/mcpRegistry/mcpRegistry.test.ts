@@ -1,17 +1,3 @@
-/**
- * Scenario: the unified MCP registry read view — user-level listing without a
- * cwd, the three-layer file merge with origins/mutability when a cwd is given,
- * read-only plugin entries kept side by side on runtime-name collisions,
- * runtime-target resolution priority, plugin load failure propagation, and
- * structural config equality.
- *
- * Exercises the real `McpRegistryService` over the real `IMcpConfigStore`
- * (in-memory storage backend), a stubbed `IPluginService`, and real temp
- * config files read through the node-local `IHostFileSystem`. Run:
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/mcpRegistry/mcpRegistry.test.ts`.
- */
-
 import { mkdtempSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -98,8 +84,6 @@ describe('McpRegistryService', () => {
   async function makeProject(): Promise<{ project: string; sub: string }> {
     const project = mkdtempSync(join(tmpdir(), 'kimi-mcp-registry-proj-'));
     tempDirs.push(project);
-    // An empty `.git` directory is enough for the work-tree probe to anchor
-    // the project-root layer here instead of walking further up.
     await mkdir(join(project, '.git'), { recursive: true });
     const sub = join(project, 'pkg');
     await mkdir(sub, { recursive: true });
@@ -162,14 +146,11 @@ describe('McpRegistryService', () => {
         'userOnly',
       ]);
 
-      // Later layers override; the origin follows the winning definition and
-      // only the user-level winner stays mutable.
       expect(byName.get('shared')).toMatchObject({
         source: 'global',
         mutable: false,
         origin: join(project, '.mcp.json'),
       });
-      // Repo-root stdio cwd resolves against the repo root.
       expect(byName.get('shared')?.config).toEqual({
         transport: 'stdio',
         command: 'repo-version',
@@ -294,7 +275,6 @@ describe('McpRegistryService', () => {
         config: { command: 'user-version' },
       });
 
-      // With the file layer gone too, the name no longer resolves at all.
       await store.remove('plugin-demo:api');
       await expect(registry.resolveRuntimeTarget('plugin-demo:api')).resolves.toBeUndefined();
     });

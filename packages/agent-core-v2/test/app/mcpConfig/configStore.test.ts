@@ -1,14 +1,3 @@
-/**
- * Scenario: user-level mcp.json write plane over the storage byte store.
- *
- * Resolves `IMcpConfigStore` through the DI test harness with the in-memory
- * storage backend and drives CRUD round-trips, v1-compatible byte output
- * (two-space indent, trailing newline, unknown top-level keys preserved),
- * name normalization, read/validation failures, `__proto__` safety, and
- * `onDidWrite` firing. Run with `pnpm --filter @moonshot-ai/agent-core-v2
- * exec vitest run test/app/mcpConfig/configStore.test.ts`.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';

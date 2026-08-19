@@ -1,28 +1,3 @@
-/**
- * Scenario: the MCP management write plane — CRUD round-trips through the
- * real store and registry, read-only collision guards (enabled plugin entries
- * reject, disabled plugin descriptors never block), guard strictness under a
- * degraded read view (a plugin listing failure or a corrupt user mcp.json
- * aborts mutations without persisting), redacted read-only views,
- * project-layer read-only visibility under a cwd query, and the
- * connection-test probe (inline http — success and unreachable-server
- * failure, inline stdio with workspace materialization, name resolution and
- * its ambiguity rejection), the
- * auth-status surface (offline grant classification, `verify` probes), the
- * locator-addressed inspection catalog with its batched probe, and the
- * locator-addressed OAuth operations (begin/complete/cancel/reset, flowId
- * bookkeeping, active-flow cancel, complete timeout, runtime-name ambiguity
- * rejection). The `mcp_management` flag
- * gates the edge exposure only; the engine service itself is deliberately
- * ungated.
- *
- * Exercises the real `McpManagementService` + `McpRegistryService` +
- * `IMcpConfigStore` (in-memory storage backend) against a stubbed
- * `IPluginService` and in-process MCP fixture / OAuth servers. Run:
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/mcpManagement/mcpManagement.test.ts`.
- */
-
 import { mkdtempSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
@@ -76,7 +51,6 @@ function stdioServer(name: string, command = 'npx'): GlobalMcpServerConfig {
   return { name, transport: 'stdio', command };
 }
 
-/** Byte-level locator of the user-level file inside the storage backend. */
 const CONFIG_SCOPE = '';
 const CONFIG_KEY = 'mcp.json';
 
@@ -161,12 +135,6 @@ describe('McpManagementService', () => {
     return server;
   }
 
-  /**
-   * An OAuth-gated endpoint: every request gets a 401 Bearer challenge, and
-   * the token endpoint rejects refresh grants with invalid_grant (a dead
-   * stored grant). Mirrors the needs-auth fixtures of
-   * `test/mcpCore/connection-manager.test.ts`.
-   */
   async function startGatedServer(): Promise<{ origin: string; url: string }> {
     const httpServer: HttpServer = createHttpServer((req, res) => {
       if (req.method === 'POST' && req.url === '/token') {
@@ -191,12 +159,6 @@ describe('McpManagementService', () => {
     return { origin: `http://127.0.0.1:${port}`, url: `http://127.0.0.1:${port}/mcp` };
   }
 
-  /**
-   * A minimal OAuth authorization server for the interactive flow: DCR at
-   * `/register` and a token endpoint answering the authorization_code grant.
-   * Discovery is seeded straight into the provider, so the authorization
-   * redirect never leaves the process.
-   */
   async function startInteractiveAuthServer(): Promise<{ origin: string }> {
     const httpServer: HttpServer = createHttpServer((req, res) => {
       if (req.method !== 'POST' || (req.url !== '/register' && req.url !== '/token')) {
@@ -231,7 +193,6 @@ describe('McpManagementService', () => {
     return { origin: `http://127.0.0.1:${port}` };
   }
 
-  /** Seeding goes through a provider whose `ready` settled — earlier writes are clobbered by its initial load. */
   async function seedDiscovery(name: string, url: string, authServerOrigin: string): Promise<void> {
     const provider = oauth.getProvider(name, url);
     await provider.ready;
@@ -271,7 +232,6 @@ describe('McpManagementService', () => {
     await provider.saveTokens({ token_type: 'Bearer', ...tokens });
   }
 
-  /** Play the browser: hit the flow's localhost callback listener with a code and the carried state. */
   async function deliverAuthCallback(authorizationUrl: string): Promise<void> {
     const url = new URL(authorizationUrl);
     const redirectUri = url.searchParams.get('redirect_uri');
@@ -403,8 +363,6 @@ describe('McpManagementService', () => {
         transport: 'http',
         url: 'https://example.com/user',
       });
-      // The collision stays visible: the fresh user-level entry lists side by
-      // side with the read-only disabled descriptor.
       const matches = added.filter((entry) => entry.name === 'plugin-demo:docs');
       expect(matches).toHaveLength(2);
       expect(matches[0]).toMatchObject({ source: 'global', mutable: true });
@@ -435,9 +393,6 @@ describe('McpManagementService', () => {
       const before = await readStoreBytes();
       pluginError = new Error2(ErrorCodes.PLUGIN_LOAD_FAILED, 'plugin state corrupt');
 
-      // Only a genuine not-found reads as "no collision": a degraded read
-      // view must abort the write, because a mutation guarded on it could
-      // shadow a read-only plugin server while contributions are unknown.
       await expect(management.addServer(stdioServer('beta'))).rejects.toMatchObject({
         code: ErrorCodes.PLUGIN_LOAD_FAILED,
       });
@@ -557,8 +512,6 @@ describe('McpManagementService', () => {
     }, 20000);
 
     it('reports a clean failure for an unreachable inline http server', async () => {
-      // 127.0.0.1:1 refuses the connection immediately, so the probe settles
-      // as a failure long before its startup timeout.
       const result = await management.testServer({
         server: {
           name: 'down',
@@ -622,8 +575,6 @@ describe('McpManagementService', () => {
           serverName: 'api',
         },
       ];
-      // The management plane rejects this write (read-only collision), so the
-      // collision is seeded straight into the store — as an on-disk edit would.
       await store.add({
         name: 'plugin-demo:api',
         transport: 'http',
@@ -646,8 +597,6 @@ describe('McpManagementService', () => {
           serverName: 'api',
         },
       ];
-      // The disabled file entry lists before the plugin in registry order, but
-      // the enabled plugin is what a live session would actually run.
       await store.add({
         name: 'plugin-demo:api',
         transport: 'http',
@@ -721,8 +670,6 @@ describe('McpManagementService', () => {
         expires_in: 3600,
       });
 
-      // An expired grant with a refresh token recovers on the next connect;
-      // without one the credential is dead and must be re-created.
       await expect(management.listAuthStatuses()).resolves.toEqual([
         { name: 'stale', authStatus: 'oauth-expired' },
         { name: 'refreshable', authStatus: 'oauth-authorized' },
@@ -756,9 +703,6 @@ describe('McpManagementService', () => {
         auth: 'oauth',
       });
 
-      // `plain` is unpinned with no grant, so even the offline path probes it
-      // once to detect a challenge (the fixture never challenges). The
-      // oauth-marked entry short-circuits to oauth-required without a probe.
       await expect(management.listAuthStatuses()).resolves.toEqual([
         { name: 'plain', authStatus: 'not-applicable' },
         { name: 'challenged', authStatus: 'oauth-required' },
@@ -822,7 +766,6 @@ describe('McpManagementService', () => {
         'plugin:demo:api',
       ]);
 
-      // Probed and connected without a grant: simply not applicable.
       expect(byId.get('global:plain')).toMatchObject({
         locator: { source: 'global', name: 'plain' },
         runtimeName: 'plain',
@@ -851,7 +794,6 @@ describe('McpManagementService', () => {
         editable: false,
         authStatus: 'not-applicable',
       });
-      // Inspection configs are the redacted wire view for every entry.
       expect(plugin?.config).toMatchObject({ headerKeys: ['X-Key'] });
       expect(plugin?.config).not.toHaveProperty('headers');
       expect(JSON.stringify(plugin?.config)).not.toContain('secret');
@@ -879,7 +821,6 @@ describe('McpManagementService', () => {
         error: 'MCP runtime name "plugin-demo:api" is not unique',
       });
 
-      // Both sides of the collision stay visible in the catalog.
       const all = await management.inspectServers();
       expect(all.filter((server) => server.runtimeName === 'plugin-demo:api')).toHaveLength(2);
     }, 20000);
@@ -1076,7 +1017,6 @@ describe('McpManagementService', () => {
         refresh_token: 'good-refresh',
       });
 
-      // The stored grant refreshes fine, so begin never surfaces a browser URL.
       await expect(
         management.beginServerAuth({ source: 'global', name: 'oauthable' }),
       ).resolves.toEqual({ status: 'already-authorized' });
@@ -1134,8 +1074,6 @@ describe('McpManagementService', () => {
 
       await management.cancelServerAuth({ flowId: begun.flowId });
 
-      // The flow is gone from the ledger: completing its flowId now rejects
-      // like any unknown flow.
       await expect(
         management.completeServerAuth({ flowId: begun.flowId, timeoutMs: 1000 }),
       ).rejects.toMatchObject({
@@ -1160,8 +1098,6 @@ describe('McpManagementService', () => {
         throw new Error(`expected authorization-required, got ${begun.status}`);
       }
 
-      // No callback is delivered: the wait must fail after the handle's
-      // timeout instead of hanging on the default 15-minute one.
       await expect(
         management.completeServerAuth({ flowId: begun.flowId, timeoutMs: 200 }),
       ).rejects.toThrow(/OAuth callback timed out/);
@@ -1214,7 +1150,6 @@ describe('McpManagementService', () => {
         },
       ];
 
-      // Reset is a no-network invalidate and works for plugin servers.
       await expect(
         management.resetServerAuth({ source: 'plugin', pluginId: 'demo', serverName: 'api' }),
       ).resolves.toBeUndefined();

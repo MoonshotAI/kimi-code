@@ -1,30 +1,3 @@
-/**
- * `mcpManagement` domain — `IMcpManagementService` implementation.
- *
- * Orchestrates the write plane: every mutation normalizes the server name
- * once (the store trims names, so the read-only guard, the persisted key,
- * and the workspace reconciliation must all agree), checks the `mcpRegistry`
- * read view for a read-only collision (an enabled plugin entry or a
- * project-layer entry rejects; a disabled plugin descriptor is a dead
- * shadow and never blocks), then writes the user-level file through the
- * `mcpConfig` store — its change event and the workspace config watch drive
- * the live-session reconciliation from there, so this service holds no
- * session knowledge. The connection test runs a throwaway
- * `McpConnectionManager` probe against the shared `mcpConfig` OAuth
- * orchestrator, feeding the manager the `[mcp]` section tunables from
- * `config` and the client name from `identity`; probing a stdio server
- * materializes the probe cwd's workspace through the runtime binding (the
- * same path any out-of-workspace connect takes) — note this registers the
- * cwd in the persisted workspace directory, an accepted side effect of
- * testing an arbitrary stdio server. The
- * inspection batches that probe over every OAuth candidate in one manager.
- * Locator-addressed OAuth operations run through the shared orchestrator
- * with flow handles tracked by flowId, and refuse to act on a runtime name
- * shared by enabled entries — the credential identity would be ambiguous.
- * Reads assemble the management view with read-only entries redacted to
- * key lists. Bound at App scope.
- */
-
 import { randomUUID } from 'node:crypto';
 
 import { normalize } from 'pathe';
@@ -76,7 +49,6 @@ import {
   type McpServerTestTarget,
 } from './mcpManagement';
 
-/** Default wait for the browser callback of a management-plane OAuth flow. */
 const DEFAULT_AUTH_TIMEOUT_MS = 15 * 60_000;
 
 export class McpManagementService extends Disposable implements IMcpManagementService {
@@ -110,10 +82,6 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     const name = normalizeServerName(server.name);
     const existing = await this.guardLookup(name);
     if (existing !== undefined && !(existing.source === 'global' && existing.mutable)) {
-      // A same-named plugin / project-layer entry already exists; writing a
-      // user-level shadow would silently change precedence, so reject. A
-      // mutable user-level duplicate falls through to the store's own
-      // "already exists" error.
       throwReadOnlyMcpServer(existing);
     }
     await this.store.add({ ...server, name });
@@ -124,7 +92,6 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     const name = normalizeServerName(server.name);
     const existing = await this.guardLookup(name);
     if (existing === undefined) {
-      // Preserve the store's not-found error (and its config validation).
       await this.store.update({ ...server, name });
     } else {
       throwReadOnlyMcpServer(existing);
@@ -192,9 +159,6 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
         'Pass an MCP server name or an inline server config',
       );
     }
-    // A name-only probe is only meaningful when one enabled entry owns the
-    // runtime name; under a collision the UI cannot tell which server Test
-    // acts on, so reject like the auth paths do.
     const matches = (await this.registry.list({ cwd })).filter((entry) => entry.name === name);
     if (matches.length === 0) {
       throw new Error2(ErrorCodes.MCP_SERVER_NOT_FOUND, `MCP server "${name}" was not found`);
@@ -206,10 +170,6 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
         `MCP runtime name "${name}" is shared by multiple enabled servers`,
       );
     }
-    // Probe the entry the runtime would actually run: the sole enabled match
-    // owns the name (an enabled plugin outranks the file layers, which list
-    // first). When every match is disabled, fall back to the first entry so
-    // the probe reports it as disabled.
     const entry = enabled[0] ?? matches[0]!;
     return { name: entry.name, ...entry.config };
   }
@@ -248,7 +208,6 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     }
   }
 
-
   async listAuthStatuses(query: McpAuthStatusQuery = {}): Promise<readonly McpServerAuthStatus[]> {
     const entries = await this.registry.list({ cwd: query.cwd });
     const verify = query.verify === true;
@@ -273,13 +232,9 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
   }
 
   async resolveServerByName(name: string): Promise<McpServerLocator> {
-    // get() first, preserving its not-found error for unknown names.
     await this.registry.get(name);
     const catalog = await this.serverDescriptors();
     const matches = catalog.filter((candidate) => candidate.runtimeName === name);
-    // The sole enabled owner wins over disabled shadows (matching the runtime
-    // and the connection-test path); ambiguity is then judged among the
-    // remaining enabled entries.
     const descriptor = matches.find((candidate) => candidate.enabled) ?? matches[0]!;
     this.requireUnambiguousRuntimeName(catalog, descriptor);
     return descriptor.locator;
@@ -333,8 +288,6 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
   async resetServerAuth(locator: McpServerLocator): Promise<void> {
     const server = await this.resolveServer(locator);
     const config = requireRemoteMcpConfig(server.runtimeName, server.config);
-    // The invalidation event propagates into live sessions via the shared
-    // OAuth service's event stream.
     await this.oauth.invalidate(server.runtimeName, config.url);
   }
 
@@ -384,20 +337,14 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     verify: boolean,
   ): Promise<McpServerAuthState> {
     const server = entry.config;
-    // A disabled server never participates in OAuth; keep the historical
-    // classification instead of reporting oauth-required or probing it.
     if (server.enabled === false) return 'not-applicable';
     if (server.transport === 'stdio') return 'not-applicable';
     if (server.bearerTokenEnvVar !== undefined) return 'bearer-token';
-    // Keep status classification aligned with the existing connection manager:
-    // unmarked static headers are not treated as OAuth credentials.
     if (server.headers !== undefined && server.auth !== 'oauth') return 'not-applicable';
     if (server.transport !== 'http' && server.auth !== 'oauth') return 'not-applicable';
     const tokens = await this.oauth.tokenState(entry.name, server.url);
     const offline = (): McpServerAuthState => {
       if (tokens.hasTokens) {
-        // An expired grant with a refresh token recovers on the next connect;
-        // without one the credential is dead and must be re-created.
         return !tokens.expired || tokens.hasRefreshToken ? 'oauth-authorized' : 'oauth-expired';
       }
       return server.auth === 'oauth' ? 'oauth-required' : 'not-applicable';
@@ -406,22 +353,16 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     const probe = async (): Promise<McpServerAuthState> =>
       this.withProbe({ name: entry.name, ...server }, cwd, (manager) => {
         const status = manager.get(entry.name)?.status;
-        // A clean connect only proves OAuth-authorized when a grant exists;
-        // a server that never challenges is simply not applicable.
         if (status === 'connected') return tokens.hasTokens ? 'oauth-authorized' : 'not-applicable';
         if (status === 'needs-auth') return tokens.hasTokens ? 'oauth-expired' : 'oauth-required';
         return offline();
       });
 
     if (verify) {
-      // Online verification: a real connection probe settles states the
-      // offline view cannot distinguish (revoked grant, dead refresh token).
       return probe();
     }
     if (tokens.hasTokens) return offline();
     if (server.auth === 'oauth') return 'oauth-required';
-    // Unpinned auth with no stored grant: probe once to detect whether the
-    // server challenges at all.
     return this.withProbe({ name: entry.name, ...server }, cwd, (manager) =>
       manager.get(entry.name)?.status === 'needs-auth' ? 'oauth-required' : 'not-applicable',
     );
@@ -439,7 +380,6 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
   ): Promise<readonly McpServerRuntimeInspection[]> {
     const runtimeNameCounts = new Map<string, number>();
     for (const server of new Map(catalog.map((item) => [item.serverId, item])).values()) {
-      // Disabled entries cannot hold a connection, so they cannot collide.
       if (!server.enabled) continue;
       runtimeNameCounts.set(server.runtimeName, (runtimeNameCounts.get(server.runtimeName) ?? 0) + 1);
     }
@@ -513,11 +453,6 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
 
 function throwReadOnlyMcpServer(entry: McpRegistryEntry): void {
   if (entry.source === 'global' && entry.mutable) return;
-  // A disabled plugin descriptor is absent from the runtime target, so a
-  // user-level entry of this name becomes the effective one the moment it
-  // is written — never block mutations on a dead shadow. (Disabled project
-  // entries still shadow the user file at runtime, so they keep their
-  // read-only rejection.)
   if (entry.source === 'plugin' && entry.config.enabled === false) return;
   const reason =
     entry.source === 'plugin'
@@ -529,7 +464,6 @@ function throwReadOnlyMcpServer(entry: McpRegistryEntry): void {
   );
 }
 
-/** Flatten a registry entry into the managed view of the unified plane. */
 function toManagedServer(entry: McpRegistryEntry): McpManagedServer {
   return {
     name: entry.name,
@@ -584,7 +518,6 @@ export function describeMcpServerLocator(locator: McpServerLocator): string {
   return `${locator.pluginId}/${locator.serverName}`;
 }
 
-/** Inspection-time descriptor: the wire shape but with the full config. */
 type McpServerRuntimeDescriptor = Omit<McpServerDescriptor, 'config'> & {
   readonly config: McpServerConfig;
 };
@@ -628,10 +561,6 @@ function selectServerDescriptors(
   });
 }
 
-/**
- * States decidable without connecting: anything pinned (stdio, bearer token,
- * static non-OAuth headers) or disabled never enters the OAuth probe.
- */
 function configuredMcpAuthState(
   server: McpServerRuntimeDescriptor,
 ): McpServerAuthState | undefined {

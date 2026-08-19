@@ -1,21 +1,3 @@
-/**
- * `mcpConfig` domain — MCP JSON config discovery and loading.
- *
- * Resolves the three MCP config files for a cwd (user `mcp.json` under the
- * kimi home, project-root `.mcp.json` — the root discovered through the
- * `git` domain's work-tree probe — and `.kimi-code/mcp.json` under the cwd)
- * and loads them with user < project-root < project precedence, normalizing
- * relative stdio `cwd` entries against the project-root file's directory.
- * `includeProject: false` skips the two project-level files and loads the
- * user file only — the workspace-trust gate: the project files ship with
- * the checkout, so an untrusted workspace must never see them.
- * {@link loadMcpServersDetailed} additionally reports the defining-file
- * origin of every effective entry, for management surfaces that show where
- * a server came from. All filesystem access goes through the os
- * `IHostFileSystem`, supplied by the caller. Pure functions — no scoped
- * state.
- */
-
 import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
 
 import { resolveKimiHome } from '#/app/bootstrap/bootstrap';
@@ -90,8 +72,6 @@ export async function loadMcpServersDetailed(
       [paths.projectRoot, projectRoot],
       [paths.project, project],
     ]);
-  // Null-prototype accumulators: a server literally named `__proto__` would
-  // otherwise hit the prototype setter and silently vanish from the merge.
   const servers: Record<string, McpServerConfig> = Object.create(null);
   const origins: Record<string, string> = Object.create(null);
   for (const [path, layer] of layers) {
@@ -154,13 +134,6 @@ async function readMcpJson(
   }
 }
 
-/**
- * Parse the file's server map entry-by-entry instead of through a single
- * `z.record()`: a record parse rebuilds its output with property assignment,
- * which routes a literal `__proto__` server key through the prototype setter
- * and silently drops it. Per-entry parsing over the JSON own-keys keeps every
- * declared server.
- */
 function parseMcpJsonServers(data: unknown): Record<string, McpServerConfig> {
   if (!isRecord(data)) {
     throw new Error('expected a JSON object');

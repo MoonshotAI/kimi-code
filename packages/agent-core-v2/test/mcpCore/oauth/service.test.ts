@@ -1,19 +1,3 @@
-/**
- * Scenario: the shared McpOAuthService stamps token writes with `obtained_at`,
- * exposes the offline token state, emits credential events, runs token
- * refreshes single-flight per credential, serializes interactive flows per
- * credential, and schedules/shuts down proactive refreshes — over the async
- * `McpOAuthStore` port (memory stub). Ported from v1's
- * `test/mcp/oauth-service.test.ts`. Run with
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/mcpCore/oauth/service.test.ts`.
- *
- * Note: the scheduling/shutdown describes drive the refresh timers with
- * `vi.useFakeTimers()` — a deliberate exception to the no-fake-timers rule:
- * the behavior under test IS the timer semantics (a `MAX_TIMER_DELAY_MS`
- * re-arm would take ~25 days of wall clock), and the service exposes no
- * clock seam. The v1 blueprint suite drives them the same way.
- */
-
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import type { AddressInfo as HttpAddress } from 'node:net';
 
@@ -58,16 +42,10 @@ afterEach(async () => {
   }
 });
 
-/** The memory store's `list(prefix)` is prefix-matching, so meta sidecars are filtered by suffix. */
 async function listMetaKeys(store: McpOAuthStore): Promise<readonly string[]> {
   return (await store.list()).filter((key) => key.endsWith(META_SUFFIX));
 }
 
-/**
- * The provider mirrors client/discovery state into in-memory caches on
- * construction (`ready`); seeding before that load settles is clobbered by
- * it, so every seed goes through a provider whose `ready` has resolved.
- */
 async function readyProvider(fixture: Fixture): Promise<McpOAuthClientProvider> {
   const provider = fixture.service.getProvider(SERVER_NAME, SERVER_URL);
   await provider.ready;
@@ -79,13 +57,6 @@ interface FakeAuthServer {
   readonly counts: { register: number; exchange: number; refresh: number };
 }
 
-/**
- * Minimal OAuth authorization server: DCR at `/register` (echoes the client
- * metadata back with a client_id) and a token endpoint that answers both
- * `authorization_code` and `refresh_token` grants with a fresh access token.
- * Discovery and the authorization redirect never touch the network — tests
- * seed discovery state and drive the localhost callback listener directly.
- */
 async function startFakeAuthServer(
   options: { readonly rejectRefreshToken?: boolean } = {},
 ): Promise<FakeAuthServer> {
@@ -140,7 +111,6 @@ async function startFakeAuthServer(
   return { url: `http://127.0.0.1:${port}`, counts };
 }
 
-/** Discovery state + registered client metadata matching a fake auth server. */
 function authServerState(authServerUrl: string) {
   return {
     discovery: {
@@ -165,10 +135,6 @@ function authServerState(authServerUrl: string) {
   };
 }
 
-/**
- * Play the browser: hit the flow's localhost callback listener with a code
- * and the `state` carried by the authorization URL.
- */
 async function deliverCallback(flow: BeginAuthorizationResult): Promise<void> {
   const redirectUri = flow.authorizationUrl.searchParams.get('redirect_uri');
   const state = flow.authorizationUrl.searchParams.get('state');
@@ -373,8 +339,6 @@ describe('McpOAuthService single-flight refresh', () => {
       token_type: 'Bearer',
     });
 
-    // The refresh's /token request must go through OAuthTokenTransaction so
-    // it serializes against concurrent 401-driven refreshes from transports.
     const fetchSpy = vi.spyOn(provider, 'createOAuthFetch');
     await fixture.service.refresh(SERVER_NAME, SERVER_URL);
     expect(fetchSpy).toHaveBeenCalled();
@@ -394,11 +358,6 @@ describe('McpOAuthService single-flight refresh', () => {
       token_type: 'Bearer',
     });
 
-    // The dead refresh token is rejected with invalid_grant, so the SDK
-    // invalidates the 'tokens' scope and the durable grant is dropped. That
-    // must broadcast the invalidation like a user-driven reset, or sessions
-    // sharing the credential keep their doomed connections until their own
-    // 401s.
     await expect(fixture.service.refresh(SERVER_NAME, SERVER_URL)).rejects.toThrow(
       /requires an interactive login/,
     );
@@ -415,7 +374,6 @@ describe('McpOAuthService single-flight refresh', () => {
     const fixture = makeFixture();
     cleanups.push(() => fixture.service.dispose());
 
-    // The token endpoint returns a rotating refresh grant.
     const grant = {
       access_token: 'rotated-access',
       refresh_token: 'rotated-refresh',
@@ -455,20 +413,15 @@ describe('McpOAuthService single-flight refresh', () => {
       token_type: 'Bearer',
     });
 
-    // The SDK's grant request rides the transaction fetch, which persists and
-    // records the exact payload…
     const res = await provider.createOAuthFetch()(`${authServerUrl}/token`, {
       method: 'POST',
       body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: 'seed-refresh' }),
     });
     const granted = (await res.json()) as Parameters<typeof provider.saveTokens>[0];
 
-    // …but before the SDK's saveTokens lands, the credential is reset.
     await provider.clearCredentials('all');
     expect(await provider.tokens()).toBeUndefined();
 
-    // The matching save is consumed as already-recorded instead of writing
-    // the cleared grant back to disk.
     await provider.saveTokens(granted);
     expect(await provider.tokens()).toBeUndefined();
   }, 15000);
@@ -483,7 +436,6 @@ describe('McpOAuthService interactive flow serialization', () => {
     await provider.saveDiscoveryState(authServerState(authServer.url).discovery);
 
     const first = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
-    // A clientLabel variant maps to the same store key, so it joins too.
     const second = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL, {
       clientLabel: 'other-client',
     });
@@ -492,7 +444,6 @@ describe('McpOAuthService interactive flow serialization', () => {
     const firstComplete = first.complete({ timeoutMs: 10_000 });
     await deliverCallback(first);
     await firstComplete;
-    // The joiner shares the settled outcome; the exchange ran exactly once.
     await second.complete();
     expect(authServer.counts.exchange).toBe(1);
     expect((await fixture.service.tokenState(SERVER_NAME, SERVER_URL)).hasTokens).toBe(true);
@@ -504,9 +455,6 @@ describe('McpOAuthService interactive flow serialization', () => {
     const authServer = await startFakeAuthServer({ rejectRefreshToken: true });
     const provider = await readyProvider(fixture);
     await provider.saveDiscoveryState(authServerState(authServer.url).discovery);
-    // A dead-but-present grant keeps the credential refreshable, so a
-    // proactive/manual refresh would normally proceed — and would hit the
-    // same shared provider the interactive flow lives on.
     await provider.saveTokens({
       access_token: 'stale-access-token',
       refresh_token: 'stale-refresh-token',
@@ -516,8 +464,6 @@ describe('McpOAuthService interactive flow serialization', () => {
 
     const flow = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
     const complete = flow.complete({ timeoutMs: 10_000 });
-    // Refresh must skip while the flow is active instead of resetting the
-    // shared provider's PKCE/state out from under the browser callback.
     await expect(fixture.service.refresh(SERVER_NAME, SERVER_URL)).resolves.toBeUndefined();
     await deliverCallback(flow);
     await complete;
@@ -526,9 +472,6 @@ describe('McpOAuthService interactive flow serialization', () => {
   }, 15000);
 
   it('skips a refresh whose token read straddles the start of an interactive flow', async () => {
-    // Gate one read of the tokens file so the refresh's `tokenState()` await
-    // stays open while an interactive flow begins — the exact window the
-    // second `activeAuthorizations` check in refreshNow exists for.
     const memory = createMemoryMcpOAuthStore();
     let releaseTokensRead: () => void = () => undefined;
     const tokensReadGate = new Promise<void>((resolve) => {
@@ -543,7 +486,7 @@ describe('McpOAuthService interactive flow serialization', () => {
       ...memory,
       async read<T>(key: string): Promise<T | undefined> {
         if (gateArmed && key.endsWith('-tokens.json')) {
-          gateArmed = false; // hold exactly one read
+          gateArmed = false;
           signalReadHeld();
           await tokensReadGate;
         }
@@ -552,14 +495,11 @@ describe('McpOAuthService interactive flow serialization', () => {
     };
     const fixture = makeFixture(store);
     cleanups.push(() => fixture.service.dispose());
-    // Runs before dispose (LIFO): unblocks a parked refresh on a failure path.
     cleanups.push(() => releaseTokensRead());
     const authServer = await startFakeAuthServer({ rejectRefreshToken: true });
     const provider = await readyProvider(fixture);
     await provider.saveDiscoveryState(authServerState(authServer.url).discovery);
     await provider.saveClientInformation(authServerState(authServer.url).client);
-    // A dead-but-present grant keeps the credential refreshable, so the
-    // refresh below would normally proceed to the token endpoint.
     await provider.saveTokens({
       access_token: 'stale-access-token',
       refresh_token: 'stale-refresh-token',
@@ -567,27 +507,18 @@ describe('McpOAuthService interactive flow serialization', () => {
       expires_in: 3600,
     });
 
-    // The refresh passes the first activeAuthorizations check and parks
-    // inside the token-state read.
     gateArmed = true;
     const refresh = fixture.service.refresh(SERVER_NAME, SERVER_URL);
     await tokensReadHeld;
 
-    // An interactive flow begins in that window and takes over the shared
-    // provider's flow state. (Its own dead-grant refresh attempt is the one
-    // /token hit counted here.)
     const flow = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
     const complete = flow.complete({ timeoutMs: 10_000 });
     expect(authServer.counts.refresh).toBe(1);
 
-    // Releasing the read must not let the refresh race the flow: the re-check
-    // sees the active authorization, so no resetFlow and no second /token
-    // request — the refresh settles quietly.
     releaseTokensRead();
     await expect(refresh).resolves.toBeUndefined();
     expect(authServer.counts.refresh).toBe(1);
 
-    // The interactive flow is intact: the callback completes the exchange.
     await deliverCallback(flow);
     await complete;
     expect(authServer.counts.exchange).toBe(1);
@@ -604,7 +535,6 @@ describe('McpOAuthService interactive flow serialization', () => {
     const first = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
     const second = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
 
-    // A joiner's cancel only detaches itself; the underlying flow survives.
     await second.cancel();
     await expect(second.complete()).rejects.toThrow(/already completed or cancelled/);
 
@@ -626,8 +556,6 @@ describe('McpOAuthService interactive flow serialization', () => {
     await first.cancel();
     await expect(second.complete()).rejects.toThrow(/already completed or cancelled/);
 
-    // The credential is free again: a new begin starts a fresh flow with a
-    // new callback listener (hence a new redirect URI) and completes cleanly.
     const third = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
     expect(third.authorizationUrl.toString()).not.toBe(first.authorizationUrl.toString());
     const thirdComplete = third.complete({ timeoutMs: 10_000 });
@@ -649,13 +577,9 @@ describe('McpOAuthService interactive flow serialization', () => {
       token_type: 'Bearer',
     });
 
-    // The stored grant refreshes fine, so begin falls into the
-    // AlreadyAuthorizedError path instead of surfacing a URL.
     await expect(
       fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL),
     ).rejects.toBeInstanceOf(AlreadyAuthorizedError);
-    // A stale map entry would make the retry join a dead flow instead of
-    // failing the same way.
     await expect(
       fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL),
     ).rejects.toBeInstanceOf(AlreadyAuthorizedError);
@@ -665,9 +589,6 @@ describe('McpOAuthService interactive flow serialization', () => {
 
 describe('McpOAuthService sweepProactiveRefresh resilience', () => {
   it('skips malformed meta sidecars and still schedules the valid credential', async () => {
-    // The memory store cannot hold unparseable JSON, so v1's corrupt file is
-    // simulated by a key that `list()` surfaces but `read()` yields undefined
-    // for (the same observation v1's JsonFileStore produced for corrupt JSON).
     const memory = createMemoryMcpOAuthStore();
     const store: McpOAuthStore = {
       ...memory,
@@ -680,9 +601,6 @@ describe('McpOAuthService sweepProactiveRefresh resilience', () => {
     cleanups.push(() => fixture.service.dispose());
     const authServer = await startFakeAuthServer();
 
-    // A valid credential written straight to the store (simulating a previous
-    // process), expiring inside the proactive window so the sweep schedules
-    // an immediate refresh.
     const state = authServerState(authServer.url);
     const storeKey = mcpOAuthStoreKey(SERVER_NAME, SERVER_URL);
     await fixture.store.write(`${storeKey}-discovery.json`, state.discovery);
@@ -699,8 +617,6 @@ describe('McpOAuthService sweepProactiveRefresh resilience', () => {
       serverUrl: SERVER_URL,
     } satisfies McpOAuthStoreMeta);
 
-    // Sidecars that parse as JSON but have the wrong shape, plus one whose
-    // read yields undefined (the corrupt-JSON case).
     await fixture.store.write('broken-empty-meta.json', {});
     await fixture.store.write('broken-types-meta.json', { serverName: 1, serverUrl: 42 });
     await fixture.store.write('broken-url-meta.json', { serverName: 'x', serverUrl: 'not a url' });
@@ -724,8 +640,6 @@ describe('McpOAuthService proactive refresh scheduling', () => {
     const state = authServerState(authServer.url);
     await provider.saveDiscoveryState(state.discovery);
     await provider.saveClientInformation(state.client);
-    // expires_in 60s < REFRESH_AHEAD_MS (120s): still valid, but already
-    // inside the proactive window, so the save hook must refresh immediately.
     await provider.saveTokens({
       access_token: 'stale-access-token',
       refresh_token: 'stale-refresh-token',
@@ -744,12 +658,11 @@ describe('McpOAuthService proactive refresh scheduling', () => {
     });
     cleanups.push(() => fixture.service.dispose());
     vi.useFakeTimers();
-    const maxTimerDelayMs = 0x7fffffff; // mirrors MAX_TIMER_DELAY_MS in the service
+    const maxTimerDelayMs = 0x7fffffff;
     const refreshSpy = vi
       .spyOn(fixture.service, 'refresh')
       .mockRejectedValue(new Error('refresh unavailable in test'));
 
-    // ~25 days of validity: expiresAt - REFRESH_AHEAD_MS exceeds 2^31-1 ms.
     await fixture.service.getProvider(SERVER_NAME, SERVER_URL).saveTokens({
       access_token: 'a',
       refresh_token: 'r',
@@ -758,8 +671,6 @@ describe('McpOAuthService proactive refresh scheduling', () => {
     });
     const expiresAt = (await fixture.service.tokenState(SERVER_NAME, SERVER_URL)).expiresAt!;
 
-    // The far-future grant is armed at the maximum timer delay; firing that
-    // timer re-computes the schedule instead of dropping the grant.
     await vi.advanceTimersByTimeAsync(maxTimerDelayMs);
     expect(refreshSpy).not.toHaveBeenCalled();
 
@@ -806,7 +717,6 @@ describe('McpOAuthService shutdown', () => {
 
     await fixture.service.shutdown();
 
-    // The flow's callback listener is gone; completing is no longer possible.
     await expect(flow.complete()).rejects.toThrow(/already completed or cancelled/);
   }, 15000);
 
@@ -817,14 +727,12 @@ describe('McpOAuthService shutdown', () => {
 
     await fixture.service.shutdown();
 
-    // Listeners are cleared: later credential events go nowhere.
     const eventCount = fixture.events.length;
     await fixture.service
       .getProvider(SERVER_NAME, SERVER_URL)
       .saveTokens({ access_token: 'a', token_type: 'Bearer', expires_in: 3600 });
     expect(fixture.events).toHaveLength(eventCount);
 
-    // Cached providers were dropped.
     expect(fixture.service.getProvider(SERVER_NAME, SERVER_URL)).not.toBe(providerBefore);
   });
 

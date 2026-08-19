@@ -180,8 +180,6 @@ describe('PluginService (plugin boundary)', () => {
     try {
       const svc = host.app.accessor.get(IPluginService);
       await expect(svc.enabledMcpServers()).resolves.toEqual({});
-      // The management-plane descriptor list fails loudly instead: a
-      // mutation guarded on it must not run with plugin state unknown.
       const failure = await svc.mcpServerEntries().catch((error: unknown) => error);
       expect(failure).toMatchObject({ code: 'plugin.load_failed' });
     } finally {

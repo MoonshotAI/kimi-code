@@ -1,8 +1,3 @@
-/**
- * `mcpManagement` domain — feature flag for the experimental MCP management
- * plane.
- */
-
 import { type FlagDefinitionInput, registerFlagDefinition } from '#/app/flag/flagRegistry';
 
 export const mcpManagementFlag: FlagDefinitionInput = {

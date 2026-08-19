@@ -1,27 +1,3 @@
-/**
- * `mcpManagement` domain — `IMcpManagementService` contract.
- *
- * The unified MCP management plane over the `mcpRegistry` read view:
- *
- *  - Write plane: CRUD on the user-level `mcp.json` guarded by the registry
- *    (read-only plugin / project-layer entries reject mutations), plus a
- *    connection-test probe that accepts either an inline server config or a
- *    registry-resolved name. Mutations land in the user-level file only —
- *    live sessions pick them up through the store's change event and the
- *    workspace config watch.
- *  - Inspection: the locator-addressed catalog with redacted configs, a
- *    per-server auth-status surface (offline by default, `verify` probes),
- *    and a batched real-connection inspection; runtime names shared by
- *    enabled entries are reported `unavailable` instead of guessed.
- *  - OAuth: locator-addressed begin/complete/cancel/reset over the shared
- *    `mcpConfig` OAuth orchestrator, with flow handles keyed by flowId and
- *    ambiguity rejection for shared runtime names.
- *
- * The plane is unreleased: the edge exposure (server routes, client
- * facades) gates on the `mcp_management` flag; the engine service itself
- * stays ungated so in-process hosts can delegate to it. Bound at App scope.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 import type { McpServerConfig } from '#/mcpCore/config-schema';
