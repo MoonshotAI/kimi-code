@@ -73,9 +73,16 @@ function formatWaitSeconds(totalSeconds: number): string {
   if (totalSeconds < 60) return `${String(totalSeconds)}s`;
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
-  if (minutes < 60) return `${String(minutes)}m ${seconds.toString().padStart(2, '0')}s`;
+  if (minutes < 60) {
+    return seconds === 0
+      ? `${String(minutes)}m`
+      : `${String(minutes)}m ${seconds.toString().padStart(2, '0')}s`;
+  }
   const hours = Math.floor(minutes / 60);
-  return `${String(hours)}h ${(minutes % 60).toString().padStart(2, '0')}m`;
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes === 0
+    ? `${String(hours)}h`
+    : `${String(hours)}h ${remainingMinutes.toString().padStart(2, '0')}m`;
 }
 
 export interface WaitForProgressHandle {
