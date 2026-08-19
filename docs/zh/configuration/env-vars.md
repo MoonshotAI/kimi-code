@@ -50,7 +50,7 @@ export KIMI_CODE_CUSTOM_HEADERS=$'X-Gateway-Cluster: my-cluster\nX-Custom-Tag: d
 新增于 0.20.2。
 :::
 
-> 优先级：Kimi 身份头（`User-Agent`、`X-Msh-*`）和 `config.toml` 里供应商的 `custom_headers`（见[配置文件](./config-files.md#providers)）会覆盖这里的同名条目。认证头的行为因协议而异：在 `kimi`、`openai`、`openai_responses` 协议上，`Authorization` 条目会替换生成的 bearer token；`/models` 列表请求始终使用自己的认证头。`authorization` 这类大小写变体不会被当作同名头——它会与真正的头合并，可能导致请求失败。不要用它设置认证等保留头。需要按供应商区分请求头时，请改用 `custom_headers`。
+> 优先级：Kimi 身份头（`User-Agent`、`X-Msh-*`）和 `config.toml` 里供应商的 `custom_headers`（见 [配置文件](./config-files.md#providers)）会覆盖这里的同名条目。认证头的行为因协议而异：在 `kimi`、`openai`、`openai_responses` 协议上，`Authorization` 条目会替换生成的 bearer token；`/models` 列表请求始终使用自己的认证头。`authorization` 这类大小写变体不会被当作同名头——它会与真正的头合并，可能导致请求失败。不要用它设置认证等保留头。需要按供应商区分请求头时，请改用 `custom_headers`。
 
 ## 供应商凭证键（写在 config.toml 里）
 
