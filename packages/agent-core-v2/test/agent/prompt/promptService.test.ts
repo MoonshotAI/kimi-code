@@ -150,6 +150,29 @@ describe('AgentPromptService', () => {
     expect(prompt.list().pending.map((item) => item.id)).toEqual([queued.id]);
   });
 
+  it('rejects steering two flow activations into one step', async () => {
+    const { prompt } = harness();
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const flowMessage = (name: string): ContextMessage => ({
+      role: 'user',
+      content: [{ type: 'text', text: `<skill>${name}</skill>` }],
+      toolCalls: [],
+      origin: {
+        kind: 'user',
+        skillActivations: [
+          { activationId: `act-${name}`, skillName: `flow:${name}`, skillType: 'flow' },
+        ],
+      },
+    });
+    const one = await prompt.enqueue({ message: flowMessage('issue-fix') });
+    const two = await prompt.enqueue({ message: flowMessage('other-flow') });
+    await expect(prompt.steer([one.id, two.id])).rejects.toMatchObject({
+      code: 'request.invalid',
+    });
+    expect(prompt.list().pending.map((item) => item.id)).toEqual([one.id, two.id]);
+  });
+
   it('steers selected prompts in FIFO order', async () => {
     const { prompt, context, loop } = harness();
     const active = await prompt.enqueue({ message: message('active') });

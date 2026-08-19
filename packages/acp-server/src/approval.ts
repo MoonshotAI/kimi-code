@@ -86,6 +86,15 @@ const CANONICAL_OPTIONS: readonly PermissionOption[] = [
 export function approvalRequestToPermissionOptions(
   req: ApprovalRequest,
 ): readonly PermissionOption[] {
+  if (req.display.kind === 'flow_gate_review') {
+    // A flow gate is a per-stage sovereignty decision: session-wide approval
+    // would let one click waive every remaining gate, so the allow-always
+    // option is deliberately absent.
+    return [
+      { optionId: APPROVE_ONCE_OPTION_ID, name: 'Pass gate', kind: 'allow_once' },
+      { optionId: REJECT_OPTION_ID, name: 'Reject', kind: 'reject_once' },
+    ];
+  }
   if (req.display.kind !== 'plan_review') {
     return CANONICAL_OPTIONS;
   }
@@ -153,6 +162,9 @@ export function permissionResponseToApprovalResponse(
     // allow-always optionId. Same backward-compatibility rationale as the
     // 'approve' branch above.
     case 'approve_for_session':
+      // A flow gate never installs a session rule — the option is not offered
+      // for it, so an id arriving anyway degrades to a one-shot approval.
+      if (req.display.kind === 'flow_gate_review') return { decision: 'approved' };
       return { decision: 'approved', scope: 'session' };
     case REJECT_OPTION_ID:
       return { decision: 'rejected' };
