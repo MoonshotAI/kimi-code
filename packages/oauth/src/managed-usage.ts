@@ -22,11 +22,12 @@
  */
 
 import { readApiErrorMessage } from './api-error';
+import { KIMI_REGION_PROFILES } from './region-profiles';
 import { isRecord } from './utils';
 
 const MANAGED_PREFIX = 'managed:';
 const KIMI_CODE_PLATFORM_ID = 'kimi-code';
-export const DEFAULT_KIMI_CODE_BASE_URL = 'https://api.kimi.com/coding/v1';
+export const DEFAULT_KIMI_CODE_BASE_URL = KIMI_REGION_PROFILES['mainland-cn'].baseUrl;
 
 export function isManagedKimiCode(providerKey?: string | null): boolean {
   if (!providerKey) return false;

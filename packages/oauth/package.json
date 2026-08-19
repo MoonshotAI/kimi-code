@@ -36,6 +36,10 @@
     "./device": {
       "types": "./src/device.ts",
       "default": "./src/device.ts"
+    },
+    "./region-profiles": {
+      "types": "./src/region-profiles.ts",
+      "default": "./src/region-profiles.ts"
     }
   },
   "scripts": {

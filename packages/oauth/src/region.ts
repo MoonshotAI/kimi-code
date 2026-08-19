@@ -1,7 +1,8 @@
 /**
- * Region profiles for the mainland-China (.com) and global (.ai)
- * Kimi Code deployments, plus the resolver that decides which region a
- * client belongs to.
+ * Node-side region resolution for the mainland-China (.com) and global (.ai)
+ * Kimi Code deployments. The profile table itself lives in
+ * `./region-profiles` (browser-safe pure data, re-exported here); this module
+ * adds the resolver that decides which region a client belongs to.
  *
  * A region is a bundle of endpoints (OAuth host, managed API base URL, CDN,
  * site, telemetry). The OAuth client_id is shared across regions and stays
@@ -25,47 +26,23 @@ import { join } from 'node:path';
 
 import { z } from 'zod';
 
-import { DEFAULT_KIMI_CODE_OAUTH_HOST } from './constants';
-import { DEFAULT_KIMI_CODE_BASE_URL } from './managed-usage';
+import {
+  KIMI_REGION_PROFILES,
+  kimiRegionProfile,
+  type KimiRegion,
+  type KimiRegionProfile,
+} from './region-profiles';
 import { kimiCodeEnvBaseUrl, kimiCodeEnvOAuthHost, KIMI_CODE_OAUTH_KEY } from './managed-kimi-code';
 
-export type KimiRegion = 'mainland-cn' | 'global';
+export {
+  KIMI_REGION_PROFILES,
+  kimiRegionProfile,
+  type KimiRegion,
+  type KimiRegionProfile,
+} from './region-profiles';
 
 /** Zod schema for the wire/domain contract; parses to {@link KimiRegion}. */
 export const kimiRegionSchema = z.enum(['mainland-cn', 'global']);
-
-export interface KimiRegionProfile {
-  /** OAuth host the device flow talks to (authorize/token derive from it). */
-  readonly oauthHost: string;
-  /** Managed API base (`/coding/v1`): usages, userinfo, models, feedback... */
-  readonly baseUrl: string;
-  /** Update/install/plugin-marketplace root. */
-  readonly cdnBase: string;
-  /** Official site root (docs, console, signup, upgrade pages). */
-  readonly siteBase: string;
-  readonly telemetryEndpoint: string;
-}
-
-export const KIMI_REGION_PROFILES: Record<KimiRegion, KimiRegionProfile> = {
-  'mainland-cn': {
-    oauthHost: DEFAULT_KIMI_CODE_OAUTH_HOST,
-    baseUrl: DEFAULT_KIMI_CODE_BASE_URL,
-    cdnBase: 'https://code.kimi.com/kimi-code',
-    siteBase: 'https://www.kimi.com',
-    telemetryEndpoint: 'https://telemetry-logs.kimi.com/v1/event',
-  },
-  global: {
-    oauthHost: 'https://auth.kimi.ai',
-    baseUrl: 'https://api.kimi.ai/coding/v1',
-    cdnBase: 'https://code.kimi.ai/kimi-code',
-    siteBase: 'https://www.kimi.ai',
-    telemetryEndpoint: 'https://telemetry-logs.kimi.ai/v1/event',
-  },
-};
-
-export function kimiRegionProfile(region: KimiRegion): KimiRegionProfile {
-  return KIMI_REGION_PROFILES[region];
-}
 
 /**
  * Content-CDN URL builder (tips banner, WebBridge / Computer-Use binaries).
