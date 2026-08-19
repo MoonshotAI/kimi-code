@@ -10,6 +10,7 @@ import { Emitter } from '#/_base/event';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentFlowService } from '#/features/flow/flow';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -110,6 +111,7 @@ export class SessionTodoService extends Service implements ISessionTodoService {
   }
 
   private staleReminder(handle: IAgentScopeHandle): string | undefined {
+    if (handle.accessor.get(IAgentFlowService).run().active) return undefined;
     const memory = handle.accessor.get(IAgentContextMemoryService);
     const toolPolicy = handle.accessor.get(IAgentToolPolicyService);
     return todoListStaleReminder({

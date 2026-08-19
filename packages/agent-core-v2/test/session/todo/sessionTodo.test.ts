@@ -29,16 +29,20 @@ import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 
+import { IAgentFlowService } from '#/features/flow/flow';
+
 import { stubWireJournal } from '../../wire/stubs';
 
 interface FakeAgent {
   readonly handle: IAgentScopeHandle;
   readonly registeredTools: string[];
   readonly registeredVariants: string[];
+  readonly variantHandlers: Map<string, () => unknown>;
   readonly journal: WireRecord[];
   readonly eventBus: EventBusService;
   readonly dispatcher: IEventDispatcher;
   readonly restore: (records: readonly WireRecord[]) => Promise<void>;
+  readonly setFlowActive: (active: boolean) => void;
 }
 
 const noopBlob: IAgentBlobService = {
@@ -51,8 +55,14 @@ const noopBlob: IAgentBlobService = {
 function makeFakeAgent(agentId: string): FakeAgent {
   const registeredTools: string[] = [];
   const registeredVariants: string[] = [];
+  const variantHandlers = new Map<string, () => unknown>();
   const journal: WireRecord[] = [];
   const eventBus = new EventBusService();
+  let flowActive = false;
+  const flowStub = {
+    _serviceBrand: undefined,
+    run: () => ({ active: flowActive }),
+  };
 
   const registryStub = {
     _serviceBrand: undefined,
@@ -67,8 +77,9 @@ function makeFakeAgent(agentId: string): FakeAgent {
 
   const injectorStub = {
     _serviceBrand: undefined,
-    register: (variant: string) => {
+    register: (variant: string, handler: () => unknown) => {
       registeredVariants.push(variant);
+      variantHandlers.set(variant, handler);
       return toDisposable(() => {});
     },
   };
@@ -112,6 +123,7 @@ function makeFakeAgent(agentId: string): FakeAgent {
       if (id === IWireService) return ix.get(IWireService) as unknown as T;
       if (id === IEventDispatcher) return dispatcher as unknown as T;
       if (id === IAgentStateService) return ix.get(IAgentStateService) as unknown as T;
+      if (id === IAgentFlowService) return flowStub as unknown as T;
       throw new Error(`unexpected service request in fake agent: ${String(id)}`);
     },
   };
@@ -127,10 +139,14 @@ function makeFakeAgent(agentId: string): FakeAgent {
     handle,
     registeredTools,
     registeredVariants,
+    variantHandlers,
     journal,
     eventBus,
     dispatcher,
     restore,
+    setFlowActive: (active: boolean) => {
+      flowActive = active;
+    },
   };
 }
 
@@ -264,6 +280,18 @@ describe('SessionTodoService', () => {
 
     expect(main.registeredVariants).toContain(TODO_LIST_REMINDER_VARIANT);
     expect(sub.registeredVariants).toContain(TODO_LIST_REMINDER_VARIANT);
+  });
+
+  it('suppresses the stale-todo reminder while a flow run is active', () => {
+    const lifecycle = makeLifecycleStub();
+    const service = new SessionTodoService(lifecycle.service);
+    void service;
+    const main = makeFakeAgent('main');
+    lifecycle.fireCreate(main.handle);
+    const handler = main.variantHandlers.get(TODO_LIST_REMINDER_VARIANT);
+    expect(handler).toBeDefined();
+    main.setFlowActive(true);
+    expect(handler?.()).toBeUndefined();
   });
 
   it('rebuilds the list when a todo tools.update_store record is replayed', async () => {
