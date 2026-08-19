@@ -138,7 +138,9 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
   async spawn(opts: SpawnSubagentOptions): Promise<SpawnedSubagent> {
     const caller = this.requireCaller(opts.callerAgentId);
     const { plan } = opts;
-    const lease = caller.accessor.get(IAgentRuntimeService).acquire(['process']);
+    const lease = plan.fork
+      ? undefined
+      : caller.accessor.get(IAgentRuntimeService).acquire(['process']);
     try {
       let created: IAgentScopeHandle;
       try {
@@ -151,7 +153,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
                 thinking: plan.thinking,
               },
               labels: opts.labels,
-              runtimeId: lease.runtime.identity.runtimeId,
+              runtimeId: lease!.runtime.identity.runtimeId,
             });
       } catch (error) {
         throw wrapSubagentModelError(
@@ -163,12 +165,17 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       created.accessor
         .get(IAgentPermissionModeService)
         .setMode(caller.accessor.get(IAgentPermissionModeService).mode);
-      created.accessor
-        .get(IAgentUserToolService)
-        .inheritUserTools(caller.accessor.get(IAgentUserToolService));
+      const createdUserTools = created.accessor.get(IAgentUserToolService);
+      const callerUserTools = caller.accessor.get(IAgentUserToolService);
+      if (plan.fork) {
+        const activeToolNames = created.accessor.get(IAgentProfileService).getActiveToolNames();
+        createdUserTools.inheritUserTools(callerUserTools, activeToolNames);
+      } else {
+        createdUserTools.inheritUserTools(callerUserTools);
+      }
       const promptText = plan.fork
         ? `${FORK_CONTEXT_NOTICE}\n\n${opts.prompt}`
-        : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease.runtime);
+        : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.runtime);
       return {
         agentId: created.id,
         profileName: plan.profileName,
@@ -176,7 +183,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         promptText,
       };
     } finally {
-      lease.dispose();
+      lease?.dispose();
     }
   }
 

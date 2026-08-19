@@ -72,6 +72,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     return {
       _serviceBrand: undefined,
       data: () => data,
+      getActiveToolNames: () => data.activeToolNames,
     } as unknown as IAgentProfileService;
   }
 
@@ -404,6 +405,18 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(createAgent).not.toHaveBeenCalled();
   });
 
+  it('preserves the fork snapshot active tool names when inheriting user tools', async () => {
+    callerData = { ...callerData, activeToolNames: ['Agent', 'Read'] };
+    const svc = service();
+
+    await spawnForkChild(svc);
+
+    expect(createdUserTools.inheritUserTools).toHaveBeenCalledWith(callerUserTools, [
+      'Agent',
+      'Read',
+    ]);
+  });
+
   it('prefixes the prompt with the fork notice when the plan is a fork', async () => {
     const svc = service();
 
@@ -417,12 +430,16 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     });
   });
 
-  it('releases the runtime lease after a fork spawn', async () => {
+  it('does not require the process capability when forking', async () => {
+    acquireRuntime.mockImplementation(() => {
+      throw new Error('process capability is no longer available');
+    });
     const svc = service();
 
-    await spawnForkChild(svc);
+    await expect(spawnForkChild(svc)).resolves.toMatchObject({ agentId: 'agent-fork' });
 
-    expect(lease.dispose).toHaveBeenCalled();
+    expect(acquireRuntime).not.toHaveBeenCalled();
+    expect(forkAgent).toHaveBeenCalledWith('main', { labels: { parentAgentId: 'main' } });
   });
 
   it('wraps a create rejection with the secondary-model config hint', async () => {
