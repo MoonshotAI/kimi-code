@@ -1,7 +1,13 @@
+import { readFile } from 'node:fs/promises';
+
 import type { FileMeta, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 import { compressImageForModel } from '@moonshot-ai/kimi-code-sdk';
 
-import { ClipboardMediaError, readClipboardMedia } from '#/utils/clipboard/clipboard-image';
+import {
+  ClipboardMediaError,
+  readClipboardMedia,
+  type ClipboardVideo,
+} from '#/utils/clipboard/clipboard-image';
 import { parseImageMeta } from '#/utils/image/image-mime';
 import { editInExternalEditor, resolveEditorCommand } from '#/utils/process/external-editor';
 
@@ -13,9 +19,13 @@ import {
   LLM_NOT_SET_MESSAGE,
   NO_ACTIVE_SESSION_MESSAGE,
 } from '../constant/kimi-tui';
-import { IMAGE_STAGING_TTL_SECONDS } from '../constant/media';
+import { MEDIA_STAGING_TTL_SECONDS } from '../constant/media';
 import { formatErrorMessage } from '../utils/event-payload';
-import type { ImageAttachment, ImageAttachmentStore } from '../utils/image-attachment-store';
+import type {
+  ImageAttachment,
+  ImageAttachmentStore,
+  VideoAttachment,
+} from '../utils/image-attachment-store';
 import { extractMediaAttachments, imageExtensionForMime } from '../utils/image-placeholder';
 import { extractInlineSkillActivations } from '../utils/inline-skill-tokens';
 import type { PendingExit, QueuedMessage, SteerInputItem } from '../types';
@@ -28,7 +38,8 @@ export interface EditorKeyboardHost {
   /**
    * True when the TUI runs on the agent-core-v2 engine (startup-selected).
    * Gates the paste-time upload to the daemon file store; the v1 engine has
-   * no file store and keeps the submit-time inline base64 form.
+   * no file store, so images keep the submit-time inline base64 form and
+   * videos cannot be submitted at all.
    */
   readonly engineV2: boolean;
   cancelInFlight: (() => void) | undefined;
@@ -49,7 +60,7 @@ export interface EditorKeyboardHost {
     imageAttachmentIds: readonly number[];
     videoAttachmentIds: readonly number[];
   }): boolean;
-  releaseStagingMedia(imageAttachmentIds: readonly number[], paths: readonly string[]): void;
+  releaseStagingMedia(mediaAttachmentIds: readonly number[]): void;
   recallLastQueued(): QueuedMessage | undefined;
   showError(msg: string): void;
   track(event: string, props?: Record<string, unknown>): void;
@@ -345,7 +356,7 @@ export class EditorKeyboardController {
             text: trimmed,
             parts: m.parts,
             imageAttachmentIds: m.imageAttachmentIds,
-            stagingPaths: m.stagingPaths,
+            videoAttachmentIds: m.videoAttachmentIds,
           });
         }
       }
@@ -355,11 +366,12 @@ export class EditorKeyboardController {
           // Synchronous path: an image still ingesting in the background
           // extracts to its inline fallback here (no bounded wait like
           // `sendNormalUserInput` — this handler cannot await without
-          // interleaving queue/draft edits).
+          // interleaving queue/draft edits); a video still uploading refuses
+          // the submission instead (no inline form exists).
           editorExtraction = extractMediaAttachments(text, this.imageStore);
         } catch (error) {
-          // Cache copy failed (e.g. the pasted video's source vanished) —
-          // leave the queue and the editor draft untouched.
+          // Media expansion failed (e.g. the pasted video's upload is still
+          // in flight) — leave the queue and the editor draft untouched.
           host.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
           return;
         }
@@ -370,7 +382,10 @@ export class EditorKeyboardController {
             editorExtraction.imageAttachmentIds.length > 0
               ? editorExtraction.imageAttachmentIds
               : undefined,
-          stagingPaths: editorExtraction.stagingPaths,
+          videoAttachmentIds:
+            editorExtraction.videoAttachmentIds.length > 0
+              ? editorExtraction.videoAttachmentIds
+              : undefined,
         });
       }
       flushTextRun();
@@ -383,18 +398,18 @@ export class EditorKeyboardController {
           editorExtraction !== undefined &&
           !host.validateMediaCapabilities(editorExtraction)
         ) {
-          host.releaseStagingMedia(
-            editorExtraction.imageAttachmentIds,
-            editorExtraction.stagingPaths,
-          );
+          host.releaseStagingMedia([
+            ...editorExtraction.imageAttachmentIds,
+            ...editorExtraction.videoAttachmentIds,
+          ]);
           return;
         }
         const session = host.session;
         if (host.state.appState.model.trim().length === 0 || session === undefined) {
-          host.releaseStagingMedia(
-            editorExtraction?.imageAttachmentIds ?? [],
-            editorExtraction?.stagingPaths ?? [],
-          );
+          host.releaseStagingMedia([
+            ...(editorExtraction?.imageAttachmentIds ?? []),
+            ...(editorExtraction?.videoAttachmentIds ?? []),
+          ]);
           host.showError(LLM_NOT_SET_MESSAGE);
           return;
         }
@@ -540,10 +555,22 @@ export class EditorKeyboardController {
     if (media === null) return false;
 
     if (media.kind === 'video') {
+      // Same shape as the image flow below: register the attachment and put
+      // its placeholder in the editor first, then upload the source file to
+      // the daemon file store in the background — typing never waits on it,
+      // and submit gives a pending upload the bounded `pendingMediaIngestions`
+      // wait. Unlike an image there is no inline fallback form, so a video
+      // whose upload has not landed (or failed) refuses the submission at
+      // extraction time.
       const attachment = this.imageStore.addVideo(media.mimeType, media.sourcePath, media.filename);
       this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
       this.host.state.ui.requestRender();
       this.host.track('shortcut_paste', { kind: 'video' });
+      attachment.pending = this.finishClipboardVideoPaste(attachment, media).catch(
+        (error: unknown) => {
+          this.host.showError(`Failed to process pasted video: ${formatErrorMessage(error)}`);
+        },
+      );
       return true;
     }
 
@@ -663,12 +690,59 @@ export class EditorKeyboardController {
       const meta = await harness.uploadFile(bytes, {
         name: `pasted-image.${imageExtensionForMime(mime)}`,
         mimeType: mime,
-        expiresInSec: IMAGE_STAGING_TTL_SECONDS,
+        expiresInSec: MEDIA_STAGING_TTL_SECONDS,
       });
       return meta;
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * Paste-time upload of the video's source file to the engine's daemon file
+   * store (agent-core-v2 only), run as background ingestion exactly like the
+   * image upload above. Best effort: any failure returns undefined, leaving
+   * the attachment without a `fileId` — submit-time expansion then refuses
+   * the submission, since a video has no inline fallback form.
+   */
+  private async uploadVideoToDaemonFileStore(
+    media: ClipboardVideo,
+  ): Promise<FileMeta | undefined> {
+    if (!this.host.engineV2) return undefined;
+    const harness = this.host.harness;
+    if (harness === undefined) return undefined;
+    let bytes: Uint8Array;
+    try {
+      bytes = await readFile(media.sourcePath);
+    } catch {
+      // The source (e.g. a clipboard temp file) vanished before the upload
+      // could read it — same outcome as a failed upload.
+      return undefined;
+    }
+    try {
+      return await harness.uploadFile(bytes, {
+        name: media.filename,
+        mimeType: media.mimeType,
+        expiresInSec: MEDIA_STAGING_TTL_SECONDS,
+      });
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async finishClipboardVideoPaste(
+    attachment: VideoAttachment,
+    media: ClipboardVideo,
+  ): Promise<void> {
+    const uploaded = await this.uploadVideoToDaemonFileStore(media);
+    const completed = this.imageStore.completeVideo(attachment, {
+      fileId: uploaded?.id,
+      fileExpiresAt: parseExpiry(uploaded),
+    });
+    if (completed === undefined && uploaded !== undefined) {
+      await this.host.harness?.deleteFile(uploaded.id).catch(() => undefined);
+    }
+    this.host.state.ui.requestRender();
   }
 
   private async openExternalEditor(): Promise<void> {

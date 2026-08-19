@@ -1,5 +1,21 @@
 # @moonshot-ai/kimi-code
 
+## 0.37.2
+
+### Patch Changes
+
+- [#3061](https://github.com/MoonshotAI/kimi-code/pull/3061) [`5c661f4`](https://github.com/MoonshotAI/kimi-code/commit/5c661f4610f36481dbf2f9598aa63f49004e4980) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: the subagent detail panel now keeps the working process fully expanded and drops the end-of-turn timestamp footer.
+
+- [#3061](https://github.com/MoonshotAI/kimi-code/pull/3061) [`5c661f4`](https://github.com/MoonshotAI/kimi-code/commit/5c661f4610f36481dbf2f9598aa63f49004e4980) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Settings gains a Lab tab with a multi-tab sidebar toggle (off by default); when enabled, the sidebar shows the Open / Done / Workspaces tabs.
+
+## 0.37.1
+
+### Patch Changes
+
+- [#3053](https://github.com/MoonshotAI/kimi-code/pull/3053) [`95cede8`](https://github.com/MoonshotAI/kimi-code/commit/95cede82b4d3b6cb1845c66e87896ab2e5fd9ba5) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix pasted images failing to reach the model on first send.
+
+- [#3047](https://github.com/MoonshotAI/kimi-code/pull/3047) [`c9c34ae`](https://github.com/MoonshotAI/kimi-code/commit/c9c34ae5a8626f133bd1b9c34cac0f3270e35b8d) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix pasted videos failing to submit instead of reaching the model.
+
 ## 0.37.0
 
 ### Minor Changes

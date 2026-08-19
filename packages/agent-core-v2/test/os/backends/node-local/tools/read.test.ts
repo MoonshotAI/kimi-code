@@ -404,7 +404,7 @@ describe('ReadTool', () => {
     expect(readText).not.toHaveBeenCalled();
   });
 
-  it('rejects image files before text decoding and points to ReadMediaFile', async () => {
+  it('rejects image files before text decoding', async () => {
     const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const { fs, readText } = createSpiedMapFs({
       '/tmp/sample.png': { bytes: pngHeader },
@@ -415,8 +415,7 @@ describe('ReadTool', () => {
     const output = toolContentString(result);
 
     expect(result.isError).toBe(true);
-    expect(output).toMatch(/image file/i);
-    expect(output).toMatch(/ReadMediaFile|media/i);
+    expect(output).toBe('"/tmp/sample.png" is an image file. Only text files can be read.');
     expect(readText).not.toHaveBeenCalled();
   });
 
@@ -432,7 +431,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/fake.png" is not readable as UTF-8 text. If it is an image or video, use ReadMediaFile. For other binary formats, use Bash or an MCP tool if available.',
+      '"/tmp/fake.png" is not readable as UTF-8 text. Only text files can be read.',
     );
     expect(readText).not.toHaveBeenCalled();
   });
@@ -469,8 +468,7 @@ describe('ReadTool', () => {
     const output = toolContentString(result);
 
     expect(result.isError).toBe(true);
-    expect(output).toMatch(/video file/i);
-    expect(output).toMatch(/ReadMediaFile|media/i);
+    expect(output).toBe('"/tmp/sample.mp4" is a video file. Only text files can be read.');
     expect(readText).not.toHaveBeenCalled();
   });
 
@@ -486,7 +484,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/blob.bin" is not readable as UTF-8 text. If it is an image or video, use ReadMediaFile. For other binary formats, use Bash or an MCP tool if available.',
+      '"/tmp/blob.bin" is not readable as UTF-8 text. Only text files can be read.',
     );
     expect(output).not.toContain('Python tools');
     expect(readText).not.toHaveBeenCalled();
@@ -510,7 +508,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/blob-with-late-nul" is not readable as UTF-8 text. If it is an image or video, use ReadMediaFile. For other binary formats, use Bash or an MCP tool if available.',
+      '"/tmp/blob-with-late-nul" is not readable as UTF-8 text. Only text files can be read.',
     );
     expect(output).not.toContain('Python tools');
   });
@@ -538,7 +536,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/not-utf8.txt" is not valid UTF-8 or UTF-16 text. Only UTF-8 and UTF-16 text files can be read; for other encodings (e.g. GBK), convert the file to UTF-8 first (e.g. `iconv` via Bash).',
+      '"/tmp/not-utf8.txt" is not valid UTF-8 or UTF-16 text. Only UTF-8 and UTF-16 text files can be read; for other encodings (e.g. GBK), convert the file to UTF-8 first (e.g. with `iconv`).',
     );
     expect(output).not.toContain('Python tools');
     expect(output).not.toContain(replacement);

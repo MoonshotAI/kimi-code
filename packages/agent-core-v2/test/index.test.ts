@@ -82,6 +82,7 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'tower_mode.exit',
   'task.started',
   'task.terminated',
+  'task.waitDelivered',
   'interaction.request',
   'interaction.resolved',
   'plan.revision',

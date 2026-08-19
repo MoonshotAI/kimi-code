@@ -64,123 +64,245 @@ export type LoopRecordedEvent =
       readonly parentUuid?: string;
     };
 
-interface FoldCtx {
-  openStepUuid: string | undefined;
-  pending: Set<string>;
-  deferred: ContextMessage[];
+export interface LoopEventFoldSink {
+  openAssistant(time: number | undefined): void;
+  appendOpenContent(part: ContentPart): void;
+  appendOpenToolCall(call: ToolCall): void;
+  dropOpenAssistant(): void;
+  sealOpenAssistant(): void;
+  pushToolMessage(message: ContextMessage, time: number | undefined): void;
+  pushMessage(message: ContextMessage, time: number | undefined): void;
 }
 
-const foldCtxMap = new WeakMap<object, FoldCtx>();
-
-function ctxOf(state: readonly ContextMessage[]): FoldCtx {
-  const key = (isDraft(state) ? original(state as any) : state) as object;
-  let ctx = foldCtxMap.get(key);
-  if (ctx === undefined) {
-    ctx = { openStepUuid: undefined, pending: new Set(), deferred: [] };
-    foldCtxMap.set(key, ctx);
-  }
-  return ctx;
+export interface LoopEventFold {
+  appendMessage(message: ContextMessage, time?: number): void;
+  loopEvent(event: LoopRecordedEvent, time?: number): void;
+  settle(time?: number): void;
+  reset(): void;
 }
 
-function bind(state: readonly ContextMessage[], ctx: FoldCtx): readonly ContextMessage[] {
-  foldCtxMap.set(state, ctx);
-  return state;
+export function createLoopEventFold(sink: LoopEventFoldSink): LoopEventFold {
+  return createLoopEventFoldWithState(sink);
 }
+
+interface InitialFoldState {
+  readonly openHasToolCalls: boolean;
+  readonly openVacuous: boolean;
+  readonly pendingToolCallIds: readonly string[];
+}
+
+function createLoopEventFoldWithState(
+  sink: LoopEventFoldSink,
+  initial?: InitialFoldState,
+): LoopEventFold {
+  let openStepUuid: string | null | undefined = initial === undefined ? undefined : null;
+  let openHasToolCalls = initial?.openHasToolCalls ?? false;
+  let openVacuous = initial?.openVacuous ?? true;
+  const pending = new Set(initial?.pendingToolCallIds);
+  let deferred: { message: ContextMessage; time: number | undefined }[] = [];
+
+  const flushDeferred = (): void => {
+    if (pending.size > 0 || deferred.length === 0) return;
+    for (const entry of deferred) sink.pushMessage(entry.message, entry.time);
+    deferred = [];
+  };
+  const closePending = (time: number | undefined): void => {
+    if (pending.size === 0) return;
+    for (const toolCallId of pending) {
+      sink.pushToolMessage(interruptedToolMessage(toolCallId), time);
+    }
+    pending.clear();
+    flushDeferred();
+  };
+  const settleOpen = (time: number | undefined): void => {
+    if (openStepUuid === undefined) return;
+    closePending(time);
+    if (!openHasToolCalls && openVacuous) {
+      sink.dropOpenAssistant();
+    } else {
+      sink.sealOpenAssistant();
+    }
+    openStepUuid = undefined;
+  };
+  const acceptsOpenStep = (stepUuid: string): boolean => {
+    if (openStepUuid === undefined) return false;
+    if (openStepUuid === null) {
+      openStepUuid = stepUuid;
+      return true;
+    }
+    return stepUuid === openStepUuid;
+  };
+
+  return {
+    appendMessage(message, time) {
+      if (pending.size > 0) {
+        deferred.push({ message, time });
+        return;
+      }
+      sink.pushMessage(message, time);
+    },
+    loopEvent(event, time) {
+      switch (event.type) {
+        case 'step.begin': {
+          settleOpen(time);
+          sink.openAssistant(time);
+          openStepUuid = event.uuid;
+          openHasToolCalls = false;
+          openVacuous = true;
+          return;
+        }
+        case 'step.end': {
+          settleOpen(time);
+          flushDeferred();
+          return;
+        }
+        case 'content.part': {
+          if (!acceptsOpenStep(event.stepUuid)) return;
+          sink.appendOpenContent(event.part);
+          openVacuous = openVacuous && isVacuousContentPart(event.part);
+          return;
+        }
+        case 'tool.call': {
+          if (!acceptsOpenStep(event.stepUuid)) return;
+          const call: ToolCall = {
+            type: 'function',
+            id: event.toolCallId,
+            name: event.name,
+            arguments: event.args === undefined ? null : JSON.stringify(event.args),
+            ...(event.extras !== undefined ? { extras: event.extras } : {}),
+          };
+          sink.appendOpenToolCall(call);
+          pending.add(event.toolCallId);
+          openHasToolCalls = true;
+          return;
+        }
+        case 'tool.result': {
+          if (!pending.has(event.toolCallId)) return;
+          pending.delete(event.toolCallId);
+          const output = event.result.output;
+          sink.pushToolMessage(
+            {
+              ...createToolMessage(
+                event.toolCallId,
+                typeof output === 'string' ? output : [...output],
+              ),
+              isError: event.result.isError,
+              note: event.result.note,
+            },
+            time,
+          );
+          flushDeferred();
+          return;
+        }
+      }
+    },
+    settle(time) {
+      settleOpen(time);
+      flushDeferred();
+    },
+    reset() {
+      openStepUuid = undefined;
+      openHasToolCalls = false;
+      openVacuous = true;
+      pending.clear();
+      deferred = [];
+    },
+  };
+}
+
+interface ImmutableFoldSink extends LoopEventFoldSink {
+  current(): readonly ContextMessage[];
+}
+
+interface BoundFold {
+  readonly fold: LoopEventFold;
+  readonly sink: ImmutableFoldSink;
+}
+
+const boundFoldMap = new WeakMap<object, BoundFold>();
 
 export function foldAppendMessage(
   state: readonly ContextMessage[],
   message: ContextMessage,
 ): readonly ContextMessage[] {
-  const ctx = ctxOf(state);
-  if (ctx.pending.size > 0) {
-    ctx.deferred.push(message);
-    return state;
-  }
-  return bind([...state, message], ctx);
+  const bound = boundOf(state);
+  bound.fold.appendMessage(message, undefined);
+  return bind(bound, bound.sink.current());
 }
 
 export function foldLoopEvent(
   state: readonly ContextMessage[],
   event: LoopRecordedEvent,
 ): readonly ContextMessage[] {
-  const ctx = ctxOf(state);
-  switch (event.type) {
-    case 'step.begin': {
-      const settled = settleOpenStep(state, ctx);
-      const assistant: ContextMessage = { role: 'assistant', content: [], toolCalls: [], partial: true };
-      ctx.openStepUuid = event.uuid;
-      return bind([...settled, assistant], ctx);
-    }
-    case 'step.end': {
-      ctx.openStepUuid = undefined;
-      const s = settleOpenStep(state, ctx);
-      return bind(flushDeferred(s, ctx), ctx);
-    }
-    case 'content.part':
-      return bind(appendToOpenAssistant(state, (message) => ({
-        ...message,
-        content: [...message.content, event.part],
-      })), ctx);
-    case 'tool.call': {
-      const call: ToolCall = {
-        type: 'function',
-        id: event.toolCallId,
-        name: event.name,
-        arguments: event.args === undefined ? null : JSON.stringify(event.args),
-        ...(event.extras !== undefined ? { extras: event.extras } : {}),
-      };
-      ctx.pending.add(event.toolCallId);
-      return bind(appendToOpenAssistant(state, (message) => ({
-        ...message,
-        toolCalls: [...message.toolCalls, call],
-      })), ctx);
-    }
-    case 'tool.result': {
-      if (!ctx.pending.has(event.toolCallId)) return state;
-      const output = event.result.output;
-      const toolMessage: ContextMessage = {
-        ...createToolMessage(event.toolCallId, typeof output === 'string' ? output : [...output]),
-        isError: event.result.isError,
-        note: event.result.note,
-      };
-      ctx.pending.delete(event.toolCallId);
-      return bind(flushDeferred([...state, toolMessage], ctx), ctx);
-    }
-    default:
-      return state;
-  }
+  const bound = boundOf(state);
+  bound.fold.loopEvent(event, undefined);
+  return bind(bound, bound.sink.current());
 }
 
 export function resetFold(state: readonly ContextMessage[]): readonly ContextMessage[] {
-  foldCtxMap.set(state, { openStepUuid: undefined, pending: new Set(), deferred: [] });
+  const sink = createImmutableFoldSink(state);
+  boundFoldMap.set(state, { fold: createLoopEventFold(sink), sink });
   return state;
 }
 
-function appendToOpenAssistant(
-  state: readonly ContextMessage[],
-  update: (message: ContextMessage) => ContextMessage,
-): readonly ContextMessage[] {
-  const index = findOpenAssistantIndex(state);
-  if (index === -1) return state;
-  const next = state.slice();
-  next[index] = update(next[index]!);
-  return next;
+function boundOf(state: readonly ContextMessage[]): BoundFold {
+  const key = keyOf(state);
+  let bound = boundFoldMap.get(key);
+  if (bound === undefined || bound.sink.current() !== key) {
+    const sink = createImmutableFoldSink(key);
+    bound = { fold: createLoopEventFoldWithState(sink, recoverFoldState(key)), sink };
+    boundFoldMap.set(key, bound);
+  }
+  return bound;
 }
 
-function settleOpenStep(
-  state: readonly ContextMessage[],
-  ctx: FoldCtx,
-): readonly ContextMessage[] {
-  const closed = closePending(state, ctx);
-  const index = findOpenAssistantIndex(closed);
-  if (index === -1) return closed;
-  const open = closed[index]!;
-  if (open.toolCalls.length === 0 && open.content.every(isVacuousContentPart)) {
-    return [...closed.slice(0, index), ...closed.slice(index + 1)];
-  }
-  const next = closed.slice();
-  next[index] = { ...open, partial: undefined };
-  return next;
+function bind(bound: BoundFold, state: readonly ContextMessage[]): readonly ContextMessage[] {
+  boundFoldMap.set(state, bound);
+  return state;
+}
+
+function keyOf(state: readonly ContextMessage[]): readonly ContextMessage[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (isDraft(state) ? original(state as any) : state) as readonly ContextMessage[];
+}
+
+function createImmutableFoldSink(initial: readonly ContextMessage[]): ImmutableFoldSink {
+  let current = initial;
+  let openIndex = findOpenAssistantIndex(initial);
+  const updateOpen = (update: (message: ContextMessage) => ContextMessage): void => {
+    if (openIndex === -1) return;
+    const next = current.slice();
+    next[openIndex] = update(next[openIndex]!);
+    current = next;
+  };
+  return {
+    current: () => current,
+    openAssistant: () => {
+      current = [...current, { role: 'assistant', content: [], toolCalls: [], partial: true }];
+      openIndex = current.length - 1;
+    },
+    appendOpenContent: (part) => {
+      updateOpen((message) => ({ ...message, content: [...message.content, part] }));
+    },
+    appendOpenToolCall: (call) => {
+      updateOpen((message) => ({ ...message, toolCalls: [...message.toolCalls, call] }));
+    },
+    dropOpenAssistant: () => {
+      if (openIndex === -1) return;
+      current = [...current.slice(0, openIndex), ...current.slice(openIndex + 1)];
+      openIndex = -1;
+    },
+    sealOpenAssistant: () => {
+      updateOpen((message) => ({ ...message, partial: undefined }));
+      openIndex = -1;
+    },
+    pushToolMessage: (message) => {
+      current = [...current, message];
+    },
+    pushMessage: (message) => {
+      current = [...current, message];
+    },
+  };
 }
 
 function findOpenAssistantIndex(state: readonly ContextMessage[]): number {
@@ -190,21 +312,24 @@ function findOpenAssistantIndex(state: readonly ContextMessage[]): number {
   return -1;
 }
 
-function closePending(state: readonly ContextMessage[], ctx: FoldCtx): readonly ContextMessage[] {
-  if (ctx.pending.size === 0) return state;
-  const next = state.slice();
-  for (const toolCallId of ctx.pending) {
-    next.push(interruptedToolMessage(toolCallId));
+function recoverFoldState(state: readonly ContextMessage[]): InitialFoldState | undefined {
+  const openIndex = findOpenAssistantIndex(state);
+  if (openIndex === -1) return undefined;
+  const open = state[openIndex]!;
+  const resolvedToolCallIds = new Set<string>();
+  for (let i = openIndex + 1; i < state.length; i++) {
+    const message = state[i]!;
+    if (message.role === 'tool' && message.toolCallId !== undefined) {
+      resolvedToolCallIds.add(message.toolCallId);
+    }
   }
-  ctx.pending.clear();
-  return flushDeferred(next, ctx);
-}
-
-function flushDeferred(state: readonly ContextMessage[], ctx: FoldCtx): readonly ContextMessage[] {
-  if (ctx.pending.size > 0 || ctx.deferred.length === 0) return state;
-  const next = [...state, ...ctx.deferred];
-  ctx.deferred.length = 0;
-  return next;
+  return {
+    openHasToolCalls: open.toolCalls.length > 0,
+    openVacuous: open.content.every(isVacuousContentPart),
+    pendingToolCallIds: open.toolCalls
+      .map((call) => call.id)
+      .filter((toolCallId) => !resolvedToolCallIds.has(toolCallId)),
+  };
 }
 
 function interruptedToolMessage(toolCallId: string): ContextMessage {

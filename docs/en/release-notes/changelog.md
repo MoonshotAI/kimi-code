@@ -6,6 +6,19 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.37.2 (2026-08-19)
+
+### Polish
+
+- web: Settings gains a Lab tab with a new multi-tab sidebar toggle; when enabled, the sidebar shows the Open / Done / Workspaces tabs.
+- Make several refinements and internal improvements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 0.37.1 (2026-08-18)
+
+### Bug Fixes
+
+- Fix pasted images and videos failing to reach the model.
+
 ## 0.37.0 (2026-08-18)
 
 ### Features

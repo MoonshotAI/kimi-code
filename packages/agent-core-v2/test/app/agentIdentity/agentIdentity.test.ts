@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost } from '#/_base/di/test';
 import {
@@ -13,12 +13,17 @@ import { IDENTITY_SECTION } from '#/app/agentIdentity/configSection';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { LifecycleScope } from '#/app/scopes';
-import { registerScopedService } from '#/_base/di/scope';
+import { _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 
 import { stubBootstrap } from '../bootstrap/stubs';
 import { StubConfigService } from '../../kosong/stubs';
 
 const hosts: Array<{ dispose(): void }> = [];
+
+beforeEach(() => {
+  _clearScopedRegistryForTests();
+  registerScopedService(LifecycleScope.App, IAgentIdentity, AgentIdentityService);
+});
 
 afterEach(() => {
   while (hosts.length > 0) hosts.pop()?.dispose();
@@ -31,7 +36,6 @@ function createIdentity(
     hostRequestHeaders?: Record<string, string>;
   } = {},
 ): { identity: IAgentIdentity; config: StubConfigService } {
-  registerScopedService(LifecycleScope.App, IAgentIdentity, AgentIdentityService);
   const config = new StubConfigService(
     section === undefined ? {} : { [IDENTITY_SECTION]: section },
   );
