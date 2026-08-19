@@ -127,6 +127,8 @@ describe('server-v2 /api/v1/sessions/{sid}/flow', () => {
     expect(body.data.gates).toEqual([]);
     expect(body.data.gates_flow_id).toBe('issue-fix');
     expect(body.data.gates_task).toBe('fix the paste bug');
+    expect(body.data.run.run_id).toBeDefined();
+    expect(body.data.gates_run_id).toBe(body.data.run.run_id);
   });
 
   it('reports the termination outcome of an ended run', async () => {

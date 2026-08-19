@@ -33,9 +33,11 @@ export const flowStateResponseSchema = z.object({
     current_stage_index: z.number().int().nonnegative().optional(),
     ended_reason: z.enum(['finished', 'aborted']).optional(),
     ended_note: z.string().optional(),
+    run_id: z.string().optional(),
   }),
   gates: z.array(flowGateRecordSchema),
   gates_flow_id: z.string().optional(),
   gates_task: z.string().optional(),
+  gates_run_id: z.string().optional(),
 });
 export type FlowStateResponse = z.infer<typeof flowStateResponseSchema>;
