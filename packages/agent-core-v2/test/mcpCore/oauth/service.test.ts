@@ -60,7 +60,7 @@ interface FakeAuthServer {
 }
 
 async function startFakeAuthServer(
-  options: { readonly rejectRefreshToken?: boolean } = {},
+  options: { readonly rejectRefreshToken?: boolean; readonly refreshExpiresIn?: number } = {},
 ): Promise<FakeAuthServer> {
   const counts = { register: 0, exchange: 0, refresh: 0 };
   const httpServer: HttpServer = createHttpServer((req, res) => {
@@ -92,7 +92,11 @@ async function startFakeAuthServer(
       }
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(
-        JSON.stringify({ access_token: 'fresh-token', token_type: 'Bearer', expires_in: 3600 }),
+        JSON.stringify({
+          access_token: 'fresh-token',
+          token_type: 'Bearer',
+          expires_in: options.refreshExpiresIn ?? 3600,
+        }),
       );
     });
   });
@@ -614,13 +618,13 @@ describe('McpOAuthService sweepProactiveRefresh resilience', () => {
     await fixture.store.write('corrupt-meta.json', '{not json');
 
     await expect(fixture.service.sweepProactiveRefresh()).resolves.toBeUndefined();
-    await fixture.scheduler.advanceBy(0);
+    await fixture.scheduler.advanceBy(30_000);
     expect(authServer.counts.refresh).toBe(1);
   }, 15000);
 });
 
 describe('McpOAuthService proactive refresh scheduling', () => {
-  it('refreshes immediately when a stored grant is already inside the refresh window', async () => {
+  it('delays a 60-second grant refresh until its midpoint', async () => {
     const fixture = makeFixture();
     cleanups.push(() => fixture.service.dispose());
     const authServer = await startFakeAuthServer();
@@ -636,9 +640,40 @@ describe('McpOAuthService proactive refresh scheduling', () => {
       expires_in: 60,
     });
 
-    await fixture.scheduler.advanceBy(0);
+    await fixture.scheduler.advanceBy(29_999);
+    expect(authServer.counts.refresh).toBe(0);
+
+    await fixture.scheduler.advanceBy(1);
     expect(authServer.counts.refresh).toBe(1);
     expect(fixture.events.filter((event) => event.type === 'tokens-saved')).toHaveLength(2);
+  }, 15000);
+
+  it('waits another midpoint after refreshing into another 60-second grant', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => {
+      fixture.service.dispose();
+    });
+    const authServer = await startFakeAuthServer({ refreshExpiresIn: 60 });
+
+    const provider = await readyProvider(fixture);
+    const state = authServerState(authServer.url);
+    await provider.saveDiscoveryState(state.discovery);
+    await provider.saveClientInformation(state.client);
+    await provider.saveTokens({
+      access_token: 'stale-access-token',
+      refresh_token: 'stale-refresh-token',
+      token_type: 'Bearer',
+      expires_in: 60,
+    });
+
+    await fixture.scheduler.advanceBy(30_000);
+    expect(authServer.counts.refresh).toBe(1);
+
+    await fixture.scheduler.advanceBy(0);
+    expect(authServer.counts.refresh).toBe(1);
+
+    await fixture.scheduler.advanceBy(30_000);
+    expect(authServer.counts.refresh).toBe(2);
   }, 15000);
 
   it('re-arms scheduling for expiries beyond the setTimeout limit', async () => {

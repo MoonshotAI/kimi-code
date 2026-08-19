@@ -245,11 +245,17 @@ export interface GlobalMcpFacade {
   list(input?: { cwd?: string }): Promise<readonly McpManagedServer[]>;
   get(input: { name: string; cwd?: string }): Promise<McpManagedServer>;
   /** Add a user-level entry; a same-named read-only entry rejects. Returns the refreshed list. */
-  add(input: { server: GlobalMcpServerConfig }): Promise<readonly McpManagedServer[]>;
+  add(input: {
+    server: GlobalMcpServerConfig;
+    cwd?: string;
+  }): Promise<readonly McpManagedServer[]>;
   /** Replace a user-level entry; read-only entries reject. Returns the refreshed list. */
-  update(input: { server: GlobalMcpServerConfig }): Promise<readonly McpManagedServer[]>;
+  update(input: {
+    server: GlobalMcpServerConfig;
+    cwd?: string;
+  }): Promise<readonly McpManagedServer[]>;
   /** Remove a user-level entry; read-only entries reject. Returns the refreshed list. */
-  remove(input: { name: string }): Promise<readonly McpManagedServer[]>;
+  remove(input: { name: string; cwd?: string }): Promise<readonly McpManagedServer[]>;
   /** Probe a real connection: a registry `name`, or an inline `server` config as-is. */
   test(input: McpServerTestTarget): Promise<McpServerTestResult>;
   /** The locator-addressed catalog plus a batched real-connection probe of OAuth candidates. */
@@ -566,16 +572,25 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
           name,
           cwd === undefined ? undefined : { cwd },
         ]) as Promise<McpManagedServer>,
-      add: ({ server }) =>
-        call('mcpManagementService', 'addServer', [server]) as Promise<
+      add: ({ server, cwd }) =>
+        call('mcpManagementService', 'addServer', [
+          server,
+          cwd === undefined ? undefined : { cwd },
+        ]) as Promise<
           readonly McpManagedServer[]
         >,
-      update: ({ server }) =>
-        call('mcpManagementService', 'updateServer', [server]) as Promise<
+      update: ({ server, cwd }) =>
+        call('mcpManagementService', 'updateServer', [
+          server,
+          cwd === undefined ? undefined : { cwd },
+        ]) as Promise<
           readonly McpManagedServer[]
         >,
-      remove: ({ name }) =>
-        call('mcpManagementService', 'removeServer', [name]) as Promise<
+      remove: ({ name, cwd }) =>
+        call('mcpManagementService', 'removeServer', [
+          name,
+          cwd === undefined ? undefined : { cwd },
+        ]) as Promise<
           readonly McpManagedServer[]
         >,
       test: (target) =>

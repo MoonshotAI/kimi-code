@@ -505,16 +505,25 @@ export class KimiHarness {
     return this.rpc.inspectAppMcpServers(targets);
   }
 
-  async addMcpServer(server: McpServerConfig): Promise<readonly McpManagedServerInfo[]> {
-    return this.rpc.addGlobalMcpServer(server);
+  async addMcpServer(
+    server: McpServerConfig,
+    options: { readonly cwd?: string } = {},
+  ): Promise<readonly McpManagedServerInfo[]> {
+    return this.rpc.addGlobalMcpServer(server, options);
   }
 
-  async updateMcpServer(server: McpServerConfig): Promise<readonly McpManagedServerInfo[]> {
-    return this.rpc.updateGlobalMcpServer(server);
+  async updateMcpServer(
+    server: McpServerConfig,
+    options: { readonly cwd?: string } = {},
+  ): Promise<readonly McpManagedServerInfo[]> {
+    return this.rpc.updateGlobalMcpServer(server, options);
   }
 
-  async removeMcpServer(name: string): Promise<readonly McpManagedServerInfo[]> {
-    return this.rpc.removeGlobalMcpServer(name);
+  async removeMcpServer(
+    name: string,
+    options: { readonly cwd?: string } = {},
+  ): Promise<readonly McpManagedServerInfo[]> {
+    return this.rpc.removeGlobalMcpServer(name, options);
   }
 
   async authenticateMcpServer(

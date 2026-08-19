@@ -2346,20 +2346,31 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   override async addGlobalMcpServer(
     server: McpServerConfig,
+    options: { readonly cwd?: string } = {},
   ): Promise<readonly McpManagedServerInfo[]> {
-    const servers = await this.engineAccessor.get(IMcpManagementService).addServer(server);
+    const servers = await this.engineAccessor
+      .get(IMcpManagementService)
+      .addServer(server, { cwd: options.cwd });
     return servers.map(toManagedServerInfo);
   }
 
   override async updateGlobalMcpServer(
     server: McpServerConfig,
+    options: { readonly cwd?: string } = {},
   ): Promise<readonly McpManagedServerInfo[]> {
-    const servers = await this.engineAccessor.get(IMcpManagementService).updateServer(server);
+    const servers = await this.engineAccessor
+      .get(IMcpManagementService)
+      .updateServer(server, { cwd: options.cwd });
     return servers.map(toManagedServerInfo);
   }
 
-  override async removeGlobalMcpServer(name: string): Promise<readonly McpManagedServerInfo[]> {
-    const servers = await this.engineAccessor.get(IMcpManagementService).removeServer(name);
+  override async removeGlobalMcpServer(
+    name: string,
+    options: { readonly cwd?: string } = {},
+  ): Promise<readonly McpManagedServerInfo[]> {
+    const servers = await this.engineAccessor
+      .get(IMcpManagementService)
+      .removeServer(name, { cwd: options.cwd });
     return servers.map(toManagedServerInfo);
   }
 

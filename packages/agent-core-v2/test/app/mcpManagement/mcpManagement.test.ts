@@ -380,6 +380,27 @@ describe('McpManagementService', () => {
   });
 
   describe('read-only guards', () => {
+    it.each([
+      ['add', (cwd: string) => management.addServer(stdioServer('local'), { cwd })],
+      ['update', (cwd: string) => management.updateServer(stdioServer('local'), { cwd })],
+      ['remove', (cwd: string) => management.removeServer('local', { cwd })],
+    ])('rejects %s when a trusted project-layer entry is read-only', async (_operation, mutate) => {
+      const project = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-read-only-'));
+      tempDirs.push(project);
+      await mkdir(join(project, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(project, '.kimi-code', 'mcp.json'),
+        JSON.stringify({ mcpServers: { local: { command: process.execPath } } }),
+        'utf8',
+      );
+
+      await expect(mutate(project)).rejects.toMatchObject({
+        code: ErrorCodes.REQUEST_INVALID,
+        message: `MCP server "local" is read-only: it is defined in ${join(project, '.kimi-code', 'mcp.json')} — edit that file instead`,
+      });
+      await expect(store.list()).resolves.toEqual([]);
+    });
+
     it('rejects add/update/remove against an enabled plugin entry', async () => {
       pluginEntries = [
         {

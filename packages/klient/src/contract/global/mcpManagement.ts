@@ -140,15 +140,15 @@ export const mcpManagementContract = {
     output: mcpManagedServerSchema,
   },
   addServer: {
-    input: z.tuple([globalMcpServerConfigSchema]),
+    input: z.tuple([globalMcpServerConfigSchema, mcpRegistryQuerySchema.optional()]),
     output: z.array(mcpManagedServerSchema),
   },
   updateServer: {
-    input: z.tuple([globalMcpServerConfigSchema]),
+    input: z.tuple([globalMcpServerConfigSchema, mcpRegistryQuerySchema.optional()]),
     output: z.array(mcpManagedServerSchema),
   },
   removeServer: {
-    input: z.tuple([z.string().min(1)]),
+    input: z.tuple([z.string().min(1), mcpRegistryQuerySchema.optional()]),
     output: z.array(mcpManagedServerSchema),
   },
   testServer: {

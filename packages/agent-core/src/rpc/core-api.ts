@@ -402,10 +402,12 @@ export interface GetGlobalMcpServerPayload {
 
 export interface PutGlobalMcpServerPayload {
   readonly server: GlobalMcpServerConfig;
+  readonly cwd?: string;
 }
 
 export interface GlobalMcpServerNamePayload {
   readonly name: string;
+  readonly cwd?: string;
 }
 
 /**

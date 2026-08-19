@@ -31,7 +31,7 @@ interface V2McpRouteHost {
     path: string,
     options: { preHandler: unknown[]; schema?: Record<string, unknown> },
     handler: (
-      req: { id: string; body: unknown; params: unknown },
+      req: { id: string; body: unknown; query: unknown; params: unknown },
       reply: { send(payload: unknown): unknown },
     ) => Promise<void> | void,
   ): unknown;
@@ -39,7 +39,7 @@ interface V2McpRouteHost {
     path: string,
     options: { preHandler: unknown[]; schema?: Record<string, unknown> },
     handler: (
-      req: { id: string; body: unknown; params: unknown },
+      req: { id: string; body: unknown; query: unknown; params: unknown },
       reply: { send(payload: unknown): unknown },
     ) => Promise<void> | void,
   ): unknown;
@@ -47,7 +47,7 @@ interface V2McpRouteHost {
     path: string,
     options: { preHandler: unknown[]; schema?: Record<string, unknown> },
     handler: (
-      req: { id: string; params: unknown },
+      req: { id: string; query: unknown; params: unknown },
       reply: { send(payload: unknown): unknown },
     ) => Promise<void> | void,
   ): unknown;
@@ -284,6 +284,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/mcp/servers',
+      querystring: serverScopedQuerySchema,
       body: globalMcpServerConfigSchema,
       success: { data: z.array(mcpManagedServerSchema) },
       errors: baseErrorSchemas,
@@ -293,7 +294,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       try {
-        const servers = await management().addServer(req.body);
+        const servers = await management().addServer(req.body, { cwd: req.query.cwd });
         reply.send(okEnvelope(servers, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);
@@ -311,6 +312,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       method: 'PUT',
       path: '/mcp/servers/{name}',
       params: serverNameParamSchema,
+      querystring: serverScopedQuerySchema,
       body: mcpServerConfigBodySchema,
       success: { data: z.array(mcpManagedServerSchema) },
       errors: namedServerErrorSchemas,
@@ -320,7 +322,10 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       try {
-        const servers = await management().updateServer({ ...req.body, name: req.params.name });
+        const servers = await management().updateServer(
+          { ...req.body, name: req.params.name },
+          { cwd: req.query.cwd },
+        );
         reply.send(okEnvelope(servers, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);
@@ -338,6 +343,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       method: 'DELETE',
       path: '/mcp/servers/{name}',
       params: serverNameParamSchema,
+      querystring: serverScopedQuerySchema,
       success: { data: z.array(mcpManagedServerSchema) },
       errors: namedServerErrorSchemas,
       description:
@@ -346,7 +352,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       try {
-        const servers = await management().removeServer(req.params.name);
+        const servers = await management().removeServer(req.params.name, { cwd: req.query.cwd });
         reply.send(okEnvelope(servers, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);

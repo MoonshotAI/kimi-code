@@ -42,13 +42,14 @@ interface McpStub {
     lastTestTarget?: McpServerTestTarget;
     lastResetLocator?: McpServerLocator;
     verifySeen?: boolean;
+    mutationCwds: Array<string | undefined>;
   };
 }
 
 function makeMcpStub(): McpStub {
   const servers = new Map<string, GlobalMcpServerConfig>();
   const calls: string[] = [];
-  const state: McpStub['state'] = {};
+  const state: McpStub['state'] = { mutationCwds: [] };
   const list = (): McpManagedServer[] =>
     [...servers.values()].map((server) => {
       const { name, ...config } = server;
@@ -74,13 +75,15 @@ function makeMcpStub(): McpStub {
       }
       return list().find((entry) => entry.name === name)!;
     },
-    addServer: async (server) => {
+    addServer: async (server, query) => {
       calls.push(`addServer:${server.name}`);
+      state.mutationCwds.push(query?.cwd);
       servers.set(server.name, server);
       return list();
     },
-    updateServer: async (server) => {
+    updateServer: async (server, query) => {
       calls.push(`updateServer:${server.name}`);
+      state.mutationCwds.push(query?.cwd);
       state.lastUpdate = server;
       if (!servers.has(server.name)) {
         throw new Error2(
@@ -91,8 +94,9 @@ function makeMcpStub(): McpStub {
       servers.set(server.name, server);
       return list();
     },
-    removeServer: async (name) => {
+    removeServer: async (name, query) => {
       calls.push(`removeServer:${name}`);
+      state.mutationCwds.push(query?.cwd);
       servers.delete(name);
       return list();
     },
@@ -247,7 +251,11 @@ describe('server /api/v2/mcp', () => {
       const stub = makeMcpStub();
       await boot(stub);
 
-      const added = await call<McpManagedServer[]>('POST', '/api/v2/mcp/servers', STDIO_A);
+      const added = await call<McpManagedServer[]>(
+        'POST',
+        '/api/v2/mcp/servers?cwd=%2Fworkspace%2Fproject',
+        STDIO_A,
+      );
       expect(added.status).toBe(200);
       expect(added.body.code).toBe(0);
       expect(added.body.data).toEqual([
@@ -269,18 +277,30 @@ describe('server /api/v2/mcp', () => {
       expect(got.body.code).toBe(0);
       expect(got.body.data).toMatchObject({ name: 'a', config: { command: 'run-a' } });
 
-      const updated = await call<McpManagedServer[]>('PUT', '/api/v2/mcp/servers/a', {
-        transport: 'stdio',
-        command: 'run-b',
-      });
+      const updated = await call<McpManagedServer[]>(
+        'PUT',
+        '/api/v2/mcp/servers/a?cwd=%2Fworkspace%2Fproject',
+        {
+          transport: 'stdio',
+          command: 'run-b',
+        },
+      );
       expect(updated.body.code).toBe(0);
       expect(updated.body.data).toHaveLength(1);
       expect(stub.state.lastUpdate).toEqual({ transport: 'stdio', command: 'run-b', name: 'a' });
 
-      const removed = await call<McpManagedServer[]>('DELETE', '/api/v2/mcp/servers/a');
+      const removed = await call<McpManagedServer[]>(
+        'DELETE',
+        '/api/v2/mcp/servers/a?cwd=%2Fworkspace%2Fproject',
+      );
       expect(removed.body.code).toBe(0);
       expect(removed.body.data).toEqual([]);
       expect(stub.calls).toContain('removeServer:a');
+      expect(stub.state.mutationCwds).toEqual([
+        '/workspace/project',
+        '/workspace/project',
+        '/workspace/project',
+      ]);
     });
 
     it('maps an unknown server name to 40408', async () => {

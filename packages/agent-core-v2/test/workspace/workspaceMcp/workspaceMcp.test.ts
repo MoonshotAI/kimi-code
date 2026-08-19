@@ -665,7 +665,7 @@ describe('WorkspaceMcpService', () => {
       });
       const reconnectAndJoin = mockManagerEntry('connected');
 
-      await oauthScheduler.advanceBy(0);
+      await oauthScheduler.advanceBy(30_000);
       expect(reconnectAndJoin).toHaveBeenCalledWith('notion');
       expect(authServer.counts.refresh).toBe(1);
     });
@@ -687,7 +687,7 @@ describe('WorkspaceMcpService', () => {
       });
       const reconnectAndJoin = mockManagerEntry('needs-auth');
 
-      await oauthScheduler.advanceBy(0);
+      await oauthScheduler.advanceBy(30_000);
       expect(events.some((event) => event.type === 'refresh-failed')).toBe(true);
       expect(reconnectAndJoin).not.toHaveBeenCalled();
     });

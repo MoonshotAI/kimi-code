@@ -508,7 +508,9 @@ export class McpOAuthService extends Disposable {
     this.cancelScheduledRefresh(serverName, canonicalUrl);
     const now = this.scheduler.now();
     if (expiresAt <= now) return;
-    const delay = expiresAt - now - REFRESH_AHEAD_MS;
+    const lifetimeMs = expiresAt - now;
+    const refreshAheadMs = Math.min(REFRESH_AHEAD_MS, lifetimeMs / 2);
+    const delay = lifetimeMs - refreshAheadMs;
     let timer: McpOAuthScheduledTask;
     if (delay > MAX_TIMER_DELAY_MS) {
       timer = this.scheduler.schedule(MAX_TIMER_DELAY_MS, () => {
@@ -516,7 +518,7 @@ export class McpOAuthService extends Disposable {
         this.scheduleRefresh(serverName, canonicalUrl, expiresAt);
       });
     } else {
-      timer = this.scheduler.schedule(Math.max(delay, 0), async () => {
+      timer = this.scheduler.schedule(delay, async () => {
         this.refreshTimers.delete(storeKey);
         await this.refresh(serverName, canonicalUrl).catch((error: unknown) => {
           this.emit({

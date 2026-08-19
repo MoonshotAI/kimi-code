@@ -351,11 +351,13 @@ export function defineKlientConformance(
     it('global mcp round-trips user-level server CRUD once the flag is on', async () => {
       const mcp = target.klient.global.mcp;
       const flags = target.app.accessor.get(IFlagService);
+      const cwd = await mkdtemp(join(tmpdir(), 'klient-conf-mcp-crud-'));
       flags.setConfigOverrides({ mcp_management: true });
       try {
-        expect(await mcp.list()).toEqual([]);
+        expect(await mcp.list({ cwd })).toEqual([]);
 
         const added = await mcp.add({
+          cwd,
           server: {
             name: 'conf-mcp',
             transport: 'stdio',
@@ -373,20 +375,22 @@ export function defineKlientConformance(
         });
 
         await mcp.update({
+          cwd,
           server: { name: 'conf-mcp', transport: 'stdio', command: 'conf-command-2' },
         });
-        expect((await mcp.get({ name: 'conf-mcp' })).config).toMatchObject({
+        expect((await mcp.get({ name: 'conf-mcp', cwd })).config).toMatchObject({
           command: 'conf-command-2',
         });
 
-        await mcp.remove({ name: 'conf-mcp' });
-        expect(await mcp.list()).toEqual([]);
-        await expect(mcp.get({ name: 'conf-mcp' })).rejects.toMatchObject({
+        await mcp.remove({ name: 'conf-mcp', cwd });
+        expect(await mcp.list({ cwd })).toEqual([]);
+        await expect(mcp.get({ name: 'conf-mcp', cwd })).rejects.toMatchObject({
           name: 'RPCError',
           code: 40408,
         });
       } finally {
         flags.setConfigOverrides(undefined);
+        await rm(cwd, { recursive: true, force: true });
       }
     });
 

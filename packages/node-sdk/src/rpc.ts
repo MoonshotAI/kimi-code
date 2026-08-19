@@ -414,21 +414,28 @@ export abstract class SDKRpcClientBase {
     return rpc.inspectAppMcpServers({ targets });
   }
 
-  async addGlobalMcpServer(server: McpServerConfig): Promise<readonly McpManagedServerInfo[]> {
+  async addGlobalMcpServer(
+    server: McpServerConfig,
+    options: { readonly cwd?: string } = {},
+  ): Promise<readonly McpManagedServerInfo[]> {
     const rpc = await this.getRpc();
-    return rpc.addGlobalMcpServer({ server });
+    return rpc.addGlobalMcpServer({ server, cwd: options.cwd });
   }
 
   async updateGlobalMcpServer(
     server: McpServerConfig,
+    options: { readonly cwd?: string } = {},
   ): Promise<readonly McpManagedServerInfo[]> {
     const rpc = await this.getRpc();
-    return rpc.updateGlobalMcpServer({ server });
+    return rpc.updateGlobalMcpServer({ server, cwd: options.cwd });
   }
 
-  async removeGlobalMcpServer(name: string): Promise<readonly McpManagedServerInfo[]> {
+  async removeGlobalMcpServer(
+    name: string,
+    options: { readonly cwd?: string } = {},
+  ): Promise<readonly McpManagedServerInfo[]> {
     const rpc = await this.getRpc();
-    return rpc.removeGlobalMcpServer({ name });
+    return rpc.removeGlobalMcpServer({ name, cwd: options.cwd });
   }
 
   async beginGlobalMcpServerAuth(name: string): Promise<BeginGlobalMcpServerAuthResult> {

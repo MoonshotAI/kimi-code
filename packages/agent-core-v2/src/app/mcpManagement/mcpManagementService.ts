@@ -83,34 +83,43 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     return toManagedServer(await this.registry.get(name, query));
   }
 
-  async addServer(server: GlobalMcpServerConfig): Promise<readonly McpManagedServer[]> {
+  async addServer(
+    server: GlobalMcpServerConfig,
+    query: McpRegistryQuery = {},
+  ): Promise<readonly McpManagedServer[]> {
     const name = normalizeServerName(server.name);
-    const existing = await this.guardLookup(name);
+    const existing = await this.guardLookup(name, query);
     if (existing !== undefined && !(existing.source === 'global' && existing.mutable)) {
       throwReadOnlyMcpServer(existing);
     }
     await this.store.add({ ...server, name });
-    return this.listServers();
+    return this.listServers(query);
   }
 
-  async updateServer(server: GlobalMcpServerConfig): Promise<readonly McpManagedServer[]> {
+  async updateServer(
+    server: GlobalMcpServerConfig,
+    query: McpRegistryQuery = {},
+  ): Promise<readonly McpManagedServer[]> {
     const name = normalizeServerName(server.name);
-    const existing = await this.guardLookup(name);
+    const existing = await this.guardLookup(name, query);
     if (existing === undefined) {
       await this.store.update({ ...server, name });
     } else {
       throwReadOnlyMcpServer(existing);
       await this.store.update({ ...server, name });
     }
-    return this.listServers();
+    return this.listServers(query);
   }
 
-  async removeServer(name: string): Promise<readonly McpManagedServer[]> {
+  async removeServer(
+    name: string,
+    query: McpRegistryQuery = {},
+  ): Promise<readonly McpManagedServer[]> {
     const normalized = normalizeServerName(name);
-    const existing = await this.guardLookup(normalized);
+    const existing = await this.guardLookup(normalized, query);
     if (existing !== undefined) throwReadOnlyMcpServer(existing);
     await this.store.remove(normalized);
-    return this.listServers();
+    return this.listServers(query);
   }
 
   async testServer(target: McpServerTestTarget): Promise<McpServerTestResult> {
@@ -121,9 +130,12 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     );
   }
 
-  private async guardLookup(name: string): Promise<McpRegistryEntry | undefined> {
+  private async guardLookup(
+    name: string,
+    query: McpRegistryQuery,
+  ): Promise<McpRegistryEntry | undefined> {
     try {
-      return await this.registry.get(name);
+      return await this.registry.get(name, query);
     } catch (error: unknown) {
       if (isError2(error) && error.code === ErrorCodes.MCP_SERVER_NOT_FOUND) return undefined;
       throw error;

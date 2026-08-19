@@ -4176,6 +4176,50 @@ describe('v1↔v2 global MCP parity', () => {
     }
   });
 
+  it.each([
+    [
+      'add',
+      (client: SDKRpcClient | SDKRpcClientV2, cwd: string) =>
+        client.addGlobalMcpServer(
+          { name: 'project', transport: 'stdio', command: 'replacement' },
+          { cwd },
+        ),
+    ],
+    [
+      'update',
+      (client: SDKRpcClient | SDKRpcClientV2, cwd: string) =>
+        client.updateGlobalMcpServer(
+          { name: 'project', transport: 'stdio', command: 'replacement' },
+          { cwd },
+        ),
+    ],
+    [
+      'remove',
+      (client: SDKRpcClient | SDKRpcClientV2, cwd: string) =>
+        client.removeGlobalMcpServer('project', { cwd }),
+    ],
+  ])('%s rejects a trusted project-layer entry as read-only on both engines', async (_operation, mutate) => {
+    const pair = await makeGlobalMcpParityPair();
+    const project = await makeTempDir('kimi-sdk-parity-mcp-project-');
+    await mkdir(join(project, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(project, '.kimi-code', 'mcp.json'),
+      JSON.stringify({ mcpServers: { project: { command: 'project-command' } } }),
+      'utf-8',
+    );
+    try {
+      await pair.v2.trustWorkspace(project);
+
+      await expectSameMcpRejection(
+        pair,
+        (client) => mutate(client, project),
+        (client) => mutate(client, project),
+      );
+    } finally {
+      await closeGlobalMcpPair(pair);
+    }
+  });
+
   it('a malformed mcp.json rejects every read with the same config.invalid', async () => {
     const pair = await makeGlobalMcpParityPair();
     await writeFile(join(pair.v1HomeDir, 'mcp.json'), '{ not valid json', 'utf-8');

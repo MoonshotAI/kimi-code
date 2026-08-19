@@ -865,14 +865,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   async addGlobalMcpServer(
-    { server }: PutGlobalMcpServerPayload,
+    { server, cwd }: PutGlobalMcpServerPayload,
   ): Promise<readonly McpManagedServerInfo[]> {
     await this.awaitMcpRegistryReady();
     // Normalize once: the store trims names, so the read-only guard, the
     // persisted key, and live-session reconciliation must all agree (a padded
     // name would otherwise persist trimmed but reconcile the raw name).
     const name = normalizeServerName(server.name);
-    const existing = await this.mcpRegistry.get(name).catch(() => undefined);
+    const existing = await this.mcpRegistry.get(name, { cwd }).catch(() => undefined);
     if (existing !== undefined && !(existing.source === 'global' && existing.mutable)) {
       // A same-named plugin / project-layer entry already exists; writing a
       // user-level shadow would silently change precedence, so reject. A
@@ -882,15 +882,15 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     }
     await this.globalMcpConfig.add({ ...server, name });
     await this.reconcileMcpServerInSessions([name], 'global-add');
-    return this.listGlobalMcpServers({});
+    return this.listGlobalMcpServers({ cwd });
   }
 
   async updateGlobalMcpServer(
-    { server }: PutGlobalMcpServerPayload,
+    { server, cwd }: PutGlobalMcpServerPayload,
   ): Promise<readonly McpManagedServerInfo[]> {
     await this.awaitMcpRegistryReady();
     const name = normalizeServerName(server.name);
-    const existing = await this.mcpRegistry.get(name).catch(() => undefined);
+    const existing = await this.mcpRegistry.get(name, { cwd }).catch(() => undefined);
     if (existing === undefined) {
       // Preserve the store's not-found error (and its config validation).
       await this.globalMcpConfig.update({ ...server, name });
@@ -899,19 +899,19 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       await this.globalMcpConfig.update({ ...server, name });
       await this.reconcileMcpServerInSessions([name], 'global-update');
     }
-    return this.listGlobalMcpServers({});
+    return this.listGlobalMcpServers({ cwd });
   }
 
   async removeGlobalMcpServer(
-    { name }: GlobalMcpServerNamePayload,
+    { name, cwd }: GlobalMcpServerNamePayload,
   ): Promise<readonly McpManagedServerInfo[]> {
     await this.awaitMcpRegistryReady();
     const normalized = normalizeServerName(name);
-    const existing = await this.mcpRegistry.get(normalized).catch(() => undefined);
+    const existing = await this.mcpRegistry.get(normalized, { cwd }).catch(() => undefined);
     if (existing !== undefined) this.throwReadOnlyMcpServer(existing);
     await this.globalMcpConfig.remove(normalized);
     await this.reconcileMcpServerInSessions([normalized], 'global-remove');
-    return this.listGlobalMcpServers({});
+    return this.listGlobalMcpServers({ cwd });
   }
 
   private throwReadOnlyMcpServer(entry: McpRegistryEntry): void {

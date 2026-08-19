@@ -105,13 +105,19 @@ export interface IMcpManagementService {
   getServer(name: string, query?: McpRegistryQuery): Promise<McpManagedServer>;
 
   /** Writes the user-level file; rejects read-only collisions. Returns the refreshed list. */
-  addServer(server: GlobalMcpServerConfig): Promise<readonly McpManagedServer[]>;
+  addServer(
+    server: GlobalMcpServerConfig,
+    query?: McpRegistryQuery,
+  ): Promise<readonly McpManagedServer[]>;
 
   /** Updates an existing user-level entry; rejects read-only collisions. Returns the refreshed list. */
-  updateServer(server: GlobalMcpServerConfig): Promise<readonly McpManagedServer[]>;
+  updateServer(
+    server: GlobalMcpServerConfig,
+    query?: McpRegistryQuery,
+  ): Promise<readonly McpManagedServer[]>;
 
   /** Removes a user-level entry; rejects read-only collisions. Returns the refreshed list. */
-  removeServer(name: string): Promise<readonly McpManagedServer[]>;
+  removeServer(name: string, query?: McpRegistryQuery): Promise<readonly McpManagedServer[]>;
 
   testServer(target: McpServerTestTarget): Promise<McpServerTestResult>;
 
