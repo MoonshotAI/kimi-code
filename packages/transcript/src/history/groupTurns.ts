@@ -200,7 +200,7 @@ export function groupMessagesIntoSnapshot(
           kind: 'text',
           frameId: `${step.stepId}.f${step.frames.length + 1}`,
           role: 'user',
-          text: textOf(message),
+          text: notificationFrameText(textOf(message)),
           ...(taskId !== undefined ? { taskId } : {}),
         });
         syncTurnItem(items, current);
@@ -278,6 +278,29 @@ export function groupMessagesIntoSnapshot(
   }
 
   return { items, tasks: [], interactions: [], attachments, todos: [], prompts: [], meta: {} };
+}
+
+function notificationFrameText(text: string): string {
+  if (!text.startsWith('<notification')) return text;
+  const openingEnd = text.indexOf('>');
+  const closingStart = text.lastIndexOf('</notification>');
+  if (openingEnd === -1 || closingStart <= openingEnd) return text;
+  const inner = text.slice(openingEnd + 1, closingStart);
+  const lines = inner.split('\n');
+  let title = '';
+  let lastHeaderIndex = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (line.startsWith('Title: ')) {
+      title = line.slice('Title: '.length);
+      lastHeaderIndex = i;
+    } else if (line.startsWith('Severity: ')) {
+      lastHeaderIndex = i;
+    }
+  }
+  const body = lines.slice(lastHeaderIndex + 1).join('\n').trim();
+  if (title.length > 0 && body.length > 0) return `${title}\n${body}`;
+  return title.length > 0 ? title : body.length > 0 ? body : text;
 }
 
 function opensOwnTurn(message: HistoryMessage): boolean {
