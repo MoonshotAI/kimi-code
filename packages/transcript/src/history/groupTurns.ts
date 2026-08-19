@@ -154,12 +154,14 @@ export function groupMessagesIntoSnapshot(
     items.push(item);
   };
 
-  let prevRole: string | undefined;
+  let prevNonTaskRole: string | undefined;
   for (const message of messages) {
     if (message.role === 'system') continue;
     const originKind = message.origin?.kind;
-    const prevRoleAtEntry = prevRole;
-    prevRole = message.role;
+    const isTaskOrigin =
+      originKind === 'task' || originKind === 'background_task' || originKind === 'task_notification';
+    const prevRoleAtEntry = prevNonTaskRole;
+    if (!isTaskOrigin) prevNonTaskRole = message.role;
 
     if (message.role === 'user') {
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
@@ -177,7 +179,7 @@ export function groupMessagesIntoSnapshot(
         }
         continue;
       }
-      if (originKind === 'task' || originKind === 'background_task' || originKind === 'task_notification') {
+      if (isTaskOrigin) {
         const origin = message.origin as { taskId?: unknown } | undefined;
         const taskId = typeof origin?.taskId === 'string' ? origin.taskId : undefined;
         const opensOwn = options?.taskOriginTurnTaskIds === undefined

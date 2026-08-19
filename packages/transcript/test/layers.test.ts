@@ -459,6 +459,12 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         origin: { kind: 'task', taskId: 'task-9' } as { kind: string },
       },
       {
+        role: 'user',
+        content: [{ type: 'text', text: '<notification id="task:task-8:completed"></notification>' }],
+        toolCalls: [],
+        origin: { kind: 'task', taskId: 'task-8' } as { kind: string },
+      },
+      {
         role: 'assistant',
         content: [{ type: 'text', text: 'continuing' }],
         toolCalls: [],
@@ -474,8 +480,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     const userFrames = turn.steps
       .flatMap((step) => step.frames)
       .filter((f) => f.kind === 'text' && f.role === 'user');
-    expect(userFrames).toHaveLength(1);
-    expect(userFrames[0]).toMatchObject({ taskId: 'task-9' });
+    expect(userFrames.map((f) => f.kind === 'text' && f.taskId)).toEqual(['task-9', 'task-8']);
     const assistantTexts = turn.steps
       .flatMap((step) => step.frames)
       .filter((f) => f.kind === 'text' && f.role === 'assistant')
