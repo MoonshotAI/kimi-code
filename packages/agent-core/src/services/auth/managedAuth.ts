@@ -6,14 +6,18 @@ import {
   applyManagedKimiCodeLogoutConfig,
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
+  OAuthConnectionError,
+  OAuthUnauthorizedError,
   resolveKimiCodeLoginAuth,
   resolveKimiCodeRuntimeAuth,
+  RetryableRefreshError,
   type BearerTokenProvider,
   type KimiHostIdentity,
   type KimiOAuthLoginOptions,
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
 
+import { ErrorCodes, KimiError } from '../../errors';
 import type { IEnvironmentService } from '../environment/environment';
 
 type ServicesManagedConfig = KimiConfig & ManagedKimiConfigShape;
@@ -125,10 +129,19 @@ class ServicesManagedAuthFacade implements ServicesAuthFacade {
     providerName: string,
     oauthRef?: OAuthRef | undefined,
   ): BearerTokenProvider => {
-    return this.toolkit.tokenProvider(
+    const provider = this.toolkit.tokenProvider(
       providerName,
       this.runtimeOAuthRef(providerName, oauthRef),
     );
+    return {
+      getAccessToken: async (options) => {
+        try {
+          return await provider.getAccessToken(options);
+        } catch (error) {
+          throw mapOAuthTokenError(error, providerName) ?? error;
+        }
+      },
+    };
   };
 
   private resolveManagedAuth(providerName?: string | undefined): {
@@ -175,4 +188,22 @@ export function createManagedAuthFacade(
   identity?: KimiHostIdentity,
 ): ServicesAuthFacade {
   return new ServicesManagedAuthFacade(env, identity);
+}
+
+function mapOAuthTokenError(error: unknown, providerName: string): KimiError | undefined {
+  if (error instanceof OAuthUnauthorizedError) {
+    return new KimiError(
+      ErrorCodes.AUTH_LOGIN_REQUIRED,
+      `OAuth provider "${providerName}" requires login before it can be used.`,
+      { cause: error },
+    );
+  }
+  if (error instanceof OAuthConnectionError || error instanceof RetryableRefreshError) {
+    return new KimiError(
+      ErrorCodes.PROVIDER_CONNECTION_ERROR,
+      `OAuth provider "${providerName}" failed to fetch an access token: ${error.message}`,
+      { cause: error },
+    );
+  }
+  return undefined;
 }

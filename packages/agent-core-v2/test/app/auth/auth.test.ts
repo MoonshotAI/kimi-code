@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import {
   clearManagedKimiCodeConfig,
+  OAuthConnectionError,
+  OAuthUnauthorizedError,
+  RetryableRefreshError,
   resolveKimiCodeOAuthKey,
   resolveKimiCodeRuntimeAuth,
 } from '@moonshot-ai/kimi-code-oauth';
@@ -9,7 +12,10 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { IAuthSummaryService, IOAuthService, IOAuthToolkit } from '#/app/auth/auth';
+import { AuthErrors } from '#/app/auth/errors';
 import { AuthSummaryService, OAuthService } from '#/app/auth/authService';
+import { Error2 } from '#/errors';
+import { ProtocolErrors } from '#/kosong/protocol/errors';
 import {
   SERVICES_SECTION,
   servicesFromToml,
@@ -203,6 +209,78 @@ describe('OAuthService', () => {
   function configBacking(): Record<string, unknown> {
     return { providers, models, services, defaultModel, thinking };
   }
+
+  describe('resolveTokenProvider — OAuth error classification', () => {
+    // See MoonshotAI/kimi-code#2786: without classification at the auth-domain
+    // boundary, a raw `OAuthConnectionError` from the toolkit serializes as
+    // `[internal]`, losing the retryable flag and the connection pause reason.
+    function throwingProvider(error: unknown): void {
+      toolkit.tokenProvider.mockReturnValue({
+        getAccessToken: async () => {
+          throw error;
+        },
+      });
+    }
+
+    async function catchTokenError(): Promise<unknown> {
+      return createService()
+        .resolveTokenProvider(OAUTH_PROVIDER)!
+        .getAccessToken()
+        .catch((caught: unknown) => caught);
+    }
+
+    it('maps OAuthConnectionError to provider.connection_error', async () => {
+      const tokenError = new OAuthConnectionError(
+        'OAuth request to https://auth.kimi.com/api/oauth/token failed: fetch failed',
+      );
+      throwingProvider(tokenError);
+
+      const error = await catchTokenError();
+
+      expect(error).toBeInstanceOf(Error2);
+      expect(error).toMatchObject({
+        code: ProtocolErrors.codes.PROVIDER_CONNECTION_ERROR,
+        message: expect.stringContaining(tokenError.message),
+        cause: tokenError,
+      });
+    });
+
+    it('maps RetryableRefreshError to provider.connection_error', async () => {
+      const tokenError = new RetryableRefreshError('Token refresh failed (HTTP 503).');
+      throwingProvider(tokenError);
+
+      const error = await catchTokenError();
+
+      expect(error).toBeInstanceOf(Error2);
+      expect(error).toMatchObject({
+        code: ProtocolErrors.codes.PROVIDER_CONNECTION_ERROR,
+        cause: tokenError,
+      });
+    });
+
+    it('maps OAuthUnauthorizedError to auth.login_required', async () => {
+      const tokenError = new OAuthUnauthorizedError('Stored token was rejected; re-login required.');
+      throwingProvider(tokenError);
+
+      const error = await catchTokenError();
+
+      expect(error).toBeInstanceOf(Error2);
+      expect(error).toMatchObject({
+        code: AuthErrors.codes.AUTH_LOGIN_REQUIRED,
+        cause: tokenError,
+      });
+    });
+
+    it('rethrows unrecognized errors raw instead of guessing a category', async () => {
+      const tokenError = new Error('storage exploded');
+      throwingProvider(tokenError);
+
+      const error = await catchTokenError();
+
+      expect(error).toBe(tokenError);
+      expect(error).not.toBeInstanceOf(Error2);
+    });
+  });
 
   function stubManagedModelsFetch(): ReturnType<typeof vi.fn> {
     const fetchMock = vi.fn().mockResolvedValue({
