@@ -17,17 +17,6 @@ export interface AgentToolContributionOptions {
   readonly name: string;
   readonly source?: ToolSource;
   readonly disclosure?: ToolDisclosure;
-  /**
-   * Extra activation predicate, re-evaluated at every activation wave. Prefer
-   * facts every agent in the session recomputes identically (runtime
-   * capabilities, provider availability, config). Per-agent identity gates
-   * (e.g. `agentId === 'main'`) are allowed, with one caveat: forked agents
-   * inherit the caller's conversation, so a divergent tool surface forfeits
-   * prompt prefix-cache parity and leaves the inherited history referencing
-   * tools the fork does not offer. Where that cost matters, restrict what a
-   * tool may DO at execution time instead (a service-level authority check,
-   * see `AgentGoalService.assertSupportedAgent`).
-   */
   readonly when?: (accessor: ServicesAccessor) => boolean;
   readonly requiredRuntimeCapabilities?: readonly RuntimeCapability[];
   readonly domain?: string;
