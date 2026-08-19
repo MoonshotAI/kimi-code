@@ -399,7 +399,7 @@ describe('AgentFlowService', () => {
       const origin = {
         kind: 'skill_activation',
         activationId,
-        skillName,
+        skillName: `flow:${skillName}`,
         trigger: 'user-slash',
         skillType: 'flow',
         skillPath,
@@ -435,7 +435,7 @@ describe('AgentFlowService', () => {
         origin: {
           kind: 'skill_activation',
           activationId: 'act-1',
-          skillName: 'issue-fix',
+          skillName: 'flow:issue-fix',
           trigger: 'user-slash',
           skillType: 'flow',
           skillPath: '/ws/.kimi-code/flows/issue-fix.md',
@@ -497,11 +497,39 @@ describe('AgentFlowService', () => {
       expect(service.run().active).toBe(false);
     });
 
+    it('starts only the first flow of a steered multi-activation prompt and clears the rest', async () => {
+      await activateFlowSkill({ activationId: 'act-s1', appendPrompt: false, reconcile: false });
+      await activateFlowSkill({
+        activationId: 'act-s2',
+        skillName: 'other-flow',
+        appendPrompt: false,
+        reconcile: false,
+      });
+      contextMessages.push({
+        role: 'user',
+        content: [{ type: 'text', text: 'merged steer prompt' }],
+        toolCalls: [],
+        origin: {
+          kind: 'user',
+          skillActivations: [
+            { activationId: 'act-s1', skillName: 'flow:issue-fix' },
+            { activationId: 'act-s2', skillName: 'flow:other-flow' },
+          ],
+        },
+      } as unknown as ContextMessage);
+      service.reconcilePendingActivation();
+      expect(service.run().flowId).toBe('issue-fix');
+
+      service.abort('stop');
+      service.reconcilePendingActivation();
+      expect(service.run().active).toBe(false);
+    });
+
     it('preserves each queued flow activation until its own prompt lands', async () => {
       await activateFlowSkill({ activationId: 'act-q1', appendPrompt: false, reconcile: false });
       await activateFlowSkill({
         activationId: 'act-q2',
-        skillName: 'other-flow',
+        skillName: 'flow:other-flow',
         appendPrompt: false,
         reconcile: false,
       });
@@ -512,7 +540,7 @@ describe('AgentFlowService', () => {
         origin: {
           kind: 'skill_activation',
           activationId: 'act-q1',
-          skillName: 'issue-fix',
+          skillName: 'flow:issue-fix',
           trigger: 'user-slash',
           skillType: 'flow',
           skillPath: '/ws/.kimi-code/flows/issue-fix.md',
@@ -529,7 +557,7 @@ describe('AgentFlowService', () => {
         origin: {
           kind: 'skill_activation',
           activationId: 'act-q2',
-          skillName: 'other-flow',
+          skillName: 'flow:other-flow',
           trigger: 'user-slash',
           skillType: 'flow',
           skillPath: '/ws/.kimi-code/flows/other-flow.md',

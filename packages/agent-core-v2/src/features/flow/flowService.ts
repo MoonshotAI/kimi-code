@@ -34,7 +34,7 @@ import {
   type FlowStageDefinition,
 } from './flow';
 import { FlowGateReview } from './flowGateReview';
-import { flowDefinitionPath } from './flowsSkillSource';
+import { FLOW_SKILL_NAME_PREFIX, flowDefinitionPath } from './flowsSkillSource';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { FlowRunEnded, FlowRunStarted, FlowVerdict, flowGatesKey, flowKey } from './flowOps';
@@ -141,6 +141,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         const flagNow = this.flags.enabled(FLOW_FLAG_ID);
         if (flagNow === flagWas) return;
         flagWas = flagNow;
+        if (this.scopeContext.agentId !== 'main') return;
         void this.dispatcher.dispatch(
           new AgentStatusUpdated({ flowRun: flagNow ? this.summary() : null }),
         );
@@ -163,11 +164,13 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
 
   private prepareActivationStart(
     activationId: string,
-    flowId: string | undefined,
+    skillName: string | undefined,
     task: string | undefined,
     skillPath: string | undefined,
   ): void {
-    if (flowId === undefined || flowId.length === 0 || this.run().active) return;
+    if (skillName === undefined || !skillName.startsWith(FLOW_SKILL_NAME_PREFIX)) return;
+    const flowId = skillName.slice(FLOW_SKILL_NAME_PREFIX.length);
+    if (flowId.length === 0 || this.run().active) return;
     if (
       skillPath === undefined ||
       resolve(skillPath) !== resolve(flowDefinitionPath(this.workspaceCtx.workDir, flowId))
@@ -177,11 +180,6 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     const parsed = FlowDefinitionSchema.safeParse(this.activationData.take(activationId));
     if (!parsed.success || parsed.data.id !== flowId) return;
     this.pendingActivations.set(activationId, { definition: parsed.data, task: task?.trim() ?? '' });
-    while (this.pendingActivations.size > 8) {
-      const oldest = this.pendingActivations.keys().next().value;
-      if (oldest === undefined) break;
-      this.pendingActivations.delete(oldest);
-    }
   }
 
   reconcilePendingActivation(): void {
@@ -192,19 +190,17 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
       .findLast((message) => message.role === 'user' && message.origin?.kind !== 'injection');
     const origin = last?.origin;
     if (origin === undefined) return;
-    const matchedId =
+    const promptActivationIds =
       origin.kind === 'skill_activation'
-        ? this.pendingActivations.has(origin.activationId)
-          ? origin.activationId
-          : undefined
+        ? [origin.activationId]
         : origin.kind === 'user'
-          ? (origin.skillActivations ?? []).find((entry) =>
-              this.pendingActivations.has(entry.activationId),
-            )?.activationId
-          : undefined;
-    if (matchedId === undefined) return;
-    const pending = this.pendingActivations.get(matchedId);
-    this.pendingActivations.delete(matchedId);
+          ? (origin.skillActivations ?? []).map((entry) => entry.activationId)
+          : [];
+    const matchedIds = promptActivationIds.filter((id) => this.pendingActivations.has(id));
+    const firstMatch = matchedIds[0];
+    if (firstMatch === undefined) return;
+    const pending = this.pendingActivations.get(firstMatch);
+    for (const id of matchedIds) this.pendingActivations.delete(id);
     if (pending === undefined) return;
     if (this.run().active) return;
     let task = pending.task;

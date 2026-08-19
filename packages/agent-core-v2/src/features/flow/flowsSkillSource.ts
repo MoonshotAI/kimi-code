@@ -21,6 +21,13 @@ import { FLOW_SUPERVISOR_CONTRACT } from './skill/skill';
 
 export const FLOWS_SKILL_SOURCE_ID = 'flows';
 
+/**
+ * Catalog-name prefix of every projected flow skill (`flow:<id>`), keeping
+ * flow commands in their own namespace so a flow can never shadow an
+ * ordinary skill with the same id.
+ */
+export const FLOW_SKILL_NAME_PREFIX = 'flow:';
+
 function joinWorkspacePath(root: string, relative: string): string {
   return `${root.replace(/[\\/]+$/, '')}/${relative}`;
 }
@@ -183,13 +190,13 @@ function toFlowSkill(definition: FlowDefinition, path: string, dir: string): Ski
       '", task: <the task>). Likewise, if no current-stage reminder appears in your context, the automatic start failed — recover by calling FlowStart yourself.',
   ].join('\n');
   return {
-    name: id,
+    name: `${FLOW_SKILL_NAME_PREFIX}${id}`,
     description,
     path,
     dir,
     content,
     metadata: {
-      name: id,
+      name: `${FLOW_SKILL_NAME_PREFIX}${id}`,
       description,
       type: 'flow',
       disableModelInvocation: true,

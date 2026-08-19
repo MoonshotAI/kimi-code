@@ -35,7 +35,7 @@ describe('skill slash commands', () => {
         path: '/skills/parent/nested-review/SKILL.md',
       }),
       skill('agent-only', 'agent'),
-      skill('commit', 'flow'),
+      skill('flow:commit', 'flow'),
     ]);
 
     expect(built.commands.map((command) => command.name)).toEqual([
@@ -46,7 +46,7 @@ describe('skill slash commands', () => {
     expect(built.commands[0]).toMatchObject({
       name: 'flow:commit',
       aliases: [],
-      description: 'commit skill',
+      description: 'flow:commit skill',
     });
     expect(built.commands[1]).toMatchObject({
       name: 'skill:nested-review',
@@ -54,7 +54,7 @@ describe('skill slash commands', () => {
       description: 'Nested review skill',
     });
     expect([...built.commandMap.entries()]).toEqual([
-      ['flow:commit', 'commit'],
+      ['flow:commit', 'flow:commit'],
       ['skill:nested-review', 'nested-review'],
       ['skill:review', 'review'],
     ]);

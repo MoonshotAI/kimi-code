@@ -58,7 +58,7 @@ describe('flows skill source e2e', () => {
       headers: authHeaders(server!),
     } as never);
     const body = (await res.json()) as { data: { skills: { name: string; type?: string }[] } };
-    const flow = body.data.skills.find((s) => s.name === 'issue-fix');
+    const flow = body.data.skills.find((s) => s.name === 'flow:issue-fix');
     expect(flow).toBeDefined();
     expect(flow?.type).toBe('flow');
   });
@@ -76,7 +76,7 @@ describe('flows skill source e2e', () => {
       { headers: authHeaders(server!) } as never,
     );
     const body = (await res.json()) as { data: { skills: { name: string; type?: string }[] } };
-    const flow = body.data.skills.find((s) => s.name === 'issue-fix');
+    const flow = body.data.skills.find((s) => s.name === 'flow:issue-fix');
     expect(flow).toBeDefined();
     expect(flow?.type).toBe('flow');
   });

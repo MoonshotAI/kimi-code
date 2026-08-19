@@ -58,7 +58,7 @@ describe('FlowsSkillSource', () => {
     const contribution = await source.load();
     expect(contribution.skills).toHaveLength(1);
     const skill = contribution.skills[0]!;
-    expect(skill.name).toBe('issue-fix');
+    expect(skill.name).toBe('flow:issue-fix');
     expect(skill.source).toBe('project');
     expect(skill.metadata.type).toBe('flow');
     expect(skill.metadata.disableModelInvocation).toBe(true);

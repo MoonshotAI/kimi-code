@@ -55,7 +55,7 @@ describe('buildAcpSkillSlashCommands', () => {
   it('filters out skills the user cannot activate', () => {
     const { commands } = buildAcpSkillSlashCommands([
       skill('reference-only', { type: 'reference' }),
-      skill('flow-one', { type: 'flow' }),
+      skill('flow:flow-one', { type: 'flow' }),
       skill('inline-one'),
     ]);
 
