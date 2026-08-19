@@ -413,8 +413,6 @@ export * from '#/agent/task/taskOps';
 export * from '#/agent/task/taskService';
 import '#/app/cron/configSection';
 export * from '#/app/cron/cronTask';
-export * from '#/app/cron/cronTaskPersistence';
-export * from '#/app/cron/cronTaskPersistenceService';
 export * from '#/app/cron/cron-expr';
 export * from '#/app/cron/format';
 export * from '#/app/cron/jitter';

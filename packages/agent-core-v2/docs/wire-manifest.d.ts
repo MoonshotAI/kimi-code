@@ -24,13 +24,16 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (49 record types)
+// Index (52 record types)
 //   config.update                      profile                                                               src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory, turn                                                   src/agent/contextMemory/contextEvents.ts
 //   context.append_message             contextMemory, goalForkNotice, plan, task.notificationDelivery, todo  src/agent/contextMemory/contextEvents.ts
 //   context.apply_compaction           contextMemory, plan, task.notificationDelivery, todo                  src/agent/contextMemory/contextEvents.ts
 //   context.clear                      contextMemory, plan, task.notificationDelivery, todo                  src/agent/contextMemory/contextEvents.ts
 //   context.undo                       contextMemory, plan, task.notificationDelivery, todo                  src/agent/contextMemory/contextEvents.ts
+//   cron.add                           cron                                                                  src/session/cron/cronOps.ts
+//   cron.cursor                        cron                                                                  src/session/cron/cronOps.ts
+//   cron.delete                        cron                                                                  src/session/cron/cronOps.ts
 //   forked                             goal, goalForkNotice                                                  src/agent/goal/goalOps.ts
 //   full_compaction.begin              fullCompaction                                                        src/agent/fullCompaction/compactionOps.ts
 //   full_compaction.cancel             fullCompaction                                                        src/agent/fullCompaction/compactionOps.ts
@@ -165,6 +168,42 @@ interface ContextClearPayload {
 interface ContextUndoPayload {
   _name: 'context.undo';
   count: number;
+}
+
+/**
+ * states: cron
+ * owner: src/session/cron/cronOps.ts
+ */
+interface CronAddPayload {
+  _name: 'cron.add';
+  task: {
+    id: string;
+    cron: string;
+    prompt: string;
+    createdAt: number;
+    recurring?: boolean;
+    lastFiredAt?: number;
+    tags?: Record<string, string>;
+  };
+}
+
+/**
+ * states: cron
+ * owner: src/session/cron/cronOps.ts
+ */
+interface CronCursorPayload {
+  _name: 'cron.cursor';
+  id: string;
+  lastFiredAt: number;
+}
+
+/**
+ * states: cron
+ * owner: src/session/cron/cronOps.ts
+ */
+interface CronDeletePayload {
+  _name: 'cron.delete';
+  ids: string[];
 }
 
 /**
@@ -715,6 +754,9 @@ interface WirePayloadMap {
   "context.apply_compaction": ContextApplyCompactionPayload;
   "context.clear": ContextClearPayload;
   "context.undo": ContextUndoPayload;
+  "cron.add": CronAddPayload;
+  "cron.cursor": CronCursorPayload;
+  "cron.delete": CronDeletePayload;
   "forked": ForkedPayload;
   "full_compaction.begin": FullCompactionBeginPayload;
   "full_compaction.cancel": FullCompactionCancelPayload;

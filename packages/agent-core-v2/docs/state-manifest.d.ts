@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 98 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 17 keys · Agent: 98 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -42,7 +42,6 @@
 //     cron.parsedCache                   src/session/cron/sessionCronServiceImpl.ts
 //     cron.seededFromStore               src/session/cron/sessionCronServiceImpl.ts
 //     cron.started                       src/session/cron/sessionCronServiceImpl.ts
-//     cron.tasks                         src/session/cron/sessionCronServiceImpl.ts
 //     interaction.nextId                 src/session/interaction/interactionService.ts
 //     interaction.pending                src/session/interaction/interactionService.ts
 //     interaction.recentlyResolved       src/session/interaction/interactionService.ts
@@ -443,15 +442,6 @@ export interface SessionStateSnapshot {
   }>;
   'cron.seededFromStore': Set<string>;
   'cron.started': boolean;
-  'cron.tasks': Map<string, /* CronTask — packages/agent-core-v2/src/app/cron/cronTask.ts */ {
-    readonly id: string;
-    readonly cron: string;
-    readonly prompt: string;
-    readonly createdAt: number;
-    readonly recurring?: boolean;
-    readonly lastFiredAt?: number;
-    readonly tags?: Readonly<Record<string, string>>;
-  }>;
   // src/session/interaction/interactionService.ts
   'interaction.nextId': number;
   'interaction.pending': Map<string, /* Pending — packages/agent-core-v2/src/session/interaction/interactionService.ts */ {
@@ -1591,7 +1581,7 @@ export interface AgentStateSnapshot {
   // replayable · durable — folds: TowerModeEnter, TowerModeExit
   'tower': boolean;
   // src/session/cron/cronOps.ts
-  // replayable · transient — folds: CronAdd, CronDelete, CronCursor
+  // replayable · durable — folds: CronAdd, CronDelete, CronCursor
   'cron': /* CronModelState — packages/agent-core-v2/src/session/cron/cronOps.ts */ Map<string, /* CronTask — packages/agent-core-v2/src/app/cron/cronTask.ts */ {
     readonly id: string;
     readonly cron: string;
