@@ -152,7 +152,7 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
     }
 
     const delayMs =
-      readRetryAfterMs(error) ?? retryBackoffDelays(attemptBudget)[failedAttempt - 1] ?? 0;
+      readRetryAfterMs(error) ?? retryBackoffDelays(failedAttempt + 1)[failedAttempt - 1] ?? 0;
     void this.dispatcher.dispatch(
       new TurnStepRetrying({
         turnId: context.turnId,
