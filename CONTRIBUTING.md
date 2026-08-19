@@ -10,18 +10,14 @@ We hold AI-assisted contributions to the same standard as hand-written ones. **Y
 
 We only merge PRs aligned with the roadmap. Drive-by refactors without context are unlikely to land.
 
-**Discuss first** — open an issue before coding. PRs without prior discussion may be closed without review:
+**External PRs are accepted for approved bug fixes only.** Open an issue first and wait for a maintainer to approve it with an `/approve` comment, then link that issue in your PR. PRs without an approved linked issue may be closed without review; once the issue is approved, ask a maintainer to reopen your PR.
 
-- New features or user-visible behavior changes (regardless of size)
+**Discuss first** — open an issue before coding:
+
+- Bug fixes, including small or typo-level ones: open a bug issue and wait for a maintainer's `/approve` before opening the PR
+- New features or user-visible behavior changes (regardless of size): external feature PRs are not accepted — features are discussed and decided in issues, and accepted features are implemented by the team or by explicit maintainer invitation
 - Refactors or other changes larger than ~100 lines
 - Public API or compatibility changes
-- Bug fixes where the cause or fix approach is still unclear
-
-**Can open a PR directly** — link an existing issue when there is one:
-
-- Clear, reproducible bug fixes with a focused diff
-- Typos, documentation-only changes, and small CI/build fixes
-- Small changes that clearly match an existing issue or maintainer request
 
 ## Project Layout
 
