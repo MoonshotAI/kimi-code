@@ -274,6 +274,37 @@ describe('Agent loop', () => {
     );
   });
 
+  it('records step.end with finishReason error when a step fails', async () => {
+    profile.update({ activeToolNames: [] });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+    await ctx.untilTurnEnd();
+
+    const begins = wireLoopEvents(ctx, 'step.begin');
+    const ends = wireLoopEvents(ctx, 'step.end');
+    expect(begins).toHaveLength(1);
+    expect(ends).toEqual([
+      expect.objectContaining({ uuid: begins[0]!['uuid'], finishReason: 'error' }),
+    ]);
+  });
+
+  it('records step.end with finishReason interrupted when the turn is cancelled mid-step', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
+    const subscription = ctx.get(IEventBus).subscribe(AssistantDelta, () => {
+      loop.cancel();
+    });
+    const turn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
+    await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+    subscription.dispose();
+
+    const begins = wireLoopEvents(ctx, 'step.begin');
+    const ends = wireLoopEvents(ctx, 'step.end');
+    expect(begins).toHaveLength(1);
+    expect(ends).toEqual([
+      expect.objectContaining({ uuid: begins[0]!['uuid'], finishReason: 'interrupted' }),
+    ]);
+  });
+
   it('does not run loop error handlers for aborted turns', async () => {
     let called = false;
     loop.registerLoopErrorHandler({
@@ -1497,6 +1528,20 @@ function nextTurnMessage(text: string): MessageStepRequest {
     },
     { admission: 'newTurn' },
   );
+}
+
+function wireLoopEvents(
+  target: TestAgentContext,
+  eventType: string,
+): Array<Record<string, unknown>> {
+  return target.allEvents
+    .filter(
+      (entry) =>
+        entry.type === '[wire]' &&
+        entry.event === 'context.append_loop_event' &&
+        (entry.args as { event?: { type?: string } }).event?.type === eventType,
+    )
+    .map((entry) => (entry.args as { event: Record<string, unknown> }).event);
 }
 
 function createTimingRequester(): IAgentLLMRequesterService {
