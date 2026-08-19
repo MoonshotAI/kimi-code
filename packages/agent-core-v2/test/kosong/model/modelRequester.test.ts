@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { isError2 } from '#/_base/errors/errors';
 import {
@@ -24,6 +24,8 @@ import type { Model } from '#/kosong/model/catalog';
 import type { ModelRequestEvent } from '#/kosong/model/modelRequester';
 import { effectiveMaxCompletionTokens } from '#/kosong/model/modelRequester';
 import { buildStreamTiming, ModelRequesterImpl } from '#/kosong/model/modelRequesterImpl';
+
+import { ManualTimeoutScheduler } from '../../_base/utils/stubs';
 
 class FakeChatProvider implements ChatProvider {
   readonly name = 'fake-base';
@@ -298,14 +300,6 @@ describe('ModelRequesterImpl request execution', () => {
 });
 
 describe('ModelRequesterImpl stream stall watchdog', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   function neverYieldingStream(signal: AbortSignal | undefined): StreamedMessage {
     return {
       id: 'msg-stall',
@@ -327,6 +321,7 @@ describe('ModelRequesterImpl stream stall watchdog', () => {
   }
 
   function stallingAfterStream(
+    scheduler: ManualTimeoutScheduler,
     steps: readonly { readonly part: StreamedMessagePart; readonly delayMs?: number }[],
     signal: AbortSignal | undefined,
   ): StreamedMessage {
@@ -338,9 +333,10 @@ describe('ModelRequesterImpl stream stall watchdog', () => {
       traceId: null,
       async *[Symbol.asyncIterator]() {
         for (const step of steps) {
-          if (step.delayMs !== undefined) {
-            await new Promise((resolve) => {
-              setTimeout(resolve, step.delayMs);
+          const delayMs = step.delayMs;
+          if (delayMs !== undefined) {
+            await new Promise<void>((resolve) => {
+              scheduler.set(resolve, delayMs);
             });
           }
           yield step.part;
@@ -353,10 +349,15 @@ describe('ModelRequesterImpl stream stall watchdog', () => {
   }
 
   it('fails with LLMStreamStalledError when the first output never arrives', async () => {
+    const scheduler = new ManualTimeoutScheduler();
     const provider = new FakeChatProvider();
     provider.handler = (_callIndex, options) =>
       Promise.resolve(neverYieldingStream(options?.signal));
-    const requester = new ModelRequesterImpl(modelWith(staticAuth()), registryReturning(provider));
+    const requester = new ModelRequesterImpl(
+      modelWith(staticAuth()),
+      registryReturning(provider),
+      scheduler,
+    );
 
     const failurePromise = collect(
       requester.request(INPUT, undefined, {
@@ -364,10 +365,10 @@ describe('ModelRequesterImpl stream stall watchdog', () => {
         streamIdleTimeoutMs: 500,
       }),
     ).catch((error: unknown) => error);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(vi.getTimerCount()).toBe(1);
+    await scheduler.advance(0);
+    expect(scheduler.size).toBe(1);
 
-    await vi.advanceTimersByTimeAsync(1000);
+    await scheduler.advance(1000);
     const failure = (await failurePromise) as LLMStreamStalledError;
 
     expect(failure).toBeInstanceOf(LLMStreamStalledError);
@@ -381,14 +382,16 @@ describe('ModelRequesterImpl stream stall watchdog', () => {
     expect(failure.elapsedMs).toBeGreaterThanOrEqual(1000);
     expect(failure.idleMs).toBeGreaterThanOrEqual(1000);
     expect(isRetryableGenerateError(failure)).toBe(true);
-    expect(vi.getTimerCount()).toBe(0);
+    expect(scheduler.size).toBe(0);
   });
 
   it('cancels the first-output budget on the first part and resets the stream idle budget on every part', async () => {
+    const scheduler = new ManualTimeoutScheduler();
     const provider = new FakeChatProvider();
     provider.handler = (_callIndex, options) =>
       Promise.resolve(
         stallingAfterStream(
+          scheduler,
           [
             { part: { type: 'text', text: 'one' } },
             { part: { type: 'text', text: 'two' }, delayMs: 400 },
@@ -396,7 +399,11 @@ describe('ModelRequesterImpl stream stall watchdog', () => {
           options?.signal,
         ),
       );
-    const requester = new ModelRequesterImpl(modelWith(staticAuth()), registryReturning(provider));
+    const requester = new ModelRequesterImpl(
+      modelWith(staticAuth()),
+      registryReturning(provider),
+      scheduler,
+    );
 
     let settled = false;
     const failurePromise = collect(
@@ -408,16 +415,16 @@ describe('ModelRequesterImpl stream stall watchdog', () => {
     void failurePromise.then(() => {
       settled = true;
     });
-    await vi.advanceTimersByTimeAsync(0);
+    await scheduler.advance(0);
 
-    await vi.advanceTimersByTimeAsync(399);
+    await scheduler.advance(399);
     expect(settled).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
+    await scheduler.advance(1);
     expect(settled).toBe(false);
-    await vi.advanceTimersByTimeAsync(499);
+    await scheduler.advance(499);
     expect(settled).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(1);
+    await scheduler.advance(1);
     const failure = (await failurePromise) as LLMStreamStalledError;
 
     expect(settled).toBe(true);
@@ -425,14 +432,19 @@ describe('ModelRequesterImpl stream stall watchdog', () => {
     expect(failure.phase).toBe('streaming');
     expect(failure.name).not.toBe('AbortError');
     expect(isRetryableGenerateError(failure)).toBe(true);
-    expect(vi.getTimerCount()).toBe(0);
+    expect(scheduler.size).toBe(0);
   });
 
   it('keeps the original cancellation when the upstream signal aborts mid-stall', async () => {
+    const scheduler = new ManualTimeoutScheduler();
     const provider = new FakeChatProvider();
     provider.handler = (_callIndex, options) =>
       Promise.resolve(neverYieldingStream(options?.signal));
-    const requester = new ModelRequesterImpl(modelWith(staticAuth()), registryReturning(provider));
+    const requester = new ModelRequesterImpl(
+      modelWith(staticAuth()),
+      registryReturning(provider),
+      scheduler,
+    );
     const controller = new AbortController();
 
     const failurePromise = collect(
@@ -441,19 +453,24 @@ describe('ModelRequesterImpl stream stall watchdog', () => {
         streamIdleTimeoutMs: 500,
       }),
     ).catch((error: unknown) => error);
-    await vi.advanceTimersByTimeAsync(0);
+    await scheduler.advance(0);
 
     controller.abort();
     const failure = await failurePromise;
 
     expect(isAbortError(failure)).toBe(true);
     expect(failure).not.toBeInstanceOf(LLMStreamStalledError);
-    expect(vi.getTimerCount()).toBe(0);
+    expect(scheduler.size).toBe(0);
   });
 
   it('clears the watchdog timers after a successful request', async () => {
+    const scheduler = new ManualTimeoutScheduler();
     const provider = new FakeChatProvider();
-    const requester = new ModelRequesterImpl(modelWith(staticAuth()), registryReturning(provider));
+    const requester = new ModelRequesterImpl(
+      modelWith(staticAuth()),
+      registryReturning(provider),
+      scheduler,
+    );
 
     await collect(
       requester.request(INPUT, undefined, {
@@ -462,13 +479,18 @@ describe('ModelRequesterImpl stream stall watchdog', () => {
       }),
     );
 
-    expect(vi.getTimerCount()).toBe(0);
+    expect(scheduler.size).toBe(0);
   });
 
   it('clears the watchdog timers after a provider failure', async () => {
+    const scheduler = new ManualTimeoutScheduler();
     const provider = new FakeChatProvider();
     provider.handler = () => Promise.reject(new APIStatusError(500, 'boom'));
-    const requester = new ModelRequesterImpl(modelWith(staticAuth()), registryReturning(provider));
+    const requester = new ModelRequesterImpl(
+      modelWith(staticAuth()),
+      registryReturning(provider),
+      scheduler,
+    );
 
     const failure = await collect(
       requester.request(INPUT, undefined, {
@@ -478,14 +500,19 @@ describe('ModelRequesterImpl stream stall watchdog', () => {
     ).catch((error: unknown) => error);
 
     expect((failure as { code: string }).code).toBe(ProtocolErrors.codes.PROVIDER_API_ERROR);
-    expect(vi.getTimerCount()).toBe(0);
+    expect(scheduler.size).toBe(0);
   });
 
   it('stays fully passive and passes the upstream signal through when both budgets are zero', async () => {
+    const scheduler = new ManualTimeoutScheduler();
     const provider = new FakeChatProvider();
     provider.handler = (_callIndex, options) =>
       Promise.resolve(neverYieldingStream(options?.signal));
-    const requester = new ModelRequesterImpl(modelWith(staticAuth()), registryReturning(provider));
+    const requester = new ModelRequesterImpl(
+      modelWith(staticAuth()),
+      registryReturning(provider),
+      scheduler,
+    );
     const controller = new AbortController();
 
     const failurePromise = collect(
@@ -494,13 +521,13 @@ describe('ModelRequesterImpl stream stall watchdog', () => {
         streamIdleTimeoutMs: 0,
       }),
     ).catch((error: unknown) => error);
-    await vi.advanceTimersByTimeAsync(0);
+    await scheduler.advance(0);
 
-    expect(vi.getTimerCount()).toBe(0);
+    expect(scheduler.size).toBe(0);
     expect(provider.calls[0]?.options?.signal).toBe(controller.signal);
 
-    await vi.advanceTimersByTimeAsync(600_000);
-    expect(vi.getTimerCount()).toBe(0);
+    await scheduler.advance(600_000);
+    expect(scheduler.size).toBe(0);
 
     controller.abort();
     const failure = await failurePromise;
@@ -509,6 +536,7 @@ describe('ModelRequesterImpl stream stall watchdog', () => {
   });
 
   it('detects a stall behind the google-genai streamed message', async () => {
+    const scheduler = new ManualTimeoutScheduler();
     const provider = new GoogleGenAIChatProvider({
       model: 'gemini-2.5-flash',
       apiKey: 'sk-probe',
@@ -524,7 +552,11 @@ describe('ModelRequesterImpl stream stall watchdog', () => {
           yield {};
         })(),
       );
-    const requester = new ModelRequesterImpl(modelWith(staticAuth()), registryReturning(provider));
+    const requester = new ModelRequesterImpl(
+      modelWith(staticAuth()),
+      registryReturning(provider),
+      scheduler,
+    );
 
     const failurePromise = collect(
       requester.request(INPUT, undefined, {
@@ -532,8 +564,8 @@ describe('ModelRequesterImpl stream stall watchdog', () => {
         streamIdleTimeoutMs: 500,
       }),
     ).catch((error: unknown) => error);
-    await vi.advanceTimersByTimeAsync(0);
-    await vi.advanceTimersByTimeAsync(1000);
+    await scheduler.advance(0);
+    await scheduler.advance(1000);
     const failure = (await failurePromise) as LLMStreamStalledError;
 
     expect(failure).toBeInstanceOf(LLMStreamStalledError);

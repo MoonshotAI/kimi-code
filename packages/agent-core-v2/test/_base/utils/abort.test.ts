@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   abortError,
@@ -9,6 +9,8 @@ import {
   userCancellationReason,
 } from '#/_base/utils/abort';
 import { MAX_TIMER_DELAY_MS } from '#/_base/utils/timer';
+
+import { ManualTimeoutScheduler } from './stubs';
 
 describe('userCancellationReason', () => {
   it('is recognised as a deliberate user cancellation', () => {
@@ -75,20 +77,14 @@ describe('abortable', () => {
 });
 
 describe('createIdleTimeoutAbortSignal', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
+  it('aborts the synthesized signal once the idle timeout elapses', async () => {
+    const scheduler = new ManualTimeoutScheduler();
+    const idle = createIdleTimeoutAbortSignal(undefined, 1000, scheduler);
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('aborts the synthesized signal once the idle timeout elapses', () => {
-    const idle = createIdleTimeoutAbortSignal(undefined, 1000);
-
-    vi.advanceTimersByTime(999);
+    expect(scheduler.scheduledTimeoutMs()).toBe(1000);
+    await scheduler.advance(999);
     expect(idle.signal.aborted).toBe(false);
-    vi.advanceTimersByTime(1);
+    await scheduler.advance(1);
 
     expect(idle.signal.aborted).toBe(true);
     expect(idle.idleTimedOut()).toBe(true);
@@ -96,43 +92,48 @@ describe('createIdleTimeoutAbortSignal', () => {
     idle.clear();
   });
 
-  it('restarts the countdown on every touch', () => {
-    const idle = createIdleTimeoutAbortSignal(undefined, 1000);
+  it('restarts the countdown on every touch', async () => {
+    const scheduler = new ManualTimeoutScheduler();
+    const idle = createIdleTimeoutAbortSignal(undefined, 1000, scheduler);
 
-    vi.advanceTimersByTime(900);
+    await scheduler.advance(900);
     idle.touch();
-    vi.advanceTimersByTime(900);
+    await scheduler.advance(900);
     expect(idle.signal.aborted).toBe(false);
-    vi.advanceTimersByTime(100);
+    await scheduler.advance(100);
 
     expect(idle.signal.aborted).toBe(true);
     expect(idle.idleTimedOut()).toBe(true);
   });
 
-  it('switches the countdown duration when touch passes one', () => {
-    const idle = createIdleTimeoutAbortSignal(undefined, 10_000);
+  it('switches the countdown duration when touch passes one', async () => {
+    const scheduler = new ManualTimeoutScheduler();
+    const idle = createIdleTimeoutAbortSignal(undefined, 10_000, scheduler);
 
     idle.touch(100);
-    vi.advanceTimersByTime(100);
+    expect(scheduler.scheduledTimeoutMs()).toBe(100);
+    await scheduler.advance(100);
 
     expect(idle.signal.aborted).toBe(true);
     expect(idle.idleTimedOut()).toBe(true);
   });
 
-  it('disarms when touch passes a non-positive duration', () => {
-    const idle = createIdleTimeoutAbortSignal(undefined, 1000);
+  it('disarms when touch passes a non-positive duration', async () => {
+    const scheduler = new ManualTimeoutScheduler();
+    const idle = createIdleTimeoutAbortSignal(undefined, 1000, scheduler);
 
     idle.touch(0);
 
-    expect(vi.getTimerCount()).toBe(0);
-    vi.advanceTimersByTime(60_000);
+    expect(scheduler.size).toBe(0);
+    await scheduler.advance(60_000);
     expect(idle.signal.aborted).toBe(false);
     idle.clear();
   });
 
   it('propagates a parent abort with its reason and stays distinguishable from an idle timeout', () => {
+    const scheduler = new ManualTimeoutScheduler();
     const controller = new AbortController();
-    const idle = createIdleTimeoutAbortSignal(controller.signal, 1000);
+    const idle = createIdleTimeoutAbortSignal(controller.signal, 1000, scheduler);
     const reason = userCancellationReason();
 
     controller.abort(reason);
@@ -144,68 +145,76 @@ describe('createIdleTimeoutAbortSignal', () => {
   });
 
   it('stops the timer and unlinks the parent on clear', () => {
+    const scheduler = new ManualTimeoutScheduler();
     const controller = new AbortController();
-    const idle = createIdleTimeoutAbortSignal(controller.signal, 1000);
-    expect(vi.getTimerCount()).toBe(1);
+    const idle = createIdleTimeoutAbortSignal(controller.signal, 1000, scheduler);
+    expect(scheduler.size).toBe(1);
 
     idle.clear();
 
-    expect(vi.getTimerCount()).toBe(0);
+    expect(scheduler.size).toBe(0);
     controller.abort();
     expect(idle.signal.aborted).toBe(false);
   });
 
-  it('never arms when created with a non-positive timeout', () => {
-    const idle = createIdleTimeoutAbortSignal(undefined, 0);
+  it('never arms when created with a non-positive timeout', async () => {
+    const scheduler = new ManualTimeoutScheduler();
+    const idle = createIdleTimeoutAbortSignal(undefined, 0, scheduler);
 
-    expect(vi.getTimerCount()).toBe(0);
+    expect(scheduler.size).toBe(0);
     idle.touch();
-    expect(vi.getTimerCount()).toBe(0);
-    vi.advanceTimersByTime(60_000);
+    expect(scheduler.size).toBe(0);
+    await scheduler.advance(60_000);
     expect(idle.signal.aborted).toBe(false);
     idle.clear();
   });
 
   it('ignores touches after clear', () => {
-    const idle = createIdleTimeoutAbortSignal(undefined, 1000);
+    const scheduler = new ManualTimeoutScheduler();
+    const idle = createIdleTimeoutAbortSignal(undefined, 1000, scheduler);
     idle.clear();
 
     idle.touch();
 
-    expect(vi.getTimerCount()).toBe(0);
+    expect(scheduler.size).toBe(0);
     expect(idle.signal.aborted).toBe(false);
   });
 
-  it('does not re-arm once the idle timeout has fired', () => {
-    const idle = createIdleTimeoutAbortSignal(undefined, 1000);
-    vi.advanceTimersByTime(1000);
+  it('does not re-arm once the idle timeout has fired', async () => {
+    const scheduler = new ManualTimeoutScheduler();
+    const idle = createIdleTimeoutAbortSignal(undefined, 1000, scheduler);
+    await scheduler.advance(1000);
     expect(idle.idleTimedOut()).toBe(true);
 
     idle.touch();
 
-    expect(vi.getTimerCount()).toBe(0);
+    expect(scheduler.size).toBe(0);
   });
 
-  it('clamps an excessive timeout to the timer ceiling instead of firing immediately', () => {
-    const idle = createIdleTimeoutAbortSignal(undefined, Number.MAX_SAFE_INTEGER);
+  it('clamps an excessive timeout to the timer ceiling instead of firing immediately', async () => {
+    const scheduler = new ManualTimeoutScheduler();
+    const idle = createIdleTimeoutAbortSignal(undefined, Number.MAX_SAFE_INTEGER, scheduler);
 
-    vi.advanceTimersByTime(MAX_TIMER_DELAY_MS - 1);
+    expect(scheduler.scheduledTimeoutMs()).toBe(MAX_TIMER_DELAY_MS);
+    await scheduler.advance(MAX_TIMER_DELAY_MS - 1);
     expect(idle.signal.aborted).toBe(false);
-    vi.advanceTimersByTime(1);
+    await scheduler.advance(1);
 
     expect(idle.signal.aborted).toBe(true);
     expect(idle.idleTimedOut()).toBe(true);
     idle.clear();
   });
 
-  it('clamps an excessive timeout passed to touch', () => {
-    const idle = createIdleTimeoutAbortSignal(undefined, 1000);
+  it('clamps an excessive timeout passed to touch', async () => {
+    const scheduler = new ManualTimeoutScheduler();
+    const idle = createIdleTimeoutAbortSignal(undefined, 1000, scheduler);
 
     idle.touch(Number.MAX_SAFE_INTEGER);
-    vi.advanceTimersByTime(60_000);
 
+    expect(scheduler.scheduledTimeoutMs()).toBe(MAX_TIMER_DELAY_MS);
+    await scheduler.advance(60_000);
     expect(idle.signal.aborted).toBe(false);
-    expect(vi.getTimerCount()).toBe(1);
+    expect(scheduler.size).toBe(1);
     idle.clear();
   });
 });

@@ -1,4 +1,4 @@
-import { setClampedTimeout } from './timer';
+import { MAX_TIMER_DELAY_MS, systemTimeoutScheduler, type TimeoutScheduler } from './timer';
 
 export function abortError(message = 'Aborted'): Error {
   const error = new Error(message);
@@ -104,6 +104,7 @@ export function createDeadlineAbortSignal(
 export function createIdleTimeoutAbortSignal(
   source: AbortSignal | undefined,
   timeoutMs: number,
+  scheduler: TimeoutScheduler = systemTimeoutScheduler,
 ): IdleTimeoutAbortSignal {
   const controller = new AbortController();
   const unlinkAbortSignal =
@@ -114,14 +115,14 @@ export function createIdleTimeoutAbortSignal(
   let timeout: ReturnType<typeof setTimeout> | undefined;
 
   const arm = () => {
-    if (timeout !== undefined) clearTimeout(timeout);
+    if (timeout !== undefined) scheduler.clear(timeout);
     timeout = undefined;
     if (cleared || didIdleTimeout || controller.signal.aborted || currentTimeoutMs <= 0) return;
-    timeout = setClampedTimeout(() => {
+    timeout = scheduler.set(() => {
       timeout = undefined;
       didIdleTimeout = true;
       controller.abort(abortError());
-    }, currentTimeoutMs);
+    }, Math.min(currentTimeoutMs, MAX_TIMER_DELAY_MS));
   };
   arm();
 
@@ -134,7 +135,7 @@ export function createIdleTimeoutAbortSignal(
     },
     clear: () => {
       cleared = true;
-      if (timeout !== undefined) clearTimeout(timeout);
+      if (timeout !== undefined) scheduler.clear(timeout);
       timeout = undefined;
       unlinkAbortSignal?.();
     },

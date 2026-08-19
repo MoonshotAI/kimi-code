@@ -1,5 +1,6 @@
 import { AsyncEventQueue } from '#/_base/asyncEventQueue';
 import { createIdleTimeoutAbortSignal } from '#/_base/utils/abort';
+import { systemTimeoutScheduler, type TimeoutScheduler } from '#/_base/utils/timer';
 import type { VideoURLPart } from '#/kosong/contract/message';
 import {
   APIStatusError,
@@ -34,6 +35,7 @@ export class ModelRequesterImpl implements ModelRequester {
   constructor(
     readonly model: Model,
     private readonly protocolRegistry: IProtocolAdapterRegistry,
+    private readonly scheduler: TimeoutScheduler = systemTimeoutScheduler,
   ) {}
 
   private resolveChatProvider(): ChatProvider {
@@ -88,7 +90,7 @@ export class ModelRequesterImpl implements ModelRequester {
     signal?.throwIfAborted();
     const provider = this.resolveChatProvider();
 
-    let requestStartedAt = Date.now();
+    let requestStartedAt = this.scheduler.now();
     let requestSentAt: number | undefined;
     let firstChunkAt: number | undefined;
     let streamEndedAt: number | undefined;
@@ -106,13 +108,13 @@ export class ModelRequesterImpl implements ModelRequester {
       usedContextTokens: params?.usedContextTokens,
       maxContextTokens: params?.maxContextTokens,
       onRequestStart: () => {
-        requestStartedAt = Date.now();
+        requestStartedAt = this.scheduler.now();
       },
       onRequestSent: () => {
-        requestSentAt = Date.now();
+        requestSentAt = this.scheduler.now();
       },
       onStreamEnd: (stats) => {
-        streamEndedAt = Date.now();
+        streamEndedAt = this.scheduler.now();
         decodeStats = stats;
       },
       onTraceId: params?.onTraceId,
@@ -126,12 +128,12 @@ export class ModelRequesterImpl implements ModelRequester {
     let result: GenerateResult;
     try {
       result = await this.runWithAuthRefresh(async (auth) => {
-        requestStartedAt = Date.now();
+        requestStartedAt = this.scheduler.now();
         const watchdog = stallWatchdogEnabled
-          ? createIdleTimeoutAbortSignal(signal, firstOutputTimeoutMs)
+          ? createIdleTimeoutAbortSignal(signal, firstOutputTimeoutMs, this.scheduler)
           : undefined;
         let stallPhase: LLMStreamStallPhase = 'waiting_first_output';
-        let lastActivityAt = Date.now();
+        let lastActivityAt = this.scheduler.now();
         try {
           return await generate(
             provider,
@@ -140,9 +142,9 @@ export class ModelRequesterImpl implements ModelRequester {
             [...input.messages],
             {
               onMessagePart: (part) => {
-                firstChunkAt ??= Date.now();
+                firstChunkAt ??= this.scheduler.now();
                 stallPhase = 'streaming';
-                lastActivityAt = Date.now();
+                lastActivityAt = this.scheduler.now();
                 watchdog?.touch(streamIdleTimeoutMs);
                 queue.push({ type: 'part', part });
               },
@@ -152,15 +154,15 @@ export class ModelRequesterImpl implements ModelRequester {
               auth,
               signal: watchdog?.signal ?? signal,
               onRequestSent: () => {
-                requestSentAt = Date.now();
-                lastActivityAt = Date.now();
+                requestSentAt = this.scheduler.now();
+                lastActivityAt = this.scheduler.now();
                 watchdog?.touch();
               },
             },
           );
         } catch (error) {
           if (watchdog?.idleTimedOut() === true && signal?.aborted !== true && isAbortError(error)) {
-            const stalledAt = Date.now();
+            const stalledAt = this.scheduler.now();
             throw new LLMStreamStalledError(
               `LLM stream stalled while ${stallPhase === 'waiting_first_output' ? 'waiting for the first output' : 'streaming'}: ` +
                 `no output for ${String(stalledAt - lastActivityAt)}ms ` +
