@@ -472,6 +472,51 @@ describe('AgentFlowService', () => {
       expect(service.run().active).toBe(false);
     });
 
+    it('preserves each queued flow activation until its own prompt lands', async () => {
+      await activateFlowSkill({ activationId: 'act-q1', appendPrompt: false, reconcile: false });
+      await activateFlowSkill({
+        activationId: 'act-q2',
+        skillName: 'other-flow',
+        appendPrompt: false,
+        reconcile: false,
+      });
+      contextMessages.push({
+        role: 'user',
+        content: [{ type: 'text', text: 'first activation prompt' }],
+        toolCalls: [],
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act-q1',
+          skillName: 'issue-fix',
+          trigger: 'user-slash',
+          skillType: 'flow',
+          skillPath: '/ws/.kimi-code/flows/issue-fix.md',
+          skillArgs: 'fix the paste bug',
+        },
+      } as unknown as ContextMessage);
+      service.reconcilePendingActivation();
+      expect(service.run().flowId).toBe('issue-fix');
+
+      contextMessages.push({
+        role: 'user',
+        content: [{ type: 'text', text: 'second activation prompt' }],
+        toolCalls: [],
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act-q2',
+          skillName: 'other-flow',
+          trigger: 'user-slash',
+          skillType: 'flow',
+          skillPath: '/ws/.kimi-code/flows/other-flow.md',
+          skillArgs: 'task',
+        },
+      } as unknown as ContextMessage);
+      service.reconcilePendingActivation();
+      expect(service.run().flowId).toBe('issue-fix');
+      service.reconcilePendingActivation();
+      expect(service.run().flowId).toBe('issue-fix');
+    });
+
     it('serves only the latest pending activation', async () => {
       await activateFlowSkill({ activationId: 'act-a' });
       expect(service.run().flowId).toBe('issue-fix');

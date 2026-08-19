@@ -46,7 +46,10 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
   private readonly review: FlowGateReview;
   private readonly approvedGateCalls = new Map<string, number>();
   private readonly preparedEpochs = new WeakMap<object, number>();
-  private pendingActivation: { activationId: string; definition: FlowDefinition; task: string } | undefined;
+  private readonly pendingActivations = new Map<
+    string,
+    { definition: FlowDefinition; task: string }
+  >();
   private epoch = Date.now();
 
   constructor(
@@ -171,31 +174,37 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     }
     const parsed = FlowDefinitionSchema.safeParse(this.activationData.take(activationId));
     if (!parsed.success || parsed.data.id !== flowId) return;
-    this.pendingActivation = { activationId, definition: parsed.data, task: task?.trim() ?? '' };
+    this.pendingActivations.set(activationId, { definition: parsed.data, task: task?.trim() ?? '' });
+    while (this.pendingActivations.size > 8) {
+      const oldest = this.pendingActivations.keys().next().value;
+      if (oldest === undefined) break;
+      this.pendingActivations.delete(oldest);
+    }
   }
 
   reconcilePendingActivation(): void {
-    const pending = this.pendingActivation;
-    if (pending === undefined) return;
+    if (this.pendingActivations.size === 0) return;
     if (!this.flags.enabled(FLOW_FLAG_ID)) return;
-    if (this.run().active) {
-      this.pendingActivation = undefined;
-      return;
-    }
     const last = this.contextMemory
       .get()
       .findLast((message) => message.role === 'user' && message.origin?.kind !== 'injection');
     const origin = last?.origin;
     if (origin === undefined) return;
-    const matches =
+    const matchedId =
       origin.kind === 'skill_activation'
-        ? origin.activationId === pending.activationId
-        : origin.kind === 'user' &&
-          (origin.skillActivations ?? []).some(
-            (entry) => entry.activationId === pending.activationId,
-          );
-    if (!matches) return;
-    this.pendingActivation = undefined;
+        ? this.pendingActivations.has(origin.activationId)
+          ? origin.activationId
+          : undefined
+        : origin.kind === 'user'
+          ? (origin.skillActivations ?? []).find((entry) =>
+              this.pendingActivations.has(entry.activationId),
+            )?.activationId
+          : undefined;
+    if (matchedId === undefined) return;
+    const pending = this.pendingActivations.get(matchedId);
+    this.pendingActivations.delete(matchedId);
+    if (pending === undefined) return;
+    if (this.run().active) return;
     let task = pending.task;
     if (task.length === 0 && origin.kind === 'user' && last !== undefined) {
       task = last.content
