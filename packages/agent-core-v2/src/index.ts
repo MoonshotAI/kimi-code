@@ -353,6 +353,7 @@ import '#/agent/goal/goalDeadlineSchedulerService';
 export * from '#/agent/goal/goal';
 export * from '#/agent/goal/goalService';
 export * from '#/agent/goal/types';
+import '#/features/staleGuard/staleGuardFeature';
 export * from '#/features/tower/tower';
 export * from '#/features/tower/towerService';
 export * from '#/features/tower/towerRateLimit';
