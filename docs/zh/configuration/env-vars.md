@@ -41,16 +41,16 @@ export KIMI_DISABLE_TELEMETRY=1
 为所有出站的模型请求附加自定义 HTTP 请求头——LLM 聊天请求（所有供应商协议）和 `/models` 模型列表请求都会携带。适合网关按请求头路由的场景，例如指定集群：
 
 ```sh
-export KIMI_CODE_CUSTOM_HEADERS=$'x-msh-certain-provider: my-cluster\nX-Custom-Tag: debug'
+export KIMI_CODE_CUSTOM_HEADERS=$'X-Gateway-Cluster: my-cluster\nX-Custom-Tag: debug'
 ```
 
 格式与 `ANTHROPIC_CUSTOM_HEADERS` 一致：由换行分隔的 `Name: Value` 行，键名和值两端的空白会被去除，不含冒号的行会被忽略。
 
 ::: info 新增
-新增于 0.2.0。
+新增于 0.20.2。
 :::
 
-> 这层请求头优先级最低——同名头会被 Kimi 身份头（`User-Agent`、`X-Msh-*`）、`config.toml` 里供应商的 `custom_headers`（见[配置文件](./config-files.md#providers)）以及认证头（`Authorization`）覆盖，因此不能用它修改认证信息。需要按供应商区分请求头时，请改用 `custom_headers`。
+> 这层请求头优先级最低——名称完全相同的头会被 Kimi 身份头（`User-Agent`、`X-Msh-*`）、`config.toml` 里供应商的 `custom_headers`（见[配置文件](./config-files.md#providers)）以及认证头（`Authorization`）覆盖。不要用它设置认证等保留头：`authorization` 这类大小写变体不会被识别为同名头，会与真正的 `Authorization` 头合并，可能导致请求失败。需要按供应商区分请求头时，请改用 `custom_headers`。
 
 ## 供应商凭证键（写在 config.toml 里）
 

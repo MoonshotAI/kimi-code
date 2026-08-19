@@ -41,16 +41,16 @@ Switch models temporarily without modifying `config.toml` — when `KIMI_MODEL_N
 Attaches custom HTTP headers to every outbound model request — both LLM chat requests (across all provider protocols) and `/models` listing requests. Useful when a gateway routes by header, for example to pin a specific cluster:
 
 ```sh
-export KIMI_CODE_CUSTOM_HEADERS=$'x-msh-certain-provider: my-cluster\nX-Custom-Tag: debug'
+export KIMI_CODE_CUSTOM_HEADERS=$'X-Gateway-Cluster: my-cluster\nX-Custom-Tag: debug'
 ```
 
 The format mirrors `ANTHROPIC_CUSTOM_HEADERS`: newline-separated `Name: Value` lines. Names and values are trimmed, and lines without a colon are ignored.
 
 ::: info Added
-Added in 0.2.0.
+Added in 0.20.2.
 :::
 
-> This is the lowest-precedence header layer — headers of the same name are overridden by the Kimi identity headers (`User-Agent`, `X-Msh-*`), by a provider's `custom_headers` in `config.toml` (see [Config files](./config-files.md#providers)), and by request auth (`Authorization`), so it cannot be used to change authentication. Use `custom_headers` when headers need to differ per provider.
+> This is the lowest-precedence header layer — a header with the exact same name is overridden by the Kimi identity headers (`User-Agent`, `X-Msh-*`), by a provider's `custom_headers` in `config.toml` (see [Config files](./config-files.md#providers)), and by request auth (`Authorization`). Do not use this variable for authentication or other reserved headers: a case variant such as `authorization` is not recognized as the same name and ends up combined with the real `Authorization` header, which can break requests. Use `custom_headers` when headers need to differ per provider.
 
 ## Provider credential key names (written in config.toml)
 
