@@ -33,6 +33,7 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { ToolAccesses, type ToolAccesses as ToolAccessList } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { stubPermissionModeService } from '../permissionMode/stubs';
 import { recordingTelemetry } from '../../app/telemetry/stubs';
 
@@ -66,6 +67,13 @@ describe('AgentPermissionPolicyService chain', () => {
           sessionApprovalRulePatterns: () => sessionApprovalRulePatterns,
         }));
         reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
+        reg.definePartialInstance(IAgentToolRegistryService, {
+          listReferences: () =>
+            ['FlowStart', 'FlowAdvance', 'FlowAbort', 'FlowJump'].map((name) => ({
+              name,
+              source: 'builtin' as const,
+            })),
+        });
         reg.defineInstance(IHostEnvironment, kaosStub());
         reg.defineInstance(IAgentRuntimeService, {
           _serviceBrand: undefined,
@@ -233,6 +241,13 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
         );
         reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub());
         reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
+        reg.definePartialInstance(IAgentToolRegistryService, {
+          listReferences: () =>
+            ['FlowStart', 'FlowAdvance', 'FlowAbort', 'FlowJump'].map((name) => ({
+              name,
+              source: 'builtin' as const,
+            })),
+        });
         reg.defineInstance(IHostEnvironment, kaosStub());
         reg.defineInstance(IAgentRuntimeService, {
           _serviceBrand: undefined,

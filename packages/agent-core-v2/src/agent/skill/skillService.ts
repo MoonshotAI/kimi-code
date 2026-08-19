@@ -135,7 +135,14 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       skillArgs: input.args,
     };
     this.activationData.put(origin.activationId, skill.data);
-    const turn = await this.recordActivation(origin, content);
+    let turn: Turn | undefined;
+    try {
+      turn = await this.recordActivation(origin, content);
+    } catch (error) {
+      this.activationData.take(origin.activationId);
+      this.flow.discardPendingActivation(origin.activationId);
+      throw error;
+    }
     if (turn === undefined) {
       this.activationData.take(origin.activationId);
       this.flow.discardPendingActivation(origin.activationId);

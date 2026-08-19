@@ -60,6 +60,7 @@ describe('FlowStartTool', () => {
     ix.stub(IAgentFlowService, {
       run: () => ({ active }),
       start,
+      hasPendingActivation: () => false,
     } as unknown as IAgentFlowService);
     tool = ix.createInstance(FlowStartTool);
   });

@@ -91,6 +91,13 @@ export class FlowStartTool implements IFlowStartTool {
       };
     }
 
+    if (this.flow.hasPendingActivation()) {
+      return {
+        isError: true,
+        output:
+          'A flow activation is already queued and will start when its prompt begins. Wait for it instead of calling FlowStart.',
+      };
+    }
     if (!this.flow.start(definition, args.task)) {
       if (this.flow.run().active) {
         return {

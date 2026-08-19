@@ -37,7 +37,17 @@ function policyContext(toolName: string, args: unknown): ResolvedToolExecutionHo
 }
 
 describe('DefaultToolApprovePermissionPolicyService', () => {
-  const policy = new DefaultToolApprovePermissionPolicyService();
+  let flowToolSource: 'builtin' | 'user' | undefined = 'builtin';
+  const registryStub = {
+    listReferences: () =>
+      flowToolSource === undefined
+        ? []
+        : ['FlowStart', 'FlowAdvance', 'FlowAbort', 'FlowJump'].map((name) => ({
+            name,
+            source: flowToolSource,
+          })),
+  } as unknown as import('#/agent/toolRegistry/toolRegistry').IAgentToolRegistryService;
+  const policy = new DefaultToolApprovePermissionPolicyService(registryStub);
 
   it.each([
     ['Read', { path: '/workspace/notes.md' }],
@@ -83,5 +93,17 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
     expect(
       policy.evaluate(policyContext(toolName, args)),
     ).toBeUndefined();
+  });
+
+  it('approves builtin flow tools but not a shadowing registration', () => {
+    expect(policy.evaluate(policyContext('FlowJump', { to: 'x', reason: 'y' }))).toEqual({
+      kind: 'approve',
+    });
+    flowToolSource = 'user';
+    expect(policy.evaluate(policyContext('FlowJump', { to: 'x', reason: 'y' }))).toBeUndefined();
+    expect(policy.evaluate(policyContext('FlowStart', { flow: 'f', task: 't' }))).toBeUndefined();
+    flowToolSource = undefined;
+    expect(policy.evaluate(policyContext('FlowAdvance', {}))).toBeUndefined();
+    flowToolSource = 'builtin';
   });
 });

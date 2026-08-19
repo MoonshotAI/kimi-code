@@ -177,7 +177,7 @@ function toFlowSkill(definition: FlowDefinition, path: string, dir: string): Ski
   const content = [
     FLOW_SUPERVISOR_CONTRACT,
     '',
-    `The engine starts a run of the flow \`${id}\` with this activation when the task below is non-empty and no other run is active — when the current-stage reminder for \`${id}\` appears in your context, the run is live: do NOT call FlowStart again, do NOT read ${FLOWS_PROJECT_DIR}/${id}.md yourself, and do NOT mirror the stages into TodoList (the engine tracks stage progress and the UI shows it). The run's blueprint:`,
+    `The engine starts a run of the flow \`${id}\` with this activation when the task below is non-empty and no other run is active — when the current-stage reminder for \`${id}\` appears in your context, the run is live: do NOT call FlowStart again, do NOT read ${FLOWS_PROJECT_DIR}/${id}.md yourself, and do NOT mirror the stages into TodoList (the engine tracks stage progress; UIs with flow support show it). The run's blueprint:`,
     '',
     stages,
     '',
