@@ -1,6 +1,6 @@
 <!--
 Thank you for your contribution to Kimi Code!
-Please open an issue before sending a feature PR — PRs without prior discussion may be closed without review.
+External PRs are accepted for approved bug fixes only: link an issue that a maintainer has approved (an `/approve` comment). External feature PRs are not accepted.
 
 See https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md for more.
 -->
