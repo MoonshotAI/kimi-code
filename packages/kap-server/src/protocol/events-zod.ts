@@ -469,6 +469,7 @@ export const toolUpdateSchema = z.object({
   percent: z.number().optional(),
   customKind: z.string().optional(),
   customData: z.unknown().optional(),
+  replace: z.boolean().optional(),
 }) satisfies z.ZodType<ToolUpdate>;
 
 export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({

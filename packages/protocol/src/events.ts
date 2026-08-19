@@ -444,6 +444,12 @@ export interface ToolUpdate {
   readonly percent?: number;
   readonly customKind?: string;
   readonly customData?: unknown;
+  /**
+   * When true, hosts replace this tool call's previous live status block
+   * instead of appending a new row — for periodic "still working" updates
+   * whose predecessors are stale the moment they are emitted.
+   */
+  readonly replace?: boolean;
 }
 
 export const MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE = 'mcp.oauth.authorization_url';
@@ -1444,6 +1450,7 @@ export const toolUpdateSchema = z.object({
   percent: z.number().optional(),
   customKind: z.string().optional(),
   customData: z.unknown().optional(),
+  replace: z.boolean().optional(),
 }) satisfies z.ZodType<ToolUpdate>;
 
 export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({

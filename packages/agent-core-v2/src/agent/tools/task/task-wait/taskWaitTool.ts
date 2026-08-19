@@ -4,6 +4,7 @@ import {
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
+  type ToolUpdate,
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
@@ -22,6 +23,8 @@ import WAIT_FOR_DESCRIPTION from './task-wait.md?raw';
 const OUTPUT_PREVIEW_BYTES = 32 * 1024;
 
 const PAGING_HINT_LINES = 300;
+
+const PROGRESS_INTERVAL_MS = 1_000;
 
 type WaitForOutcome = 'completed' | 'timed_out' | 'task_not_found' | 'aborted';
 
@@ -48,6 +51,64 @@ function fullOutputHint(output: AgentTaskOutputSnapshot): string | undefined {
     `(parameters: path, line_offset, n_lines; read about ${String(PAGING_HINT_LINES)} ` +
     'lines per page).'
   );
+}
+
+export function waitForProgressUpdate(
+  args: WaitForInput,
+  runningCount: number,
+  startedAt: number,
+  now: number,
+): ToolUpdate {
+  const elapsedS = Math.max(0, Math.round((now - startedAt) / 1000));
+  return {
+    kind: 'status',
+    text:
+      `Waiting ${formatWaitSeconds(elapsedS)} / ${formatWaitSeconds(args.timeout)} · ` +
+      `${String(runningCount)} background task${runningCount === 1 ? '' : 's'} still running`,
+    replace: true,
+  };
+}
+
+function formatWaitSeconds(totalSeconds: number): string {
+  if (totalSeconds < 60) return `${String(totalSeconds)}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) {
+    return seconds === 0
+      ? `${String(minutes)}m`
+      : `${String(minutes)}m ${seconds.toString().padStart(2, '0')}s`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes === 0
+    ? `${String(hours)}h`
+    : `${String(hours)}h ${remainingMinutes.toString().padStart(2, '0')}m`;
+}
+
+export interface WaitForProgressHandle {
+  readonly stop: () => void;
+  readonly tick: () => void;
+}
+
+export function startWaitProgress(
+  args: WaitForInput,
+  tasks: Pick<IAgentTaskService, 'list'>,
+  onUpdate: ((update: ToolUpdate) => void) | undefined,
+  startedAt: number,
+): WaitForProgressHandle {
+  if (onUpdate === undefined) return { stop: () => {}, tick: () => {} };
+  const tick = (): void => {
+    onUpdate(waitForProgressUpdate(args, tasks.list(true).length, startedAt, Date.now()));
+  };
+  tick();
+  const interval = setInterval(tick, PROGRESS_INTERVAL_MS);
+  interval.unref?.();
+  return {
+    stop: () => {
+      clearInterval(interval);
+    },
+    tick,
+  };
 }
 
 export class WaitForTool implements IWaitForTool {
@@ -105,6 +166,7 @@ export class WaitForTool implements IWaitForTool {
     }
 
     let waited: AgentTaskInfo | undefined;
+    const progress = startWaitProgress(args, this.tasks, ctx.onUpdate, startedAt);
     try {
       waited =
         args.task_id === undefined
@@ -113,6 +175,8 @@ export class WaitForTool implements IWaitForTool {
     } catch (error) {
       this.track(args, startedAt, timeoutMs, 'aborted', 0);
       throw error;
+    } finally {
+      progress.stop();
     }
 
     if (waited === undefined) {
