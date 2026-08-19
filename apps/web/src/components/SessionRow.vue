@@ -60,8 +60,10 @@ const emit = defineEmits<{
   pin: [id: string];
 }>();
 
-// Full, absolute timestamp shown on hover (the row's `time` is a short relative
-// string like "2h"/"1d" — see formatTime in useKimiWebClient).
+// The session's last-updated time (`updatedAt`), rendered as a full absolute
+// timestamp at the bottom of the right-click menu with a "Last updated" label —
+// the row's own `time` is a short relative string like "2h"/"1d" derived from
+// the same field (see formatTime in useKimiWebClient).
 function formatFullTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -712,7 +714,7 @@ function openPullRequest(): void {
           {{ sidebarTabs ? t('sidebar.markDone') : t('sidebar.archive') }}
         </MenuItem>
         <MenuItem separator />
-        <div class="menu-time">{{ fullTime }}</div>
+        <div class="menu-time">{{ t('sidebar.lastActive', { time: fullTime }) }}</div>
         </Menu>
       </Transition>
     </Teleport>
@@ -1055,11 +1057,14 @@ function openPullRequest(): void {
   opacity: 0;
   transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
 }
+/* Non-interactive footer of the right-click menu: the last-updated timestamp,
+   padded a rung under the md MenuItem's 5px 9px (the closest on-scale tokens). */
 .menu-time {
-  padding: 6px 10px;
+  padding: var(--space-1) var(--space-2);
   color: var(--color-text-faint);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
   cursor: default;
   user-select: text;
 }

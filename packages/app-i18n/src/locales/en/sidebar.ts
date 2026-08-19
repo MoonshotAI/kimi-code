@@ -62,6 +62,9 @@ export default {
   export: 'Export session',
   pin: 'Pin',
   unpin: 'Unpin',
+  // Footer of the session row's right-click menu: labels the absolute
+  // timestamp (the session's last-updated time, `updatedAt`).
+  lastActive: 'Last updated: {time}',
   pinned: 'Pinned',
   collapsePinned: 'Collapse pinned',
   expandPinned: 'Expand pinned',

@@ -61,6 +61,8 @@ export default {
   export: '导出会话',
   pin: '置顶',
   unpin: '取消置顶',
+  // 会话行右键菜单底部的时间行：为绝对时间标注含义（会话的最后更新时间，即 updatedAt）。
+  lastActive: '最后更新：{time}',
   pinned: '置顶',
   collapsePinned: '折叠置顶区',
   expandPinned: '展开置顶区',
