@@ -1,35 +1,5 @@
-import { registerBuiltinSkill } from '#/app/skillCatalog/builtin/registry';
-import { parseSkillText } from '#/app/skillCatalog/parser';
-import type { SkillDefinition } from '#/app/skillCatalog/types';
-
-import { FLOW_FLAG_ID } from '../flow';
-
 import FLOW_CONTRACT from './contract.md?raw';
-import FLOW_ENTRY from './flow.md?raw';
 
-const PSEUDO_PATH = 'builtin://flow';
-
-/** The shared supervisor contract — the body both the generic /flow entry and
- *  every per-flow skill (see flowsSkillSource) are assembled from. */
+/** The shared supervisor contract — the body every projected per-flow skill
+ *  (see flowsSkillSource) is assembled from. */
 export const FLOW_SUPERVISOR_CONTRACT: string = FLOW_CONTRACT.trim();
-
-const parsed = parseSkillText({
-  skillMdPath: '/builtin/skills/flow.md',
-  skillDirName: 'flow',
-  source: 'builtin',
-  text: FLOW_ENTRY.replace('$CONTRACT', FLOW_SUPERVISOR_CONTRACT),
-});
-
-export const FLOW_SKILL: SkillDefinition = {
-  ...parsed,
-  path: PSEUDO_PATH,
-  dir: PSEUDO_PATH,
-  experimentalFlag: FLOW_FLAG_ID,
-  metadata: {
-    ...parsed.metadata,
-    type: parsed.metadata.type ?? 'inline',
-    disableModelInvocation: true,
-  },
-};
-
-registerBuiltinSkill(FLOW_SKILL);
