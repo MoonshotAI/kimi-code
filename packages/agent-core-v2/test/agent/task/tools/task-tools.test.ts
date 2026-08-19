@@ -22,7 +22,7 @@ import { TaskOutputTool } from '#/agent/tools/task/task-output/taskOutputTool';
 import { TaskStopInputSchema } from '#/agent/tools/task/task-stop/task-stop';
 import { TaskStopTool } from '#/agent/tools/task/task-stop/taskStopTool';
 import { WaitForInputSchema } from '#/agent/tools/task/task-wait/task-wait';
-import { WaitForTool } from '#/agent/tools/task/task-wait/taskWaitTool';
+import { WaitForTool, waitForProgressUpdate } from '#/agent/tools/task/task-wait/taskWaitTool';
 import { abortError } from '#/_base/utils/abort';
 import type { ITaskHandle } from '#/app/task/task';
 import type { IHostProcess } from '#/os/interface/hostProcess';
@@ -1034,40 +1034,45 @@ describe('WaitForTool', () => {
   });
 
   it('emits status progress updates while the wait is pending', async () => {
-    vi.useFakeTimers();
-    try {
-      const tasks = new FakeTaskService();
-      tasks.add(processTask({ taskId: 'bash-prog001' }));
-      tasks.waitDelegate = (_taskId, _timeoutMs, waitSignal) =>
-        new Promise<never>((_resolve, reject) => {
-          waitSignal?.addEventListener('abort', () => reject(abortError()), { once: true });
-        });
+    const update = waitForProgressUpdate({ timeout: 600 }, 2, 1_000, 31_000);
+    expect(update).toMatchObject({
+      kind: 'status',
+      replace: true,
+      text: 'Waiting 30s / 600s · 2 background tasks still running',
+    });
+    expect(waitForProgressUpdate({ timeout: 600 }, 1, 1_000, 31_000).text).toContain(
+      '1 background task still running',
+    );
+    expect(waitForProgressUpdate({ timeout: 600 }, 0, 1_000, 31_000).text).toContain(
+      '0 background tasks still running',
+    );
+  });
 
-      const onUpdate = vi.fn();
-      const controller = new AbortController();
-      const pending = executeTool(
-        new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true)),
-        { ...context('wait_progress', { timeout: 600, task_id: 'bash-prog001' }, controller.signal), onUpdate },
-      );
+  it('routes the composed progress update through onUpdate on a manual tick', () => {
+    const tasks = new FakeTaskService();
+    tasks.add(processTask({ taskId: 'bash-prog002' }));
+    const onUpdate = vi.fn();
+    const tool = new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true));
+    const progress = (
+      tool as unknown as {
+        startProgress(
+          args: { timeout: number },
+          ctx: { onUpdate?: (update: unknown) => void },
+          startedAt: number,
+        ): { stop(): void; tick(): void };
+      }
+    ).startProgress({ timeout: 600 }, { onUpdate }, Date.now() - 30_000);
 
-      await vi.advanceTimersByTimeAsync(10_500);
+    progress.tick();
+    progress.stop();
 
-      expect(onUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          kind: 'status',
-          text: expect.stringContaining('1 background task still running'),
-          replace: true,
-        }),
-      );
-
-      controller.abort();
-      await expect(pending).rejects.toThrow('Aborted');
-
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(onUpdate.mock.calls).toHaveLength(1);
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(onUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'status',
+        replace: true,
+        text: 'Waiting 30s / 600s · 1 background task still running',
+      }),
+    );
   });
 });
 

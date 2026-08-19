@@ -4,6 +4,7 @@ import {
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
+  type ToolUpdate,
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
@@ -50,6 +51,22 @@ function fullOutputHint(output: AgentTaskOutputSnapshot): string | undefined {
     `(parameters: path, line_offset, n_lines; read about ${String(PAGING_HINT_LINES)} ` +
     'lines per page).'
   );
+}
+
+export function waitForProgressUpdate(
+  args: WaitForInput,
+  runningCount: number,
+  startedAt: number,
+  now: number,
+): ToolUpdate {
+  const elapsedS = Math.max(0, Math.round((now - startedAt) / 1000));
+  return {
+    kind: 'status',
+    text:
+      `Waiting ${String(elapsedS)}s / ${String(args.timeout)}s · ` +
+      `${String(runningCount)} background task${runningCount === 1 ? '' : 's'} still running`,
+    replace: true,
+  };
 }
 
 export class WaitForTool implements IWaitForTool {
@@ -107,7 +124,7 @@ export class WaitForTool implements IWaitForTool {
     }
 
     let waited: AgentTaskInfo | undefined;
-    const stopProgress = this.startProgress(args, ctx, startedAt);
+    const progress = this.startProgress(args, ctx, startedAt);
     try {
       waited =
         args.task_id === undefined
@@ -117,7 +134,7 @@ export class WaitForTool implements IWaitForTool {
       this.track(args, startedAt, timeoutMs, 'aborted', 0);
       throw error;
     } finally {
-      stopProgress();
+      progress.stop();
     }
 
     if (waited === undefined) {
@@ -169,23 +186,19 @@ export class WaitForTool implements IWaitForTool {
     args: WaitForInput,
     ctx: ExecutableToolContext,
     startedAt: number,
-  ): () => void {
+  ): { readonly stop: () => void; readonly tick: () => void } {
     const onUpdate = ctx.onUpdate;
-    if (onUpdate === undefined) return () => {};
-    const interval = setInterval(() => {
-      const elapsedS = Math.round((Date.now() - startedAt) / 1000);
-      const running = this.tasks.list(true).length;
-      onUpdate({
-        kind: 'status',
-        text:
-          `Waiting ${String(elapsedS)}s / ${String(args.timeout)}s · ` +
-          `${String(running)} background task${running === 1 ? '' : 's'} still running`,
-        replace: true,
-      });
-    }, PROGRESS_INTERVAL_MS);
+    if (onUpdate === undefined) return { stop: () => {}, tick: () => {} };
+    const tick = (): void => {
+      onUpdate(waitForProgressUpdate(args, this.tasks.list(true).length, startedAt, Date.now()));
+    };
+    const interval = setInterval(tick, PROGRESS_INTERVAL_MS);
     interval.unref?.();
-    return () => {
-      clearInterval(interval);
+    return {
+      stop: () => {
+        clearInterval(interval);
+      },
+      tick,
     };
   }
 
