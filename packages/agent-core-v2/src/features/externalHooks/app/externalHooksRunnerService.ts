@@ -1,20 +1,18 @@
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IPluginService } from '#/app/plugin/plugin';
-import { HOOKS_SECTION, type HookDefConfig } from '#/agent/externalHooks/configSection';
-import type { HookBlockDecision, HookDef, HookResult } from '#/agent/externalHooks/types';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 
+import { HOOKS_SECTION, type HookDefConfig } from '../configSection';
 import {
   IExternalHooksRunnerService,
   type ExternalHooksRunnerTriggerArgs,
 } from './externalHooksRunner';
-import { blockDecision, indexHooks, runMatchedHooks } from './runner';
-import type { HookRunCallbacks } from './runner';
+import { blockDecision, indexHooks, runMatchedHooks } from '../internal/matchHooks';
+import type { HookRunCallbacks } from '../internal/matchHooks';
+import type { HookBlockDecision, HookDef, HookResult } from '../internal/types';
 
 export class ExternalHooksRunnerService extends Disposable implements IExternalHooksRunnerService {
   declare readonly _serviceBrand: undefined;
@@ -120,11 +118,3 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     this._onDidReload.fire();
   }
 }
-
-registerScopedService(
-  LifecycleScope.App,
-  IExternalHooksRunnerService,
-  ExternalHooksRunnerService,
-  ScopeActivation.OnScopeCreated,
-  'externalHooksRunner',
-);

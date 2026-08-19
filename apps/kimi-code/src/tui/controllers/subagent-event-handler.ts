@@ -119,10 +119,16 @@ export class SubAgentEventHandler {
       });
     } else if (
       event.type === 'tool.progress' &&
-      (event.update.kind === 'stdout' || event.update.kind === 'stderr') &&
+      (event.update.kind === 'stdout' ||
+        event.update.kind === 'stderr' ||
+        event.update.kind === 'status') &&
       event.update.text !== undefined
     ) {
-      toolCall.appendSubToolLiveOutput(`${childAgentId}:${event.toolCallId}`, event.update.text);
+      toolCall.appendSubToolLiveOutput(
+        `${childAgentId}:${event.toolCallId}`,
+        event.update.text,
+        { replace: event.update.replace === true },
+      );
     } else if (event.type === 'tool.result') {
       toolCall.finishSubToolCall({
         tool_call_id: `${childAgentId}:${event.toolCallId}`,

@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 98 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 17 keys · Agent: 99 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -42,7 +42,6 @@
 //     cron.parsedCache                   src/session/cron/sessionCronServiceImpl.ts
 //     cron.seededFromStore               src/session/cron/sessionCronServiceImpl.ts
 //     cron.started                       src/session/cron/sessionCronServiceImpl.ts
-//     cron.tasks                         src/session/cron/sessionCronServiceImpl.ts
 //     interaction.nextId                 src/session/interaction/interactionService.ts
 //     interaction.pending                src/session/interaction/interactionService.ts
 //     interaction.recentlyResolved       src/session/interaction/interactionService.ts
@@ -69,7 +68,7 @@
 //     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
 //     cron                                            src/session/cron/cronOps.ts
 //     dateChange.seed                                 src/features/dateChange/dateChangeService.ts
-//     externalHooks.stopHookContinuationUsed          src/agent/externalHooks/externalHooksService.ts
+//     externalHooks.stopHookContinuationUsed          src/features/externalHooks/agent/agentExternalHooksService.ts
 //     fullCompaction                                  src/agent/fullCompaction/compactionOps.ts
 //     fullCompaction.activeTurnId                     src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.compactionCountInTurn            src/agent/fullCompaction/fullCompactionService.ts
@@ -126,6 +125,7 @@
 //     runtimeBinding                                  src/agent/runtimeBinding/runtimeBindingOps.ts
 //     shellCommand.tasks                              src/agent/shellCommand/shellCommandService.ts
 //     skill                                           src/agent/skill/skillOps.ts
+//     staleGuard                                      src/features/staleGuard/staleGuardOps.ts
 //     stepRetry.failedAttempts                        src/agent/stepRetry/stepRetryService.ts
 //     stepRetry.lastFailedDriverId                    src/agent/stepRetry/stepRetryService.ts
 //     swarm                                           src/features/swarm/swarmOps.ts
@@ -443,15 +443,6 @@ export interface SessionStateSnapshot {
   }>;
   'cron.seededFromStore': Set<string>;
   'cron.started': boolean;
-  'cron.tasks': Map<string, /* CronTask — packages/agent-core-v2/src/app/cron/cronTask.ts */ {
-    readonly id: string;
-    readonly cron: string;
-    readonly prompt: string;
-    readonly createdAt: number;
-    readonly recurring?: boolean;
-    readonly lastFiredAt?: number;
-    readonly tags?: Readonly<Record<string, string>>;
-  }>;
   // src/session/interaction/interactionService.ts
   'interaction.nextId': number;
   'interaction.pending': Map<string, /* Pending — packages/agent-core-v2/src/session/interaction/interactionService.ts */ {
@@ -1188,8 +1179,6 @@ export interface AgentStateSnapshot {
   })[];
   // src/agent/contextProjector/contextProjectorService.ts
   'contextProjector.lastRepairSignature': string | null;
-  // src/agent/externalHooks/externalHooksService.ts
-  'externalHooks.stopHookContinuationUsed': boolean;
   // src/agent/fullCompaction/compactionOps.ts
   // replayable · durable — folds: FullCompactionBegin, FullCompactionCancel, FullCompactionComplete
   'fullCompaction': /* CompactionState — packages/agent-core-v2/src/agent/fullCompaction/compactionOps.ts */ {
@@ -1516,11 +1505,11 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly timeoutMs?: number;
   }>;
-  // replayable · durable · undoable — folds: ContextAppendMessage
+  // replayable · durable · undoable — folds: ContextAppendMessage, TaskWaitDelivered
   'task.notificationDelivery': readonly string[];
   'task.scheduledNotificationKeys': Set<string>;
   // src/agent/tokenCounting/tokenCountingOps.ts
-  // replayable · durable — folds: TokenCountingMeasured, TokenCountingTruncated, TokenCountingRebased
+  // replayable · durable — folds: TokenCountingMeasured, TokenCountingTruncated, TokenCountingRebased, TokenCountingTurnRecorded
   'tokenCounting': /* TokenCountingState — packages/agent-core-v2/src/agent/tokenCounting/tokenCountingOps.ts */ {
     readonly anchors: readonly /* TokenAnchor — packages/agent-core-v2/src/agent/tokenCounting/tokenCountingOps.ts */ {
       readonly length: number;
@@ -1575,6 +1564,8 @@ export interface AgentStateSnapshot {
     readonly timeZone: string;
     readonly renderGeneration: number;
   } | undefined;
+  // src/features/externalHooks/agent/agentExternalHooksService.ts
+  'externalHooks.stopHookContinuationUsed': boolean;
   // src/features/plan/injection/planModeInjection.ts
   'plan.wasActive': boolean;
   // src/features/plan/planOps.ts
@@ -1584,6 +1575,9 @@ export interface AgentStateSnapshot {
     readonly id?: string;
     readonly revisionCount?: Readonly<Record<string, number>>;
   };
+  // src/features/staleGuard/staleGuardOps.ts
+  // replayable · durable — folds: StaleGuardRecorded, StaleGuardCleared
+  'staleGuard': /* StaleGuardModelState — packages/agent-core-v2/src/features/staleGuard/staleGuardOps.ts */ Map<string, number>;
   // src/features/swarm/swarmOps.ts
   // replayable · durable — folds: SwarmModeEnter, SwarmModeExit
   'swarm': 'task' | 'tool' | 'manual' | null;
@@ -1591,7 +1585,7 @@ export interface AgentStateSnapshot {
   // replayable · durable — folds: TowerModeEnter, TowerModeExit
   'tower': boolean;
   // src/session/cron/cronOps.ts
-  // replayable · transient — folds: CronAdd, CronDelete, CronCursor
+  // replayable · durable — folds: CronAdd, CronDelete, CronCursor
   'cron': /* CronModelState — packages/agent-core-v2/src/session/cron/cronOps.ts */ Map<string, /* CronTask — packages/agent-core-v2/src/app/cron/cronTask.ts */ {
     readonly id: string;
     readonly cron: string;

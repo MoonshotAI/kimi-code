@@ -59,6 +59,7 @@ import {
   isDisplayablePromptOrigin,
   ThinkingDelta,
   ToolCallDelta,
+  turnPromptAttachments,
   turnPromptText,
   TurnStarted,
   TurnStepCompleted,
@@ -454,6 +455,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         turnId: job.turn.id,
         origin,
         prompt: isDisplayablePromptOrigin(origin) ? turnPromptText(job.seed.input, origin) : undefined,
+        promptAttachments: turnPromptAttachments(job.seed.input),
       }),
     );
     void this.runTurn(job.turn, job.ready).then(job.result.resolve, job.result.reject);
@@ -803,40 +805,56 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.activeRequestTrace = undefined;
     await this.hooks.onWillBeginStep.run({ turnId, step: currentStep, firstStepOfTurn, signal });
     const markStepStarted = this.beginStep(turnId, signal, currentStep, stepUuid, onStarted);
-    const streamParts = this.createStreamPartHandler(turnId, markStepStarted);
-    const request = this.llmRequester.start(
-      { source: { type: 'turn', turnId, step: currentStep } },
-      streamParts.handle,
-      signal,
-    );
-    this.activeRequestTrace = request.trace;
-    let response: AgentLLMRequestFinish;
+    let stepEndAppended = false;
     try {
-      response = await request.result;
+      const streamParts = this.createStreamPartHandler(turnId, markStepStarted);
+      const request = this.llmRequester.start(
+        { source: { type: 'turn', turnId, step: currentStep } },
+        streamParts.handle,
+        signal,
+      );
+      this.activeRequestTrace = request.trace;
+      let response: AgentLLMRequestFinish;
+      try {
+        response = await request.result;
+      } catch (error) {
+        this.appendInterruptedStreamContent(turnId, currentStep, stepUuid, streamParts, turnSignal);
+        throw error;
+      }
+      this.lastRequestTraceId = request.trace.traceId;
+      this.appendResponseContent(turnId, currentStep, stepUuid, response);
+      const finishReason = await this.executeStepTools(
+        turnId,
+        signal,
+        currentStep,
+        stepUuid,
+        response,
+        request.trace,
+      );
+      this.finishStep(turnId, signal, currentStep, stepUuid, response, finishReason, markStepStarted);
+      stepEndAppended = true;
+      const hookStopTurn = await this.runAfterStep(
+        turnId,
+        signal,
+        currentStep,
+        firstStepOfTurn,
+        response.usage,
+        finishReason,
+      );
+      return { stopReason: finishReason, hookStopTurn };
     } catch (error) {
-      this.appendInterruptedStreamContent(turnId, currentStep, stepUuid, streamParts, turnSignal);
+      if (!stepEndAppended) {
+        this.context.appendLoopEvent({
+          type: 'step.end',
+          uuid: stepUuid,
+          turnId: String(turnId),
+          step: currentStep,
+          finishReason:
+            isAbortError(error) || signal.aborted || turnSignal.aborted ? 'interrupted' : 'error',
+        });
+      }
       throw error;
     }
-    this.lastRequestTraceId = request.trace.traceId;
-    this.appendResponseContent(turnId, currentStep, stepUuid, response);
-    const finishReason = await this.executeStepTools(
-      turnId,
-      signal,
-      currentStep,
-      stepUuid,
-      response,
-      request.trace,
-    );
-    this.finishStep(turnId, signal, currentStep, stepUuid, response, finishReason, markStepStarted);
-    const hookStopTurn = await this.runAfterStep(
-      turnId,
-      signal,
-      currentStep,
-      firstStepOfTurn,
-      response.usage,
-      finishReason,
-    );
-    return { stopReason: finishReason, hookStopTurn };
   }
 
   private beginStep(

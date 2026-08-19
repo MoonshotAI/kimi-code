@@ -7,6 +7,7 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
 import {
+  ContextAppendLoopEvent,
   ContextAppendMessage,
   ContextApplyCompaction,
   ContextClear,
@@ -473,6 +474,50 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     const rebuilt = replay.agentState.get(contextMemoryKey);
     expect(rebuilt).toEqual(live);
     expect(mediaUrl(rebuilt[0]!)).toBe(dataUri);
+  });
+
+  it('settles an open step when blob rehydration replaces the folded context state', async () => {
+    const host = buildHost(KEY);
+    const big = 'A'.repeat(200);
+
+    await host.dispatcher.dispatch(new ContextAppendMessage({ message: imageMessage(big) }));
+    await host.dispatcher.dispatch(
+      new ContextAppendLoopEvent({ event: { type: 'step.begin', uuid: 'interrupted' } }),
+    );
+    await host.dispatcher.flush();
+    const records = await readRecords(host.log);
+
+    const replay = buildHost(REPLAY_KEY);
+    await restoreTestEventDispatcher(
+      replay.dispatcher,
+      replay.log,
+      testWireScope(SCOPE, REPLAY_KEY),
+      records,
+    );
+    expect(blob.loadCalls).toBeGreaterThanOrEqual(1);
+
+    await replay.dispatcher.dispatch(new ContextAppendMessage({ message: userMessage('retry') }));
+    await replay.dispatcher.dispatch(
+      new ContextAppendLoopEvent({ event: { type: 'step.begin', uuid: 'recovered' } }),
+    );
+    await replay.dispatcher.dispatch(
+      new ContextAppendLoopEvent({
+        event: {
+          type: 'content.part',
+          stepUuid: 'recovered',
+          part: { type: 'text', text: 'answer' },
+        },
+      }),
+    );
+    await replay.dispatcher.dispatch(
+      new ContextAppendLoopEvent({ event: { type: 'step.end', uuid: 'recovered' } }),
+    );
+
+    const rebuilt = replay.agentState.get(contextMemoryKey);
+    expect(rebuilt.map((message) => message.role)).toEqual(['user', 'user', 'assistant']);
+    expect(textOf(rebuilt[1]!)).toBe('retry');
+    expect(textOf(rebuilt[2]!)).toBe('answer');
+    expect(rebuilt.some((message) => message.partial === true)).toBe(false);
   });
 
   it('publishes context.spliced on live dispatch and is silent on replay', async () => {

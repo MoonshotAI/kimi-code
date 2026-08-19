@@ -87,7 +87,7 @@ export class SessionLegacyService implements ISessionLegacyService {
       swarm_mode: swarm.isActive,
       context_tokens: tokens,
       max_context_tokens: maxTokens > 0 ? maxTokens : undefined,
-      context_usage: maxTokens > 0 ? Math.min(1, tokens / maxTokens) : 0,
+      context_usage: maxTokens > 0 ? Math.min(1, tokens / maxTokens) : undefined,
     };
   }
 

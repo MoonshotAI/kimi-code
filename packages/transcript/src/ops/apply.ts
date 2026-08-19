@@ -578,7 +578,7 @@ function applyMetaMerge(state: AgentState, meta: TranscriptMetaMerge): ApplyResu
   const agent =
     meta.agent !== undefined ? { ...state.meta.agent, ...meta.agent } : state.meta.agent;
   const next: TranscriptMeta = {
-    goal: meta.goal ?? state.meta.goal,
+    goal: meta.goal === null ? undefined : (meta.goal ?? state.meta.goal),
     activity: meta.activity ?? state.meta.activity,
     modes: modes !== undefined && modes.plan === undefined && modes.swarm === undefined ? undefined : modes,
     agent,

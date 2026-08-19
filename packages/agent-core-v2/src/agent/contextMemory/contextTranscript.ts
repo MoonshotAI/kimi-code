@@ -7,12 +7,8 @@ import {
   selectRecentUserMessages,
 } from './compactionHandoff';
 import { isPromptOwnedInjection, isUndoAnchor } from './conversationTime';
-import type { LoopRecordedEvent } from './loopEventFold';
+import { createLoopEventFold, type LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
-import { isVacuousContentPart } from './vacuousContent';
-
-const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
-  'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
 
 export interface ContextTranscript {
   readonly entries: readonly ContextMessage[];
@@ -32,6 +28,7 @@ interface MutableMessage {
   toolCalls: ToolCall[];
   toolCallId?: string;
   isError?: boolean;
+  note?: string;
   origin?: ContextMessage['origin'];
 }
 
@@ -50,111 +47,46 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   const transcript: MutableEntry[] = [];
   let foldedLength = 0;
   let clearFloor = 0;
-  const openSteps = new Map<string, MutableEntry>();
-  const pendingToolResultIds = new Set<string>();
-  let deferred: MutableEntry[] = [];
-  let lastOpenStepUuid: string | undefined;
+  let openEntry: MutableEntry | undefined;
 
   const push = (...entries: MutableEntry[]): void => {
     transcript.push(...entries);
     foldedLength += entries.length;
   };
-  const flushDeferredIfToolExchangeClosed = (): void => {
-    if (pendingToolResultIds.size > 0 || deferred.length === 0) return;
-    push(...deferred);
-    deferred = [];
-  };
-  const closePendingToolResults = (time: number | undefined): void => {
-    if (pendingToolResultIds.size === 0) return;
-    const interruptedToolCallIds = [...pendingToolResultIds];
-    for (const toolCallId of interruptedToolCallIds) {
-      push({
-        message: {
-          role: 'tool',
-          content: [{ type: 'text', text: TOOL_INTERRUPTED_ON_RESUME_OUTPUT }],
-          toolCalls: [],
-          toolCallId,
-          isError: true,
-        },
-        time,
-      });
-      pendingToolResultIds.delete(toolCallId);
-    }
-    flushDeferredIfToolExchangeClosed();
-  };
-  const resetOpenState = (): void => {
-    openSteps.clear();
-    pendingToolResultIds.clear();
-    deferred = [];
-    lastOpenStepUuid = undefined;
-  };
-  const settleStep = (uuid: string): void => {
-    const entry = openSteps.get(uuid);
-    if (entry === undefined) return;
-    openSteps.delete(uuid);
-    if (entry.message.toolCalls.length > 0) return;
-    if (!entry.message.content.every(isVacuousContentPart)) return;
-    const index = transcript.indexOf(entry);
-    if (index === -1) return;
-    transcript.splice(index, 1);
-    foldedLength = Math.max(0, foldedLength - 1);
-  };
 
-  const applyLoopEvent = (event: LoopRecordedEvent, time: number | undefined): void => {
-    switch (event.type) {
-      case 'step.begin': {
-        closePendingToolResults(time);
-        if (lastOpenStepUuid !== undefined) settleStep(lastOpenStepUuid);
-        const entry: MutableEntry = {
-          message: { role: 'assistant', content: [], toolCalls: [] },
-          time,
-        };
-        push(entry);
-        openSteps.set(event.uuid, entry);
-        lastOpenStepUuid = event.uuid;
-        return;
-      }
-      case 'step.end': {
-        settleStep(event.uuid);
-        if (lastOpenStepUuid === event.uuid) lastOpenStepUuid = undefined;
-        flushDeferredIfToolExchangeClosed();
-        return;
-      }
-      case 'content.part': {
-        openSteps.get(event.stepUuid)?.message.content.push(event.part);
-        return;
-      }
-      case 'tool.call': {
-        const openStep = openSteps.get(event.stepUuid);
-        if (openStep === undefined) return;
-        const call: ToolCall = {
-          type: 'function',
-          id: event.toolCallId,
-          name: event.name,
-          arguments: event.args === undefined ? null : JSON.stringify(event.args),
-          ...(event.extras !== undefined ? { extras: event.extras } : {}),
-        };
-        openStep.message.toolCalls.push(call);
-        pendingToolResultIds.add(event.toolCallId);
-        return;
-      }
-      case 'tool.result': {
-        if (!pendingToolResultIds.has(event.toolCallId)) return;
-        push({
-          message: {
-            role: 'tool',
-            content: rawToolResultContent(event.result.output),
-            toolCalls: [],
-            toolCallId: event.toolCallId,
-            isError: event.result.isError,
-          },
-          time,
-        });
-        pendingToolResultIds.delete(event.toolCallId);
-        flushDeferredIfToolExchangeClosed();
-        return;
-      }
-    }
+  const fold = createLoopEventFold({
+    openAssistant: (time) => {
+      openEntry = { message: { role: 'assistant', content: [], toolCalls: [] }, time };
+      push(openEntry);
+    },
+    appendOpenContent: (part) => {
+      openEntry?.message.content.push(part);
+    },
+    appendOpenToolCall: (call) => {
+      openEntry?.message.toolCalls.push(call);
+    },
+    dropOpenAssistant: () => {
+      if (openEntry === undefined) return;
+      const index = transcript.indexOf(openEntry);
+      openEntry = undefined;
+      if (index === -1) return;
+      transcript.splice(index, 1);
+      foldedLength = Math.max(0, foldedLength - 1);
+    },
+    sealOpenAssistant: () => {
+      openEntry = undefined;
+    },
+    pushToolMessage: (message, time) => {
+      push({ message: message as MutableMessage, time });
+    },
+    pushMessage: (message, time) => {
+      push(toMutableEntry(message, time));
+    },
+  });
+
+  const resetOpenState = (): void => {
+    fold.reset();
+    openEntry = undefined;
   };
 
   const applyUndo = (count: number): void => {
@@ -168,17 +100,15 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
       foldedLength = Math.max(0, foldedLength - 1);
       if (isUndoAnchor(message)) {
         removedUserCount++;
-        if (removedUserCount >= count) {
-          while (
-            i > clearFloor &&
-            isPromptOwnedInjection(transcript[i - 1]!.message, message)
-          ) {
-            transcript.splice(i - 1, 1);
-            i--;
-            foldedLength = Math.max(0, foldedLength - 1);
-          }
-          break;
+        while (
+          i > clearFloor &&
+          isPromptOwnedInjection(transcript[i - 1]!.message, message)
+        ) {
+          transcript.splice(i - 1, 1);
+          i--;
+          foldedLength = Math.max(0, foldedLength - 1);
         }
+        if (removedUserCount >= count) break;
       }
     }
     resetOpenState();
@@ -187,15 +117,19 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   const add = (record: WireRecord): void => {
     switch (record.type) {
       case 'context.append_message': {
-        const entry = toMutableEntry(record['message'] as ContextMessage, record.time);
-        if (pendingToolResultIds.size > 0) deferred.push(entry);
-        else push(entry);
+        fold.appendMessage(record['message'] as ContextMessage, record.time);
         break;
       }
-      case 'context.append_loop_event':
-        applyLoopEvent(record['event'] as LoopRecordedEvent, record.time);
+      case 'context.append_loop_event': {
+        fold.loopEvent(record['event'] as LoopRecordedEvent, record.time);
         break;
+      }
       case 'context.apply_compaction': {
+        if (readNumber(record, 'keptUserMessageCount') !== undefined) {
+          fold.settle(record.time);
+        } else {
+          resetOpenState();
+        }
         transcript.push({
           message: {
             role: 'user',
@@ -206,7 +140,6 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
           time: record.time,
         });
         foldedLength = recoverFoldedLength(record, transcript, clearFloor, foldedLength);
-        resetOpenState();
         break;
       }
       case 'context.undo':
@@ -295,8 +228,4 @@ function textOfParts(content: readonly ContentPart[]): string {
 function readNumber(record: WireRecord, key: string): number | undefined {
   const value = record[key];
   return typeof value === 'number' ? value : undefined;
-}
-
-function rawToolResultContent(output: string | readonly ContentPart[]): ContentPart[] {
-  return typeof output === 'string' ? [{ type: 'text', text: output }] : [...output];
 }

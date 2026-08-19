@@ -344,6 +344,8 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     generation: number,
     id: string,
   ): Promise<SessionSummary | undefined> {
+    const queued = this.mirror.pending().find((summary) => summary.id === id);
+    if (queued !== undefined) return queued;
     const cached: unknown = await this.queryStore.get(sessionCollection(generation), id);
     if (isSessionSummaryShape(cached)) return stripRecencyField(generation, cached);
     const summary = await this.getLegacy(id);

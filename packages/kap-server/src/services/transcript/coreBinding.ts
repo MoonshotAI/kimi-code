@@ -1,6 +1,7 @@
 import {
   IAgentLifecycleService,
   IAgentActivityView,
+  IAgentTaskService,
   IEventBus,
   ISessionMetadata,
   ISessionInteractionService,
@@ -103,6 +104,25 @@ export function bindSessionTranscript(
         },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
       });
+      for (const agent of agents.list()) {
+        if (agent.id !== agentId) continue;
+        const tasks = agent.accessor.get(IAgentTaskService)?.list() ?? [];
+        for (const info of tasks) {
+          if (info.kind === 'agent' && typeof info.agentId === 'string' && info.agentId.length > 0) {
+            applyOps(
+              agentId,
+              projector.seedSubagentTask({
+                taskId: info.taskId,
+                agentId: info.agentId,
+                description: info.description,
+                status: info.status,
+                detached: info.detached ?? false,
+                startedAt: info.startedAt,
+              }),
+            );
+          }
+        }
+      }
       projectors.set(agentId, projector);
     }
     return projector;
