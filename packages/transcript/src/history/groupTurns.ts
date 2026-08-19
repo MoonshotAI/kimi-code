@@ -72,6 +72,7 @@ export function groupMessagesIntoSnapshot(
   const items: TranscriptItem[] = [];
   const attachments: TranscriptAttachment[] = [];
   let turn: TurnDraft | undefined;
+  let pendingNotificationFrames: { text: string; taskId: string | undefined }[] = [];
   let nextOrdinal = 0;
   let markerCount = 0;
 
@@ -143,6 +144,7 @@ export function groupMessagesIntoSnapshot(
   const startTurn = (origin: TurnOrigin, prompt?: string, attachmentIds?: string[]): TurnDraft => {
     const ordinal = nextOrdinal;
     nextOrdinal += 1;
+    pendingNotificationFrames = [];
     turn = { turnId: `t${ordinal}`, ordinal, origin, prompt, attachmentIds, steps: [] };
     items.push(draftToTurnItem(turn));
     return turn;
@@ -192,16 +194,7 @@ export function groupMessagesIntoSnapshot(
           startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
           continue;
         }
-        const step = turn?.steps.at(-1);
-        if (turn === undefined || step === undefined) continue;
-        step.frames.push({
-          kind: 'text',
-          frameId: `${step.stepId}.f${step.frames.length + 1}`,
-          role: 'user',
-          text: notificationFrameText(textOf(message)),
-          taskId,
-        });
-        syncTurnItem(items, turn);
+        pendingNotificationFrames.push({ text: notificationFrameText(textOf(message)), taskId });
         continue;
       }
       const bundled = bundledSkillActivations(message);
@@ -238,6 +231,16 @@ export function groupMessagesIntoSnapshot(
         frameCount += 1;
         return `${step.stepId}.f${frameCount}`;
       };
+      for (const pending of pendingNotificationFrames) {
+        step.frames.push({
+          kind: 'text',
+          frameId: nextFrameId(),
+          role: 'user',
+          text: pending.text,
+          taskId: pending.taskId,
+        });
+      }
+      pendingNotificationFrames = [];
       for (const part of message.content ?? []) {
         if (part.type === 'text' && 'text' in part && typeof part.text === 'string' && part.text.length > 0) {
           step.frames.push({ kind: 'text', frameId: nextFrameId(), role: 'assistant', text: part.text });
@@ -285,18 +288,24 @@ function notificationFrameText(text: string): string {
   if (openingEnd === -1 || closingStart <= openingEnd) return text;
   const inner = text.slice(openingEnd + 1, closingStart);
   const lines = inner.split('\n');
+  let headerEnd = 0;
+  while (headerEnd < lines.length && lines[headerEnd]!.trim() === '') headerEnd += 1;
   let title = '';
-  let lastHeaderIndex = -1;
-  for (let i = 0; i < lines.length; i++) {
+  let bodyStart = headerEnd;
+  for (let i = headerEnd; i < lines.length; i++) {
     const line = lines[i]!;
     if (line.startsWith('Title: ')) {
       title = line.slice('Title: '.length);
-      lastHeaderIndex = i;
-    } else if (line.startsWith('Severity: ')) {
-      lastHeaderIndex = i;
+      bodyStart = i + 1;
+      continue;
     }
+    if (line.startsWith('Severity: ')) {
+      bodyStart = i + 1;
+      continue;
+    }
+    break;
   }
-  const bodyLines = lines.slice(lastHeaderIndex + 1);
+  const bodyLines = lines.slice(bodyStart);
   const childStart = bodyLines.findIndex((line) => {
     const trimmed = line.trimStart();
     return trimmed.startsWith('<output-file') || trimmed.startsWith('<output-preview');

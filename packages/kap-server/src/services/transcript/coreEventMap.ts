@@ -201,6 +201,7 @@ export class AgentTranscriptProjector {
   /** Latest header of the in-flight (or most recent) turn; kept whole so terminal upserts preserve `origin` / `startedAt` by reference. */
   private currentTurn: TurnHeader | undefined;
   private currentStep: StepHeader | undefined;
+  private pendingTaskNotifications: { text: string; taskId: string | undefined }[] = [];
   /** turnId → highest step ordinal seen (engine-reported placement hint). */
   private readonly stepOrdinals = new Map<string, number>();
   private frameOrdinal = 0;
@@ -379,6 +380,7 @@ export class AgentTranscriptProjector {
       startedAt: nowIso(),
     };
     this.currentStep = undefined;
+    this.pendingTaskNotifications = [];
     this.openText = undefined;
     this.openThinking = undefined;
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
@@ -420,6 +422,7 @@ export class AgentTranscriptProjector {
     };
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
     this.currentStep = undefined;
+    this.pendingTaskNotifications = [];
     if (event.reason === 'cancelled' && event.interruptReason === 'user_cancelled') {
       ops.push(
         this.markerOp('interruption', { turnId: event.turnId, reason: event.interruptReason }),
@@ -473,7 +476,23 @@ export class AgentTranscriptProjector {
     this.frameOrdinal = 0;
     this.openText = undefined;
     this.openThinking = undefined;
-    return [{ op: 'step.upsert', turnId, step: this.currentStep }];
+    const ops: TranscriptOperation[] = [{ op: 'step.upsert', turnId, step: this.currentStep }];
+    for (const pending of this.pendingTaskNotifications) {
+      ops.push({
+        op: 'frame.upsert',
+        turnId,
+        stepId,
+        frame: {
+          kind: 'text',
+          frameId: `${stepId}.f${++this.frameOrdinal}`,
+          role: 'user',
+          text: pending.text,
+          taskId: pending.taskId,
+        },
+      });
+    }
+    this.pendingTaskNotifications = [];
+    return ops;
   }
 
   private onStepCompleted(event: {
@@ -865,20 +884,21 @@ export class AgentTranscriptProjector {
   }): TranscriptOperation[] {
     const step = this.currentStep;
     const turn = this.currentTurn;
-    const midTurn =
-      step !== undefined &&
-      turn !== undefined &&
-      step.state === 'running' &&
-      turn.state === 'running';
-    if (!midTurn) return [];
-    const frame: TextFrame = {
-      kind: 'text',
-      frameId: `${step.stepId}.f${++this.frameOrdinal}`,
-      role: 'user',
-      text: `${event.title}\n${event.body}`.trim(),
-      taskId: event.sourceId,
-    };
-    return [{ op: 'frame.upsert', turnId: turn.turnId, stepId: step.stepId, frame }];
+    if (turn === undefined || turn.state !== 'running') return [];
+    const text = `${event.title}\n${event.body}`.trim();
+    if (step !== undefined && step.state === 'running') {
+      const frame: TextFrame = {
+        kind: 'text',
+        frameId: `${step.stepId}.f${++this.frameOrdinal}`,
+        role: 'user',
+        text,
+        taskId: event.sourceId,
+      };
+      return [{ op: 'frame.upsert', turnId: turn.turnId, stepId: step.stepId, frame }];
+    }
+    if (turn.origin?.kind === 'task') return [];
+    this.pendingTaskNotifications.push({ text, taskId: event.sourceId });
+    return [];
   }
 
   private onTaskLifecycle(event: {
