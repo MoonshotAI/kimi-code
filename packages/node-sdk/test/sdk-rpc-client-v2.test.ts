@@ -535,10 +535,20 @@ key = "${titleOAuthRef.key}"
       expect(order).toEqual(['resumed']);
 
       // The resumed session is a fresh, fully usable scope — not the handle
-      // the temporary path just tore down.
+      // the temporary path just tore down. The listing is served from the
+      // derived session-index read model (interval-flushed mirror), so give
+      // it a bounded window to reflect the rename instead of asserting on a
+      // single read.
       await client.renameSession({ id: 'ses_title_race', title: 'Resumed title' });
-      const sessions = await client.listSessions({ workDir });
-      expect(sessions.find((item) => item.id === 'ses_title_race')?.title).toBe('Resumed title');
+      await vi.waitFor(
+        async () => {
+          const sessions = await client.listSessions({ workDir });
+          expect(sessions.find((item) => item.id === 'ses_title_race')?.title).toBe(
+            'Resumed title',
+          );
+        },
+        { timeout: 5_000, interval: 50 },
+      );
     } finally {
       await client.close();
       fetchSpy.mockRestore();
