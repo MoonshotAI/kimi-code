@@ -1066,6 +1066,8 @@ export class AgentTranscriptProjector {
     swarmIndex?: number;
     runInBackground: boolean;
     taskId?: string;
+    model?: string;
+    thinkingEffort?: string;
   }): TranscriptOperation[] {
     const taskKey = event.taskId ?? event.subagentId;
     if (event.taskId !== undefined) {
@@ -1083,6 +1085,8 @@ export class AgentTranscriptProjector {
       outputTail: prev?.outputTail ?? '',
       startedAt: prev?.startedAt ?? nowIso(),
       endedAt: prev?.endedAt,
+      model: event.model ?? prev?.model,
+      thinkingEffort: event.thinkingEffort ?? prev?.thinkingEffort,
     }));
     const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
     const hit =
@@ -1134,6 +1138,8 @@ export class AgentTranscriptProjector {
       usage: event.usage ?? prev?.usage,
       error: event.error ?? prev?.error,
       stateReason: event.reason ?? prev?.stateReason,
+      model: prev?.model,
+      thinkingEffort: prev?.thinkingEffort,
     }));
     return [{ op: 'task.upsert', task }];
   }

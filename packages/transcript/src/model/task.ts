@@ -33,4 +33,8 @@ export interface TranscriptTask {
   readonly stateReason?: string;
   /** Token usage of the finished run (`subagent.completed`). */
   readonly usage?: StepUsage;
+  /** Model the spawned subagent runs on (`subagent.spawned`). */
+  readonly model?: string;
+  /** Thinking effort of the spawned subagent (`subagent.spawned`). */
+  readonly thinkingEffort?: string;
 }

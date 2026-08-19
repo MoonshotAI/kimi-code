@@ -974,6 +974,8 @@ describe('AgentTranscriptProjector', () => {
         description: 'scan the repo',
         swarmIndex: 0,
         runInBackground: false,
+        model: 'kimi-k3-highspeed',
+        thinkingEffort: 'high',
       }),
     );
     feed(ev({ type: 'subagent.completed', subagentId: 'agent-0', resultSummary: 'done' }));
@@ -989,6 +991,8 @@ describe('AgentTranscriptProjector', () => {
       agentId: 'agent-0',
       description: 'scan the repo',
       detached: false,
+      model: 'kimi-k3-highspeed',
+      thinkingEffort: 'high',
     });
   });
 
