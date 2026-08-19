@@ -432,9 +432,14 @@ describe('kimi export', () => {
       uiMode: 'shell',
       model: 'k2',
       sessionId: undefined,
-      endpoint: 'https://telemetry-logs.kimi.com/v1/event',
+      endpoint: expect.any(Function),
       getAccessToken: expect.any(Function),
     });
+    // The endpoint resolver defers to the active region profile at flush time.
+    const telemetryOptions = mocks.initializeTelemetry.mock.calls[0]![0] as {
+      endpoint: () => string;
+    };
+    expect(telemetryOptions.endpoint()).toBe('https://telemetry-logs.kimi.com/v1/event');
     expect(mocks.initializeTelemetry.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.harnessExportSession.mock.invocationCallOrder[0]!,
     );
