@@ -142,6 +142,12 @@ describe('server-v2 /api/v1/debug RPC', () => {
     await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
   }
 
+  async function createSubagent(sessionId: string, agentId: string): Promise<void> {
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
+    if (session === undefined) throw new Error(`session ${sessionId} not found`);
+    await session.accessor.get(IAgentLifecycleService).create({ agentId });
+  }
+
   it('describes all channels via GET /api/v1/debug/channels', async () => {
     const { status, body } = await call<
       readonly {
@@ -624,6 +630,20 @@ describe('server-v2 /api/v1/debug RPC', () => {
       { objective: 'second' },
     );
     expect(duplicate.body.code).toBe(40913);
+  });
+
+  it('rejects reflected goal helper access for subagents', async () => {
+    const id = await createSession(home as string);
+    await createSubagent(id, 'sub-1');
+
+    const { body } = await call<null>(
+      'POST',
+      rpc('agent', IAgentGoalService, 'clearInternal', { sid: id, aid: 'sub-1' }),
+      'user',
+    );
+
+    expect(body.code).toBe(40920);
+    expect(body.msg).toBe('Goals are only supported by the main agent');
   });
 
   it('lists and installs plugins through RPC', async () => {

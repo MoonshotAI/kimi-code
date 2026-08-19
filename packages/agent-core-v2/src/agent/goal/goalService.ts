@@ -454,20 +454,32 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     return this.agentContext.agentId === 'main';
   }
 
+  private assertSupportedAgent(): void {
+    if (this.isSupportedAgent) return;
+    throw new Error2(
+      ErrorCodes.GOAL_UNSUPPORTED_AGENT,
+      'Goals are only supported by the main agent',
+      { details: { agentId: this.agentContext.agentId } },
+    );
+  }
+
   private get goalState(): GoalState | null {
     return this.states.get(goalKey);
   }
 
   getGoal(): GoalToolResult {
+    this.assertSupportedAgent();
     const state = this.goalState;
     return { goal: state === null ? null : this.toSnapshot(state) };
   }
 
   isGoalToolTarget(turnId: number, goalId: string): boolean {
+    this.assertSupportedAgent();
     return this.goalTurnTargets.get(turnId) === goalId;
   }
 
   async createGoal(input: CreateGoalInput, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
+    this.assertSupportedAgent();
     const objective = this.validateObjective(input.objective);
     this.prepareForGoalCreation(input.replace === true);
     const wallClockResumedAt = Date.now();
@@ -514,6 +526,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   async pauseGoal(input: GoalReasonInput = {}, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
+    this.assertSupportedAgent();
     const state = this.requireState();
     if (state.status === 'paused') return this.toSnapshot(state);
     if (state.status !== 'active') {
@@ -529,12 +542,14 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     input: GoalReasonInput = {},
     actor: GoalActor = 'runtime',
   ): Promise<GoalSnapshot | null> {
+    this.assertSupportedAgent();
     const state = this.goalState;
     if (state === null || state.status !== 'active') return null;
     return this.applyLifecycle(state, 'paused', input.reason, actor);
   }
 
   async resumeGoal(input: ResumeGoalInput = {}, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
+    this.assertSupportedAgent();
     const state = this.requireState();
     if (state.status === 'active') return this.toSnapshot(state);
     if (state.status !== 'paused' && state.status !== 'blocked') {
@@ -569,6 +584,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     input: { readonly budgetLimits: GoalBudgetLimits },
     actor: GoalActor = 'user',
   ): Promise<GoalSnapshot> {
+    this.assertSupportedAgent();
     const state = this.requireState();
     const budgetLimits = { ...state.budgetLimits, ...input.budgetLimits };
     void this.dispatcher.dispatch(new GoalUpdate({ budgetLimits }));
@@ -585,6 +601,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   async cancelGoal(_input: GoalReasonInput = {}, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
+    this.assertSupportedAgent();
     const state = this.requireState();
     const snapshot = this.toSnapshot(state);
     if (state.status === 'active' && this.liveTurnId !== undefined) {
@@ -604,6 +621,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     input: GoalReasonInput = {},
     actor: GoalActor = 'runtime',
   ): Promise<GoalSnapshot | null> {
+    this.assertSupportedAgent();
     const state = this.goalState;
     if (state === null || state.status !== 'active') return null;
     const snapshot = this.applyLifecycle(state, 'blocked', input.reason, actor, {
@@ -616,6 +634,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     input: GoalReasonInput = {},
     actor: GoalActor = 'model',
   ): Promise<GoalSnapshot | null> {
+    this.assertSupportedAgent();
     const state = this.goalState;
     if (state === null || state.status !== 'active') return null;
     this.dispatchCompletion(state, input.reason, actor);
@@ -648,10 +667,12 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   async pauseOnInterrupt(input: GoalReasonInput = {}): Promise<GoalSnapshot | null> {
+    this.assertSupportedAgent();
     return this.pauseActiveGoal(input, 'user');
   }
 
   async recordTokenUsage(tokenDelta: number): Promise<GoalSnapshot | null> {
+    this.assertSupportedAgent();
     return this.accountTokenUsage(tokenDelta);
   }
 
@@ -665,6 +686,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   async incrementTurn(): Promise<GoalSnapshot | null> {
+    this.assertSupportedAgent();
     return this.incrementGoalTurn();
   }
 
