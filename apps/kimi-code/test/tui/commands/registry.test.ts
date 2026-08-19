@@ -173,6 +173,7 @@ describe('built-in slash command registry', () => {
         'status',
         'theme',
         'title',
+        'tower',
         'undo',
         'usage',
         'version',
@@ -196,5 +197,14 @@ describe('built-in slash command registry', () => {
     expect(command).toBeDefined();
     expect((command as KimiSlashCommand).experimentalFlag).toBe('secondary-model');
     expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
+  });
+
+  it('gates tower behind the tower experiment, always available', () => {
+    const command = findBuiltInSlashCommand('tower');
+    expect(command).toBeDefined();
+    expect((command as KimiSlashCommand).experimentalFlag).toBe('tower');
+    expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
+    expect(resolveSlashCommandAvailability(command!, 'on')).toBe('always');
+    expect(resolveSlashCommandAvailability(command!, 'Ship feature X')).toBe('always');
   });
 });

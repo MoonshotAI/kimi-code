@@ -6,6 +6,7 @@ import {
   IAgentPlanService,
   IAgentProfileService,
   IAgentSwarmService,
+  IAgentTowerService,
   resumeSessionById,
   type PermissionMode,
   type Scope,
@@ -50,6 +51,13 @@ export async function applySessionAgentConfig(
     if (swarm.isActive !== agentConfig.swarm_mode) {
       if (agentConfig.swarm_mode) swarm.enter('manual');
       else swarm.exit();
+    }
+  }
+  if (agentConfig.tower_mode !== undefined) {
+    const tower = agent.accessor.get(IAgentTowerService);
+    if (tower.isActive !== agentConfig.tower_mode) {
+      if (agentConfig.tower_mode) tower.enter();
+      else tower.exit();
     }
   }
   if (agentConfig.goal_objective !== undefined) {

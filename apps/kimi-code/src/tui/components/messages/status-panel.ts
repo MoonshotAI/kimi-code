@@ -44,6 +44,7 @@ export interface StatusReportOptions {
   readonly thinkingEffort: ThinkingEffort;
   readonly permissionMode: PermissionMode;
   readonly planMode: boolean;
+  readonly towerMode: boolean;
   readonly contextUsage: number;
   readonly contextTokens: number;
   readonly maxContextTokens: number;
@@ -112,6 +113,7 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
     { label: 'Directory', value: options.workDir },
     { label: 'Permissions', value: permission },
     { label: 'Plan mode', value: planMode ? 'on' : 'off' },
+    { label: 'Tower mode', value: options.towerMode ? 'on' : 'off' },
     { label: 'Session', value: sessionId },
   ];
   const title = options.sessionTitle?.trim();

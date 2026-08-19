@@ -69,6 +69,7 @@ import {
   handleTitleCommand,
 } from './session';
 import { handleSwarmCommand } from './swarm';
+import { handleTowerCommand } from './tower';
 import { handleUndoCommand } from './undo';
 import { handleWebCommand } from './web';
 
@@ -96,6 +97,7 @@ export {
   showSettingsSelector,
 } from './config';
 export { handleSwarmCommand } from './swarm';
+export { handleTowerCommand } from './tower';
 export { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
@@ -572,6 +574,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'swarm':
       await handleSwarmCommand(host, args);
+      return;
+    case 'tower':
+      await handleTowerCommand(host, args);
       return;
     case 'compact':
       await handleCompactCommand(host, args);

@@ -37,6 +37,7 @@ import {
   getLiveSessionById,
   HostProcessError,
   IAgentLifecycleService,
+  IAgentTowerService,
   IHostRequestHeaders,
   ISessionManager,
   ISessionTodoService,
@@ -906,6 +907,65 @@ key = "${titleOAuthRef.key}"
       });
     } finally {
       await client.close();
+    }
+  });
+
+  it('serves setTowerMode and getStatus towerMode through the agent scope tower service', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_tower', workDir });
+      expect((await client.getStatus({ sessionId: 'ses_tower' })).towerMode).toBe(false);
+
+      const mainTower = () => {
+        const handle = getLiveSessionById(client.engineAccessor, 'ses_tower');
+        expect(handle).toBeDefined();
+        const agent = handle!.accessor.get(IAgentLifecycleService).get('main');
+        expect(agent).toBeDefined();
+        return agent!.accessor.get(IAgentTowerService);
+      };
+
+      await client.setTowerMode({ sessionId: 'ses_tower', enabled: true });
+      // The tower feature is flag-gated engine-side, so enter() may be a
+      // no-op; the wire must always mirror the engine truth.
+      expect((await client.getStatus({ sessionId: 'ses_tower' })).towerMode).toBe(
+        mainTower().isActive,
+      );
+
+      await client.setTowerMode({ sessionId: 'ses_tower', enabled: false });
+      expect((await client.getStatus({ sessionId: 'ses_tower' })).towerMode).toBe(false);
+
+      await expect(client.setTowerMode({ sessionId: 'ses_missing', enabled: true }))
+        .rejects.toMatchObject({
+          code: ErrorCodes.SESSION_NOT_FOUND,
+        });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('exposes Session.setTowerMode and getStatus().towerMode on the v2 harness', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    try {
+      const session = await harness.createSession({ workDir });
+      expect((await session.getStatus()).towerMode).toBe(false);
+
+      await expect(session.setTowerMode(true)).resolves.toBeUndefined();
+      expect(typeof (await session.getStatus()).towerMode).toBe('boolean');
+
+      await expect(session.setTowerMode(false)).resolves.toBeUndefined();
+      expect((await session.getStatus()).towerMode).toBe(false);
+
+      await expect(session.setTowerMode('yes' as unknown as boolean)).rejects.toMatchObject({
+        code: ErrorCodes.REQUEST_INVALID,
+      });
+    } finally {
+      await harness.close();
     }
   });
 });

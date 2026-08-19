@@ -1,5 +1,4 @@
-import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentTowerService, TOWER_TOOL_NAMES } from '#/features/tower/tower';
+import { IAgentTowerService } from '#/features/tower/tower';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
@@ -17,7 +16,6 @@ export class TowerInitTool implements ITowerInitTool {
   constructor(
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentTowerService private readonly tower: IAgentTowerService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
   ) {}
 
   resolveExecution(_args: TowerInitToolInput): ToolExecution {
@@ -29,7 +27,6 @@ export class TowerInitTool implements ITowerInitTool {
           const store = newTowerStore(this.sessionContext);
           const result = await store.init(this.sessionContext.sessionId);
           this.tower.enter();
-          for (const name of TOWER_TOOL_NAMES) this.profile.addActiveTool(name);
           return {
             output: [
               result.created

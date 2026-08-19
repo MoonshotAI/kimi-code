@@ -130,7 +130,9 @@
  *   scope's `ISessionSkillCatalog`; `startBtw` → the session scope's
  *   `ISessionBtwService`; `setSwarmMode` / `swarm` → the agent scope's
  *   `IAgentSwarmService` (the v2 port of v1's `SwarmMode`), with `swarm()`
- *   recomposed over the `setSwarmMode` + `prompt` overrides.
+ *   recomposed over the `setSwarmMode` + `prompt` overrides; `setTowerMode` →
+ *   the agent scope's `IAgentTowerService` (v2-only — the base class throws
+ *   `not_implemented`).
  *   `createSessionWithKaos` / `resumeSessionWithKaos` deliberately keep the
  *   base class's kaos-ignoring degradation (the v2 engine has no kaos
  *   injection point — see the session-lifecycle section header), and
@@ -192,6 +194,7 @@ import {
   IAgentTokenCountingService,
   IAgentToolPolicyService,
   IAgentToolRegistryService,
+  IAgentTowerService,
   IBootstrapService,
   IConfigService,
   IEventService,
@@ -268,6 +271,7 @@ import {
   type SetSessionPlanModeRpcInput,
   type SetSessionSwarmModeRpcInput,
   type SetSessionThinkingRpcInput,
+  type SetSessionTowerModeRpcInput,
   type UpdateSessionMetadataRpcInput,
 } from '#/rpc';
 import type {
@@ -1792,6 +1796,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       permission: agent.accessor.get(IAgentPermissionModeService).mode,
       planMode: plan !== null,
       swarmMode: agent.accessor.get(IAgentSwarmService).isActive,
+      towerMode: agent.accessor.get(IAgentTowerService).isActive,
       contextTokens,
       maxContextTokens,
       contextUsage,
@@ -2099,6 +2104,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async swarm(input: SessionPromptRpcInput): Promise<void> {
     await this.setSwarmMode({ sessionId: input.sessionId, enabled: true, trigger: 'task' });
     return this.prompt(input);
+  }
+
+  /** Through the agent scope (`IAgentTowerService.enter` / `.exit`) — no klient facade exists. */
+  override async setTowerMode(input: SetSessionTowerModeRpcInput): Promise<void> {
+    const agent = await this.agentScope(input.sessionId);
+    const tower = agent.accessor.get(IAgentTowerService);
+    if (input.enabled) {
+      tower.enter();
+    } else {
+      tower.exit();
+    }
+    await agent.accessor.get(IAgentContextInjectorService).reconcileWhenIdle('tower_mode');
   }
 
   // -----------------------------------------------------------------------

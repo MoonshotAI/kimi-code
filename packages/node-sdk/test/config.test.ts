@@ -356,6 +356,17 @@ describe('KimiHarness config API', () => {
         enabled: false,
         source: 'default',
       },
+      {
+        id: 'tower',
+        title: 'Tower mode',
+        description:
+          'Enable tower mode: coordinate multiple agents on a shared objective, toggled with the /tower command.',
+        surface: 'both',
+        env: 'KIMI_CODE_EXPERIMENTAL_TOWER',
+        defaultEnabled: false,
+        enabled: false,
+        source: 'default',
+      },
     ]);
   });
 

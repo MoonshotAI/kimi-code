@@ -360,7 +360,7 @@ export * from '#/features/tower/tools/finding/finding';
 export * from '#/features/tower/tools/review/review';
 export * from '#/features/tower/tools/mission/mission';
 export * from '#/features/tower/tools/status/status';
-export * from '#/features/tower/skill/skill';
+import '#/features/tower/flag';
 import '#/features/tower/towerFeature';
 export * from '#/agent/usage/usage';
 export * from '#/agent/usage/usageService';

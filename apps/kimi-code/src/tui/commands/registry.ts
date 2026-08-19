@@ -178,6 +178,15 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'idle-only',
   },
   {
+    name: 'tower',
+    aliases: [],
+    description: 'Toggle tower mode or set the tower objective',
+    priority: 100,
+    argumentHint: '[on|off] | <objective>',
+    availability: 'always',
+    experimentalFlag: 'tower',
+  },
+  {
     name: 'model',
     aliases: [],
     description: 'Switch LLM model',

@@ -698,6 +698,35 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(after.body.data.permission).toBe('yolo');
   });
 
+  it('accepts tower_mode agent_config and reflects it in GET /status', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+
+    const before = await getJson<{
+      tower_mode?: boolean;
+    }>(`/api/v1/sessions/${id}/status`);
+    expect(before.body.data.tower_mode).toBe(false);
+
+    const on = await postJson(`/api/v1/sessions/${id}/profile`, {
+      agent_config: { tower_mode: true },
+    });
+    expect(on.body.code).toBe(0);
+    const after = await getJson<{
+      tower_mode?: boolean;
+    }>(`/api/v1/sessions/${id}/status`);
+    expect(typeof after.body.data.tower_mode).toBe('boolean');
+
+    const off = await postJson(`/api/v1/sessions/${id}/profile`, {
+      agent_config: { tower_mode: false },
+    });
+    expect(off.body.code).toBe(0);
+    const settled = await getJson<{
+      tower_mode?: boolean;
+    }>(`/api/v1/sessions/${id}/status`);
+    expect(settled.body.data.tower_mode).toBe(false);
+  });
+
   it('returns the current goal via GET /goal', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });

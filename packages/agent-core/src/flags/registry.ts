@@ -41,6 +41,15 @@ export const FLAG_DEFINITIONS = [
     default: false,
     surface: 'core',
   },
+  {
+    id: 'tower',
+    title: 'Tower mode',
+    description:
+      'Enable tower mode: coordinate multiple agents on a shared objective, toggled with the /tower command.',
+    env: 'KIMI_CODE_EXPERIMENTAL_TOWER',
+    default: false,
+    surface: 'both',
+  },
 ] as const satisfies readonly FlagDefinitionInput[];
 
 /** Literal union of registered flag ids. */

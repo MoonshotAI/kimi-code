@@ -255,6 +255,22 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
+  it('resolves /tower to the builtin command when the tower flag is enabled', () => {
+    setExperimentalFeatures([{ id: 'tower', enabled: true }]);
+
+    expect(resolve('/tower Ship feature X')).toMatchObject({
+      kind: 'builtin',
+      name: 'tower',
+      args: 'Ship feature X',
+    });
+  });
+
+  it('does not resolve /tower as a builtin when the tower flag is disabled', () => {
+    expect(resolve('/tower Ship feature X')).toEqual({
+      kind: 'message',
+      input: '/tower Ship feature X',
+    });
+  });
 });
 
 describe('goal command resolution', () => {
