@@ -105,6 +105,7 @@ export class OAuthService extends Disposable implements IOAuthService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
     @IEventService private readonly events: IEventService,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {
     super();
     this._register(providerService.onDidChangeProviders((event) => {
@@ -403,6 +404,7 @@ export class OAuthService extends Disposable implements IOAuthService {
       configuredOAuthHost: oauth?.oauthHost,
       configuredOAuthKey: oauth?.key,
       readMarker: process.env['KIMI_CODE_REGION_MARKER'] !== 'off',
+      homeDir: this.bootstrap.homeDir,
     });
   }
 

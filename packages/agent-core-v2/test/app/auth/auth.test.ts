@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -425,11 +425,11 @@ describe('OAuthService', () => {
     expect(svc.getRegion()).toBe('global');
   });
 
-  it('getRegion reads the install marker unless KIMI_CODE_REGION_MARKER=off', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'kimi-v2-auth-region-'));
+  it('getRegion reads the install marker from the bootstrapped home unless KIMI_CODE_REGION_MARKER=off', async () => {
+    const home = ix.get(IBootstrapService).homeDir;
     try {
+      await mkdir(home, { recursive: true });
       await writeFile(join(home, 'region'), 'global\n', 'utf-8');
-      vi.stubEnv('KIMI_CODE_HOME', home);
       vi.stubEnv('KIMI_CODE_OAUTH_HOST', '');
       providers[OAUTH_PROVIDER] = { type: 'kimi' };
       expect(createService().getRegion()).toBe('global');
@@ -441,11 +441,29 @@ describe('OAuthService', () => {
     }
   });
 
-  it('getRegion resolves cn from the default-slot oauth ref despite an global marker', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'kimi-v2-auth-region-'));
+  it('getRegion reads the marker from the bootstrapped home, not KIMI_CODE_HOME', async () => {
+    const bootstrapHome = ix.get(IBootstrapService).homeDir;
+    const envHome = await mkdtemp(join(tmpdir(), 'kimi-v2-auth-envhome-'));
     try {
+      await mkdir(bootstrapHome, { recursive: true });
+      await writeFile(join(bootstrapHome, 'region'), 'global\n', 'utf-8');
+      // A divergent KIMI_CODE_HOME must not distract the resolver: the host
+      // was bootstrapped with an explicit home, so the marker lives there.
+      vi.stubEnv('KIMI_CODE_HOME', envHome);
+      vi.stubEnv('KIMI_CODE_OAUTH_HOST', '');
+      providers[OAUTH_PROVIDER] = { type: 'kimi' };
+      expect(createService().getRegion()).toBe('global');
+    } finally {
+      await rm(bootstrapHome, { recursive: true, force: true });
+      await rm(envHome, { recursive: true, force: true });
+    }
+  });
+
+  it('getRegion resolves cn from the default-slot oauth ref despite an global marker', async () => {
+    const home = ix.get(IBootstrapService).homeDir;
+    try {
+      await mkdir(home, { recursive: true });
       await writeFile(join(home, 'region'), 'global\n', 'utf-8');
-      vi.stubEnv('KIMI_CODE_HOME', home);
       vi.stubEnv('KIMI_CODE_OAUTH_HOST', '');
       providers[OAUTH_PROVIDER] = {
         type: 'kimi',

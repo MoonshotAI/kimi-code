@@ -72,6 +72,7 @@ export class CapabilityService extends Disposable implements ICapabilityService 
             configuredOAuthHost: oauth?.oauthHost,
             configuredOAuthKey: oauth?.key,
             readMarker: process.env['KIMI_CODE_REGION_MARKER'] !== 'off',
+            homeDir: bootstrap.homeDir,
           });
         },
       };
