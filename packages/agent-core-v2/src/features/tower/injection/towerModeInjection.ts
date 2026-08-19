@@ -3,8 +3,9 @@ import { defineState } from '#/state/state';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentTowerService } from '#/features/tower/tower';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IFlagService } from '#/app/flag/flag';
+import { IAgentTowerService, TOWER_FLAG_ID } from '#/features/tower/tower';
 import TOWER_MODE_EXIT_REMINDER from './tower-mode-exit-reminder.md?raw';
 import TOWER_MODE_FULL_REMINDER from './tower-mode-full-reminder.md?raw';
 import TOWER_MODE_SPARSE_REMINDER from './tower-mode-sparse-reminder.md?raw';
@@ -21,12 +22,14 @@ export class TowerModeInjection extends Service {
     @IAgentTowerService private readonly tower: IAgentTowerService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IFlagService private readonly flags: IFlagService,
   ) {
     super();
     this.states.contributeState(towerWasActiveKey);
 
     this._register(
       injector.register(TOWER_MODE_INJECTION_VARIANT, ({ lastInjectedAt: injectedAt }) => {
+        if (!this.flags.enabled(TOWER_FLAG_ID)) return undefined;
         if (!this.tower.isActive) {
           if (!this.states.get(towerWasActiveKey)) return undefined;
           this.states.set(towerWasActiveKey, false);
