@@ -551,6 +551,27 @@ describe('AsyncTransport', () => {
     });
   });
 
+  it('resolves a function endpoint per send, so an in-process switch needs no rebuild', async () => {
+    const fetchImpl = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      Promise.resolve(new Response('', { status: 200 })),
+    );
+    let endpoint = 'https://cn.test/events';
+    const transport = new AsyncTransport({
+      homeDir: await tempHome(),
+      deviceId: 'dev',
+      endpoint: () => endpoint,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      retryBackoffsMs: [],
+    });
+
+    await transport.send([sampleEvent()]);
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://cn.test/events');
+
+    endpoint = 'https://global.test/events';
+    await transport.send([sampleEvent()]);
+    expect(fetchImpl.mock.calls[1]?.[0]).toBe('https://global.test/events');
+  });
+
   it('retries anonymously on 401 with a token', async () => {
     const fetchImpl = vi
       .fn()

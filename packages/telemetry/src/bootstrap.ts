@@ -22,9 +22,11 @@ export interface TelemetryBootstrapOptions {
   readonly getAccessToken?: () => string | null | Promise<string | null>;
   /**
    * Region-aware endpoint derived by the composition root (this package stays
-   * dependency-free and keeps the cn default in `TELEMETRY_ENDPOINT`).
+   * dependency-free and keeps the cn default in `TELEMETRY_ENDPOINT`). A
+   * resolver is invoked per flush so an in-process region switch takes effect
+   * without re-initialization.
    */
-  readonly endpoint?: string;
+  readonly endpoint?: string | (() => string);
 }
 
 export function isTelemetryDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boolean {
