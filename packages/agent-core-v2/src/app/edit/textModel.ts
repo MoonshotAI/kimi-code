@@ -1,12 +1,3 @@
-/**
- * `edit` domain — {@link TextModel}, the pure text/line-ending/match-replace
- * core of an edit.
- *
- * Wraps a raw file's text and exposes a normalized LF "model view" for matching
- * (so a pure CRLF file can be edited with an LF `old_string`), plus the
- * mechanical replace primitives. No IO, no business rules.
- */
-
 import {
   type LineEndingStyle,
   materializeModelText,

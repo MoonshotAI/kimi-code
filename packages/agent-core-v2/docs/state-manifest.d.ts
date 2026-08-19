@@ -69,7 +69,7 @@
 //     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
 //     cron                                            src/session/cron/cronOps.ts
 //     dateChange.seed                                 src/features/dateChange/dateChangeService.ts
-//     externalHooks.stopHookContinuationUsed          src/agent/externalHooks/externalHooksService.ts
+//     externalHooks.stopHookContinuationUsed          src/features/externalHooks/agent/agentExternalHooksService.ts
 //     fullCompaction                                  src/agent/fullCompaction/compactionOps.ts
 //     fullCompaction.activeTurnId                     src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.compactionCountInTurn            src/agent/fullCompaction/fullCompactionService.ts
@@ -200,6 +200,7 @@ export interface WorkspaceStateSnapshot {
         readonly mermaid?: string;
         readonly d2?: string;
         readonly productSpecific?: boolean;
+        readonly experimentalFlag?: string;
       }[];
       readonly skipped?: readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
         readonly path: string;
@@ -236,6 +237,7 @@ export interface WorkspaceStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
     }) => void;
     register: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -262,6 +264,7 @@ export interface WorkspaceStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
     }, options?: {
       readonly replace?: boolean;
     }) => void;
@@ -296,6 +299,7 @@ export interface WorkspaceStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
     } | undefined;
     getPluginSkill: (pluginId: string, name: string) => /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -322,6 +326,7 @@ export interface WorkspaceStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
     } | undefined;
     renderSkillPrompt: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -348,6 +353,7 @@ export interface WorkspaceStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
     }, rawArgs: string, context?: {
       readonly sessionId?: string;
     }) => string;
@@ -376,6 +382,7 @@ export interface WorkspaceStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
     }[];
     listInvocableSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -402,6 +409,7 @@ export interface WorkspaceStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
     }[];
     getSkillRoots: () => readonly string[];
     getSkippedByPolicy: () => readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
@@ -528,6 +536,7 @@ export interface SessionStateSnapshot {
         readonly mermaid?: string;
         readonly d2?: string;
         readonly productSpecific?: boolean;
+        readonly experimentalFlag?: string;
       }[];
       readonly skipped?: readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
         readonly path: string;
@@ -564,6 +573,7 @@ export interface SessionStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
     }) => void;
     register: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -590,6 +600,7 @@ export interface SessionStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
     }, options?: {
       readonly replace?: boolean;
     }) => void;
@@ -624,6 +635,7 @@ export interface SessionStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
     } | undefined;
     getPluginSkill: (pluginId: string, name: string) => /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -650,6 +662,7 @@ export interface SessionStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
     } | undefined;
     renderSkillPrompt: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -676,6 +689,7 @@ export interface SessionStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
     }, rawArgs: string, context?: {
       readonly sessionId?: string;
     }) => string;
@@ -704,6 +718,7 @@ export interface SessionStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
     }[];
     listInvocableSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -730,6 +745,7 @@ export interface SessionStateSnapshot {
       readonly mermaid?: string;
       readonly d2?: string;
       readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
     }[];
     getSkillRoots: () => readonly string[];
     getSkippedByPolicy: () => readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
@@ -1172,8 +1188,6 @@ export interface AgentStateSnapshot {
   })[];
   // src/agent/contextProjector/contextProjectorService.ts
   'contextProjector.lastRepairSignature': string | null;
-  // src/agent/externalHooks/externalHooksService.ts
-  'externalHooks.stopHookContinuationUsed': boolean;
   // src/agent/fullCompaction/compactionOps.ts
   // replayable · durable — folds: FullCompactionBegin, FullCompactionCancel, FullCompactionComplete
   'fullCompaction': /* CompactionState — packages/agent-core-v2/src/agent/fullCompaction/compactionOps.ts */ {
@@ -1500,7 +1514,7 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly timeoutMs?: number;
   }>;
-  // replayable · durable · undoable — folds: ContextAppendMessage
+  // replayable · durable · undoable — folds: ContextAppendMessage, TaskWaitDelivered
   'task.notificationDelivery': readonly string[];
   'task.scheduledNotificationKeys': Set<string>;
   // src/agent/tokenCounting/tokenCountingOps.ts
@@ -1559,6 +1573,8 @@ export interface AgentStateSnapshot {
     readonly timeZone: string;
     readonly renderGeneration: number;
   } | undefined;
+  // src/features/externalHooks/agent/agentExternalHooksService.ts
+  'externalHooks.stopHookContinuationUsed': boolean;
   // src/features/plan/injection/planModeInjection.ts
   'plan.wasActive': boolean;
   // src/features/plan/planOps.ts

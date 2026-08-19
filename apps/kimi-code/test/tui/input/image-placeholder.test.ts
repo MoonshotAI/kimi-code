@@ -6,7 +6,6 @@
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { describe, it, expect } from 'vitest';
 
@@ -17,7 +16,7 @@ import { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 import {
   extractMediaAttachments,
   makeExtractionResendable,
-  pendingImageIngestions,
+  pendingMediaIngestions,
   persistOriginalImageSync,
   refreshExpiringImageFileRefs,
   resolveOriginalCaptions,
@@ -56,14 +55,14 @@ function makeTempDir(): string {
 type VideoUrlPart = { type: 'video_url'; videoUrl: { url: string } };
 
 // Prompt-attached videos are emitted as a `video_url` part whose url is a
-// local `file://` reference to the cache copy; decode it back to a filesystem
-// path for assertions.
-function videoPathFromParts(parts: unknown[]): string {
+// bare `kimi-file://` daemon reference (the paste was uploaded at paste
+// time); pull the url out for assertions.
+function videoUrlFromParts(parts: unknown[]): string {
   const part = parts.find(
     (p): p is VideoUrlPart => (p as VideoUrlPart).type === 'video_url',
   );
   if (!part) throw new Error(`no video_url part found in: ${JSON.stringify(parts)}`);
-  return fileURLToPath(part.videoUrl.url);
+  return part.videoUrl.url;
 }
 
 describe('extractMediaAttachments', () => {
@@ -105,30 +104,21 @@ describe('extractMediaAttachments', () => {
   });
 
   it('keeps matched-placeholder order with mixed image and video attachments', () => {
-    const { cleanup } = setupTempCache();
-    const srcDir = makeTempDir();
-    try {
-      const srcVideo = join(srcDir, 'clip.mov');
-      writeFileSync(srcVideo, 'video-bytes');
-      const store = new ImageAttachmentStore();
-      const img = store.addImage(new Uint8Array([1]), 'image/png', 10, 10);
-      const vid = store.addVideo('video/quicktime', srcVideo);
-      const text = `first ${img.placeholder} then ${vid.placeholder} end`;
-      const r = extractMediaAttachments(text, store);
-      expect(r.imageAttachmentIds).toEqual([1]);
-      expect(r.videoAttachmentIds).toEqual([2]);
-      expect(r.parts[0]).toEqual({ type: 'text', text: 'first ' });
-      expect(r.parts[1]).toEqual({
-        type: 'image_url',
-        imageUrl: { url: 'data:image/png;base64,AQ==' },
-      });
-      const cachePath = videoPathFromParts(r.parts);
-      expect(cachePath.startsWith(getCacheDir())).toBe(true);
-      expect(readFileSync(cachePath, 'utf8')).toBe('video-bytes');
-    } finally {
-      cleanup();
-      rmSync(srcDir, { recursive: true, force: true });
-    }
+    const store = new ImageAttachmentStore();
+    const img = store.addImage(new Uint8Array([1]), 'image/png', 10, 10);
+    const vid = store.addVideo('video/quicktime', '/tmp/clip.mov');
+    store.completeVideo(vid, { fileId: 'file-v1' });
+    const text = `first ${img.placeholder} then ${vid.placeholder} end`;
+    const r = extractMediaAttachments(text, store);
+    expect(r.imageAttachmentIds).toEqual([1]);
+    expect(r.videoAttachmentIds).toEqual([2]);
+    expect(r.parts).toEqual([
+      { type: 'text', text: 'first ' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AQ==' } },
+      { type: 'text', text: ' then ' },
+      { type: 'video_url', videoUrl: { url: 'kimi-file://file-v1' } },
+      { type: 'text', text: ' end' },
+    ]);
   });
 
   it('leaves unresolved (typed by hand) placeholders as literal text', () => {
@@ -149,49 +139,53 @@ describe('extractMediaAttachments', () => {
     });
   });
 
-  it('keeps the video label (including special chars) in the cache path', () => {
+  it('emits a bare kimi-file video_url part for an uploaded video', () => {
     const { cleanup } = setupTempCache();
-    const srcDir = makeTempDir();
     try {
-      const srcVideo = join(srcDir, 'source.mp4');
-      writeFileSync(srcVideo, 'x');
       const store = new ImageAttachmentStore();
-      // The filename drives the cache label; `&` is a valid path char the cache
-      // copy keeps verbatim (the engine escapes it if it later renders a tag).
-      const att = store.addVideo('video/mp4', srcVideo, 'a&b.mp4');
-      const r = extractMediaAttachments(att.placeholder, store);
-      expect(r.parts).toHaveLength(1);
-      expect((r.parts[0] as VideoUrlPart).type).toBe('video_url');
-      expect(videoPathFromParts(r.parts).endsWith('a&b.mp4')).toBe(true);
-    } finally {
-      cleanup();
-      rmSync(srcDir, { recursive: true, force: true });
-    }
-  });
-
-  it('copies video placeholders into the cache and emits a file:// video_url part', () => {
-    const { cleanup } = setupTempCache();
-    const srcDir = makeTempDir();
-    try {
-      const srcVideo = join(srcDir, 'sample.mp4');
-      writeFileSync(srcVideo, 'video-data');
-      const store = new ImageAttachmentStore();
-      const att = store.addVideo('video/mp4', srcVideo);
+      const att = store.addVideo('video/mp4', '/tmp/sample.mp4');
+      store.completeVideo(att, { fileId: 'file-v1' });
       const r = extractMediaAttachments(att.placeholder, store);
       expect(r.hasMedia).toBe(true);
       expect(r.videoAttachmentIds).toEqual([1]);
+      expect(r.parts).toHaveLength(1);
       const part = r.parts[0] as VideoUrlPart;
       expect(part.type).toBe('video_url');
-      expect(part.videoUrl.url.startsWith('file:')).toBe(true);
-      const cachePath = videoPathFromParts(r.parts);
-      // The part points at the cache copy, not the original source path.
-      expect(cachePath.startsWith(getCacheDir())).toBe(true);
-      expect(cachePath).not.toBe(srcVideo);
-      expect(readFileSync(cachePath, 'utf8')).toBe('video-data');
+      // No cache copy and no `?path=`: the engine's prompt intake
+      // materializes the session copy and rewrites the reference — the part
+      // is self-contained.
+      expect(parseDaemonFileUrl(part.videoUrl.url)).toEqual({ fileId: 'file-v1' });
+      expect(existsSync(getCacheDir())).toBe(false);
     } finally {
       cleanup();
-      rmSync(srcDir, { recursive: true, force: true });
     }
+  });
+
+  it('refuses a video whose upload is still in flight', () => {
+    const store = new ImageAttachmentStore();
+    const att = store.addVideo('video/mp4', '/tmp/sample.mp4');
+    att.pending = new Promise<void>(() => undefined); // never settles
+    expect(() => extractMediaAttachments(att.placeholder, store)).toThrow(
+      /still uploading/,
+    );
+  });
+
+  it('refuses a video whose upload failed or is missing', () => {
+    const store = new ImageAttachmentStore();
+    const att = store.addVideo('video/mp4', '/tmp/sample.mp4');
+    expect(() => extractMediaAttachments(att.placeholder, store)).toThrow(
+      /could not be uploaded/,
+    );
+  });
+
+  it('refuses a video whose staged upload is too close to expiry', () => {
+    const store = new ImageAttachmentStore();
+    const att = store.addVideo('video/mp4', '/tmp/sample.mp4');
+    store.completeVideo(att, {
+      fileId: 'file-v1',
+      fileExpiresAt: Date.now() + 1_000,
+    });
+    expect(() => extractMediaAttachments(att.placeholder, store)).toThrow(/expired/);
   });
 
   it('expands a compressed paste without a caption — captions are authored at dispatch', () => {
@@ -240,7 +234,6 @@ describe('extractMediaAttachments', () => {
       expect(parseDaemonFileUrl('kimi-file://file-1')).toEqual({ fileId: 'file-1' });
       // The edge stages no local copy for an uploaded image — the cache dir
       // is never even created.
-      expect(r.stagingPaths).toEqual([]);
       expect(existsSync(getCacheDir())).toBe(false);
     } finally {
       cleanup();
@@ -288,7 +281,6 @@ describe('extractMediaAttachments', () => {
         type: 'image_url',
         imageUrl: { url: 'data:image/png;base64,iVBORw==' },
       });
-      expect(resend.stagingPaths).toHaveLength(0);
     } finally {
       cleanup();
     }
@@ -359,23 +351,23 @@ describe('extractMediaAttachments', () => {
     }
   });
 
-  it('rolls back cache copies when a later attachment cannot be materialized', () => {
+  it('stages nothing when a later video refuses the submission', () => {
     const { cleanup } = setupTempCache();
-    const srcDir = makeTempDir();
     try {
-      const firstPath = join(srcDir, 'first.mp4');
-      writeFileSync(firstPath, 'video-bytes');
       const store = new ImageAttachmentStore();
-      const first = store.addVideo('video/mp4', firstPath);
-      const missing = store.addVideo('video/mp4', join(srcDir, 'missing.mp4'));
+      const first = store.addVideo('video/mp4', '/tmp/first.mp4');
+      store.completeVideo(first, { fileId: 'file-v1' });
+      const missing = store.addVideo('video/mp4', '/tmp/missing.mp4');
 
       expect(() =>
         extractMediaAttachments(`${first.placeholder} ${missing.placeholder}`, store),
-      ).toThrow();
-      expect(readdirSync(getCacheDir())).toEqual([]);
+      ).toThrow(/could not be uploaded/);
+      // The prompt path stages no cache copies at all, so the throw leaves
+      // no local cleanup behind — the first video's daemon upload is owned
+      // by its retain, not by a staging path.
+      expect(existsSync(getCacheDir())).toBe(false);
     } finally {
       cleanup();
-      rmSync(srcDir, { recursive: true, force: true });
     }
   });
 });
@@ -790,15 +782,15 @@ describe('rewriteMediaPlaceholders', () => {
   });
 });
 
-describe('pendingImageIngestions', () => {
-  it('returns undefined for text without image placeholders', () => {
+describe('pendingMediaIngestions', () => {
+  it('returns undefined for text without media placeholders', () => {
     const store = new ImageAttachmentStore();
-    expect(pendingImageIngestions('hello world', store, 5)).toBeUndefined();
+    expect(pendingMediaIngestions('hello world', store, 5)).toBeUndefined();
   });
 
   it('returns undefined when no referenced image has a pending ingestion', () => {
     const { store, placeholder } = storeWith(new Uint8Array([0xaa, 0xbb]));
-    expect(pendingImageIngestions(`describe ${placeholder}`, store, 5)).toBeUndefined();
+    expect(pendingMediaIngestions(`describe ${placeholder}`, store, 5)).toBeUndefined();
   });
 
   it('waits for a pending ingestion so extraction can use the daemon-ref form', async () => {
@@ -817,7 +809,7 @@ describe('pendingImageIngestions', () => {
       };
     });
 
-    const waited = pendingImageIngestions(`describe ${placeholder}`, store, 1_000);
+    const waited = pendingMediaIngestions(`describe ${placeholder}`, store, 1_000);
     if (waited === undefined) throw new Error('expected a pending wait');
     let settled = false;
     void waited.then(() => {
@@ -837,6 +829,26 @@ describe('pendingImageIngestions', () => {
     expect(parseDaemonFileUrl(part.imageUrl.url)?.fileId).toBe('file-1');
   });
 
+  it('waits for a pending video upload so extraction can use the daemon-ref form', async () => {
+    const store = new ImageAttachmentStore();
+    const att = store.addVideo('video/mp4', '/tmp/clip.mp4');
+    let finish!: () => void;
+    att.pending = new Promise<void>((resolve) => {
+      finish = () => {
+        store.completeVideo(att, { fileId: 'file-v1' });
+        resolve();
+      };
+    });
+
+    const waited = pendingMediaIngestions(`watch ${att.placeholder}`, store, 1_000);
+    if (waited === undefined) throw new Error('expected a pending wait');
+    finish();
+    await waited;
+
+    const r = extractMediaAttachments(`watch ${att.placeholder}`, store);
+    expect(videoUrlFromParts(r.parts)).toBe('kimi-file://file-v1');
+  });
+
   it('bounds the wait by the timeout so a slow ingestion extracts to the inline form', async () => {
     const { store, placeholder } = storeWith(new Uint8Array([0xaa, 0xbb]));
     const att = store.get(1);
@@ -844,7 +856,7 @@ describe('pendingImageIngestions', () => {
     att.pending = new Promise<void>(() => undefined); // never settles
 
     const start = Date.now();
-    const waited = pendingImageIngestions(`describe ${placeholder}`, store, 20);
+    const waited = pendingMediaIngestions(`describe ${placeholder}`, store, 20);
     if (waited === undefined) throw new Error('expected a pending wait');
     await waited;
     expect(Date.now() - start).toBeLessThan(1_000);

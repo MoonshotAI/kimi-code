@@ -1,0 +1,28 @@
+import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { Event } from '#/_base/event';
+import type { HookBlockDecision, HookMatcherValue, HookResult } from '../internal/types';
+
+export interface ExternalHooksRunnerTriggerArgs {
+  readonly matcherValue?: HookMatcherValue;
+  readonly inputData?: Record<string, unknown>;
+  readonly signal?: AbortSignal;
+  readonly cwd?: string;
+  readonly sessionId?: string;
+}
+
+export interface IExternalHooksRunnerService {
+  readonly _serviceBrand: undefined;
+  readonly ready: Promise<void>;
+  /** Fired after the hook index is (re)built — initial load and plugin reloads. */
+  readonly onDidReload: Event<void>;
+  trigger(event: string, args?: ExternalHooksRunnerTriggerArgs): Promise<HookResult[]>;
+  triggerBlock(
+    event: string,
+    args?: ExternalHooksRunnerTriggerArgs,
+  ): Promise<HookBlockDecision | undefined>;
+  fireAndForgetTrigger(event: string, args?: ExternalHooksRunnerTriggerArgs): Promise<HookResult[]>;
+  hasHooksFor(event: string): boolean;
+}
+
+export const IExternalHooksRunnerService: ServiceIdentifier<IExternalHooksRunnerService> =
+  createDecorator<IExternalHooksRunnerService>('externalHooksRunnerService');

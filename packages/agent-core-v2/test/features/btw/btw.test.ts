@@ -29,8 +29,6 @@ describe('SessionBtwService', () => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     appendReminder = vi.fn(() => 'reminder-id');
-    // The suffix mimics the worker-rejection guidance formatDenyMessage appends
-    // for forked sub agents, so the assertion proves the reason went through it.
     formatDenyMessage = vi.fn((message: string) => `${message} [worker guidance]`);
     executorEvents = stubToolExecutorEvents();
 

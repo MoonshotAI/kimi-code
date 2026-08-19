@@ -1,14 +1,3 @@
-/**
- * `pluginCommand` domain — `IAgentPluginCommandService` implementation.
- *
- * Resolves the command definition through `plugin` (`IPluginService`), expands
- * its arguments, publishes the `plugin_command.activated` domain event through
- * `state` (`IEventDispatcher`), enqueues the expanded body as a user message
- * through `prompt`, and — for the main agent only — persists the derived
- * title/lastPrompt through `sessionMetadata`, publishing the live update
- * through `event`. Bound at Agent scope.
- */
-
 import { randomUUID } from 'node:crypto';
 
 import { LifecycleScope } from '#/app/scopes';

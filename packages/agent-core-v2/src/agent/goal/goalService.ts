@@ -1,44 +1,3 @@
-/**
- * `goal` domain — `IAgentGoalService` implementation.
- *
- * Owns the main-agent goal lifecycle; persists the goal in the `goalKey`
- * state (`GoalState | null`) through the durable `GoalCreate` / `GoalUpdate` /
- * `GoalClear` events (`dispatcher.dispatch`), reads it through
- * `dispatcher.getState`, dispatches the live-only `GoalUpdated` observable
- * through the same dispatcher, and forces a replayed `active`
- * goal back to `paused` via `dispatcher.hooks.onDidRestore`. The accumulated
- * `wallClockMs` lives in the state (set from each event payload, never by
- * `Date.now()` inside a fold); the active interval's epoch-ms
- * `wallClockResumedAt` anchor is
- * persisted at create/resume boundaries so recovery can settle crash-spanning
- * elapsed time without periodic writes. A `forked` journal record (written at
- * a fork boundary) clears the state. Injects reminders through
- * `contextInjector`, drives continuation turns by enqueueing `newTurn`
- * `StepRequest`s onto `loop` (the continuation message materializes when the
- * loop pops it), accounts live
- * turn usage through `usage`, observes terminal goal tool results through
- * `toolExecutor`, appends one-time reminder events through `systemReminder`, reports
- * telemetry through `telemetry`, and checks main-agent eligibility through
- * `scopeContext`. Measures time and arms hard deadlines through `goal`'s
- * App-scoped deadline scheduler. Two `onBeforeExecuteTool` veto listeners
- * guard the goal lifecycle: stale or budget-exhausted goal tool calls are
- * vetoed with synthetic results, and a `CreateGoal` call carrying a
- * `goal_start` display outside `auto` mode defers to a cold `waitUntil`
- * factory that runs the goal-start review through `toolApproval` under the
- * origin `goal-start-review-ask` — including the permission-mode switch
- * picked on the approval surface. The mutable turn-tracking and wall-clock
- * state (`liveTurnId`, `goalDrivenTurns`, `countedGoalTurns`,
- * `goalStarterTurns`, `goalOutcomeToolResultTurns`,
- * `goalOutcomeContinuationTurns`, `budgetGraceTurns`,
- * `pendingContinuationGoals`, `goalTurnTargets`, `exhaustedTurnBudgetGoals`,
- * `liveWallClockStartedAt`, `resumeContinuation`) is registered into
- * `agentState` (`IAgentStateService`) and read/written through it; the
- * `pendingContinuation` promise lock and the `wallClockDeadline` disposable
- * slot stay plain fields. Bound at Agent scope.
- * Subagent instances reject every goal command and do not install goal
- * injection, accounting, budget, or continuation hooks.
- */
-
 import { randomUUID } from 'node:crypto';
 
 import { z } from 'zod';
@@ -54,7 +13,7 @@ import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
-import { GoalInjection } from '#/agent/goal/injection/goalInjection';
+import { GoalInjection, GOAL_WAIT_FOR_GUIDANCE } from '#/agent/goal/injection/goalInjection';
 import {
   IAgentLoopService,
   type AfterStepContext,
@@ -72,11 +31,14 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
 import { IAgentUsageService, type UsageRecordedContext } from '#/agent/usage/usage';
 import type { GoalBudgetProperties } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import {
   ErrorCodes,
   Error2,
@@ -88,6 +50,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { defineState } from '#/state/state';
 
 import { IAgentGoalService, type GoalReasonInput, type ResumeGoalInput } from './goal';
+import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import { IGoalDeadlineScheduler } from './goalDeadlineScheduler';
 import {
   GoalClear,
@@ -290,7 +253,6 @@ export const goalResumeContinuationKey = defineState<ResumeContinuation | undefi
   () => undefined as ResumeContinuation | undefined,
 );
 
-// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class AgentGoalService extends Disposable implements IAgentGoalService {
   declare readonly _serviceBrand: undefined;
 
@@ -305,10 +267,13 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IAgentUsageService usageService: IAgentUsageService,
     @IConfigService private readonly config: IConfigService,
+    @IFlagService private readonly flags: IFlagService,
     @IGoalDeadlineScheduler private readonly deadlineScheduler: IGoalDeadlineScheduler,
     @IAgentScopeContext private readonly agentContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -333,6 +298,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       new GoalInjection(
         {
           getGoal: () => this.getGoal().goal,
+          isWaitForEnabled: () => this.isWaitForAvailable(),
         },
         injector,
       ),
@@ -937,15 +903,26 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     } catch {}
   }
 
+  private isWaitForAvailable(): boolean {
+    return (
+      this.flags.enabled(WAIT_FOR_FLAG_ID) &&
+      this.toolRegistry.resolve('WaitFor') !== undefined &&
+      this.toolPolicy.isToolActive('WaitFor')
+    );
+  }
+
   private launchContinuationTurn(goalId: string, stepCapped = false): void {
     if (!this.isActiveGoal(goalId)) return;
     if (this.pendingContinuation !== undefined) return;
+    const prompt = stepCapped ? GOAL_STEP_CAP_CONTINUATION_PROMPT : GOAL_CONTINUATION_PROMPT;
     const message: ContextMessage = {
       role: 'user',
       content: [
         {
           type: 'text',
-          text: stepCapped ? GOAL_STEP_CAP_CONTINUATION_PROMPT : GOAL_CONTINUATION_PROMPT,
+          text: this.isWaitForAvailable()
+            ? `${prompt} ${GOAL_WAIT_FOR_GUIDANCE}`
+            : prompt,
         },
       ],
       toolCalls: [],

@@ -1,28 +1,4 @@
-/**
- * `shellCommand` domain — `IAgentShellCommandService` implementation.
- *
- * Runs user-initiated `!` commands through the builtin `Bash` tool from
- * `toolRegistry`, records the command and output as `shell_command`-origin
- * context messages via `contextMemory`, streams live `shell.output` /
- * `shell.started` / `shell.completed` events through `state`
- * (`IEventDispatcher`), and steers the model through `promptService` when a
- * command is detached to background. Bound at Agent scope.
- *
- * `shell.completed` fires once when a foreground command settles (success or
- * failure); runs detached to background do NOT fire it — they report through
- * the task lifecycle instead. `shell.output` / `shell.completed` carry the
- * foreground process `taskId` once that task is registered, so consumers that
- * missed `shell.started` can still route the chunk. A failure text that was
- * never streamed (empty stdout/stderr) is emitted as a `shell.output` chunk
- * before `shell.completed`, so live consumers see the output too.
- *
- * The plain-data state (`shellCommandTasks`) is registered into `agentState`
- * (`IAgentStateService`) and read/written through it; `shellCommandControllers`
- * stays an instance field (per-command `AbortController`s, not plain data).
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';

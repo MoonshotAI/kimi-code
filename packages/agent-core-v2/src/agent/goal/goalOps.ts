@@ -1,35 +1,4 @@
-/**
- * `goal` domain — the `goalKey` state, the durable `goal.create`
- * (`GoalCreate`) / `goal.update` (`GoalUpdate`) / `goal.clear` (`GoalClear`) /
- * `forked` (`GoalForked`) events for the per-agent goal lifecycle, and the
- * live-only `goal.updated` observable (`GoalUpdated`).
- *
- * The state holds `GoalState | null` (initial `null`); `GoalState` holds the
- * persistent, replayable fields — identity, objective, status, `turnsUsed` /
- * `tokensUsed`, the accumulated `wallClockMs`, the current active interval's
- * epoch-ms `wallClockResumedAt`, `budgetLimits`, and `terminalReason`. The
- * persistence contract charges an active interval from its persisted
- * create/resume anchor through the first recovery clock read, then folds that
- * interval into `wallClockMs` while recovery pauses the goal. This
- * intentionally includes unobservable crash downtime: a monotonic clock
- * cannot span processes, while learning the crash instant would require
- * periodic durable writes. System-clock rollback is clamped to zero. The
- * 1.4 -> 1.5 compatibility transform (also applied before sealing
- * envelope-less logs) derives missing create/resume/checkpoint anchors from
- * those records' existing epoch-ms `time` stamps. The durable classes are the
- * wire-protocol record vocabulary: their `serialize()` output is the on-disk
- * record (flat payload, epoch-ms `time`), byte-compatible with the retired op
- * encoding. The non-deterministic values stay OUT of the folds: `goalId` and
- * the wall-clock anchor/totals are computed by the live service and carried
- * in event payloads. Each fold keeps the same reference when nothing changes
- * so the state's reference-equality stays quiet. The `GoalUpdated` fact is
- * dispatched live by the service (observable, never on replay); restore
- * rebuilds the state silently and the service's `dispatcher.hooks.onDidRestore`
- * forces a replayed `active` goal back to `paused`.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { z } from 'zod';
 
 import { Event2 } from '#/app/event/event2';

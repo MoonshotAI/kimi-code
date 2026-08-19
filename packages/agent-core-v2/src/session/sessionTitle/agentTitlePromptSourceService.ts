@@ -1,20 +1,3 @@
-/**
- * `sessionTitle` domain (L6) — `IAgentTitlePromptSource` implementation.
- *
- * Reads the first active natural-language prompts from the live `contextMemory`
- * window, merging the `prompt` queue so submissions waiting behind an active
- * turn are visible, and projects the turn excerpts behind the `first_turn` /
- * `digest` title sources: assistant segments keep only the final natural
- * language text of the turn (tool calls, thinking, and media parts never
- * contribute; the shared metadata sanitizer redacts secrets and long
- * base64-looking runs; rendered skill blocks bundled into a prompt's
- * content are excluded, so titles reflect the caller's own text). The
- * window may be post-compaction — acceptable for
- * title generation: compaction keeps the head user messages, and a title
- * derived from the surviving tail is a fine degradation. Bound at Agent
- * scope.
- */
-
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';

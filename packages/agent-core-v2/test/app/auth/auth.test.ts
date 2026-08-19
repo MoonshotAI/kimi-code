@@ -1,10 +1,3 @@
-/**
- * `auth` domain tests — covers the `OAuthService` device-code orchestration,
- * its dependency on the `provider` domain, and the managed OAuth provider
- * model refresh, using a fake `IOAuthToolkit` so no real network or token
- * storage is exercised.
- */
-
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import {
   clearManagedKimiCodeConfig,
@@ -1030,9 +1023,6 @@ describe('WebSearchProviderService', () => {
     expect(resolveTokenProvider).not.toHaveBeenCalled();
   });
 
-  // Tool activation gates on presence alone. An env-configured endpoint is
-  // visible before config finishes loading, so a fast bootstrap can evaluate
-  // the gate before the identity snapshot froze — presence must not read it.
   it('answers presence without touching a not-yet-frozen identity', () => {
     const notFrozen: IAgentIdentity = {
       _serviceBrand: undefined,

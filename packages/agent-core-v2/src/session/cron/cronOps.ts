@@ -1,22 +1,4 @@
-/**
- * `cron` domain — the `cronKey` state, the transient `cron.add` (`CronAdd`)
- * / `cron.delete` (`CronDelete`) / `cron.cursor` (`CronCursor`) events for the
- * session-level scheduling engine, plus the transient observable `cron.fired`
- * (`CronFired`) edge event.
- *
- * The state is the live map of `taskId -> CronTask` (initial empty). The
- * cursor (`lastFiredAt`) lives on the task itself, so there is no separate
- * cursor map — `CronCursor` folds into the same map by updating the matching
- * task's `lastFiredAt`. The folds mutate the draft map in place (immer
- * MapSet), so a no-op (a `cron.delete` of absent ids, or a `cron.cursor` for
- * an unknown id) keeps the same reference and the state's reference-equality
- * stays quiet. The events are live-only (`durable: false`) because cron
- * records are not v1 wire types; the authoritative store is the App-scoped
- * `ICronTaskPersistence`, reloaded on resume.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { z } from 'zod';
 
 import type { CronJobOrigin } from '#/agent/contextMemory/types';

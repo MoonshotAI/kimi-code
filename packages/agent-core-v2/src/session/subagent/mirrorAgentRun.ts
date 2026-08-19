@@ -1,28 +1,4 @@
-/**
- * `subagent` domain — caller-side mirroring of an agent run.
- *
- * When one agent drives another through `ISessionSubagentService.run`, the
- * *requesting* agent surfaces that run
- * on its own record stream so the UI can nest the child transcript under the
- * launching tool call, external hooks fire, and telemetry is tracked. That
- * requester ↔ target association is business data of this wrapper layer — the
- * lifecycle registry itself stays flat and knows nothing about it.
- *
- * External hooks (`SubagentStart` / `SubagentStop`) fire by observation, like
- * every other external hook: this wrapper announces "a run is about to start"
- * / "...has stopped" through the `ISessionSubagentService` agent-run hook
- * slot and stop event.
- *
- * Wire shape note: the signals are still named `subagent.spawned / started /
- * completed / failed` and telemetry still tracks `subagent_created` so existing
- * session recordings and dashboards stay valid. The spawned signal also
- * reports the child's bound model alias and its effective thinking effort, so
- * clients can render both at spawn instead of waiting for the first
- * `agent.status.updated` frame.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
@@ -30,6 +6,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { isProviderRateLimitError } from '#/kosong/contract/errors';
 import { type TokenUsage } from '#/kosong/contract/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { SubagentCreatedEvent } from '#/app/telemetry/events';
 import { Event2 } from '#/app/event/event2';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -49,6 +26,7 @@ export interface SubagentSpawnedPayload {
   readonly runInBackground: boolean;
   readonly model?: string;
   readonly thinkingEffort?: string;
+  readonly taskId?: string;
 }
 
 export class SubagentSpawned extends Event2<SubagentSpawnedPayload> {
@@ -99,6 +77,7 @@ export interface AgentRunSpawnedMeta {
   readonly swarmIndex?: number;
   readonly runInBackground?: boolean;
   readonly model?: string;
+  readonly taskId?: string;
 }
 
 export interface MirrorAgentRunOptions {
@@ -107,6 +86,7 @@ export interface MirrorAgentRunOptions {
   readonly suppressRateLimitFailureEvent?: boolean;
   readonly signal: AbortSignal;
   readonly cancel?: (reason?: unknown) => void;
+  readonly deferStarted?: boolean;
 }
 
 export function emitAgentRunSpawned(
@@ -131,16 +111,19 @@ export function emitAgentRunSpawned(
       runInBackground: meta.runInBackground ?? false,
       model: meta.model,
       thinkingEffort: childProfile?.getEffectiveThinkingLevel(),
+      taskId: meta.taskId,
     }),
   );
   childProfile?.republishStatus();
-  requester.accessor.get(ITelemetryService)?.track2('subagent_created', {
+  const telemetryEvent: SubagentCreatedEvent = {
     subagent_name: meta.profileName,
     run_in_background: meta.runInBackground ?? false,
     agent_id: targetAgentId,
     parent_agent_id: requester.id,
     parent_tool_call_id: meta.parentToolCallId ?? '',
-  });
+    model: meta.model,
+  };
+  requester.accessor.get(ITelemetryService)?.track2('subagent_created', telemetryEvent);
 }
 
 export async function mirrorAgentRun(
@@ -151,7 +134,9 @@ export async function mirrorAgentRun(
   const dispatcher = requester.accessor.get(IEventDispatcher);
   const subagents = requester.accessor.get(ISessionSubagentService);
   const agentLifecycle = requester.accessor.get(IAgentLifecycleService);
-  void dispatcher?.dispatch(new SubagentStarted({ subagentId: run.agentId }));
+  if (options.deferStarted !== true) {
+    void dispatcher?.dispatch(new SubagentStarted({ subagentId: run.agentId }));
+  }
   if (options.prompt !== undefined) {
     const cancelAndRethrow = (reason: unknown): never => {
       options.cancel?.(reason);

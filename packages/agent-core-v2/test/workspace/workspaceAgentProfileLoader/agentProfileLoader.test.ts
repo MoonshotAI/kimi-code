@@ -1,18 +1,3 @@
-/**
- * Scenario: agent-profile loaders + session catalog — the Contribution /
- * Registry / Catalog extension point end to end. Exercises the real loader
- * services (builtin / user / plugin / workspace / extra / explicit), the
- * App-scope `AgentProfileRegistryService` fold, and the Session-scope
- * `SessionAgentProfileCatalogService` — the loaders and the fold are resolved
- * through one DI container (the `this.provide` collection-contribution path
- * requires container-constructed units) against real temp directories:
- * source-priority merge, the builtin-override rule, explicit fatal semantics,
- * config / plugin-reload / fs-watch driven reloads, and SYSTEM.md interplay.
- * Run:
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/workspace/workspaceAgentProfileLoader/agentProfileLoader.test.ts`.
- */
-
 import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 

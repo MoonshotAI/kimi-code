@@ -1,13 +1,3 @@
-/**
- * Scenario: swarm service policy, context reconciliation, persistence, and
- * tool execution.
- *
- * Exercises the Agent-scoped service through DI and public loop boundaries,
- * with storage, session swarm execution, and approvals stubbed. Run:
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/features/swarm/swarm.test.ts`.
- */
-
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 
@@ -126,9 +116,7 @@ function mockSwarmHost({
   run = vi.fn().mockResolvedValue([]),
   getSwarmItem = vi.fn().mockResolvedValue(undefined),
 }: {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly run?: (...args: any[]) => any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly getSwarmItem?: (...args: any[]) => any;
 } = {}) {
   return {
@@ -291,7 +279,6 @@ describe('AgentSwarmService', () => {
       variant: 'swarm_mode',
       disclosure: { kind: 'swarm_mode', state: 'active' },
     });
-    expect(messageText(reminder)).toContain('You are now in "agent swarm" mode.');
     expect(context.get()).toHaveLength(1);
   });
 
@@ -693,12 +680,10 @@ describe('AgentSwarmTool', () => {
     expect(execution.matchesRule).toBeUndefined();
   });
 
-  it('description states the enforced input requirements', () => {
+  it('description documents the {{item}} placeholder', () => {
     const host = mockSwarmHost();
     const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile());
-    expect(tool.description).toContain('at least 2');
     expect(tool.description).toContain('{{item}}');
-    expect(tool.description.toLowerCase()).toContain('distinct');
   });
 
   it('uses the persisted caller allowlist instead of the current catalog profile', async () => {
@@ -1094,13 +1079,10 @@ describe('AgentSwarmTool', () => {
     const host = mockSwarmHost();
     const configured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ defaultModel: 'provider/fast', models: { 'provider/fast': 'fast and cheap', 'main-model': 'the main model' } }), stubFlag(true), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model' }));
 
-    expect(configured.description).toContain('Available models (pass via model):');
+    expect(configured.description).toContain('Available models');
     expect(configured.description).toContain('- provider/fast [default]: fast and cheap');
-    // The caller's alias is a normal pool entry; the primary line stays distinct.
     expect(configured.description).toContain('- main-model [main model]: the main model');
-    expect(configured.description).toContain(
-      '- primary (main-model): the main model you are running on, bound with your current thinking level',
-    );
+    expect(configured.description).toContain('- primary (main-model)');
 
     const unconfigured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model' }));
 

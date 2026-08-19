@@ -1,13 +1,3 @@
-/**
- * `tools` domain — `ISubagentTool` contract (the `Agent` tool).
- *
- * Public contract of the `Agent` collaboration tool: the input/output zod
- * schemas the model-facing parameters are derived from, the tool-owned
- * constants (default profile name, resumed-agent label, fixed output
- * messages), and the `ISubagentTool` DI decorator that the implementation
- * registers against via `registerAgentToolService`. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';
@@ -66,7 +56,6 @@ export const SubagentToolInputSchema = z.preprocess(
 
 export type SubagentToolInput = z.infer<typeof SubagentToolInputSchema>;
 
-
 export const SubagentToolOutputSchema = z.object({
   result: z.string().describe('Aggregated text output from the subagent'),
   usage: z
@@ -88,7 +77,6 @@ export const RESUME_WITH_TYPE_UNAVAILABLE =
 export const USER_INTERRUPTED_SUBAGENT_MESSAGE =
   'The subagent was stopped before it finished by user.';
 export const SUBAGENT_STOPPED_MESSAGE = 'The subagent was stopped before it finished.';
-
 
 export interface ISubagentTool extends AgentTool<SubagentToolInput> {
   readonly _serviceBrand: undefined;

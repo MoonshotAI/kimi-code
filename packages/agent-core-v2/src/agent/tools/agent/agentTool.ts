@@ -1,43 +1,3 @@
-/**
- * `tools` domain — `SubagentTool` implementation (the `Agent` tool).
- *
- * The LLM-facing wrapper over the `subagent` domain: translates the tool args
- * into a Profile + Model binding, creates (or resumes) an agent through
- * `IAgentLifecycleService`, drives one turn via `ISessionSubagentService.run`,
- * and mirrors the run onto the calling agent's record stream
- * (`mirrorAgentRun`). The tool also owns the JSON schema + description,
- * approval rule, background-task registration (so the LLM can see the run
- * under TaskList/TaskOutput/TaskStop when `run_in_background=true` or after
- * detach), and terminal text formatting.
- *
- * Spawn bindings use the explicit tool `model` choice first, before
- * `resolveSubagentBinding` falls back to the configured `[secondary_model.models]`
- * pool default or the caller's model; with `[secondary_model].force` set the
- * `model` parameter is not advertised and every spawn binds `default_model`.
- * The pool is gated behind the `secondary-model` experiment (via
- * `IFlagService`): while it is off the `model` parameter is stripped and
- * every spawn inherits the caller's model.
- * The selected alias is
- * resolved through the model catalog before lifecycle allocation. A resumed
- * agent keeps the model recorded in its own wire journal — with per-subagent
- * models there is no "child follows the parent's current model" invariant to
- * enforce.
- *
- * Registered via the module-level `registerAgentToolService(ISubagentTool,
- * SubagentTool)` at the bottom of this file — the same "import = register"
- * pattern used by every agent tool. The per-profile tool listings in the
- * description read the full `AgentToolContribution` collection — static
- * registrations and feature-contributed tools alike — not the runtime
- * registry, which only holds tools the caller's own Profile activated,
- * plus any dynamically registered tools. The description's catalog profile list is
- * snapshotted once the session catalog has loaded and frozen for the agent's
- * lifetime: plugin install / enable / disable / remove re-contributes
- * profiles mid-session, and a live read would rewrite the tools payload of
- * every later request — breaking the provider's prompt cache for a change a
- * live agent must not see (new profiles take effect on `/new` or `/reload`).
- * Bound at Agent scope.
- */
-
 import { type CollectionView } from '#/_base/di/collection';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import {
@@ -91,7 +51,8 @@ import type { Runtime } from '#/runtime/runtime';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
-import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
+import { emitAgentRunSpawned, mirrorAgentRun, SubagentStarted } from '#/session/subagent/mirrorAgentRun';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import {
   buildSubagentModelDescriptions,
@@ -200,8 +161,6 @@ export class SubagentTool implements ISubagentTool {
   private catalogProfiles(): readonly AgentProfile[] {
     if (this.frozenCatalogProfiles !== undefined) return this.frozenCatalogProfiles;
     const profiles = this.catalog.list();
-    // Freeze only on a loaded catalog — a pre-ready read could pin a partial
-    // listing for the agent's lifetime.
     if (this.catalogReady) this.frozenCatalogProfiles = profiles;
     return profiles;
   }
@@ -352,15 +311,6 @@ export class SubagentTool implements ISubagentTool {
       });
     }
 
-    const runInBackground = args.run_in_background === true;
-    emitAgentRunSpawned(requester, agentId, {
-      profileName,
-      parentToolCallId: toolCallId,
-      description: args.description,
-      runInBackground,
-      model: displayModel,
-    });
-
     const run = await this.subagents.run(
       agentId,
       { kind: 'prompt', prompt: promptText },
@@ -370,6 +320,7 @@ export class SubagentTool implements ISubagentTool {
       profileName,
       prompt: promptText,
       signal: controller.signal,
+      deferStarted: true,
       cancel: (reason) => {
         controller.abort(reason);
       },
@@ -493,6 +444,21 @@ export class SubagentTool implements ISubagentTool {
         };
       }
 
+      const requester = this.lifecycle.get(this.callerAgentId);
+      if (requester !== undefined) {
+        emitAgentRunSpawned(requester, handle.agentId, {
+          profileName: handle.profileName,
+          parentToolCallId: toolCallId,
+          description: args.description,
+          runInBackground,
+          model: handle.model,
+          taskId,
+        });
+        void requester.accessor
+          .get(IEventDispatcher)
+          ?.dispatch(new SubagentStarted({ subagentId: handle.agentId }));
+      }
+
       if (runInBackground) {
         return {
           output: formatBackgroundAgentResult(taskId, handle, args.description, allowBackground),
@@ -538,7 +504,6 @@ registerAgentToolService(ISubagentTool, SubagentTool, {
   domain: 'subagent',
   requiredRuntimeCapabilities: ['process'],
 });
-
 
 function buildProfileDescriptions(
   profiles: readonly AgentProfile[],

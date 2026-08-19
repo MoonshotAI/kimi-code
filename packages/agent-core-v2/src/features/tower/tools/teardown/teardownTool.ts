@@ -1,13 +1,3 @@
-/**
- * `tools` domain — `TowerTeardownTool` implementation (the `TowerTeardown`
- * tool).
- *
- * Tears the workspace down through the protocol `TowerStore` rooted at the
- * session cwd (`sessionContext`) and exits tower mode via `tower`; the comms
- * directory stays on disk as the audit trail. Registered for the main agent
- * only. Bound at Agent scope.
- */
-
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';

@@ -1,7 +1,3 @@
-/**
- * `mcpCore` domain — SSE transport MCP client.
- */
-
 import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerSseConfig } from './config-schema';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';

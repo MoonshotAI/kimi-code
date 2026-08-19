@@ -1,16 +1,3 @@
-/**
- * `InMemoryStorageService` — `IFileSystemStorageService` backed by in-memory maps.
- *
- * Not auto-registered: the Storage-layer backend is a deployment choice that
- * the composition root must provide. `bootstrap()` seeds a per-token
- * `FileStorageService` (rooted at `bootstrap.homeDir`) for production; the
- * test harness seeds this in-memory backend so tests keep a durable-enough
- * default. A scope that seeds neither backend will fail to resolve the storage
- * tokens on first use.
- *
- * `append` concatenates into the same key slot `write` replaces.
- */
-
 import {
   DisposableStore,
   combinedDisposable,

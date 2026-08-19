@@ -1,12 +1,3 @@
-/**
- * Scenario: the checked-in wire-protocol manifest matches the live
- * EVENT2_REGISTRY and parses as a valid TypeScript declaration file.
- *
- * Rebuilds `docs/wire-manifest.d.ts` from the actual durable Event2
- * registrations and fails when the file is stale. Regenerate with
- * `pnpm --filter @moonshot-ai/agent-core-v2 gen:wire-manifest`.
- */
-
 import { readFileSync } from 'node:fs';
 import { Project } from 'ts-morph';
 import { describe, expect, it } from 'vitest';

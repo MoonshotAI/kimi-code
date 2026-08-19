@@ -1,24 +1,4 @@
-/**
- * `tokenCounting` domain — the measured-anchor ledger state
- * (`tokenCountingKey`) and the transient events maintaining it.
- *
- * State is `{ anchors, tokens }`: `anchors` is the live history of measured
- * context sizes — one entry per measured LLM exchange (`measured: true`), or
- * a single rebased entry after clear / compaction (`measured` marks whether
- * the value is fully LLM-reported). Folding the ledger lets undo restore the
- * REAL size of a surviving prefix instead of re-estimating it. `tokens` is
- * the display value carried by the most recent event, kept for status
- * emission because folds cannot estimate.
- *
- * All three events are live-only (transient): the ledger is not a v1 record
- * type, so resume starts empty and reads estimates until the next measured
- * exchange — same contract as the previous single-anchor model. Each fold
- * keeps the same reference on a no-op and emits the `agent.status.updated`
- * contextTokens slice live (never on replay).
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { z } from 'zod';
 
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';

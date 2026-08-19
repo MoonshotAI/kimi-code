@@ -46,7 +46,6 @@ describe('ToolCallIdNormalizer', () => {
 
     expect(response.remapStreamedId('Bash_0', 0)).toBe('Bash_0');
     expect(response.remapStreamedId('Bash_0', 1)).toBe('Bash_0__2');
-    // A re-emitted function part for the same stream index keeps its assignment.
     expect(response.remapStreamedId('Bash_0', 1)).toBe('Bash_0__2');
 
     const finalized = response.remapFinalizedCalls([call('Bash_0'), call('Bash_0')]);
@@ -56,7 +55,7 @@ describe('ToolCallIdNormalizer', () => {
   it('seeds the seen set from restored context so a replayed id is rewritten on first sight', () => {
     const normalizer = new ToolCallIdNormalizer();
     normalizer.seedFrom(historyWith('Bash_0'));
-    normalizer.seedFrom(historyWith('ignored')); // seeding happens once
+    normalizer.seedFrom(historyWith('ignored'));
 
     const response = normalizer.beginResponse();
     expect(response.remapStreamedId('Bash_0', 0)).toBe('Bash_0__2');

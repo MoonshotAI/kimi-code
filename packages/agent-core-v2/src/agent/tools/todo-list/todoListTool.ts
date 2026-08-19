@@ -1,19 +1,3 @@
-/**
- * `tools` domain — `TodoListTool` implementation (the `TodoList` tool).
- *
- * The list is session-shared: the tool reads/writes `ISessionTodoService`
- * (`todo` domain), which persists every change as a `tools.update_store`
- * (`key: 'todo'`) wire record on the main agent.
- *
- * Registered via the module-level `registerAgentToolService(ITodoListTool,
- * TodoListTool)` at the bottom of this file — the same "import = register"
- * pattern used by every agent tool. `AgentToolActivationService` activates it
- * per agent when the profile allows (resolving the Session-scope
- * `ISessionTodoService` from the parent scope) — never from a service
- * constructor, which would re-enter `ISessionTodoService` while it is still
- * being constructed. Bound at Agent scope.
- */
-
 import type { ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';

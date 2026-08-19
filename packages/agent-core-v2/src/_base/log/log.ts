@@ -1,15 +1,3 @@
-/**
- * `_base/log` — structured logging contract.
- *
- * Defines the public logging model shared by every scope: the `LogEntry` /
- * `LogLevel` types, the `ILogger` / `ILogService` facade used by other domains
- * to emit leveled entries, and the plain `ILogWriter` sink shape. There is a
- * single `ILogService` DI token; each scope binds its own `*LogService`
- * implementation to it, so consumers just inject `@ILogService` and the scope
- * decides where entries land. `ILogWriter` is a plain (non-DI) interface — sinks
- * are created by the `*LogService` implementations, not registered.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export type LogLevel = 'off' | 'error' | 'warn' | 'info' | 'debug';

@@ -1,15 +1,8 @@
-/**
- * `plugin` domain — manages installed plugin state and consumption metadata.
- *
- * Installs, reloads, persists, and summarizes plugins, counting loadable
- * plugin skills through skill discovery.
- */
-
 import { cp, mkdir, mkdtemp, realpath, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import type { HookDef } from '#/agent/externalHooks/types';
+import type { HookDef } from '#/features/externalHooks/internal/types';
 import { discoverFileSkills } from '#/app/skillCatalog/fileSkillDiscovery';
 import type { SkillDiscoveryResult } from '#/app/skillCatalog/skillDiscovery';
 import type { SkillRoot } from '#/app/skillCatalog/types';

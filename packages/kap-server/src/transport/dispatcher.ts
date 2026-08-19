@@ -1,10 +1,3 @@
-/**
- * `/api/v1/debug` dispatcher — resolves the scope + Service + method from a request
- * and calls it. No facade: Services are reached directly through the scope
- * tree, the channel registry decides which Services are exposed at all, and the
- * method is invoked by reflection (VS Code's `ProxyChannel.fromService` model).
- */
-
 import {
   ErrorCodes,
   IAgentGoalService,
@@ -131,7 +124,6 @@ export async function dispatch(
     throw new Error2(ErrorCodes.REQUEST_INVALID, `method not found: ${serviceName}.${method}`);
   }
 
-  // Property read (e.g. `mode`, `rules`, `isActive`) — return as-is.
   if (typeof member !== 'function') {
     return assertSerializable(member);
   }

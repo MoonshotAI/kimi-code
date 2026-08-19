@@ -1,8 +1,3 @@
-/**
- * HTTP helpers for raw-content routes — request header access and single-range
- * `Range` header parsing shared by the file download / content endpoints.
- */
-
 export function pickHeader(
   headers: Record<string, unknown>,
   name: string,

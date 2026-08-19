@@ -1,20 +1,3 @@
-/**
- * `toolExecutor` domain — `IAgentToolExecutorService` implementation.
- *
- * Resolves executable tools through `toolRegistry`, adjudicates tool calls
- * through the `onBeforeExecuteTool` veto event, awaits readiness work
- * through the `onWillExecuteTool` participation event, finalizes results
- * through the ordered `onDidExecuteTool` hook, publishes tool lifecycle
- * events through `state` (`IEventDispatcher`), records telemetry through
- * `telemetry`, truncates
- * oversized outputs through `toolResultTruncation`, and logs parse
- * diagnostics through `log`. The mutable dup-type tracking state
- * (`toolCallDupTypes`, `dupTypeTurnId`) is registered into `agentState`
- * (`IAgentStateService`) and read/written through it; the emitters, the hook
- * slot, and the describer/guard registration slots stay plain fields. Bound
- * at Agent scope.
- */
-
 import { toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';

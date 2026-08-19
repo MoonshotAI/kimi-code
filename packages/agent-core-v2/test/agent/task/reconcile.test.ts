@@ -1,7 +1,3 @@
-/**
- * AgentTaskService reconcile + persistence integration tests.
- */
-
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';

@@ -1,23 +1,3 @@
-/**
- * Scenario: `IAgentSkillService.activate` is the wire-facing skill activation
- * entry — awaited, returning the launched turn id.
- *
- * The activation settles only once the turn has launched, and activation
- * failures (unknown skill, busy agent) surface to the caller instead of
- * fire-and-forget. Run: `pnpm --filter @moonshot-ai/agent-core-v2
- * exec vitest run test/agent/skill/activateSkill.test.ts`.
- *
- * Scenario: `IAgentSkillService.promptWithSkills` bundles one or more skill
- * activations into the prompt's own user message — the rendered skill blocks
- * precede the caller's parts in the content (one text part per skill, in
- * order) and every activation's metadata rides the prompt origin's
- * `skillActivations`. The bundle launches exactly one turn (one LLM call)
- * and undoes as a single anchor; `skill.activated` fires per skill before
- * `turn.started`. Unknown skill names, an empty skill list, and an empty
- * prompt each reject the whole submission with zero side effects (no LLM
- * call, no context, no events).
- */
-
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
@@ -89,7 +69,9 @@ describe('promptWithSkills', () => {
       input: [{ type: 'text', text: 'Review this change.' }],
       skills: [{ name: 'review' }, { name: 'security' }],
     });
-    expect(launched?.turn_id).toBe(0);
+    expect(launched.turn_id).toBe(0);
+    expect(launched.prompt_id).toBeTruthy();
+    expect(launched.state).toBe('running');
     await ctx.untilTurnEnd();
 
     expect(ctx.llmCalls).toHaveLength(1);
@@ -197,5 +179,22 @@ describe('promptWithSkills', () => {
     const undone = await ctx.rpc.undoHistory({ count: 1 });
     expect(undone).toBe(1);
     expect(ctx.context.get()).toHaveLength(0);
+  });
+
+  it('reserves the bundled prompt id against later prompt_id reuse', async () => {
+    ctx = agentWithSkills();
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    const launched = await ctx.rpc.promptWithSkills({
+      input: [{ type: 'text', text: 'Review this change.' }],
+      skills: [{ name: 'review' }],
+    });
+    await ctx.untilTurnEnd();
+
+    await expect(
+      ctx.rpc.prompt({
+        input: [{ type: 'text', text: 'again' }],
+        promptId: launched.prompt_id,
+      }),
+    ).rejects.toThrow(/already in use/i);
   });
 });

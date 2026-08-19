@@ -1,8 +1,3 @@
-/**
- * Low-level durable file-write primitives — atomic writes plus file and
- * directory fsync helpers.
- */
-
 import { randomBytes } from 'node:crypto';
 import { closeSync, fsyncSync, openSync } from 'node:fs';
 import * as nodeFs from 'node:fs';

@@ -17,7 +17,7 @@
 #   experimental             src/app/flag/flag.ts
 #   extraAgentDirs           src/workspace/workspaceAgentProfileLoader/configSection.ts
 #   extraSkillDirs           src/app/skillCatalog/configSection.ts
-#   hooks                    src/agent/externalHooks/configSection.ts
+#   hooks                    src/features/externalHooks/configSection.ts
 #   identity                 src/app/agentIdentity/configSection.ts
 #   image                    src/agent/media/configSection.ts
 #   loopControl              src/agent/loop/configSection.ts
@@ -135,7 +135,7 @@ extra_skill_dirs = []
 
 # ##########################################################################
 # hooks
-#   owner: src/agent/externalHooks/configSection.ts
+#   owner: src/features/externalHooks/configSection.ts
 #   scope: core
 #   hooks: custom fromToml · custom toToml
 # ##########################################################################

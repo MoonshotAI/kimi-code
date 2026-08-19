@@ -1,8 +1,3 @@
-/**
- * agent-core-v2 public surface — re-exports every domain barrel (grouped by
- * layer) so importing the package loads all scoped-registry registrations.
- */
-
 export * from '#/_base/di/descriptors';
 export * from '#/_base/di/errors';
 export * from '#/_base/di/graph';
@@ -327,6 +322,14 @@ export * from '#/features/plan/plan';
 export * from '#/features/plan/planOps';
 export * from '#/features/plan/planService';
 import '#/features/plan/planFeature';
+export * from '#/features/externalHooks/configSection';
+export * from '#/features/externalHooks/app/externalHooksRunner';
+export * from '#/features/externalHooks/app/externalHooksRunnerService';
+export * from '#/features/externalHooks/session/sessionExternalHooks';
+export * from '#/features/externalHooks/session/sessionExternalHooksService';
+export * from '#/features/externalHooks/agent/agentExternalHooks';
+export * from '#/features/externalHooks/agent/agentExternalHooksService';
+import '#/features/externalHooks/externalHooksFeature';
 export * from '#/features/debugEvents/debugEvents';
 export * from '#/features/debugEvents/debugEventsService';
 import '#/features/debugEvents/debugEventsFeature';
@@ -403,6 +406,8 @@ export * from '#/agent/tools/task/task-output/task-output';
 import '#/agent/tools/task/task-output/taskOutputTool';
 export * from '#/agent/tools/task/task-stop/task-stop';
 import '#/agent/tools/task/task-stop/taskStopTool';
+export * from '#/agent/tools/task/task-wait/task-wait';
+import '#/agent/tools/task/task-wait/taskWaitTool';
 export * from '#/agent/task/task';
 export * from '#/agent/task/taskOps';
 export * from '#/agent/task/taskService';
@@ -466,9 +471,8 @@ export * from '#/workspace/workspaceContext/workspaceContext';
 export * from '#/workspace/sessionLifecycle/sessionLifecycle';
 export * from '#/workspace/sessionLifecycle/sessionLifecycleEvents';
 export * from '#/workspace/sessionLifecycle/sessionLifecycleService';
+export * from '#/workspace/sessionLifecycle/coldSessionArchive';
 export * from '#/workspace/sessionLifecycle/internal/addressing';
-export * from '#/session/externalHooks/externalHooks';
-export * from '#/session/externalHooks/externalHooksService';
 import '#/app/sessionExport/errors';
 export * from '#/app/sessionExport/sessionExport';
 export * from '#/app/sessionExport/sessionExportService';
@@ -586,8 +590,6 @@ export * from '#/app/edit/editService';
 export * from '#/app/edit/textModel';
 export * from '#/agent/tools/edit/edit';
 import '#/agent/tools/edit/editTool';
-export * from '#/app/externalHooksRunner/externalHooksRunner';
-export * from '#/app/externalHooksRunner/externalHooksRunnerService';
 export * from '#/agent/tools/fetch-url/fetch-url';
 import '#/agent/tools/fetch-url/fetchUrlTool';
 export * from '#/app/web/web';
@@ -614,6 +616,7 @@ export * from '#/features/dateChange/dateChangeService';
 import '#/features/dateChange/dateChangeFeature';
 export * from '#/agent/contextProjector/contextProjector';
 export * from '#/agent/contextProjector/contextProjectorService';
+export * from '#/agent/contextProjector/mediaProjection';
 export * from '#/agent/tokenCounting/tokenCounting';
 export * from '#/agent/tokenCounting/tokenCountingOps';
 export * from '#/agent/tokenCounting/tokenCountingService';
@@ -622,9 +625,6 @@ export * from '#/agent/contextInjector/contextInjectorService';
 export * from '#/agent/plugin/agentPlugin';
 export * from '#/agent/plugin/agentPluginOps';
 export * from '#/agent/plugin/agentPluginService';
-import '#/agent/externalHooks/configSection';
-export * from '#/agent/externalHooks/externalHooks';
-export * from '#/agent/externalHooks/externalHooksService';
 export * from '#/agent/fullCompaction/strategy';
 export * from '#/agent/fullCompaction/fullCompaction';
 export * from '#/agent/fullCompaction/fullCompactionService';
@@ -651,9 +651,6 @@ export * from '#/mcpCore/config-schema';
 export * from '#/agent/media/mediaTools';
 export * from '#/agent/media/mediaToolsRegistrar';
 export * from '#/agent/media/registerMediaTools';
-// mediaRef keeps a named export list: the module's remaining helpers (suffix
-// tables, tag escaping, session fs layout) are domain-internal, and external
-// consumers only need the reference/tag grammar below.
 export {
   buildDaemonFileUrl,
   buildMediaPathTag,
@@ -669,9 +666,6 @@ export * from '#/agent/media/kimiFileUrl';
 export * from '#/agent/media/videoUpload';
 export * from '#/agent/media/mediaResolver';
 export * from '#/agent/media/mediaResolverService';
-// Deprecated aliases kept so existing consumers compile unchanged.
-export * from '#/agent/media/videoResolver';
-export * from '#/agent/media/videoResolverService';
 import '#/agent/media/configSection';
 export * from '#/agent/media/imageConfigBridge';
 import '#/agent/permissionMode/configSection';
@@ -694,9 +688,6 @@ export * from '#/agent/prompt/promptOps';
 export * from '#/agent/prompt/promptService';
 export * from '#/agent/prompt/promptMetadataText';
 export * from '#/agent/replayBuilder/types';
-// `replayBuilder/types` inlines its own `SessionSummary`; keep the barrel's
-// `SessionSummary` pinned to the session-index one (explicit re-export wins
-// over the ambiguous `export *` pair).
 export { type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 export * from '#/agent/undo/undo';
 export * from '#/agent/undo/undoService';

@@ -1,24 +1,4 @@
-/**
- * `stepRetry` domain — `IAgentStepRetryService` implementation.
- *
- * Loop error-recovery plugin: claims retryable provider failures (HTTP 429 /
- * 5xx, connection, timeout, empty response — `isRetryableGenerateError`) from
- * the loop's error-handler registry and re-enqueues the failed step's driver
- * at the head of the queue after exponential backoff (`retryBackoffDelays`).
- * The loop only learns that the error was caught; the retry rides the normal
- * step numbering and consumes `maxSteps` budget like any other step. Each
- * claimed failure dispatches the transient `turn.step.retrying` observable
- * (`TurnStepRetrying`) through `state` (`IEventDispatcher`). Consecutive
- * attempts are
- * counted per failed driver and reset when any step succeeds (`onDidFinishStep`)
- * or a new turn starts. The mutable retry state (`lastFailedDriverId`,
- * `failedAttempts`) is registered into `agentState` (`IAgentStateService`) and
- * read/written through it. Bound at Agent scope and constructed with the scope
- * so the handler registers before the first turn runs.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -74,7 +54,6 @@ export const stepRetryFailedAttemptsKey = defineState<number>(
   () => 0,
 );
 
-// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class AgentStepRetryService extends Disposable implements IAgentStepRetryService {
   declare readonly _serviceBrand: undefined;
 

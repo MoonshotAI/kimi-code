@@ -1,10 +1,3 @@
-/**
- * One-shot config migrations. Each migration runs at most once per kimi
- * home: a marker in `<home>/migrations-effort.json` records completion (ISO
- * timestamp), so a value the user re-sets by hand afterwards is never
- * migrated again. Best-effort and never throws — a migration must never
- * block startup.
- */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'pathe';
 

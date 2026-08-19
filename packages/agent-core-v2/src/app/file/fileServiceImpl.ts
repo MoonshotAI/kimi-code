@@ -1,15 +1,3 @@
-/**
- * `file` domain — `IFileService` implementation.
- *
- * Streams uploads into the `IBlobStore` under the `files` scope and keeps a
- * JSON `FileMeta` index in the same store under the `file` scope. Uploads are
- * written incrementally (`putStream`), so their size is bounded by disk, not
- * memory; the service counts bytes as they flow through to record
- * `FileMeta.size`. Prunes the index when a referenced blob is missing, and
- * hands downloads back as a lazy `Readable` over `getStream`. Bound at App
- * scope.
- */
-
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 

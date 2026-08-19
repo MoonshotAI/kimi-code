@@ -1,10 +1,3 @@
-/**
- * `event` domain — `IEventService` implementation.
- *
- * Delivers published `Event2` instances to subscribers through the `Emitter`
- * primitive. Bound at App scope.
- */
-
 import { type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
@@ -17,7 +10,6 @@ import type { Event2 } from './event2';
 export class EventService extends Service implements IEventService {
   declare readonly _serviceBrand: undefined;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private readonly emitter = this._register(new Emitter<Event2<any>>('publish'));
   readonly onDidPublish: Event<Event2<any>> = this.emitter.event;
 
@@ -25,12 +17,10 @@ export class EventService extends Service implements IEventService {
     return this.emitter.listenerCount;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   publish(event: Event2<any>): void {
     this.emitter.fire(event);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   subscribe(handler: (event: Event2<any>) => void): IDisposable {
     return this.emitter.event(handler);
   }

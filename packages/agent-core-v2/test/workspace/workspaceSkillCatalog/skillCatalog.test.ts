@@ -1,13 +1,3 @@
-/**
- * Scenario: workspace skill-source discovery, merge, and plugin refresh.
- *
- * Exercises the real Workspace-scoped catalog and source services with
- * filesystem or in-memory discovery boundaries, including controlled
- * concurrent refreshes and fs-watch-driven single-source rescans.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/workspace/workspaceSkillCatalog/skillCatalog.test.ts`.
- */
-
 import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
@@ -39,6 +29,7 @@ import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import {
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
@@ -64,6 +55,7 @@ import { ILogService } from '#/_base/log/log';
 import { HostFsWatchService } from '#/os/backends/node-local/hostFsWatchService';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 import { stubSkill } from '../../app/skillCatalog/stubs';
 import { stubProviderService } from '../../app/provider/stubs';
 import { stubLog } from '../../_base/log/stubs';
@@ -182,6 +174,7 @@ function makeHost(
   const config = configStub();
   const host = createScopedTestHost([
     stubPair(ISkillDiscovery, store),
+    stubPair(IFlagService, stubFlag(true)),
     stubPair(IBootstrapService, stubBootstrap('/home', {}, { skillDirs: explicitDirs })),
     stubPair(IConfigService, config),
     stubPair(IPluginService, pluginStub(pluginRoots, pluginReloadEmitter)),
@@ -395,6 +388,7 @@ describe('WorkspaceSkillCatalogService', () => {
     store.setExtraSkills([stubSkill('extra-only', { description: 'from extra', source: 'extra' })]);
     const ws = workspaceContextStub('/work');
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(ISkillDiscovery, store),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, config),
@@ -431,6 +425,7 @@ describe('WorkspaceSkillCatalogService', () => {
     const config = configStub();
     const ws = workspaceContextStub('/work');
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(ISkillDiscovery, store),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, config),
@@ -647,6 +642,7 @@ describe('WorkspaceSkillCatalogService', () => {
     };
     const ws = workspaceContextStub('/work');
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(ISkillDiscovery, new InMemorySkillDiscovery()),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
@@ -704,6 +700,7 @@ describe('WorkspaceSkillCatalogService', () => {
     const pluginService = pluginStub([], reloadEmitter);
     const ws = workspaceContextStub('/work');
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(ISkillDiscovery, new InMemorySkillDiscovery()),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
@@ -760,6 +757,7 @@ describe('WorkspaceSkillCatalogService', () => {
       stubSkill('demo-skill', { source: 'extra', plugin: { id: 'demo' } }),
     ]);
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(ISkillDiscovery, store),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IConfigService, configStub()),
@@ -871,6 +869,7 @@ describe('WorkspaceSkillCatalogService', () => {
       WorkspaceRootSkillSource,
     );
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(ISkillDiscovery, discovery),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
@@ -907,6 +906,7 @@ describe('WorkspaceSkillCatalogService', () => {
   it('rescans the workspace-root source when a project skill file changes on disk', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-'));
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
       stubPair(IPluginService, pluginStub()),
@@ -962,6 +962,7 @@ describe('WorkspaceSkillCatalogService', () => {
     const watchedRuntimeFile = await realpath(runtimeFile);
     let ignored: ((path: string) => boolean) | undefined;
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
       stubPair(IPluginService, pluginStub()),
@@ -1057,6 +1058,7 @@ describe('WorkspaceSkillCatalogService', () => {
   it('rescans when a skill under a dot directory appears on disk', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-dot-'));
     const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
       stubPair(IPluginService, pluginStub()),

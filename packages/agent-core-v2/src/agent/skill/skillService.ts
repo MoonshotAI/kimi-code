@@ -1,19 +1,3 @@
-/**
- * `skill` domain — `IAgentSkillService` implementation.
- *
- * Resolves skills from the session catalog, renders the activation prompt,
- * records the activation as a transient `SkillActivate` fact through
- * `dispatcher.dispatch` (the `skillKey` placeholder fold emits the
- * observable `SkillActivated`), drives user-slash activations into a new turn via
- * `prompt` (attachment parts from the caller ride the same user message after
- * the rendered prompt), settles `{turn_id}` for the caller, persists the
- * derived title/lastPrompt through `sessionMetadata` for the main agent only
- * (publishing the live update through `event`), and reports `skill_invoked` /
- * `flow_invoked` through `telemetry`. Replay drops the fold's emit, so neither
- * the event nor telemetry fires on resume (matching the
- * former `restoring` guard). Bound at Agent scope.
- */
-
 import { randomUUID } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -31,7 +15,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { Service } from '#/_base/di/service';
 import { ErrorCodes, Error2 } from '#/errors';
 import { isUserActivatableSkillType, type SkillDefinition } from '#/app/skillCatalog/types';
-import { IAgentPromptService, type PromptLaunchResult } from '#/agent/prompt/prompt';
+import { IAgentPromptService, reservePrompt, type PromptLaunchResult } from '#/agent/prompt/prompt';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -40,6 +24,7 @@ import {
   IAgentSkillService,
   type PromptSkillActivation,
   type PromptWithSkillsInput,
+  type PromptWithSkillsResult,
   type SkillActivationInput,
 } from './skill';
 import { SkillActivate, skillKey } from './skillOps';
@@ -130,7 +115,7 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     return { turn_id: turn.id };
   }
 
-  async promptWithSkills(input: PromptWithSkillsInput): Promise<PromptLaunchResult | undefined> {
+  async promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult> {
     if (input.input.length === 0) {
       throw new Error2(ErrorCodes.REQUEST_INVALID, 'promptWithSkills requires a non-empty prompt');
     }
@@ -155,8 +140,9 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     for (const activation of prepared) {
       void this.recordActivation(activation.origin);
     }
-    const handle = await this.prompt.enqueue({
-      message: {
+    const reservation = reservePrompt(this.prompt);
+    try {
+      const handle = await reservation.submit({
         role: 'user',
         content: [...prepared.map((activation) => activation.part), ...input.input],
         toolCalls: [],
@@ -164,11 +150,23 @@ export class AgentSkillService extends Service implements IAgentSkillService {
           kind: 'user',
           skillActivations: prepared.map((activation) => activation.entry),
         },
-      },
-    });
-    if (handle.state === 'pending') return undefined;
-    const turn = await handle.launched;
-    return turn === undefined ? undefined : { turn_id: turn.id };
+      });
+      if (handle.state === 'pending') {
+        return { prompt_id: handle.id, created_at: handle.createdAt, state: 'queued' };
+      }
+      const turn = await handle.launched;
+      if (turn === undefined && handle.state !== 'blocked') {
+        throw new Error2(ErrorCodes.INTERNAL, 'promptWithSkills failed to launch a turn');
+      }
+      return {
+        turn_id: turn?.id,
+        prompt_id: handle.id,
+        created_at: handle.createdAt,
+        state: handle.state === 'blocked' ? 'blocked' : 'running',
+      };
+    } finally {
+      reservation.dispose();
+    }
   }
 
   recordModelToolActivation(origin: SkillActivationOrigin): void {
@@ -240,10 +238,6 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       toolCalls: [],
       origin,
     };
-    // Plain-input equivalence, no opt-in: an activation that arrives while a
-    // turn is running steers into it at the next step boundary (the
-    // skill_activation origin rides the `turn.steer` record); with no running
-    // turn it queues as a fresh prompt turn exactly like normal input.
     if (this.loop.status().state === 'running') {
       return this.prompt.inject(message);
     }

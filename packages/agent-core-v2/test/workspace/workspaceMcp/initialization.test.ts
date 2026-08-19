@@ -1,13 +1,3 @@
-/**
- * Scenario: workspace MCP initialization — config-readiness gating and the
- * global `[mcp]` timeout preferences, end to end.
- *
- * Exercises the real `WorkspaceMcpService` + `WorkspaceMcpConfigService`
- * through DI against real temp config files and stdio fixture servers. Run:
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/workspace/workspaceMcp/initialization.test.ts`.
- */
-
 import { mkdtempSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

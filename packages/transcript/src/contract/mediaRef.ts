@@ -1,17 +1,3 @@
-/**
- * `contract` — media path tag + kimi-file ref recognition for read models.
- *
- * Browser-pure mirror of the engine grammar
- * (`packages/agent-core-v2/src/agent/media/mediaRef.ts`), duplicated
- * because this package must not import the engine — keep the two in sync.
- *
- * A daemon-ref media part is self-contained: the part type carries the kind
- * and the reference the daemon file id, so read models derive the attachment
- * straight from the part via `daemonFileRefFromPairingPart` — there is no
- * tag+ref pairing to compute. A standalone `<media path>` tag in history is
- * user-visible text or the legacy degrade form and always stays a text part.
- */
-
 export type MediaPathTagKind = 'image' | 'video' | 'audio' | 'file';
 
 export interface MediaPathTagMatch {

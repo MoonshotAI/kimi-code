@@ -1,9 +1,3 @@
-/**
- *   GET  /v1/capabilities
- *   GET  /v1/capabilities/{capability_id}
- *   POST /v1/capabilities/{capability_id}:install
- */
-
 import { z } from 'zod';
 
 export const capabilityStepSchema = z.object({

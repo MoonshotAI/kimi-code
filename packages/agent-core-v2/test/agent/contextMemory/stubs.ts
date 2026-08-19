@@ -1,12 +1,3 @@
-/**
- * `contextMemory` test stubs — shared doubles for `IAgentContextMemoryService` and its
- * collaborator (`IWireService`).
- *
- * Lives under `test/` (not `src/`) so test-support code stays out of the
- * production tree. Import from a relative path (`./stubs` or
- * `../contextMemory/stubs`).
- */
-
 import type { ServiceRegistration } from '#/_base/di/test';
 import { buildContextCompactionShape } from '#/agent/contextMemory/compactionHandoff';
 import {

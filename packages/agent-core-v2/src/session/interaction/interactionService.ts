@@ -1,22 +1,3 @@
-/**
- * `interaction` domain — `ISessionInteractionService` implementation.
- *
- * Owns the pending interaction set and resolves requests when a response
- * arrives; announces add/remove through a typed `onDidChangePending`. Every
- * request/resolution is also journaled as a durable `interaction.request` /
- * `interaction.resolved` event on the ORIGIN agent's dispatcher
- * (`origin.agentId ?? 'main'`), so the journal can rebuild interaction
- * entities on a cold transcript fold. The plain-data state (`pending`,
- * `recentlyResolved`, `nextId`) is registered into `sessionState`
- * (`ISessionStateService`) and
- * read/written through it. `IAgentLifecycleService` is resolved lazily at dispatch
- * time (via `IInstantiationService.invokeFunction`) — a constructor edge
- * would close a DI cycle. Direct construction without a
- * container (tests, embeddings) simply skips the journaling. The kernel's
- * pending semantics stay memory-only: pending promises are never restored
- * from the journal. Bound at Session scope.
- */
-
 import { Emitter, type Event } from '#/_base/event';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';

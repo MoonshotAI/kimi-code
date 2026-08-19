@@ -1,11 +1,3 @@
-/**
- * Zod schema half of the v1 event catalog (`packages/protocol/src/events.ts`),
- * ported verbatim for byte-level AsyncAPI/JSON-Schema compatibility. Interface
- * declarations and the deprecated volatile-event helpers are intentionally not
- * ported; `satisfies z.ZodType<T>` clauses are kept only where `T` is
- * importable from an agent-core-v2 leaf path and dropped elsewhere (dropped
- * clauses do not affect the emitted JSON Schema).
- */
 import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
@@ -27,7 +19,7 @@ import type {
   UserPromptOrigin,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import { messageContentSchema } from './message';
-import type { HookResultPayload } from '@moonshot-ai/agent-core-v2/agent/externalHooks/externalHooksService';
+import type { HookResultPayload } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {
   CompactionBlockedPayload,
   CompactionCompletedPayload,
@@ -477,6 +469,7 @@ export const toolUpdateSchema = z.object({
   percent: z.number().optional(),
   customKind: z.string().optional(),
   customData: z.unknown().optional(),
+  replace: z.boolean().optional(),
 }) satisfies z.ZodType<ToolUpdate>;
 
 export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
@@ -708,6 +701,7 @@ export const turnStartedEventSchema = z.object({
 
 export const turnEndedEventSchema = z.object({
   type: z.literal('turn.ended'),
+  time: z.number().optional(),
   turnId: z.number(),
   reason: turnEndReasonSchema,
   error: kimiErrorPayloadSchema.optional(),
@@ -851,6 +845,7 @@ export const subagentSpawnedEventSchema = z.object({
   runInBackground: z.boolean(),
   model: z.string().optional(),
   thinkingEffort: z.string().optional(),
+  taskId: z.string().optional(),
 }) satisfies z.ZodType<SubagentSpawnedPayload>;
 
 export const subagentStartedEventSchema = z.object({

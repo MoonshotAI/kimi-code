@@ -1,50 +1,3 @@
-/**
- * `GET /sessions/{session_id}/transcript` — turn-granular session transcript.
- *
- * The page unit is the turn: a page is a contiguous slice of turns plus the
- * markers/taskrefs in their segments (`paginateTurns`); `tasks`,
- * `interactions`, `attachments`, `todos`, `meta`, `agents` and
- * `pending_interactions` are global state and ship unpaginated with every
- * response.
- *
- *   - Live sessions answer from the in-memory `TranscriptStore`
- *     (`TranscriptService.forSessionLive`), awaiting the requested agent's
- *     wire-records backfill (`TranscriptService.whenReady` /
- *     `TranscriptService.ensureAgentHistory`) so first reads carry history —
- *     for any agent id, including unmaterialized subagents.
- *   - Cold sessions rebuild the requested agent from the persisted wire
- *     records (`TranscriptService.readColdSnapshot`, same reduction as the
- *     snapshot reader); an agent without records pages empty.
- *
- * **Error mapping**: unknown session → `40401` (session.not_found); invalid
- * query → `40001` (validation.failed, via defineRoute).
- *
- * `GET /sessions/{session_id}/transcript/ops` is the point-to-point catch-up
- * companion: journaled op batches with seq > `since_seq` for one agent (live
- * sessions only — cold sessions answer `complete: false`), letting a client
- * that holds watermark N converge without a full refresh.
- *
- * `GET /sessions/{session_id}/transcript/user-messages` projects every
- * turn-opening input (turns with a defined `prompt`, plus attachment-only
- * prompts normalized to `""`) out of the transcript,
- * grouped per agent — agents are separate transcripts, so user messages are
- * per-agent by construction. It reads the same live-store / cold-rebuild
- * paths as the paged route, but unpaginated (user messages are few compared
- * to the timeline); `agent_id` is optional and narrows the read to one agent.
- *
- * `GET /sessions/{session_id}/transcript/plan` answers the plan information
- * of an agent's ExitPlanMode tool calls (`agent_id` required; `tool_call_id`
- * optional — present narrows the read to that one call, absent lists every
- * call with recoverable content, in timeline order): the reviewed plan
- * content, the plan file path, the offered options, and the review outcome.
- * The content is projected from the first available fact —
- * the linked approval interaction's persisted `request` display (every
- * interactive review, live or cold), the live tool frame's display (auto
- * permission mode), or the tool result output text (cold rebuilds where the
- * call never went through an interaction). It never touches the blob store:
- * the `plan.revision` reference records carry no tool-call linkage.
- */
-
 import { MAIN_AGENT_ID, type Scope } from '@moonshot-ai/agent-core-v2';
 import {
   isPlainAgentId,
@@ -82,11 +35,6 @@ const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
 
-/**
- * HTTP query strings arrive as `Record<string, string>`; `page_size` is
- * coerced here so the protocol's response schema stays HTTP-agnostic —
- * mirrors `messages.ts:messagesListQueryCoercion`.
- */
 const transcriptQueryCoercion = z
   .object({
     agent_id: z.string().min(1),
@@ -115,10 +63,6 @@ const transcriptQueryCoercion = z
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-/**
- * `GET .../transcript/ops` query: `since_seq` is the caller's op-batch
- * watermark (coerced from the query string, like `page_size` above).
- */
 const transcriptOpsQueryCoercion = z
   .object({
     agent_id: z.string().min(1),
@@ -135,14 +79,8 @@ const transcriptOpsQueryCoercion = z
     }
   });
 
-/** Default turns per page (protocol contract; max enforced by the query schema). */
 const DEFAULT_PAGE_SIZE = 20;
 
-/**
- * `GET .../transcript/user-messages` query: `agent_id` is optional — present
- * reads that one agent, absent reads every rostered agent (agents are
- * separate transcripts, so user messages are per-agent by construction).
- */
 const userMessagesQueryCoercion = z
   .object({
     agent_id: z.string().min(1).optional(),
@@ -158,12 +96,6 @@ const userMessagesQueryCoercion = z
     }
   });
 
-/**
- * `GET .../transcript/plan` query: both `agent_id` and `tool_call_id` are
- * `GET .../transcript/plan` query: `agent_id` is required (a tool call only
- * exists inside one agent's transcript); `tool_call_id` is optional — present
- * narrows the read to that one ExitPlanMode call, absent lists every one.
- */
 const planQueryCoercion = z
   .object({
     agent_id: z.string().min(1),
@@ -212,9 +144,6 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
         pageSize: query.page_size ?? DEFAULT_PAGE_SIZE,
       };
 
-      // Live session — answer from the bound store, after the requested
-      // agent's history backfill has landed (full reads always see the
-      // established transcript, for any agent id).
       const store = transcriptService.forSessionLive(session_id);
       if (store !== undefined) {
         await transcriptService.whenReady(session_id);
@@ -234,7 +163,6 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
               meta: transcript.getMeta(),
               agents: store.agents(),
               pending_interactions: transcript.listPendingInteractions(),
-              // Watermark: this state includes every op batch with seq <= N.
               seq: transcriptService.getSeqWatermark(session_id, query.agent_id),
             },
             req.id,
@@ -243,16 +171,12 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
         return;
       }
 
-      // Cold session — rebuild the requested agent from its wire records.
       const snapshot = await transcriptService.readColdSnapshot(session_id, query.agent_id);
       if (snapshot === undefined) {
         sendSessionNotFound(reply, req.id, session_id);
         return;
       }
       const page = paginateTurns(snapshot.items, pageQuery);
-      // The roster comes from the persisted session metadata — never from
-      // the requested id itself: include it only when it actually has
-      // content (or is main), so an empty probe conjures no ghost entry.
       const roster = (await transcriptService.readColdRoster(session_id)) ?? [];
       if (
         !roster.some((d) => d.agentId === query.agent_id) &&
@@ -305,9 +229,6 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
 
       const catchup = transcriptService.getOpsSince(session_id, query.agent_id, query.since_seq);
       if (catchup === undefined) {
-        // Not live in this process: a truly unknown session is a 40401 (same
-        // mapping as the transcript route); a known-but-cold session has no
-        // journal, so the catch-up is incomplete by definition.
         const roster = await transcriptService.readColdRoster(session_id);
         if (roster === undefined) {
           sendSessionNotFound(reply, req.id, session_id);
@@ -355,9 +276,6 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
       const { session_id } = req.params;
       const { agent_id } = req.query;
 
-      // Live session — the store already holds the full timeline; the roster
-      // was seeded from session metadata on bind, so an agent_id-less read
-      // covers every agent (each backfilled on demand, like the paged route).
       const store = transcriptService.forSessionLive(session_id);
       if (store !== undefined) {
         await transcriptService.whenReady(session_id);
@@ -377,10 +295,6 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
         return;
       }
 
-      // Cold session — rebuild each agent from its wire records. The roster
-      // comes from the persisted session metadata; main is always included on
-      // a full read since it may have records even when the metadata lists no
-      // agents (same fallback as the paged route's ghost-entry rule).
       const roster = await transcriptService.readColdRoster(session_id);
       if (roster === undefined) {
         sendSessionNotFound(reply, req.id, session_id);
@@ -432,7 +346,6 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
       const { session_id } = req.params;
       const { agent_id, tool_call_id } = req.query;
 
-      // Live session — same read path as the paged route.
       const store = transcriptService.forSessionLive(session_id);
       if (store !== undefined) {
         await transcriptService.whenReady(session_id);
@@ -451,9 +364,6 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
         return;
       }
 
-      // Cold session — rebuild the agent from its wire records (undefined
-      // means the session itself is unknown, same mapping as the paged
-      // route).
       const snapshot = await transcriptService.readColdSnapshot(session_id, agent_id);
       if (snapshot === undefined) {
         sendSessionNotFound(reply, req.id, session_id);
@@ -470,9 +380,6 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
   app.get(planRoute.path, planRoute.options, planRoute.handler as Parameters<TranscriptRouteHost['get']>[2]);
 }
 
-/**
- * One user-message wire entry (snake_case projection of the turn header).
- */
 interface UserMessageEntry {
   turn_id: string;
   ordinal: number;
@@ -483,16 +390,6 @@ interface UserMessageEntry {
   started_at?: string;
 }
 
-/**
- * Project the user messages out of one agent's full timeline: every turn with
- * a defined prompt, in timeline order. An attachment-only prompt folds to no
- * text — live turns then carry `prompt: undefined` while the cold rebuild
- * yields `""`; both normalize to `""` here so the two paths list the same
- * messages. A genuinely promptless turn (no text, no attachments) stays
- * projected out. `resolveAttachment` looks up the referenced entities (live:
- * the store's attachment map; cold: the snapshot's array) so the response
- * carries their metadata alongside the ids.
- */
 function projectUserMessages(
   items: readonly TranscriptItem[],
   resolveAttachment: (id: string) => TranscriptAttachment | undefined,
@@ -544,18 +441,12 @@ function sendToolCallNotFound(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Plan projection (`GET .../transcript/plan`)
-// ---------------------------------------------------------------------------
-
-/** The review round-trip of one ExitPlanMode call, from its approval interaction. */
 interface PlanReviewInfo {
   state: 'pending' | 'approved' | 'rejected' | 'cancelled';
   selected_option?: string;
   feedback?: string;
 }
 
-/** One ExitPlanMode call's projected plan information. */
 interface PlanInfo {
   tool_call_id: string;
   turn_id: string;
@@ -566,27 +457,12 @@ interface PlanInfo {
   review?: PlanReviewInfo;
 }
 
-/** Structural read of the open-content `plan_review` display payload. */
 interface PlanReviewDisplayInfo {
   plan: string;
   path?: string;
   options?: { label: string; description?: string }[];
 }
 
-/**
- * Project the plan information of an agent's ExitPlanMode tool calls, in
- * timeline order. `toolCallId` narrows the read to that one call. A call
- * whose content is not recoverable (e.g. it errored before the review
- * display existed) is skipped. Content comes from the first available fact:
- *
- *  1. the linked approval interaction's persisted `request` display — every
- *     interactive review (approve / Revise / Reject / dismiss), live or cold;
- *  2. the tool frame's `display` — live only (cold rebuilds do not restore
- *     displays), covers auto permission mode where no interaction exists;
- *  3. the tool frame's `output` text — the approved/auto-approved tool
- *     result embeds the plan body (see `parsePlanFromOutput`), the only
- *     source for cold rebuilds without an interaction.
- */
 function projectPlans(
   items: readonly TranscriptItem[],
   interactions: readonly TranscriptInteraction[],
@@ -607,7 +483,6 @@ function projectPlans(
   return plans;
 }
 
-/** Project one ExitPlanMode tool frame; `undefined` when no content is recoverable. */
 function projectPlanFrame(
   turnId: string,
   frame: ToolCallFrame,
@@ -638,7 +513,6 @@ function projectPlanFrame(
   return undefined;
 }
 
-/** Map an approval interaction onto the review info; `undefined` when there is none. */
 function readPlanReview(interaction: TranscriptInteraction | undefined): PlanReviewInfo | undefined {
   if (interaction === undefined) return undefined;
   const state = interaction.state;
@@ -660,7 +534,6 @@ function readPlanReview(interaction: TranscriptInteraction | undefined): PlanRev
   return { state, selected_option: selected, feedback };
 }
 
-/** Read a `plan_review` display payload (open content) into plan info. */
 function readPlanReviewDisplay(display: unknown): PlanReviewDisplayInfo | undefined {
   if (display === null || typeof display !== 'object') return undefined;
   const d = display as { kind?: unknown; plan?: unknown; path?: unknown; options?: unknown };
@@ -687,17 +560,9 @@ function readPlanReviewDisplay(display: unknown): PlanReviewDisplayInfo | undefi
   };
 }
 
-// The wording mirrors `formatPlanForOutput` / `formatAutoApprovedPlanForOutput`
-// in `agent-core-v2/src/features/plan/tools/exit-plan-mode/exitPlanModeTool.ts` — the approved
-// tool result embeds the full plan body after one of these markers, and the
-// plan file path on a `Plan saved to: <path>` line.
 const PLAN_SAVED_TO_MARKER = 'Plan saved to: ';
 const PLAN_BODY_MARKERS = ['## Approved Plan:\n', '## Plan (auto-approved, not user-reviewed):\n'];
 
-/**
- * Recover plan info from the ExitPlanMode tool result output text — the cold
- * rebuild path keeps the tool result but not the ephemeral review display.
- */
 function parsePlanFromOutput(output: unknown): { plan: string; path?: string } | undefined {
   if (typeof output !== 'string') return undefined;
   let path: string | undefined;

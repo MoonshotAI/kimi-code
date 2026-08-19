@@ -1,15 +1,3 @@
-/**
- * `contextMemory` domain — `IAgentContextMemoryService` implementation.
- *
- * Owns per-agent conversation history through the event dispatcher, maintains
- * measurements with `tokenCounting`. Every
- * splice-shaped mutation (`clear` / `applyCompaction` / `undo`, plus verified
- * cross-model trailing removal) publishes `context.spliced` from the live path
- * only — replay rebuilds silently — and truncates the measured-anchor ledger
- * when a cut crosses an anchor, letting `tokenCounting` restore the surviving
- * prefix's REAL size from the remaining anchors. Bound at Agent scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -46,7 +34,6 @@ import {
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
 
-// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class AgentContextMemoryService extends Disposable implements IAgentContextMemoryService {
   declare readonly _serviceBrand: undefined;
 
@@ -165,9 +152,6 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   private dispatchCutEvents(cutIndex: number): void {
     const model = this.agentState.get(tokenCountingKey);
     if (!model.anchors.some((anchor) => anchor.length > cutIndex)) return;
-    // The display tokens are the post-cut size computed from the CURRENT
-    // ledger — anchors at or below the cut are identical before and after
-    // the truncation, so the pre-dispatch read is exact.
     void this.dispatcher.dispatch(
       new TokenCountingTruncated({
         length: cutIndex,

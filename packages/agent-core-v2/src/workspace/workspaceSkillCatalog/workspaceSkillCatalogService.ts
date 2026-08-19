@@ -1,19 +1,3 @@
-/**
- * `workspaceSkillCatalog` domain — `IWorkspaceSkillCatalog`
- * implementation.
- *
- * Merges builtin, user, explicit, extra, workspace-root, and plugin skill
- * sources by priority ONCE per handler, serializing refreshes for each
- * source; afterwards a source's `onDidChange` (fs watch / config section /
- * plugin reload) re-scans that source alone and re-fires the merged change
- * event — no full rescan ever leaves the build-time load. The merged view is
- * shared by every session of the handler through the
- * `ISessionSkillCatalogData` seed (`sessionData()`), a live read view over
- * this service. The plain-data state (`contributions`, `merged`) is
- * registered into `workspaceState` (`IWorkspaceStateService`) and
- * read/written through it. Bound at Workspace scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { defineState } from '#/state/state';

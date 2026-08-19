@@ -1,16 +1,4 @@
-/**
- * `permissionMode` domain — the `permissionModeKey` /
- * `permissionModeConfiguredKey` states and the durable `permission.set_mode`
- * event (`PermissionSetMode`) for the agent's permission mode.
- *
- * Declares the mode as a scalar state (initial `manual`) plus a replay marker
- * state that distinguishes an explicit persisted mode from the default. The
- * single durable event replaces the mode and sets the marker; both states fold
- * it. Scope-agnostic.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { z } from 'zod';
 
 import type { PermissionMode } from '#/agent/permissionPolicy/types';

@@ -1,10 +1,3 @@
-/**
- *   GET  /v1/plugins
- *   GET  /v1/plugins/marketplace
- *   POST /v1/plugins
- *   POST /v1/plugins/{plugin_id}:{enable,disable,remove}
- */
-
 import { z } from 'zod';
 
 /** GitHub provenance for github-sourced plugins (domain PluginGithubMetadata). */
@@ -42,7 +35,6 @@ export const listPluginsResponseSchema = z.object({
 export type ListPluginsResponse = z.infer<typeof listPluginsResponseSchema>;
 
 export const installPluginRequestSchema = z.object({
-  /** local path, https zip URL, or GitHub repo URL — same semantics as the CLI. */
   source: z.string().min(1),
 });
 export type InstallPluginRequest = z.infer<typeof installPluginRequestSchema>;
@@ -54,23 +46,15 @@ export const pluginMarketplaceEntrySchema = z.object({
   description: z.string().optional(),
   homepage: z.string().optional(),
   keywords: z.array(z.string()).optional(),
-  /** Catalog-declared version; absent for entries that track a moving source. */
   version: z.string().optional(),
   source: z.string(),
-  /** Present when the plugin is installed locally (detected on demand). */
   installed: z
     .object({
       version: z.string().optional(),
       enabled: z.boolean(),
     })
     .optional(),
-  /** True only when both versions are valid semver and catalog > installed. */
   updateAvailable: z.boolean().optional(),
-  /**
-   * Set when the entry is a built-in capability's wiring plugin — install it
-   * through `/capabilities/{capabilityId}:install` (binary runtime + wiring);
-   * a plain plugin install sets up the wiring layer only.
-   */
   capabilityId: z.string().optional(),
 });
 export type PluginMarketplaceEntryWire = z.infer<typeof pluginMarketplaceEntrySchema>;

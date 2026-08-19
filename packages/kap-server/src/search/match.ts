@@ -1,17 +1,3 @@
-/**
- * `search` module — query shape, sort order, keyset boundaries, bounded
- * collection and the shared match/confirm pass (pure logic).
- *
- * Extracted from `searchService.ts` so the SAME implementation backs both
- * consumers:
- *   - the main-process service (the live transcript route), and
- *   - the host-agnostic index core (`indexCore.ts`), which runs the index
- *     route inside the search worker thread.
- *
- * The worker entry's import closure is loaded under Node's native type
- * stripping, so every relative import here uses an explicit `.ts` specifier.
- */
-
 import { createHash } from 'node:crypto';
 
 import { normalizeLiteral } from '@moonshot-ai/minidb';
@@ -22,10 +8,6 @@ import {
   type GlobalSearchSource,
 } from './contract.ts';
 import type { MessageDoc, SearchDoc, TitleDoc } from './docs.ts';
-
-// ---------------------------------------------------------------------------
-// Normalized query (produced by the service, consumed by both routes)
-// ---------------------------------------------------------------------------
 
 export interface NormalizedQuery {
   readonly query: string;
@@ -64,10 +46,6 @@ export interface SearchBudgets {
   readonly queryTextBudgetChars: number;
 }
 
-// ---------------------------------------------------------------------------
-// Page-token decoding products (tokens themselves are the service's business)
-// ---------------------------------------------------------------------------
-
 /**
  * Sort boundary of the last returned hit — the keyset cursor:
  *   - literal mode / `time_desc` / `time_asc`: `[time, key]`;
@@ -80,17 +58,12 @@ export type SortBoundary = readonly (number | string)[];
 export type DecodedPage =
   | { readonly kind: 'first' }
   | { readonly kind: 'keyset'; readonly boundary: SortBoundary }
-  /** Legacy v1 offset token, accepted during the transition window. */
   | { readonly kind: 'legacy'; readonly skip: number };
 
 /** Boundary tuple width for the query's effective sort order. */
 export function boundaryWidth(q: NormalizedQuery): 2 | 3 {
   return q.mode !== 'literal' && q.sort === 'score' ? 3 : 2;
 }
-
-// ---------------------------------------------------------------------------
-// Sort order, boundary filtering and bounded collection (both routes)
-// ---------------------------------------------------------------------------
 
 /** One matched document with its stable key and match context. */
 export interface MatchedRow {
@@ -136,7 +109,6 @@ export function boundaryOf(q: NormalizedQuery, row: MatchedRow): SortBoundary {
   return boundaryWidth(q) === 3 ? [row.score, row.value.time, row.key] : [row.value.time, row.key];
 }
 
-/** Whether the row ranks strictly AFTER the boundary in the sort order. */
 function rowAfterBoundary(q: NormalizedQuery, row: MatchedRow, boundary: SortBoundary): boolean {
   let cmp: number;
   if (boundary.length === 3) {
@@ -167,7 +139,7 @@ export class RowTopK {
   ) {}
 
   private worse(x: MatchedRow, y: MatchedRow): boolean {
-    return compareRows(this.q, x, y) > 0; // x ranks after y
+    return compareRows(this.q, x, y) > 0;
   }
 
   offer(row: MatchedRow): void {
@@ -183,7 +155,7 @@ export class RowTopK {
       }
       return;
     }
-    if (this.k === 0 || !this.worse(a[0]!, row)) return; // must beat the worst kept
+    if (this.k === 0 || !this.worse(a[0]!, row)) return;
     a[0] = row;
     let i = 0;
     for (;;) {
@@ -204,7 +176,6 @@ export class RowTopK {
   }
 }
 
-/** How often the match loop re-checks the deadline (candidate iterations). */
 const DEADLINE_CHECK_STRIDE = 64;
 
 /**
@@ -236,22 +207,12 @@ export function matchDocs(
     if (q.role !== undefined && doc.role !== q.role) continue;
     if (q.startTime !== undefined && doc.time < q.startTime) continue;
     if (q.endTime !== undefined && doc.time > q.endTime) continue;
-    // The boundary check only needs the sort key (score/time/key), so it
-    // runs BEFORE the expensive literal confirmation.
     if (boundary !== undefined && !rowAfterBoundary(q, { key, value: doc, score }, boundary)) {
       continue;
     }
     if (literalQuery !== undefined) {
       budget.textCharsLeft -= doc.text.length;
       if (budget.textCharsLeft < 0) return { rows, incomplete: 'deadline' };
-      // Two-phase execution (same model as Elasticsearch's wildcard field):
-      // candidates (from the n-gram index, or every in-memory doc on the
-      // live route) are confirmed against the document text — hash
-      // collisions and non-contiguous n-gram coverage can produce false
-      // positives. Zero false positives is the hard guarantee of literal
-      // mode. The match offset doubles as the snippet anchor. Deliberate
-      // deviation from ES: the comparison is case-insensitive (NFKC +
-      // lowercase), aligned with the terms tokenizer.
       const at = normalizeLiteral(doc.text).indexOf(literalQuery);
       if (at === -1) continue;
       rows.push({ key, value: doc, score: 0, anchor: at });
@@ -289,10 +250,6 @@ export function paginateRows(
   }
   return { pageRows, hasMore };
 }
-
-// ---------------------------------------------------------------------------
-// Page tokens v2 — keyset cursor + generation, legacy v1 offset compat
-// ---------------------------------------------------------------------------
 
 /**
  * The page token encodes a fingerprint of the query conditions — changing
@@ -355,8 +312,6 @@ export function decodePageToken(
     );
   }
   if (p.v === undefined) {
-    // Legacy v1 offset token (`{f, s}`) — transition window: answer it with
-    // offset semantics; the response issues a v2 keyset token back.
     if (typeof p.s !== 'number' || !Number.isInteger(p.s) || p.s < 0) {
       throw new GlobalSearchError('invalid_page_token', 'pageToken is malformed');
     }

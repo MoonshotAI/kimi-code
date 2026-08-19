@@ -1,12 +1,3 @@
-/**
- * Session/agent meta state that floats above the timeline.
- *
- * `meta` is global (never paginated) and state-merged, not appended: every
- * `meta.merge` op carries the freshest whole sub-state. The goal strip above
- * a composer is the canonical consumer — a goal simultaneously appears inline
- * as a 'goal' marker and here as floating status.
- */
-
 import type { StepUsage } from './turn';
 
 export type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete';

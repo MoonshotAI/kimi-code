@@ -1,13 +1,3 @@
-/**
- * Event type uniqueness lint — statically scans `src/**` for duplicate durable
- * event type declarations (`static override readonly type` inside a class
- * carrying `static override readonly durable = true`), and runtime-checks the
- * two registration channels: `registerEvent2Class` fails fast with
- * `DuplicateEventError` on a colliding durable class, while
- * `foldEventStateContributions` (the contribution seam) skips a colliding
- * record and reports it through `onUnexpectedError`.
- */
-
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';

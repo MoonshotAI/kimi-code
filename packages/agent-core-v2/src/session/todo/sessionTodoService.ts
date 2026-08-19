@@ -1,14 +1,3 @@
-/**
- * `todo` domain — `ISessionTodoService` implementation.
- *
- * Provides session-wide todo access through the main agent's `wire`, binds
- * todo capabilities into each agent, and publishes changes through its typed
- * event. The main agent's wire owns the replayable state (including the
- * undoable `todoKey`); this facade keeps no list copy of its own
- * and there is deliberately no second session-level wire aggregate. Bound at
- * Session scope.
- */
-
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';

@@ -1,14 +1,4 @@
-/**
- * `undo` domain — `IAgentConversationUndoService` implementation.
- *
- * Owns idle conversation undo coordination and restored observable state.
- * Coordinates `contextMemory`, undo participants, `fullCompaction`,
- * `loop`, `prompt`, Agent and Session identity, `sessionMetadata`, `event`,
- * `eventBus`, `telemetry`, and `wire`. Bound at Agent scope.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';

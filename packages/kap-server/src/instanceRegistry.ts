@@ -1,19 +1,3 @@
-/**
- * Server instance registry — the discovery mechanism for kap-server instances
- * sharing one home directory.
- *
- * Every server instance writes a self-describing file under
- * `<home>/server/instances/<serverId>.json`. Multiple instances can coexist in
- * the same home directory and discover each other by reading the directory.
- * Each file is single-writer (only its owning process ever rewrites it), so
- * updates are race-free; stale entries left by a crashed peer are swept lazily
- * on `register` / `listLive` via a `kill(pid, 0)` probe.
- *
- * The `heartbeat_at` field is informational (diagnostics + a hook for future
- * cross-machine TTL liveness); same-machine stale detection keys off pid
- * liveness only.
- */
-
 import { randomBytes } from 'node:crypto';
 import { mkdir, open, readdir, readFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -38,7 +22,6 @@ export interface ServerInstanceInfo {
   readonly serverVersion?: string;
 }
 
-/** On-disk JSON shape. snake_case to match operator-facing logs and the legacy lock. */
 interface ServerInstanceDisk {
   server_id: string;
   pid: number;
@@ -46,8 +29,6 @@ interface ServerInstanceDisk {
   port: number;
   started_at: number;
   heartbeat_at: number;
-  // Wire name kept as `host_version`: external tooling (kimi-inspect's server
-  // discovery) parses these files independently.
   host_version?: string;
 }
 
@@ -80,7 +61,6 @@ export interface InstanceRegistryOptions {
   readonly heartbeatIntervalMs?: number;
 }
 
-/** `process.kill(pid, 0)` probe — true if the pid exists, false on ESRCH. */
 function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -88,9 +68,7 @@ function pidAlive(pid: number): boolean {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ESRCH') return false;
-    // EPERM = process exists but we can't signal it (different user). Treat as alive.
     if (code === 'EPERM') return true;
-    // Anything else: be safe, assume alive so we don't clobber a live entry.
     return true;
   }
 }
@@ -139,7 +117,6 @@ function decode(raw: string): ServerInstanceInfo | undefined {
   }
 }
 
-/** Read + decode one instance file; undefined on missing/unparseable input. */
 async function readInstanceFile(filePath: string): Promise<ServerInstanceInfo | undefined> {
   try {
     return decode(await readFile(filePath, 'utf8'));
@@ -149,7 +126,6 @@ async function readInstanceFile(filePath: string): Promise<ServerInstanceInfo | 
   }
 }
 
-/** Atomic (rename-based) write. Single-writer per file, so no lock is needed. */
 async function writeFileAtomic(filePath: string, content: string): Promise<void> {
   const tmpPath = `${filePath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
   let renamed = false;
@@ -167,13 +143,11 @@ async function writeFileAtomic(filePath: string, content: string): Promise<void>
       try {
         await unlink(tmpPath);
       } catch {
-        // best-effort cleanup
       }
     }
   }
 }
 
-/** Remove dead-pid entries in the directory. Best-effort; ENOENT races are ignored. */
 async function sweepStale(instancesDir: string): Promise<void> {
   let names: string[];
   try {
@@ -186,8 +160,6 @@ async function sweepStale(instancesDir: string): Promise<void> {
     names.filter(isInstanceFile).map(async (name) => {
       const filePath = join(instancesDir, name);
       const info = await readInstanceFile(filePath);
-      // Only remove entries we can positively identify as dead. Unparseable
-      // files are left alone — they may belong to a live peer mid-write.
       if (info === undefined || pidAlive(info.pid)) return;
       try {
         await unlink(filePath);
@@ -198,11 +170,6 @@ async function sweepStale(instancesDir: string): Promise<void> {
   );
 }
 
-/**
- * Read every live instance in the directory, lazily unlinking dead-pid entries.
- * Results are sorted by `startedAt` ascending so "first" is the longest-running
- * instance — deterministic for consumers that pick one.
- */
 async function listLiveInternal(instancesDir: string): Promise<readonly ServerInstanceInfo[]> {
   let names: string[];
   try {
@@ -244,18 +211,12 @@ export function createInstanceRegistry(options: InstanceRegistryOptions = {}): I
       await mkdir(instancesDir, { recursive: true });
       await sweepStale(instancesDir);
 
-      // Mutable per-registration state so `update` and the heartbeat rewrite
-      // the latest port without re-reading the file.
       const state: { port: number; released: boolean } = { port: info.port, released: false };
 
-      // Count of writes that passed the `released` check but have not finished
-      // their atomic rename yet. `release()` must drain them before unlinking:
-      // a rename that lands after the unlink would recreate the file.
       let inflightWrites = 0;
       let onWritesDrained: (() => void) | null = null;
 
       const write = async (): Promise<void> => {
-        // Bail out once released so no new write starts after `release()`.
         if (state.released) return;
         inflightWrites += 1;
         try {
@@ -279,7 +240,6 @@ export function createInstanceRegistry(options: InstanceRegistryOptions = {}): I
 
       const timer = setInterval(() => {
         void write().catch(() => {
-          // Best-effort heartbeat: a transient fs error must not crash the process.
         });
       }, heartbeatIntervalMs);
       timer.unref();
@@ -295,8 +255,6 @@ export function createInstanceRegistry(options: InstanceRegistryOptions = {}): I
           if (state.released) return;
           state.released = true;
           clearInterval(timer);
-          // Wait for writes already in flight so their atomic rename cannot
-          // recreate the file after we unlink it.
           if (inflightWrites > 0) {
             await new Promise<void>((resolve) => {
               onWritesDrained = resolve;

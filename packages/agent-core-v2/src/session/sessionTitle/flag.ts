@@ -1,12 +1,3 @@
-/**
- * `sessionTitle` domain — experimental flag for AI session title generation.
- *
- * Gates every `generateTitle` entry point (the kap-server route, klient, and
- * through them the desktop/web auto trigger and rename-field action). Off by
- * default; enable via `KIMI_CODE_EXPERIMENTAL_AUTO_SESSION_TITLE`, the master
- * `KIMI_CODE_EXPERIMENTAL_FLAG`, or the `[experimental]` config section.
- */
-
 import { type FlagDefinitionInput, registerFlagDefinition } from '#/app/flag/flagRegistry';
 
 export const AUTO_SESSION_TITLE_FLAG_ID = 'auto_session_title';

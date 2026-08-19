@@ -1,9 +1,3 @@
-/**
- * `AgentActivityView` — the folded read model: turn slice, lastTurn memory,
- * and the background-work busy layer (seeded from task and compaction owners,
- * folded from their lifecycle events).
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';

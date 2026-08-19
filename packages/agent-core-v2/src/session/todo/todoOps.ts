@@ -1,14 +1,4 @@
-/**
- * `todo` domain — persists the session's shared todo document.
- *
- * Validates todo state against the item contract and keeps it aligned with
- * conversation undo through the undoable state protocol. The
- * `tools.update_store` durable event is the v1 wire vocabulary shared with
- * other store keys; the todo fold only reacts to the `todo` key.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { z } from 'zod';
 
 import { Event2 } from '#/app/event/event2';

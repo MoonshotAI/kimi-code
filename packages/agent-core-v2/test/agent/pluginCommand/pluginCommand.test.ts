@@ -1,14 +1,3 @@
-/**
- * Scenario: `IAgentPluginCommandService.activate` drives a user-slash plugin
- * command into the prompt pipeline.
- *
- * Pins the activation flow: definition lookup (unknown commands reject with
- * `request.invalid`), argument expansion, the `plugin_command.activated`
- * domain event, the enqueued user message, and the main-agent prompt-metadata
- * update. Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/agent/pluginCommand/pluginCommand.test.ts`.
- */
-
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { IEventBus } from '#/app/event/eventBus';

@@ -1,11 +1,3 @@
-/**
- * `tower` domain (protocol) — the machine-readable state types behind `.tower/`.
- *
- * `state.json` (this file's shapes) is the single source of truth;
- * `MISSIONS.md` and `missions/*.md` are generated human views and must never
- * be edited by hand. All writes go through `TowerStore`.
- */
-
 export type TowerAgentKind = 'worker' | 'reviewer';
 
 export interface TowerRosterEntry {

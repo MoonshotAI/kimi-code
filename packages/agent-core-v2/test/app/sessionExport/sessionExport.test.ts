@@ -44,7 +44,7 @@ import {
 } from '#/app/sessionExport/sessionExportService';
 import { writeExportZip } from '#/app/sessionExport/zip';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
-import { ISessionManager } from '#/app/sessionManager/sessionManager';
+import { ISessionManager, type UnguardedSessionLifecycle } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import { Error2 } from '#/errors';
@@ -890,6 +890,11 @@ function registerSessionExportServices(
     },
     resume: async () => options.lifecycleHandle,
     get: () => options.lifecycleHandle,
+    whenResumeSettled: async () => {},
+    withLifecycleSerialization: async <T>(
+      _sessionId: string,
+      work: (unguarded: UnguardedSessionLifecycle) => Promise<T>,
+    ): Promise<T> => work({ archive: async () => {}, restore: async () => undefined }),
     list: () => (options.lifecycleHandle === undefined ? [] : [options.lifecycleHandle]),
     close: async () => {},
     archive: async () => {},

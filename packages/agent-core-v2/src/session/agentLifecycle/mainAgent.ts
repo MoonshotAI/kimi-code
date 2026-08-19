@@ -1,20 +1,3 @@
-/**
- * `agentLifecycle` domain — main-agent bootstrap helper.
- *
- * The main agent is an ordinary agent whose only distinction is
- * `agentId === 'main'`; `IAgentLifecycleService` itself knows nothing about
- * it. `ensureMainAgent` is the single convenience entry point for the
- * conventional id so edge callers do not repeat the
- * `create({ agentId: MAIN_AGENT_ID })` incantation — and never misspell it.
- *
- * `create` is create-or-get for explicit ids — it joins an in-flight creation
- * and returns an already-created main agent as-is — so concurrent
- * bootstrappers always receive the same, fully-bootstrapped handle (activity
- * lane `idle`).
- *
- * Not a Service: a pure composition helper over the session handle.
- */
-
 import type { ISessionScopeHandle, IAgentScopeHandle } from '#/_base/di/scope';
 
 import { type CreateAgentOptions, IAgentLifecycleService, MAIN_AGENT_ID } from './agentLifecycle';

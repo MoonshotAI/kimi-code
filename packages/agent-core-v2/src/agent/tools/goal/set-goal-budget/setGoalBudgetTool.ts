@@ -1,14 +1,3 @@
-/**
- * `tools` domain — `ISetGoalBudgetTool` implementation.
- *
- * Normalizes the model's budget input, converts supported time units to
- * milliseconds, and rejects obviously unreasonable time limits before writing
- * the limit through the goal service (`goal`). Stops the batch when the goal
- * has already reached the new budget, and guards against the goal changing
- * between resolution and execution. Registered for the main agent only,
- * mirroring v1's `agent.type === 'main'` gate. Bound at Agent scope.
- */
-
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type ToolExecution } from '#/tool/toolContract';

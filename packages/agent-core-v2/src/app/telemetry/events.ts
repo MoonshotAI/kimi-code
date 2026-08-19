@@ -1,20 +1,3 @@
-/**
- * `telemetry` domain — telemetry event registry.
- *
- * Central registry of every business event emitted through
- * `ITelemetryService.track2`: each entry pairs the event's property type
- * (the compile-time contract enforced at call sites) with review metadata
- * (owner, purpose, per-property comment) whose keys must match the property
- * type exactly. Agent-scoped entries compose their payload with the centrally
- * declared Agent telemetry context, keeping ambient identity out of business
- * payloads while preserving the effective wire schema. Registered names are
- * the raw event names, before the transport's `kfc_` server prefix. Naming
- * conventions: events and properties are snake_case; durations/counts/sizes
- * carry a unit suffix (`_ms` / `_count` / `_bytes`); never register user
- * content or file paths as properties. App-scoped, self-contained — property
- * unions are declared locally instead of imported from business domains.
- */
-
 import type { TelemetryPrimitive } from './telemetry';
 
 export interface TelemetryEventMeta {
@@ -252,6 +235,14 @@ export interface BackgroundTaskCompletedEvent {
   status: 'running' | 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost';
 }
 
+export interface WaitForCompletedEvent {
+  outcome: 'completed' | 'timed_out' | 'task_not_found' | 'aborted';
+  timeout_ms: number;
+  waited_ms: number;
+  has_task_id: boolean;
+  extra_completed_count: number;
+}
+
 export interface ModelSwitchEvent {
   model: string;
 }
@@ -344,12 +335,17 @@ export interface FsGrepNodeFallbackEvent {
   reason: 'rg_missing';
 }
 
+export interface FsSuggestNodeFallbackEvent {
+  reason: 'rg_missing' | 'rg_error';
+}
+
 export interface SubagentCreatedEvent {
   subagent_name: string;
   run_in_background: boolean;
   agent_id: string;
   parent_agent_id: string;
   parent_tool_call_id: string;
+  model?: string;
 }
 
 export interface McpConnectedEvent {
@@ -695,6 +691,18 @@ export const telemetryEventDefinitions = {
       status: 'Terminal task status',
     },
   }),
+  wait_for_completed: defineAgentTelemetryEvent<WaitForCompletedEvent>({
+    owner: 'kimi-code',
+    comment: 'A WaitFor tool call returns.',
+    properties: {
+      outcome:
+        'How the wait ended: the waited task finished, the wait timed out, the task id was unknown, or the wait was aborted',
+      timeout_ms: 'Timeout argument in milliseconds',
+      waited_ms: 'Actual wall-clock wait time in milliseconds',
+      has_task_id: 'Whether a specific task id was given',
+      extra_completed_count: 'Number of additional tasks that finished within the wait window',
+    },
+  }),
   model_switch: defineAgentTelemetryEvent<ModelSwitchEvent>({
     owner: 'kimi-code',
     comment: 'The active model is bound or switched.',
@@ -827,6 +835,11 @@ export const telemetryEventDefinitions = {
     comment: 'The fs grep path falls back to the node implementation.',
     properties: { reason: 'Why the fallback was taken' },
   }),
+  fs_suggest_node_fallback: defineTelemetryEvent<FsSuggestNodeFallbackEvent>({
+    owner: 'kimi-code',
+    comment: 'The fs suggest path falls back to the node implementation.',
+    properties: { reason: 'Why the fallback was taken' },
+  }),
   subagent_created: defineTelemetryEvent<SubagentCreatedEvent>({
     owner: 'kimi-code',
     comment: 'A subagent run is created.',
@@ -836,6 +849,7 @@ export const telemetryEventDefinitions = {
       agent_id: 'Child agent id',
       parent_agent_id: 'Parent (caller) agent id',
       parent_tool_call_id: "Tool call id of the launching call in the parent agent; '' when not launched from a tool call",
+      model: 'Model alias the subagent binds to (secondary-model choice or inherited caller model); omitted when no binding was resolved',
     },
   }),
   mcp_connected: defineTelemetryEvent<McpConnectedEvent>({

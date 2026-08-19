@@ -1,15 +1,3 @@
-/**
- * `sessionMetadata` domain — prompt-derived title / lastPrompt updates.
- *
- * Applies the metadata text derived from a prompt-like entry (prompt, steer,
- * skill or plugin-command activation) to the session's durable metadata:
- * `lastPrompt` always follows the latest text, while `title` is only derived
- * for an untitled session without a custom title. Persists through
- * `sessionMetadata` and publishes the live `session.meta.updated` update
- * through `event`. Session-scoped by target, called from Agent-scope domains
- * (main agent only).
- */
-
 import type { IEventService } from '#/app/event/event';
 
 import { titleFromPromptMetadataText } from '#/agent/prompt/promptMetadataText';

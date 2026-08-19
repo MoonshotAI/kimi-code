@@ -1,14 +1,3 @@
-/**
- * `wire` domain — error codes, the `WireError` base class, and the domain
- * registration.
- *
- * Aggregates the wire journal's coded errors: `wire.unknown_record` is
- * constructed at journal-read and replay time for records that are malformed
- * or whose event type is absent from the folded registry (unknown or
- * withdrawn vocabulary); `wire.migration_missing` and
- * `records.write_failed` cover the migration chain and append failures.
- */
-
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2, type Error2Options } from '#/_base/errors/errors';
 

@@ -1,13 +1,9 @@
-/**
- * `tower` domain — the builtin `tower` skill definition (the `/tower` slash
- * command body). Self-registers into the builtin skill catalog at import via
- * `registerBuiltinSkill` (the static import=register channel), so no builtin
- * module needs to know the skill exists.
- */
-
 import type { SkillDefinition } from '#/app/skillCatalog/types';
 import { parseSkillText } from '#/app/skillCatalog/parser';
 import { registerBuiltinSkill } from '#/app/skillCatalog/builtin/registry';
+
+import { TOWER_FLAG_ID } from '../tower';
+
 import TOWER_BODY from './tower.md?raw';
 
 const PSEUDO_PATH = 'builtin://tower';
@@ -23,6 +19,7 @@ export const TOWER_SKILL: SkillDefinition = {
   ...parsed,
   path: PSEUDO_PATH,
   dir: PSEUDO_PATH,
+  experimentalFlag: TOWER_FLAG_ID,
   metadata: {
     ...parsed.metadata,
     type: parsed.metadata.type ?? 'inline',

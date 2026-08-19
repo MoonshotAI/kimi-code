@@ -47,8 +47,6 @@ describe('detectTextEncoding', () => {
   });
 
   it('reports BOM-less UTF-16 with no zero bytes at all as utf-8 (known limitation)', () => {
-    // Pure CJK content has no zero bytes in UTF-16 — undetectable without
-    // statistical guessing, same as VS Code.
     expect(detectTextEncoding(utf16Le('你好世界')).encoding).toBe('utf-8');
   });
 

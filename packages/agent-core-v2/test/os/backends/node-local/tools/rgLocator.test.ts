@@ -1,13 +1,3 @@
-/**
- * Covers: rg-locator (ripgrep hybrid binary resolution).
- *
- * Pure-lookup pins (no real CDN download):
- *   - `findExistingRg` returns undefined when PATH + share-bin are both empty
- *   - Resolves from `<shareDir>/bin/rg` when that binary exists
- *   - Prefers system PATH over share-dir cache when both are available
- *   - `rgUnavailableMessage` surfaces the underlying cause + install hints
- */
-
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

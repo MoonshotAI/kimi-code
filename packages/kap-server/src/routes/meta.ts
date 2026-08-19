@@ -1,26 +1,7 @@
-/**
- * `GET /meta` route handler.
- *
- * Returns `server_version`, the declared `capabilities` map, a per-process
- * `server_id` (ULID minted at boot), and `started_at`.
- *
- * **Capabilities**: the wire schema (`metaCapabilitiesSchema`) only permits the
- * literal `true` for each capability, so this mirrors the v1 response exactly to
- * keep the interface unchanged. server-v2 v0.1 does not yet back every
- * capability (no WebSocket / file upload / fs query / mcp / terminal); clients
- * must treat unbacked capabilities as not-yet-available until the corresponding
- * routes are wired.
- *
- * **No DI for the static fields**: pure server-self info; that part of the
- * payload is frozen at registration time. `experimental_flags` is the
- * exception — flag state flips live when the `[experimental]` config section
- * changes, so it is resolved per request through the injected getter.
- */
-
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { metaResponseSchema } from '../protocol/rest-meta';
-import type { MetaResponse } from '../protocol/rest-meta';
+import type { MetaFeature, MetaResponse } from '../protocol/rest-meta';
 
 interface RouteHost {
   get(
@@ -55,6 +36,12 @@ export interface MetaRouteOptions {
    * always reflects the fully loaded config (never pre-load defaults).
    */
   readonly getExperimentalFlags: () => Record<string, boolean> | Promise<Record<string, boolean>>;
+  /**
+   * Resolves the engine's current feature list at request time. Backed by
+   * `IFeatureManager.units()` in production, so runtime retraction or a failed
+   * assembly is reflected in the very next response.
+   */
+  readonly getFeatures: () => MetaFeature[] | Promise<MetaFeature[]>;
 }
 
 export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void {
@@ -88,6 +75,7 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
       const data: MetaResponse = {
         ...staticData,
         experimental_flags: await opts.getExperimentalFlags(),
+        features: await opts.getFeatures(),
       };
       reply.send(okEnvelope(data, req.id));
     },

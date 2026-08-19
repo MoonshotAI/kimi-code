@@ -1,14 +1,4 @@
-/**
- * `toolExecutor` domain — the transient observable `tool.call.started` /
- * `tool.progress` / `tool.result` `Event2` classes published through the
- * event dispatcher as tool calls execute. Consumers subscribe by class (or by
- * `type` string). `ToolResultEvent` carries the `Event` suffix because the
- * bare name collides with `toolContract`'s `ToolResult` at the producing
- * service.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { Event2 } from '#/app/event/event2';
 import type { ToolUpdate } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';

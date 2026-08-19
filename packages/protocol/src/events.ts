@@ -444,6 +444,12 @@ export interface ToolUpdate {
   readonly percent?: number;
   readonly customKind?: string;
   readonly customData?: unknown;
+  /**
+   * When true, hosts replace this tool call's previous live status block
+   * instead of appending a new row — for periodic "still working" updates
+   * whose predecessors are stale the moment they are emitted.
+   */
+  readonly replace?: boolean;
 }
 
 export const MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE = 'mcp.oauth.authorization_url';
@@ -460,6 +466,14 @@ export interface McpOAuthAuthorizationUrlUpdateData {
 }
 
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
+
+export type TurnInterruptReason =
+  | 'user_cancelled'
+  | 'aborted'
+  | 'max_steps'
+  | 'error'
+  | 'filtered'
+  | 'blocked';
 
 export type AgentPhase =
   | { readonly kind: 'idle' }
@@ -678,10 +692,12 @@ export interface TurnStartedEvent {
 
 export interface TurnEndedEvent {
   readonly type: 'turn.ended';
+  readonly time?: number;
   readonly turnId: number;
   readonly reason: TurnEndReason;
   readonly error?: KimiErrorPayload;
   readonly durationMs?: number;
+  readonly interruptReason?: TurnInterruptReason;
 }
 
 export interface TurnStepStartedEvent {
@@ -848,6 +864,11 @@ export interface SubagentSpawnedEvent {
   /** The child's effective thinking effort at spawn (same vocabulary as
    *  `agent.status.updated`). Optional for cross-version tolerance. */
   readonly thinkingEffort?: string;
+  /** Background-task id the run registered under in the caller's task store.
+   *  Emitted after task registration, so cancel/status actions can bind to
+   *  the task store without waiting for `task.started`. Optional for
+   *  cross-version tolerance (older producers never send it). */
+  readonly taskId?: string;
 }
 
 export interface SubagentStartedEvent {
@@ -1434,6 +1455,7 @@ export const toolUpdateSchema = z.object({
   percent: z.number().optional(),
   customKind: z.string().optional(),
   customData: z.unknown().optional(),
+  replace: z.boolean().optional(),
 }) satisfies z.ZodType<ToolUpdate>;
 
 export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
@@ -1443,6 +1465,8 @@ export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
 }) satisfies z.ZodType<McpOAuthAuthorizationUrlUpdateData>;
 
 export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed', 'blocked']) satisfies z.ZodType<TurnEndReason>;
+
+export const turnInterruptReasonSchema = z.enum(['user_cancelled', 'aborted', 'max_steps', 'error', 'filtered', 'blocked']) satisfies z.ZodType<TurnInterruptReason>;
 
 export const agentPhaseSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('idle') }),
@@ -1639,10 +1663,12 @@ export const turnStartedEventSchema = z.object({
 
 export const turnEndedEventSchema = z.object({
   type: z.literal('turn.ended'),
+  time: z.number().optional(),
   turnId: z.number(),
   reason: turnEndReasonSchema,
   error: kimiErrorPayloadSchema.optional(),
   durationMs: z.number().optional(),
+  interruptReason: turnInterruptReasonSchema.optional(),
 }) satisfies z.ZodType<TurnEndedEvent>;
 
 export const turnStepStartedEventSchema = z.object({
@@ -1779,6 +1805,7 @@ export const subagentSpawnedEventSchema = z.object({
   runInBackground: z.boolean(),
   model: z.string().optional(),
   thinkingEffort: z.string().optional(),
+  taskId: z.string().optional(),
 }) satisfies z.ZodType<SubagentSpawnedEvent>;
 
 export const subagentStartedEventSchema = z.object({

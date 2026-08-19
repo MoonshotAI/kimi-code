@@ -31,7 +31,10 @@ registerFeature(PlanFeature);   // import = register
 
 `Feature extends Service`, so every contribution runs through the normal two-phase
 construction protocol (declare contributions in the constructor; they are buffered and
-flushed by the kernel). The helpers are thin compositions over the existing seams:
+flushed by the kernel). A feature may also declare `static readonly meta = { ... }` —
+free-form self-description that `IFeatureManager.units()` introspection carries (and
+kap-server surfaces via `GET /api/v1/meta`); it defaults to `{}`. The helpers are thin
+compositions over the existing seams:
 
 | Helper | Composition | Semantics |
 |---|---|---|
@@ -93,7 +96,7 @@ keep their static registrations; the service and the two tools go through the Fe
 
 ## Adding a new feature
 
-1. `src/features/<name>/` — domain files follow the usual conventions (header comments,
+1. `src/features/<name>/` — domain files follow the usual conventions (no comments,
    one service per file pair, `.md?raw` assets move with the feature).
 2. `<name>Feature.ts` — the Feature subclass + `registerFeature(...)`.
 3. `src/index.ts` — precise leaf imports/exports; no barrel.

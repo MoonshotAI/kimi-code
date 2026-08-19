@@ -6,7 +6,7 @@
  * these helpers.
  */
 
-import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { appendFile, link, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 import type { z } from 'zod';
@@ -15,6 +15,15 @@ function isNotFound(error: unknown): boolean {
   return (
     typeof error === 'object' && error !== null && (error as { code?: string }).code === 'ENOENT'
   );
+}
+
+/**
+ * Hard links need filesystem support: FAT/exFAT (and some network mounts)
+ * answer link() with ENOTSUP/ENOSYS/EPERM instead.
+ */
+function isHardLinkUnsupported(error: unknown): boolean {
+  const code = (error as { code?: string } | null)?.code;
+  return code === 'ENOTSUP' || code === 'ENOSYS' || code === 'EPERM';
 }
 
 function assertNonConfigWrite(filePath: string): void {
@@ -63,6 +72,32 @@ export async function writeJsonFile<T>(
   } catch (error) {
     await unlink(tmpPath).catch(() => {});
     throw error;
+  }
+}
+
+/**
+ * Create `filePath` with `content` only while the path is still free —
+ * atomically, and throwing EEXIST when it is already taken.
+ *
+ * Primary primitive: hard-link a fully written temp file into place, so the
+ * destination is never observable in an empty/partial state. Filesystems
+ * without hard-link support (FAT/exFAT, some network mounts) fall back to an
+ * exclusive create + write — whose create→write gap IS observable, so readers
+ * of such files must grant young unparseable content a publish grace before
+ * treating it as corrupt (see the update install lock for an example).
+ */
+export async function createFileIfAbsent(filePath: string, content: string): Promise<void> {
+  assertNonConfigWrite(filePath);
+  await mkdir(dirname(filePath), { recursive: true });
+  const tmpPath = tempPathFor(filePath);
+  await writeFile(tmpPath, content, { encoding: 'utf-8', mode: 0o600 });
+  try {
+    await link(tmpPath, filePath);
+  } catch (error) {
+    if (!isHardLinkUnsupported(error)) throw error;
+    await writeFile(filePath, content, { encoding: 'utf-8', mode: 0o600, flag: 'wx' });
+  } finally {
+    await unlink(tmpPath).catch(() => {});
   }
 }
 

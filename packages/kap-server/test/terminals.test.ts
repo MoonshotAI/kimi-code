@@ -6,7 +6,7 @@ import {
   IHostTerminalService,
   ScopeActivation,
   LifecycleScope,
-  registerScopedService,
+  overrideScopedService,
   type TerminalProcess,
   type TerminalSpawnOptions,
 } from '@moonshot-ai/agent-core-v2';
@@ -17,14 +17,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
-
-// --- Fake PTY service -------------------------------------------------------
-//
-// `startServer` bootstraps the real `HostTerminalService` (backed by node-pty).
-// Registering this fake at App scope AFTER those imports overrides it —
-// `buildCollection` applies scoped registrations in import order and the last
-// `set` for a given (scope, id) wins. Every spawned process is pushed into the
-// module-level collectors below so tests can inspect cwd / kill state.
 
 class FakeTerminalProcess implements TerminalProcess {
   private readonly dataListeners = new Set<(data: string) => void>();
@@ -76,15 +68,13 @@ class FakeHostTerminalService implements IHostTerminalService {
 const spawnOptions: TerminalSpawnOptions[] = [];
 const processes: FakeTerminalProcess[] = [];
 
-registerScopedService(
+overrideScopedService(
   LifecycleScope.App,
   IHostTerminalService,
   FakeHostTerminalService,
   ScopeActivation.OnDemand,
   'terminal-test',
 );
-
-// --- Test harness -----------------------------------------------------------
 
 interface Envelope<T> {
   code: number;
@@ -201,7 +191,6 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
       expect(termA.rows).toBe(30);
       expect(termA.status).toBe('running');
       expect(termB.session_id).toBe(sidB);
-      // Each session resolves cwd against its own workspace workDir.
       expect(spawnOptions.map((o) => o.cwd)).toEqual([resolve(rootA), resolve(rootB)]);
 
       const listA = (await get<{ items: Terminal[] }>(`/api/v1/sessions/${sidA}/terminals`)).data;

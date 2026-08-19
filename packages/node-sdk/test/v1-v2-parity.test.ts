@@ -367,6 +367,7 @@ function projectBackgroundTask(info: BackgroundTaskInfo): unknown {
   delete projected['startedAt'];
   delete projected['endedAt'];
   delete projected['timeoutMs'];
+  delete projected['terminalNotificationSuppressed'];
   return projected;
 }
 
@@ -448,8 +449,9 @@ function projectResumedAgents(
  *   the engines (the subagent/cron docs embed engine-specific facts), and
  *   v1 additionally registers the `select_tools` meta tool v2 has no
  *   counterpart for — both are engine design, not resume data. v2's default
- *   profile also carries `TowerInit` (the tower-mode entry point); tower is
- *   v2-only, so the tool is projected out of both rosters. A model-less
+ *   profile also carries `TowerInit` (the tower-mode entry point) and
+ *   `WaitFor` (the background-task wait primitive); both are v2-only, so the
+ *   tools are projected out of both rosters. A model-less
  *   agent's roster is not compared at all (v1 initializes builtin tools
  *   only on a profiled agent; v2 exposes them unbound).
  */
@@ -468,6 +470,7 @@ function projectResumedAgent(agent: ResumedAgentState, home: HomePair): unknown 
     projected['tools'] = tools
       .filter((tool) => tool['name'] !== 'select_tools')
       .filter((tool) => tool['name'] !== 'TowerInit')
+      .filter((tool) => tool['name'] !== 'WaitFor')
       .map((tool) => ({ name: tool['name'], active: tool['active'], source: tool['source'] }))
       .toSorted((a, b) => String(a.name).localeCompare(String(b.name)));
   }
@@ -3455,11 +3458,11 @@ describe('v1↔v2 print policy parity', () => {
         input.sessionId,
         'sleep 0.3 && echo drain-done',
       );
-      await Promise.all([v1Task.run, v2Task.run]);
-      await Promise.all([
+      const drain = Promise.all([
         pair.v1.waitForBackgroundTasksOnPrint(input),
         pair.v2.waitForBackgroundTasksOnPrint(input),
       ]);
+      await Promise.all([v1Task.run, v2Task.run, drain]);
       // By the time the drain returns the task is terminal on both engines,
       // with its terminal notification suppressed (same drain side effect).
       const projectList = KNOWN_DIFFS.listBackgroundTasks;
@@ -3472,6 +3475,8 @@ describe('v1↔v2 print policy parity', () => {
       expect(v1Tasks[0]).toMatchObject({
         status: 'completed',
         exitCode: 0,
+      });
+      expect(v2Tasks[0]).toMatchObject({
         terminalNotificationSuppressed: true,
       });
       const [v1Output, v2Output] = await Promise.all([

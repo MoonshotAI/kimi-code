@@ -61,9 +61,6 @@ import type { ActivatePluginCommandPayload } from '#/agent/pluginCommand/pluginC
 import { IAgentPluginCommandService } from '#/agent/pluginCommand/pluginCommand';
 import type { ToolInfo } from '#/tool/toolContract';
 
-// Test-facing wire vocabulary, formerly imported from the deleted RPC
-// aggregation layer; payloads with an owner-domain type are aliased above,
-// the rest are local to the harness.
 type EmptyPayload = {};
 type CreateGoalPayload = CreateGoalInput;
 type RegisterToolPayload = UserToolRegistration;
@@ -87,7 +84,7 @@ interface StopTaskPayload { readonly taskId: string; readonly reason?: string }
 interface UndoHistoryPayload { readonly count: number }
 interface UnregisterToolPayload { readonly name: string }
 import { type UsageStatus } from '#/agent/usage/usage';
-import { IAgentSkillService, type PromptWithSkillsInput, type SkillActivationInput } from '#/agent/skill/skill';
+import { IAgentSkillService, type PromptWithSkillsInput, type PromptWithSkillsResult, type SkillActivationInput } from '#/agent/skill/skill';
 import { AgentSkillService } from '#/agent/skill/skillService';
 import { IAgentRuntimeBindingSeed } from '#/agent/runtimeBinding/runtimeBinding';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
@@ -341,7 +338,7 @@ type RpcPromise<T> = Promise<T> & {
 
 interface AgentRpcPassthroughAPI {
   prompt: (payload: PromptPayload) => Promisable<PromptLaunchResult | undefined>;
-  promptWithSkills: (payload: PromptWithSkillsInput) => Promisable<PromptLaunchResult | undefined>;
+  promptWithSkills: (payload: PromptWithSkillsInput) => Promisable<PromptWithSkillsResult>;
   steer: (payload: SteerPayload) => Promisable<PromptLaunchResult | undefined>;
   cancel: (payload: CancelPayload) => void;
   undoHistory: (payload: UndoHistoryPayload) => Promisable<number>;
@@ -438,7 +435,6 @@ export interface TestAgentOptions {
 
 type MutableScopeSeed = Array<readonly [ServiceIdentifier<unknown>, unknown]>;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyCtor<T> = new (...args: any[]) => T;
 type TestAgentServiceScope = 'app' | 'session' | 'agent';
 
@@ -917,11 +913,6 @@ function collectScopeSeed(
   return seed;
 }
 
-// Feature contributions (`ScopeUnits` fold) provide into a scope through the
-// cascade and would replace a same-token seed instance installed at creation;
-// re-asserting overrides of feature-contributed tokens through the live
-// container right after scope creation keeps test stubs winning, as they did
-// over static registrations (which `provideScopeServices` skips when seeded).
 function reassertServiceOverrides(
   overrides: readonly TestAgentScopedServiceOverride[],
   scope: TestAgentServiceScope,
@@ -1116,10 +1107,6 @@ export class AgentTestContext {
             IConfigService,
             configService(() => this.kimiConfig),
           );
-          // The harness is a config-already-loaded world, so the identity is
-          // handed out pre-frozen (no custom identity, matching the empty
-          // bootstrap headers above); the freeze ordering itself is covered
-          // by the agentIdentity suite. Suites override via `appService`.
           reg.defineInstance(IAgentIdentity, stubAgentIdentity());
           reg.defineInstance(
             IAppendLogStore,
@@ -1196,6 +1183,13 @@ export class AgentTestContext {
       'app',
     );
     this.root = createAppScope({ seeds: appSeeds });
+    const hookRunnerSeed = appSeeds.find(([id]) => id === IExternalHooksRunnerService);
+    if (hookRunnerSeed !== undefined) {
+      this.root.instantiation.provide(
+        IExternalHooksRunnerService,
+        hookRunnerSeed[1] as IExternalHooksRunnerService,
+      );
+    }
 
     const initialConfig = this.root.accessor.get(IConfigService);
     this.root.accessor

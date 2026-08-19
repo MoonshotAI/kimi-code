@@ -1,29 +1,3 @@
-/**
- * `sessionTitle` domain (L6) — `ISessionTitleService` implementation.
- *
- * Generates the session's title from the first active prompts in the main
- * Agent's live conversation context through the managed platform `/tools`
- * `chat_title` endpoint, persists it through
- * `sessionMetadata`, and rebroadcasts `session.meta.updated`.
- * Generation is on demand only: `generateTitle()` is the single entry point
- * (the kap-server route), gated by the experimental `auto_session_title` flag and
- * a managed Kimi Code OAuth login; any
- * failure degrades to keeping the current title, and a custom title set by
- * the user is never overwritten. An already-generated title is not
- * regenerated. Concurrent calls coalesce onto one shared in-flight
- * generation. `force` requests an explicit user-driven regeneration: it
- * bypasses the in-flight coalescing and both title-kind guards, and the
- * applied title is marked `generated` (a previous custom marking is
- * dropped). The `source` option picks the conversation excerpt sent to the
- * backend (see `SessionTitleSource`): the default first-prompts window, the
- * strict `first_turn` user+assistant pair, or the head+tail `digest` for
- * multi-turn regeneration.
- * Provider config comes
- * from `provider`, the bearer token from `auth`, host identity headers from
- * `model`, prompt history from `agentLifecycle`/`sessionTitle`, and logs
- * through `log`. Bound at Session scope.
- */
-
 import {
   KIMI_CODE_PROVIDER_NAME,
   OAuthError,
@@ -57,7 +31,6 @@ const MAX_TITLE_INPUT_LENGTH = 1000;
 
 const MAX_TITLE_PROMPTS = 3;
 
-/** Per-segment excerpt budgets inside the composed chat_content. */
 const MAX_TITLE_USER_SEGMENT = 300;
 
 const MAX_TITLE_FIRST_TURN_ASSISTANT = 600;

@@ -1,15 +1,4 @@
-/**
- * `mcp` domain — MCP tool-discovery state.
- *
- * Restores the per-agent de-dup cursor for durable MCP discovery records,
- * keyed by `${serverName}\n${hash}` entries already present in this log. The
- * durable `mcp.tools_discovered` event (`McpToolsDiscovered`) carries the
- * discovered tool snapshot; only the cursor is folded into state.
- * Scope-agnostic.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { z } from 'zod';
 
 import { Event2 } from '#/app/event/event2';

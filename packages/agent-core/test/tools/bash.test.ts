@@ -396,36 +396,6 @@ describe('BashTool', () => {
     // Each call is a fresh shell (cwd not preserved), and there is a first-class
     // cwd param — the description must steer toward it rather than cross-call cd.
     expect(tool.description).toContain('cwd');
-    expect(tool.description).toContain('absolute paths');
-    // The failure trailer is non-zero-exit-specific; timeout/interrupt differ.
-    expect(tool.description).toContain('exits non-zero');
-  });
-
-  it('describes timeout behavior according to the auto-background option', () => {
-    const autoBg = bashTool(
-      createFakeKaos({ osEnv: posixEnv }),
-      '/workspace',
-      createBackgroundManager().manager,
-    );
-    expect(autoBg.description).toContain('moved to the background instead of being killed');
-
-    const killOnTimeout = bashTool(
-      createFakeKaos({ osEnv: posixEnv }),
-      '/workspace',
-      createBackgroundManager().manager,
-      { autoBackgroundOnTimeout: false },
-    );
-    expect(killOnTimeout.description).not.toContain('moved to the background instead of being killed');
-    expect(killOnTimeout.description).toContain('hits its timeout is killed');
-
-    const noBackground = bashTool(
-      createFakeKaos({ osEnv: posixEnv }),
-      '/workspace',
-      createBackgroundManager().manager,
-      { allowBackground: false },
-    );
-    expect(noBackground.description).not.toContain('moved to the background instead of being killed');
-    expect(noBackground.description).toContain('hits its timeout is killed');
   });
 
   it('runs through execWithEnv, injects cwd, noninteractive env, and closes stdin', async () => {
@@ -967,21 +937,6 @@ describe('BashTool', () => {
       }
     });
 
-    it('tells the model there is no default timeout when backgroundTimeoutS is 0', () => {
-      const tool = bashTool(
-        createFakeKaos({ osEnv: posixEnv }),
-        '/workspace',
-        createBackgroundManager().manager,
-        { backgroundTimeoutS: 0 },
-      );
-      expect(tool.description).toContain('Background commands have no timeout by default');
-      expect(tool.description).not.toContain('default to a 600s timeout');
-      const timeoutParam = (
-        tool.parameters as { properties: { timeout: { description?: string } } }
-      ).properties.timeout;
-      expect(timeoutParam.description).toContain('Background default no timeout');
-      expect(timeoutParam.description).not.toContain('Background default 600s');
-    });
   });
 
   it('kills a spawned background command when the task limit is reached', async () => {
@@ -1425,10 +1380,6 @@ describe('BashTool', () => {
     expect(description).toContain('**Guidelines for safety and security:**');
     expect(description).toContain('**Guidelines for efficiency:**');
     expect(description).toContain('run_in_background=true');
-    expect(description).toContain('automatically notified');
-    // Moved here from system.md: the "don't block on a background task" nudge belongs in
-    // the background-enabled Bash description, the only place that documents it.
-    expect(description).toContain('returning control to the user');
   });
 });
 

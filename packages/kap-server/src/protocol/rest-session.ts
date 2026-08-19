@@ -1,20 +1,3 @@
-/**
- *   POST    /v1/sessions                  body: SessionCreate   data: Session
- *   GET     /v1/sessions                  query: ListSessions   data: Page<Session>
- *   GET     /v1/sessions/{id}             -                     data: Session
- *   GET     /v1/sessions/{id}/profile     -                     data: Session
- *   POST    /v1/sessions/{id}/profile     body: SessionUpdate   data: Session
- *   POST    /v1/sessions/{id}:fork        body: SessionFork     data: Session
- *   POST    /v1/sessions/{id}:btw         -                     data: StartBtwSession
- *   GET     /v1/sessions/{id}/children    query: ListSessions   data: Page<Session>
- *   POST    /v1/sessions/{id}/children    body: SessionChild    data: Session
- *   GET     /v1/sessions/{id}/status      -                     data: SessionStatus
- *   POST    /v1/sessions/{id}:compact     body: CompactSession  data: {}
- *   POST    /v1/sessions/{id}:undo        body: UndoSession     data: UndoSession
- *   POST    /v1/sessions/{id}:archive     -                     data: { archived: true }
- *   POST    /v1/sessions/{id}:restore     -                     data: Session
- */
-
 import { z } from 'zod';
 
 import { messageSchema } from './message';
@@ -94,9 +77,6 @@ export const exportSessionRequestSchema = z
         message: `web_log must not exceed ${MAX_SESSION_EXPORT_WEB_LOG_BYTES} UTF-8 bytes`,
       })
       .optional(),
-    // Desktop hosts set this to bundle the on-disk desktop app log
-    // (`<home>/logs/kimi-code-desktop.log`) into the archive; the server reads
-    // the file itself, so no log content crosses the request.
     desktop: z.boolean().optional(),
   })
   .strict();
@@ -128,8 +108,6 @@ export const startBtwSessionResponseSchema = z.object({
 });
 export type StartBtwSessionResponse = z.infer<typeof startBtwSessionResponseSchema>;
 
-// Child lists intentionally omit exclude_empty: the /sessions/{id}/children route
-// does not filter by it, so advertising it would mislead generated clients.
 export const listSessionChildrenQuerySchema = cursorQuerySchema.and(
   z.object({
     busy: booleanQueryParam,
@@ -147,9 +125,6 @@ export type CreateSessionChildRequest = z.infer<typeof createSessionChildRequest
 export const createSessionChildResponseSchema = sessionSchema;
 export type CreateSessionChildResponse = z.infer<typeof createSessionChildResponseSchema>;
 
-// GET /sessions/{id}/goal — the session's current goal snapshot (camelCase,
-// same shape as the `goal.updated` WS event payload), or null when none is
-// active.
 export const getSessionGoalResponseSchema = goalSnapshotSchema.nullable();
 export type GetSessionGoalResponse = z.infer<typeof getSessionGoalResponseSchema>;
 
