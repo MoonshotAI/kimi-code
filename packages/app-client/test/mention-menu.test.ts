@@ -5,9 +5,9 @@ import type { AppSkill } from '@moonshot-ai/app-core/api';
 import { useMentionMenu } from '../src/composables';
 import type { TextFieldLike } from '@moonshot-ai/app-composer';
 
-// The debounced mention search must not outlive a close: blur / session
-// switch / submit all close the menu, and a pending (or in-flight) search
-// must never reopen it afterwards.
+// The mention search fires immediately on the keystroke (no debounce), so it
+// is always in flight when a close lands: blur / session switch / submit all
+// close the menu, and that in-flight search must never reopen it afterwards.
 
 interface MockEditor {
   selectionStart: number;
@@ -44,35 +44,53 @@ afterEach(() => {
 });
 
 describe('useMentionMenu — close', () => {
-  it('cancels a pending debounced search so the menu never opens', async () => {
-    const search = vi.fn(async (): Promise<FileItem[]> => [{ path: 'src/a.ts', name: 'a.ts' }]);
+  it('invalidates the immediately-fired search on close, so its late response never reopens', async () => {
+    let resolveSearch: (items: FileItem[]) => void = () => {};
+    const search = vi.fn(
+      () =>
+        new Promise<FileItem[]>((resolve) => {
+          resolveSearch = resolve;
+        }),
+    );
     const { mention } = setup('@a', search);
 
     mention.update();
-    // Close inside the 200ms debounce window (e.g. the composer blurred).
+    // No debounce: the search fires on the keystroke itself.
+    expect(search).toHaveBeenCalledTimes(1);
+
+    // The composer blurred while the request was in flight.
     mention.close();
-    await vi.advanceTimersByTimeAsync(300);
+    resolveSearch([{ path: 'src/a.ts', name: 'a.ts' }]);
+    await vi.advanceTimersByTimeAsync(0);
 
     expect(mention.open.value).toBe(false);
     expect(mention.loading.value).toBe(false);
-    expect(search).not.toHaveBeenCalled();
+    expect(mention.items.value).toEqual([]);
   });
 
-  it('select cancels a pending debounced search too, so it never reopens', async () => {
-    const search = vi.fn(async (): Promise<FileItem[]> => [{ path: 'src/a.ts', name: 'a.ts' }]);
+  it('select invalidates the in-flight search too, so it never reopens', async () => {
+    let resolveSearch: (items: FileItem[]) => void = () => {};
+    const search = vi.fn(
+      () =>
+        new Promise<FileItem[]>((resolve) => {
+          resolveSearch = resolve;
+        }),
+    );
     const { mention } = setup('@a', search);
 
     mention.update();
-    // Select inside the 200ms debounce window (a mouse pick on an
-    // instantly-opened row). The token is replaced right away.
-    mention.select({ kind: 'file', file: { path: 'src/a.ts', name: 'a.ts' } });
-    await vi.advanceTimersByTimeAsync(300);
+    expect(search).toHaveBeenCalledTimes(1);
 
-    // Without the cancel the timer would fire now, reopen the menu and latch
-    // loading on (the token is gone, so its stillCurrent guard never passes).
+    // A mouse pick on an instantly-opened row, before the response landed.
+    // The token is replaced right away; the late response must not reopen
+    // the menu (close() bumped the sequence, so its guard never passes).
+    mention.select({ kind: 'file', file: { path: 'src/a.ts', name: 'a.ts' } });
+    resolveSearch([{ path: 'src/a.ts', name: 'a.ts' }]);
+    await vi.advanceTimersByTimeAsync(0);
+
     expect(mention.open.value).toBe(false);
     expect(mention.loading.value).toBe(false);
-    expect(search).not.toHaveBeenCalled();
+    expect(mention.items.value).toEqual([]);
   });
 
   it('drops an in-flight search result instead of applying it', async () => {
@@ -86,8 +104,7 @@ describe('useMentionMenu — close', () => {
     const { mention } = setup('@a', search);
 
     mention.update();
-    await vi.advanceTimersByTimeAsync(250);
-    // The debounce fired: menu open, search in flight.
+    // The search fired on the keystroke: menu open, request in flight.
     expect(mention.open.value).toBe(true);
     expect(mention.loading.value).toBe(true);
 
@@ -169,50 +186,49 @@ describe('useMentionMenu — close', () => {
   });
 });
 
-describe('useMentionMenu — the highlight never auto-moves to a skill', () => {
-  it('keeps the highlight on the file section even when skills match instantly', async () => {
-    // The '@a' scenario: a skill matches locally at keystroke time, but the
-    // default highlight must wait for real file hits, not sit on the skill.
+describe('useMentionMenu — the default highlight is the top row of the merged ranking', () => {
+  it('a prefix skill hit legitimately owns the top row over a strong file hit', async () => {
+    // The '@a' scenario: a skill matches locally at keystroke time, and in
+    // the merged ranking a prefix skill hit outranks a strong file hit.
     const skillList = ref<AppSkill[]>([{ name: 'a-skill', description: '' } as AppSkill]);
     const search = vi.fn(async (): Promise<FileItem[]> => [{ path: 'apps', name: 'apps', kind: 'directory' } as FileItem]);
     const { mention } = setup('@a', search, skillList);
 
     mention.update();
-    expect(mention.skillItems.value).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mention.items.value.map((item) => (item.kind === 'skill' ? item.skill.name : item.file.name)))
+      .toEqual(['a-skill', 'apps']);
+    // The default highlight simply sits on the top row, skill band included.
     expect(mention.active.value).toBe(0);
-
-    // Fresh results land: the first real file row owns the highlight — the
-    // skill's instant availability never earns the default.
-    await vi.advanceTimersByTimeAsync(250);
-    expect(mention.fileItems.value[0]?.path).toBe('apps');
-    expect(mention.items.value[mention.active.value]).toEqual({ kind: 'folder', file: { path: 'apps', name: 'apps', kind: 'directory' } });
+    expect(mention.items.value[0]?.kind).toBe('skill');
   });
 
-  it('does not let an asynchronously-landing skill capture the highlight during the stale window', async () => {
+  it('the highlight follows its row identity when fresh file results land', async () => {
     const skillList = ref<AppSkill[]>([]);
     const search = vi.fn(async (): Promise<FileItem[]> => [{ path: 'src/foo.ts', name: 'foo.ts' }]);
     const { text, editor, mention } = setup('@fo', search, skillList);
 
     mention.update();
-    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(0);
     expect(mention.fileItems.value).toHaveLength(1);
 
-    // The query changes: the file rows go stale; the highlight stays on the
-    // (dimmed, briefly unselectable) stale row rather than jumping to a skill.
+    // The query changes: the file rows go stale and the highlight resets to
+    // the top row (a new intent).
     text.value = '@foo';
     editor.selectionStart = 4;
     mention.update();
     expect(mention.fileStale.value).toBe(true);
     expect(mention.active.value).toBe(0);
 
-    // A skill arriving mid-window must not capture the highlight…
+    // A prefix skill arriving mid-window takes the top band legitimately…
     skillList.value = [{ name: 'foo-skill', description: '' } as AppSkill];
     await nextTick();
-    expect(mention.active.value).toBe(0);
+    expect(mention.items.value[0]?.kind).toBe('skill');
 
-    // …and when the fresh file results land, the first fresh file row takes it.
-    await vi.advanceTimersByTimeAsync(250);
+    // …and when the fresh file results land, the highlight follows the row it
+    // was on (the skill) instead of being reclaimed by the file hits.
+    await vi.advanceTimersByTimeAsync(0);
     expect(mention.fileStale.value).toBe(false);
-    expect(mention.items.value[mention.active.value]?.kind).not.toBe('skill');
+    expect(mention.items.value[mention.active.value]?.kind).toBe('skill');
   });
 });

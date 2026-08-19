@@ -1309,6 +1309,39 @@ export class DaemonKimiWebApi implements KimiWebApi {
     };
   }
 
+  async suggestFiles(
+    workspace: string,
+    input: { query: string; limit?: number },
+  ): Promise<{
+    items: Array<{
+      path: string;
+      name: string;
+      kind: 'file' | 'directory' | 'symlink';
+      score: number;
+      matchPositions: number[];
+    }>;
+    truncated: boolean;
+  }> {
+    const body: Record<string, unknown> = { workspace, query: input.query };
+    if (input.limit !== undefined) body['limit'] = input.limit;
+    // The wire shape is identical to fs:search (fsSuggestItemSchema ==
+    // fsSearchHitSchema) — only the matching/ranking differs.
+    const data = await this.http.post<WireSearchFilesResult>(
+      `/workspace/fs:suggest`,
+      body,
+    );
+    return {
+      items: data.items.map((item) => ({
+        path: item.path,
+        name: item.name,
+        kind: item.kind,
+        score: item.score,
+        matchPositions: item.match_positions,
+      })),
+      truncated: data.truncated,
+    };
+  }
+
   async grepFiles(
     sessionId: string,
     input: { pattern: string; regex?: boolean; caseSensitive?: boolean },

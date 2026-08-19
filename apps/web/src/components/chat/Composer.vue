@@ -326,6 +326,7 @@ const {
   update: updateMentionMenu,
   close: closeMentionMenu,
   select: selectMentionItem,
+  navigate: mentionNavigate,
 } = useMentionMenu({
   text,
   editorRef: textareaRef,
@@ -802,12 +803,12 @@ function handleKeydown(e: KeyboardEvent): void {
     if (mentionItems.value.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        mentionActive.value = (mentionActive.value + 1) % mentionItems.value.length;
+        mentionNavigate((mentionActive.value + 1) % mentionItems.value.length);
         return;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
-        mentionActive.value = (mentionActive.value - 1 + mentionItems.value.length) % mentionItems.value.length;
+        mentionNavigate((mentionActive.value - 1 + mentionItems.value.length) % mentionItems.value.length);
         return;
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
@@ -1585,7 +1586,7 @@ function selectModel(modelId: string): void {
           :loading="mentionLoading"
           :stale="mentionFileStale"
           @select="selectMentionItem"
-          @hover="mentionActive = $event"
+          @hover="mentionNavigate"
         />
 
         <!-- Add menu: the composer's action list — the autocomplete family's

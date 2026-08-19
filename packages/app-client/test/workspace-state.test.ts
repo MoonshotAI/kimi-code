@@ -43,6 +43,8 @@ const apiMock = {
   getMeta: vi.fn(),
   listSessions: vi.fn(),
   listWorkspaces: vi.fn(),
+  searchFiles: vi.fn(),
+  suggestFiles: vi.fn(),
 };
 
 // Real i18n (the export-failure test asserts on localized copy); the client
@@ -3486,5 +3488,71 @@ describe('useWorkspaceState — recency-ordered restore/fork', () => {
     // Same timestamp as the source: lands right after it, never at the front.
     expect(state.sessions.map((s) => s.id)).toEqual(['a', 'b', 'forked', 'c']);
     expect(state.activeSessionId).toBe('forked');
+  });
+});
+
+describe('useWorkspaceState — searchFiles (fs:suggest with fs:search fallback)', () => {
+  beforeEach(() => {
+    apiMock.suggestFiles.mockReset();
+    apiMock.searchFiles.mockReset();
+  });
+
+  function setupSearch(deps: UseWorkspaceStateDeps = createDeps()) {
+    deps.workspaceIdForSession = () => 'ws_1';
+    return useWorkspaceState(createState(), deps);
+  }
+
+  it('prefers fs:suggest and preserves kind + matchPositions', async () => {
+    apiMock.suggestFiles.mockResolvedValue({
+      items: [{ path: 'src/app.ts', name: 'app.ts', kind: 'file', score: 0.9, matchPositions: [4, 5, 6] }],
+      truncated: false,
+    });
+    const workspace = setupSearch();
+
+    const items = await workspace.searchFiles('app');
+
+    expect(apiMock.suggestFiles).toHaveBeenCalledWith('ws_1', { query: 'app', limit: 20 });
+    expect(apiMock.searchFiles).not.toHaveBeenCalled();
+    expect(items).toEqual([{ path: 'src/app.ts', name: 'app.ts', kind: 'file', matchPositions: [4, 5, 6] }]);
+  });
+
+  it('falls back to fs:search on a bare 404 and stops probing fs:suggest', async () => {
+    apiMock.suggestFiles.mockRejectedValue(
+      new DaemonApiError({ code: 404, msg: 'Not Found', requestId: 'r1' }),
+    );
+    apiMock.searchFiles.mockResolvedValue({
+      items: [{ path: 'README.md', name: 'README.md', kind: 'file', score: 1, matchPositions: [0] }],
+      truncated: false,
+    });
+    const workspace = setupSearch();
+
+    const first = await workspace.searchFiles('read');
+    const second = await workspace.searchFiles('read');
+
+    expect(first[0]?.path).toBe('README.md');
+    expect(apiMock.searchFiles).toHaveBeenCalledTimes(2);
+    // The 404 is sticky: the server build does not change mid-session.
+    expect(apiMock.suggestFiles).toHaveBeenCalledTimes(1);
+    expect(second[0]?.matchPositions).toEqual([0]);
+  });
+
+  it('does not fall back on non-404 suggest errors (defensive [])', async () => {
+    apiMock.suggestFiles.mockRejectedValue(
+      new DaemonApiError({ code: 500, msg: 'boom', requestId: 'r2' }),
+    );
+    const workspace = setupSearch();
+
+    expect(await workspace.searchFiles('x')).toEqual([]);
+    expect(apiMock.searchFiles).not.toHaveBeenCalled();
+    // Not sticky — the next query probes fs:suggest again.
+    expect(await workspace.searchFiles('x')).toEqual([]);
+    expect(apiMock.suggestFiles).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns [] when no workspace ref is active', async () => {
+    // createDeps' default workspaceIdForSession is a bare vi.fn() → undefined.
+    const workspace = useWorkspaceState(createState(), createDeps());
+    expect(await workspace.searchFiles('x')).toEqual([]);
+    expect(apiMock.suggestFiles).not.toHaveBeenCalled();
   });
 });

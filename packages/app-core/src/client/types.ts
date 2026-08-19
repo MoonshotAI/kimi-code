@@ -21,6 +21,10 @@ export interface FileItem {
   /** The daemon's entry kind, when the search pipeline preserved it (drives
    *  the folder icon/pill; older callers may omit it). */
   kind?: 'file' | 'directory' | 'symlink';
+  /** Matched-character positions into the FULL path (fs:search/fs:suggest
+   *  `match_positions`), when the pipeline preserved them — drives the
+   *  match highlighting in the menu row. */
+  matchPositions?: number[];
 }
 
 export interface Session {

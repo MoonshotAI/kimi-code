@@ -86,30 +86,34 @@ describe('useMentionMenu — update', () => {
     const searchFiles = vi.fn().mockResolvedValue([{ path: 'src/a.ts', name: 'a.ts' }]);
     const { text, editor, mention } = setup('@a', searchFiles);
     mention.update();
-    // Backspace the 'a' before the debounce fires — the bare-@ listing
-    // replaces the pending query search immediately.
+    // The 'a' search fired on the keystroke…
+    expect(searchFiles).toHaveBeenCalledWith('a');
+    // …and backspacing to a bare @ replaces it with the empty-query listing.
     text.value = '@';
     editor.value = '@';
     editor.selectionStart = 1;
     mention.update();
-    await vi.advanceTimersByTimeAsync(500);
-    expect(searchFiles).toHaveBeenCalledTimes(1);
-    expect(searchFiles).toHaveBeenCalledWith('');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(searchFiles).toHaveBeenCalledTimes(2);
+    expect(searchFiles).toHaveBeenLastCalledWith('');
     expect(mention.open.value).toBe(true);
   });
 
-  it('stays closed when the @token is deleted before the debounce fires', async () => {
+  it('stays closed when the @token is deleted while the search is in flight', async () => {
     const searchFiles = vi.fn().mockResolvedValue([{ path: 'src/a.ts', name: 'a.ts' }]);
     const { text, editor, mention } = setup('@a', searchFiles);
     mention.update();
-    // Delete the whole token before the debounce fires.
+    // The 'a' search fired on the keystroke; deleting the whole token closes
+    // the menu before its response lands (and that response is dropped).
+    expect(searchFiles).toHaveBeenCalledWith('a');
     text.value = '';
     editor.value = '';
     editor.selectionStart = 0;
     mention.update();
-    await vi.advanceTimersByTimeAsync(500);
-    expect(searchFiles).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
     expect(mention.open.value).toBe(false);
+    expect(mention.fileItems.value).toEqual([]);
+    expect(mention.loading.value).toBe(false);
   });
 
   it('ignores in-flight results that resolve after backspacing to a bare @', async () => {
@@ -119,8 +123,7 @@ describe('useMentionMenu — update', () => {
     );
     const { text, editor, mention } = setup('@a', searchFiles);
     mention.update();
-    await vi.advanceTimersByTimeAsync(200); // debounced search('a') fires
-    expect(searchFiles).toHaveBeenCalledWith('a');
+    expect(searchFiles).toHaveBeenCalledWith('a'); // fires on the keystroke
     // Backspace to a bare @ while the 'a' search is in flight — this fires an
     // immediate empty-query search.
     text.value = '@';
@@ -140,14 +143,14 @@ describe('useMentionMenu — update', () => {
     expect(mention.loading.value).toBe(false);
   });
 
-  it('opens with search results after the debounce', async () => {
+  it('opens immediately with search results (no debounce)', async () => {
     const searchFiles = vi.fn().mockResolvedValue([{ path: 'src/a.ts', name: 'a.ts' }]);
     const { mention } = setup('@a', searchFiles);
     mention.update();
-    expect(mention.open.value).toBe(false); // debounced, not yet
-    await vi.advanceTimersByTimeAsync(200);
+    // The search fires on the keystroke and opens the menu while in flight.
     expect(searchFiles).toHaveBeenCalledWith('a');
     expect(mention.open.value).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
     expect(mention.fileItems.value).toEqual([{ path: 'src/a.ts', name: 'a.ts' }]);
     expect(mention.loading.value).toBe(false);
     expect(mention.active.value).toBe(0);
@@ -175,21 +178,22 @@ describe('useMentionMenu — update', () => {
     expect(mention.fileStale.value).toBe(false);
     // Retype the query — the old candidates STAY on screen, marked stale
     // (dimmed), instead of flashing an empty "searching" state on every
-    // keystroke; the menu never collapses. The default highlight stays on the
-    // first row (a dimmed, briefly-unselectable stale file) — it never jumps
-    // to a skill automatically, no matter how fresh the skill rows are.
+    // keystroke; the menu never collapses. The default highlight resets to
+    // the top row of the merged ranking (a new intent) — here the freshly
+    // prefix-matched skill legitimately owns it.
     text.value = '@goal';
     editor.value = '@goal';
     editor.selectionStart = 5;
     mention.update();
     expect(mention.fileItems.value).toEqual([{ path: 'src/a.ts', name: 'a.ts' }]);
     expect(mention.fileStale.value).toBe(true);
-    expect(mention.skillItems.value.map((s) => s.name)).toEqual(['goal']);
-    expect(mention.active.value).toBe(0); // first row, never auto-borrowed to a skill
+    expect(mention.skillItems.value.map((s) => s.skill.name)).toEqual(['goal']);
+    expect(mention.active.value).toBe(0);
     await vi.advanceTimersByTimeAsync(200);
     expect(mention.fileItems.value).toEqual([{ path: 'src/b.ts', name: 'b.ts' }]);
     expect(mention.fileStale.value).toBe(false);
-    // …and the landing hands the first fresh file row the highlight.
+    // …and the landing keeps the highlight on the same row (the skill), which
+    // still tops the ranking over the weak 'b.ts' subsequence hit.
     expect(mention.active.value).toBe(0);
   });
 
@@ -265,17 +269,17 @@ describe('useMentionMenu — update', () => {
     expect(mention.loading.value).toBe(false);
   });
 
-  it('discards an in-flight response when the query round-trips inside the debounce window', async () => {
+  it('discards an in-flight response when the query round-trips while requests are in flight', async () => {
     const resolvers: Array<(items: FileItem[]) => void> = [];
     const searchFiles = vi.fn().mockImplementation(
       () => new Promise<FileItem[]>((resolve) => { resolvers.push(resolve); }),
     );
     const { text, editor, mention } = setup('@foo', searchFiles);
     mention.update();
-    await vi.advanceTimersByTimeAsync(200); // search A ('foo') in flight
-    expect(searchFiles).toHaveBeenCalledWith('foo');
-    // '@foo' → '@bar' → '@foo' within 200ms: the re-search is still
-    // debouncing when the ORIGINAL 'foo' response returns…
+    expect(searchFiles).toHaveBeenCalledWith('foo'); // search A fires at once
+    // '@foo' → '@bar' → '@foo' in quick succession: B and C fire immediately —
+    // and the ORIGINAL 'foo' response arrives while its own re-query (C) is
+    // still in flight…
     text.value = '@bar';
     editor.value = '@bar';
     editor.selectionStart = 4;
@@ -284,6 +288,7 @@ describe('useMentionMenu — update', () => {
     editor.value = '@foo';
     editor.selectionStart = 4;
     mention.update();
+    expect(searchFiles.mock.calls.map((call) => call[0])).toEqual(['foo', 'bar', 'foo']);
     resolvers[0]!([{ path: 'src/stale.ts', name: 'stale.ts' }]);
     await vi.advanceTimersByTimeAsync(0);
     // …and it must be dropped — the query change already invalidated the
@@ -291,11 +296,8 @@ describe('useMentionMenu — update', () => {
     // flashing stale candidates until the re-search lands.
     expect(mention.fileItems.value).toEqual([]);
     expect(mention.loading.value).toBe(true);
-    // The debounced re-search fires and its response is the one that lands.
-    await vi.advanceTimersByTimeAsync(200);
-    expect(searchFiles).toHaveBeenCalledTimes(2);
-    expect(searchFiles).toHaveBeenLastCalledWith('foo');
-    resolvers[1]!([{ path: 'src/fresh.ts', name: 'fresh.ts' }]);
+    // The newest 'foo' response (C) is the one that lands.
+    resolvers[2]!([{ path: 'src/fresh.ts', name: 'fresh.ts' }]);
     await vi.advanceTimersByTimeAsync(0);
     expect(mention.fileItems.value).toEqual([{ path: 'src/fresh.ts', name: 'fresh.ts' }]);
     expect(mention.loading.value).toBe(false);
@@ -305,22 +307,24 @@ describe('useMentionMenu — update', () => {
     const SKILLS: AppSkill[] = [
       { name: 'goal', description: 'Goal mode', path: '/skills/goal/SKILL.md', source: 'builtin' },
       { name: 'git-review', description: 'Review', path: '/skills/git-review/SKILL.md', source: 'project' },
+      { name: 'wing', description: 'Wing', path: '/skills/wing/SKILL.md', source: 'project' },
     ];
     const searchFiles = vi.fn().mockResolvedValue([{ path: 'src/g.ts', name: 'g.ts' }]);
     const { mention } = setup('@g', searchFiles, { skills: SKILLS });
     mention.update();
-    // The skills open immediately; the user arrows onto 'git-review' before
-    // the file search returns.
-    mention.active.value = 1;
+    // The skills open immediately; the user arrows onto 'wing' (the
+    // substring-tier row) before the file search returns.
+    mention.active.value = 2;
     await vi.advanceTimersByTimeAsync(200);
-    // The file section prepended ahead of the skills…
+    // The file hits merged into the ranking: 'g.ts' is a strong (prefix) file
+    // hit, so it lands between the prefix skills and the substring skill…
     expect(mention.items.value.map((item) => (item.kind === 'skill' ? item.skill.name : item.file.name)))
-      .toEqual(['g.ts', 'goal', 'git-review']);
-    // …and the highlight followed 'git-review' to its new index instead of
+      .toEqual(['goal', 'git-review', 'g.ts', 'wing']);
+    // …and the highlight followed 'wing' to its new index instead of
     // resetting to row 0 (an Enter now would insert the wrong row).
-    expect(mention.active.value).toBe(2);
+    expect(mention.active.value).toBe(3);
     const activeItem = mention.items.value[mention.active.value]!;
-    expect(activeItem.kind === 'skill' && activeItem.skill.name).toBe('git-review');
+    expect(activeItem.kind === 'skill' && activeItem.skill.name).toBe('wing');
   });
 
   it('resets the highlight to row 0 when a refreshed result set drops that row', async () => {
@@ -330,14 +334,13 @@ describe('useMentionMenu — update', () => {
     );
     const { text, editor, mention } = setup('@a', searchFiles);
     mention.update();
-    await vi.advanceTimersByTimeAsync(200); // search A ('a') in flight
     resolvers[0]!([{ path: 'src/a.ts', name: 'a.ts' }, { path: 'src/ab.ts', name: 'ab.ts' }]);
     await vi.advanceTimersByTimeAsync(0);
     expect(mention.fileItems.value).toHaveLength(2);
     mention.active.value = 1; // highlight 'ab.ts'
-    // Re-enter the query — fiddle inside the debounce window and land back on
-    // 'a': the re-search returns a set WITHOUT ab.ts, so the highlight must
-    // not linger on a row that no longer exists.
+    // Re-enter the query — fiddle and land back on 'a' (each keystroke fires
+    // its own search immediately): the newest re-search returns a set WITHOUT
+    // ab.ts, so the highlight must not linger on a row that no longer exists.
     text.value = '@ab';
     editor.value = '@ab';
     editor.selectionStart = 3;
@@ -346,9 +349,8 @@ describe('useMentionMenu — update', () => {
     editor.value = '@a';
     editor.selectionStart = 2;
     mention.update();
-    await vi.advanceTimersByTimeAsync(200);
-    expect(searchFiles).toHaveBeenCalledTimes(2);
-    resolvers[1]!([{ path: 'src/a.ts', name: 'a.ts' }]);
+    expect(searchFiles).toHaveBeenCalledTimes(3);
+    resolvers[2]!([{ path: 'src/a.ts', name: 'a.ts' }]);
     await vi.advanceTimersByTimeAsync(0);
     expect(mention.fileItems.value).toEqual([{ path: 'src/a.ts', name: 'a.ts' }]);
     expect(mention.active.value).toBe(0);
@@ -392,7 +394,178 @@ describe('useMentionMenu — skills section', () => {
     mention.update();
     // No debounce for the local section — open before any timer fires.
     expect(mention.open.value).toBe(true);
-    expect(mention.skillItems.value.map((s) => s.name)).toEqual(['goal', 'git-review', 'grammar']);
+    expect(mention.skillItems.value.map((s) => s.skill.name)).toEqual(['goal', 'git-review', 'grammar']);
+  });
+
+  it('carries contiguous name-match positions for row highlighting', () => {
+    const { mention } = setup('@rev', undefined, { skills: SKILLS });
+    mention.update();
+    const row = mention.items.value.find((item) => item.kind === 'skill' && item.skill.name === 'git-review');
+    // 'git-review' contains 'rev' at offset 4 — one contiguous run.
+    expect(row && row.kind === 'skill' && row.matchPositions).toEqual([4, 5, 6]);
+  });
+
+  it('matches skills by subsequence for tokens of 3+ chars (separator-bridging)', () => {
+    const { mention } = setup('@larkim', undefined, {
+      skills: [
+        { name: 'lark-im', description: '', path: '/s/lark-im/SKILL.md', source: 'project' },
+        { name: 'lark-wiki', description: '', path: '/s/lark-wiki/SKILL.md', source: 'project' },
+      ],
+    });
+    mention.update();
+    // 'larkim' is a subsequence of 'lark-im' but NOT of 'lark-wiki' (there
+    // the 'i' comes after the last possible 'm' position ordering fails).
+    expect(mention.skillItems.value.map((s) => s.skill.name)).toEqual(['lark-im']);
+    expect(mention.open.value).toBe(true);
+    // …with the scattered (non-contiguous) match positions for highlighting.
+    const row = mention.items.value[0];
+    expect(row?.kind).toBe('skill');
+    expect(row && row.kind === 'skill' && row.matchPositions).toEqual([0, 1, 2, 3, 5, 6]);
+  });
+
+  it('does not subsequence-match skills for short tokens', () => {
+    const { mention } = setup('@lm', undefined, {
+      skills: [{ name: 'lark-im', description: '', path: '/s/lark-im/SKILL.md', source: 'project' }],
+    });
+    mention.update();
+    // Two characters subsequence-match nearly everything — pure noise, so
+    // the subsequence tier only kicks in at 3+.
+    expect(mention.skillItems.value).toEqual([]);
+    expect(mention.open.value).toBe(false);
+  });
+
+  it('keeps the highlighted row by identity when a late skill list reorders the merged list', async () => {
+    const skillsRef = ref<AppSkill[]>([]);
+    const searchFiles = vi.fn().mockResolvedValue([
+      { path: 'src/g.ts', name: 'g.ts' },
+      { path: 'src/g2.ts', name: 'g2.ts' },
+    ]);
+    const { mention } = setup('@g', searchFiles, { skills: skillsRef });
+    mention.update();
+    await vi.advanceTimersByTimeAsync(0);
+    // The user arrows onto the second file row.
+    expect(mention.items.value.map((item) => (item.kind === 'skill' ? item.skill.name : item.file.name)))
+      .toEqual(['g.ts', 'g2.ts']);
+    mention.active.value = 1;
+    // The skill list arrives late: prefix skills join the top bands,
+    // reordering the merged list…
+    skillsRef.value = SKILLS;
+    await nextTick();
+    expect(mention.items.value.map((item) => (item.kind === 'skill' ? item.skill.name : item.file.name)))
+      .toEqual(['goal', 'git-review', 'grammar', 'g.ts', 'g2.ts']);
+    // …but the highlight follows 'g2.ts' to its new index — a numeric index
+    // left behind would silently retarget 'git-review', and Enter would
+    // insert it.
+    const activeItem = mention.items.value[mention.active.value]!;
+    expect(activeItem.kind === 'file' && activeItem.file.name).toBe('g2.ts');
+  });
+
+  it('keeps the highlight on a single-row skill after an arrow press that cannot move it', async () => {
+    const resolvers: Array<(items: FileItem[]) => void> = [];
+    const searchFiles = vi.fn().mockImplementation(
+      () => new Promise<FileItem[]>((resolve) => { resolvers.push(resolve); }),
+    );
+    const { mention } = setup('@goal', searchFiles, {
+      skills: [{ name: 'x-goal', description: '', path: '/s/x-goal/SKILL.md', source: 'project' }],
+    });
+    mention.update();
+    // One candidate: a substring skill. The user presses ArrowDown — the
+    // index cannot move (0 → 0, no watch fires), but navigate() must still
+    // register the intent.
+    expect(mention.items.value).toHaveLength(1);
+    mention.navigate(0);
+    // A strong file hit lands and joins ABOVE the substring skill…
+    resolvers[0]!([{ path: 'src/goal.ts', name: 'goal.ts' }]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mention.items.value.map((item) => (item.kind === 'skill' ? item.skill.name : item.file.name)))
+      .toEqual(['goal.ts', 'x-goal']);
+    // …but the highlight stays with the skill the user acted on.
+    const activeItem = mention.items.value[mention.active.value]!;
+    expect(activeItem.kind === 'skill' && activeItem.skill.name).toBe('x-goal');
+  });
+
+  it('captures the highlighted row before re-banding stale candidates under the new query', async () => {
+    const resolvers: Array<(items: FileItem[]) => void> = [];
+    const searchFiles = vi.fn().mockImplementation(
+      () => new Promise<FileItem[]>((resolve) => { resolvers.push(resolve); }),
+    );
+    const skills: AppSkill[] = [
+      { name: 'goal', description: '', path: '/s/goal/SKILL.md', source: 'project' },
+      { name: 'z-goal', description: '', path: '/s/z-goal/SKILL.md', source: 'project' },
+    ];
+    const { text, editor, mention } = setup('@a', searchFiles, { skills });
+    mention.update();
+    resolvers[0]!([{ path: 'src/a.ts', name: 'a.ts' }]);
+    await vi.advanceTimersByTimeAsync(0);
+    // '@a' landed a strong file hit above the substring skills.
+    expect(mention.items.value.map((item) => (item.kind === 'skill' ? item.skill.name : item.file.name)))
+      .toEqual(['a.ts', 'goal', 'z-goal']);
+
+    // Retype '@goal': the file row goes stale but keeps its strong band (it
+    // was produced by 'a'); the user arrows onto the substring skill.
+    text.value = '@goal';
+    editor.value = '@goal';
+    editor.selectionStart = 5;
+    mention.update();
+    expect(mention.items.value.map((item) => (item.kind === 'skill' ? item.skill.name : item.file.name)))
+      .toEqual(['goal', 'a.ts', 'z-goal']);
+    mention.navigate(2); // 'z-goal'
+
+    // The new results land. applyFileItems must capture the highlight BEFORE
+    // re-banding the stale 'a.ts' under 'goal' (which drops it to the weak
+    // band and shifts 'z-goal' up) — capturing after would mistake the stale
+    // file for the highlighted row.
+    resolvers[1]!([{ path: 'src/b.ts', name: 'b.ts' }]);
+    await vi.advanceTimersByTimeAsync(0);
+    const activeItem = mention.items.value[mention.active.value]!;
+    expect(activeItem.kind === 'skill' && activeItem.skill.name).toBe('z-goal');
+  });
+
+  it('covers the full UTF-16 span of surrogate pairs in subsequence skill matches', () => {
+    const { mention } = setup('@a🍱🍱', undefined, {
+      skills: [{ name: 'a🍱x🍱', description: '', path: '/s/emoji/SKILL.md', source: 'project' }],
+    });
+    mention.update();
+    const row = mention.items.value[0];
+    expect(row?.kind).toBe('skill');
+    // '🍱' is a surrogate pair: each matched emoji must contribute BOTH
+    // UTF-16 units, or mentionMatchSpans would slice a pair in two.
+    expect(row && row.kind === 'skill' && row.matchPositions).toEqual([0, 1, 2, 4, 5]);
+  });
+
+  it('maps match positions back to original coordinates when case-folding expands a character', () => {
+    const { mention } = setup('@ab', undefined, {
+      skills: [{ name: 'xİAB', description: '', path: '/s/exp/SKILL.md', source: 'project' }],
+    });
+    mention.update();
+    const row = mention.items.value[0];
+    expect(row?.kind).toBe('skill');
+    // 'İ' case-folds to 'i̇' (one unit → two), so the lowered match's index
+    // is not the original's: 'AB' sits at [2,3] in 'xİAB', not [3,4].
+    expect(row && row.kind === 'skill' && row.matchPositions).toEqual([2, 3]);
+  });
+
+  it('counts the subsequence gate in code points, not UTF-16 units', () => {
+    const { mention } = setup('@🍱a', undefined, {
+      skills: [{ name: '🍱---a', description: '', path: '/s/gate/SKILL.md', source: 'project' }],
+    });
+    mention.update();
+    // Two user characters (three UTF-16 units): below the 3-char gate, so no
+    // subsequence match.
+    expect(mention.skillItems.value).toEqual([]);
+    expect(mention.open.value).toBe(false);
+  });
+
+  it('matches context-sensitive case mappings with whole-string lowering (final sigma)', () => {
+    const { mention } = setup('@ος', undefined, {
+      skills: [{ name: 'ΟΣ', description: '', path: '/s/sigma/SKILL.md', source: 'project' }],
+    });
+    mention.update();
+    const row = mention.items.value[0];
+    // 'ΟΣ' folds to 'ος' (final sigma) — per-code-point lowering would give
+    // 'οσ' and the exact match would vanish.
+    expect(row?.kind).toBe('skill');
+    expect(row && row.kind === 'skill' && row.matchPositions).toEqual([0, 1]);
   });
 
   it('stays closed when neither skills nor file search produce anything', () => {
@@ -422,7 +595,7 @@ describe('useMentionMenu — skills section', () => {
     // The session's skills arrive while the menu is still open on the token.
     skillsRef.value = SKILLS;
     await nextTick();
-    expect(mention.skillItems.value.map((s) => s.name)).toEqual(['goal']);
+    expect(mention.skillItems.value.map((s) => s.skill.name)).toEqual(['goal']);
     expect(mention.open.value).toBe(true);
   });
 
@@ -436,25 +609,32 @@ describe('useMentionMenu — skills section', () => {
     expect(mention.open.value).toBe(false);
   });
 
-  it('re-derives the skill candidates while the file search is still debouncing', async () => {
+  it('re-derives the skill candidates while the file search is in flight', async () => {
     const skillsRef = ref<AppSkill[]>([]);
-    const searchFiles = vi.fn().mockResolvedValue([]);
+    let resolveSearch: (items: FileItem[]) => void = () => {};
+    const searchFiles = vi.fn(
+      () =>
+        new Promise<FileItem[]>((resolve) => {
+          resolveSearch = resolve;
+        }),
+    );
     const { mention } = setup('@goal', searchFiles, { skills: skillsRef });
     mention.update();
-    // Inside the debounce window the menu has not opened yet (no local skill
-    // hits, the file search has not fired).
-    expect(mention.open.value).toBe(false);
-    expect(searchFiles).not.toHaveBeenCalled();
-    // The skills arrive now — the section fills in WITHOUT forcing the menu
-    // open (the pending search owns opening).
+    // The search fired on the keystroke: menu open (loading), no local skill
+    // hits yet.
+    expect(mention.open.value).toBe(true);
+    expect(mention.loading.value).toBe(true);
+    expect(mention.skillItems.value).toEqual([]);
+    // The skills arrive mid-flight — the section fills in in place, without
+    // waiting for the search.
     skillsRef.value = SKILLS;
     await nextTick();
-    expect(mention.skillItems.value.map((s) => s.name)).toEqual(['goal']);
-    expect(mention.open.value).toBe(false);
-    // The debounced search then opens the menu with the skill section in place.
-    await vi.advanceTimersByTimeAsync(200);
+    expect(mention.skillItems.value.map((s) => s.skill.name)).toEqual(['goal']);
+    // …and the search's landing keeps it.
+    resolveSearch([]);
+    await vi.advanceTimersByTimeAsync(0);
     expect(mention.open.value).toBe(true);
-    expect(mention.skillItems.value.map((s) => s.name)).toEqual(['goal']);
+    expect(mention.skillItems.value.map((s) => s.skill.name)).toEqual(['goal']);
   });
 
   it('does not refresh or reopen an explicitly closed menu when the skill list arrives', async () => {
@@ -462,15 +642,17 @@ describe('useMentionMenu — skills section', () => {
     const searchFiles = vi.fn().mockResolvedValue([]);
     const { mention } = setup('@goal', searchFiles, { skills: skillsRef });
     mention.update();
-    // Escape mid-debounce: the menu is closed explicitly while the @token is
-    // still live — a late skill list must neither fill in nor reopen it.
+    // The search fired on the keystroke; Escape while it is in flight closes
+    // the menu explicitly while the @token is still live — a late skill list
+    // must neither fill in nor reopen it.
+    expect(searchFiles).toHaveBeenCalledTimes(1);
     mention.close();
     skillsRef.value = SKILLS;
     await nextTick();
     expect(mention.skillItems.value).toEqual([]);
     expect(mention.open.value).toBe(false);
     await vi.advanceTimersByTimeAsync(500);
-    expect(searchFiles).not.toHaveBeenCalled();
+    expect(searchFiles).toHaveBeenCalledTimes(1);
     expect(mention.open.value).toBe(false);
   });
 
@@ -480,15 +662,17 @@ describe('useMentionMenu — skills section', () => {
     const { text, editor, mention } = setup('@g', searchFiles, { skills: skillsRef });
     mention.update();
     mention.close();
-    // Type another character — the fresh derivation re-arms the watcher.
+    // Type another character — the fresh derivation re-arms the watcher and
+    // fires a new search immediately.
     text.value = '@go';
     editor.value = '@go';
     editor.selectionStart = 3;
     mention.update();
     skillsRef.value = SKILLS;
     await nextTick();
-    expect(mention.skillItems.value.map((s) => s.name)).toEqual(['goal']);
-    expect(mention.open.value).toBe(false);
+    expect(mention.skillItems.value.map((s) => s.skill.name)).toEqual(['goal']);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mention.open.value).toBe(true);
   });
 });
 
@@ -546,7 +730,7 @@ describe('useMentionMenu — pill-boundary token detection', () => {
     const { mention } = setup(AFTER_PILL, undefined, { skills: [SKILL], runStart: 24 });
     mention.update();
     expect(mention.open.value).toBe(true);
-    expect(mention.skillItems.value.map((s) => s.name)).toEqual(['goal']);
+    expect(mention.skillItems.value.map((s) => s.skill.name)).toEqual(['goal']);
   });
 
   it('without the run bound (textarea), the same text detects no token', () => {
@@ -570,7 +754,7 @@ describe('useMentionMenu — pill-boundary token detection', () => {
     const text = '[x](kimi-code://skill/x) ask @go';
     const { mention } = setup(text, undefined, { skills: [SKILL], runStart: 25 });
     mention.update();
-    expect(mention.skillItems.value.map((s) => s.name)).toEqual(['goal']);
+    expect(mention.skillItems.value.map((s) => s.skill.name)).toEqual(['goal']);
   });
 });
 

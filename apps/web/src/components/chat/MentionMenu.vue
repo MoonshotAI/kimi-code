@@ -1,12 +1,12 @@
 <!-- apps/web/src/components/chat/MentionMenu.vue -->
-<!-- Popup list shown when the user types @ in the Composer: file/folder
-     matches from the daemon search (top section) plus session skills (bottom
-     section, when the host editor offers them). -->
+<!-- Popup list shown when the user types @ in the Composer: one merged,
+     ranked list of file/folder matches from the daemon search and session
+     skills (no sections — see useMentionMenu for the ranking bands). -->
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Spinner } from '@moonshot-ai/app-ui';
-import { fileMentionIconSvg, mentionIconSvg } from '@moonshot-ai/app-composer';
+import { fileMentionIconSvg, mentionIconSvg, mentionMatchSpans, type MentionMatchSpan } from '@moonshot-ai/app-composer';
 import type { MentionItem } from '@moonshot-ai/app-client/composables';
 import type { FileItem } from '../../types';
 
@@ -15,7 +15,7 @@ import type { FileItem } from '../../types';
 export type { FileItem };
 
 const props = defineProps<{
-  /** Flat row list — files/folders first, then skills. */
+  /** Flat merged row list (files, folders and skills in ranking order). */
   items: MentionItem[];
   activeIndex: number;
   loading: boolean;
@@ -31,10 +31,9 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-// Section split: skills always trail the flat list. The section headers only
-// appear when BOTH groups are present — a single group reads fine bare.
-const fileRows = computed(() => props.items.filter((item): item is Extract<MentionItem, { kind: 'file' | 'folder' }> => item.kind !== 'skill'));
-const skillRows = computed(() => props.items.filter((item): item is Extract<MentionItem, { kind: 'skill' }> => item.kind === 'skill'));
+function rowKey(item: MentionItem): string {
+  return item.kind === 'skill' ? `skill:${item.skill.name}` : item.file.path;
+}
 
 function rowIcon(item: MentionItem): string {
   if (item.kind === 'skill') return mentionIconSvg('skill', '', item.skill.name);
@@ -48,6 +47,24 @@ function rowDir(path: string): string {
   const trimmed = path.endsWith('/') ? path.slice(0, -1) : path;
   const idx = trimmed.lastIndexOf('/');
   return idx === -1 ? '' : trimmed.slice(0, idx);
+}
+
+/** Match highlighting for the skill name: the positions ride the row (they
+ *  index into the name — see useMentionMenu's rankSkills). */
+function skillSpans(item: Extract<MentionItem, { kind: 'skill' }>): MentionMatchSpan[] {
+  return mentionMatchSpans(item.skill.name, item.matchPositions, 0);
+}
+
+/** Match highlighting: the daemon's match_positions index into the FULL path,
+ *  so the name label translates them by its basename offset and the directory
+ *  label takes the prefix range — see mentionMatchSpans. */
+function nameSpans(file: FileItem): MentionMatchSpan[] {
+  const path = file.path.endsWith('/') ? file.path.slice(0, -1) : file.path;
+  return mentionMatchSpans(file.name, file.matchPositions, Math.max(0, path.length - file.name.length));
+}
+
+function dirSpans(file: FileItem): MentionMatchSpan[] {
+  return mentionMatchSpans(rowDir(file.path), file.matchPositions, 0);
 }
 
 // Scroll-linked edge fades (the dock work panel's alpha-mask vocabulary):
@@ -259,48 +276,30 @@ watch(
       :style="{ maskImage, maxHeight: scrollMaxHeight }"
       @scroll="onScroll"
     >
-      <!-- Files / folders (flat indices 0..fileRows.length-1) -->
-      <template v-if="fileRows.length > 0">
-        <div v-if="skillRows.length > 0" class="mention-section">{{ t('mention.files') }}</div>
-        <div
-          v-for="(row, i) in fileRows"
-          :key="row.file.path"
-          :id="`composer-mention-option-${i}`"
-          class="mention-item"
-          :class="{ active: i === props.activeIndex, stale: props.stale }"
-          role="option"
-          :aria-selected="i === props.activeIndex"
-          @mouseenter="emit('hover', i)"
-          @mousedown.prevent="emit('select', row)"
-        >
-          <!-- file-type glyph (line-SVG) -->
-          <!-- eslint-disable-next-line vue/no-v-html -->
-          <span class="mention-icon" v-html="rowIcon(row)" aria-hidden="true" />
-          <span class="mention-name">{{ row.file.name }}</span>
-          <span v-if="rowDir(row.file.path)" class="mention-meta">{{ rowDir(row.file.path) }}</span>
-        </div>
-      </template>
-
-      <!-- Skills (flat indices fileRows.length..) -->
-      <template v-if="skillRows.length > 0">
-        <div v-if="fileRows.length > 0" class="mention-section">{{ t('mention.skills') }}</div>
-        <div
-          v-for="(row, j) in skillRows"
-          :key="row.skill.name"
-          :id="`composer-mention-option-${fileRows.length + j}`"
-          class="mention-item"
-          :class="{ active: fileRows.length + j === props.activeIndex }"
-          role="option"
-          :aria-selected="fileRows.length + j === props.activeIndex"
-          @mouseenter="emit('hover', fileRows.length + j)"
-          @mousedown.prevent="emit('select', row)"
-        >
-          <!-- eslint-disable-next-line vue/no-v-html -->
-          <span class="mention-icon" v-html="rowIcon(row)" aria-hidden="true" />
-          <span class="mention-name">{{ row.skill.name }}</span>
+      <!-- One merged list: files, folders and skills in ranking order. -->
+      <div
+        v-for="(row, i) in props.items"
+        :key="rowKey(row)"
+        :id="`composer-mention-option-${i}`"
+        class="mention-item"
+        :class="{ active: i === props.activeIndex, stale: props.stale && row.kind !== 'skill' }"
+        role="option"
+        :aria-selected="i === props.activeIndex"
+        @mouseenter="emit('hover', i)"
+        @mousedown.prevent="emit('select', row)"
+      >
+        <!-- file-type / skill glyph (line-SVG) -->
+        <!-- eslint-disable-next-line vue/no-v-html -->
+        <span class="mention-icon" v-html="rowIcon(row)" aria-hidden="true" />
+        <template v-if="row.kind === 'skill'">
+          <span class="mention-name"><template v-for="(span, k) in skillSpans(row)" :key="k"><span v-if="span.hit" class="mention-hit">{{ span.text }}</span><template v-else>{{ span.text }}</template></template></span>
           <span class="mention-meta">{{ row.skill.description }}</span>
-        </div>
-      </template>
+        </template>
+        <template v-else>
+          <span class="mention-name"><template v-for="(span, k) in nameSpans(row.file)" :key="k"><span v-if="span.hit" class="mention-hit">{{ span.text }}</span><template v-else>{{ span.text }}</template></template></span>
+          <span v-if="rowDir(row.file.path)" class="mention-meta"><template v-for="(span, k) in dirSpans(row.file)" :key="k"><span v-if="span.hit" class="mention-hit">{{ span.text }}</span><template v-else>{{ span.text }}</template></template></span>
+        </template>
+      </div>
     </div>
     <!-- Overlay scroll indicator (the native bar is hidden — it ate row width) -->
     <div v-if="thumb && props.items.length > 0" class="scroll-thumb" @pointerdown="onThumbPointerDown" :style="{ top: `${thumb.top}px`, height: `${thumb.height}px` }" />
@@ -382,15 +381,6 @@ watch(
   padding: var(--space-2) var(--space-1);
   font-family: var(--font-ui);
   font-size: var(--ui-b2);
-}
-
-/* Group caption between the two sections — quiet, same text column. */
-.mention-section {
-  padding: var(--space-1) var(--space-1) var(--space-05);
-  color: var(--color-text-muted);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-section-label);
 }
 
 /* The searching indicator while candidates stay visible: pinned to the
@@ -491,6 +481,17 @@ watch(
   /* Hug the content: the name → meta gap is the row's fixed flex gap, not a
      column position (the old 80px min-width made it vary with name length). */
   flex-shrink: 0;
+}
+
+/* Matched characters (the daemon's match_positions): ink emphasis only —
+   same size, no background, so the row rhythm never shifts. */
+.mention-name .mention-hit {
+  color: var(--color-text-strong);
+  font-weight: var(--weight-semibold);
+}
+
+.mention-meta .mention-hit {
+  color: var(--color-text);
 }
 
 .mention-meta {

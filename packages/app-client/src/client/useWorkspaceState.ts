@@ -3667,13 +3667,20 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
+  // Sticky capability flag: a daemon predating fs:suggest answers it with a
+  // bare 404 — fall back to fs:search and stop probing (the server build does
+  // not change mid-session).
+  let suggestUnavailable = false;
   /**
-   * Search files in the active workspace via the daemon's workspace fs:search
-   * endpoint — no session id involved, so `@` works unchanged before the first
-   * prompt. The workspace ref mirrors what selectSession syncs: the active
-   * session's workspace, else the draft's active workspace (a registered id or
-   * an absolute root — the daemon resolves both). Returns {path, name}[] —
-   * defensive, returns [] on error or when no workspace is active.
+   * Search files in the active workspace via the daemon's workspace fs:suggest
+   * endpoint (path-aware matching + tiered ranking; older daemons fall back to
+   * fs:search) — no session id involved, so `@` works unchanged before the
+   * first prompt. The workspace ref mirrors what selectSession syncs: the
+   * active session's workspace, else the draft's active workspace (a
+   * registered id or an absolute root — the daemon resolves both). Returns
+   * {path, name, kind, matchPositions}[] (matchPositions indexes into the full
+   * path, for menu highlighting) — defensive, returns [] on error or when no
+   * workspace is active.
    */
   async function searchFiles(query: string): Promise<Array<{ path: string; name: string }>> {
     const session = rawState.sessions.find((s) => s.id === rawState.activeSessionId);
@@ -3681,8 +3688,17 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (!ref) return [];
     try {
       const api = getKimiWebApi();
+      if (!suggestUnavailable) {
+        try {
+          const result = await api.suggestFiles(ref, { query, limit: 20 });
+          return result.items.map((item) => ({ path: item.path, name: item.name, kind: item.kind, matchPositions: item.matchPositions }));
+        } catch (err) {
+          if (!isDaemonApiError(err) || err.code !== 404) throw err;
+          suggestUnavailable = true;
+        }
+      }
       const result = await api.searchFiles(ref, { query, limit: 20 });
-      return result.items.map((item) => ({ path: item.path, name: item.name, kind: item.kind }));
+      return result.items.map((item) => ({ path: item.path, name: item.name, kind: item.kind, matchPositions: item.matchPositions }));
     } catch {
       return [];
     }

@@ -4,6 +4,7 @@
 // singleton, and the user-message renderer (ComposerText).
 export * from './icons';
 export * from './mentionIcons';
+export * from './mentionMatch';
 export * from './mentionPill';
 export * from './mentionSelectionSync';
 export * from './mentionTooltip';
