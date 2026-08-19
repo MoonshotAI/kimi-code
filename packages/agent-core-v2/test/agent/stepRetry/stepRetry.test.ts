@@ -262,6 +262,72 @@ describe('stepRetry plugin', () => {
     expect(rpcEvents('turn.step.retrying')).toEqual([]);
   });
 
+  it('gives stream stalls a fresh budget after other retryable failures', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        if (calls <= 2) throw new APIConnectionError('terminated');
+        throw new LLMStreamStalledError('stalled', {
+          phase: 'streaming',
+          elapsedMs: 60_000,
+          idleMs: 60_000,
+        });
+      }),
+    );
+
+    const result = await runTurn(1);
+
+    expect(result.type).toBe('failed');
+    expect(calls).toBe(5);
+    const retrying = rpcEvents('turn.step.retrying');
+    expect(retrying).toHaveLength(4);
+    expect(retrying[0]?.args).toMatchObject({
+      failedAttempt: 1,
+      maxAttempts: 10,
+      errorName: 'APIConnectionError',
+    });
+    expect(retrying[2]?.args).toMatchObject({
+      failedAttempt: 1,
+      maxAttempts: 3,
+      errorName: 'LLMStreamStalledError',
+    });
+    expect(retrying[3]?.args).toMatchObject({
+      failedAttempt: 2,
+      maxAttempts: 3,
+      errorName: 'LLMStreamStalledError',
+    });
+  });
+
+  it('still counts stall attempts toward the total attempt budget', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        if (calls <= 9) throw new APIConnectionError('terminated');
+        throw new LLMStreamStalledError('stalled', {
+          phase: 'streaming',
+          elapsedMs: 60_000,
+          idleMs: 60_000,
+        });
+      }),
+    );
+
+    const result = await runTurn(1);
+
+    expect(result.type).toBe('failed');
+    expect(calls).toBe(10);
+    const retrying = rpcEvents('turn.step.retrying');
+    expect(retrying).toHaveLength(9);
+    expect(retrying[8]?.args).toMatchObject({
+      failedAttempt: 9,
+      maxAttempts: 10,
+      errorName: 'APIConnectionError',
+    });
+  });
+
   it('starts a fresh attempt budget on the next turn', async () => {
     vi.useFakeTimers();
     let calls = 0;

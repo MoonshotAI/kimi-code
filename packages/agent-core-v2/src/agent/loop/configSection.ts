@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { type EnvBindings, envBindings, stripEnvBoundFields } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 import { plainObjectToToml } from '#/app/config/toml';
+import { MAX_TIMER_DELAY_MS } from '#/_base/utils/timer';
 
 export const LOOP_CONTROL_SECTION = 'loopControl';
 
@@ -24,19 +25,24 @@ export const LoopControlSchema = z.object({
   maxRalphIterations: z.number().int().min(-1).optional(),
   reservedContextSize: z.number().int().min(0).optional(),
   compactionTriggerRatio: z.number().min(0.5).max(0.99).optional(),
-  firstOutputTimeoutMs: z.number().int().min(0).optional(),
-  streamIdleTimeoutMs: z.number().int().min(0).optional(),
+  firstOutputTimeoutMs: z.number().int().min(0).max(MAX_TIMER_DELAY_MS).optional(),
+  streamIdleTimeoutMs: z.number().int().min(0).max(MAX_TIMER_DELAY_MS).optional(),
   maxStallAttemptsPerStep: z.number().int().min(0).optional(),
 });
 
 export type LoopControl = z.infer<typeof LoopControlSchema>;
 
-function parseNonNegativeInt(raw: string): number | undefined {
+function parseNonNegativeInt(raw: string, max?: number): number | undefined {
   const value = raw.trim();
   if (value.length === 0 || !/^\d+$/.test(value)) return undefined;
   const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+  return Number.isInteger(parsed) && parsed >= 0 && (max === undefined || parsed <= max)
+    ? parsed
+    : undefined;
 }
+
+const parseTimerDelayMs = (raw: string): number | undefined =>
+  parseNonNegativeInt(raw, MAX_TIMER_DELAY_MS);
 
 export const loopControlEnvBindings: EnvBindings<LoopControl> = envBindings(LoopControlSchema, {
   maxStepsPerTurn: { env: LOOP_MAX_STEPS_PER_TURN_ENV, parse: parseNonNegativeInt },
@@ -45,8 +51,8 @@ export const loopControlEnvBindings: EnvBindings<LoopControl> = envBindings(Loop
     deprecatedEnv: LOOP_MAX_RETRIES_PER_STEP_ENV,
     parse: parseNonNegativeInt,
   },
-  firstOutputTimeoutMs: { env: LOOP_FIRST_OUTPUT_TIMEOUT_MS_ENV, parse: parseNonNegativeInt },
-  streamIdleTimeoutMs: { env: LOOP_STREAM_IDLE_TIMEOUT_MS_ENV, parse: parseNonNegativeInt },
+  firstOutputTimeoutMs: { env: LOOP_FIRST_OUTPUT_TIMEOUT_MS_ENV, parse: parseTimerDelayMs },
+  streamIdleTimeoutMs: { env: LOOP_STREAM_IDLE_TIMEOUT_MS_ENV, parse: parseTimerDelayMs },
   maxStallAttemptsPerStep: {
     env: LOOP_MAX_STALL_ATTEMPTS_PER_STEP_ENV,
     parse: parseNonNegativeInt,

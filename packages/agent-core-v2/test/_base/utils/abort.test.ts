@@ -8,6 +8,7 @@ import {
   isUserCancellation,
   userCancellationReason,
 } from '#/_base/utils/abort';
+import { MAX_TIMER_DELAY_MS } from '#/_base/utils/timer';
 
 describe('userCancellationReason', () => {
   it('is recognised as a deliberate user cancellation', () => {
@@ -183,5 +184,28 @@ describe('createIdleTimeoutAbortSignal', () => {
     idle.touch();
 
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('clamps an excessive timeout to the timer ceiling instead of firing immediately', () => {
+    const idle = createIdleTimeoutAbortSignal(undefined, Number.MAX_SAFE_INTEGER);
+
+    vi.advanceTimersByTime(MAX_TIMER_DELAY_MS - 1);
+    expect(idle.signal.aborted).toBe(false);
+    vi.advanceTimersByTime(1);
+
+    expect(idle.signal.aborted).toBe(true);
+    expect(idle.idleTimedOut()).toBe(true);
+    idle.clear();
+  });
+
+  it('clamps an excessive timeout passed to touch', () => {
+    const idle = createIdleTimeoutAbortSignal(undefined, 1000);
+
+    idle.touch(Number.MAX_SAFE_INTEGER);
+    vi.advanceTimersByTime(60_000);
+
+    expect(idle.signal.aborted).toBe(false);
+    expect(vi.getTimerCount()).toBe(1);
+    idle.clear();
   });
 });

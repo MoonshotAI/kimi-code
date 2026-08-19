@@ -1,3 +1,5 @@
+import { setClampedTimeout } from './timer';
+
 export function abortError(message = 'Aborted'): Error {
   const error = new Error(message);
   error.name = 'AbortError';
@@ -115,7 +117,7 @@ export function createIdleTimeoutAbortSignal(
     if (timeout !== undefined) clearTimeout(timeout);
     timeout = undefined;
     if (cleared || didIdleTimeout || controller.signal.aborted || currentTimeoutMs <= 0) return;
-    timeout = setTimeout(() => {
+    timeout = setClampedTimeout(() => {
       timeout = undefined;
       didIdleTimeout = true;
       controller.abort(abortError());
