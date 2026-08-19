@@ -1,6 +1,6 @@
 import { OPEN_PLATFORMS } from '@moonshot-ai/kimi-code-oauth';
 
-import { currentKimiRegion, KIMI_CODE_GLOBAL_PLATFORM_VALUE } from '#/utils/region';
+import { KIMI_CODE_GLOBAL_PLATFORM_VALUE } from '#/utils/region';
 
 import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 
@@ -14,13 +14,9 @@ const KIMI_CODE_GLOBAL_OPTION: ChoiceOption = {
 };
 
 function platformOptions(): readonly ChoiceOption[] {
-  // The suggested region's entry goes first so it is the initial highlight.
-  const oauthOptions =
-    currentKimiRegion() === 'global'
-      ? [KIMI_CODE_GLOBAL_OPTION, KIMI_CODE_MAINLAND_CN_OPTION]
-      : [KIMI_CODE_MAINLAND_CN_OPTION, KIMI_CODE_GLOBAL_OPTION];
   return [
-    ...oauthOptions,
+    KIMI_CODE_MAINLAND_CN_OPTION,
+    KIMI_CODE_GLOBAL_OPTION,
     ...OPEN_PLATFORMS.map((platform) => ({ value: platform.id, label: platform.name })),
   ];
 }
