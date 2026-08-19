@@ -1,3 +1,10 @@
+/**
+ * Host filesystem watch service.
+ *
+ * On Windows, drive-root watch paths such as `D:` / `/D:` are normalized to
+ * `D:\\` before `fs.watch`, avoiding ENOENT when the process CWD is a drive root.
+ */
+
 import { watch as fsWatch } from 'node:fs';
 import { basename, isAbsolute, join, relative } from 'node:path';
 
@@ -230,11 +237,21 @@ export class HostFsWatchService implements IHostFsWatchService {
   constructor(private readonly runtime: HostFsWatchRuntime = NODE_HOST_FS_WATCH_RUNTIME) {}
 
   watch(path: string, options?: HostFsWatchOptions): IHostFsWatchHandle {
+    const root = normalizeWatchRoot(path, this.runtime.platform);
     if (useNativeRecursive(options, this.runtime.platform)) {
-      return new SignalWatchHandle(path, options, this.runtime);
+      return new SignalWatchHandle(root, options, this.runtime);
     }
-    return new HostFsWatchHandle(path, options);
+    return new HostFsWatchHandle(root, options);
   }
+}
+
+function normalizeWatchRoot(path: string, platform: NodeJS.Platform): string {
+  if (platform !== 'win32') return path;
+  const driveOnly = path.match(/^\/?([A-Za-z]):\/?$/);
+  if (driveOnly) {
+    return `${driveOnly[1].toUpperCase()}:\\`;
+  }
+  return path;
 }
 
 function useNativeRecursive(
