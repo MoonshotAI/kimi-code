@@ -7,3 +7,4 @@
 // matrix tests.
 export * from './composerTextDoc';
 export * from './mentionLinkPath';
+export * from './skillActivationEdit';

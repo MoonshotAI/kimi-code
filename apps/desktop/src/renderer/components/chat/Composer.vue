@@ -5,7 +5,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } f
 import { useI18n } from 'vue-i18n';
 import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
-import { buildSlashItems, parseSlash, SKILL_COMMAND_PREFIX, stripSkillPrefix } from '@moonshot-ai/app-core/lib';
+import { buildSlashItems, matchSlashItem, parseSlash, SKILL_COMMAND_PREFIX, stripSkillPrefix } from '@moonshot-ai/app-core/lib';
 import { formatTokens } from '@moonshot-ai/app-core/lib';
 import type { IconName } from '@moonshot-ai/app-client/icons';
 import type { FileItem } from './MentionMenu.vue';
@@ -758,11 +758,7 @@ function handleSubmit(): void {
     // compact (the pill is a plain reference in its args), not hijack into a
     // skill activation. Resolve the command FIRST.
     const parsed = parseSlash(trimmed);
-    const matched = parsed
-      ? buildSlashItems(props.skills).find(
-          (item) => item.name === parsed.cmd || item.name === `/${SKILL_COMMAND_PREFIX}${parsed.cmd.slice(1)}`,
-        )
-      : undefined;
+    const matched = parsed ? matchSlashItem(buildSlashItems(props.skills), parsed.cmd) : undefined;
     const skillMentions = editor?.getSkillMentions() ?? [];
     // A pill revived from a draft/history/edit-resend may name a skill GONE
     // from the workspace: the daemon would refuse the activation, the failure
@@ -825,6 +821,27 @@ function handleSubmit(): void {
       } else {
         emit('command', { cmd, attachments: [] });
       }
+      return;
+    }
+
+    // An explicit `/skill:<name>` line that resolves against NOTHING in the
+    // current catalog (list still loading, listSkills failed, or the skill
+    // was removed — e.g. an undo refill for a since-deleted skill) must not
+    // fall through to a plain prompt: the user plainly asked for an
+    // activation, so send it down the command path anyway and let the
+    // daemon's skill.not_found surface (with the composer restore) instead
+    // of silently dropping the activation.
+    if (parsed && !matched && parsed.cmd.startsWith(`/${SKILL_COMMAND_PREFIX}`)) {
+      const cmd = parsed.arg ? `${parsed.cmd} ${parsed.arg}` : parsed.cmd;
+      text.value = '';
+      clearDraft();
+      slashOpen.value = false;
+      collapseAndRefit();
+      previewAttachment.value = null;
+      previewThumbImg.value = null;
+      clearAfterSubmit();
+      closeMentionMenu();
+      emit('command', { cmd, attachments: readyAttachments.map((a) => toPromptAttachment(a)) });
       return;
     }
   }

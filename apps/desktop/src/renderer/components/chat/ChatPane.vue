@@ -22,7 +22,7 @@ import { Icon, Kbd, Spinner, Button, Tooltip } from '@moonshot-ai/app-ui';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { copyTextToClipboard, formatMessageTime } from '@moonshot-ai/app-core/lib';
 import { openFileAttachment } from '@moonshot-ai/app-client/lib';
-import { startMentionSelectionSync, mentionIconSvg, parseMentionLinks, ComposerText } from '@moonshot-ai/app-composer';
+import { startMentionSelectionSync, ComposerText, canUndoSkillActivation, skillActivationEditText, skillActivationHasPill, serializeMention } from '@moonshot-ai/app-composer';
 import { getKimiWebApi } from '../../api';
 import {
   formatTokens,
@@ -41,9 +41,6 @@ import type { AssistantFold, AssistantRenderBlock, TurnFileChange } from '../cha
 
 const { t } = useI18n();
 
-// Skill glyph for the legacy activation card's skill pill (shared registry
-// mapping — shown when a slash-typed activation has no pill in its args).
-const skillMentionIcon = mentionIconSvg('skill', '', '');
 const { confirm } = useConfirmDialog();
 
 onUnmounted(() => {
@@ -424,10 +421,10 @@ const lastUserTurnId = computed<string | null>(() => {
 
 /** Whether to offer "edit & resend" on this turn: the latest user message, only
     while the conversation has nothing unfinished and it isn't a plugin command.
-    A pill-composed skill activation edits fine: its args are the full original
-    text, so the composer revives the skill pill and resending re-activates it.
-    A SLASH-typed activation's args carry no pill — editing those would resend
-    bare text as a plain prompt, so they stay non-editable. */
+    A skill activation is editable whenever the refill can replay the
+    activation on resend — pill-composed args go back verbatim (this composer
+    revives the pill), anything else rides the synthesized `/skill:<name>
+    <args>` command form (see skillActivationEditText in app-composer). */
 function canEditTurn(turn: ChatTurn): boolean {
   return (
     !props.readOnly &&
@@ -435,21 +432,8 @@ function canEditTurn(turn: ChatTurn): boolean {
     turn.id === lastUserTurnId.value &&
     !props.working &&
     !turn.pluginCommand &&
-    !(turn.skillActivation && !skillActivationHasPill(turn))
+    !(turn.skillActivation && !canUndoSkillActivation(turn.skillActivation, { revivePill: true }))
   );
-}
-
-/** True when the activation's args carry EXACTLY ONE revivable skill mention
-    and it is the activated skill (the mention-composed send path). Slash-typed
-    activations have bare args with no pill — and args carrying EXTRA skill
-    links would revive into multiple pills, whose resend downgrades to a plain
-    prompt and silently drops the activation — so both keep the identity card
-    and stay non-editable. */
-function skillActivationHasPill(turn: ChatTurn): boolean {
-  const act = turn.skillActivation;
-  if (!act) return false;
-  const skills = parseMentionLinks(act.args ?? '').filter((m) => m.attrs.kind === 'skill');
-  return skills.length === 1 && skills[0]!.attrs.name === act.name;
 }
 
 /** Divider label: "Context compacted"/"auto-compacted" + optional token stats. */
@@ -511,7 +495,13 @@ async function onUndo(turn: ChatTurn): Promise<void> {
 function confirmEditMessage(turn: ChatTurn): void {
   if (undoingTurnId.value !== null) return;
   undoingTurnId.value = turn.id;
-  emit('editMessage', { text: turn.text, attachments: turn.attachments });
+  // A skill activation refills in its replayable form (verbatim pill args, or
+  // the synthesized `/skill:<name> <args>` command) so the resend replays the
+  // activation instead of degrading to a plain prompt.
+  const text = turn.skillActivation
+    ? (skillActivationEditText(turn.skillActivation, { revivePill: true }) ?? turn.text)
+    : turn.text;
+  emit('editMessage', { text, attachments: turn.attachments });
   // Fallback: if the server rewind never removes the turn (e.g. it failed),
   // release the guard so the user can retry.
   undoFallbackTimer = setTimeout(() => {
@@ -724,21 +714,29 @@ watch(
   },
 );
 
-// Clampable bubble text: a skill activation's args (the full original text —
-// the pill's link form revives in place), a plugin command's args (the card
-// above replaced the raw input), otherwise the user's verbatim text.
+// Clampable bubble text: a skill activation renders MENTION-STYLE — no
+// identity card: args carrying the activated skill as a pill show the
+// original text verbatim (the pill revives in place); any other activation
+// (slash-typed bare args, extra skill links, no args at all) gets the skill
+// as an inline pill in front of the args, exactly how a mention-composed
+// message reads. A plugin command's args follow its card; anything else is
+// the user's verbatim text.
 function userTextContent(turn: ChatTurn): string | null {
-  if (turn.skillActivation) return turn.skillActivation.args || null;
+  if (turn.skillActivation) {
+    const act = turn.skillActivation;
+    if (skillActivationHasPill(act)) return act.args ?? null;
+    const pill = serializeMention({ kind: 'skill', name: act.name, path: '' });
+    return act.args ? `${pill} ${act.args}` : pill;
+  }
   if (turn.pluginCommand) return turn.pluginCommand.args || null;
   return turn.text || null;
 }
 
 function isCommandArgs(turn: ChatTurn): boolean {
-  // A pill-composed skill activation's args ARE the user's message (the pill
-  // revives inline in it) — they take the plain bubble styling; a
-  // slash-typed activation keeps the command-args styling under its identity
-  // card, same as a plugin command's.
-  return turn.pluginCommand !== undefined || (turn.skillActivation !== undefined && !skillActivationHasPill(turn));
+  // Only a plugin command's args keep the command-args styling under their
+  // identity card; a skill activation's args are plain user text (a pill
+  // revives inline in them).
+  return turn.pluginCommand !== undefined;
 }
 
 function isUserTextClamped(turnId: string): boolean {
@@ -939,19 +937,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
                 :size="att.size"
                 @activate="onAttachmentClick(att)"
               />
-            </div>
-            <!-- Skill activation identity card — only when the args DON'T
-                 carry the skill as a pill (legacy slash-typed activations);
-                 pill-composed ones show the revived pill in the text itself. -->
-            <div v-if="turn.skillActivation && !skillActivationHasPill(turn)" class="skill-act">
-              <div class="skill-act-head">
-                <span class="skill-act-arrow">▶</span>
-                <i18n-t keypath="conversation.activatedSkill" tag="span">
-                  <template #name>
-                    <span class="mention-pill mention-skill" data-mention-kind="skill" :data-mention-name="turn.skillActivation.name" tabindex="0" role="button"><span class="mention-pill-icon" aria-hidden="true" v-html="skillMentionIcon" /><span class="mention-pill-name">{{ turn.skillActivation.name }}</span></span>
-                  </template>
-                </i18n-t>
-              </div>
             </div>
             <!-- Plugin command card (replaces expanded body) -->
             <div v-if="turn.pluginCommand" class="skill-act">

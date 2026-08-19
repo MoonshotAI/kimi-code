@@ -22,7 +22,6 @@ export default {
   compactedTokens: ' ({before} → {after} tokens)',
   viewSummary: 'View summary',
   summaryTitle: 'Compaction summary',
-  activatedSkill: 'Activated skill: {name}',
   undo: 'Undo',
   undoTooltip: 'Undo edit',
   undoConfirm: 'Undo last message?',

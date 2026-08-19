@@ -22,7 +22,6 @@ export default {
   compactedTokens: '（{before} → {after} tokens）',
   viewSummary: '查看摘要',
   summaryTitle: '压缩摘要',
-  activatedSkill: '已激活技能: {name}',
   undo: '撤销',
   undoTooltip: '撤回编辑',
   undoConfirm: '撤销上一条消息？',

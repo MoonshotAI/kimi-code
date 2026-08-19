@@ -73,6 +73,32 @@ export function parseSlash(input: string): { cmd: string; arg: string } | null {
 export const SKILL_COMMAND_PREFIX = 'skill:';
 
 /**
+ * Resolve a typed slash command (the `cmd` half of parseSlash) against the
+ * slash-item list. Three forms hit, in priority order:
+ *  1. exact (`/compact` → `/compact`) — built-in commands always win ties;
+ *  2. bare skill name (`/deploy` → the `/skill:deploy` item), mirroring the TUI;
+ *  3. prefixed name against ANY skill (`/skill:deploy` → even a builtin-sourced
+ *     skill whose menu item is the bare `/deploy`) — the undo refill and the
+ *     pill command both speak the prefixed form regardless of source.
+ * Skill names with spaces never match here: the space-delimited cmd string
+ * can't carry them (they ride the pill command's structured skillName).
+ */
+export function matchSlashItem(
+  items: ReadonlyArray<SlashCommand>,
+  cmd: string,
+): SlashCommand | undefined {
+  const exact = items.find((item) => item.name === cmd);
+  if (exact !== undefined) return exact;
+  const prefixed = `/${SKILL_COMMAND_PREFIX}${cmd.slice(1)}`;
+  const bareSkill = items.find((item) => item.name === prefixed);
+  if (bareSkill !== undefined) return bareSkill;
+  if (!cmd.startsWith(`/${SKILL_COMMAND_PREFIX}`)) return undefined;
+  const name = cmd.slice(1 + SKILL_COMMAND_PREFIX.length);
+  if (name.length === 0 || name.includes(' ')) return undefined;
+  return items.find((item) => item.isSkill === true && stripSkillPrefix(item.name) === name);
+}
+
+/**
  * Strip the `skill:` prefix from a slash-command name (with or without the
  * leading `/`), returning the bare skill name. The slash menu builds skill
  * items as `/skill:<name>` (or `/<name>` for builtin-sourced skills), so the

@@ -23,6 +23,7 @@ import { safeRemove, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { closestRegion, isEditableTarget, isSelectAllKeyEvent, selectContentsOf } from '@moonshot-ai/app-core/lib';
 import { isFindKeyEvent } from '@moonshot-ai/app-core/lib';
+import { canUndoSkillActivation, skillActivationEditText } from '@moonshot-ai/app-composer';
 import { useComposerAutoFocus } from '@moonshot-ai/app-client/composables';
 import { turnHasOutput } from '../chatTurnRendering';
 import type { TurnFileChange } from '../chatTurnRendering';
@@ -1841,10 +1842,18 @@ function lastUserTurn(): ChatTurn | null {
 function armEscUndo(): void {
   if (undoHintTurnId.value !== null || pendingAutoUndoTurnId.value !== null) return;
   // Arm only with a main turn in flight and an empty queue (a draining queue
-  // would retarget the undo); skill/plugin command turns never arm.
+  // would retarget the undo); plugin command turns never arm, and a skill
+  // activation arms only when its refill can replay the activation on resend
+  // (canEditTurn parity — the web textarea takes the synthesized command form
+  // only, see skillActivationEditText in app-composer).
   if (!props.working || (props.queued?.length ?? 0) > 0) return;
   const turn = lastUserTurn();
-  if (turn === null || turn.skillActivation !== undefined || turn.pluginCommand !== undefined) return;
+  if (
+    turn === null ||
+    turn.pluginCommand !== undefined ||
+    (turn.skillActivation !== undefined &&
+      !canUndoSkillActivation(turn.skillActivation, { revivePill: false }))
+  ) return;
   const zeroOutput = props.turns
     .slice(props.turns.indexOf(turn) + 1)
     .every((t) => t.role === 'assistant' && !turnHasOutput(t));
@@ -1881,7 +1890,12 @@ function executeEscUndo(turnId: string): void {
     escUndoInFlight = false;
     escUndoInFlightTimer = null;
   }, ESC_UNDO_FALLBACK_MS);
-  handleEditMessage({ text: turn.text, attachments: turn.attachments });
+  // A skill activation refills in its replayable form (same rule as the hover
+  // undo in ChatPane) so the resend replays the activation.
+  const text = turn.skillActivation
+    ? (skillActivationEditText(turn.skillActivation, { revivePill: false }) ?? turn.text)
+    : turn.text;
+  handleEditMessage({ text, attachments: turn.attachments });
 }
 
 function maybeFireAutoUndo(): void {

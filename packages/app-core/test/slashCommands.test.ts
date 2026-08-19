@@ -1,6 +1,6 @@
 // packages/app-core/test/slashCommands.test.ts
 import { describe, expect, it } from 'vitest';
-import { buildSlashItems, filterCommandMatches, filterCommands, matchRanges, stripSkillPrefix, type SlashCommand } from '../src/lib/slashCommands';
+import { buildSlashItems, filterCommandMatches, filterCommands, matchRanges, matchSlashItem, stripSkillPrefix, type SlashCommand } from '../src/lib/slashCommands';
 
 const passThrough = (item: SlashCommand): string => item.desc;
 
@@ -152,5 +152,52 @@ describe('stripSkillPrefix', () => {
 
   it('returns skill:-less, slash-less input unchanged', () => {
     expect(stripSkillPrefix('deploy')).toBe('deploy');
+  });
+});
+
+describe('matchSlashItem', () => {
+  const skills = [
+    { name: 'deploy', description: 'Ship it' },
+    { name: 'commit', description: 'Builtin-sourced skill', source: 'builtin' },
+    { name: 'compact', description: 'Skill sharing a builtin name', source: 'builtin' },
+  ];
+  const items = buildSlashItems(skills);
+
+  it('matches a built-in command exactly', () => {
+    expect(matchSlashItem(items, '/new')?.name).toBe('/new');
+  });
+
+  it('resolves a bare skill name to its prefixed menu item (TUI parity)', () => {
+    const match = matchSlashItem(items, '/deploy');
+    expect(match?.name).toBe('/skill:deploy');
+    expect(match?.isSkill).toBe(true);
+  });
+
+  it('matches the prefixed form of a non-builtin skill directly', () => {
+    expect(matchSlashItem(items, '/skill:deploy')?.isSkill).toBe(true);
+  });
+
+  it('matches the prefixed form of a builtin-sourced skill (menu item is bare)', () => {
+    const match = matchSlashItem(items, '/skill:commit');
+    expect(match?.name).toBe('/commit');
+    expect(match?.isSkill).toBe(true);
+  });
+
+  it('an explicit /skill: prefix activates the skill even when a builtin command shares the name', () => {
+    const match = matchSlashItem(items, '/skill:compact');
+    expect(match?.isSkill).toBe(true);
+    expect(stripSkillPrefix(match!.name)).toBe('compact');
+  });
+
+  it('a bare builtin command still wins over a same-named skill', () => {
+    const match = matchSlashItem(items, '/compact');
+    expect(match?.name).toBe('/compact');
+    expect(match?.isSkill).toBeUndefined();
+  });
+
+  it('returns undefined for unknown commands and space-carrying heads', () => {
+    expect(matchSlashItem(items, '/nonexistent')).toBeUndefined();
+    expect(matchSlashItem(items, '/skill:')).toBeUndefined();
+    expect(matchSlashItem(items, '/skill:write goal')).toBeUndefined();
   });
 });
