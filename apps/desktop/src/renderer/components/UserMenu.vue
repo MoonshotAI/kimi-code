@@ -558,6 +558,8 @@ async function onLogout(): Promise<void> {
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   overflow-x: hidden;
+  /* Menu labels are chrome, not content — drag-selecting must not highlight them. */
+  user-select: none;
 }
 /* Flyout — content-adaptive width; positionSubmenu caps it at the parent menu width via maxWidth. */
 .user-submenu {
@@ -569,6 +571,7 @@ async function onLogout(): Promise<void> {
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   overflow-x: hidden;
+  user-select: none;
 }
 .menu-pop-enter-active {
   transition:
