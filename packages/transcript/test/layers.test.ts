@@ -492,6 +492,31 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(assistantTexts).toEqual(['starting', 'continuing']);
   });
 
+  it('stops folded notification text before child output blocks', () => {
+    const xml = [
+      '<notification id="task:task-9:completed" category="task" type="task.completed" source_kind="background_task" source_id="task-9">',
+      'Title: Background agent completed',
+      'Severity: info',
+      'inspect done.',
+      '<output-file>/tmp/out.log</output-file>',
+      '/tmp/out.log',
+      'full output here',
+      '</notification>',
+    ].join('\n');
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'run' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'go' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: xml }], toolCalls: [], origin: { kind: 'task', taskId: 'task-9' } as { kind: string } },
+      ],
+      { taskOriginTurnTaskIds: new Set() },
+    );
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    const frame = turn.steps.flatMap((step) => step.frames).find((f) => f.kind === 'text' && f.role === 'user');
+    expect(frame).toMatchObject({ text: 'Background agent completed\ninspect done.' });
+  });
+
   it('expands a bundled prompt into per-skill markers and a caller-text turn', () => {
     const snapshot = groupMessagesIntoSnapshot([
       {

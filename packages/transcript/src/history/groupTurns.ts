@@ -300,11 +300,9 @@ function notificationFrameText(text: string): string {
       lastHeaderIndex = i;
     }
   }
-  const body = lines
-    .slice(lastHeaderIndex + 1)
-    .filter((line) => !line.trimStart().startsWith('<'))
-    .join('\n')
-    .trim();
+  const bodyLines = lines.slice(lastHeaderIndex + 1);
+  const childStart = bodyLines.findIndex((line) => line.trimStart().startsWith('<'));
+  const body = (childStart === -1 ? bodyLines : bodyLines.slice(0, childStart)).join('\n').trim();
   if (title.length > 0 && body.length > 0) return `${title}\n${body}`;
   return title.length > 0 ? title : body.length > 0 ? body : text;
 }
