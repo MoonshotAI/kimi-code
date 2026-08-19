@@ -508,14 +508,22 @@ export class TranscriptService {
     }
     const messages = [...reduceContextTranscript(records).entries];
     const taskOriginTurnTaskIds = new Set<string>();
+    let sawTurnStarted = false;
     for (const record of records) {
       if (record.type !== 'turn.started') continue;
+      sawTurnStarted = true;
       const origin = (record as { origin?: { kind?: unknown; taskId?: unknown } }).origin;
-      if (origin?.kind === 'task' && typeof origin.taskId === 'string') {
+      if (
+        (origin?.kind === 'task' || origin?.kind === 'background_task') &&
+        typeof origin.taskId === 'string'
+      ) {
         taskOriginTurnTaskIds.add(origin.taskId);
       }
     }
-    const base = groupMessagesIntoSnapshot(messages, { taskOriginTurnTaskIds });
+    const base = groupMessagesIntoSnapshot(
+      messages,
+      sawTurnStarted ? { taskOriginTurnTaskIds } : undefined,
+    );
     return foldWireRecordFacts(records, base);
   }
 
