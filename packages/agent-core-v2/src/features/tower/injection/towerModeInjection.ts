@@ -1,9 +1,7 @@
 import { Service } from '#/_base/di/service';
-import { defineState } from '#/state/state';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentStateService } from '#/agent/state/agentState';
 import { IFlagService } from '#/app/flag/flag';
 import { IAgentTowerService, TOWER_FLAG_ID } from '#/features/tower/tower';
 import TOWER_MODE_EXIT_REMINDER from './tower-mode-exit-reminder.md?raw';
@@ -13,37 +11,36 @@ import TOWER_MODE_SPARSE_REMINDER from './tower-mode-sparse-reminder.md?raw';
 const TOWER_MODE_DEDUP_MIN_TURNS = 2;
 const TOWER_MODE_FULL_REFRESH_TURNS = 5;
 const TOWER_MODE_INJECTION_VARIANT = 'tower_mode';
-
-export const towerWasActiveKey = defineState<boolean>('tower.wasActive', () => false);
+const TOWER_MODE_EXIT_DISCLOSURE = 'exit';
 
 export class TowerModeInjection extends Service {
   constructor(
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentTowerService private readonly tower: IAgentTowerService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentStateService private readonly states: IAgentStateService,
     @IFlagService private readonly flags: IFlagService,
   ) {
     super();
-    this.states.contributeState(towerWasActiveKey);
-
     this._register(
-      injector.register(TOWER_MODE_INJECTION_VARIANT, ({ lastInjectedAt: injectedAt }) => {
-        if (!this.flags.enabled(TOWER_FLAG_ID)) return undefined;
-        if (!this.tower.isActive) {
-          if (!this.states.get(towerWasActiveKey)) return undefined;
-          this.states.set(towerWasActiveKey, false);
-          return TOWER_MODE_EXIT_REMINDER;
-        }
-        if (!this.states.get(towerWasActiveKey)) {
-          this.states.set(towerWasActiveKey, true);
-          return TOWER_MODE_FULL_REMINDER;
-        }
-        const variant = towerModeReminderVariant(injectedAt, this.context.get());
-        if (variant === 'full') return TOWER_MODE_FULL_REMINDER;
-        if (variant === 'sparse') return TOWER_MODE_SPARSE_REMINDER;
-        return undefined;
-      }),
+      injector.register<typeof TOWER_MODE_EXIT_DISCLOSURE>(
+        TOWER_MODE_INJECTION_VARIANT,
+        ({ injectedPositions, lastInjectedAt: injectedAt, lastDisclosure }) => {
+          if (!this.flags.enabled(TOWER_FLAG_ID)) return undefined;
+          if (!this.tower.isActive) {
+            if (injectedPositions.length === 0 || lastDisclosure === TOWER_MODE_EXIT_DISCLOSURE) {
+              return undefined;
+            }
+            return { content: TOWER_MODE_EXIT_REMINDER, disclosure: TOWER_MODE_EXIT_DISCLOSURE };
+          }
+          if (injectedPositions.length === 0 || lastDisclosure === TOWER_MODE_EXIT_DISCLOSURE) {
+            return TOWER_MODE_FULL_REMINDER;
+          }
+          const variant = towerModeReminderVariant(injectedAt, this.context.get());
+          if (variant === 'full') return TOWER_MODE_FULL_REMINDER;
+          if (variant === 'sparse') return TOWER_MODE_SPARSE_REMINDER;
+          return undefined;
+        },
+      ),
     );
   }
 }
@@ -63,9 +60,7 @@ function towerModeReminderVariant(
       assistantTurnsSince += 1;
       continue;
     }
-    if (message.role === 'user') {
-      return 'full';
-    }
+    if (message.role === 'user' && assistantTurnsSince >= 1) return 'full';
   }
   if (assistantTurnsSince >= TOWER_MODE_FULL_REFRESH_TURNS) return 'full';
   if (assistantTurnsSince >= TOWER_MODE_DEDUP_MIN_TURNS) return 'sparse';

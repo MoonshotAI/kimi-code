@@ -56,7 +56,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         await next();
       }),
     );
-    this._register(new TowerModeInjection(injector, this, context, this.agentState, this.flags));
+    this._register(new TowerModeInjection(injector, this, context, this.flags));
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => {
         if (!this.flags.enabled(TOWER_FLAG_ID)) return;

@@ -814,15 +814,43 @@ describe('TowerModeInjection', () => {
     expect(text).not.toContain('Tower mode still active');
   });
 
-  it('refreshes the full reminder if a user message appears after the last injection', async () => {
+  it('refreshes the full reminder when a user message follows at least one assistant turn', async () => {
     tower.enter();
 
     await injectDynamic(injector);
+    appendAssistantTurn(ctx, context, 'assistant one');
     ctx.appendUserMessage([{ type: 'text', text: 'next task' }]);
     await injectDynamic(injector);
 
     const text = lastTowerReminder(context);
     expect(text).toContain('Tower mode is active');
     expect(text).not.toContain('Tower mode still active');
+  });
+
+  it('does not duplicate the full reminder when the first objective follows activation directly', async () => {
+    tower.enter();
+
+    await injectDynamic(injector);
+    ctx.appendUserMessage([{ type: 'text', text: 'first objective' }]);
+    await injectDynamic(injector);
+
+    expect(towerReminderMessages(context)).toHaveLength(1);
+  });
+
+  it('emits the exit reminder only once and returns the full reminder on re-entry', async () => {
+    tower.enter();
+
+    await injectDynamic(injector);
+    tower.exit();
+    await injectDynamic(injector);
+    await injectDynamic(injector);
+
+    expect(towerReminderMessages(context)).toHaveLength(2);
+
+    tower.enter();
+    await injectDynamic(injector);
+
+    expect(towerReminderMessages(context)).toHaveLength(3);
+    expect(lastTowerReminder(context)).toContain('Tower mode is active');
   });
 });
