@@ -99,19 +99,22 @@ Collaboration tools handle inter-Agent coordination, user interaction, and Skill
 
 ## Background Tasks
 
-Background task tools manage tasks started via `Bash`, `Agent`, or `AskUserQuestion`. When a task reaches a terminal state, its status and saved output path are automatically delivered back to the Agent; use `TaskOutput` to check progress early.
+Background task tools manage tasks started via `Bash`, `Agent`, or `AskUserQuestion`. When a task reaches a terminal state, its status and saved output path are automatically delivered back to the Agent; use `TaskOutput` to check progress early, or `WaitFor` to wait for a result inside the current turn.
 
 | Tool | Default Approval | Description |
 | --- | --- | --- |
 | `TaskList` | Auto-allow | List background tasks |
 | `TaskOutput` | Auto-allow | View the output of a background task |
 | `TaskStop` | Requires approval | Stop a running background task |
+| `WaitFor` | Auto-allow | Wait for background tasks to finish |
 
 **`TaskList`** returns the list of background tasks. Optional parameters: `active_only` (defaults to true; lists only running tasks) and `limit` (defaults to 20; range 1–100).
 
 **`TaskOutput`** returns the status and output of a task given its `task_id`. The inline preview includes at most the most recent 32 KB of content; the full log is saved to disk, and the tool also returns an `output_path` with a suggestion to use `Read` for paginated access. The call is always non-blocking — it returns the current snapshot immediately, and task completion is delivered via automatic notification.
 
 **`TaskStop`** accepts a `task_id` and optional `reason` (defaults to `Stopped by TaskStop`). Safe to call on tasks that are already in a terminal state.
+
+**`WaitFor`** suspends the current turn until a background task finishes or the timeout elapses. Parameters: `timeout` (required, in seconds, max 600) and optional `task_id`. Without `task_id`, the wait ends as soon as any background task that was running at call time finishes; when no background tasks are running, it returns immediately. A timeout is not an error — the result lists the tasks still running, and the Agent can wait again or do other work meanwhile. A task whose result was reported by `WaitFor` does not also produce an automatic completion notification.
 
 ## Scheduled Tasks
 

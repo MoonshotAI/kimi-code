@@ -591,6 +591,9 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
     async suppressTerminalNotification(): Promise<void> {
     },
 
+    markTasksDeliveredViaWait(): void {
+    },
+
     detach(taskId: string): AgentTaskInfo | undefined {
       const entry = tasks.get(taskId);
       if (entry === undefined) return undefined;

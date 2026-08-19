@@ -17,7 +17,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -107,8 +107,7 @@ function createPasteHarness(
     async pasteImage() {
       await pasteImageRaw();
       for (let id = 1; id <= store.size(); id++) {
-        const attachment = store.get(id);
-        if (attachment?.kind === 'image') await attachment.pending;
+        await store.get(id)?.pending;
       }
     },
     pasteImageRaw,
@@ -439,5 +438,150 @@ describe('clipboard image paste compression', () => {
 
     expect(att.fileId).toBe('file-late');
     expect(att.pending).toBeUndefined();
+  });
+});
+
+describe('clipboard video paste upload', () => {
+  beforeEach(() => {
+    readClipboardMedia.mockReset();
+  });
+
+  async function withSourceVideo(run: (sourcePath: string) => Promise<void>): Promise<void> {
+    const dir = await mkdtemp(join(tmpdir(), 'paste-video-'));
+    try {
+      const sourcePath = join(dir, 'clip.mp4');
+      await writeFile(sourcePath, 'video-bytes');
+      await run(sourcePath);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('uploads the pasted video to the daemon file store (v2)', async () => {
+    await withSourceVideo(async (sourcePath) => {
+      readClipboardMedia.mockResolvedValue({
+        kind: 'video',
+        mimeType: 'video/mp4',
+        filename: 'clip.mp4',
+        sourcePath,
+      });
+      const uploadFile = uploadFileMock('file-v1');
+
+      const { store, pasteImage } = createPasteHarness({ engineV2: true, uploadFile });
+      await pasteImage();
+
+      const att = store.get(1);
+      if (att?.kind !== 'video') throw new Error('expected video attachment');
+      expect(att.placeholder).toBe('[video #1 clip.mp4]');
+      expect(att.fileId).toBe('file-v1');
+      expect(att.fileExpiresAt).toBe(Date.parse('2030-01-02T03:04:05.000Z'));
+      expect(att.pending).toBeUndefined();
+      const [data, opts] = uploadFile.mock.calls[0]!;
+      expect(new Uint8Array(data)).toEqual(new TextEncoder().encode('video-bytes'));
+      expect(opts).toEqual({ name: 'clip.mp4', mimeType: 'video/mp4', expiresInSec: 60 * 60 });
+    });
+  });
+
+  it('settles the paste callback before the background upload completes (v2)', async () => {
+    await withSourceVideo(async (sourcePath) => {
+      readClipboardMedia.mockResolvedValue({
+        kind: 'video',
+        mimeType: 'video/mp4',
+        filename: 'clip.mp4',
+        sourcePath,
+      });
+      let resolveUpload!: (meta: { id: string }) => void;
+      const uploadFile = vi.fn(
+        (
+          _data: Uint8Array,
+          _opts: { name: string; mimeType?: string; expiresInSec?: number },
+        ): Promise<{ id: string }> =>
+          new Promise<{ id: string }>((resolve) => {
+            resolveUpload = resolve;
+          }),
+      );
+
+      const { store, pasteImageRaw } = createPasteHarness({ engineV2: true, uploadFile });
+      // The handler returns once the placeholder is in the editor; the upload
+      // is still unresolved here — typing is never held behind it.
+      await pasteImageRaw();
+
+      const att = store.get(1);
+      if (att?.kind !== 'video') throw new Error('expected video attachment');
+      expect(att.fileId).toBeUndefined();
+      expect(att.pending).toBeDefined();
+
+      // The upload starts once the source file has been read in the
+      // background; only then can it be resolved.
+      await vi.waitFor(() => {
+        expect(uploadFile).toHaveBeenCalled();
+      });
+      resolveUpload({ id: 'file-vlate' });
+      await att.pending;
+
+      expect(att.fileId).toBe('file-vlate');
+      expect(att.pending).toBeUndefined();
+    });
+  });
+
+  it('leaves the video without a fileId when the daemon upload fails (v2)', async () => {
+    await withSourceVideo(async (sourcePath) => {
+      readClipboardMedia.mockResolvedValue({
+        kind: 'video',
+        mimeType: 'video/mp4',
+        filename: 'clip.mp4',
+        sourcePath,
+      });
+      const uploadFile = vi.fn(async (): Promise<{ id: string }> => {
+        throw new Error('daemon down');
+      });
+
+      const { store, pasteImage } = createPasteHarness({ engineV2: true, uploadFile });
+      await pasteImage(); // must not throw
+
+      const att = store.get(1);
+      if (att?.kind !== 'video') throw new Error('expected video attachment');
+      expect(att.fileId).toBeUndefined();
+      expect(att.pending).toBeUndefined();
+    });
+  });
+
+  it('leaves the video without a fileId when the source file vanished (v2)', async () => {
+    readClipboardMedia.mockResolvedValue({
+      kind: 'video',
+      mimeType: 'video/mp4',
+      filename: 'clip.mp4',
+      sourcePath: '/tmp/kimi-paste-vanished-source.mp4',
+    });
+    const uploadFile = uploadFileMock('file-v1');
+
+    const { store, pasteImage } = createPasteHarness({ engineV2: true, uploadFile });
+    await pasteImage();
+
+    expect(uploadFile).not.toHaveBeenCalled();
+    const att = store.get(1);
+    if (att?.kind !== 'video') throw new Error('expected video attachment');
+    expect(att.fileId).toBeUndefined();
+  });
+
+  it('never uploads on the v1 engine', async () => {
+    await withSourceVideo(async (sourcePath) => {
+      readClipboardMedia.mockResolvedValue({
+        kind: 'video',
+        mimeType: 'video/mp4',
+        filename: 'clip.mp4',
+        sourcePath,
+      });
+      const uploadFile = uploadFileMock('file-v1');
+
+      // engineV2 unset — the v1 host shape.
+      const { store, pasteImage } = createPasteHarness({ uploadFile });
+      await pasteImage();
+
+      expect(uploadFile).not.toHaveBeenCalled();
+      const att = store.get(1);
+      if (att?.kind !== 'video') throw new Error('expected video attachment');
+      expect(att.fileId).toBeUndefined();
+    });
   });
 });

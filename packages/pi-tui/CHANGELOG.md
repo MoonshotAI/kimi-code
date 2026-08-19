@@ -1,5 +1,11 @@
 # @moonshot-ai/pi-tui
 
+## 0.84.4
+
+### Patch Changes
+
+- [#2935](https://github.com/MoonshotAI/kimi-code/pull/2935) [`44a6c70`](https://github.com/MoonshotAI/kimi-code/commit/44a6c70e66762ea9e122f8dceae16dc759086a7c) Thanks [@chengluyu](https://github.com/chengluyu)! - Add an opt-in inline slash autocomplete trigger that fires after whitespace mid-input.
+
 ## 0.84.3
 
 ### Patch Changes

@@ -179,16 +179,50 @@ describe('ImageAttachmentStore', () => {
     expect(att.fileId).toBeUndefined();
   });
 
-  it('rebaseVideoSource repoints a recalled video at its staged cache copy', () => {
+  it('completeVideo lands the daemon upload id and clears the pending marker', () => {
     const s = new ImageAttachmentStore();
     const att = s.addVideo('video/mp4', '/tmp/original.mp4');
+    att.pending = Promise.resolve();
 
-    s.rebaseVideoSource(att.id, '/cache/original.mp4');
-    expect(att.sourcePath).toBe('/cache/original.mp4');
+    const completed = s.completeVideo(att, { fileId: 'file-v1', fileExpiresAt: 123_000 });
 
-    // Images and unknown ids are ignored.
-    const image = s.addImage(new Uint8Array([1]), 'image/png', 10, 10);
-    s.rebaseVideoSource(image.id, '/cache/nope');
-    expect(s.get(image.id)).toBe(image);
+    expect(completed).toBe(att);
+    expect(att.fileId).toBe('file-v1');
+    expect(att.fileExpiresAt).toBe(123_000);
+    expect(att.pending).toBeUndefined();
+
+    // A cleared attachment is not completed — the caller deletes the upload.
+    s.clear();
+    const stale = att;
+    const fresh = s.addVideo('video/mp4', '/tmp/other.mp4');
+    expect(s.completeVideo(stale, { fileId: 'file-v2' })).toBeUndefined();
+    expect(fresh.fileId).toBeUndefined();
+  });
+
+  it('clear() keeps staged uploads that still have an outstanding retain', () => {
+    const s = new ImageAttachmentStore();
+    const img = s.addImage(new Uint8Array(), 'image/png', 10, 10, undefined, 'file-1');
+    const vid = s.addVideo('video/mp4', '/tmp/a.mp4');
+    s.completeVideo(vid, { fileId: 'file-2' });
+
+    // The video's upload is still referenced by a stashed/queued draft; the
+    // image's is not, so only the latter comes back for deletion.
+    s.retainFileIds([vid.id]);
+    expect(s.clear()).toEqual(['file-1']);
+    expect(s.size()).toBe(0);
+    expect(img.fileId).toBe('file-1');
+  });
+
+  it('takes a video upload through the same retain/take lifecycle as an image', () => {
+    const s = new ImageAttachmentStore();
+    const vid = s.addVideo('video/mp4', '/tmp/a.mp4');
+    s.completeVideo(vid, { fileId: 'file-v1' });
+
+    s.retainFileIds([vid.id]);
+    s.retainFileIds([vid.id]);
+    expect(s.takeFileIds([vid.id])).toEqual([]);
+    expect(vid.fileId).toBe('file-v1');
+    expect(s.takeFileIds([vid.id])).toEqual(['file-v1']);
+    expect(vid.fileId).toBeUndefined();
   });
 });

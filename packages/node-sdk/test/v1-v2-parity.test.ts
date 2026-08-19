@@ -449,8 +449,9 @@ function projectResumedAgents(
  *   the engines (the subagent/cron docs embed engine-specific facts), and
  *   v1 additionally registers the `select_tools` meta tool v2 has no
  *   counterpart for — both are engine design, not resume data. v2's default
- *   profile also carries `TowerInit` (the tower-mode entry point); tower is
- *   v2-only, so the tool is projected out of both rosters. A model-less
+ *   profile also carries `TowerInit` (the tower-mode entry point) and
+ *   `WaitFor` (the background-task wait primitive); both are v2-only, so the
+ *   tools are projected out of both rosters. A model-less
  *   agent's roster is not compared at all (v1 initializes builtin tools
  *   only on a profiled agent; v2 exposes them unbound).
  */
@@ -469,6 +470,7 @@ function projectResumedAgent(agent: ResumedAgentState, home: HomePair): unknown 
     projected['tools'] = tools
       .filter((tool) => tool['name'] !== 'select_tools')
       .filter((tool) => tool['name'] !== 'TowerInit')
+      .filter((tool) => tool['name'] !== 'WaitFor')
       .map((tool) => ({ name: tool['name'], active: tool['active'], source: tool['source'] }))
       .toSorted((a, b) => String(a.name).localeCompare(String(b.name)));
   }

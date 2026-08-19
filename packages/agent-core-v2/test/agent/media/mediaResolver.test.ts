@@ -17,7 +17,6 @@ import { buildKimiFileUrl } from '#/agent/media/kimiFileUrl';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { AgentMediaResolverService } from '#/agent/media/mediaResolverService';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
-import { IAgentVideoResolverService } from '#/agent/media/videoResolver';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { type GetResult, IFileService } from '#/app/file/fileService';
@@ -794,13 +793,5 @@ describe('AgentMediaResolverService scoped registration', () => {
     );
 
     expect(firstPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
-  });
-
-  it('resolves the legacy video-resolver alias to the same instance', () => {
-    const agent = agentScope(new Map());
-
-    expect(agent.accessor.get(IAgentVideoResolverService)).toBe(
-      agent.accessor.get(IAgentMediaResolverService),
-    );
   });
 });
