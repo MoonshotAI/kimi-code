@@ -285,6 +285,10 @@ export class ContextMemory {
     }
 
     this.agent.replayBuilder.removeLastMessages(removedMessages);
+    // Roll the tool store back to match the spliced history before any
+    // undo_limit throw — a partial undo must leave the store consistent with
+    // the partially removed history, compensating records included.
+    this.agent.tools.rollbackStore(removedUserCount);
 
     this.openSteps.clear();
     this.pendingToolResultIds.clear();
@@ -798,6 +802,14 @@ export class ContextMemory {
         type: 'message',
         message,
       });
+      if (isRealUserInput(message)) {
+        // Undo-anchor checkpoint: snapshot the tool store the way this turn
+        // found it, so `undo` can restore it alongside the history tail.
+        // `pushHistory` is the one funnel every message (live, replay, and
+        // deferred-behind-an-open-exchange) passes through, which keeps
+        // checkpoint pushes 1:1 with undo's anchor counting over `_history`.
+        this.agent.tools.snapshotToolStore();
+      }
     }
   }
 }

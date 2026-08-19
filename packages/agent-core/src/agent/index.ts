@@ -718,6 +718,7 @@ export class Agent {
       getPlan: () => this.planMode.data(),
       getUsage: () => this.usage.data(),
       getTools: () => this.tools.data(),
+      getTodos: () => this.tools.storeValue('todo') ?? [],
       getBackground: (payload) => this.background.list(payload.activeOnly ?? false, payload.limit),
     };
   }

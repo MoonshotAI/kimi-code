@@ -1335,6 +1335,126 @@ describe('Agent context', () => {
     ]);
   });
 
+  it('undo rolls the tool store back to the last user prompt', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    const todosA = [{ title: 'first task', status: 'done' as const }];
+    const todosB = [{ title: 'second task', status: 'in_progress' as const }];
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'first prompt' }]);
+    ctx.agent.tools.updateStore('todo', todosA);
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'second prompt' }]);
+    ctx.agent.tools.updateStore('todo', todosB);
+
+    ctx.agent.context.undo(1);
+
+    expect(ctx.agent.tools.storeData()['todo']).toEqual(todosA);
+    await ctx.expectResumeMatches();
+  });
+
+  it('undo logs a compensating tools.update_store record on the wire', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    const todosA = [{ title: 'first task', status: 'done' as const }];
+    const todosB = [{ title: 'second task', status: 'in_progress' as const }];
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'first prompt' }]);
+    ctx.agent.tools.updateStore('todo', todosA);
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'second prompt' }]);
+    ctx.agent.tools.updateStore('todo', todosB);
+    ctx.newEvents();
+
+    ctx.agent.context.undo(1);
+
+    expect(ctx.newEvents()).toContainEqual(
+      expect.objectContaining({
+        type: '[wire]',
+        event: 'tools.update_store',
+        args: expect.objectContaining({ key: 'todo', value: todosA }),
+      }),
+    );
+  });
+
+  it('undo clears todos first written during the undone turn', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    const todosB = [{ title: 'second task', status: 'in_progress' as const }];
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'first prompt' }]);
+    ctx.agent.tools.updateStore('todo', todosB);
+
+    ctx.agent.context.undo(1);
+
+    expect(ctx.agent.tools.storeData()['todo']).toEqual([]);
+  });
+
+  it('partial undo at the compaction boundary restores the compaction baseline', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    const todosA = [{ title: 'first task', status: 'done' as const }];
+    const todosB = [{ title: 'second task', status: 'in_progress' as const }];
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'old user message' }]);
+    ctx.agent.tools.updateStore('todo', todosA);
+    ctx.agent.context.applyCompaction({
+      summary: 'summary of compacted context',
+      compactedCount: 1,
+      tokensBefore: 100,
+    });
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'recent user message' }]);
+    ctx.agent.tools.updateStore('todo', todosB);
+
+    expect(() => {
+      ctx.agent.context.undo(2);
+    }).toThrow('Cannot undo 2 prompts; only 1 prompt can be undone');
+
+    expect(ctx.agent.tools.storeData()['todo']).toEqual(todosA);
+  });
+
+  it('undo skips background notifications when rolling back the store', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    const todosA = [{ title: 'first task', status: 'done' as const }];
+    const todosB = [{ title: 'second task', status: 'in_progress' as const }];
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'first prompt' }]);
+    ctx.agent.tools.updateStore('todo', todosA);
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'second prompt' }]);
+    ctx.agent.context.appendMessage({
+      role: 'user',
+      content: [{ type: 'text', text: 'background task completed' }],
+      toolCalls: [],
+      origin: {
+        kind: 'background_task',
+        taskId: 'bash-001',
+        status: 'completed',
+        notificationId: 'task:bash-001:completed',
+      },
+    });
+    ctx.agent.tools.updateStore('todo', todosB);
+
+    ctx.agent.context.undo(1);
+
+    expect(ctx.agent.tools.storeData()['todo']).toEqual(todosA);
+  });
+
+  it('clear resets the undo baseline but keeps todos', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    const todosA = [{ title: 'first task', status: 'done' as const }];
+    const todosB = [{ title: 'second task', status: 'in_progress' as const }];
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'first prompt' }]);
+    ctx.agent.tools.updateStore('todo', todosA);
+    ctx.agent.context.clear();
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'post-clear prompt' }]);
+    ctx.agent.tools.updateStore('todo', todosB);
+
+    ctx.agent.context.undo(1);
+
+    expect(ctx.agent.tools.storeData()['todo']).toEqual(todosA);
+  });
+
 });
 
 describe('Agent context notification projection', () => {

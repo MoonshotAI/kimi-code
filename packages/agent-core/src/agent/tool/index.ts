@@ -33,6 +33,13 @@ export * from './types';
 /** Foreground timeout (seconds) for a user-initiated `!` shell command. */
 const SHELL_FOREGROUND_TIMEOUT_S = 2 * 60;
 
+/**
+ * Undo-anchor store snapshots kept (baseline plus the newest anchors). Todos
+ * are tiny, so this only bounds worst-case memory; an undo deeper than the
+ * retained window floors at the baseline snapshot.
+ */
+const TOOL_STORE_CHECKPOINT_LIMIT = 100;
+
 interface McpToolEntry {
   readonly tool: ExecutableTool;
   readonly serverName: string;
@@ -72,6 +79,14 @@ export class ToolManager {
    */
   private readonly pendingLoadedDynamicTools = new Set<string>();
   protected readonly store: Partial<ToolStoreData> = {};
+  /**
+   * Store snapshots taken when each real user input (undo anchor) enters
+   * history, oldest first. Index 0 is the baseline seeded at construction,
+   * compaction, and clear; `rollbackStore` pops from the top on undo.
+   * Shallow copies suffice: writers replace values wholesale (TodoList swaps
+   * the whole array), never mutate in place.
+   */
+  private storeCheckpoints: Array<Partial<ToolStoreData>> = [{}];
   private mcpToolStatusUnsubscribe: (() => void) | undefined;
   /**
    * `serverName\nhash` keys of `mcp.tools_discovered` records already durable
@@ -131,6 +146,53 @@ export class ToolManager {
       value,
     });
     this.store[key] = value;
+  }
+
+  /** Snapshot the store for a just-appended undo anchor (real user input). */
+  snapshotToolStore(): void {
+    this.storeCheckpoints.push({ ...this.store });
+    if (this.storeCheckpoints.length > TOOL_STORE_CHECKPOINT_LIMIT) {
+      // Trim from above the baseline so an undo past the retained depth still
+      // floors at the baseline.
+      this.storeCheckpoints.splice(1, this.storeCheckpoints.length - TOOL_STORE_CHECKPOINT_LIMIT);
+    }
+  }
+
+  /**
+   * Roll the store back over `removedUserTurns` undo anchors (v2 parity: pop
+   * that many checkpoints, restore to the snapshot the earliest removed anchor
+   * found, never below the baseline). Restores go through `updateStore`, so
+   * the live path logs compensating `tools.update_store` records — the
+   * append-only wire, the transcript reducer, and the v1-fold-over-v2-wire
+   * resume all stay self-consistent — while replay restore is record-suppressed.
+   */
+  rollbackStore(removedUserTurns: number): void {
+    const pops = Math.min(removedUserTurns, this.storeCheckpoints.length - 1);
+    if (pops <= 0) return;
+    const target = this.storeCheckpoints[this.storeCheckpoints.length - pops]!;
+    this.storeCheckpoints.splice(this.storeCheckpoints.length - pops);
+    // Union of the target and current keys: a key first written during the
+    // undone turns is absent from the target and must be restored to the
+    // canonical empty (TodoList's clear form — consumers treat `undefined`
+    // and `[]` alike).
+    const keys = new Set([
+      ...(Object.keys(target) as ToolStoreKey[]),
+      ...(Object.keys(this.store) as ToolStoreKey[]),
+    ]);
+    for (const key of keys) {
+      const value = target[key];
+      if (this.store[key] === value) continue;
+      this.updateStore(key, value ?? ([] as ToolStoreData[typeof key]));
+    }
+  }
+
+  /** Typed store read for RPC surfaces (`store` itself is protected). */
+  storeValue<K extends ToolStoreKey>(key: K): ToolStoreData[K] | undefined {
+    return this.store[key];
+  }
+
+  private resetStoreCheckpoints(): void {
+    this.storeCheckpoints = [{ ...this.store }];
   }
 
   /**
@@ -667,6 +729,7 @@ export class ToolManager {
    */
   onContextCleared(): void {
     this.pendingLoadedDynamicTools.clear();
+    this.resetStoreCheckpoints();
   }
 
   /**
@@ -678,6 +741,7 @@ export class ToolManager {
    */
   onContextCompacted(): void {
     this.pendingLoadedDynamicTools.clear();
+    this.resetStoreCheckpoints();
   }
 
   /**
