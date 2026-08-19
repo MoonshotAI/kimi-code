@@ -1032,6 +1032,42 @@ describe('WaitForTool', () => {
     expect(outputString(result)).toContain('wait_for experimental flag is off');
     expect(tasks.waitCalls).toEqual([]);
   });
+
+  it('emits status progress updates while the wait is pending', async () => {
+    vi.useFakeTimers();
+    try {
+      const tasks = new FakeTaskService();
+      tasks.add(processTask({ taskId: 'bash-prog001' }));
+      tasks.waitDelegate = (_taskId, _timeoutMs, waitSignal) =>
+        new Promise<never>((_resolve, reject) => {
+          waitSignal?.addEventListener('abort', () => reject(abortError()), { once: true });
+        });
+
+      const onUpdate = vi.fn();
+      const controller = new AbortController();
+      const pending = executeTool(
+        new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true)),
+        { ...context('wait_progress', { timeout: 600, task_id: 'bash-prog001' }, controller.signal), onUpdate },
+      );
+
+      await vi.advanceTimersByTimeAsync(10_500);
+
+      expect(onUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'status',
+          text: expect.stringContaining('1 background task still running'),
+        }),
+      );
+
+      controller.abort();
+      await expect(pending).rejects.toThrow('Aborted');
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(onUpdate.mock.calls).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('WaitForTool (harness)', () => {

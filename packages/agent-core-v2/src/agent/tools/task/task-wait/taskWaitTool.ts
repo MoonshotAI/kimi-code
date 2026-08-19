@@ -23,6 +23,8 @@ const OUTPUT_PREVIEW_BYTES = 32 * 1024;
 
 const PAGING_HINT_LINES = 300;
 
+const PROGRESS_INTERVAL_MS = 10_000;
+
 type WaitForOutcome = 'completed' | 'timed_out' | 'task_not_found' | 'aborted';
 
 function terminalReason(info: AgentTaskInfo): 'timed_out' | 'stopped' | 'failed' | undefined {
@@ -105,6 +107,7 @@ export class WaitForTool implements IWaitForTool {
     }
 
     let waited: AgentTaskInfo | undefined;
+    const stopProgress = this.startProgress(args, ctx, startedAt);
     try {
       waited =
         args.task_id === undefined
@@ -113,6 +116,8 @@ export class WaitForTool implements IWaitForTool {
     } catch (error) {
       this.track(args, startedAt, timeoutMs, 'aborted', 0);
       throw error;
+    } finally {
+      stopProgress();
     }
 
     if (waited === undefined) {
@@ -158,6 +163,29 @@ export class WaitForTool implements IWaitForTool {
       unlink();
       controller.abort(abortError());
     }
+  }
+
+  private startProgress(
+    args: WaitForInput,
+    ctx: ExecutableToolContext,
+    startedAt: number,
+  ): () => void {
+    const onUpdate = ctx.onUpdate;
+    if (onUpdate === undefined) return () => {};
+    const interval = setInterval(() => {
+      const elapsedS = Math.round((Date.now() - startedAt) / 1000);
+      const running = this.tasks.list(true).length;
+      onUpdate({
+        kind: 'status',
+        text:
+          `Waiting ${String(elapsedS)}s / ${String(args.timeout)}s · ` +
+          `${String(running)} background task${running === 1 ? '' : 's'} still running`,
+      });
+    }, PROGRESS_INTERVAL_MS);
+    interval.unref?.();
+    return () => {
+      clearInterval(interval);
+    };
   }
 
   private collectExtras(
