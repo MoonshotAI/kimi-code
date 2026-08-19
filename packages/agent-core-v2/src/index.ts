@@ -370,6 +370,7 @@ export * from '#/features/flow/definition';
 export * from '#/features/flow/tools/start/start';
 export * from '#/features/flow/tools/advance/advance';
 export * from '#/features/flow/tools/abort/abort';
+export * from '#/features/flow/tools/jump/jump';
 export * from '#/features/flow/skill/skill';
 export * from '#/features/flow/flowsSkillSource';
 import '#/features/flow/flowFeature';

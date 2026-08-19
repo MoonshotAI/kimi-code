@@ -371,6 +371,7 @@ function sendMappedError(
         reply.send(errEnvelope(ErrorCode.FILE_NOT_FOUND, err.message, requestId, err.stack));
         return;
       case ErrorCodes.VALIDATION_FAILED:
+      case ErrorCodes.REQUEST_INVALID:
         reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
         return;
     }

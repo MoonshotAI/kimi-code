@@ -110,7 +110,7 @@ describe('AgentSkillService', () => {
         });
         reg.definePartialInstance(IFlagService, { enabled: () => false });
         reg.definePartialInstance(IConfigService, {
-          get: () => undefined,
+          get: (<T,>() => undefined as T) as IConfigService['get'],
           onDidChangeConfiguration: () => ({ dispose: () => {} }),
         });
       },
@@ -222,7 +222,7 @@ describe('SkillTool', () => {
         });
         reg.definePartialInstance(IFlagService, { enabled: () => false });
         reg.definePartialInstance(IConfigService, {
-          get: () => undefined,
+          get: (<T,>() => undefined as T) as IConfigService['get'],
           onDidChangeConfiguration: () => ({ dispose: () => {} }),
         });
       },
