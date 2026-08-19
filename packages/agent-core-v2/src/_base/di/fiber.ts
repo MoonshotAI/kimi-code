@@ -35,6 +35,7 @@ export interface RecipeStatics {
   readonly name?: string;
   readonly inject?: readonly ServiceIdentifier<any>[];
   readonly Config?: ConfigSchema;
+  readonly meta?: Record<string, unknown>;
 }
 
 export type ServiceClassRecipe =
