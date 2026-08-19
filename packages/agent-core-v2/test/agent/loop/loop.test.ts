@@ -800,9 +800,10 @@ describe('Agent loop', () => {
           {
             role: 'user',
             content: [
-              { type: 'image_url', imageUrl: { url: 'daemon://files/file_1', id: 'file_1' } },
-              { type: 'video_url', videoUrl: { url: 'daemon://files/file_2', id: 'file_2' } },
+              { type: 'image_url', imageUrl: { url: 'kimi-file://file_1', id: 'file_1' } },
+              { type: 'video_url', videoUrl: { url: 'kimi-file://file_2', id: 'file_2' } },
               { type: 'image_url', imageUrl: { url: 'https://example.com/no-id.png' } },
+              { type: 'image_url', imageUrl: { url: 'ms://provider-blob', id: 'prov_1' } },
               { type: 'text', text: 'look' },
             ],
             toolCalls: [],
