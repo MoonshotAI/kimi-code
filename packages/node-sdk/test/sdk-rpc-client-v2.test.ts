@@ -46,7 +46,6 @@ import {
 import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
 
 import { TEST_IDENTITY } from './test-identity';
-import { startMcpAuthStatusServer } from './mcp-auth-status-server';
 import { recordingTelemetry, type TelemetryRecord } from './telemetry';
 
 const hostEnvProbe = vi.hoisted(() => ({ failWithMissingShell: false }));
@@ -132,10 +131,10 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   });
 
-  it('reports global MCP authorization from the persisted v2 credential store', async () => {
+  it('reports global MCP authorization from the persisted v2 credential store without probing', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
-    const statusServer = await startMcpAuthStatusServer();
+    const implicitOAuthUrl = 'https://implicit-oauth.example.test/mcp';
     const authorizedUrl = 'https://authorized.example.test/mcp';
     const requiredUrl = 'https://required.example.test/mcp';
     const externalOAuth = new McpOAuthService({ kimiHomeDir: homeDir });
@@ -143,17 +142,17 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       .getProvider('oauth-authorized', authorizedUrl)
       .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
     await externalOAuth
-      .getProvider('sse', statusServer.oauthUrl)
+      .getProvider('sse', implicitOAuthUrl)
       .saveTokens({ access_token: 'stale-sse-token', token_type: 'Bearer' });
     await writeFile(
       join(homeDir, 'mcp.json'),
       JSON.stringify({
         mcpServers: {
           stdio: { command: 'local-command' },
-          plain: { transport: 'http', url: statusServer.plainUrl },
-          detected: { transport: 'http', url: statusServer.oauthUrl },
-          sse: { transport: 'sse', url: statusServer.oauthUrl },
-          'sse-oauth': { transport: 'sse', url: statusServer.oauthUrl, auth: 'oauth' },
+          plain: { transport: 'http', url: 'https://plain.example.test/mcp' },
+          detected: { transport: 'http', url: implicitOAuthUrl },
+          sse: { transport: 'sse', url: implicitOAuthUrl },
+          'sse-oauth': { transport: 'sse', url: implicitOAuthUrl, auth: 'oauth' },
           bearer: {
             transport: 'http',
             url: 'https://bearer.example.test/mcp',
@@ -179,7 +178,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
-        { name: 'detected', authStatus: 'oauth-required' },
+        { name: 'detected', authStatus: 'not-applicable' },
         { name: 'sse', authStatus: 'not-applicable' },
         { name: 'sse-oauth', authStatus: 'oauth-required' },
         { name: 'bearer', authStatus: 'bearer-token' },
@@ -195,7 +194,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
-        { name: 'detected', authStatus: 'oauth-required' },
+        { name: 'detected', authStatus: 'not-applicable' },
         { name: 'sse', authStatus: 'not-applicable' },
         { name: 'sse-oauth', authStatus: 'oauth-required' },
         { name: 'bearer', authStatus: 'bearer-token' },
@@ -204,7 +203,6 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       ]);
     } finally {
       await harness.close();
-      await statusServer.close();
     }
   }, 15_000);
 
