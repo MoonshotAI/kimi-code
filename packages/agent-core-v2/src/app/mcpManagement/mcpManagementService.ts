@@ -7,7 +7,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 
-import { ErrorCodes, Error2, isError2 } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { McpServerConfigSchema, type McpServerConfig } from '#/mcpCore/config-schema';
 import { toMcpServerConfigView } from '#/mcpCore/configView';
@@ -88,10 +88,7 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     query: McpRegistryQuery = {},
   ): Promise<readonly McpManagedServer[]> {
     const name = normalizeServerName(server.name);
-    const existing = await this.guardLookup(name, query);
-    if (existing !== undefined && !(existing.source === 'global' && existing.mutable)) {
-      throwReadOnlyMcpServer(existing);
-    }
+    await this.guardMutation(name, query);
     await this.store.add({ ...server, name });
     return this.listServers(query);
   }
@@ -101,13 +98,8 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     query: McpRegistryQuery = {},
   ): Promise<readonly McpManagedServer[]> {
     const name = normalizeServerName(server.name);
-    const existing = await this.guardLookup(name, query);
-    if (existing === undefined) {
-      await this.store.update({ ...server, name });
-    } else {
-      throwReadOnlyMcpServer(existing);
-      await this.store.update({ ...server, name });
-    }
+    await this.guardMutation(name, query);
+    await this.store.update({ ...server, name });
     return this.listServers(query);
   }
 
@@ -116,8 +108,7 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     query: McpRegistryQuery = {},
   ): Promise<readonly McpManagedServer[]> {
     const normalized = normalizeServerName(name);
-    const existing = await this.guardLookup(normalized, query);
-    if (existing !== undefined) throwReadOnlyMcpServer(existing);
+    await this.guardMutation(normalized, query);
     await this.store.remove(normalized);
     return this.listServers(query);
   }
@@ -130,16 +121,9 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     );
   }
 
-  private async guardLookup(
-    name: string,
-    query: McpRegistryQuery,
-  ): Promise<McpRegistryEntry | undefined> {
-    try {
-      return await this.registry.get(name, query);
-    } catch (error: unknown) {
-      if (isError2(error) && error.code === ErrorCodes.MCP_SERVER_NOT_FOUND) return undefined;
-      throw error;
-    }
+  private async guardMutation(name: string, query: McpRegistryQuery): Promise<void> {
+    const matches = (await this.registry.list(query)).filter((entry) => entry.name === name);
+    for (const entry of matches) throwReadOnlyMcpServer(entry);
   }
 
   private async resolveTestTarget(target: McpServerTestTarget): Promise<GlobalMcpServerConfig> {
