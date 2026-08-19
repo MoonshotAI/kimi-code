@@ -36,6 +36,22 @@ export KIMI_DISABLE_TELEMETRY=1
 
 不修改 `config.toml` 临时切换模型——设置 `KIMI_MODEL_NAME` 后，CLI 在内存里合成一个临时供应商，重启后失效。详见[用环境变量定义模型](#用环境变量定义模型-kimi-model)。
 
+### `KIMI_CODE_CUSTOM_HEADERS`
+
+为所有出站的模型请求附加自定义 HTTP 请求头——LLM 聊天请求（所有供应商协议）和 `/models` 模型列表请求都会携带。适合网关按请求头路由的场景，例如指定集群：
+
+```sh
+export KIMI_CODE_CUSTOM_HEADERS=$'x-msh-certain-provider: my-cluster\nX-Custom-Tag: debug'
+```
+
+格式与 `ANTHROPIC_CUSTOM_HEADERS` 一致：由换行分隔的 `Name: Value` 行，键名和值两端的空白会被去除，不含冒号的行会被忽略。
+
+::: info 新增
+新增于 0.2.0。
+:::
+
+> 这层请求头优先级最低——同名头会被 Kimi 身份头（`User-Agent`、`X-Msh-*`）、`config.toml` 里供应商的 `custom_headers`（见[配置文件](./config-files.md#providers)）以及认证头（`Authorization`）覆盖，因此不能用它修改认证信息。需要按供应商区分请求头时，请改用 `custom_headers`。
+
 ## 供应商凭证键（写在 config.toml 里）
 
 下面这些键名不是直接从 shell 读取的——它们是写在 `config.toml` 的 `[providers.<name>.env]` 子表里、作为 `api_key` / `base_url` 备用来源的键名。CLI 只从配置文件读取，不从 `process.env` 读取。

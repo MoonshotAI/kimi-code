@@ -36,6 +36,22 @@ export KIMI_DISABLE_TELEMETRY=1
 
 Switch models temporarily without modifying `config.toml` — when `KIMI_MODEL_NAME` is set, the CLI synthesizes a temporary provider in memory; the change does not persist after restart. See [Define a model from environment variables](#define-a-model-from-environment-variables-kimi-model).
 
+### `KIMI_CODE_CUSTOM_HEADERS`
+
+Attaches custom HTTP headers to every outbound model request — both LLM chat requests (across all provider protocols) and `/models` listing requests. Useful when a gateway routes by header, for example to pin a specific cluster:
+
+```sh
+export KIMI_CODE_CUSTOM_HEADERS=$'x-msh-certain-provider: my-cluster\nX-Custom-Tag: debug'
+```
+
+The format mirrors `ANTHROPIC_CUSTOM_HEADERS`: newline-separated `Name: Value` lines. Names and values are trimmed, and lines without a colon are ignored.
+
+::: info Added
+Added in 0.2.0.
+:::
+
+> This is the lowest-precedence header layer — headers of the same name are overridden by the Kimi identity headers (`User-Agent`, `X-Msh-*`), by a provider's `custom_headers` in `config.toml` (see [Config files](./config-files.md#providers)), and by request auth (`Authorization`), so it cannot be used to change authentication. Use `custom_headers` when headers need to differ per provider.
+
 ## Provider credential key names (written in config.toml)
 
 The key names below are not read directly from the shell — they are key names written inside the `[providers.<name>.env]` sub-table of `config.toml`, serving as fallback values for `api_key` / `base_url`. The CLI reads only from the config file, not from `process.env`.
