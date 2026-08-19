@@ -178,6 +178,7 @@ import {
   IEventService,
   IHostEnvironment,
   IHostFileSystem,
+  IMcpConfigStore,
   IMcpManagementService,
   IModelService,
   IProviderService,
@@ -315,7 +316,6 @@ import { translateGlobalEvent } from '#/v2/event-mapper';
 import { assertImportFits, buildImportContextMessage } from '#/v2/import-context';
 import { foldAgentWireReplay } from '#/v2/resume-replay';
 import {
-  GlobalMcpConfigStore,
   mcpConfigWithoutName,
   normalizeServerName,
   parseInlineMcpServer,
@@ -387,13 +387,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   private readonly modelReady: Promise<void>;
   /**
-   * The user-global MCP file store (`<home>/mcp.json`) — the SDK-side port in
-   * `src/v2/global-mcp.ts`. Only the session-level `addSessionMcpServer`
-   * persist path still writes through it; the management plane delegates to
-   * the engine's `IMcpManagementService`.
-   */
-  private readonly globalMcpConfig: GlobalMcpConfigStore;
-  /**
    * Per-live-session event/interaction wirings (`src/v2/session-wiring.ts`):
    * created when a session materializes through this client (create / resume /
    * fork / reload), dropped on close (ours or the engine's). Each wiring feeds
@@ -454,7 +447,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     );
     this.app = app;
     this.klient = createKlient({ scope: app });
-    this.globalMcpConfig = new GlobalMcpConfigStore(this.homeDir);
     this.configReady = app.accessor.get(IConfigService).ready;
     this.installEngineTelemetry(options.telemetry);
     this.modelReady = Promise.all([
@@ -2540,7 +2532,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const target = { ...parsed, name: normalizeServerName(parsed.name) };
     if (input.persist === true) {
       await this.rejectProjectLayerPersistedMcpAdd(input.sessionId, target.name);
-      await this.globalMcpConfig.add(target);
+      await this.engineAccessor.get(IMcpConfigStore).add(target);
     }
     await manager.connect(target.name, mcpConfigWithoutName(target));
     const entry = manager.get(target.name);
