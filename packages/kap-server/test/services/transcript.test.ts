@@ -66,6 +66,24 @@ function turnOps(turnId: string, items: ReturnType<AgentTranscript['getItems']>)
   return turn;
 }
 
+function coldTranscriptService(home: string): TranscriptService {
+  return new TranscriptService({
+    homeDir: home,
+    core: {
+      accessor: {
+        get: (token: unknown) => {
+          if (token === ISessionManager) return { get: () => undefined, list: () => [] };
+          if (token === IWorkspaceInstanceManager) {
+            return { list: () => [], onDidChange: () => ({ dispose: () => undefined }) };
+          }
+          if (token === ISessionIndex) return { get: async () => ({ workspaceId: 'ws' }) };
+          return undefined;
+        },
+      },
+    } as unknown as Scope,
+  });
+}
+
 describe('AgentTranscriptProjector', () => {
   it('projects a full turn: headers, delta appends, flush, tool frames', () => {
     const projector = new AgentTranscriptProjector('main');
@@ -1910,6 +1928,45 @@ describe('AgentTranscriptProjector', () => {
         expect.objectContaining({ kind: 'taskref', refId: 'ref-task_1', taskId: 'task_1' }),
       ]);
       service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('readColdSnapshot opens a task-origin turn only when the wire has the turn.prompt boundary', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-taskturn-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const notification =
+        '<notification id="task:task_9:completed" category="task" type="task.completed" source_kind="background_task" source_id="task_9">\nTitle: Background agent completed\nSeverity: info\ninspect done.\n</notification>';
+      const taskOrigin = { kind: 'task', taskId: 'task_9', status: 'completed', notificationId: 'n1' };
+      const opening = [
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] }, time: 2000 },
+      ];
+      const boundary = { type: 'turn.prompt', input: [{ type: 'text', text: notification }], origin: taskOrigin, time: 3000 };
+      const delivered = { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: notification }], toolCalls: [], origin: taskOrigin }, time: 4000 };
+      const reply = { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'reporting back' }], toolCalls: [] }, time: 5000 };
+      const write = async (records: unknown[]): Promise<void> =>
+        writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      await write([...opening, boundary, delivered, reply]);
+      const withBoundary = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+      const originKinds = withBoundary!.items
+        .filter((item) => item.kind === 'turn')
+        .map((item) => (item.kind === 'turn' ? item.origin.kind : ''));
+      expect(originKinds).toEqual(['user', 'task']);
+
+      await write([...opening, delivered, reply]);
+      const withoutBoundary = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+      const turns = withoutBoundary!.items.filter((item) => item.kind === 'turn');
+      expect(turns).toHaveLength(1);
+      const turn = turns[0];
+      if (turn?.kind !== 'turn') throw new Error('expected turn');
+      expect(
+        turn.steps.flatMap((step) => step.frames).some((f) => f.kind === 'text' && f.role === 'user'),
+      ).toBe(true);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
