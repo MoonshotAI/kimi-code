@@ -123,15 +123,18 @@ export interface IMcpManagementService {
 
   /**
    * Legacy auth-status surface: per-server OAuth state over the registry
-   * catalog. Offline by default (stored-grant classification only);
-   * `verify: true` probes a real connection. Never mutates credentials.
+   * catalog. Offline by default (stored-grant classification only, never
+   * mutates credentials); `verify: true` probes a real connection, which may
+   * refresh or invalidate stored credentials and broadcast the events.
    */
   listAuthStatuses(query?: McpAuthStatusQuery): Promise<readonly McpServerAuthStatus[]>;
 
   /**
    * The locator-addressed catalog plus a batched real-connection probe of
-   * every OAuth candidate. A runtime name shared by enabled entries cannot
-   * be probed (or credentialed) unambiguously and reports `unavailable`.
+   * every OAuth candidate; a probe that hits an expired grant may refresh or
+   * invalidate stored credentials and broadcast the events. A runtime name
+   * shared by enabled entries cannot be probed (or credentialed)
+   * unambiguously and reports `unavailable`.
    */
   inspectServers(targets?: readonly McpServerLocator[]): Promise<readonly McpServerInspection[]>;
 
