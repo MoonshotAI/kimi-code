@@ -145,6 +145,9 @@ const props = defineProps<{
   /** True when the active session is archived (completed) — drives the chat
    *  header's Done pill + reopen button (PR-merge semantics). */
   sessionArchived?: boolean;
+  /** True when the active session is in the sidebar's pinned section — drives
+   *  the chat header's pin/unpin menu item. */
+  sessionPinned?: boolean;
   /** GitHub PR for the current branch, when known (shown in the chat header). */
   pr?: { number: number; state: string; url: string } | null;
 }>();
@@ -195,6 +198,8 @@ const emit = defineEmits<{
   renameSession: [id: string, title: string];
   /** Chat header / session row: fork current session. */
   forkSession: [id: string];
+  /** Chat header: pin/unpin the current session in the sidebar's pinned section. */
+  togglePin: [id: string];
   /** Chat header / session row: archive (mark done) current session. */
   archiveSession: [id: string];
   /** Chat header: reopen a done (archived) session. */
@@ -2222,12 +2227,14 @@ defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone
       :pr="pr"
       :copied="copyConversationCopied"
       :archived="sessionArchived"
+      :pinned="sessionPinned"
       @open-changes="emit('openChanges')"
       @copy-all="chatPaneRef?.copyConversation()"
       @copy-final-summary="chatPaneRef?.copyFinalSummary()"
       @open-pr="pr && emit('openPr', pr.url)"
       @rename-session="(id, title) => emit('renameSession', id, title)"
       @fork-session="(id) => emit('forkSession', id)"
+      @toggle-pin="(id) => emit('togglePin', id)"
       @archive-session="(id) => emit('archiveSession', id)"
       @restore-session="(id) => emit('restoreSession', id)"
       @export-session="(id) => emit('exportSession', id)"

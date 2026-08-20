@@ -134,6 +134,8 @@ export const rendererTrackEventSchema = z.discriminatedUnion('event', [
         'copyAll',
         'copyFinalSummary',
         'copySessionId',
+        'pin',
+        'unpin',
         'rename',
         'fork',
         'export',

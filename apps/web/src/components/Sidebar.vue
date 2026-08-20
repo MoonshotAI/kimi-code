@@ -737,12 +737,20 @@ function onSearchSelectWorkspace(workspaceId: string): void {
   });
 }
 
-// Explicit pins (row button, context menu, drop into the section) re-expand
-// a folded pinned section so the new row is seen — PinnedSessionList owns
-// the fold state and exposes expand() for exactly this path.
+// Explicit pins (row button, context menu, drop into the section, and the
+// chat header's ⋮ menu via the exposed method) re-expand a folded pinned
+// section so the new row is seen — PinnedSessionList owns the fold state and
+// exposes expand() for exactly this path.
 const pinnedListRef = ref<InstanceType<typeof PinnedSessionList> | null>(null);
 
-function onPinSession(id: string): void {
+// Re-expand a folded pinned section before a pin lands, so the new row is
+// visible. Exposed for pin entries that don't pass through this component
+// (the chat header's ⋮ menu calls it from App.vue).
+function revealPinnedSection(): void {
+  // The pinned section only mounts on the 进行中 tab — a header-menu pin can
+  // land while the user sits on 已完成 / 工作空间, so switch back first
+  // (setStatusTab is a no-op in the legacy single-list form).
+  if (statusTab.value !== 'open') setStatusTab('open');
   if (pinnedListRef.value) {
     pinnedListRef.value.expand();
   } else {
@@ -752,6 +760,12 @@ function onPinSession(id: string): void {
     // and hide this first pin.
     savePinnedCollapsed(false);
   }
+}
+
+defineExpose({ revealPinnedSection });
+
+function onPinSession(id: string): void {
+  revealPinnedSection();
   emit('pin', id);
 }
 

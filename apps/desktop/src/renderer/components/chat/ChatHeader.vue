@@ -42,6 +42,9 @@ const props = defineProps<{
    *  remote archive while open or a deep link (the local flow switches away
    *  from the session it completes). */
   archived?: boolean;
+  /** True when the session is in the sidebar's pinned section — the ⋮ menu
+   *  offers Unpin instead of Pin. */
+  pinned?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -51,6 +54,8 @@ const emit = defineEmits<{
   openPr: [url: string];
   renameSession: [id: string, title: string];
   forkSession: [id: string];
+  /** Pin/unpin the session in the sidebar's pinned section. */
+  togglePin: [id: string];
   archiveSession: [id: string];
   /** Reopen a done (archived) session — the inverse of archiveSession. */
   restoreSession: [id: string];
@@ -220,6 +225,18 @@ function cancelRename(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Pin/unpin — moves the session into/out of the sidebar's pinned section (the
+// same store action the session row's pin button fires). Hidden for archived
+// sessions: a completed session can't hold a pin (the backfill drops it).
+// ---------------------------------------------------------------------------
+function togglePin(): void {
+  if (!props.sessionId) return;
+  track('session_menu_action', { action: props.pinned ? 'unpin' : 'pin' });
+  closeMenu();
+  emit('togglePin', props.sessionId);
+}
+
+// ---------------------------------------------------------------------------
 // Fork
 // ---------------------------------------------------------------------------
 function forkSession(): void {
@@ -366,6 +383,10 @@ function toggleTerminalPanel(): void {
         <MenuItem @click="copySessionId">
           <Icon :name="copiedId ? 'check' : 'copy'" size="sm" />
           {{ copiedId ? t('header.copied') : t('header.copySessionId') }}
+        </MenuItem>
+        <MenuItem v-if="!archived" @click="togglePin">
+          <Icon :name="pinned ? 'unpin' : 'pin'" size="sm" />
+          {{ pinned ? t('header.unpinSession') : t('header.pinSession') }}
         </MenuItem>
         <MenuItem @click="startRename">
           <Icon name="pencil" size="sm" />

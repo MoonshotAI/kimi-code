@@ -19,6 +19,8 @@ export default {
   prStatusUnknown: '未知',
   options: '选项',
   copySessionId: '复制 Session ID',
+  pinSession: '置顶',
+  unpinSession: '取消置顶',
   renameSession: '重命名',
   forkSession: '分叉会话',
   archiveSession: '归档',

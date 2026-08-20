@@ -3884,6 +3884,7 @@ export function useKimiWebClient() {
     workspaceGroups,
     mobileWorkspaceGroups,
     pinnedSessions,
+    pinnedSessionIds,
     flatSessions,
     flatSessionsHasMore: flatListHasMore,
     flatSessionsLoadingMore: computed(() => rawState.flatSessionsLoadingMore),

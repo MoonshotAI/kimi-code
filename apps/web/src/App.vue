@@ -113,6 +113,24 @@ const activeSessionTitle = computed<string>(() => {
   return client.sessions.value.find((s) => s.id === id)?.title ?? '';
 });
 
+// Whether the active session sits in the sidebar's pinned section — drives the
+// chat header's pin/unpin menu item.
+const activeSessionPinned = computed<boolean>(() => {
+  const id = client.activeSessionId.value;
+  return !!id && client.pinnedSessionIds.value.includes(id);
+});
+
+// Pin toggle from the chat header's ⋮ menu: an explicit pin re-expands a
+// folded pinned section (same reveal the sidebar row's pin path applies) so
+// the newly pinned row is actually seen, then toggles the store.
+const sidebarRef = ref<InstanceType<typeof Sidebar> | null>(null);
+function togglePinFromHeader(id: string): void {
+  if (!client.pinnedSessionIds.value.includes(id)) {
+    sidebarRef.value?.revealPinnedSection();
+  }
+  client.togglePinSession(id);
+}
+
 // End reason of the active session's latest turn — ConversationPane marks the
 // transcript when it was manually stopped.
 const activeLastTurnReason = computed(() => {
@@ -1225,6 +1243,7 @@ function openPr(url: string): void {
     <!-- Desktop navigation: workspace rail + resizable session column. -->
     <template v-if="!isMobile">
       <Sidebar
+        ref="sidebarRef"
         :collapsed="sidebarCollapsed"
         :dragging="sidebarDragging"
         :col-width="sideWidth"
@@ -1354,6 +1373,7 @@ function openPr(url: string): void {
       :draft-entry="client.draftEntry.value"
       :session-title="activeSessionTitle"
       :session-archived="client.activeSessionArchived.value"
+      :session-pinned="activeSessionPinned"
       :pr="client.activePullRequest.value"
       @open-changes="openDiffDetail()"
       @select-workspace="handleDraftWorkspaceSelect($event)"
@@ -1383,6 +1403,7 @@ function openPr(url: string): void {
       @refresh-git-status="client.activeSessionId.value && client.loadGitStatus(client.activeSessionId.value)"
       @rename-session="(id, title) => client.renameSession(id, title)"
       @fork-session="(id) => client.forkSession(id)"
+      @toggle-pin="togglePinFromHeader"
       @archive-session="archiveSessionWithToast($event)"
       @restore-session="restoreSessionWithToast($event)"
       @export-session="(id) => void exportSessionWithToast(id)"

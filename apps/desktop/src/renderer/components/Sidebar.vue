@@ -229,7 +229,9 @@ function onSearchButtonClick(): void {
 
 // App.vue's shortcut dispatcher drives the dialog through these exposes
 // (isSearchOpen lets it allow the closing press through the overlay guard).
-defineExpose({ openSearch, toggleSearch, isSearchOpen: () => showSearch.value, setStatusTab, selectSibling });
+// revealPinnedSection serves the chat header's ⋮-menu pin entry (function
+// declaration, hoisted — defined with onPinSession below).
+defineExpose({ openSearch, toggleSearch, isSearchOpen: () => showSearch.value, setStatusTab, selectSibling, revealPinnedSection });
 
 // Scroll-linked seams: each edge shows a soft fade only while more session
 // content exists beyond that edge. This keeps the pinned actions and Settings
@@ -736,12 +738,20 @@ function onSelectSession(sessionId: string): void {
   emit('select', { sessionId, source: 'sidebar' });
 }
 
-// Explicit pins (row button, context menu, drop into the section) re-expand
-// a folded pinned section so the new row is seen — PinnedSessionList owns
-// the fold state and exposes expand() for exactly this path.
+// Explicit pins (row button, context menu, drop into the section, and the
+// chat header's ⋮ menu via the exposed method) re-expand a folded pinned
+// section so the new row is seen — PinnedSessionList owns the fold state and
+// exposes expand() for exactly this path.
 const pinnedListRef = ref<InstanceType<typeof PinnedSessionList> | null>(null);
 
-function onPinSession(id: string): void {
+// Re-expand a folded pinned section before a pin lands, so the new row is
+// visible. Exposed for pin entries that don't pass through this component
+// (the chat header's ⋮ menu calls it from App.vue).
+function revealPinnedSection(): void {
+  // The pinned section only mounts on the 进行中 tab — a header-menu pin can
+  // land while the user sits on 已完成 / 工作空间, so switch back first
+  // (setStatusTab is a no-op in the legacy single-list form).
+  if (statusTab.value !== 'open') setStatusTab('open');
   if (pinnedListRef.value) {
     pinnedListRef.value.expand();
   } else {
@@ -751,6 +761,10 @@ function onPinSession(id: string): void {
     // and hide this first pin.
     savePinnedCollapsed(false);
   }
+}
+
+function onPinSession(id: string): void {
+  revealPinnedSection();
   emit('pin', id);
 }
 

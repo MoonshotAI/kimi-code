@@ -19,6 +19,8 @@ export default {
   prStatusUnknown: 'unknown',
   options: 'Options',
   copySessionId: 'Copy session ID',
+  pinSession: 'Pin',
+  unpinSession: 'Unpin',
   renameSession: 'Rename',
   forkSession: 'Fork session',
   archiveSession: 'Archive',
