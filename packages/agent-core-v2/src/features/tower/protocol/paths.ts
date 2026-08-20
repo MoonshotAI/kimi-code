@@ -8,7 +8,6 @@ export const LOG_DIR = `${COMMS_DIR}/log`;
 export const WORKTREES_DIR = `${TOWER_ROOT}/worktrees`;
 
 export const STATE_FILE = `${COMMS_DIR}/state.json`;
-export const LEASE_FILE = `${COMMS_DIR}/lease.json`;
 export const ACTIVITY_LOG = `${LOG_DIR}/activity.log`;
 export const MISSIONS_INDEX = `${COMMS_DIR}/MISSIONS.md`;
 

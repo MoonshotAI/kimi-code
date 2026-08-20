@@ -61,7 +61,7 @@ Business domains **do not implement persistence themselves** — they depend on 
 
 Business code must not `import 'node:fs'`, write SQL, hand-roll append-logs / atomic writes, or hold file handles. Generic Stores are named by **access pattern** (`IAppendLogStore`, `IAtomicDocumentStore`); only domain-unique Stores are named after the domain (`ISessionIndex`). See `.agents/skills/agent-core-dev/persistence.md` for the full layering rules and decision tree.
 
-One accepted exception: `features/tower/protocol` manages the `.tower/` directory inside the *user's* repository (worktree slots, comms files, activity log) — workspace content, not engine state — and is a verbatim port of the v1 protocol whose semantics (atomic tmp+rename, real `git` CLI for worktrees/merges) are the feature. It keeps direct `node:fs` / `node:child_process` access; do not "modernize" it onto the Stores above without a dedicated migration. One addition on top of v1: `.tower/comms/lease.json`, a cross-process ownership lease (pid + sessionId) written on init/adopt/claim — adoption and teardown are refused while the recorded owner is live (a live in-process session handle, or a live pid from another kimi process).
+One accepted exception: `features/tower/protocol` manages the `.tower/` directory inside the *user's* repository (worktree slots, comms files, activity log) — workspace content, not engine state — and is a verbatim port of the v1 protocol whose semantics (atomic tmp+rename, real `git` CLI for worktrees/merges) are the feature. It keeps direct `node:fs` / `node:child_process` access; do not "modernize" it onto the Stores above without a dedicated migration.
 
 ## Session index
 

@@ -155,55 +155,6 @@ describe('init', () => {
     const log = await store.recentLog(5);
     expect(log.some((line) => line.includes(' adopt ') && line.includes('session=session-b') && line.includes('previous=session-a') && line.includes('retired=agent-build,reviewer-a'))).toBe(true);
   });
-
-  it('writes a pid lease on init and refreshes it on adopt', async () => {
-    await store.init('session-a');
-    expect((await store.readLease())?.sessionId).toBe('session-a');
-
-    await store.init('session-b');
-    expect((await store.readLease())?.sessionId).toBe('session-b');
-  });
-});
-
-describe('claim', () => {
-  it('claims the workspace with the full skeleton and returns the caller as owner', async () => {
-    const owner = await store.claim('session-a');
-
-    expect(owner).toBe('session-a');
-    const state = await store.load();
-    expect(state.sessionId).toBe('session-a');
-    expect(state.roster.agents).toEqual([]);
-    for (const sub of ['inbox', 'findings', 'reviews', 'missions', 'log']) {
-      expect((await stat(join(repo, '.tower/comms', sub))).isDirectory()).toBe(true);
-    }
-
-    const init = await store.init('session-a');
-    expect(init).toEqual({ base: 'main', created: false, retiredAgents: [] });
-    expect((await store.load()).sessionId).toBe('session-a');
-  });
-
-  it('returns the existing owner to a second session without rewriting the claim', async () => {
-    await store.claim('session-a');
-
-    const second = await store.claim('session-b');
-
-    expect(second).toBe('session-a');
-    const state = await store.load();
-    expect(state.sessionId).toBe('session-a');
-    expect(state.missions).toEqual([]);
-  });
-
-  it('returns undefined and writes nothing when the directory is not a git repo', async () => {
-    const plain = await mkdtemp(join(tmpdir(), 'tower-claim-plain-'));
-    try {
-      const result = await new TowerStore(plain).claim('session-a');
-
-      expect(result).toBeUndefined();
-      await expect(stat(join(plain, '.tower'))).rejects.toMatchObject({ code: 'ENOENT' });
-    } finally {
-      await rm(plain, { recursive: true, force: true });
-    }
-  });
 });
 
 describe('plan', () => {

@@ -5,7 +5,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
-import { newTowerStore, runTowerTool, towerOwnerAlive } from '../support';
+import { newTowerStore, runTowerTool } from '../support';
 import DESCRIPTION from './teardown.md?raw';
 import {
   ITowerTeardownTool,
@@ -39,14 +39,13 @@ export class TowerTeardownTool implements ITowerTeardownTool {
           if (
             priorOwner !== undefined &&
             priorOwner !== this.sessionContext.sessionId &&
-            (await towerOwnerAlive(store, this.sessions, priorOwner))
+            this.sessions.get(priorOwner) !== undefined
           ) {
             throw new TowerProtocolError(
               `tower workspace is owned by a live session (${priorOwner}) — tearing it down would dismantle that session's fleet. Use TowerTeardown from that session, or close it first.`,
             );
           }
           const report = await store.teardown({ force: args.force });
-          await store.removeLease();
           this.tower.exit();
           return {
             output: [

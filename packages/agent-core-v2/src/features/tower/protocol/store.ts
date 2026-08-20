@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir, open, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import picomatch from 'picomatch';
@@ -22,7 +22,6 @@ import {
   BROADCAST_NAME,
   FINDINGS_DIR,
   INBOX_DIR,
-  LEASE_FILE,
   LOG_DIR,
   MISSIONS_DIR,
   MISSIONS_INDEX,
@@ -42,7 +41,6 @@ import type {
   TowerFindingSeverity,
   TowerFindingType,
   TowerInboxItem,
-  TowerLease,
   TowerMission,
   TowerMissionKind,
   TowerMissionStatus,
@@ -182,64 +180,10 @@ export class TowerStore {
       missions: [],
     };
     await this.save(state);
-    if (sessionId !== undefined) await this.writeLease(sessionId);
     await writeFile(this.abs(ACTIVITY_LOG), '', 'utf8');
     await this.renderMissionsIndex(state);
     await this.appendLog(TOWER_NAME, 'init', { mode: state.mode, base }, MISSIONS_INDEX);
     return { base, created: true, retiredAgents: [] };
-  }
-
-  /**
-   * Claim the repository-level tower owner without adopting it. Returns the
-   * effective owner after the claim: the existing owner when already claimed
-   * (by any session), `sessionId` when this call claimed it, or `undefined`
-   * when the directory cannot host a tower (not a git repo / no commits) and
-   * therefore has nothing to conflict over. The state file is created with
-   * exclusive-create semantics, so exactly one of two racing first-claims wins;
-   * the loser reads back the winner's id.
-   */
-  async claim(sessionId: string): Promise<string | undefined> {
-    if (!(await isInsideRepo(this.repoRoot))) return undefined;
-    if (!(await hasAnyCommit(this.repoRoot))) return undefined;
-    if (await this.isInitialized()) {
-      const state = await this.load();
-      const owner = state.sessionId;
-      if (owner === undefined || owner === sessionId) {
-        await this.writeLease(sessionId);
-        return sessionId;
-      }
-      return owner;
-    }
-
-    const base = await currentBranch(this.repoRoot);
-    for (const dir of [INBOX_DIR, FINDINGS_DIR, REVIEWS_DIR, MISSIONS_DIR, LOG_DIR, WORKTREES_DIR]) {
-      await mkdir(this.abs(dir), { recursive: true });
-    }
-    await this.ensureGitExclude();
-    const state: TowerState = {
-      version: 1,
-      base,
-      mode: 'branch',
-      createdAt: new Date().toISOString(),
-      sessionId,
-      roster: { agents: [] },
-      missions: [],
-    };
-    try {
-      await writeFile(this.abs(STATE_FILE), `${JSON.stringify(state, null, 2)}\n`, {
-        flag: 'wx',
-      });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-        return (await this.load()).sessionId;
-      }
-      throw error;
-    }
-    await this.writeLease(sessionId);
-    await writeFile(this.abs(ACTIVITY_LOG), '', 'utf8');
-    await this.renderMissionsIndex(state);
-    await this.appendLog(TOWER_NAME, 'init', { mode: state.mode, base }, MISSIONS_INDEX);
-    return sessionId;
   }
 
   /**
@@ -262,33 +206,12 @@ export class TowerStore {
     );
     state.sessionId = sessionId;
     await this.save(state);
-    await this.writeLease(sessionId);
     await this.appendLog(TOWER_NAME, 'adopt', {
       session: sessionId,
       previous: previous ?? 'unknown',
       retired: stale.length > 0 ? stale.map((agent) => agent.name).join(',') : undefined,
     });
     return stale.map((agent) => agent.name);
-  }
-
-  async writeLease(sessionId: string): Promise<void> {
-    const lease: TowerLease = { pid: process.pid, sessionId, at: new Date().toISOString() };
-    await writeFile(this.abs(LEASE_FILE), `${JSON.stringify(lease)}\n`, 'utf8');
-  }
-
-  async readLease(): Promise<TowerLease | undefined> {
-    try {
-      return JSON.parse(await readFile(this.abs(LEASE_FILE), 'utf8')) as TowerLease;
-    } catch {
-      return undefined;
-    }
-  }
-
-  async removeLease(): Promise<void> {
-    try {
-      await unlink(this.abs(LEASE_FILE));
-    } catch {
-    }
   }
 
   /** Add `.tower/` to `.git/info/exclude` (repo-local; tracked .gitignore stays untouched). */

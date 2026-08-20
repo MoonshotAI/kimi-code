@@ -30,7 +30,6 @@ import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IFlagService } from '#/app/flag/flag';
-import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import type { ToolCall } from '#/kosong/contract/message';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -154,7 +153,6 @@ describe('AgentTowerService', () => {
       get: () => [],
     } as unknown as IAgentContextMemoryService);
     ix.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
-    ix.stub(ISessionManager, { get: () => undefined } as unknown as ISessionManager);
     registerTestAgentWire(ix, testWireScope('wire', 'tower-test'), {
       log: ix.get(IAppendLogStore),
       eventBus: ix.get(IEventBus),
@@ -351,7 +349,7 @@ describe('AgentTowerService', () => {
     expect(events).toEqual([]);
   });
 
-  it('enter() is a no-op while a foreign session owns the tower in another process', async () => {
+  it('enter() is a no-op while a foreign session owns the tower in this process', async () => {
     const repo = await mkdtemp(join(tmpdir(), 'tower-enter-foreign-'));
     try {
       await execFileAsync('git', ['init', '-b', 'main'], { cwd: repo });
@@ -359,10 +357,6 @@ describe('AgentTowerService', () => {
       await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
       await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
       await new TowerStore(repo).init('session-original');
-      await writeFile(
-        join(repo, '.tower/comms/lease.json'),
-        `${JSON.stringify({ pid: process.ppid, sessionId: 'session-original', at: new Date().toISOString() })}\n`,
-      );
 
       ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-fork' } as unknown as ISessionContext);
       const tower = ix.get(IAgentTowerService);
@@ -371,27 +365,6 @@ describe('AgentTowerService', () => {
 
       expect(tower.isActive).toBe(false);
       expect(addedTools).toEqual([]);
-    } finally {
-      await rm(repo, { recursive: true, force: true });
-    }
-  });
-
-  it('enter() adopts the tower when the foreign owner is stale', async () => {
-    const repo = await mkdtemp(join(tmpdir(), 'tower-enter-stale-'));
-    try {
-      await execFileAsync('git', ['init', '-b', 'main'], { cwd: repo });
-      await writeFile(join(repo, 'README.md'), '# fixture\n');
-      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
-      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
-      await new TowerStore(repo).init('session-original');
-
-      ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-fork' } as unknown as ISessionContext);
-      const tower = ix.get(IAgentTowerService);
-
-      await tower.enter();
-
-      expect(tower.isActive).toBe(true);
-      expect((await new TowerStore(repo).load()).sessionId).toBe('session-fork');
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
@@ -462,7 +435,6 @@ describe('AgentTowerService', () => {
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
-    ix2.stub(ISessionManager, { get: () => undefined } as unknown as ISessionManager);
     ix2.stub(IAgentContextInjectorService, {
       register: () => ({ dispose: () => {} }),
       reconcileWhenIdle: async () => {},
@@ -563,7 +535,6 @@ describe('AgentTowerService', () => {
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(IFlagService, stubFlag(() => false));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
-    ix2.stub(ISessionManager, { get: () => undefined } as unknown as ISessionManager);
     ix2.stub(IAgentContextInjectorService, {
       register: () => ({ dispose: () => {} }),
       reconcileWhenIdle: async () => {},
@@ -629,7 +600,6 @@ describe('AgentTowerService', () => {
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
-    ix2.stub(ISessionManager, { get: () => undefined } as unknown as ISessionManager);
     ix2.stub(IAgentContextInjectorService, {
       register: () => ({ dispose: () => {} }),
       reconcileWhenIdle: async () => {},
@@ -705,7 +675,6 @@ describe('AgentTowerService', () => {
         cwd: repo,
         sessionId: 'session-fork',
       } as unknown as ISessionContext);
-      ix2.stub(ISessionManager, { get: () => undefined } as unknown as ISessionManager);
       ix2.stub(IAgentContextInjectorService, {
         register: () => ({ dispose: () => {} }),
         reconcileWhenIdle: async () => {},
@@ -781,7 +750,6 @@ describe('AgentTowerService', () => {
       cwd: '/nonexistent-tower-repo',
       sessionId: 'session-fork',
     } as unknown as ISessionContext);
-    ix2.stub(ISessionManager, { get: () => undefined } as unknown as ISessionManager);
     ix2.stub(IAgentContextInjectorService, {
       register: () => ({ dispose: () => {} }),
       reconcileWhenIdle: async () => {},
@@ -854,7 +822,6 @@ describe('AgentTowerService', () => {
       cwd: '/nonexistent-tower-repo',
       sessionId: 'session-owner',
     } as unknown as ISessionContext);
-    ix2.stub(ISessionManager, { get: () => undefined } as unknown as ISessionManager);
     ix2.stub(IAgentContextInjectorService, {
       register: () => ({ dispose: () => {} }),
       reconcileWhenIdle: async () => {},
@@ -908,7 +875,6 @@ describe('AgentTowerService', () => {
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
-    ix2.stub(ISessionManager, { get: () => undefined } as unknown as ISessionManager);
     ix2.stub(IAgentContextInjectorService, {
       register: () => ({ dispose: () => {} }),
       reconcileWhenIdle: async () => {},
