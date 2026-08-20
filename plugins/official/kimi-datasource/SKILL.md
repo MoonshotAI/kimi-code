@@ -82,7 +82,7 @@ description: |
      - 该数据源整体说明（含 ticker 格式、全局约束）
      - 每个 API 的描述 / 必填参数 / 可选参数 / 默认值 / 取值范围
 4. 选最匹配的 API，按文档拼 params
-5. 执行一次 call_data_source_tool；结果成功且已经覆盖问题时停止调用
+5. 执行 call_data_source_tool 取数；需要先发现接口 / 字段 / 实体的源（caixin_api_search、wind_search_fields、天眼查公司搜索），发现类调用不受“一次”限制，继续调到真正的取数 API。结果成功且已经覆盖问题时停止调用
 6. 读返回结果，用用户提问时使用的语言回答
 ```
 
