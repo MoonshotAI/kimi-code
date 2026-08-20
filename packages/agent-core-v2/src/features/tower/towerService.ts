@@ -30,6 +30,7 @@ import {
   TOWER_TOOL_NAMES,
   TOWER_WORKER_PROFILE,
 } from './tower';
+import { isTowerFeatureAssembled } from './towerFeature';
 import { TowerModeEnter, TowerModeExit, towerKey, towerOwnerKey } from './towerOps';
 
 export const TOWER_MODE_TOOLS: readonly string[] = ['TowerInit', ...TOWER_TOOL_NAMES];
@@ -131,6 +132,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   async enter(): Promise<void> {
     if (this.agentCtx.agentId !== 'main') return;
     if (!this.flags.enabled(TOWER_FLAG_ID)) return;
+    if (!isTowerFeatureAssembled()) return;
     if (this.isActive) return;
     const owner = await this.resolveTowerOwner();
     if (owner !== undefined && owner !== this.sessionCtx.sessionId) return;
@@ -149,6 +151,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     return (
       this.agentCtx.agentId === 'main' &&
       this.flags.enabled(TOWER_FLAG_ID) &&
+      isTowerFeatureAssembled() &&
       this.agentState.get(towerKey)
     );
   }

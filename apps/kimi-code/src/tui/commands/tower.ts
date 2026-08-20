@@ -58,16 +58,17 @@ async function setTowerMode(host: SlashCommandHost, enabled: boolean): Promise<b
   if (session === undefined) return false;
   try {
     await session.setTowerMode(enabled);
-    // The engine may silently refuse entry (flag off, another session owning
-    // the workspace tower) — confirm the mode actually took before reporting
-    // success or letting an objective ride on it.
+    // The engine may silently refuse entry (flag off, feature not assembled
+    // until a restart, another session owning the workspace tower) — confirm
+    // the mode actually took before reporting success or letting an objective
+    // ride on it.
     const status = await session.getStatus();
     const effective = status.towerMode ?? false;
     if (effective !== enabled) {
       host.setAppState({ towerMode: effective });
       host.showError(
         enabled
-          ? 'Tower mode could not be enabled — another session owns this workspace tower (or the experiment is off).'
+          ? 'Tower mode could not be enabled — another session owns this workspace tower, or the experiment is off / was just turned on and needs a restart.'
           : 'Tower mode could not be disabled.',
       );
       return false;

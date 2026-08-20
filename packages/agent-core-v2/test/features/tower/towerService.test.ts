@@ -22,6 +22,7 @@ import type {
 } from '#/agent/toolExecutor/toolHooks';
 import { TowerStore } from '#/features/tower/protocol/index';
 import { IAgentTowerService, TOWER_FLAG_ID } from '#/features/tower/tower';
+import { _setTowerFeatureAssembledForTests } from '#/features/tower/towerFeature';
 import { AgentTowerService, TOWER_MODE_TOOLS } from '#/features/tower/towerService';
 import { towerKey } from '#/features/tower/towerOps';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -54,6 +55,8 @@ import {
 } from '../../wire/stubs';
 
 const execFileAsync = promisify(execFile);
+
+_setTowerFeatureAssembledForTests(true);
 
 const signal = new AbortController().signal;
 
@@ -347,6 +350,20 @@ describe('AgentTowerService', () => {
 
     expect(tower.isActive).toBe(false);
     expect(events).toEqual([]);
+  });
+
+  it('enter() is a no-op until the feature is assembled — a live flag flip needs a restart', async () => {
+    _setTowerFeatureAssembledForTests(false);
+    try {
+      const tower = ix.get(IAgentTowerService);
+
+      await tower.enter();
+
+      expect(tower.isActive).toBe(false);
+      expect(addedTools).toEqual([]);
+    } finally {
+      _setTowerFeatureAssembledForTests(true);
+    }
   });
 
   it('enter() is a no-op while a foreign session owns the tower in this process', async () => {

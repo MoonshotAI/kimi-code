@@ -62,6 +62,7 @@ export class TowerFeature extends Feature {
   constructor(@IFlagService flags: IFlagService) {
     super();
     if (!flags.enabled(TOWER_FLAG_ID)) return;
+    assembled = true;
     this.contributeService(LifecycleScope.App, ITowerRateLimitService, TowerRateLimitService, {
       activation: ScopeActivation.OnDemand,
     });
@@ -73,6 +74,21 @@ export class TowerFeature extends Feature {
     }
     this.contributeProfiles([TOWER_WORKER_PROFILE_DEF]);
   }
+}
+
+let assembled = false;
+
+/**
+ * Whether the App-scope feature assembly ran with the tower flag on. A live
+ * `/experiments` flip does not re-assemble features, so until a restart the
+ * tower tools/profile do not exist and the mode machinery must stay inert.
+ */
+export function isTowerFeatureAssembled(): boolean {
+  return assembled;
+}
+
+export function _setTowerFeatureAssembledForTests(value: boolean): void {
+  assembled = value;
 }
 
 registerFeature(TowerFeature);
