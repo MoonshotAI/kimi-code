@@ -30,6 +30,7 @@ export interface IAppendLogStore {
   flush(): Promise<void>;
   close(): Promise<void>;
   acquire(scope: string, key: string): IDisposable;
+  drainRetirements(): Promise<void>;
 }
 
 export const IAppendLogStore: ServiceIdentifier<IAppendLogStore> =

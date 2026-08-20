@@ -1,4 +1,4 @@
-import type { GoalSnapshot } from '#/agent/goal/types';
+import type { GoalSnapshot } from '#/features/goal/types';
 
 import type { SessionStatusResponse } from './sessionProtocol';
 import { LifecycleScope } from '#/app/scopes';
@@ -13,7 +13,7 @@ import {
   type ServicesAccessor,
 } from '#/_base/di/instantiation';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { IAgentGoalService } from '#/agent/goal/goal';
+import { IAgentGoalService } from '#/features/goal/goal';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';

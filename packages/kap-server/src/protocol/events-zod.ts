@@ -36,7 +36,7 @@ import type {
   GoalSnapshot,
   GoalStatus,
   GoalToolResult,
-} from '@moonshot-ai/agent-core-v2/agent/goal/types';
+} from '@moonshot-ai/agent-core-v2';
 import type {
   AssistantDeltaPayload,
   ThinkingDeltaPayload,

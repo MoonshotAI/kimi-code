@@ -299,23 +299,20 @@ describe('renderSystemPromptResult', () => {
     expect(overridden).not.toContain('Kimi Code CLI');
   });
 
-  it('returns disclosure metadata for the builtin now section', () => {
-    const result = renderSystemPromptResult(
+  it('renders identical text regardless of the render-time clock', () => {
+    const earlier = renderSystemPromptResult(
       '',
-      {
-        cwd: '/work',
-        now: '2026-07-29T12:00:00',
-        agentsMd: 'AGENTS',
-      },
+      { cwd: '/work', now: '2026-07-29T12:00:00', timeZone: 'UTC' },
+      { skillActive: true },
+    );
+    const later = renderSystemPromptResult(
+      '',
+      { cwd: '/work', now: '2026-08-19T01:00:00', timeZone: 'UTC' },
       { skillActive: true },
     );
 
-    expect(result.text).toContain('AGENTS');
-    expect(result.environment.cwd).toBe('/work');
-    expect(result.environment.date).toMatchObject({
-      disclosed: true,
-      value: { localDate: '2026-07-29' },
-    });
+    expect(later.text).toBe(earlier.text);
+    expect(earlier.environment).toEqual({ cwd: '/work', date: { disclosed: false } });
   });
 });
 

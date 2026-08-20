@@ -1,9 +1,7 @@
-import { LifecycleScope } from '#/app/scopes';
-
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import type { ToolExecution } from '#/tool/toolContract';
+import { type ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern } from '#/tool/rule-match';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { computeNextCronRun, cronToHuman, hasFireWithinYears, parseCronExpression, type ParsedCronExpression } from '#/app/cron/cron-expr';
@@ -17,6 +15,7 @@ import {
   type CronCreateInput,
   type CronCreateOutput,
 } from './cron-create';
+import { CRON_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '../../mainAgentOnly';
 import CRON_CREATE_DESCRIPTION from './cron-create.md?raw';
 
 const ONE_SHOT_MAX_FUTURE_MS = 350 * 24 * 60 * 60 * 1000;
@@ -36,6 +35,8 @@ export class CronCreateTool implements ICronCreateTool {
   ) {}
 
   resolveExecution(args: CronCreateInput): ToolExecution {
+    const denied = mainAgentOnlyExecution(this.scopeContext, CRON_MAIN_AGENT_ONLY);
+    if (denied !== undefined) return denied;
     if (this.cron.isDisabled()) {
       return {
         isError: true,
@@ -173,10 +174,7 @@ function formatOutput(o: CronCreateOutput): string {
   return lines.join('\n');
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  ICronCreateTool,
-  CronCreateTool,
-  ScopeActivation.OnScopeCreated,
-  'cron',
-);
+registerAgentToolService(ICronCreateTool, CronCreateTool, {
+  name: 'CronCreate',
+  domain: 'cron',
+});

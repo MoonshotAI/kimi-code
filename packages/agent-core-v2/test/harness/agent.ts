@@ -28,8 +28,8 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { SessionCronServiceImpl } from '#/session/cron/sessionCronServiceImpl';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
-import { IAgentGoalService } from '#/agent/goal/goal';
-import { AgentGoalService } from '#/agent/goal/goalService';
+import { IAgentGoalService } from '#/features/goal/goal';
+import { AgentGoalService } from '#/features/goal/goalService';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
@@ -52,7 +52,7 @@ import type {
 import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
 import type { AgentContextData } from '#/agent/contextMemory/types';
-import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/agent/goal/types';
+import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/features/goal/types';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { RunShellCommandInput, RunShellCommandResult } from '#/agent/shellCommand/shellCommand';
@@ -225,6 +225,8 @@ import {
   type InteractionResolution,
 } from '#/session/interaction/interaction';
 import type { IHostProcess } from '#/os/interface/hostProcess';
+import { IHostClock } from '#/os/interface/hostClock';
+import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionQuestionService, type QuestionResult } from '#/session/question/question';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionSwarmService } from '#/features/swarm/session/sessionSwarm';
@@ -254,6 +256,25 @@ const MOCK_PROVIDER = {
 interface TestModelProviderOptions {
   readonly promptCacheKey?: string;
   readonly kimiRequestHeaders?: Record<string, string>;
+}
+
+function disclosedTestEnvironment(clock: IHostClock, cwd: string): EnvironmentDisclosureSnapshot {
+  const timeZone = clock.timeZone();
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(clock.now());
+  const part = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((candidate) => candidate.type === type)?.value ?? '';
+  return {
+    cwd,
+    date: {
+      disclosed: true,
+      value: { localDate: `${part('year')}-${part('month')}-${part('day')}`, timeZone },
+    },
+  };
 }
 
 interface KimiConfig {
@@ -1004,6 +1025,10 @@ class PersistenceAppendLogStore implements IAppendLogStore {
     return toDisposable(() => { });
   }
 
+  drainRetirements(): Promise<void> {
+    return Promise.resolve();
+  }
+
   snapshot(): WireRecord[] {
     return this.persistence.records.map(cloneRecord);
   }
@@ -1193,6 +1218,7 @@ export class AgentTestContext {
       'app',
     );
     this.root = createAppScope({ seeds: appSeeds });
+    reassertServiceOverrides(this.serviceOverrides, 'app', this.root.instantiation);
     const hookRunnerSeed = appSeeds.find(([id]) => id === IExternalHooksRunnerService);
     if (hookRunnerSeed !== undefined) {
       this.root.instantiation.provide(
@@ -1597,6 +1623,10 @@ export class AgentTestContext {
       modelAlias: provider.model,
       systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
       thinkingLevel: 'off',
+      environmentDisclosure: disclosedTestEnvironment(
+        this.get(IHostClock),
+        this.get(ISessionContext).cwd,
+      ),
     });
 
     if (tools.length > 0) {

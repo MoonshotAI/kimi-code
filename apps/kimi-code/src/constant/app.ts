@@ -1,5 +1,4 @@
 import { ErrorCodes } from '@moonshot-ai/kimi-code-sdk';
-import { kimiCdnContentUrl } from '@moonshot-ai/kimi-code-oauth';
 
 import { currentKimiProfile } from '#/utils/region';
 
@@ -109,10 +108,6 @@ export function kimiCodeCdnLatestJsonUrl(): string {
 // (same layout install.ps1 consumes).
 export function kimiCodeCdnBinariesBase(): string {
   return `${kimiCodeCdnBase()}/binaries`;
-}
-// The tips banner rides the content CDN, which both regions currently share.
-export function kimiCodeTipsBannerUrl(): string {
-  return kimiCdnContentUrl('kimi-code-tips/tips.json');
 }
 // The marketplace env override name lives in the shared agent-core-v2 plugin
 // domain (kap-server consumes it from there). Deep-path import: this module is

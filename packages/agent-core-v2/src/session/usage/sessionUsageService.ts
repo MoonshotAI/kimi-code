@@ -22,10 +22,10 @@ export class SessionUsageService extends Service implements ISessionUsageService
     usage: TokenUsage,
     source?: AgentLLMRequestSource,
   ): Promise<void> {
-    await agentSpaceOf(agent).use(UsageAgentModelDefinition, (m) =>
+    const firstRecord = await agentSpaceOf(agent).use(UsageAgentModelDefinition, (m) =>
       m.record({ model, usage, source }),
     );
-    this.onDidRecordEmitter.fire({ agent, model, usage: copyUsage(usage), source });
+    this.onDidRecordEmitter.fire({ agent, model, usage: copyUsage(usage), source, firstRecord });
   }
 
   status(agent: AgentContext): UsageStatus {

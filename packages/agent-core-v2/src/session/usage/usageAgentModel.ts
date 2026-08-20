@@ -31,7 +31,8 @@ export class UsageAgentModel extends AgentModel<UsageModelState> {
     });
   }
 
-  record(input: UsageRecordInput): Promise<void> {
+  record(input: UsageRecordInput): Promise<boolean> {
+    const firstRecord = Object.keys(this.state.byModel).length === 0;
     const usageScope: UsageRecordScope = input.source?.type === 'turn' ? 'turn' : 'session';
     const recorded = this.emit(
       new UsageRecord({
@@ -56,7 +57,7 @@ export class UsageAgentModel extends AgentModel<UsageModelState> {
     const notified = this.emit(
       new AgentStatusUpdated({ agentId: this.agent.agentId, usage: this.status() }),
     );
-    return recorded.then(() => notified).then(() => undefined);
+    return recorded.then(() => notified).then(() => firstRecord);
   }
 
   status(): UsageStatus {

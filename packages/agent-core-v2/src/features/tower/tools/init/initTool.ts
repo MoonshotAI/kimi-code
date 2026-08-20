@@ -1,11 +1,13 @@
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { TowerProtocolError } from '#/features/tower/protocol/index';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
-import { newTowerStore, runTowerTool } from '../support';
+import { newTowerStore, runTowerTool, TOWER_MAIN_AGENT_ONLY } from '../support';
 import DESCRIPTION from './init.md?raw';
 import { ITowerInitTool, TowerInitToolInputSchema, type TowerInitToolInput } from './init';
 
@@ -19,9 +21,16 @@ export class TowerInitTool implements ITowerInitTool {
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentTowerService private readonly tower: IAgentTowerService,
     @ISessionManager private readonly sessions: ISessionManager,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {}
 
   resolveExecution(_args: TowerInitToolInput): ToolExecution {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) {
+      return {
+        isError: true,
+        output: TOWER_MAIN_AGENT_ONLY,
+      };
+    }
     return {
       description: 'Initializing tower workspace',
       approvalRule: this.name,
@@ -65,4 +74,3 @@ export class TowerInitTool implements ITowerInitTool {
     };
   }
 }
-
