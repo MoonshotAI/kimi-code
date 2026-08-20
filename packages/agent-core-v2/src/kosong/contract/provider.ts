@@ -84,6 +84,7 @@ export interface GenerateOptions {
   onRequestSent?: () => void;
   onStreamEnd?: (stats?: StreamDecodeStats) => void;
   onTraceId?: (traceId: string | null) => void;
+  streamStallTimeoutMs?: number;
 }
 
 export interface ChatProvider {

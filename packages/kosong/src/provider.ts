@@ -179,6 +179,16 @@ export interface GenerateOptions {
    * least one part was streamed, or `undefined` for an empty stream.
    */
   onStreamEnd?: (stats?: StreamDecodeStats) => void;
+  /**
+   * Maximum time in milliseconds to wait for the response — headers first,
+   * then each streamed part — before declaring the request stalled. The
+   * budget resets on every part, so slow generations are unaffected — only a
+   * complete silence longer than this trips the watchdog. On a stall the
+   * connection is torn down and {@link generate | generate()} throws an
+   * `APITimeoutError` (retryable). Defaults to
+   * `DEFAULT_STREAM_STALL_TIMEOUT_MS`; set to `0` to disable.
+   */
+  streamStallTimeoutMs?: number;
 }
 
 /**

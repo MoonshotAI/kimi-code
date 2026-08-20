@@ -56,7 +56,7 @@ export type {
 } from './catalog';
 
 // Core functions
-export { generate } from './generate';
+export { generate, DEFAULT_STREAM_STALL_TIMEOUT_MS } from './generate';
 export type { GenerateCallbacks, GenerateResult } from './generate';
 
 // Tool wire schema

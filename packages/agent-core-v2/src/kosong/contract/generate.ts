@@ -1,4 +1,4 @@
-import { APIEmptyResponseError, createAbortError } from './errors';
+import { APIEmptyResponseError, APITimeoutError, createAbortError } from './errors';
 import {
   isContentPart,
   isToolCall,
@@ -28,6 +28,8 @@ export interface GenerateCallbacks {
   onToolCall?: (toolCall: ToolCall) => void | Promise<void>;
 }
 
+export const DEFAULT_STREAM_STALL_TIMEOUT_MS = 300_000;
+
 export async function generate(
   provider: ChatProvider,
   systemPrompt: string,
@@ -50,7 +52,33 @@ export async function generate(
     : tools;
 
   options?.onRequestStart?.();
-  const stream = await provider.generate(systemPrompt, wireTools, history, options);
+  const stallAbort = new AbortController();
+  const requestSignal =
+    options?.signal === undefined
+      ? stallAbort.signal
+      : AbortSignal.any([options.signal, stallAbort.signal]);
+  const stallTimeoutMs = options?.streamStallTimeoutMs ?? DEFAULT_STREAM_STALL_TIMEOUT_MS;
+  const generatePromise = provider.generate(systemPrompt, wireTools, history, {
+    ...options,
+    signal: requestSignal,
+  });
+  const generateOutcome = await raceStallOrAbort(generatePromise, stallTimeoutMs, requestSignal);
+  if (generateOutcome === 'aborted' || generateOutcome === 'stalled') {
+    if (generateOutcome === 'stalled') {
+      stallAbort.abort();
+    }
+    void generatePromise
+      .then((lateStream) => cancelStream(lateStream))
+      .catch(() => undefined);
+    if (generateOutcome === 'aborted') {
+      throw createAbortError();
+    }
+    throw new APITimeoutError(
+      `The API did not respond within ${stallTimeoutMs}ms (no response headers).` +
+        ` Provider: ${provider.name}, model: ${provider.modelName}`,
+    );
+  }
+  const stream = generateOutcome;
   if (stream.traceId !== undefined) {
     options?.onTraceId?.(stream.traceId);
   }
@@ -62,50 +90,69 @@ export async function generate(
   let firstPartAt: number | undefined;
   let lastResumeAt = 0;
 
-  for await (const part of stream) {
-    const arrivedAt = Date.now();
-    if (firstPartAt === undefined) {
-      firstPartAt = arrivedAt;
-    } else {
-      serverDecodeMs += arrivedAt - lastResumeAt;
-    }
+  const iterator = stream[Symbol.asyncIterator]();
+  try {
+    for (;;) {
+      const next = await nextStreamPart(iterator, stream, stallTimeoutMs, requestSignal, stallAbort);
+      if (next === 'stalled') {
+        throw new APITimeoutError(
+          `The API stream stalled: no data received for ${stallTimeoutMs}ms.` +
+            formatFinishReasonHint(stream) +
+            ` Provider: ${provider.name}, model: ${provider.modelName}`,
+        );
+      }
+      if (next.done === true) {
+        break;
+      }
+      const part = next.value;
+      const arrivedAt = Date.now();
+      if (firstPartAt === undefined) {
+        firstPartAt = arrivedAt;
+      } else {
+        serverDecodeMs += arrivedAt - lastResumeAt;
+      }
 
-    try {
-      await throwIfAborted(options?.signal, stream);
-
-      if (callbacks?.onMessagePart !== undefined) {
-        await callbacks.onMessagePart(deepCopyPart(part));
+      try {
         await throwIfAborted(options?.signal, stream);
-      }
 
-      if (
-        isToolCallPart(part) &&
-        part.index !== undefined &&
-        !isPendingToolCallAtIndex(pendingPart, part.index)
-      ) {
-        const arrayIdx = toolCallIndexMap.get(part.index);
-        if (arrayIdx !== undefined) {
-          const target = message.toolCalls[arrayIdx];
-          if (target !== undefined && part.argumentsPart !== null) {
-            target.arguments =
-              target.arguments === null
-                ? part.argumentsPart
-                : target.arguments + part.argumentsPart;
-          }
-          continue;
+        if (callbacks?.onMessagePart !== undefined) {
+          await callbacks.onMessagePart(deepCopyPart(part));
+          await throwIfAborted(options?.signal, stream);
         }
-      }
 
-      if (pendingPart === null) {
-        pendingPart = part;
-      } else if (!mergeInPlace(pendingPart, part)) {
-        flushPart(message, pendingPart, toolCallIndexMap);
-        pendingPart = part;
+        if (
+          isToolCallPart(part) &&
+          part.index !== undefined &&
+          !isPendingToolCallAtIndex(pendingPart, part.index)
+        ) {
+          const arrayIdx = toolCallIndexMap.get(part.index);
+          if (arrayIdx !== undefined) {
+            const target = message.toolCalls[arrayIdx];
+            if (target !== undefined && part.argumentsPart !== null) {
+              target.arguments =
+                target.arguments === null
+                  ? part.argumentsPart
+                  : target.arguments + part.argumentsPart;
+            }
+            continue;
+          }
+        }
+
+        if (pendingPart === null) {
+          pendingPart = part;
+        } else if (!mergeInPlace(pendingPart, part)) {
+          flushPart(message, pendingPart, toolCallIndexMap);
+          pendingPart = part;
+        }
+      } finally {
+        lastResumeAt = Date.now();
+        clientConsumeMs += lastResumeAt - arrivedAt;
       }
-    } finally {
-      lastResumeAt = Date.now();
-      clientConsumeMs += lastResumeAt - arrivedAt;
     }
+  } catch (error) {
+    void cancelStream(stream);
+    teardownIterator(iterator);
+    throw error;
   }
 
   await throwIfAborted(options?.signal, stream);
@@ -185,6 +232,78 @@ async function cancelStream(stream: StreamedMessage): Promise<void> {
   try {
     await cancelable.return?.();
   } catch {}
+}
+
+async function raceStallOrAbort<T>(
+  pending: Promise<T>,
+  stallTimeoutMs: number,
+  signal: AbortSignal,
+): Promise<T | 'stalled' | 'aborted'> {
+  if (signal.aborted) {
+    return 'aborted';
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const watchdog = new Promise<'stalled' | 'aborted'>((resolve) => {
+    if (Number.isFinite(stallTimeoutMs) && stallTimeoutMs > 0) {
+      timer = setTimeout(() => {
+        resolve('stalled');
+      }, stallTimeoutMs);
+      (timer as { unref?: () => void }).unref?.();
+    }
+    onAbort = () => {
+      resolve('aborted');
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+
+  try {
+    return await Promise.race([pending, watchdog]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+    if (onAbort !== undefined) {
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
+}
+
+async function nextStreamPart(
+  iterator: AsyncIterator<StreamedMessagePart>,
+  stream: StreamedMessage,
+  stallTimeoutMs: number,
+  signal: AbortSignal,
+  stallAbort: AbortController,
+): Promise<IteratorResult<StreamedMessagePart> | 'stalled'> {
+  let outcome: IteratorResult<StreamedMessagePart> | 'stalled' | 'aborted';
+  try {
+    outcome = await raceStallOrAbort(iterator.next(), stallTimeoutMs, signal);
+  } catch (error) {
+    if (signal.aborted) {
+      void cancelStream(stream);
+      teardownIterator(iterator);
+      throw createAbortError();
+    }
+    throw error;
+  }
+  if (outcome === 'aborted') {
+    void cancelStream(stream);
+    teardownIterator(iterator);
+    throw createAbortError();
+  }
+  if (outcome === 'stalled') {
+    stallAbort.abort();
+    void cancelStream(stream);
+    teardownIterator(iterator);
+    return 'stalled';
+  }
+  return outcome;
+}
+
+function teardownIterator(iterator: AsyncIterator<StreamedMessagePart>): void {
+  void Promise.resolve(iterator.return?.()).catch(() => undefined);
 }
 
 async function throwIfAborted(signal?: AbortSignal, stream?: StreamedMessage): Promise<void> {
