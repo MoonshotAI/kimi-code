@@ -55,6 +55,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     this.agentState.contributeState(towerKey);
     this._register(
       this.dispatcher.hooks.onDidRestore.register('tower', async (_ctx, next) => {
+        await this.exitForeignTower();
         this.restoreTowerTools();
         await next();
       }),
@@ -140,6 +141,19 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       this.flags.enabled(TOWER_FLAG_ID) &&
       this.agentState.get(towerKey)
     );
+  }
+
+  private async exitForeignTower(): Promise<void> {
+    if (!this.flags.enabled(TOWER_FLAG_ID)) return;
+    if (this.agentCtx.agentId !== 'main') return;
+    if (!this.agentState.get(towerKey)) return;
+    const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
+    const owner = await store.load().then(
+      (state) => state.sessionId,
+      () => undefined,
+    );
+    if (owner === undefined || owner === this.sessionCtx.sessionId) return;
+    void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
   }
 
   private restoreTowerTools(): void {
