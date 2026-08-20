@@ -317,5 +317,33 @@ describe('McpConfigStore', () => {
       await mutation;
       expect(completed).toBe(true);
     });
+
+    it('starts asynchronous listeners concurrently before waiting for completion', async () => {
+      let resolveStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        resolveStarted = resolve;
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let secondStarted = false;
+      store.onDidWrite((event) => {
+        resolveStarted();
+        event.waitUntil(gate);
+      });
+      store.onDidWrite(() => {
+        secondStarted = true;
+      });
+
+      const mutation = store.add(stdioServer('alpha'));
+      await started;
+      await Promise.resolve();
+      const secondStartedBeforeRelease = secondStarted;
+      release();
+      await mutation;
+
+      expect(secondStartedBeforeRelease).toBe(true);
+    });
   });
 });

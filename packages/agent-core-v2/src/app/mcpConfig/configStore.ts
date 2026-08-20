@@ -162,7 +162,7 @@ export class McpConfigStore extends Disposable implements IMcpConfigStore {
     await this.storage.write(CONFIG_SCOPE, MCP_CONFIG_KEY, textEncoder.encode(text), {
       atomic: true,
     });
-    await this.writeEmitter.fireAsync({}, NO_ABORT);
+    await this.writeEmitter.fireAsyncConcurrent({}, NO_ABORT);
   }
 }
 
