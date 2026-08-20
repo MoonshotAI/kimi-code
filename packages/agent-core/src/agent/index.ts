@@ -35,7 +35,7 @@ import {
 } from './compaction';
 import { CronManager } from './cron';
 import { ConfigState } from './config';
-import type { ThinkingEffortFallback } from './config/thinking';
+import type { ThinkingEffort, ThinkingEffortFallback } from './config/thinking';
 import { ContextMemory } from './context';
 import { GoalMode } from './goal';
 import { HookEngine } from '../session/hooks';
@@ -188,7 +188,7 @@ export class Agent {
     readonly model: string;
     readonly effort: string;
     readonly knownEfforts: string | undefined;
-    readonly fallbackEffort: string;
+    readonly fallbackEffort?: string;
   }> = [];
   private readonly systemPromptContextProvider?: (() => Promise<PreparedSystemPromptContext>) | undefined;
 
@@ -344,30 +344,72 @@ export class Agent {
     model: ModelAlias | undefined,
     fallback: ThinkingEffortFallback,
   ): void {
+    const effective = model === undefined ? undefined : effectiveModelAlias(model);
+    const supportEfforts = effective?.supportEfforts?.filter((value) => value.length > 0) ?? [];
+    const modelName = effective?.model ?? modelAlias ?? 'unknown';
+    this.emitThinkingEffortWarning({
+      code: 'thinking-effort-not-listed',
+      message: `Thinking effort "${fallback.configured}" is not listed for model "${modelName}" (known: ${supportEfforts.join(', ')}). Falling back to the model's default effort "${fallback.resolved}".`,
+      modelAlias,
+      model: modelName,
+      effort: fallback.configured,
+      knownEfforts: supportEfforts.join(','),
+      fallbackEffort: fallback.resolved,
+    });
+  }
+
+  /**
+   * One-shot warning for a `KIMI_MODEL_THINKING_EFFORT` override that is not
+   * in the model's declared support list. The override is an explicit pin
+   * applied after resolution: it bypasses the declared list by design and is
+   * sent upstream unchanged, so the warning says so instead of promising a
+   * fallback.
+   */
+  warnAboutUnlistedThinkingEffortOverride(
+    modelAlias: string | undefined,
+    model: ModelAlias | undefined,
+    effort: ThinkingEffort,
+  ): void {
+    if (effort === 'on' || effort === 'off') return;
+    const effective = model === undefined ? undefined : effectiveModelAlias(model);
+    const supportEfforts = effective?.supportEfforts?.filter((value) => value.length > 0) ?? [];
+    if (supportEfforts.length === 0 || supportEfforts.includes(effort)) return;
+    const modelName = effective?.model ?? modelAlias ?? 'unknown';
+    this.emitThinkingEffortWarning({
+      code: 'thinking-effort-override-not-listed',
+      message: `Thinking effort "${effort}" is not listed for model "${modelName}" (known: ${supportEfforts.join(', ')}). The value will be sent unchanged to the backend.`,
+      modelAlias,
+      model: modelName,
+      effort,
+      knownEfforts: supportEfforts.join(','),
+      fallbackEffort: undefined,
+    });
+  }
+
+  private emitThinkingEffortWarning(warning: {
+    readonly code: string;
+    readonly message: string;
+    readonly modelAlias: string | undefined;
+    readonly model: string;
+    readonly effort: string;
+    readonly knownEfforts: string;
+    readonly fallbackEffort?: string;
+  }): void {
     try {
-      const effective = model === undefined ? undefined : effectiveModelAlias(model);
-      const supportEfforts = effective?.supportEfforts?.filter((value) => value.length > 0) ?? [];
-      const modelName = effective?.model ?? modelAlias ?? 'unknown';
-      const code = 'thinking-effort-not-listed';
-      const message = `Thinking effort "${fallback.configured}" is not listed for model "${modelName}" (known: ${supportEfforts.join(', ')}). Falling back to the model's default effort "${fallback.resolved}".`;
-      const knownEfforts = supportEfforts.join(',');
-      const key = [code, modelAlias, modelName, fallback.configured, knownEfforts].join('\u0000');
+      const key = [
+        warning.code,
+        warning.modelAlias,
+        warning.model,
+        warning.effort,
+        warning.knownEfforts,
+      ].join('\u0000');
       if (this.emittedThinkingEffortWarnings.has(key)) return;
       this.emittedThinkingEffortWarnings.add(key);
-      const pending = {
-        code,
-        message,
-        modelAlias,
-        model: modelName,
-        effort: fallback.configured,
-        knownEfforts,
-        fallbackEffort: fallback.resolved,
-      };
       if (this.records.restoring) {
-        this.pendingThinkingEffortWarnings.push(pending);
+        this.pendingThinkingEffortWarnings.push(warning);
         return;
       }
-      this.publishThinkingEffortWarning(pending);
+      this.publishThinkingEffortWarning(warning);
     } catch {
       // A capability warning must never make config replay or session resume fail.
     }

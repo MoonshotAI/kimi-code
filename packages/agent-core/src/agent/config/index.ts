@@ -138,6 +138,12 @@ export class ConfigState {
     if (thinkingFallback !== undefined) {
       this.agent.warnAboutThinkingEffortFallback(targetAlias, targetModel, thinkingFallback);
     }
+    if (thinkingEffort !== undefined && thinkingEffort !== unforcedThinkingEffort) {
+      // The KIMI_MODEL_THINKING_EFFORT override is applied after resolution
+      // and bypasses support_efforts by design; warn once when the pinned
+      // value is outside the model's declared list.
+      this.agent.warnAboutUnlistedThinkingEffortOverride(targetAlias, targetModel, thinkingEffort);
+    }
     this.agent.emitStatusUpdated(thinkingEffort !== undefined);
   }
 
