@@ -404,9 +404,8 @@ export class ConfigService extends Disposable implements IConfigService {
     }
     await this.enqueueStateTransition(async () => {
       this.assertPersistable();
-      await this.persist(domain, (freshRaw) => {
-        this.raw = freshRaw;
-        const next = this.registry.merge(domain, freshRaw[domain], patch);
+      await this.persist(domain, () => {
+        const next = this.registry.merge(domain, this.raw[domain], patch);
         const validated = this.registry.validate(domain, next);
         const stripped = this.stripEnv(domain, validated);
         if (stripped === undefined) {
@@ -438,13 +437,14 @@ export class ConfigService extends Disposable implements IConfigService {
     }
     await this.enqueueStateTransition(async () => {
       this.assertPersistable();
-      const stripped = this.stripEnv(domain, effectiveValue);
-      if (stripped === undefined) {
-        delete this.raw[domain];
-      } else {
-        this.raw[domain] = this.registry.validate(domain, stripped);
-      }
-      await this.persist(domain);
+      await this.persist(domain, () => {
+        const stripped = this.stripEnv(domain, effectiveValue);
+        if (stripped === undefined) {
+          delete this.raw[domain];
+        } else {
+          this.raw[domain] = this.registry.validate(domain, stripped);
+        }
+      });
       this.rebuildEffective('set', [domain]);
     });
   }
@@ -472,18 +472,19 @@ export class ConfigService extends Disposable implements IConfigService {
     }
     await this.enqueueStateTransition(async () => {
       this.assertPersistable();
-      const staged: ResolvedConfig = { ...this.raw };
-      for (const domain of domains) {
-        const value = sections[domain] === null ? undefined : sections[domain];
-        const stripped = this.stripEnv(domain, value);
-        if (stripped === undefined) {
-          delete staged[domain];
-        } else {
-          staged[domain] = this.registry.validate(domain, stripped);
+      await this.persistDomains(domains, () => {
+        const staged: ResolvedConfig = { ...this.raw };
+        for (const domain of domains) {
+          const value = sections[domain] === null ? undefined : sections[domain];
+          const stripped = this.stripEnv(domain, value);
+          if (stripped === undefined) {
+            delete staged[domain];
+          } else {
+            staged[domain] = this.registry.validate(domain, stripped);
+          }
         }
-      }
-      this.raw = staged;
-      await this.persistDomains(domains);
+        this.raw = staged;
+      });
       this.rebuildEffective('set', domains);
     });
   }
@@ -749,14 +750,11 @@ export class ConfigService extends Disposable implements IConfigService {
     );
   }
 
-  private async persist(domain: string, rebase?: (onDiskRaw: ResolvedConfig) => void): Promise<void> {
+  private async persist(domain: string, rebase: () => void): Promise<void> {
     await this.persistDomains([domain], rebase);
   }
 
-  private async persistDomains(
-    domains: readonly string[],
-    rebase?: (onDiskRaw: ResolvedConfig) => void,
-  ): Promise<void> {
+  private async persistDomains(domains: readonly string[], rebase: () => void): Promise<void> {
     this.assertPersistable();
     let onDisk: ResolvedConfig = {};
     try {
@@ -779,20 +777,13 @@ export class ConfigService extends Disposable implements IConfigService {
         { cause: error },
       );
     }
-    if (rebase !== undefined) {
-      rebase(transformTomlData(onDisk, this.registry));
-    }
-    const absorbedExternal = JSON.stringify(onDisk) !== JSON.stringify(this.rawSnake);
-    const nextRawSnake = cloneRecord(onDisk);
+    this.rawSnake = cloneRecord(onDisk);
+    this.raw = transformTomlData(onDisk, this.registry);
+    rebase();
     for (const domain of domains) {
-      applySectionToToml(nextRawSnake, domain, this.raw[domain], this.registry);
+      applySectionToToml(this.rawSnake, domain, this.raw[domain], this.registry);
     }
-    await this.documentStore.set(CONFIG_SCOPE, this.configKey, nextRawSnake);
-    if (absorbedExternal) {
-      await this.load('reload');
-      return;
-    }
-    this.rawSnake = nextRawSnake;
+    await this.documentStore.set(CONFIG_SCOPE, this.configKey, this.rawSnake);
   }
 }
 

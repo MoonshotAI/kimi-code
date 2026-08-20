@@ -67,6 +67,7 @@ import {
   PROVIDERS_SECTION,
   THINKING_SECTION,
 } from '#/app/kosongConfig/configSection';
+import '#/app/kosongConfig/envOverlay';
 import { type ThinkingConfig } from '#/kosong/model/thinking';
 import {
   KEEP_ALIVE_ON_EXIT_ENV,
@@ -2605,13 +2606,13 @@ describe('ConfigService persistence guards', () => {
     }
   }
 
-  async function createGuardedConfig(toml: string) {
+  async function createGuardedConfig(toml: string, env: NodeJS.ProcessEnv = {}) {
     const disposables = new DisposableStore();
     const ix = disposables.add(new TestInstantiationService());
     const storage = new SilentStorage();
     await storage.write('', 'config.toml', new TextEncoder().encode(toml));
     ix.stub(ILogService, stubLog());
-    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg-guards'));
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg-guards', env));
     ix.stub(IFileSystemStorageService, storage);
     ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
     ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
@@ -2750,6 +2751,26 @@ describe('ConfigService persistence guards', () => {
       beta: { type: 'openai', apiKey: 'sk-beta' },
       gamma: { type: 'openai', apiKey: 'sk-gamma' },
     });
+
+    disposables.dispose();
+  });
+
+  it('restores env-masked values from the freshly re-read file instead of the stale snapshot', async () => {
+    const { config, disposables, storage } = await createGuardedConfig(
+      'default_model = "acme/m1"\n\n[providers.acme]\ntype = "openai"\napi_key = "sk-acme"\n\n[models."acme/m1"]\nprovider = "acme"\nmodel = "m1"\n',
+      { KIMI_MODEL_NAME: 'env-model' },
+    );
+    expect(config.get(DEFAULT_MODEL_SECTION)).toBe('__kimi_env_model__');
+
+    await overwrite(
+      storage,
+      'default_model = "acme/m2"\n\n[providers.acme]\ntype = "openai"\napi_key = "sk-acme"\n\n[models."acme/m2"]\nprovider = "acme"\nmodel = "m2"\n',
+    );
+    await config.replace(DEFAULT_MODEL_SECTION, config.get(DEFAULT_MODEL_SECTION));
+
+    const doc = await stored(storage);
+    expect(doc).toContain('default_model = "acme/m2"');
+    expect(doc).not.toContain('default_model = "acme/m1"');
 
     disposables.dispose();
   });
