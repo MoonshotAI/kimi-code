@@ -1067,10 +1067,13 @@ describe('TowerModeInjection', () => {
   let injector: InjectableDynamicInjector;
   let tower: IAgentTowerService;
   let towerFlagOn: boolean;
+  let cwd: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     towerFlagOn = true;
+    cwd = await mkdtemp(join(tmpdir(), 'tower-injection-'));
     ctx = createTestAgent(
+      { cwd },
       appService(IFlagService, stubFlag((id) => towerFlagOn && id === TOWER_FLAG_ID)),
     );
     context = ctx.get(IAgentContextMemoryService);
@@ -1083,6 +1086,7 @@ describe('TowerModeInjection', () => {
       await ctx.expectResumeMatches();
     } finally {
       await ctx.dispose();
+      await rm(cwd, { recursive: true, force: true });
     }
   });
 

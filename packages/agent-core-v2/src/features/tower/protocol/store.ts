@@ -187,6 +187,44 @@ export class TowerStore {
   }
 
   /**
+   * Claim the repository-level tower owner without adopting it. Returns the
+   * effective owner after the claim: the existing owner when already claimed
+   * (by any session), `sessionId` when this call claimed it, or `undefined`
+   * when the directory cannot host a tower (not a git repo / no commits) and
+   * therefore has nothing to conflict over. The post-write read-back serializes
+   * racing first-claims: of two simultaneous writers, only the one reading its
+   * own id back proceeds.
+   */
+  async claim(sessionId: string): Promise<string | undefined> {
+    if (!(await isInsideRepo(this.repoRoot))) return undefined;
+    if (!(await hasAnyCommit(this.repoRoot))) return undefined;
+    if (await this.isInitialized()) {
+      const state = await this.load();
+      return state.sessionId;
+    }
+
+    const base = await currentBranch(this.repoRoot);
+    for (const dir of [INBOX_DIR, FINDINGS_DIR, REVIEWS_DIR, MISSIONS_DIR, LOG_DIR, WORKTREES_DIR]) {
+      await mkdir(this.abs(dir), { recursive: true });
+    }
+    await this.ensureGitExclude();
+    const state: TowerState = {
+      version: 1,
+      base,
+      mode: 'branch',
+      createdAt: new Date().toISOString(),
+      sessionId,
+      roster: { agents: [] },
+      missions: [],
+    };
+    await this.save(state);
+    await writeFile(this.abs(ACTIVITY_LOG), '', 'utf8');
+    await this.renderMissionsIndex(state);
+    await this.appendLog(TOWER_NAME, 'init', { mode: state.mode, base }, MISSIONS_INDEX);
+    return (await this.load()).sessionId;
+  }
+
+  /**
    * Retire roster entries spawned by other sessions and restamp the state
    * with the current session id. The `adopt` log line is written on every
    * session change — even with nothing to retire — so id collisions across

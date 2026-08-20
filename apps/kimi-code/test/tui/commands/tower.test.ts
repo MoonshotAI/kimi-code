@@ -14,10 +14,15 @@ function makeHost(
     hasSession?: boolean;
     towerMode?: boolean;
     engineV2?: boolean;
+    refuseTowerEntry?: boolean;
   } = {},
 ) {
+  let engineMode = overrides.towerMode ?? false;
   const session = {
-    setTowerMode: vi.fn(async () => {}),
+    setTowerMode: vi.fn(async (enabled: boolean) => {
+      if (!(overrides.refuseTowerEntry && enabled)) engineMode = enabled;
+    }),
+    getStatus: vi.fn(async () => ({ towerMode: engineMode })),
   };
   const hasSession = overrides.hasSession ?? true;
   const host = {
@@ -160,6 +165,17 @@ describe('handleTowerCommand', () => {
       expect.stringContaining('Failed to disable tower mode'),
     );
     expect(host.setAppState).not.toHaveBeenCalledWith({ towerMode: false });
+  });
+
+  it('does not show ON or send the objective when the engine refuses entry', async () => {
+    const { host } = makeHost({ towerMode: false, refuseTowerEntry: true });
+
+    await handleTowerCommand(host, 'Ship feature X');
+
+    expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('could not be enabled'));
+    expect(host.setAppState).toHaveBeenCalledWith({ towerMode: false });
+    expect(host.showNotice).not.toHaveBeenCalledWith('Tower mode: ON');
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
   it('shows an error when no session is active on the legacy engine', async () => {

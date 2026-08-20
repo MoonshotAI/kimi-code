@@ -132,7 +132,9 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (this.agentCtx.agentId !== 'main') return;
     if (!this.flags.enabled(TOWER_FLAG_ID)) return;
     if (this.isActive) return;
-    const owner = await this.resolveTowerOwner();
+    const owner = await new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd)).claim(
+      this.sessionCtx.sessionId,
+    );
     if (owner !== undefined && owner !== this.sessionCtx.sessionId) return;
     for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
     void this.dispatcher.dispatch(
@@ -168,8 +170,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       (state) => state.sessionId,
       () => undefined,
     );
-    if (storeOwner !== undefined) return storeOwner;
-    return this.agentState.get(towerOwnerKey);
+    return storeOwner ?? this.agentState.get(towerOwnerKey);
   }
 
   private restoreTowerTools(): void {
