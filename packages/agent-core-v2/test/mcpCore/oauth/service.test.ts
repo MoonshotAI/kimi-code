@@ -751,6 +751,7 @@ describe('McpOAuthService proactive refresh scheduling', () => {
 
     await fixture.scheduler.advanceBy(30_000);
     expect(authServer.counts.refresh).toBe(1);
+    expect((await fixture.service.tokenState(SERVER_NAME, SERVER_URL)).hasRefreshToken).toBe(true);
 
     await fixture.scheduler.advanceBy(0);
     expect(authServer.counts.refresh).toBe(1);

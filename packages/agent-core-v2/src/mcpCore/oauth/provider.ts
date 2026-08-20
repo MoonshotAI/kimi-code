@@ -163,12 +163,13 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
-    await this.tokenTransaction.save(tokens);
+    const persisted = await this.tokenTransaction.save(tokens);
+    if (persisted === undefined) return;
     const meta: McpOAuthStoreMeta = { serverName: this.serverName, serverUrl: this.serverUrl };
     await this.store.write(`${this.storeKey}${META_SUFFIX}`, meta);
     const stamped: StoredMcpOAuthTokens = {
-      ...tokens,
-      obtained_at: (tokens as StoredMcpOAuthTokens).obtained_at ?? this.now(),
+      ...persisted,
+      obtained_at: (persisted as StoredMcpOAuthTokens).obtained_at ?? this.now(),
     };
     this.onTokensSaved?.(stamped);
   }

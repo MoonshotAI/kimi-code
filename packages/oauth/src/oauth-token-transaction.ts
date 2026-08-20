@@ -51,15 +51,20 @@ export class OAuthTokenTransaction<T extends object> {
     }) as typeof fetch;
   }
 
-  async save(tokens: T): Promise<void> {
+  async save(tokens: T): Promise<T | undefined> {
+    let persisted: T | undefined;
     await transactionLock.runExclusive(this.options.key, async () => {
-      if (this.consumeSave(tokens)) {
-        this.adopt(await this.options.read());
+      const pending = this.consumeSave(tokens);
+      if (pending !== undefined) {
+        persisted = await this.options.read();
+        this.adopt(persisted);
         return;
       }
       await this.options.write(tokens);
       this.adopt(tokens);
+      persisted = tokens;
     });
+    return persisted;
   }
 
   async invalidateFromSdk(scope: 'tokens' | 'all'): Promise<boolean> {
@@ -187,13 +192,15 @@ export class OAuthTokenTransaction<T extends object> {
     this.effects.push(effect);
   }
 
-  private consumeSave(tokens: T): boolean {
+  private consumeSave(tokens: T): T | undefined {
     const index = this.effects.findIndex(
-      (effect) => effect.kind === 'save' && isDeepStrictEqual(effect.tokens, tokens),
+      (effect) =>
+        effect.kind === 'save' &&
+        (isDeepStrictEqual(effect.tokens, tokens) || sameRefreshSave(effect.tokens, tokens)),
     );
-    if (index === -1) return false;
-    this.effects.splice(index, 1);
-    return true;
+    if (index === -1) return undefined;
+    const effect = this.effects.splice(index, 1)[0] as Extract<Effect<T>, { kind: 'save' }>;
+    return effect.tokens;
   }
 
   private takeInvalidate(scope: 'tokens' | 'all'): Extract<Effect<T>, { kind: 'invalidate' }> | undefined {
@@ -207,6 +214,20 @@ export class OAuthTokenTransaction<T extends object> {
     if (index === -1) return undefined;
     return this.effects.splice(index, 1)[0] as Extract<Effect<T>, { kind: 'invalidate' }>;
   }
+}
+
+function sameRefreshSave<T extends object>(expected: T, actual: T): boolean {
+  const expectedRecord = expected as Record<string, unknown>;
+  const actualRecord = actual as Record<string, unknown>;
+  if (
+    refreshToken(expected) === undefined ||
+    ('refresh_token' in actualRecord && actualRecord['refresh_token'] !== undefined)
+  ) {
+    return false;
+  }
+  const { refresh_token: _expectedRefreshToken, ...expectedWithoutRefresh } = expectedRecord;
+  const { refresh_token: _actualRefreshToken, ...actualWithoutRefresh } = actualRecord;
+  return isDeepStrictEqual(expectedWithoutRefresh, actualWithoutRefresh);
 }
 
 function refreshToken(tokens: object | undefined): string | undefined {

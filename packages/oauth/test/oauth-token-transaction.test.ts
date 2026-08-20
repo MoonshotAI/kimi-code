@@ -41,6 +41,19 @@ describe('OAuthTokenTransaction', () => {
     expect(stored).toEqual(tokens('access-1', 'refresh-1'));
   });
 
+  it('preserves a refresh token when the SDK save omits it after refresh', async () => {
+    let stored: TestTokens | undefined = tokens('access-0', 'refresh-0');
+    const subject = transaction('same-server', () => stored, (value) => (stored = value));
+    const response = await subject.createFetch(async () => json({ access_token: 'access-1' }))(
+      'https://issuer.example.test/token',
+      refreshRequest('refresh-0'),
+    );
+
+    await subject.save((await response.json()) as TestTokens);
+
+    expect(stored).toEqual(tokens('access-1', 'refresh-0'));
+  });
+
   it('preserves an access-only winner when an older refresh is queued', async () => {
     let stored: TestTokens | undefined = { access_token: 'access-from-login' };
     const stale = transaction('same-server', () => stored, (value) => (stored = value));
