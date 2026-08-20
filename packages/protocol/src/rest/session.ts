@@ -139,6 +139,7 @@ export const sessionStatusResponseSchema = z.object({
   permission: z.string(),
   plan_mode: z.boolean(),
   swarm_mode: z.boolean(),
+  tower_mode: z.boolean().optional(),
   context_tokens: z.number().int().nonnegative(),
   /** Omitted when the context limit is unknown — 0 is the engine's "unknown"
    *  marker, never a real limit. */
