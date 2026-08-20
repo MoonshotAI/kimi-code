@@ -63,6 +63,9 @@ export class TowerFeature extends Feature {
     super();
     if (!flags.enabled(TOWER_FLAG_ID)) return;
     assembledFlagServices.add(flags);
+    this.onDispose(() => {
+      assembledFlagServices.delete(flags);
+    });
     this.contributeService(LifecycleScope.App, ITowerRateLimitService, TowerRateLimitService, {
       activation: ScopeActivation.OnDemand,
     });
