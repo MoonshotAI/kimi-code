@@ -1,7 +1,7 @@
 ---
 name: kimi-datasource
 description: |
-  Universal data-source assistant. Use this skill when the user wants external structured data such as stocks, financial reports, technical indicators, A-share/HK/US markets, global macroeconomics, Chinese enterprise registry information, arXiv papers, Google Scholar results, Chinese laws/regulations and judicial cases, Wind financial data (intraday/minute quotes, funds, bonds), IMF macro datasets (FX rates, CPI, GDP forecasts), Gildata smart screening, US SEC filings (10-K/10-Q, Form 4, 13F), S&P Capital IQ fundamentals (top holders, consensus estimates, valuation ratios), Chinese government open data (National Data Administration catalogs, NBS macro indicators), Chinese standards (GB/HB/DB/TT), international organization open data (WHO, FAO, UNSD, ECB, Eurostat, UNICEF, OECD, FRED), Xinhua Finance news/announcements, or the Caixin database.
+  Universal data-source assistant for stocks (Wind, S&P, SEC EDGAR), macro (World Bank, IMF, FRED, NBS), Chinese government data and standards (GB/HB/DB/TT), corporate, academic, legal, WHO/FAO/OECD and other IGO data, financial news (Xinhua, Caixin).
   This plugin exposes tools via MCP server `plugin-kimi-datasource_data`; call them in the flow `mcp__plugin-kimi-datasource_data__get_data_source_desc` → `mcp__plugin-kimi-datasource_data__call_data_source_tool`.
 ---
 
