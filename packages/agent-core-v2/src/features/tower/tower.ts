@@ -34,7 +34,7 @@ export interface IAgentTowerService {
    * never report a mode whose feature is inert.
    */
   readonly isActive: boolean;
-  enter(): void;
+  enter(): Promise<void>;
   exit(): void;
 }
 

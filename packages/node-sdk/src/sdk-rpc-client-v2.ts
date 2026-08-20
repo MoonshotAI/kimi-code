@@ -2118,7 +2118,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const agent = await this.agentScope(input.sessionId);
     const tower = agent.accessor.get(IAgentTowerService);
     if (input.enabled) {
-      tower.enter();
+      await tower.enter();
     } else {
       tower.exit();
     }

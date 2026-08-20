@@ -26,7 +26,7 @@ export class TowerInitTool implements ITowerInitTool {
         runTowerTool(async () => {
           const store = newTowerStore(this.sessionContext);
           const result = await store.init(this.sessionContext.sessionId);
-          this.tower.enter();
+          await this.tower.enter();
           return {
             output: [
               result.created

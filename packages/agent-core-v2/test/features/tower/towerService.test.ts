@@ -174,7 +174,7 @@ describe('AgentTowerService', () => {
     return executorEvents.fireBeforeExecute(ctx);
   }
 
-  it('enter / exit toggle isActive and emit agent.status.updated via wire', () => {
+  it('enter / exit toggle isActive and emit agent.status.updated via wire', async () => {
     const tower = ix.get(IAgentTowerService);
     const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
     disposables.add(
@@ -186,7 +186,7 @@ describe('AgentTowerService', () => {
     );
 
     expect(tower.isActive).toBe(false);
-    tower.enter();
+    await tower.enter();
     expect(tower.isActive).toBe(true);
     tower.exit();
     expect(tower.isActive).toBe(false);
@@ -197,7 +197,7 @@ describe('AgentTowerService', () => {
     ]);
   });
 
-  it('enter / exit are idempotent while already in that state', () => {
+  it('enter / exit are idempotent while already in that state', async () => {
     const tower = ix.get(IAgentTowerService);
     const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
     disposables.add(
@@ -210,8 +210,8 @@ describe('AgentTowerService', () => {
 
     tower.exit();
     expect(tower.isActive).toBe(false);
-    tower.enter();
-    tower.enter();
+    await tower.enter();
+    await tower.enter();
     expect(tower.isActive).toBe(true);
 
     expect(events).toEqual([{ type: 'agent.status.updated', towerMode: true }]);
@@ -219,7 +219,7 @@ describe('AgentTowerService', () => {
 
   it('dispatch persists enter/exit records and replay rebuilds the flag (silent)', async () => {
     const tower = ix.get(IAgentTowerService);
-    tower.enter();
+    await tower.enter();
 
     const log = ix.get(IAppendLogStore);
     const records: WireRecord[] = [];
@@ -277,7 +277,7 @@ describe('AgentTowerService', () => {
 
   it('leaves AskUserQuestion alone while tower mode is active (the tower may ask)', async () => {
     const tower = ix.get(IAgentTowerService);
-    tower.enter();
+    await tower.enter();
 
     const decision = await fire(hookContext([toolCall('AskUserQuestion', 'call_ask')]));
 
@@ -298,7 +298,7 @@ describe('AgentTowerService', () => {
 
   it('vetoes TodoList while tower mode is active', async () => {
     const tower = ix.get(IAgentTowerService);
-    tower.enter();
+    await tower.enter();
 
     const decision = await fire(hookContext([toolCall('TodoList', 'call_todo')]));
 
@@ -324,7 +324,7 @@ describe('AgentTowerService', () => {
 
   it('abstains on other tools while tower mode is active', async () => {
     const tower = ix.get(IAgentTowerService);
-    tower.enter();
+    await tower.enter();
 
     const decision = await fire(hookContext([toolCall('Bash', 'call_bash')]));
 
@@ -333,7 +333,7 @@ describe('AgentTowerService', () => {
     expect(formatDenyMessage).not.toHaveBeenCalled();
   });
 
-  it('enter() is a no-op while the tower flag is off', () => {
+  it('enter() is a no-op while the tower flag is off', async () => {
     towerFlagOn = false;
     const tower = ix.get(IAgentTowerService);
     const events: { readonly type: string }[] = [];
@@ -343,15 +343,36 @@ describe('AgentTowerService', () => {
       }),
     );
 
-    tower.enter();
+    await tower.enter();
 
     expect(tower.isActive).toBe(false);
     expect(events).toEqual([]);
   });
 
+  it('enter() is a no-op when the store belongs to another session', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'tower-enter-foreign-'));
+    try {
+      await execFileAsync('git', ['init', '-b', 'main'], { cwd: repo });
+      await writeFile(join(repo, 'README.md'), '# fixture\n');
+      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      await new TowerStore(repo).init('session-original');
+
+      ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-fork' } as unknown as ISessionContext);
+      const tower = ix.get(IAgentTowerService);
+
+      await tower.enter();
+
+      expect(tower.isActive).toBe(false);
+      expect(addedTools).toEqual([]);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
   it('does not veto TodoList while the tower flag is off, even with tower mode persisted active', async () => {
     const tower = ix.get(IAgentTowerService);
-    tower.enter();
+    await tower.enter();
     expect(tower.isActive).toBe(true);
     towerFlagOn = false;
 
@@ -363,10 +384,10 @@ describe('AgentTowerService', () => {
     expect(tower.isActive).toBe(false);
   });
 
-  it('enter activates the tower tool set on the main agent; exit keeps it', () => {
+  it('enter activates the tower tool set on the main agent; exit keeps it', async () => {
     const tower = ix.get(IAgentTowerService);
 
-    tower.enter();
+    await tower.enter();
     expect(addedTools).toEqual([...TOWER_MODE_TOOLS]);
     expect(removedTools).toEqual([]);
 
@@ -374,14 +395,14 @@ describe('AgentTowerService', () => {
     expect(removedTools).toEqual([]);
   });
 
-  it('enter is inert on a non-main agent', () => {
+  it('enter is inert on a non-main agent', async () => {
     ix.stub(
       IAgentScopeContext,
       makeAgentScopeContext({ agentId: 'test-agent', agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
     );
     const tower = ix.get(IAgentTowerService);
 
-    tower.enter();
+    await tower.enter();
 
     expect(tower.isActive).toBe(false);
     expect(addedTools).toEqual([]);
@@ -392,7 +413,7 @@ describe('AgentTowerService', () => {
 
   it('restore re-applies the tower tool set and re-emits the status while active', async () => {
     const tower = ix.get(IAgentTowerService);
-    tower.enter();
+    await tower.enter();
 
     const log = ix.get(IAppendLogStore);
     const records: WireRecord[] = [];
@@ -457,9 +478,9 @@ describe('AgentTowerService', () => {
     expect(events).toContainEqual({ type: 'agent.status.updated', towerMode: true });
   });
 
-  it('exit clears persisted tower state even while the tower flag is off', () => {
+  it('exit clears persisted tower state even while the tower flag is off', async () => {
     const tower = ix.get(IAgentTowerService);
-    tower.enter();
+    await tower.enter();
     expect(tower.isActive).toBe(true);
 
     towerFlagOn = false;
@@ -473,7 +494,7 @@ describe('AgentTowerService', () => {
 
   it('reapplies the tower tool set when a profile change wipes the allow-list', async () => {
     const tower = ix.get(IAgentTowerService);
-    tower.enter();
+    await tower.enter();
     expect(addedTools).toEqual([...TOWER_MODE_TOOLS]);
 
     addedTools.length = 0;
@@ -495,7 +516,7 @@ describe('AgentTowerService', () => {
 
   it('restore keeps the feature inert while the tower flag is off', async () => {
     const tower = ix.get(IAgentTowerService);
-    tower.enter();
+    await tower.enter();
 
     const log = ix.get(IAppendLogStore);
     const records: WireRecord[] = [];
@@ -560,7 +581,7 @@ describe('AgentTowerService', () => {
 
   it('restore keeps a persisted enter record inert on a non-main agent', async () => {
     const tower = ix.get(IAgentTowerService);
-    tower.enter();
+    await tower.enter();
 
     const log = ix.get(IAppendLogStore);
     const records: WireRecord[] = [];
@@ -624,7 +645,7 @@ describe('AgentTowerService', () => {
 
   it('exits a replayed tower mode when the store owner is another session (fork)', async () => {
     const tower = ix.get(IAgentTowerService);
-    tower.enter();
+    await tower.enter();
 
     const log = ix.get(IAppendLogStore);
     const records: WireRecord[] = [];
@@ -707,7 +728,7 @@ describe('AgentTowerService', () => {
       sessionId: 'session-original',
     } as unknown as ISessionContext);
     const tower = ix.get(IAgentTowerService);
-    tower.enter();
+    await tower.enter();
 
     const log = ix.get(IAppendLogStore);
     const records: WireRecord[] = [];
@@ -779,7 +800,7 @@ describe('AgentTowerService', () => {
       sessionId: 'session-owner',
     } as unknown as ISessionContext);
     const tower = ix.get(IAgentTowerService);
-    tower.enter();
+    await tower.enter();
 
     const log = ix.get(IAppendLogStore);
     const records: WireRecord[] = [];
@@ -1066,7 +1087,7 @@ describe('TowerModeInjection', () => {
   });
 
   it('injects the full reminder when tower mode turns on', async () => {
-    tower.enter();
+    await tower.enter();
 
     await injectDynamic(injector);
     const text = lastTowerReminder(context);
@@ -1077,7 +1098,7 @@ describe('TowerModeInjection', () => {
   });
 
   it('injects the exit reminder when tower mode turns off after being active', async () => {
-    tower.enter();
+    await tower.enter();
 
     await injectDynamic(injector);
     tower.exit();
@@ -1088,7 +1109,7 @@ describe('TowerModeInjection', () => {
   });
 
   it('emits the exit reminder once when the tower flag is turned off with an active reminder in context', async () => {
-    tower.enter();
+    await tower.enter();
 
     await injectDynamic(injector);
     expect(towerReminderMessages(context)).toHaveLength(1);
@@ -1115,7 +1136,7 @@ describe('TowerModeInjection', () => {
   });
 
   it('skips reinjection before the assistant-turn threshold', async () => {
-    tower.enter();
+    await tower.enter();
 
     await injectDynamic(injector);
     appendAssistantTurn(ctx, context, 'assistant one');
@@ -1125,7 +1146,7 @@ describe('TowerModeInjection', () => {
   });
 
   it('injects the sparse reminder after the short assistant-turn threshold', async () => {
-    tower.enter();
+    await tower.enter();
 
     await injectDynamic(injector);
     appendAssistantTurn(ctx, context, 'assistant one');
@@ -1138,7 +1159,7 @@ describe('TowerModeInjection', () => {
   });
 
   it('refreshes the full reminder after the long assistant-turn threshold', async () => {
-    tower.enter();
+    await tower.enter();
 
     await injectDynamic(injector);
     for (let i = 0; i < 5; i += 1) {
@@ -1152,7 +1173,7 @@ describe('TowerModeInjection', () => {
   });
 
   it('refreshes the full reminder when a user message follows at least one assistant turn', async () => {
-    tower.enter();
+    await tower.enter();
 
     await injectDynamic(injector);
     appendAssistantTurn(ctx, context, 'assistant one');
@@ -1165,7 +1186,7 @@ describe('TowerModeInjection', () => {
   });
 
   it('does not duplicate the full reminder when the first objective follows activation directly', async () => {
-    tower.enter();
+    await tower.enter();
 
     await injectDynamic(injector);
     ctx.appendUserMessage([{ type: 'text', text: 'first objective' }]);
@@ -1175,7 +1196,7 @@ describe('TowerModeInjection', () => {
   });
 
   it('emits the exit reminder only once and returns the full reminder on re-entry', async () => {
-    tower.enter();
+    await tower.enter();
 
     await injectDynamic(injector);
     tower.exit();
@@ -1184,7 +1205,7 @@ describe('TowerModeInjection', () => {
 
     expect(towerReminderMessages(context)).toHaveLength(2);
 
-    tower.enter();
+    await tower.enter();
     await injectDynamic(injector);
 
     expect(towerReminderMessages(context)).toHaveLength(3);

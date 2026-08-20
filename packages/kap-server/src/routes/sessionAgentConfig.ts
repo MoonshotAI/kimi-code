@@ -55,7 +55,7 @@ export async function applySessionAgentConfig(
   }
   if (agentConfig.tower_mode !== undefined) {
     const tower = agent.accessor.get(IAgentTowerService);
-    if (agentConfig.tower_mode) tower.enter();
+    if (agentConfig.tower_mode) await tower.enter();
     else tower.exit();
   }
   if (agentConfig.goal_objective !== undefined) {

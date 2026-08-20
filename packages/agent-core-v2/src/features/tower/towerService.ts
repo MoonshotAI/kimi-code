@@ -128,10 +128,12 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     );
   }
 
-  enter(): void {
+  async enter(): Promise<void> {
     if (this.agentCtx.agentId !== 'main') return;
     if (!this.flags.enabled(TOWER_FLAG_ID)) return;
     if (this.isActive) return;
+    const owner = await this.resolveTowerOwner();
+    if (owner !== undefined && owner !== this.sessionCtx.sessionId) return;
     for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
     void this.dispatcher.dispatch(
       new TowerModeEnter({ agentId: this.agentCtx.agentId, sessionId: this.sessionCtx.sessionId }),
@@ -161,13 +163,13 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   }
 
   private async resolveTowerOwner(): Promise<string | undefined> {
-    const recorded = this.agentState.get(towerOwnerKey);
-    if (recorded !== undefined) return recorded;
     const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
-    return store.load().then(
+    const storeOwner = await store.load().then(
       (state) => state.sessionId,
       () => undefined,
     );
+    if (storeOwner !== undefined) return storeOwner;
+    return this.agentState.get(towerOwnerKey);
   }
 
   private restoreTowerTools(): void {
