@@ -304,6 +304,7 @@ describe('AgentFlowService', () => {
     );
     expect(service.run().active).toBe(false);
     expect(service.currentStage()).toBeUndefined();
+    expect(service.run().endedReason).toBe('finished');
   });
 
   it('republishes the flow summary after a conversation undo', () => {
