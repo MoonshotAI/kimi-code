@@ -12,10 +12,10 @@ export const sessionUsageSchema = z.object({
   output_tokens: z.number().int().nonnegative(),
   cache_read_tokens: z.number().int().nonnegative(),
   cache_creation_tokens: z.number().int().nonnegative(),
-  total_cost_usd: z.number().nonnegative(),
+  total_cost_usd: z.number().nonnegative().optional(),
   context_tokens: z.number().int().nonnegative(),
-  context_limit: z.number().int().nonnegative(),
-  turn_count: z.number().int().nonnegative(),
+  context_limit: z.number().int().nonnegative().optional(),
+  turn_count: z.number().int().nonnegative().optional(),
 });
 
 export type SessionUsage = z.infer<typeof sessionUsageSchema>;

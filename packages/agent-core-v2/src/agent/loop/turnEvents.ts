@@ -1,5 +1,6 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import type { PromptOrigin } from '#/agent/contextMemory/types';
+import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
 import { Event2 } from '#/app/event/event2';
 import type { FinishReason } from '#/kosong/contract/provider';
 import type { ContentPart, TextPart } from '#/kosong/contract/message';
@@ -19,6 +20,7 @@ export interface TurnStartedPayload {
   readonly turnId: number;
   readonly origin: PromptOrigin;
   readonly prompt?: string;
+  readonly promptAttachments?: readonly { kind: 'image' | 'video' | 'audio'; fileId: string }[];
 }
 
 export class TurnStarted extends Event2<TurnStartedPayload> {
@@ -38,6 +40,32 @@ export function turnPromptText(
     .map((part) => part.text)
     .join('');
   return text.length > 0 ? text : undefined;
+}
+
+/** Media parts become the turn's transcript attachments only when they point
+ *  at a session upload — the id must match the part's daemon file URL (a
+ *  provider-issued id on a remote URL is not a session-media file id). */
+export function turnPromptAttachments(
+  input: readonly ContentPart[],
+): TurnStartedPayload['promptAttachments'] {
+  const attachments: { kind: 'image' | 'video' | 'audio'; fileId: string }[] = [];
+  const sessionMediaFileId = (url: string, id: string | undefined): string | undefined => {
+    if (id === undefined) return undefined;
+    return parseDaemonFileUrl(url)?.fileId === id ? id : undefined;
+  };
+  for (const part of input) {
+    if (part.type === 'image_url') {
+      const fileId = sessionMediaFileId(part.imageUrl.url, part.imageUrl.id);
+      if (fileId !== undefined) attachments.push({ kind: 'image', fileId });
+    } else if (part.type === 'video_url') {
+      const fileId = sessionMediaFileId(part.videoUrl.url, part.videoUrl.id);
+      if (fileId !== undefined) attachments.push({ kind: 'video', fileId });
+    } else if (part.type === 'audio_url') {
+      const fileId = sessionMediaFileId(part.audioUrl.url, part.audioUrl.id);
+      if (fileId !== undefined) attachments.push({ kind: 'audio', fileId });
+    }
+  }
+  return attachments.length > 0 ? attachments : undefined;
 }
 
 export function isDisplayablePromptOrigin(origin: PromptOrigin): boolean {

@@ -156,24 +156,33 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     ready: Promise<void>,
     extra?: readonly string[],
   ): (name: string) => boolean {
-    const baseline = new Set<string>(extra);
-    for (const entry of view.list()) {
-      baseline.add(entry.name);
-    }
+    let baseline: Set<string> | undefined;
     let frozen = false;
+    const snapshot = (): Set<string> => {
+      if (baseline === undefined) {
+        baseline = new Set<string>(extra);
+        for (const entry of view.list()) {
+          baseline.add(entry.name);
+        }
+      }
+      return baseline;
+    };
     void ready.then(
       () => {
+        snapshot();
         frozen = true;
       },
       () => {
+        snapshot();
         frozen = true;
       },
     );
     return (name) => {
-      if (baseline.has(name)) return true;
+      const names = snapshot();
+      if (names.has(name)) return true;
       if (frozen) return false;
       if (view.get(name) === undefined) return false;
-      baseline.add(name);
+      names.add(name);
       return true;
     };
   }

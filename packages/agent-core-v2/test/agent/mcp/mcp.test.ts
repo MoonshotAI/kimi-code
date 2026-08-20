@@ -1207,6 +1207,34 @@ describe('AgentMcpService', () => {
     ]);
   });
 
+  it('registers the synthetic authenticate tool for a server that settled needs-auth before attach', () => {
+    const oauthService = {
+      beginAuthorization: async () => ({
+        authorizationUrl: new URL('https://example.com/authorize'),
+        complete: async () => {},
+        cancel: async () => {},
+      }),
+    } as unknown as McpOAuthService;
+    const manager = new FakeMcpManager({ oauthService });
+    manager.needsAuth();
+
+    createService(manager);
+
+    const tools = ix.get(IAgentToolRegistryService).list();
+    expect(tools).toEqual([
+      expect.objectContaining({
+        name: 'mcp__needs-auth__authenticate',
+        source: 'mcp',
+      }),
+    ]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'mcp.server.status',
+        server: expect.objectContaining({ name: 'needs-auth', status: 'needs-auth' }),
+      }),
+    );
+  });
+
   it('keeps tools registered when a connected server fails so later calls can heal', async () => {
     const manager = new FakeMcpManager();
     const client = fakeMcpClient();

@@ -47,7 +47,6 @@ import '#/state/eventDispatcherService';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { SessionCronServiceImpl } from '#/session/cron/sessionCronServiceImpl';
-import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { CRON_SECTION } from '#/app/cron/configSection';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { SessionInteractionService } from '#/session/interaction/interactionService';
@@ -716,13 +715,6 @@ describe('AgentLifecycleService', () => {
       },
       { type: 'interaction.request', id: 'i1', kind: 'question', request: { q: 1 }, time: 3 },
     ]).store);
-    ix.stub(ICronTaskPersistence, {
-      _serviceBrand: undefined,
-      get: async () => undefined,
-      list: async () => [],
-      save: async () => {},
-      delete: async () => {},
-    } as ICronTaskPersistence);
     ix.stub(IConfigService, {
       ready: Promise.resolve(),
       get: ((section: unknown) =>

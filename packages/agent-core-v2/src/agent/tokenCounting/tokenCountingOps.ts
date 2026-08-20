@@ -41,6 +41,15 @@ export class TokenCountingRebased extends Event2<z.infer<typeof rebaseSchema>> {
 }
 export interface TokenCountingRebased extends z.infer<typeof rebaseSchema> {}
 
+const turnRecordedSchema = sizeSchema.extend({ turnId: z.number() });
+
+export class TokenCountingTurnRecorded extends Event2<z.infer<typeof turnRecordedSchema>> {
+  static override readonly type = 'token_counting.turn_recorded';
+  static override readonly durable = true;
+  static override readonly schema = turnRecordedSchema;
+}
+export interface TokenCountingTurnRecorded extends z.infer<typeof turnRecordedSchema> {}
+
 function anchorsEqual(a: readonly TokenAnchor[], b: readonly TokenAnchor[]): boolean {
   return a.length === b.length && a.every((anchor, i) => anchor === b[i]);
 }
@@ -74,6 +83,19 @@ export const tokenCountingKey = defineState(
     const length = normalizeAnchorLength(e.length);
     const tokens = Math.max(0, e.tokens);
     const anchors: TokenAnchor[] = [{ length, tokens, measured: e.measured }];
+    if (!(s.tokens === tokens && anchorsEqual(s.anchors, anchors))) {
+      s.anchors = anchors;
+      s.tokens = tokens;
+    }
+    ctx.emit(new AgentStatusUpdated({ contextTokens: s.tokens }));
+  })
+  .on(TokenCountingTurnRecorded, (s, e, ctx) => {
+    const length = normalizeAnchorLength(e.length);
+    const tokens = Math.max(0, e.tokens);
+    const pinned = s.anchors.some((a) => a.length === length);
+    const anchors = pinned
+      ? s.anchors
+      : [...s.anchors.filter((a) => a.length < length), { length, tokens, measured: false }];
     if (!(s.tokens === tokens && anchorsEqual(s.anchors, anchors))) {
       s.anchors = anchors;
       s.tokens = tokens;

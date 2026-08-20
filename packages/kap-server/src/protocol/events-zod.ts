@@ -19,7 +19,7 @@ import type {
   UserPromptOrigin,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import { messageContentSchema } from './message';
-import type { HookResultPayload } from '@moonshot-ai/agent-core-v2/agent/externalHooks/externalHooksService';
+import type { HookResultPayload } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {
   CompactionBlockedPayload,
   CompactionCompletedPayload,
@@ -577,6 +577,11 @@ export const sessionCreatedEventSchema = z.object({
   session: sessionSchema,
 });
 
+export const sessionArchivedEventSchema = z.object({
+  type: z.literal('event.session.archived'),
+  workspace_id: z.string().min(1),
+});
+
 export const workspaceCreatedEventSchema = z.object({
   type: z.literal('event.workspace.created'),
   workspace: workspaceSchema,
@@ -697,6 +702,9 @@ export const turnStartedEventSchema = z.object({
   origin: promptOriginSchema,
   prompt: z.string().optional(),
   promptId: z.string().optional(),
+  promptAttachments: z
+    .array(z.object({ kind: z.enum(['image', 'video', 'audio']), fileId: z.string() }))
+    .optional(),
 });
 
 export const turnEndedEventSchema = z.object({
@@ -845,6 +853,7 @@ export const subagentSpawnedEventSchema = z.object({
   runInBackground: z.boolean(),
   model: z.string().optional(),
   thinkingEffort: z.string().optional(),
+  taskId: z.string().optional(),
 }) satisfies z.ZodType<SubagentSpawnedPayload>;
 
 export const subagentStartedEventSchema = z.object({
@@ -981,6 +990,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   agentDisposedEventSchema,
   sessionMetaUpdatedEventSchema,
   sessionCreatedEventSchema,
+  sessionArchivedEventSchema,
   workspaceCreatedEventSchema,
   workspaceUpdatedEventSchema,
   workspaceDeletedEventSchema,

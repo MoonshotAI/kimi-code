@@ -20,7 +20,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { EffortSelectorComponent } from '#/tui/components/dialogs/effort-selector';
-import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import { kimiCodePluginMarketplaceUrl } from '#/constant/app';
 import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
 import {
   AgentSwarmProgressComponent,
@@ -6912,7 +6912,7 @@ command = "vim"
           'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
         );
       });
-      expect(globalThis.fetch).toHaveBeenCalledWith(KIMI_CODE_PLUGIN_MARKETPLACE_URL);
+      expect(globalThis.fetch).toHaveBeenCalledWith(kimiCodePluginMarketplaceUrl());
     } finally {
       vi.stubGlobal('fetch', originalFetch);
     }

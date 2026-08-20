@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { BugIndicatingError, Error2, ErrorCodes, PluginErrors } from '#/errors';
-import type { HookDef } from '#/agent/externalHooks/types';
+import type { HookDef } from '#/features/externalHooks/internal/types';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { PluginAgentRoot } from './types';
 import { discoverFileSkills } from '#/app/skillCatalog/fileSkillDiscovery';

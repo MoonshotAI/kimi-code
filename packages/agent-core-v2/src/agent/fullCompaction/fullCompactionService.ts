@@ -686,8 +686,11 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             retryCount = 0;
             continue;
           }
+          const unwrappedError = unwrapErrorCause(error);
           if (
-            (error instanceof CompactionTruncatedError || unwrapErrorCause(error) instanceof APIEmptyResponseError) &&
+            (error instanceof CompactionTruncatedError ||
+              (unwrappedError instanceof APIEmptyResponseError &&
+                unwrappedError.finishReason !== 'filtered')) &&
             messagesToCompact.length > 1
           ) {
             emptyOrTruncatedShrinkCount += 1;
@@ -700,7 +703,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             retryCount = 0;
             continue;
           }
-          if (!isRetryableGenerateError(unwrapErrorCause(error))) {
+          if (!isRetryableGenerateError(unwrappedError)) {
             throw error;
           }
           if (retryCount + 1 >= MAX_COMPACTION_RETRY_ATTEMPTS) {

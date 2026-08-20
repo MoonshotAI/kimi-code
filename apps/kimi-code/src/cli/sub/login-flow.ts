@@ -6,11 +6,27 @@
  */
 
 import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
+import type { KimiRegion } from '@moonshot-ai/kimi-code-oauth';
 
 import { createKimiCodeHostIdentity } from '#/cli/version';
 import { openUrl } from '#/utils/open-url';
+import { persistedKimiOAuthRef, regionForBareLogin } from '#/utils/region';
 
-export async function runLoginFlow(): Promise<never> {
+/** Parse a `--region` CLI flag; exits with an actionable message on bad input. */
+export function parseRegionFlag(value: string): KimiRegion {
+  if (value !== 'mainland-cn' && value !== 'global') {
+    process.stderr.write(`Invalid --region "${value}" (expected "mainland-cn" or "global").\n`);
+    process.exit(1);
+  }
+  return value;
+}
+
+export async function runLoginFlow(options: { region?: KimiRegion } = {}): Promise<never> {
+  // No flag: a fresh install follows the resolved region (env/marker/
+  // default); an existing login keeps its own environment (see
+  // regionForBareLogin — the default slot re-pins mainland-cn, a scoped slot
+  // keeps its configured hosts).
+  const region = options.region ?? regionForBareLogin(persistedKimiOAuthRef());
   const identity = createKimiCodeHostIdentity();
   const harness = createKimiHarness({
     identity,
@@ -23,6 +39,7 @@ export async function runLoginFlow(): Promise<never> {
   try {
     const result = await harness.auth.login(undefined, {
       signal: controller.signal,
+      region,
       onDeviceCode: (data) => {
         const url = data.verificationUriComplete || data.verificationUri;
         // Print the manual fallback before attempting to open the user's

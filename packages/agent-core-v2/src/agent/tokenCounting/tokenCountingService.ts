@@ -2,8 +2,10 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IConfigService } from '#/app/config/config';
+import { IEventBus } from '#/app/event/eventBus';
 import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { TurnEnded } from '#/agent/loop/turnOps';
 import type { Message } from '#/kosong/contract/message';
 import type { Tool } from '#/kosong/contract/tool';
 import {
@@ -25,6 +27,7 @@ import {
 } from './tokenCounting';
 import {
   TokenCountingMeasured,
+  TokenCountingTurnRecorded,
   tokenCountingKey,
   type TokenAnchor,
 } from './tokenCountingOps';
@@ -38,9 +41,21 @@ export class AgentTokenCountingService extends Disposable implements IAgentToken
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IConfigService private readonly config: IConfigService,
     @IAgentStateService private readonly agentState: IAgentStateService,
+    @IEventBus private readonly eventBus: IEventBus,
   ) {
     super();
     this.agentState.contributeState(tokenCountingKey);
+    this._register(
+      this.eventBus.subscribe(TurnEnded, (e) => {
+        void this.dispatcher.dispatch(
+          new TokenCountingTurnRecorded({
+            turnId: e.turnId,
+            length: this.context().length,
+            tokens: this.statusSize(),
+          }),
+        );
+      }),
+    );
   }
 
   get strategy(): TokenCountingStrategy {

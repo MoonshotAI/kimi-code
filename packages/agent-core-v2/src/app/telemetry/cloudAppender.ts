@@ -84,6 +84,10 @@ export class CloudAppender implements ITelemetryAppender {
       storage: options.storage,
       deviceId: options.deviceId,
       endpoint: options.endpoint,
+      homeDir: options.bootstrap.homeDir,
+      readMarker:
+        (options.bootstrap.getEnv('KIMI_CODE_REGION_MARKER') ??
+          process.env['KIMI_CODE_REGION_MARKER']) !== 'off',
       getAccessToken: options.getAccessToken,
       fetchImpl: options.fetchImpl,
       retryBackoffsMs: options.retryBackoffsMs,

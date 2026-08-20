@@ -33,7 +33,7 @@ import { IWorkspaceMcpService, type ISessionMcpOverlay } from '#/workspace/works
 import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpService';
 
 import { stubLog } from '../../_base/log/stubs';
-import { createMemoryMcpOAuthStore, stdioFixture } from '../../mcpCore/stubs';
+import { createMemoryMcpOAuthStore, startInProcessHttpMcpServer, stdioFixture } from '../../mcpCore/stubs';
 import { registerAgentIdentityStub } from '../../app/agentIdentity/stubs';
 
 function stdioServer(): McpServerConfig {
@@ -214,6 +214,35 @@ describe('WorkspaceMcpService', () => {
     expect(handle.isBaselineServer('alpha')).toBe(true);
 
     expect(service.sessionHandle().isBaselineServer('late')).toBe(true);
+  }, 20000);
+
+  it('sessionHandle admits servers that finished the initial load before the first baseline read', async () => {
+    current = { alpha: stdioServer() };
+    const service = createService();
+    manager = service.connectionManager();
+    const handle = service.sessionHandle();
+
+    await service.ready;
+    expect(manager.get('alpha')?.status).toBe('connected');
+
+    expect(handle.isBaselineServer('alpha')).toBe(true);
+  }, 20000);
+
+  it('sessionHandle admits a needs-auth server that settled before the first baseline read', async () => {
+    const server = await startInProcessHttpMcpServer({ authToken: 'secret' });
+    try {
+      current = { remote: { transport: 'http', url: server.url } };
+      const service = createService();
+      manager = service.connectionManager();
+      const handle = service.sessionHandle();
+
+      await service.ready;
+      expect(manager.get('remote')?.status).toBe('needs-auth');
+
+      expect(handle.isBaselineServer('remote')).toBe(true);
+    } finally {
+      await server.close();
+    }
   }, 20000);
 
   it('sessionOverlay marks the ephemeral server names as baseline by construction', async () => {

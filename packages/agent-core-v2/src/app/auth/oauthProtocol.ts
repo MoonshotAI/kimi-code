@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { isoDateTimeSchema } from '#/_base/utils/isoDateTime';
+import { kimiRegionSchema } from '@moonshot-ai/kimi-code-oauth';
 
 export const oauthFlowStatusEnum = z.enum([
   'pending',
@@ -63,6 +64,11 @@ export const oauthLogoutResponseSchema = z.object({
   provider: z.string().min(1),
 });
 export type OAuthLogoutResponse = z.infer<typeof oauthLogoutResponseSchema>;
+
+export const oauthRegionResultSchema = z.object({
+  region: kimiRegionSchema,
+});
+export type OAuthRegionResult = z.infer<typeof oauthRegionResultSchema>;
 
 const providerRefreshChangeSchema = z.object({
   provider_id: z.string().min(1),
