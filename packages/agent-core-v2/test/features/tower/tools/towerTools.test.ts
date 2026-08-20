@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { TOWER_TOOL_CONTRIBUTIONS } from '#/features/tower/towerFeature';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
@@ -67,6 +68,7 @@ let ix: TestInstantiationService;
 let towerActive: boolean;
 let currentAgentId: string;
 let currentSessionId: string;
+let liveSessionIds: string[];
 const agentContexts = new Map<string, Readonly<{ agentId: string; generation: number }>>();
 
 beforeEach(async () => {
@@ -78,6 +80,7 @@ beforeEach(async () => {
 
   towerActive = false;
   currentAgentId = 'main';
+  liveSessionIds = [];
   currentSessionId = 'session-test';
   agentContexts.clear();
 
@@ -123,6 +126,9 @@ beforeEach(async () => {
           towerActive = false;
         },
       });
+      reg.defineInstance(ISessionManager, {
+        get: (id: string) => (liveSessionIds.includes(id) ? {} : undefined),
+      } as unknown as ISessionManager);
       reg.definePartialInstance(ITowerRateLimitService, {
         snapshot: () => ({ budget: 2, inflight: 0, blockedUntil: null }),
       });
@@ -198,6 +204,19 @@ describe('TowerInitTool', () => {
     const state = await store.load();
     expect(state.sessionId).toBe('session-next');
     expect(state.roster.agents).toEqual([]);
+  });
+
+  it('refuses to adopt while the owning session is live in this process', async () => {
+    await initViaTool();
+    liveSessionIds = ['session-test'];
+    currentSessionId = 'session-next';
+
+    const result = await run(ix.get(ITowerInitTool), {});
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('owned by live session session-test');
+    const state = await new TowerStore(repo).load();
+    expect(state.sessionId).toBe('session-test');
   });
 });
 

@@ -191,9 +191,9 @@ export class TowerStore {
    * effective owner after the claim: the existing owner when already claimed
    * (by any session), `sessionId` when this call claimed it, or `undefined`
    * when the directory cannot host a tower (not a git repo / no commits) and
-   * therefore has nothing to conflict over. The post-write read-back serializes
-   * racing first-claims: of two simultaneous writers, only the one reading its
-   * own id back proceeds.
+   * therefore has nothing to conflict over. The state file is created with
+   * exclusive-create semantics, so exactly one of two racing first-claims wins;
+   * the loser reads back the winner's id.
    */
   async claim(sessionId: string): Promise<string | undefined> {
     if (!(await isInsideRepo(this.repoRoot))) return undefined;
@@ -217,11 +217,20 @@ export class TowerStore {
       roster: { agents: [] },
       missions: [],
     };
-    await this.save(state);
+    try {
+      await writeFile(this.abs(STATE_FILE), `${JSON.stringify(state, null, 2)}\n`, {
+        flag: 'wx',
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        return (await this.load()).sessionId;
+      }
+      throw error;
+    }
     await writeFile(this.abs(ACTIVITY_LOG), '', 'utf8');
     await this.renderMissionsIndex(state);
     await this.appendLog(TOWER_NAME, 'init', { mode: state.mode, base }, MISSIONS_INDEX);
-    return (await this.load()).sessionId;
+    return sessionId;
   }
 
   /**
