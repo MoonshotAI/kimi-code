@@ -19,7 +19,7 @@
  *
  * Every monitor is one-shot (the first fire — match, exit, or timeout —
  * delivers exactly one notification and closes the monitor) and bounded
- * by `timeout_s` (default 1h, max 24h). Monitors do not survive a
+ * by `timeout` seconds (default 1h, max 24h). Monitors do not survive a
  * session restart: on resume, still-active monitors show up as `lost`
  * in MonitorList.
  *
@@ -48,7 +48,7 @@ import MONITOR_CREATE_DESCRIPTION from './monitor-create.md?raw';
 // ── Input schema ─────────────────────────────────────────────────────
 
 const commonFields = {
-  timeout_s: z
+  timeout: z
     .number()
     .int()
     .positive()
@@ -172,7 +172,7 @@ export class MonitorCreateTool implements BuiltinTool<MonitorCreateInput> {
 }
 
 function toSpec(args: MonitorCreateInput): MonitorCreateSpec {
-  const base = { timeoutS: args.timeout_s, description: args.description };
+  const base = { timeoutS: args.timeout, description: args.description };
   switch (args.type) {
     case 'task_output':
       return { ...base, type: 'task_output', taskId: args.task_id, pattern: args.pattern };

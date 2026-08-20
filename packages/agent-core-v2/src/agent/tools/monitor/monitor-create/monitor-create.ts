@@ -32,7 +32,7 @@ export const MonitorCreateInputSchema = z.discriminatedUnion('type', [
       .describe(
         'Regular expression matched line by line against the task output. The monitor fires on the first matching line; do not rely on anchors that span multiple lines.',
       ),
-    timeout_s: timeoutField,
+    timeout: timeoutField,
     description: descriptionField,
   }),
   z.object({
@@ -46,7 +46,7 @@ export const MonitorCreateInputSchema = z.discriminatedUnion('type', [
       .describe(
         'Regular expression matched line by line against the command output. The monitor fires on the first matching line and then terminates the command. When omitted, the monitor fires when the command exits.',
       ),
-    timeout_s: timeoutField,
+    timeout: timeoutField,
     description: descriptionField,
   }),
   z.object({
@@ -60,7 +60,7 @@ export const MonitorCreateInputSchema = z.discriminatedUnion('type', [
       .array(z.enum(['created', 'modified']))
       .optional()
       .describe('Which change kinds fire the monitor. Defaults to both created and modified.'),
-    timeout_s: timeoutField,
+    timeout: timeoutField,
     description: descriptionField,
   }),
 ]);

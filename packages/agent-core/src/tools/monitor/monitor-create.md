@@ -12,7 +12,7 @@ Every monitor fires **exactly once**, then closes. The first of these wins:
 
 1. `match` — a pattern matched (or a file event fired)
 2. `exit` — the watched command exited (command monitors)
-3. `timeout` — `timeout_s` elapsed (default 1h, max 24h)
+3. `timeout` — the `timeout` input (in seconds) elapsed (default 1h, max 24h)
 
 You get a single `<notification>` in the conversation when it fires. To keep watching after a fire, create a new monitor. Do not expect repeated reports from one monitor.
 

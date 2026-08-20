@@ -579,18 +579,18 @@ describe('monitor persistence', () => {
 // ── tool schema + flag gating ────────────────────────────────────────
 
 describe('MonitorCreate tool', () => {
-  it('rejects timeout_s above the 24h ceiling at the schema level', () => {
+  it('rejects timeout above the 24h ceiling at the schema level', () => {
     expect(
-      MonitorCreateInputSchema.safeParse({ type: 'command', command: 'x', timeout_s: 86_401 })
+      MonitorCreateInputSchema.safeParse({ type: 'command', command: 'x', timeout: 86_401 })
         .success,
     ).toBe(false);
     expect(
-      MonitorCreateInputSchema.safeParse({ type: 'command', command: 'x', timeout_s: 86_400 })
+      MonitorCreateInputSchema.safeParse({ type: 'command', command: 'x', timeout: 86_400 })
         .success,
     ).toBe(true);
     // Default applies when omitted.
     const parsed = MonitorCreateInputSchema.parse({ type: 'command', command: 'x' });
-    expect(parsed.timeout_s).toBe(3600);
+    expect(parsed.timeout).toBe(3600);
   });
 
   it('rejects an invalid regex pattern with an actionable error', () => {
@@ -600,7 +600,7 @@ describe('MonitorCreate tool', () => {
       type: 'task_output',
       task_id: 'bash-xxxxxxxx',
       pattern: '(',
-      timeout_s: 60,
+      timeout: 60,
     });
     expect(result.isError).toBe(true);
     if (result.isError === true) {
@@ -615,7 +615,7 @@ describe('MonitorCreate tool', () => {
     const execution = create.resolveExecution({
       type: 'file',
       path: dir,
-      timeout_s: 30,
+      timeout: 30,
     });
     if (execution.isError === true) throw new Error('unexpected prepare error');
     const result = await execution.execute({} as never);
@@ -683,7 +683,7 @@ describe('monitor session E2E', () => {
         type: 'command',
         command: "sh -c 'echo ready; sleep 60'",
         pattern: 'ready',
-        timeout_s: 60,
+        timeout: 60,
       });
       if (execution.isError === true) throw new Error('unexpected prepare error');
       const createResult = await execution.execute({

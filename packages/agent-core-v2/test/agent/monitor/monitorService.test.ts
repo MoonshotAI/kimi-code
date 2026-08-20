@@ -588,7 +588,7 @@ describe('AgentMonitorService', () => {
         type: 'task_output',
         task_id: 'bash-123',
         pattern: 'x',
-        timeout_s: 90_000,
+        timeout: 90_000,
       }).success,
     ).toBe(false);
     expect(

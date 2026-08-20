@@ -21,7 +21,7 @@ import {
 import MONITOR_CREATE_DESCRIPTION from './monitor-create.md?raw';
 
 function toSpec(args: MonitorCreateInput): MonitorSpec {
-  const timeoutMs = (args.timeout_s ?? MONITOR_DEFAULT_TIMEOUT_S) * 1000;
+  const timeoutMs = (args.timeout ?? MONITOR_DEFAULT_TIMEOUT_S) * 1000;
   const description = args.description;
   switch (args.type) {
     case 'task_output':
