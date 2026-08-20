@@ -405,7 +405,7 @@ export class TranscriptService {
   private livePromptBackfill(sessionId: string, agentId: string): TranscriptOperation[] {
     const agent = getLiveSessionById(this.deps.core.accessor, sessionId)
       ?.accessor.get(IAgentLifecycleService)
-      .get(agentId);
+      .findAgentHandle(agentId);
     const promptService = agent === undefined ? undefined : agent.accessor.get(IAgentPromptService);
     const queue = promptService?.list();
     if (queue === undefined) return [];
@@ -564,7 +564,7 @@ export class TranscriptService {
     const folded = foldWireRecordFacts(records, base);
     const status = getLiveSessionById(this.deps.core.accessor, sessionId)
       ?.accessor.get(IAgentLifecycleService)
-      .get(agentId)
+      .findAgentHandle(agentId)
       ?.accessor.get(IAgentLoopService)
       .status();
     const activity = status?.state === 'running' ? 'turn' : 'idle';

@@ -1,10 +1,3 @@
-// Contract-level e2e for the transcript protocol: drive REAL end-to-end paths
-// (mock LLM over local HTTP → engine → kap-server → REST + WS transcript) and
-// assert that every contract entity the client renders from is actually
-// produced — meta.activity, prompts, tasks, interactions, turn/step/frame
-// items — at the right lifecycle moment, on both the REST snapshot and the WS
-// reset+ops channel. This is the regression net for "the field exists in the
-// contract but nothing on the real path produces it".
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -18,9 +11,6 @@ import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders, bearerToken } from './helpers/auth';
 
-// ---------------------------------------------------------------------------
-// Mock LLM endpoint (OpenAI SSE).
-// ---------------------------------------------------------------------------
 
 function sseLines(...events: readonly string[]): string {
   return events.map((event) => `data: ${event}\n\n`).join('') + 'data: [DONE]\n\n';
@@ -115,9 +105,6 @@ async function startMockLlm(routes: readonly LlmRoute[], fallback: () => string 
   };
 }
 
-// ---------------------------------------------------------------------------
-// kap-server harness + REST/WS clients.
-// ---------------------------------------------------------------------------
 
 function configToml(llmPort: number): string {
   return [
@@ -227,7 +214,9 @@ async function subscribeTranscript(server: RunningServer, sid: string): Promise<
     if (frame.type === 'transcript.ops' && payload?.agent_id === 'main') ops.push(...(payload.ops ?? []));
   });
   await new Promise<void>((resolve, reject) => {
-    ws.once('open', () => resolve());
+    ws.once('open', () => {
+      resolve();
+    });
     ws.once('error', reject);
   });
   ws.send(JSON.stringify({ type: 'subscribe_v2', id: 'sub-1', payload: { session_id: sid, transcript: { '*': 'delta' } } }));
@@ -240,9 +229,6 @@ async function subscribeTranscript(server: RunningServer, sid: string): Promise<
   };
 }
 
-// ---------------------------------------------------------------------------
-// The contract assertions.
-// ---------------------------------------------------------------------------
 
 describe('transcript contract e2e', { timeout: 90000 }, () => {
   let home: string | undefined;
@@ -294,7 +280,7 @@ describe('transcript contract e2e', { timeout: 90000 }, () => {
       await idle(server, base, sid);
     } catch (error) {
       const tx = await getTranscript(server, base, sid);
-      throw new Error(`${(error as Error).message}\ntranscript at timeout: ${dumpState(tx, llm?.hits ?? [])}`);
+      throw new Error(`${(error as Error).message}\ntranscript at timeout: ${dumpState(tx, llm?.hits ?? [])}`, { cause: error });
     }
   };
 
@@ -304,7 +290,6 @@ describe('transcript contract e2e', { timeout: 90000 }, () => {
     await submitPrompt(server!, base, sid, 'say hello');
     const channel = await subscribeTranscript(server!, sid);
 
-    // Mid-turn: REST snapshot carries liveness + the running prompt.
     await until('turn running + prompt tracked', async () => {
       const tx = await getTranscript(server!, base, sid);
       return (
@@ -320,7 +305,6 @@ describe('transcript contract e2e', { timeout: 90000 }, () => {
 
     await idle(server!, base, sid);
 
-    // Settled: everything reaches terminal and the frames are complete.
     const end = await getTranscript(server!, base, sid);
     expect(end.meta.activity).toBe('idle');
     const turn = end.items.find((i) => i.kind === 'turn');
@@ -331,8 +315,6 @@ describe('transcript contract e2e', { timeout: 90000 }, () => {
     const promptStatuses = end.prompts.map((p) => p.status);
     expect(promptStatuses.every((s) => s === 'completed')).toBe(true);
 
-    // The WS channel saw the same world: the reset baseline was taken mid-turn
-    // (activity 'turn'), and the terminal transition streams through ops.
     const reset = channel.reset();
     expect(reset.snapshot.meta.activity).toBe('turn');
     const opTypes = new Set(channel.ops.map((o: any) => o.op));
@@ -431,7 +413,20 @@ describe('transcript contract e2e', { timeout: 90000 }, () => {
     await until('task completed', async () => {
       const tx = await getTranscript(server!, base, sid);
       return tx.tasks.some((t: any) => t.taskId === task.taskId && t.state === 'completed');
-    }, 45000);
+    }, 45000).catch(async (error) => {
+      const tx = await getTranscript(server!, base, sid);
+      const opsData = await rest<{ batches: { seq: number; ops: any[] }[] }>(
+        server!,
+        base,
+        `/api/v1/sessions/${encodeURIComponent(sid)}/transcript/ops?agent_id=main&since_seq=0`,
+      );
+      const taskOps = opsData.batches.flatMap((b) =>
+        b.ops
+          .filter((o: any) => o.op === 'task.upsert')
+          .map((o: any) => `${b.seq}:${o.task.taskId}:${o.task.state}`),
+      );
+      throw new Error(`${(error as Error).message}\ntasks: ${JSON.stringify(tx.tasks)}\ntaskOps: ${JSON.stringify(taskOps)}`, { cause: error });
+    });
     await until('notification turn exists', async () => {
       const tx = await getTranscript(server!, base, sid);
       return tx.items.some((i: any) => i.kind === 'turn' && i.origin?.kind === 'task');
@@ -450,8 +445,6 @@ describe('transcript contract e2e', { timeout: 90000 }, () => {
     const sid = await createSession(server!, base);
     await submitPrompt(server!, base, sid, 'take your time');
 
-    // No WS subscription and no transcript read happened before this point —
-    // the binding attaches cold, mid-turn.
     const tx = await getTranscript(server!, base, sid);
     expect(tx.meta.activity).toBe('turn');
     expect(tx.items.some((i: any) => i.kind === 'turn' && i.state === 'running')).toBe(true);

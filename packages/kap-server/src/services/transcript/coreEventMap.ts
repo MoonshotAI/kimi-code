@@ -1153,7 +1153,31 @@ export class AgentTranscriptProjector {
       model: prev?.model,
       thinkingEffort: prev?.thinkingEffort,
     }));
-    return [{ op: 'task.upsert', task }];
+    const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
+    if (taskKey !== event.subagentId && this.tasks.has(event.subagentId)) {
+      const agentTask = this.upsertTask(event.subagentId, (prev) => ({
+        taskId: event.subagentId,
+        kind: 'subagent',
+        state,
+        detached: prev?.detached ?? true,
+        description: prev?.description,
+        agentId: event.subagentId,
+        outputTail: prev?.outputTail ?? '',
+        startedAt: prev?.startedAt ?? nowIso(),
+        endedAt:
+          event.type === 'subagent.completed' || event.type === 'subagent.failed'
+            ? nowIso()
+            : prev?.endedAt,
+        resultSummary: event.resultSummary ?? prev?.resultSummary,
+        usage: event.usage ?? prev?.usage,
+        error: event.error ?? prev?.error,
+        stateReason: event.reason ?? prev?.stateReason,
+        model: prev?.model,
+        thinkingEffort: prev?.thinkingEffort,
+      }));
+      ops.push({ op: 'task.upsert', task: agentTask });
+    }
+    return ops;
   }
 
   private onGoalUpdated(event: {
