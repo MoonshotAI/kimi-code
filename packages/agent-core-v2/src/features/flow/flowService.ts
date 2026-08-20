@@ -15,6 +15,7 @@ import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventBus } from '#/app/event/eventBus';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
@@ -40,7 +41,11 @@ import {
   type FlowStageDefinition,
 } from './flow';
 import { FlowGateReview } from './flowGateReview';
-import { FLOW_SKILL_NAME_PREFIX, flowDefinitionPath } from './flowsSkillSource';
+import {
+  FLOW_SKILL_NAME_PREFIX,
+  flowDefinitionPath,
+  userFlowDefinitionPath,
+} from './flowsSkillSource';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { FlowJumped, FlowRunEnded, FlowRunStarted, FlowVerdict, flowGatesKey, flowKey } from './flowOps';
@@ -74,6 +79,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     @IFlagService private readonly flags: IFlagService,
     @IEventBus eventBus: IEventBus,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ISkillActivationDataService private readonly activationData: ISkillActivationDataService,
     @IAgentContextMemoryService private readonly contextMemory: IAgentContextMemoryService,
@@ -205,9 +211,11 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     if (skillName === undefined || !skillName.startsWith(FLOW_SKILL_NAME_PREFIX)) return;
     const flowId = skillName.slice(FLOW_SKILL_NAME_PREFIX.length);
     if (flowId.length === 0 || this.run().active) return;
+    if (skillPath === undefined) return;
+    const resolvedSkillPath = resolve(skillPath);
     if (
-      skillPath === undefined ||
-      resolve(skillPath) !== resolve(flowDefinitionPath(this.workspaceCtx.workDir, flowId))
+      resolvedSkillPath !== resolve(flowDefinitionPath(this.workspaceCtx.workDir, flowId)) &&
+      resolvedSkillPath !== resolve(userFlowDefinitionPath(this.bootstrap.homeDir, flowId))
     ) {
       return;
     }

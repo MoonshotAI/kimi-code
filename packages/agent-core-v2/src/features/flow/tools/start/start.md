@@ -1,4 +1,4 @@
-Start a flow run from a definition file under `.kimi-code/flows/`.
+Start a flow run from a definition file under the project's `.kimi-code/flows/`, falling back to the user-level flows directory (`~/.kimi-code/flows/`).
 
 Reads and validates the definition, snapshots its stages into the run state, and positions the run at the first stage. The tool output is the run blueprint: every stage with its objective, completion criteria, and gate ownership.
 

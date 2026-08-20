@@ -1,4 +1,6 @@
 import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
@@ -6,6 +8,7 @@ import { ToolAccesses, type ExecutableToolResult, type ToolExecution } from '#/t
 
 import { FLOWS_PROJECT_DIR, IAgentFlowService, type FlowDefinition } from '../../flow';
 import { FlowDefinitionParseError, parseFlowDefinition } from '../../definition';
+import { userFlowDefinitionPath, userFlowsDir } from '../../flowsSkillSource';
 
 import DESCRIPTION from './start.md?raw';
 import { FlowStartInputSchema, IFlowStartTool, type FlowStartInput } from './start';
@@ -20,6 +23,8 @@ export class FlowStartTool implements IFlowStartTool {
     @IAgentFlowService private readonly flow: IAgentFlowService,
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
+    @IHostFileSystem private readonly hostFs: IHostFileSystem,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {}
 
   resolveExecution(args: FlowStartInput): ToolExecution {
@@ -58,20 +63,33 @@ export class FlowStartTool implements IFlowStartTool {
       };
     }
 
-    let text: string;
+    let text: string | undefined;
     const lease = this.runtime.acquire(['fs']);
     try {
       if (lease.runtime.identity.generation !== generation) {
         return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
       }
-      text = await lease.runtime.fs!.readText(path);
-    } catch {
-      return {
-        isError: true,
-        output: `Could not read the flow definition at ${path}. Check that the file exists under ${FLOWS_PROJECT_DIR}/.`,
-      };
+      try {
+        text = await lease.runtime.fs!.readText(path);
+      } catch {
+        text = undefined;
+      }
     } finally {
       lease.dispose();
+    }
+
+    let sourcePath = path;
+    if (text === undefined) {
+      const userPath = userFlowDefinitionPath(this.bootstrap.homeDir, args.flow);
+      try {
+        text = await this.hostFs.readText(userPath);
+        sourcePath = userPath;
+      } catch {
+        return {
+          isError: true,
+          output: `Could not read the flow definition at ${path} or ${userPath}. Check that the file exists under ${FLOWS_PROJECT_DIR}/ or ${userFlowsDir(this.bootstrap.homeDir)}/.`,
+        };
+      }
     }
 
     let definition: FlowDefinition;
@@ -79,7 +97,7 @@ export class FlowStartTool implements IFlowStartTool {
       definition = parseFlowDefinition(text);
     } catch (error) {
       if (error instanceof FlowDefinitionParseError) {
-        return { isError: true, output: `${error.message} (${path})` };
+        return { isError: true, output: `${error.message} (${sourcePath})` };
       }
       throw error;
     }
@@ -87,7 +105,7 @@ export class FlowStartTool implements IFlowStartTool {
     if (definition.id !== args.flow) {
       return {
         isError: true,
-        output: `The definition at ${path} declares id \`${definition.id}\`, which does not match the requested flow \`${args.flow}\`. Fix the file's id or request the flow by its declared id.`,
+        output: `The definition at ${sourcePath} declares id \`${definition.id}\`, which does not match the requested flow \`${args.flow}\`. Fix the file's id or request the flow by its declared id.`,
       };
     }
 

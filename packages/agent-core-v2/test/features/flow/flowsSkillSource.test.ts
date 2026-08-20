@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { Event } from '#/_base/event';
+import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { IConfigService } from '#/app/config/config';
 import type { IFlagService } from '#/app/flag/flag';
 import { FLOW_FLAG_ID } from '#/features/flow/flow';
@@ -23,20 +24,28 @@ stages:
 
 describe('FlowsSkillSource', () => {
   let files: Map<string, string>;
+  let userFiles: Map<string, string>;
   let flowFlagOn: boolean;
   let source: FlowsSkillSource;
 
   beforeEach(() => {
     files = new Map();
+    userFiles = new Map();
     flowFlagOn = true;
+    const dirOf = (path: string): Map<string, string> | undefined => {
+      if (path === '/ws/.kimi-code/flows') return files;
+      if (path === '/home/.kimi-code/flows') return userFiles;
+      return undefined;
+    };
     const fs = {
       readdir: async (path: string): Promise<HostDirEntry[]> => {
-        if (path !== '/ws/.kimi-code/flows') throw new Error('not found');
-        return [...files.keys()].map((name) => ({ name, isFile: true, isDirectory: false }));
+        const dir = dirOf(path);
+        if (dir === undefined) throw new Error('not found');
+        return [...dir.keys()].map((name) => ({ name, isFile: true, isDirectory: false }));
       },
       readText: async (path: string): Promise<string> => {
         const name = path.split('/').at(-1)!;
-        const text = files.get(name);
+        const text = dirOf(path.split('/').slice(0, -1).join('/'))?.get(name);
         if (text === undefined) throw new Error('not found');
         return text;
       },
@@ -45,12 +54,13 @@ describe('FlowsSkillSource', () => {
       watch: () => ({ ready: Promise.resolve(), onDidChange: Event.None, dispose: () => {} }),
     } as unknown as IHostFsWatchService;
     const workspace = { cwd: '/ws' } as unknown as IWorkspaceContext;
+    const bootstrap = { homeDir: '/home/.kimi-code' } as unknown as IBootstrapService;
     const flags = stubFlag((id) => flowFlagOn && id === FLOW_FLAG_ID) as IFlagService;
     const config = {
       get: () => undefined,
       onDidChangeConfiguration: () => ({ dispose: () => {} }),
     } as unknown as IConfigService;
-    source = new FlowsSkillSource(fs, fsWatch, workspace, flags, config);
+    source = new FlowsSkillSource(fs, fsWatch, workspace, bootstrap, flags, config);
   });
 
   it('projects a flow definition into a user-activatable flow skill', async () => {
@@ -89,6 +99,35 @@ describe('FlowsSkillSource', () => {
     expect(contribution.skipped?.map((entry) => entry.path).toSorted()).toEqual([
       '/ws/.kimi-code/flows/broken.md',
       '/ws/.kimi-code/flows/renamed.md',
+    ]);
+  });
+
+  it('projects a user-level flow definition with the user source', async () => {
+    userFiles.set('issue-fix.md', VALID);
+    const contribution = await source.load();
+    expect(contribution.skills).toHaveLength(1);
+    const skill = contribution.skills[0]!;
+    expect(skill.name).toBe('flow:issue-fix');
+    expect(skill.source).toBe('user');
+    expect(skill.path).toBe('/home/.kimi-code/flows/issue-fix.md');
+    expect(contribution.scannedRoots).toEqual([
+      '/ws/.kimi-code/flows',
+      '/home/.kimi-code/flows',
+    ]);
+  });
+
+  it('a project flow shadows a user flow with the same id', async () => {
+    files.set('issue-fix.md', VALID);
+    userFiles.set('issue-fix.md', VALID);
+    const contribution = await source.load();
+    expect(contribution.skills).toHaveLength(1);
+    expect(contribution.skills[0]!.source).toBe('project');
+    expect(contribution.skipped).toEqual([
+      {
+        path: '/home/.kimi-code/flows/issue-fix.md',
+        type: 'flow',
+        reason: 'shadowed by the project flow `issue-fix`',
+      },
     ]);
   });
 });

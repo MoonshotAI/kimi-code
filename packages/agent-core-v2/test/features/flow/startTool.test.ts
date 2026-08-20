@@ -4,8 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAgentFlowService } from '#/features/flow/flow';
 import { FlowStartTool } from '#/features/flow/tools/start/startTool';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { ExecutableToolContext, RunnableToolExecution, ToolExecution } from '#/tool/toolContract';
 
@@ -32,7 +34,8 @@ function runnable(execution: ToolExecution): RunnableToolExecution {
 describe('FlowStartTool', () => {
   let ix: TestInstantiationService;
   let tool: FlowStartTool;
-  let fileText: string;
+  let fileText: string | undefined;
+  let userFileText: string | undefined;
   let active: boolean;
   let startResult: boolean;
   let start: ReturnType<typeof vi.fn>;
@@ -40,6 +43,7 @@ describe('FlowStartTool', () => {
   beforeEach(() => {
     ix = new TestInstantiationService();
     fileText = VALID_DEFINITION;
+    userFileText = undefined;
     active = false;
     startResult = true;
     start = vi.fn(() => startResult);
@@ -47,7 +51,12 @@ describe('FlowStartTool', () => {
       identity: { workspaceId: 'w', runtimeId: 'r', generation: 'g1' },
       workspace: { mapRoots: (roots: unknown) => roots },
       path,
-      fs: { readText: async () => fileText },
+      fs: {
+        readText: async () => {
+          if (fileText === undefined) throw new Error('not found');
+          return fileText;
+        },
+      },
     };
     ix.stub(IAgentRuntimeService, {
       inspect: () => runtime,
@@ -62,6 +71,17 @@ describe('FlowStartTool', () => {
       start,
       hasPendingActivation: () => false,
     } as unknown as IAgentFlowService);
+    ix.stub(IHostFileSystem, {
+      readText: async (target: string) => {
+        if (userFileText === undefined || !target.startsWith('/home/.kimi-code/flows/')) {
+          throw new Error('not found');
+        }
+        return userFileText;
+      },
+    } as unknown as IHostFileSystem);
+    ix.stub(IBootstrapService, {
+      homeDir: '/home/.kimi-code',
+    } as unknown as IBootstrapService);
     tool = ix.createInstance(FlowStartTool);
   });
 
@@ -107,6 +127,24 @@ describe('FlowStartTool', () => {
     const result = await execute('issue-fix');
     expect(result.isError).toBe(true);
     expect(result.output).toContain('already active');
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the user-level flows directory when the project file is missing', async () => {
+    fileText = undefined;
+    userFileText = VALID_DEFINITION;
+    const result = await execute('issue-fix');
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('Flow run started: `issue-fix`');
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ id: 'issue-fix' }), 'fix #1');
+  });
+
+  it('names both directories when the definition exists in neither', async () => {
+    fileText = undefined;
+    const result = await execute('issue-fix');
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('.kimi-code/flows');
+    expect(result.output).toContain('/home/.kimi-code/flows/issue-fix.md');
     expect(start).not.toHaveBeenCalled();
   });
 });

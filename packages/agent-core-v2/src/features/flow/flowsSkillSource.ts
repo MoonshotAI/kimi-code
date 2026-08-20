@@ -3,6 +3,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
 import { TimeoutTimer } from '#/_base/utils/timer';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import {
@@ -40,6 +41,23 @@ export function flowDefinitionPath(workDir: string, flowId: string): string {
   return `${joinWorkspacePath(workDir, FLOWS_PROJECT_DIR)}/${flowId}.md`;
 }
 
+/**
+ * User-level flows directory: `flows/` under the kimi home (typically
+ * `~/.kimi-code/flows/`), scanned alongside the project directory; a project
+ * flow shadows a user flow with the same id.
+ */
+export function userFlowsDir(homeDir: string): string {
+  return joinWorkspacePath(homeDir, 'flows');
+}
+
+/**
+ * Canonical on-disk path of a user-level flow definition — automatic run
+ * starts accept an activation against it as well as the project path.
+ */
+export function userFlowDefinitionPath(homeDir: string, flowId: string): string {
+  return `${userFlowsDir(homeDir)}/${flowId}.md`;
+}
+
 const WATCH_DEBOUNCE_MS = 200;
 
 export interface IFlowsSkillSource extends ISkillSource {
@@ -69,6 +87,7 @@ export class FlowsSkillSource extends Disposable implements IFlowsSkillSource {
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostFsWatchService fsWatch: IHostFsWatchService,
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IFlagService private readonly flags: IFlagService,
     @IConfigService config: IConfigService,
   ) {
@@ -108,29 +127,57 @@ export class FlowsSkillSource extends Disposable implements IFlowsSkillSource {
   async load(): Promise<SkillContribution> {
     if (!this.flags.enabled(FLOW_FLAG_ID)) return { skills: [] };
     await this.watchReady;
-    return discoverFlowSkills(this.fs, this.workspace.cwd);
+    return discoverFlowSkills(this.fs, this.workspace.cwd, userFlowsDir(this.bootstrap.homeDir));
   }
 }
 
 /**
- * Scan `<workDir>/.kimi-code/flows/` and project every valid definition into
- * a flow-typed skill. Shared by the workspace-scoped FlowsSkillSource and
- * kap-server's session-less workspace skills route — callers gate on the flow
- * flag themselves.
+ * Scan `<workDir>/.kimi-code/flows/` — plus, when given, the user-level flows
+ * directory — and project every valid definition into a flow-typed skill; a
+ * project flow shadows a user flow with the same id. Shared by the
+ * workspace-scoped FlowsSkillSource and kap-server's session-less workspace
+ * skills route — callers gate on the flow flag themselves.
  */
 export async function discoverFlowSkills(
   fs: IHostFileSystem,
   workDir: string,
+  userDir?: string,
 ): Promise<SkillContribution> {
   const flowsDir = joinWorkspacePath(workDir, FLOWS_PROJECT_DIR);
+  const project = await scanFlowsDir(fs, flowsDir, 'project');
+  if (userDir === undefined) {
+    return { skills: project.skills, skipped: project.skipped, scannedRoots: [flowsDir] };
+  }
+  const user = await scanFlowsDir(fs, userDir, 'user');
+  const projectNames = new Set(project.skills.map((skill) => skill.name));
+  const skills = [...project.skills];
+  const skipped = [...project.skipped, ...user.skipped];
+  for (const skill of user.skills) {
+    if (projectNames.has(skill.name)) {
+      skipped.push({
+        path: skill.path,
+        type: 'flow',
+        reason: `shadowed by the project flow \`${skill.name.slice(FLOW_SKILL_NAME_PREFIX.length)}\``,
+      });
+      continue;
+    }
+    skills.push(skill);
+  }
+  return { skills, skipped, scannedRoots: [flowsDir, userDir] };
+}
 
+async function scanFlowsDir(
+  fs: IHostFileSystem,
+  flowsDir: string,
+  source: 'project' | 'user',
+): Promise<{ skills: SkillDefinition[]; skipped: SkippedSkill[] }> {
   let names: string[];
   try {
     names = (await fs.readdir(flowsDir))
       .filter((entry) => entry.isFile && entry.name.endsWith('.md'))
       .map((entry) => entry.name);
   } catch {
-    return { skills: [], scannedRoots: [flowsDir] };
+    return { skills: [], skipped: [] };
   }
 
   const skills: SkillDefinition[] = [];
@@ -148,7 +195,7 @@ export async function discoverFlowSkills(
         });
         continue;
       }
-      skills.push(toFlowSkill(definition, path, flowsDir));
+      skills.push(toFlowSkill(definition, path, flowsDir, source));
     } catch (error) {
       skipped.push({
         path,
@@ -158,10 +205,15 @@ export async function discoverFlowSkills(
       });
     }
   }
-  return { skills, skipped, scannedRoots: [flowsDir] };
+  return { skills, skipped };
 }
 
-function toFlowSkill(definition: FlowDefinition, path: string, dir: string): SkillDefinition {
+function toFlowSkill(
+  definition: FlowDefinition,
+  path: string,
+  dir: string,
+  source: 'project' | 'user',
+): SkillDefinition {
   const id = definition.id;
   const when = definition.when;
   const description =
@@ -177,7 +229,7 @@ function toFlowSkill(definition: FlowDefinition, path: string, dir: string): Ski
   const content = [
     FLOW_SUPERVISOR_CONTRACT,
     '',
-    `The engine starts a run of the flow \`${id}\` with this activation when the task below is non-empty and no other run is active — when the current-stage reminder for \`${id}\` appears in your context, the run is live: do NOT call FlowStart again, do NOT read ${FLOWS_PROJECT_DIR}/${id}.md yourself, and do NOT mirror the stages into TodoList (the engine tracks stage progress; UIs with flow support show it). The run's blueprint:`,
+    `The engine starts a run of the flow \`${id}\` with this activation when the task below is non-empty and no other run is active — when the current-stage reminder for \`${id}\` appears in your context, the run is live: do NOT call FlowStart again, do NOT re-read the flow's definition file yourself, and do NOT mirror the stages into TodoList (the engine tracks stage progress; UIs with flow support show it). The run's blueprint:`,
     '',
     stages,
     '',
@@ -201,7 +253,7 @@ function toFlowSkill(definition: FlowDefinition, path: string, dir: string): Ski
       type: 'flow',
       disableModelInvocation: true,
     },
-    source: 'project',
+    source,
     data: definition,
   };
 }

@@ -8,7 +8,7 @@ export const FlowStartInputSchema = z.object({
     .string()
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'flow id must be kebab-case')
     .describe(
-      'Flow id: the basename of a definition file under .kimi-code/flows/ (e.g. "issue-fix" for .kimi-code/flows/issue-fix.md).',
+      'Flow id: the basename of a definition file under the project .kimi-code/flows/ or the user-level ~/.kimi-code/flows/ (e.g. "issue-fix" for .kimi-code/flows/issue-fix.md).',
     ),
   task: z
     .string()

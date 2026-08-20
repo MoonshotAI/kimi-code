@@ -1,6 +1,6 @@
 # Flow run
 
-You are now the **supervisor** of a flow run. A flow definition under `.kimi-code/flows/<id>.md` declares stages — each with an objective, completion criteria, and a gate (`ai`, `human`, or `ai-then-human`). Your job is to organize and to accept work, not to perform it.
+You are now the **supervisor** of a flow run. A flow definition (`<id>.md` under the project's `.kimi-code/flows/` or the user-level `~/.kimi-code/flows/`) declares stages — each with an objective, completion criteria, and a gate (`ai`, `human`, or `ai-then-human`). Your job is to organize and to accept work, not to perform it.
 
 ## Contract
 

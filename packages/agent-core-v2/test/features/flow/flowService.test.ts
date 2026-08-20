@@ -20,6 +20,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISkillActivationDataService } from '#/agent/skill/skillActivationData';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService, type ConfigChangedEvent } from '#/app/config/config';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
@@ -91,6 +92,9 @@ describe('AgentFlowService', () => {
       workDir: '/ws',
       additionalDirs: [],
     } as unknown as ISessionWorkspaceContext);
+    ix.stub(IBootstrapService, {
+      homeDir: '/home/.kimi-code',
+    } as unknown as IBootstrapService);
     ix.stub(IAgentToolRegistryService, {
       listReferences: () =>
         ['FlowStart', 'FlowAdvance', 'FlowAbort', 'FlowJump'].map((name) => ({
@@ -669,6 +673,15 @@ describe('AgentFlowService', () => {
       expect(service.run().flowId).toBe('issue-fix');
     });
 
+    it('accepts an activation at the user-level flows definition path', async () => {
+      await activateFlowSkill({
+        activationId: 'act-user',
+        skillPath: '/home/.kimi-code/flows/issue-fix.md',
+      });
+      expect(service.run().active).toBe(true);
+      expect(service.run().flowId).toBe('issue-fix');
+    });
+
     it('ignores a flow-typed activation whose path is not the projected flows definition', async () => {
       await activateFlowSkill({
         activationId: 'act-foreign',
@@ -936,4 +949,5 @@ describe('AgentFlowService', () => {
       expect(requestToolApproval).not.toHaveBeenCalled();
     });
   });
+});
 });

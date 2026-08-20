@@ -304,7 +304,7 @@ export class Program {
       const extraSkills = own(new ExtraFileSkillSource(skillDiscovery, this.dependencies.config, this.context, this.dependencies.bootstrap));
       const workspaceSkills = own(new WorkspaceRootSkillSource(skillDiscovery, this.context, this.dependencies.config, this.dependencies.bootstrap, runtime.watch!));
       const pluginSkills = new PluginSkillSource(skillDiscovery, this.dependencies.plugins);
-      const flowsSkills = own(new FlowsSkillSource(runtime.fs!, runtime.watch!, this.context, this.dependencies.flags, this.dependencies.config));
+      const flowsSkills = own(new FlowsSkillSource(runtime.fs!, runtime.watch!, this.context, this.dependencies.bootstrap, this.dependencies.flags, this.dependencies.config));
       const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, userSkills, explicitSkills, extraSkills, workspaceSkills, pluginSkills, flowsSkills, state));
       return {
         id: runtime.identity.generation,

@@ -29,6 +29,7 @@ import {
   configuredRoots,
   projectRoots,
   sessionMediaOriginalsDir,
+  userFlowsDir,
   userRoots,
   type ContentPart,
   type ISessionScopeHandle,
@@ -310,7 +311,11 @@ async function listWorkspaceSkillsForRoot(
     discovery.discover(extraRootList),
     discovery.discover(pluginRootList),
     flags.enabled(FLOW_FLAG_ID)
-      ? discoverFlowSkills(core.accessor.get(IHostFileSystem), workDir)
+      ? discoverFlowSkills(
+          core.accessor.get(IHostFileSystem),
+          workDir,
+          userFlowsDir(bootstrap.homeDir),
+        )
       : Promise.resolve({ skills: [] as readonly SkillDefinition[] }),
   ]);
 
