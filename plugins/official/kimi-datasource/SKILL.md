@@ -69,7 +69,7 @@ description: |
 - 国家标准（gb）、行业标准（hb）、地方标准（db）、团体标准（tt）查 `china_standards`；法律法规与判例在 `yuandian_law`，别混
 - 新华财经（`xhcj`）偏公告 / 快讯 / 政策新闻；`caixin` 覆盖 600+ 财新数据接口，先用它的 `caixin_api_search` 找合适接口再调用
 
-**不支持的能力**：通用 Web 搜索，以及 `xhcj` / `caixin` 覆盖之外的实时新闻。财经公告、快讯与政策新闻走 `xhcj` / `caixin`；超出财经范围的新闻需求，告诉用户当前数据源不覆盖。
+**不支持的能力**：通用 Web 搜索，以及 `xhcj` / `caixin` 覆盖之外的实时新闻。
 
 ## 2. 标准工作流：`get_data_source_desc` → `call_data_source_tool`
 
