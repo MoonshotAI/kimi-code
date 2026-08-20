@@ -6,6 +6,189 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.38.0 (2026-08-20)
+
+### Features
+
+- Support two OAuth login methods — kimi.ai and kimi.com.
+- Add the WaitFor tool: the agent can now wait for a background task to finish within the current turn instead of ending the turn and being re-invoked.
+- Add 13 data sources to the official Kimi Datasource plugin — Chinese government data (NDA/NBS) and standards (GB/HB/DB/TT), eight international organization datasets (WHO, FAO, UNSD, ECB, Eurostat, UNICEF, OECD, FRED), Xinhua Finance, and Caixin. Update the plugin from the Official tab in /plugins.
+- web: Add a Pin action to the chat header more-menu.
+
+### Polish
+
+- Edit and Write now require reading an existing file before modifying it.
+<!-- - Sub-agents no longer spawn their own sub-agents by default; custom agent profiles can still allow it explicitly. -->
+- Collapse long `!` shell command output instead of flooding the transcript. Press ctrl+o to expand or collapse it together with tool output.
+
+### Bug Fixes
+
+- Fix config.toml entries being lost when the file had a syntax error or was edited outside the app.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 0.37.2 (2026-08-19)
+
+### Polish
+
+- web: Settings gains a Lab tab with a new multi-tab sidebar toggle; when enabled, the sidebar shows the Open / Done / Workspaces tabs.
+- Make several refinements and internal improvements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 0.37.1 (2026-08-18)
+
+### Bug Fixes
+
+- Fix pasted images and videos failing to reach the model.
+
+## 0.37.0 (2026-08-18)
+
+### Features
+
+- Activate multiple skills in a single prompt. Type `/` after whitespace to insert a skill token.
+- The Windows native (single-binary) CLI now supports automatic updates.
+- web: The sidebar gains Open / Done / Workspaces tabs, and sessions can be marked as done.
+- web: Add a session management page.
+
+### Polish
+
+- Queue slash skill commands entered while the agent is busy instead of rejecting them.
+- web: @-mentioned files, folders, and skills in chat messages now render as icon pills.
+- web: The browser tab title now shows the current workspace directory name.
+- web: The search dialog now finds workspaces too, and picking a workspace or session result expands the sidebar and scrolls the item into view.
+- web: Renamed the Subagent panel to "Background Agent".
+- Warn when a typed `/goal` objective exceeds the 4000-character limit, and keep the input if it is rejected.
+
+### Bug Fixes
+
+- Fix Gemini tool-calling sessions failing on follow-up requests.
+- web: Fix Ctrl+K in the composer opening session search on macOS — session search now only answers to Cmd+K.
+- web: Fix the Background Agent panel showing incorrect task counts and statuses.
+- web: Fix pasting a copied folder into the composer failing the upload with a connection error — folders are now skipped instead.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 0.36.1 (2026-08-14)
+
+### Features
+
+- web: Generate session titles with AI (experimental). Off by default — set `KIMI_CODE_EXPERIMENTAL_AUTO_SESSION_TITLE=1` (or the master flag `KIMI_CODE_EXPERIMENTAL_FLAG=1`) to turn it on.
+
+### Polish
+
+- web: Polish the Plan, Goal, and Swarm toggles in the composer, which now live in the + menu next to the input box.
+
+### Bug Fixes
+
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 0.36.0 (2026-08-13)
+
+### Features
+
+- Upgrade the experimental subagent model setting to a model pool: the `[secondary_model]` section can now hold a set of candidate models with descriptions, and the main agent picks from them per spawn based on the task.
+
+  Set `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1` (or the master flag `KIMI_CODE_EXPERIMENTAL_FLAG=1`) before starting Kimi to enable it.
+
+  Recommended setups:
+
+  - Minimal: run `/secondary-model` in the TUI, or write a single `default_model` line in `config.toml`, to make every subagent run the same model by default; add `force = true` to pin that choice so the main agent cannot override it.
+  - Declare a named pool with a one-line scenario description for each alias — the descriptions are what the main agent sees when choosing:
+
+    ```toml
+    [secondary_model]
+    default_model = "kimi-code/kimi-for-coding-highspeed"
+    [secondary_model.models]
+    "kimi-code/kimi-for-coding-highspeed" = "Fast and cheap — good for daily refactoring, code explanation, and small edits."
+    "kimi-code/k3" = "Strong at complex reasoning and deep debugging — pick it for hard problems."
+    ```
+
+  See the [subagent model pool docs](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#subagent-model-pool) for details.
+- Add an experimental fullscreen TUI mode. Set the `KIMI_CODE_TUI_FULL_SCREEN=1` environment variable to enable it.
+- Support rendering LaTeX math formulas (`$…$` / `$$…$$`) in TUI messages as Unicode formulas.
+
+### Bug Fixes
+
+- Show project MCP launch targets in the workspace trust prompt, default to declining trust, and resolve `fd` and `stty` binaries to absolute paths so untrusted workspaces cannot plant bare-name executables before confirmation.
+- Fix sessions failing with a provider 400 error on every follow-up request after a turn is interrupted while the model is still thinking, on strict OpenAI-compatible providers (e.g. DeepSeek).
+- Fix Ctrl+C being ignored during automatic retries of failed API requests.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 0.35.0 (2026-08-12)
+
+### Features
+
+- Add the Modern Web Guidance plugin to the bundled plugin marketplace. Run `/plugins` and select Modern Web Guidance to install it.
+- Show the live work progress of background subagents in the `/tasks` panel.
+
+### Bug Fixes
+
+- Fix coder subagents spawning further subagents by default.
+- Fix the token counts reported after compaction reading far below the real context size; they now match the numbers shown while the session runs.
+- Fix two binary-planting risks on Windows.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 0.34.0 (2026-08-06)
+
+### Features
+
+- web: Add a flat view to the sidebar session list.
+- The Kimi Computer Use plugin now supports Windows x64 — install it from `/plugins`.
+- Show a cache-expiry reminder when resuming or sending after a long idle. Set [`cache_expiry_hint`](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#tui-toml) to `false` to disable it.
+
+### Polish
+
+- web: Subagent tasks show their model and thinking level.
+- web: Show a failure card with one-click resume when a model request fails.
+- web: Show retry progress (attempt N of M) in the working status during automatic retries.
+- Show browser extension links and activation steps after installing Kimi WebBridge.
+
+### Bug Fixes
+
+- Fix UTF-16 LE/BE text files (with or without a BOM) failing to load.
+- web: Fix attachments being dropped when sent with a skill command.
+- web: Fix the model picker overflowing the screen when many models are available.
+- web: Fix a file path with spaces opening the Documents folder instead of the file on Windows.
+- web: Fix the thinking level resetting to the model default when a new session starts with a skill command.
+- web: Fix manually cancelled sessions showing an error marker in the sidebar; it now appears only when the last turn failed.
+- web: Fix IME composition while renaming a session — Enter and Esc no longer act mid-composition.
+- web: Fix dragging to select text while renaming moving the whole list item.
+- web: Fix the background-tasks and todos pills jumping to the top when the plan approval dialog expands.
+- web: Fix the chevron direction on the "show less" button of the changed-files summary card.
+- Fix `kimi -p` exiting before background tasks and subagents finish.
+- `/feedback` now works for signed-in users on any model; signed-out users see the sign-up page and GitHub Issues links.
+- Fix removing an MCP server breaking open sessions: its tools stay visible but calls fail with a removal notice.
+- Fix the last turn's outcome being lost across server restarts — failed turns now stay flagged in session lists and resumed sessions.
+- Fix resumed sessions showing background-task completion as raw protocol text instead of a status card.
+
+## 0.33.0 (2026-08-05)
+
+### Features
+
+- Add Kimi Computer Use and Kimi WebBridge as built-in official marketplace entries in the v2 CLI. Installing from `/plugins` sets up the latest managed runtime and plugin together, reports incomplete manual steps, and supports retrying interrupted setup.
+- web: Add and manage custom providers in settings.
+- web: Pin sessions to the top of the sidebar.
+- web: Set an emoji for the session title.
+- web: Show the signed-in account and plan usage.
+- Add /bug as an alias for the /feedback slash command. Type /bug to submit feedback.
+
+### Polish
+
+- Ask whether to trust the current folder on startup.
+- `/fork` no longer switches to the forked session: the current session stays active and its background tasks keep running. Find the fork in `/sessions`.
+- web: Overhaul the UI/UX and fix known issues.
+- Start the interactive TUI without creating a session.
+- Rename the partner plugin marketplace tab to Curated and clarify that it contains third-party plugins from Kimi partners.
+
+### Bug Fixes
+
+- Fix all tool calls failing with spawn EBADF on macOS when a skill folder contains a very large file tree.
+- Fix MCP OAuth re-authorization always failing with "Invalid redirect URI"; the stale client registration is now dropped and re-created with the current callback URI.
+- Ensure the first request waits for MCP startup to finish while the interface still opens immediately.
+- MCP tool results now surface the spec-defined `structuredContent` field and `_meta` server metadata to the model instead of silently dropping them, so servers that return their machine-readable contract in these fields work the same as on other MCP hosts.
+- Fix built-in capability availability and installed status in `/plugins`, preserve legacy WebBridge skills as backups during updates, and prevent Computer Use updates from duplicating or disconnecting MCP servers.
+
+### Refactors
+
+- Run the CLI surfaces (interactive TUI, `kimi -p`, `kimi acp`, `kimi export`, `kimi provider`) on the agent-core-v2 engine by default. Set `KIMI_CODE_LEGACY_FLAG=1` to fall back to the legacy engine.
+
 ## 0.32.0 (2026-08-04)
 
 ### Features

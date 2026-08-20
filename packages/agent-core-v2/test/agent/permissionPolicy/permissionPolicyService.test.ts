@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import type { ToolCall } from '#/kosong/contract/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
@@ -25,6 +25,7 @@ import {
   type PermissionRule,
 } from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IGitService } from '#/app/git/git';
 import { findGitWorkTree } from '#/app/git/workTree';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -66,6 +67,35 @@ describe('AgentPermissionPolicyService chain', () => {
         }));
         reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
+        reg.defineInstance(IAgentRuntimeService, {
+          _serviceBrand: undefined,
+          onDidChange: () => ({ dispose: () => {} }),
+          isAvailable: () => true,
+          inspect() { return (this as IAgentRuntimeService).acquire().runtime; },
+          acquire: () => ({
+            track: (resource) => resource,
+            runtime: {
+              identity: { workspaceId: 'test', runtimeId: 'local', generation: 'test' },
+              capabilities: new Set(),
+              status: 'ready',
+              onDidChangeStatus: () => ({ dispose: () => {} }),
+              dispose: () => {},
+              environment: { pathClass: 'posix' } as never,
+              path: {
+                separator: '/',
+                delimiter: ':',
+                isAbsolute: () => true,
+                join: (...paths: readonly string[]) => join(...paths),
+                relative: (from: string, to: string) => to.replace(`${from}/`, ''),
+                resolve: (...paths: readonly string[]) => join(...paths),
+                basename: (path: string) => basename(path),
+                dirname: (path: string) => dirname(path),
+              },
+              workspace: { mapRoots: (roots) => roots },
+            },
+            dispose: () => {},
+          }),
+        });
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.definePartialInstance(IGitService, { findWorkTree: async () => null });
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
@@ -204,6 +234,35 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
         reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub());
         reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
+        reg.defineInstance(IAgentRuntimeService, {
+          _serviceBrand: undefined,
+          onDidChange: () => ({ dispose: () => {} }),
+          isAvailable: () => true,
+          inspect() { return (this as IAgentRuntimeService).acquire().runtime; },
+          acquire: () => ({
+            track: (resource) => resource,
+            runtime: {
+              identity: { workspaceId: 'test', runtimeId: 'local', generation: 'test' },
+              capabilities: new Set(),
+              status: 'ready',
+              onDidChangeStatus: () => ({ dispose: () => {} }),
+              dispose: () => {},
+              environment: { pathClass: 'posix' } as never,
+              path: {
+                separator: '/',
+                delimiter: ':',
+                isAbsolute: () => true,
+                join: (...paths: readonly string[]) => join(...paths),
+                relative: (from: string, to: string) => to.replace(`${from}/`, ''),
+                resolve: (...paths: readonly string[]) => join(...paths),
+                basename: (path: string) => basename(path),
+                dirname: (path: string) => dirname(path),
+              },
+              workspace: { mapRoots: (roots) => roots },
+            },
+            dispose: () => {},
+          }),
+        });
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.definePartialInstance(IGitService, {
           findWorkTree: (cwd: string) => findGitWorkTree(hostFs, cwd),

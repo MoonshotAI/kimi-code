@@ -1,15 +1,5 @@
-/**
- * `workspaceAgentProfileLoader` domain — `IExplicitAgentProfileLoader` implementation.
- *
- * Loads the runtime-selected agent files through `hostFs`, resolving paths
- * against the workspace root (`workspaceContext`) and `bootstrap`.
- * Bound at Workspace scope.
- */
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { parseAgentFileText } from '#/workspace/workspaceAgentProfileLoader/internal/agentFile';
 import { AgentProfileLoaderBase } from '#/workspace/workspaceAgentProfileLoader/internal/agentProfileLoader';
 import { agentProfileFromFile } from '#/workspace/workspaceAgentProfileLoader/internal/agentProfileFromFile';
@@ -17,6 +7,7 @@ import {
   AGENT_PROFILE_SOURCE_PRIORITY,
   type AgentProfileContribution,
 } from '#/app/agentProfileCatalog/agentProfileContribution';
+import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { resolveAgentPath } from '#/workspace/workspaceAgentProfileLoader/internal/paths';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -41,9 +32,9 @@ export class ExplicitAgentProfileLoaderService
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService log: ILogService,
     @IUserAgentProfileLoader private readonly user: IUserAgentProfileLoader,
-    @IAgentProfileRegistry registry: IAgentProfileRegistry,
+    registry?: IAgentProfileRegistry,
   ) {
-    super(registry, log);
+    super(log, registry);
     this.start();
   }
 
@@ -68,10 +59,3 @@ export class ExplicitAgentProfileLoaderService
   }
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IExplicitAgentProfileLoader,
-  ExplicitAgentProfileLoaderService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceAgentProfileLoader',
-);

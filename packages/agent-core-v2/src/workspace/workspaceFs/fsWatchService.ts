@@ -1,25 +1,9 @@
-/**
- * `workspaceFs` domain — `IWorkspaceFsWatchService` implementation.
- *
- * Keeps ONE os `IHostFsWatchService` subscription on the handler root and
- * fans its raw events out to every `IWorkspaceFsWatchSubscription`: the
- * shared leg (the os handle plus the `.gitignore` matcher) runs once per
- * handler, the per-subscriber leg (subtree confinement, debounce window,
- * overflow truncation) runs once per subscription, so two sessions of the
- * same workspace never hang a second os watcher. The os handle starts
- * lazily when the first subscription declares a non-empty path set and
- * stops when no subscription watches anything. Path confinement is lexical
- * (the handler root plus the `workspaceDirs` additional-dir set), matching
- * the rest of `workspaceFs`. Bound at Workspace scope.
- */
-
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import ignore, { type Ignore } from 'ignore';
 
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
@@ -290,10 +274,3 @@ function isUnderAny(rel: string, parents: ReadonlySet<string>): boolean {
   return false;
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceFsWatchService,
-  WorkspaceFsWatchService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceFs',
-);

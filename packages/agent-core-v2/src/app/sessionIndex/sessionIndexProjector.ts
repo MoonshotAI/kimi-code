@@ -1,26 +1,3 @@
-/**
- * `sessionIndex` domain (L2) — projector and reconciliation for the read
- * model.
- *
- * The projector materializes the authoritative session metadata
- * (`state.json` documents) into a fresh read-model generation: a full scan
- * with bounded concurrency, chunked `batch` writes (no cross-shard atomicity
- * required), per-workspace counters recomputed exactly, and finally one
- * atomic checkpoint publish that makes the generation readable. A projector
- * that dies midway never publishes, so readers keep serving the previous
- * generation; the next run clears its own stragglers before writing.
- * Publishing also schedules the previous generation's drop.
- *
- * Reconciliation runs against the *published* generation: it re-scans the
- * authoritative set, upserts summaries that drifted (mirror loss, external
- * edits), deletes entries whose document disappeared, and rewrites every
- * counter from the authoritative scan — bounding counter drift to one
- * reconcile interval.
- *
- * This is an internal collaborator of `FileSessionIndex`, not a DI service:
- * the index drives it single-flight and owns the state machine around it.
- */
-
 import { ILogService } from '#/_base/log/log';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IQueryStore, type WriteOp } from '#/persistence/interface/queryStore';
@@ -46,6 +23,7 @@ import {
 
 const WRITE_CHUNK = 500;
 const SCAN_CONCURRENCY = 16;
+const SHARED_SCAN_REUSE_MS = 30_000;
 
 export interface SessionIndexProjectorDeps {
   readonly storage: IFileSystemStorageService;
@@ -66,15 +44,85 @@ export interface ReconcileResult {
   readonly removed: number;
 }
 
+/** One consistent pass over the authoritative session metadata set. */
+export interface AuthoritativeScan {
+  readonly summaries: SessionSummary[];
+  readonly counts: Map<string, { active: number; archived: number }>;
+}
+
+interface ScanSlot {
+  readonly promise: Promise<AuthoritativeScan>;
+  readonly reusableUntil: number;
+  settled: boolean;
+}
+
 export class SessionIndexProjector {
+  private scanSlot: ScanSlot | undefined;
+
   constructor(private readonly deps: SessionIndexProjectorDeps) {}
+
+  /**
+   * The projection's scan: joins a running shared scan, reuses one that
+   * settled within the reuse window, or starts a fresh one. The projection
+   * publishes a point-in-time derived model by design, so a just-finished
+   * snapshot is safe for it (the mirror queue and reconciliation heal the
+   * gap) — and this is what keeps a fast first read + kicked projection
+   * from scanning the directory tree twice.
+   */
+  sharedScan(): Promise<AuthoritativeScan> {
+    const slot = this.scanSlot;
+    if (slot !== undefined && (!slot.settled || Date.now() < slot.reusableUntil)) {
+      return slot.promise;
+    }
+    return this.startScan();
+  }
+
+  /**
+   * A fallback read's scan: joins a scan that is still in flight or starts a
+   * fresh one. A settled snapshot is NEVER served to a read — it could
+   * predate a session this process just created, breaking read-your-writes.
+   * Joining an in-flight scan is NOT the same freshness as enumerating here
+   * and now: the scan may have started (and passed a directory) before this
+   * call, so the caller folds the mirror's pending queue into the result —
+   * every pending entry is known to be durable on disk.
+   */
+  sharedScanForRead(): Promise<AuthoritativeScan> {
+    const slot = this.scanSlot;
+    if (slot !== undefined && !slot.settled) return slot.promise;
+    return this.startScan();
+  }
+
+  private startScan(): Promise<AuthoritativeScan> {
+    const slot: ScanSlot = {
+      promise: this.scanAuthoritative(),
+      reusableUntil: Date.now() + SHARED_SCAN_REUSE_MS,
+      settled: false,
+    };
+    const markSettled = (): void => {
+      slot.settled = true;
+    };
+    void slot.promise.then(markSettled, markSettled);
+    this.scanSlot = slot;
+    return slot.promise;
+  }
 
   /** Scan the authoritative set into a fresh generation and publish it. */
   async project(generation: number): Promise<ProjectionResult> {
+    const scan = this.sharedScan();
+    try {
+      return await this.doProject(generation, scan);
+    } finally {
+      if (this.scanSlot?.promise === scan) this.scanSlot = undefined;
+    }
+  }
+
+  private async doProject(
+    generation: number,
+    scan: Promise<AuthoritativeScan>,
+  ): Promise<ProjectionResult> {
     const { queryStore, log } = this.deps;
     const collection = sessionCollection(generation);
     const counters = sessionCountersCollection(generation);
-    // Clear stragglers of a crashed earlier attempt at this generation.
     await queryStore.dropCollection(collection);
     await queryStore.dropCollection(counters);
     await queryStore.ensureIndex(collection, {
@@ -83,7 +131,7 @@ export class SessionIndexProjector {
       field: `custom.${PARENT_SESSION_ID_KEY}`,
     });
 
-    const { summaries, counts } = await this.scanAuthoritative();
+    const { summaries, counts } = await scan;
     await this.batchChunks(
       summaries.map((summary) => ({
         kind: 'put' as const,
@@ -156,10 +204,7 @@ export class SessionIndexProjector {
     return result;
   }
 
-  private async scanAuthoritative(): Promise<{
-    summaries: SessionSummary[];
-    counts: Map<string, { active: number; archived: number }>;
-  }> {
+  private async scanAuthoritative(): Promise<AuthoritativeScan> {
     const { storage, docs, sessionsScope } = this.deps;
     const summaries: SessionSummary[] = [];
     const counts = new Map<string, { active: number; archived: number }>();
@@ -190,7 +235,6 @@ export class SessionIndexProjector {
       key: workspaceId,
       value: { active: value.active, archived: value.archived } satisfies SessionWorkspaceCounts,
     }));
-    // Workspaces that vanished entirely lose their counter document.
     const existing = await queryStore.listKeys(counters);
     for (const key of existing) {
       if (!counts.has(key)) ops.push({ kind: 'delete', collection: counters, key });

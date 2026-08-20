@@ -1,25 +1,3 @@
-/**
- * Origin / CORS middleware (ROADMAP M4.2).
- *
- * HTTP `onRequest` hook:
- *   - no `Origin` header → non-CORS / same-origin request → proceeds untouched;
- *   - same-origin (`Origin` host === `Host`, port stripped both sides) → allowed;
- *   - cross-origin → allowed only if the full origin (scheme + host) is in the
- *     explicit whitelist (`KIMI_CODE_CORS_ORIGINS`, no `*` wildcard — PLAN
- *     §3.4). Allowed origins get `Access-Control-Allow-Origin/-Methods` echoed
- *     and `Access-Control-Allow-Headers` reflected from the preflight's
- *     `Access-Control-Request-Headers` (so new client headers need no server
- *     change); `OPTIONS` preflight short-circuits to `204`;
- *   - cross-origin and NOT whitelisted → no CORS headers are emitted, so the
- *     browser blocks the response. `OPTIONS` still returns `204` (without CORS
- *     headers) so the preflight fails closed.
- *
- * `isOriginAllowed` is also exported for the WS upgrade path (M4.3). There,
- * absent/malformed `Origin` is treated as allowed (non-browser Node `ws`
- * clients send no `Origin`); a present-but-disallowed browser Origin is
- * rejected. See M4.3 for the deliberate present-only deviation.
- */
-
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { stripPort } from './hostnames';
@@ -86,21 +64,13 @@ export function isOriginAllowed(
     if (ohStripped === hostStripped) {
       return true;
     }
-    // Dev-proxy case: a browser hitting a same-machine dev server (e.g. Vite on
-    // `localhost:5175`) whose upstream server is bound to a different loopback
-    // name (e.g. `127.0.0.1:58627`). The two are not string-equal, but both ends
-    // are loopback, so there is no real cross-origin threat — treat as
-    // same-origin so WebSocket upgrades are not rejected with 403.
     if (isLoopbackHost(ohStripped) && isLoopbackHost(hostStripped)) {
       return true;
     }
   }
-  // `origin` is defined here (originHost returned a host), so the whitelist
-  // match is against the full origin string (scheme + host).
   return allowed.includes(origin as string);
 }
 
-/** Loopback-only host names, mirroring the allowlist in `hostnames.ts`. */
 function isLoopbackHost(h: string): boolean {
   return (
     h === 'localhost' ||
@@ -145,8 +115,6 @@ export function createOriginHook(
       }
       return;
     }
-    // Origin present but not allowed: emit no CORS headers so the browser
-    // blocks the response. Short-circuit the preflight to fail closed.
     if (req.method === 'OPTIONS') {
       return reply.code(204).send();
     }

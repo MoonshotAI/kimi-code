@@ -1,5 +1,6 @@
 // Core TUI interfaces and classes
 
+export { Marked, type Token, type Tokens } from "marked";
 // Autocomplete support
 export {
 	type AutocompleteItem,
@@ -18,10 +19,17 @@ export {
 	type EditorSelectionRange,
 	type EditorTheme,
 } from "./components/editor.ts";
+export { HStack } from "./components/h-stack.ts";
 export { Image, type ImageOptions, type ImageTheme } from "./components/image.ts";
 export { Input } from "./components/input.ts";
 export { Loader, type LoaderIndicatorOptions } from "./components/loader.ts";
 export { type DefaultTextStyle, Markdown, type MarkdownOptions, type MarkdownTheme } from "./components/markdown.ts";
+export {
+	ScrollView,
+	type ScrollViewOptions,
+	type ScrollViewScrollbar,
+	type ScrollViewScrollToOptions,
+} from "./components/scroll-view.ts";
 export {
 	type SelectItem,
 	SelectList,
@@ -33,6 +41,13 @@ export { type SettingItem, SettingsList, type SettingsListTheme } from "./compon
 export { Spacer } from "./components/spacer.ts";
 export { Text } from "./components/text.ts";
 export { TruncatedText } from "./components/truncated-text.ts";
+export {
+	type StackChild,
+	type StackEntry,
+	type StackEntryOptions,
+	type StackOptions,
+	VStack,
+} from "./components/v-stack.ts";
 // Editor component interface (for custom editors)
 export type { EditorComponent } from "./editor-component.ts";
 // Fuzzy matching
@@ -63,6 +78,8 @@ export {
 	parseKey,
 	setKittyProtocolActive,
 } from "./keys.ts";
+// LaTeX rendering
+export { type RenderLatexOptions, renderLatex } from "./latex.ts";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";
 // Terminal interface and implementations
@@ -106,8 +123,10 @@ export {
 	type Component,
 	Container,
 	CURSOR_MARKER,
+	compositeTuiLine,
 	type Focusable,
 	isFocusable,
+	isViewportTUI,
 	type OverlayAnchor,
 	type OverlayHandle,
 	type OverlayMargin,
@@ -115,7 +134,21 @@ export {
 	type OverlayUnfocusOptions,
 	type RenderedChildLayout,
 	type SizeValue,
-	TUI,
+	type TUI,
+	type TuiInputListener,
+	type TuiInputListenerResult,
+	type TuiMode,
+	type TuiStopOptions,
+	type ViewportTUI,
 } from "./tui.ts";
+export { TuiAltScreen, type TuiAltScreenOptions } from "./tui-alt-screen.ts";
+export { TuiMainScreen, type TuiMainScreenRenderState } from "./tui-main-screen.ts";
 // Utilities
-export { sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.ts";
+export {
+	getOsc8LinkAtColumn,
+	sliceByColumn,
+	stripTerminalSequences,
+	truncateToWidth,
+	visibleWidth,
+	wrapTextWithAnsi,
+} from "./utils.ts";

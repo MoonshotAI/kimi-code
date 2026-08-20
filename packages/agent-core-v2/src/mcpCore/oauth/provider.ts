@@ -1,31 +1,3 @@
-/**
- * `mcpCore` domain — `McpOAuthClientProvider`, the `OAuthClientProvider`
- * backed by the MCP OAuth credential store (`McpOAuthStore` over
- * `IAtomicDocumentStore`).
- *
- * One provider instance per server/resource identity. It persists OAuth
- * tokens, the registered DCR client info, and discovery state under
- * `<homeDir>/credentials/mcp/<key>-*.json` via the store; captures the
- * authorization URL when the SDK calls `redirectToAuthorization`; and keeps
- * the PKCE verifier and OAuth `state` in-memory. Persisted values are
- * mirrored into in-memory caches loaded eagerly on construction (`ready`) so
- * the SDK's synchronous `redirectUrl` / `clientMetadata` getters read without
- * blocking, while the data methods `await ready` before reading or writing.
- * The provider does not open browsers or run servers — it is the
- * persistence + flow-state shim.
- *
- * `invalidateStaleRegistration` guards interactive flows: the callback
- * listener binds a random port per flow while a DCR registration pins the
- * redirect URIs of the flow that created it, so a reused registration whose
- * URIs no longer cover the current callback would be rejected at the
- * authorization endpoint ("invalid redirect URI", rendered only in the
- * user's browser). Dropping it lets `auth()` re-register.
- *
- * `clientName` is the product token for the default label
- * (`<clientName> (<serverName>)`), carrying the configured custom identity; it
- * is ignored when `clientLabel` states the whole label explicitly.
- */
-
 import { randomBytes } from 'node:crypto';
 
 import { BugIndicatingError } from '#/errors';
@@ -55,6 +27,10 @@ export interface McpOAuthProviderOptions {
   readonly store: McpOAuthStore;
   readonly clientLabel?: string;
   readonly clientName?: string;
+}
+
+export interface StoredMcpOAuthTokens extends OAuthTokens {
+  readonly obtained_at?: number;
 }
 
 export class McpOAuthClientProvider implements OAuthClientProvider {
@@ -149,8 +125,9 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
-    this.tokensCache = tokens;
-    await this.store.write(`${this.storeKey}${TOKENS_SUFFIX}`, tokens);
+    const stamped: StoredMcpOAuthTokens = { ...tokens, obtained_at: Date.now() };
+    this.tokensCache = stamped;
+    await this.store.write(`${this.storeKey}${TOKENS_SUFFIX}`, stamped);
   }
 
   redirectToAuthorization(url: URL): void {

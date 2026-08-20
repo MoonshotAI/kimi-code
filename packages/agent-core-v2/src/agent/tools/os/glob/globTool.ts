@@ -1,64 +1,3 @@
-/**
- * `tools` domain — `GlobTool` implementation, file pattern matching via
- * ripgrep.
- *
- * Finds files matching a glob pattern, returned sorted by modification time
- * (most recent first). Implemented by shelling out to `rg --files` through the
- * host `IHostProcessService` — sharing the ripgrep subprocess plumbing,
- * gitignore handling, and sensitive-file filtering with the Grep tool.
- *
- * Collaborators injected via constructor:
- *   - `fs`             — `IHostFileSystem`, search-root existence/type
- *                        pre-check
- *   - `env`            — `IHostEnvironment`, path class for display
- *                        relativization
- *   - `processService` — `IHostProcessService`, spawns the rg subprocess
- *   - `workspaceCtx`   — `ISessionWorkspaceContext`, workspace roots for path
- *                        safety and display
- *   - `telemetry`      — `ITelemetryService`, rg fallback outcome tracking
- *   - `skillCatalog`   — `ISessionSkillCatalog` (optional), extends the
- *                        workspace with skill roots
- *
- * Ported from v1 onto the v2 os domains:
- *   - Search: v1 `kaos.exec(rgPath, ...)` maps to
- *     `this.processService.spawn(rgPath, [...], { cwd: searchRoot })`. Pinning
- *     the subprocess cwd to the search root so `--glob` patterns match paths
- *     relative to that root.
- *   - Binary resolution: `ensureRgPath` probes the execution environment for
- *     a working `rg` (system PATH, then the cached bootstrap binary) so a
- *     missing `rg` surfaces an actionable message instead of a naked
- *     `spawn rg ENOENT`.
- *   - Subprocess plumbing: `runRgOnce` / `shouldRetryRipgrepEagain` own
- *     spawn, capped draining, abort/timeout, two-phase kill, and the
- *     single-threaded EAGAIN retry shared with v1's run-rg.
- *   - Directory pre-check: `fs.stat(searchRoot)` surfaces a missing or
- *     non-directory root as "does not exist" / "is not a directory" instead of
- *     a misleading "No matches found" (or, for a file root, rg listing the
- *     file itself as its own match).
- *   - Path safety / home expansion / path class: `resolvePathAccessPath` over
- *     the `hostEnvironment` domain, identical to Read/Write/Edit/Grep.
- *
- * Behaviour:
- *   - `.gitignore` / `.ignore` / `.rgignore` are respected by default
- *     (ripgrep native). Pass `include_ignored` to also surface ignored files
- *     (e.g. build outputs, `node_modules`). Sensitive files such as `.env` are
- *     always filtered out (authoritative post-filter via
- *     {@link isSensitiveFile}).
- *   - Results are files-only — `rg --files` never lists directories.
- *     `include_dirs` is accepted but deprecated and ignored.
- *   - Brace expansion (`*.{ts,tsx}`, `{src,test}/**`) is handled by ripgrep's
- *     glob engine; the pattern is passed through to a single `--glob`.
- *   - Match count is capped at `MAX_MATCHES`. Callers are expected to add
- *     an anchor (extension, subdirectory) when that would not be enough.
- *
- * Output convention: paths shown to the LLM are relativized to the search
- * base only when that base sits inside the primary workspace. External roots
- * stay absolute so downstream Read/Edit calls keep targeting the same file.
- *
- * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module
- * load.
- */
-
 import { normalize, resolve } from 'pathe';
 
 import { ensureRgPath, rgUnavailableMessage, type RgProbe } from '#/os/backends/node-local/tools/rgLocator';
@@ -68,10 +7,12 @@ import {
   runRgOnce,
   shouldRetryRipgrepEagain,
 } from '#/os/backends/node-local/tools/runRg';
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IHostProcessService } from '#/os/interface/hostProcess';
+import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { IHostProcessService } from '#/os/interface/hostProcess';
+import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { unwrapErrorCause } from '#/_base/errors/errors';
+import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -82,7 +23,6 @@ import {
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {
-  extendWorkspaceWithSkillRoots,
   isWithinDirectory,
   resolvePathAccessPath,
   type PathClass,
@@ -120,42 +60,45 @@ const SENSITIVE_GLOBS_TO_EXCLUDE: readonly string[] = [
 export class GlobTool implements IGlobTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'Glob' as const;
-  readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GlobInputSchema);
   constructor(
-    @IHostFileSystem private readonly fs: IHostFileSystem,
-    @IHostEnvironment private readonly env: IHostEnvironment,
-    @IHostProcessService private readonly processService: IHostProcessService,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
-  ) {
-    this.description =
-      this.env.pathClass === 'win32' ? globDescription + WINDOWS_PATH_HINT : globDescription;
+  ) {}
+
+  get description(): string {
+    return inspectAgentRuntime(this.runtime).environment.pathClass === 'win32'
+      ? globDescription + WINDOWS_PATH_HINT
+      : globDescription;
   }
 
-  private get workspaceConfig(): WorkspaceConfig {
-    return extendWorkspaceWithSkillRoots(
-      {
-        workspaceDir: this.workspaceCtx.workDir,
-        additionalDirs: this.workspaceCtx.additionalDirs,
-      },
-      this.skillCatalog?.catalog.getSkillRoots() ?? [],
-      this.env.pathClass,
-    );
+  private workspaceConfig(view: RuntimeWorkspaceView): WorkspaceConfig {
+    return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
   resolveExecution(args: GlobInput): ToolExecution {
+    const inspected = inspectAgentRuntime(this.runtime);
+    const view = new RuntimeWorkspaceView(inspected, {
+      workDir: this.workspaceCtx.workDir,
+      additionalDirs: [
+        ...this.workspaceCtx.additionalDirs,
+        ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
+      ],
+    });
+    const env = { _serviceBrand: undefined, ...inspected.environment, ready: Promise.resolve() };
+    const workspace = this.workspaceConfig(view);
     let path: string | undefined;
     if (args.path !== undefined) {
       path = resolvePathAccessPath(args.path, {
-        env: this.env,
-        workspace: this.workspaceConfig,
+        env,
+        workspace,
         operation: 'search',
         policy: { guardMode: 'absolute-outside-allowed', checkSensitive: false },
       });
     }
-    const searchRoots = [path ?? this.workspaceConfig.workspaceDir];
+    const searchRoots = [path ?? workspace.workspaceDir];
 
     const detailParts: string[] = [`pattern: ${args.pattern}`];
     if (args.path !== undefined) {
@@ -176,19 +119,41 @@ export class GlobTool implements IGlobTool {
       },
       approvalRule: literalRulePattern(this.name, args.pattern),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
-      execute: ({ signal }) => this.execution(args, signal, searchRoots),
+      execute: async ({ signal }) => {
+        const lease = this.runtime.acquire(['fs', 'process']);
+        try {
+          if (lease.runtime.identity.generation !== inspected.identity.generation) {
+            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+          }
+          return await this.execution(
+            lease.runtime.fs!,
+            lease.runtime.process!,
+            env,
+            workspace,
+            args,
+            signal,
+            searchRoots,
+          );
+        } finally {
+          lease.dispose();
+        }
+      },
     };
   }
 
   private async execution(
+    fs: IHostFileSystem,
+    processService: IHostProcessService,
+    env: IHostEnvironment,
+    workspace: WorkspaceConfig,
     args: GlobInput,
     signal: AbortSignal,
     searchRoots: readonly string[],
   ): Promise<ExecutableToolResult> {
-    const searchRoot = searchRoots[0] ?? this.workspaceConfig.workspaceDir;
+    const searchRoot = searchRoots[0] ?? workspace.workspaceDir;
 
     try {
-      const st = await this.fs.stat(searchRoot);
+      const st = await fs.stat(searchRoot);
       if (!st.isDirectory) {
         return { isError: true, output: `${searchRoot} is not a directory` };
       }
@@ -205,7 +170,7 @@ export class GlobTool implements IGlobTool {
 
     let rgPath: string;
     try {
-      const resolution = await ensureRgPath(createRgProbe(this.processService), {
+      const resolution = await ensureRgPath(createRgProbe(processService), {
         signal,
         allowCachedFallback: true,
       });
@@ -226,7 +191,7 @@ export class GlobTool implements IGlobTool {
 
     let run;
     try {
-      run = await runRgOnce(this.processService, buildRgArgs(rgPath, args), signal, { cwd: searchRoot });
+      run = await runRgOnce(processService, buildRgArgs(rgPath, args), signal, { cwd: searchRoot });
     } catch (error) {
       return { isError: true, output: formatSpawnError(error) };
     }
@@ -236,7 +201,7 @@ export class GlobTool implements IGlobTool {
 
     if (shouldRetryRipgrepEagain(run)) {
       try {
-        run = await runRgOnce(this.processService, buildRgArgs(rgPath, args, true), signal, { cwd: searchRoot });
+        run = await runRgOnce(processService, buildRgArgs(rgPath, args, true), signal, { cwd: searchRoot });
       } catch (error) {
         return { isError: true, output: formatSpawnError(error) };
       }
@@ -285,8 +250,8 @@ export class GlobTool implements IGlobTool {
       return { output: 'No matches found' };
     }
 
-    const pathClass = this.env.pathClass;
-    const shouldRelativize = isWithinDirectory(searchRoot, this.workspaceConfig.workspaceDir, pathClass);
+    const pathClass = env.pathClass;
+    const shouldRelativize = isWithinDirectory(searchRoot, workspace.workspaceDir, pathClass);
     const displayLines = limited.map((p) =>
       shouldRelativize ? relativizeIfUnder(p, searchRoot, pathClass) : p,
     );
@@ -320,7 +285,11 @@ export class GlobTool implements IGlobTool {
   }
 }
 
-registerAgentToolService(IGlobTool, GlobTool, { name: 'Glob', domain: 'os/backends' });
+registerAgentToolService(IGlobTool, GlobTool, {
+  name: 'Glob',
+  domain: 'os/backends',
+  requiredRuntimeCapabilities: ['fs', 'process'],
+});
 
 function createRgProbe(processService: IHostProcessService): RgProbe {
   return {
@@ -336,7 +305,7 @@ function createRgProbe(processService: IHostProcessService): RgProbe {
       proc.stderr.resume();
       const exitCode = await proc.wait();
       try {
-        proc.dispose();
+        void proc.dispose();
       } catch {
       }
       return { exitCode };

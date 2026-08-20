@@ -1,16 +1,9 @@
-/**
- * `plugin` domain — manages installed plugin state and consumption metadata.
- *
- * Installs, reloads, persists, and summarizes plugins, counting loadable
- * plugin skills through skill discovery.
- */
-
 import { cp, mkdir, mkdtemp, realpath, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { BugIndicatingError, Error2, ErrorCodes, PluginErrors } from '#/errors';
-import type { HookDef } from '#/agent/externalHooks/types';
+import type { HookDef } from '#/features/externalHooks/internal/types';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { PluginAgentRoot } from './types';
 import { discoverFileSkills } from '#/app/skillCatalog/fileSkillDiscovery';
@@ -320,6 +313,7 @@ export class PluginManager {
           path: dir,
           source: 'extra',
           plugin: { id: record.id, instructions: record.skillInstructions },
+          scanMode: record.manifest.rootSkillFallback ? 'root-skill-only' : undefined,
         });
       }
     }
@@ -739,6 +733,7 @@ async function countDiscoveredPluginSkills(
     path: dir,
     source: 'extra',
     plugin: { id: pluginId, instructions: manifest?.skillInstructions },
+    scanMode: manifest?.rootSkillFallback ? 'root-skill-only' : undefined,
   }));
   const result = await discoverSkills(roots);
   return result.skills.length;

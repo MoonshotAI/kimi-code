@@ -1,25 +1,18 @@
-/**
- * `agentProfileCatalog` domain — `IAgentProfileRegistry` impl.
- *
- * App-scope singleton backed by the generic `ContributionRegistry`: storage
- * keys encode the (sourceId, workspaceKey) pair so a workspace-local source id
- * (`workspace`, `extra`, `explicit`) coexists across handlers, while global
- * sources (`builtin`, `plugin`, `user`) register once. The registry is pure
- * storage — merging, name dedup, and override rules live in the Session-scope
- * catalog projection.
- */
-
-import { ContributionRegistry } from '#/_base/contribution/registry';
-import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import type { Event } from '#/_base/event';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import type { AgentProfileContribution } from './agentProfileContribution';
+import { type CollectionChange, type CollectionView } from '#/_base/di/collection';
+import type { IDisposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
+import { Emitter, type Event } from '#/_base/event';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import {
+  AgentProfileContribution,
+  type AgentProfileContributionRecord,
+} from './agentProfileContribution';
 
 import type {
   AgentProfileRegistration,
   AgentProfileRegistryChange,
   IAgentProfileRegistry,
-  RegisterAgentProfileOptions,
 } from './agentProfileRegistry';
 import { IAgentProfileRegistry as IAgentProfileRegistryDecorator } from './agentProfileRegistry';
 
@@ -33,42 +26,81 @@ function decodeKey(key: string): AgentProfileRegistryChange {
 }
 
 export class AgentProfileRegistryService
-  extends Disposable
+  extends Service
   implements IAgentProfileRegistry
 {
   declare readonly _serviceBrand: undefined;
 
-  private readonly registry = this._register(
-    new ContributionRegistry<AgentProfileRegistration>(),
+  private readonly onDidChangeEmitter = this._register(
+    new Emitter<AgentProfileRegistryChange>(),
   );
+  readonly onDidChange: Event<AgentProfileRegistryChange> = this.onDidChangeEmitter.event;
 
-  readonly onDidChange: Event<AgentProfileRegistryChange> = (listener, thisArg, disposables) =>
-    this.registry.onDidChange(
-      (key) => listener.call(thisArg, decodeKey(key)),
-      undefined,
-      disposables,
+  private folded: ReadonlyMap<string, AgentProfileContributionRecord> = new Map();
+  private readonly direct = new Map<string, AgentProfileRegistration>();
+
+  constructor(
+    @AgentProfileContribution
+    private readonly view: CollectionView<AgentProfileContributionRecord>,
+  ) {
+    super();
+    this.refold();
+    this._register(
+      this.view.onDidChange((change) => {
+        this.onViewChange(change);
+      }),
     );
-
-  register(
-    sourceId: string,
-    contribution: AgentProfileContribution,
-    options?: RegisterAgentProfileOptions,
-  ): IDisposable {
-    const registration: AgentProfileRegistration = {
-      sourceId,
-      priority: options?.priority ?? 0,
-      workspaceKey: options?.workspaceKey,
-      contribution,
-    };
-    return this.registry.register(encodeKey(sourceId, options?.workspaceKey), registration);
-  }
-
-  unregister(sourceId: string, workspaceKey?: string): void {
-    this.registry.unregister(encodeKey(sourceId, workspaceKey));
   }
 
   entries(): readonly AgentProfileRegistration[] {
-    return this.registry.entries().map((entry) => entry.contribution);
+    const entries = new Map<string, AgentProfileRegistration>();
+    for (const record of this.folded.values()) {
+      entries.set(encodeKey(record.sourceId, record.workspaceKey), {
+        sourceId: record.sourceId,
+        priority: record.priority ?? 0,
+        workspaceKey: record.workspaceKey,
+        contribution: record.contribution,
+      });
+    }
+    for (const [key, registration] of this.direct) entries.set(key, registration);
+    return [...entries.values()];
+  }
+
+  register(registration: AgentProfileRegistration): IDisposable {
+    const key = encodeKey(registration.sourceId, registration.workspaceKey);
+    this.direct.set(key, registration);
+    this.onDidChangeEmitter.fire(decodeKey(key));
+    let active = true;
+    return {
+      dispose: () => {
+        if (!active || this.direct.get(key) !== registration) return;
+        active = false;
+        this.direct.delete(key);
+        this.onDidChangeEmitter.fire(decodeKey(key));
+      },
+    };
+  }
+
+  private onViewChange(change: CollectionChange<AgentProfileContributionRecord>): void {
+    const previous = this.folded;
+    const affected = new Set<string>();
+    for (const record of [...change.removed, ...change.added]) {
+      affected.add(encodeKey(record.sourceId, record.workspaceKey));
+    }
+    this.refold();
+    for (const key of affected) {
+      if (previous.get(key) !== this.folded.get(key)) {
+        this.onDidChangeEmitter.fire(decodeKey(key));
+      }
+    }
+  }
+
+  private refold(): void {
+    const next = new Map<string, AgentProfileContributionRecord>();
+    for (const record of this.view.records) {
+      next.set(encodeKey(record.value.sourceId, record.value.workspaceKey), record.value);
+    }
+    this.folded = next;
   }
 }
 

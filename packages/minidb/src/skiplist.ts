@@ -123,6 +123,63 @@ export class SkipList<K = number, V = string> {
     return list;
   }
 
+  /** Sliced variant of bulkLoad (the open-time main-thread load paths):
+   *  builds the exact same balanced tower, but yields to the event loop every
+   *  `sliceEvery` source entries in the two O(N) passes (node creation,
+   *  level linking), so a large image load never runs as one synchronous
+   *  slice. */
+  static async bulkLoadAsync<K, V>(
+    entries: readonly RangeEntry<K, V>[],
+    opts: SkipListOptions<K, V> = {},
+    slice: { sliceEvery?: number } = {},
+  ): Promise<SkipList<K, V>> {
+    const sliceEvery = slice.sliceEvery ?? 65536;
+    const yieldToLoop = (): Promise<void> => new Promise((r) => setImmediate(r));
+    const list = new SkipList<K, V>(opts);
+    const n = entries.length;
+    if (n === 0) return list;
+    const nodes: SkipNode<K, V>[] = [];
+    for (let i = 0; i < n; i++) {
+      if (i > 0 && i % sliceEvery === 0) await yieldToLoop();
+      const e = entries[i]!;
+      if (nodes.length > 0) {
+        const prev = nodes[nodes.length - 1]!;
+        if (list.cmpK(prev.key, e.key) === 0 && list.cmpV(prev.val, e.val) === 0) continue;
+      }
+      // Balanced tower: index i (0-based) reaches level 1 + v4(i+1), capped.
+      let lvl = 1;
+      for (let m = i + 1; m % 4 === 0 && lvl < MAX_LEVEL; m = m / 4) lvl++;
+      nodes.push(new SkipNode<K, V>(e.key, e.val, lvl));
+    }
+    const count = nodes.length;
+    list.level = 1;
+    for (const node of nodes) if (node.level.length > list.level) list.level = node.level.length;
+    // Link every level: forward pointers + spans (level-0 distance to the
+    // forward node; 0 for a tail's null forward, matching insert()).
+    const lastAt: { node: SkipNode<K, V>; index: number }[] = [];
+    for (let l = 0; l < list.level; l++) lastAt.push({ node: list.header, index: -1 });
+    for (let i = 0; i < count; i++) {
+      if (i > 0 && i % sliceEvery === 0) await yieldToLoop();
+      const node = nodes[i]!;
+      for (let l = 0; l < node.level.length; l++) {
+        const pred = lastAt[l]!;
+        pred.node.level[l]!.forward = node;
+        pred.node.level[l]!.span = i - pred.index;
+        lastAt[l] = { node, index: i };
+      }
+      node.backward = i === 0 ? null : nodes[i - 1]!;
+    }
+    for (let l = 0; l < list.level; l++) {
+      const pred = lastAt[l]!;
+      // Header spans at unused levels keep the insert() convention (distance
+      // from the header's virtual index -1, i.e. count); real tail nodes get 0.
+      pred.node.level[l]!.span = pred.index === -1 ? count : 0;
+    }
+    list.tail = nodes[count - 1]!;
+    list.length = count;
+    return list;
+  }
+
   private nodeLess(a: SkipNode<K, V>, b: { key: K; val: V }): boolean {
     const c = this.cmpK(a.key, b.key);
     return c < 0 || (c === 0 && this.cmpV(a.val, b.val) < 0);

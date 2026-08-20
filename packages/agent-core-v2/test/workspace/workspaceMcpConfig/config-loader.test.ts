@@ -1,11 +1,3 @@
-/**
- * Scenario: MCP config discovery, precedence, normalization, and validation.
- *
- * Exercises the real loader against temporary JSON files. Run with `pnpm
- * --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/workspace/workspaceMcpConfig/config-loader.test.ts`.
- */
-
 import { mkdtempSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

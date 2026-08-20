@@ -1,30 +1,3 @@
-/**
- * `IQueryStore` — the indexed, queryable read-model facade.
- *
- * A peer of `IAppendLogStore` and `IAtomicDocumentStore`. Where
- * `IAppendLogStore` is the authoritative append-only write model and
- * `IAtomicDocumentStore` holds atomic documents, `IQueryStore` serves fast,
- * indexed, paginated reads over a *derived* dataset — typically materialized
- * from an append log by a projector.
- *
- * This file intentionally ships the interface only. A concrete implementation
- * (e.g. backed by `minidb`) and the projector that feeds it are a follow-up;
- * the contract is fixed here so domains can depend on it without coupling to
- * any specific engine.
- *
- * `collection` is a logical table (an engine may encode it as a key prefix).
- * Values are plain JSON-shaped objects; indexes are declared over their fields.
- *
- * Ordered columns: a record may carry *columns* — numeric scalars declared at
- * write time — that an engine keeps in an ordered structure so
- * `pageByColumn` can serve bounded, sorted pages without scanning and
- * re-sorting the whole collection. A column named `x` must duplicate a
- * numeric field `x` present in the value (engines may order by either), and
- * column names are store-wide: two collections must not reuse the same
- * column name with different semantics. Sharding, WAL offsets, and engine
- * generations stay backend-private and never appear here.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export type SortDir = 'asc' | 'desc';

@@ -1,13 +1,3 @@
-/**
- * `sessionInstructions` domain — seeded AGENTS.md provider contract.
- *
- * Defines `ISessionInstructionsProvider`, the pure-data injection contract
- * carrying the workspace's current AGENTS.md snapshot (combined content, the
- * oversize/load warning, and the discovered-file list) and the change event
- * fired when a watched instruction file invalidates the snapshot. The
- * contract carries no IO. Session-scoped.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ScopeSeed } from '#/_base/di/scope';
 import type { Event } from '#/_base/event';

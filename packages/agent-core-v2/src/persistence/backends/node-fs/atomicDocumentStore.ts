@@ -1,16 +1,8 @@
-/**
- * `JsonAtomicDocumentStore` — node-fs backend for `IAtomicDocumentStore`.
- *
- * JSON and TOML codec implementations plus the `AtomicDocumentStoreBase`,
- * `JsonAtomicDocumentStore`, and `TomlAtomicDocumentStore` classes. Reads and
- * writes bytes through `IFileSystemStorageService`. Bound at
- * App scope.
- */
-
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Event } from '#/_base/event';
 
 import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';

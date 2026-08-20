@@ -1,12 +1,3 @@
-/**
- * FetchURL / LocalFetchURLProvider abort-signal plumbing.
- *
- * Locks in that the `AbortSignal` carried on `ExecutableToolContext` is
- * forwarded all the way to the underlying `fetch` so an in-flight request
- * is actually cancelled (not merely raced by the executor), and that the
- * tool re-throws aborts so the executor can classify user cancellation.
- */
-
 import { lookup } from 'node:dns/promises';
 
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
@@ -18,8 +9,6 @@ import type { UrlFetcher, UrlFetchResult } from '#/app/web/tools/fetch-url-types
 
 vi.mock('node:dns/promises', () => ({ lookup: vi.fn() }));
 
-// LocalFetchURLProvider resolves hostnames before fetching; keep DNS
-// hermetic so provider-level tests never touch the real resolver.
 beforeEach(() => {
   (lookup as unknown as Mock).mockReset();
   (lookup as unknown as Mock).mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
@@ -131,10 +120,6 @@ describe('FetchURLTool output note', () => {
 });
 
 describe('FetchURLTool backend resolution', () => {
-  // Agent creation constructs the tool; the backend must not materialize
-  // until a call needs it. The service documents that each getUrlFetcher()
-  // call re-reads config and login state, and a construction-time read would
-  // race the identity freeze during a fast bootstrap.
   it('resolves the fetcher per invocation, never at construction', async () => {
     const fetch = vi
       .fn<UrlFetcher['fetch']>()

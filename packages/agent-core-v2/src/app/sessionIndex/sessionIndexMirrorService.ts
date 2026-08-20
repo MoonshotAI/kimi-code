@@ -1,30 +1,6 @@
-/**
- * `sessionIndex` domain (L2) — `ISessionIndexMirror` implementation.
- *
- * The write side of the session read model. `SessionMetadata` (Session scope)
- * records the freshest `SessionSummary` here once the authoritative
- * `state.json` is durable; this App-scoped queue then mirrors it into the
- * `IQueryStore` read model *off the user completion path*. Updates coalesce
- * per session (only the newest summary is kept) and flush in chunks — on a
- * short timer or as soon as a batch fills — writing summaries (with the
- * recency column declared) and per-workspace counter deltas into the
- * currently published generation.
- *
- * Everything here is best-effort: a flush failure keeps the entries queued,
- * backs off, and after repeated failures gives up until the next `record` —
- * the failed entries stay dirty and the domain's reconciliation heals them
- * from the authoritative documents. A queue overflow drops incoming summaries
- * (logged) rather than growing memory without bound. `drain()` is the
- * explicit shutdown path — the composition root awaits it before the query
- * store closes; DI disposal additionally fires a best-effort drain into a
- * module-level set so hosts without explicit wiring can await it via
- * `drainSessionIndexMirror()`.
- *
- * Bound at App scope.
- */
-
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IntervalTimer } from '#/_base/utils/timer';
 import { IFlagService } from '#/app/flag/flag';
@@ -47,12 +23,6 @@ const FLUSH_BATCH_SIZE = 500;
 const MAX_PENDING = 10_000;
 const MAX_CONSECUTIVE_FAILURES = 5;
 
-/**
- * Best-effort drains fired by DI disposal (which is synchronous). The server
- * shutdown path awaits the service's own `drain()` explicitly before the
- * query store closes; this set is the backstop for hosts that only tear the
- * scope down.
- */
 const pendingDrains = new Set<Promise<void>>();
 
 export async function drainSessionIndexMirror(): Promise<void> {
@@ -109,13 +79,18 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
     return [...this.pendingMap.values()];
   }
 
+  async evict(id: string): Promise<void> {
+    this.pendingMap.delete(id);
+    await this.flushing;
+    this.pendingMap.delete(id);
+  }
+
   async drain(): Promise<void> {
     this.timer.cancel();
     while (this.pendingMap.size > 0) {
       const before = this.pendingMap.size;
       await this.flush();
       if (this.pendingMap.size >= before) {
-        // No progress — the store is down; the next reconciliation heals.
         this.log.warn('session index mirror drain made no progress; leaving the rest dirty', {
           pending: this.pendingMap.size,
         });
@@ -140,8 +115,6 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
     try {
       const manifest = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
       if (manifest === undefined) {
-        // No published generation yet — the running projection reads the
-        // authoritative documents and covers these sessions; retry shortly.
         this.consecutiveFailures += 1;
         return;
       }

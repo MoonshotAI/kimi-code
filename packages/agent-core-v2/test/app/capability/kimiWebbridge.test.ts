@@ -1,10 +1,3 @@
-/**
- * `kimi-webbridge` capability entry — platform asset mapping, layered
- * detect, and the idempotent install flow (download → start-if-down →
- * plugin wiring). All host effects are faked
- * (temp dirs, scripted fetch, scripted host processes, fake plugins).
- */
-
 import { mkdtemp, readFile, readdir, rm, mkdir, writeFile, access, chmod, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -90,8 +83,6 @@ function fakePlugins(installed: Array<{ id: string; enabled: boolean; state: str
       ),
     installPlugin: (input: { source: string }) => {
       installs.push(input.source);
-      // Upsert semantics of the real manager: a new id installs enabled, an
-      // existing record keeps its (possibly disabled) enabled flag.
       const existing = installed.find((p) => p.id === 'kimi-webbridge');
       if (existing === undefined) {
         installed.push({ id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.11.3' });
@@ -111,7 +102,6 @@ function fakePlugins(installed: Array<{ id: string; enabled: boolean; state: str
   return { service, installs, enabledCalls };
 }
 
-/** Scripted fetch: answers daemon /status and CDN binary downloads. */
 function fakeFetch(opts: {
   statusSequence?: Array<object | 'error'>;
   binary?: Uint8Array;
@@ -179,9 +169,6 @@ describe('kimi-webbridge entry', () => {
     await writeFile(from, 'new');
     await writeFile(to, 'old-running');
 
-    // Stage-then-rename on the target filesystem: the live destination is
-    // replaced atomically (never opened for write — ETXTBSY-safe), the
-    // source is removed, and no sibling temp is left behind.
     await renameAcrossDevicesFallback(from, to);
 
     expect(await readFile(to, 'utf-8')).toBe('new');
@@ -217,7 +204,7 @@ describe('kimi-webbridge entry', () => {
     ]);
   });
 
-  it('reports user skill shadows for manual cleanup without deleting them', async () => {
+  it('backs up standalone skills after refreshing the managed plugin', async () => {
     const kimiHome = path.join(root, 'kimi-home');
     const userHome = path.join(root, 'user-home');
     await mkdir(path.join(kimiHome, 'skills', 'kimi-webbridge'), { recursive: true });
@@ -232,20 +219,37 @@ describe('kimi-webbridge entry', () => {
 
     const detected = await entry.detect();
 
-    expect(detected.steps.find((step) => step.id === 'skill-shadow')).toEqual({
-      id: 'skill-shadow',
-      state: 'failed',
+    expect(detected.steps.find((step) => step.id === 'standalone-skill-migration')).toEqual({
+      id: 'standalone-skill-migration',
+      state: 'missing',
       detail: `${path.join(kimiHome, 'skills', 'kimi-webbridge')}, ${path.join(userHome, '.agents', 'skills', 'kimi-webbridge')}`,
       optional: true,
     });
-    await access(path.join(kimiHome, 'skills', 'kimi-webbridge', 'SKILL.md'));
-    await access(path.join(userHome, '.agents', 'skills', 'kimi-webbridge', 'SKILL.md'));
+    const reports: string[] = [];
+    const note = await entry.install((step) => reports.push(step));
+
+    expect(plugins.installs).toEqual([
+      'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip',
+    ]);
+    expect(note).toBe('user-skill-migrated');
+    expect(reports).toContain('standalone-skill-migration');
+    await expect(access(path.join(kimiHome, 'skills', 'kimi-webbridge'))).rejects.toThrow();
+    await expect(access(path.join(userHome, '.agents', 'skills', 'kimi-webbridge'))).rejects.toThrow();
+
+    const backupDir = path.join(kimiHome, 'backups', 'kimi-webbridge-skills');
+    const backups = await readdir(backupDir);
+    expect(backups).toHaveLength(1);
+    await expect(
+      readFile(path.join(backupDir, backups[0]!, 'kimi-code', 'SKILL.md'), 'utf8'),
+    ).resolves.toBe('old');
+    await expect(
+      readFile(path.join(backupDir, backups[0]!, 'agents', 'SKILL.md'), 'utf8'),
+    ).resolves.toBe('old');
   });
 
   it('installs end-to-end: download, start-if-down, and plugin wiring', async () => {
     const plugins = fakePlugins([]);
     const host = fakeHostProcess();
-    // First status poll (before start): down. Subsequent polls: up.
     const { fetchImpl } = fakeFetch({
       statusSequence: [
         { running: false },
@@ -260,19 +264,37 @@ describe('kimi-webbridge entry', () => {
 
     await entry.install((step, percent) => reports.push([step, percent]));
 
-    // Binary downloaded into place and made executable.
     const binPath = path.join(root, 'user-home', '.kimi-webbridge', 'bin', 'kimi-webbridge');
     await access(binPath);
-    // Daemon started exactly once (start-if-down).
     expect(host.calls.map((c) => `${c.command} ${c.args.join(' ')}`)).toEqual([`${binPath} start`]);
-    // Plugin wiring installed from the official CDN zip.
     expect(plugins.installs).toEqual([
       'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip',
     ]);
-    // Progress reported download steps.
     expect(reports[0]).toEqual(['download', 0]);
     expect(reports.some(([step]) => step === 'daemon')).toBe(true);
     expect(reports.some(([step]) => step === 'skill')).toBe(true);
+  });
+
+  it('installs the plugin zip from the global CDN when the region is global', async () => {
+    const plugins = fakePlugins([]);
+    const host = fakeHostProcess();
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: true }],
+    });
+    const entry = createKimiWebbridgeEntry(
+      makeCtx({
+        plugins: plugins.service,
+        hostProcess: host.service,
+        fetchImpl,
+        resolveRegion: () => 'global',
+      }),
+    );
+
+    await entry.install(() => {});
+
+    expect(plugins.installs).toEqual([
+      'https://code.kimi.ai/kimi-code/plugins/official/kimi-webbridge.zip',
+    ]);
   });
 
   it('never starts the daemon when one is already running (coexistence)', async () => {
@@ -285,8 +307,9 @@ describe('kimi-webbridge entry', () => {
       makeCtx({ plugins: plugins.service, hostProcess: host.service, fetchImpl }),
     );
 
-    await entry.install(() => {});
+    const note = await entry.install(() => {});
     expect(host.calls).toEqual([]);
+    expect(note).toBeUndefined();
   });
 
   it('reinstalls the latest binary and plugin for a ready capability', async () => {
@@ -340,6 +363,37 @@ describe('kimi-webbridge entry', () => {
     expect(plugins.installs).toHaveLength(1);
   });
 
+  it('refreshes the wiring plugin when daemon recovery is the only missing layer', async () => {
+    const userHome = path.join(root, 'user-home');
+    await mkdir(path.join(userHome, '.kimi-webbridge', 'bin'), { recursive: true });
+    const binPath = path.join(userHome, '.kimi-webbridge', 'bin', 'kimi-webbridge');
+    await writeFile(binPath, 'bin');
+    await chmod(binPath, 0o755);
+    const plugins = fakePlugins([
+      { id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.11.3' },
+    ]);
+    const host = fakeHostProcess();
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [
+        { running: false },
+        { running: false },
+        { running: true, version: 'v1.11.3', extension_connected: true },
+      ],
+    });
+    const entry = createKimiWebbridgeEntry(
+      makeCtx({ plugins: plugins.service, hostProcess: host.service, fetchImpl }),
+    );
+
+    await entry.install(() => {});
+
+    expect(plugins.installs).toEqual([
+      'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip',
+    ]);
+    expect(host.calls.map((call) => `${call.command} ${call.args.join(' ')}`)).toEqual([
+      `${binPath} start`,
+    ]);
+  });
+
   it('rejects install on unsupported platforms before any side effect', async () => {
     const plugins = fakePlugins([]);
     const entry = createKimiWebbridgeEntry(
@@ -351,7 +405,6 @@ describe('kimi-webbridge entry', () => {
   it('treats a non-executable leftover binary as missing and re-downloads it', async () => {
     const userHome = path.join(root, 'user-home');
     await mkdir(path.join(userHome, '.kimi-webbridge', 'bin'), { recursive: true });
-    // An install interrupted between rename and chmod leaves this behind.
     const binPath = path.join(userHome, '.kimi-webbridge', 'bin', 'kimi-webbridge');
     await writeFile(binPath, 'stale');
     await chmod(binPath, 0o644);
@@ -382,10 +435,7 @@ describe('kimi-webbridge entry', () => {
     });
     const entry = createKimiWebbridgeEntry(makeCtx({ plugins: plugins.service, fetchImpl }));
 
-    // installPlugin preserves the disabled flag, but setup must not strand
-    // the capability at partial by leaving the wiring off.
     await entry.install(() => {});
     expect(plugins.enabledCalls).toEqual([{ id: 'kimi-webbridge', enabled: true }]);
   });
 });
-

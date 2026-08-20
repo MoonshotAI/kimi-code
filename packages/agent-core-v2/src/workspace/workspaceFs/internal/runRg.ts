@@ -1,16 +1,6 @@
-/**
- * `workspaceFs` domain — shared ripgrep subprocess plumbing.
- *
- * Timeout / abort handling, capped stdout / stderr draining, two-phase kill
- * with process disposal, and the EAGAIN retry predicate for spawning `rg`
- * through the handler-shared `ISessionProcessRunner`. Ported from v1. This
- * helper is the reusable module for callers that want the simpler buffered
- * shape.
- */
-
 import type { Readable } from 'node:stream';
 
-import type { IProcess, ISessionProcessRunner } from '#/session/process/processRunner';
+import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 
 export const DEFAULT_TIMEOUT_MS = 20_000;
 export const SIGTERM_GRACE_MS = 5_000;
@@ -27,7 +17,7 @@ export interface RunRgResult {
 
 export type RunRgOutcome = RunRgResult | { readonly kind: 'aborted' };
 
-async function disposeProcess(proc: IProcess): Promise<void> {
+async function disposeProcess(proc: IHostProcess): Promise<void> {
   try {
     await proc.dispose();
   } catch {
@@ -35,7 +25,7 @@ async function disposeProcess(proc: IProcess): Promise<void> {
 }
 
 export async function runRgOnce(
-  runner: ISessionProcessRunner,
+  runner: IHostProcessService,
   rgArgs: readonly string[],
   signal: AbortSignal,
   options?: { readonly cwd?: string },
@@ -44,7 +34,9 @@ export async function runRgOnce(
     return { kind: 'aborted' };
   }
 
-  const proc: IProcess = await runner.exec(rgArgs, { cwd: options?.cwd });
+  const command = rgArgs[0];
+  if (command === undefined) throw new Error('runRgOnce requires a command');
+  const proc: IHostProcess = await runner.spawn(command, rgArgs.slice(1), { cwd: options?.cwd });
 
   try {
     proc.stdin.end();

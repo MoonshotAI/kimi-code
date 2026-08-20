@@ -1,31 +1,6 @@
-/**
- * Generic Zod body / query / params validators for Fastify routes.
- *
- * On validation success: the parsed value replaces the raw input on the
- * request object so handlers operate on a `T`-typed payload (no need to
- * re-parse). On failure: we send a `40001 validation.failed` envelope with a
- * `details` array of `{path, message}` issues (REST.md §1.4) and return early
- * — the handler does not run.
- *
- * The envelope shape matches `errEnvelope(40001, ...)` with the extra
- * `details` field at top level. REST.md §1.4 specifies `details` as a free
- * field per code; for `40001` clients expect `Array<{path, message}>` so they
- * can highlight the offending field. We extend `errEnvelope`'s output rather
- * than reshape it — this is the single error code that carries structured
- * details so a one-off shape is acceptable.
- *
- * Note: route-level Zod failures land here at the preHandler stage and never
- * reach the generic error hook, which only emits 50001 for unknown exceptions.
- */
-
 import { ErrorCode } from '../protocol/error-codes';
 import type { z } from 'zod';
 
-/**
- * Minimal Fastify request/reply shapes — keep our hook independent of the
- * concrete generic parameters so it works against the server's pino-typed
- * variant without TS friction.
- */
 interface ValidationRequest {
   id: string;
   body?: unknown;

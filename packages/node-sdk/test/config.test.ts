@@ -357,17 +357,6 @@ describe('KimiHarness config API', () => {
         source: 'default',
       },
       {
-        id: 'acp-v2',
-        title: 'ACP server v2 (agent-core-v2 engine)',
-        description:
-          'Expose the `kimi acp-v2` sub-command that runs the Agent Client Protocol server over the experimental agent-core-v2 engine.',
-        surface: 'core',
-        env: 'KIMI_CODE_EXPERIMENTAL_ACP_V2',
-        defaultEnabled: false,
-        enabled: false,
-        source: 'default',
-      },
-      {
         id: 'terminal_mouse_input',
         title: 'Terminal mouse input',
         description: 'Allow mouse clicks and drags to position and select text in the main prompt editor.',

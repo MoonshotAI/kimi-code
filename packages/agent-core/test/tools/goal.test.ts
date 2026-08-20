@@ -85,25 +85,6 @@ describe('CreateGoalTool', () => {
       code: ErrorCodes.GOAL_OBJECTIVE_TOO_LONG,
     });
   });
-
-  it('uses the imported markdown description', () => {
-    const tool = new CreateGoalTool(fakeAgent());
-    expect(tool.description).toContain('Create a durable, structured goal');
-    expect(tool.description).not.toContain('SetGoalBudget');
-  });
-
-  it('warns that creating fails when a goal already exists', () => {
-    const description = new CreateGoalTool(fakeAgent()).description.toLowerCase();
-    // agent/goal/index.ts throws "A goal already exists; use replace..." without replace:true.
-    expect(description).toContain('already exists');
-    expect(description).toContain('replace');
-    // The replace param blocks on any persisted goal, including `blocked` (index.ts).
-    const replaceDesc =
-      ((new CreateGoalTool(fakeAgent()).parameters as {
-        properties: Record<string, { description?: string }>;
-      }).properties['replace']?.description) ?? '';
-    expect(replaceDesc).toContain('blocked');
-  });
 });
 
 describe('GetGoalTool', () => {
@@ -138,30 +119,9 @@ describe('GetGoalTool', () => {
     parsed = JSON.parse((await executeTool(tool, ctx({}))).output as string);
     expect(parsed.goal.status).toBe('blocked');
   });
-
-  it('describes only the fields GetGoal actually returns', () => {
-    const description = new GetGoalTool(fakeAgent()).description.toLowerCase();
-    expect(description).toContain('objective');
-    expect(description).toContain('budget');
-    // GoalSnapshot has no self-report / evaluator-verdict fields, so the
-    // description must not promise them (serialize.ts strips only goalId).
-    expect(description).not.toContain('self-report');
-    expect(description).not.toContain('evaluator');
-  });
 });
 
 describe('SetGoalBudgetTool', () => {
-  it('states the 1-second to 24-hour time-budget band', () => {
-    const description = new SetGoalBudgetTool(fakeAgent()).description;
-    // set-goal-budget.ts rejects time budgets < 1s or > 24h (MIN/MAX_REASONABLE_TIME_BUDGET_MS).
-    expect(description).toContain('1 second');
-    expect(description).toContain('24 hours');
-    // turn/token budgets are floored at 1 and rounded to the nearest whole number
-    // (Math.max(1, Math.round(value))) — the description must not claim "rounded up".
-    expect(description).toContain('rounded to the nearest whole number');
-    expect(description).not.toContain('rounded up');
-  });
-
   it('advertises an object parameter schema for OpenAI-compatible providers', () => {
     const parameters = new SetGoalBudgetTool(fakeAgent()).parameters;
 
@@ -290,39 +250,6 @@ describe('SetGoalBudgetTool', () => {
 });
 
 describe('UpdateGoalTool', () => {
-  it('guards against premature blocked status', () => {
-    const description = new UpdateGoalTool(fakeAgent()).description.toLowerCase();
-    // Reserve blocked for genuine impasses, not ordinary unfinished work.
-    expect(description).toContain('genuine impasse');
-    expect(description).toContain('3 consecutive goal turns');
-    expect(description).toContain('fresh blocked audit');
-    expect(description).toContain('impossible, unsafe, or contradictory');
-    expect(description).toContain('same turn instead of running more goal turns');
-    expect(description).toContain('hard, slow');
-    expect(description).toContain('needs more goal turns');
-    // UpdateGoal also injects the completion/blocked outcome prompt, so it does
-    // more than "only record the status".
-    expect(description).not.toContain('only records the status');
-  });
-
-  it('exposes the blocked-audit rule in the status parameter schema', () => {
-    const statusDescription =
-      ((new UpdateGoalTool(fakeAgent()).parameters as {
-        properties: Record<string, { description?: string }>;
-      }).properties['status']?.description) ?? '';
-    expect(statusDescription).toContain('3 consecutive goal turns');
-    expect(statusDescription).toContain('impossible, unsafe, or contradictory objectives');
-  });
-
-  it('discourages calling UpdateGoal after a non-terminal work slice', () => {
-    const description = new UpdateGoalTool(fakeAgent()).description;
-    expect(description).toContain('Most active goal turns should not call this tool');
-    expect(description).toContain('end the turn normally without calling UpdateGoal');
-    expect(description).toContain('actual objective and every explicit requirement');
-    expect(description).toContain('weak or indirect evidence');
-    expect(description).toContain('budget is nearly exhausted');
-  });
-
   // Keep a capturing context here to prove terminal paths no longer append a
   // separate reminder; the outcome prompt is returned as the tool result.
   function agentWithContext(

@@ -1,10 +1,18 @@
 import type { BackgroundTaskInfo, Session } from '@moonshot-ai/kimi-code-sdk';
-import type { Component, ProcessTerminal, TUI } from '@moonshot-ai/pi-tui';
+import type { ProcessTerminal, TUI } from '@moonshot-ai/pi-tui';
 
+import { AgentActivityViewer, formatSubagentActivityPreview } from '../components/dialogs/agent-activity-viewer';
 import { TaskOutputViewer } from '../components/dialogs/task-output-viewer';
 import { TasksBrowserApp, type TasksFilter } from '../components/dialogs/tasks-browser';
 import type { Theme } from '#/tui/theme';
 import type { CustomEditor } from '../components/editor/custom-editor';
+import {
+  beginScreenTakeover,
+  endScreenTakeover,
+  type ScreenTakeover,
+} from '../utils/screen-takeover';
+import type { SessionEventHandler } from './session-event-handler';
+import type { SubagentActivityRecord } from './subagent-activity-store';
 
 export interface TasksBrowserHost {
   readonly state: {
@@ -15,6 +23,7 @@ export interface TasksBrowserHost {
     readonly editor: CustomEditor;
   };
   readonly backgroundTasks: ReadonlyMap<string, BackgroundTaskInfo>;
+  readonly sessionEventHandler: SessionEventHandler;
   readonly session: Session | undefined;
   showError(msg: string): void;
   setTasksBrowser(value: TasksBrowserState | undefined): void;
@@ -24,7 +33,7 @@ export interface TasksBrowserHost {
 
 export type TasksBrowserState = {
   component: TasksBrowserApp;
-  savedChildren: readonly Component[];
+  takeover: ScreenTakeover;
   filter: TasksFilter;
   selectedTaskId: string | undefined;
   tailOutput: string | undefined;
@@ -35,8 +44,8 @@ export type TasksBrowserState = {
   pollTimer: NodeJS.Timeout | undefined;
   viewer:
     | {
-        component: TaskOutputViewer;
-        savedChildren: readonly Component[];
+        component: TaskOutputViewer | AgentActivityViewer;
+        takeover: ScreenTakeover;
         taskId: string;
         output: string;
         refreshId: number;
@@ -84,10 +93,8 @@ export class TasksBrowserController {
       state.terminal,
     );
 
-    const savedChildren = [...state.ui.children];
     this.host.suspendTerminalMouseTracking();
-    state.ui.clear();
-    state.ui.addChild(component);
+    const takeover = beginScreenTakeover(state.ui, component);
     state.ui.setFocus(component);
     state.ui.requestRender(true);
 
@@ -97,7 +104,7 @@ export class TasksBrowserController {
 
     this.host.setTasksBrowser({
       component,
-      savedChildren,
+      takeover,
       filter,
       selectedTaskId,
       tailOutput: undefined,
@@ -122,10 +129,7 @@ export class TasksBrowserController {
     if (browser.pollTimer !== undefined) clearInterval(browser.pollTimer);
     if (browser.flashTimer !== undefined) clearTimeout(browser.flashTimer);
 
-    state.ui.clear();
-    for (const child of browser.savedChildren) {
-      state.ui.addChild(child);
-    }
+    endScreenTakeover(state.ui, browser.takeover);
     this.host.setTasksBrowser(undefined);
     state.ui.setFocus(state.editor);
     this.host.refreshTerminalMouseTracking();
@@ -144,6 +148,8 @@ export class TasksBrowserController {
     const browser = state.tasksBrowser;
     const viewer = browser?.viewer;
     if (browser === undefined || viewer === undefined) return;
+    // The agent activity viewer refreshes from the local store, not the RPC.
+    if (viewer.component instanceof AgentActivityViewer) return;
 
     const session = this.host.session;
     if (session === undefined) return;
@@ -218,7 +224,24 @@ export class TasksBrowserController {
       return;
     }
     if (state.tasksBrowser !== browser) return;
+    this.syncAgentPreview();
     this.pushProps(tasks);
+  }
+
+  /** Agent tasks capture output only on completion, so while one is selected
+   *  the Preview frame is fed from the in-memory activity store instead. */
+  private syncAgentPreview(): void {
+    const browser = this.host.state.tasksBrowser;
+    const selectedTaskId = browser?.selectedTaskId;
+    if (browser === undefined || selectedTaskId === undefined) return;
+    const info = this.host.backgroundTasks.get(selectedTaskId);
+    if (info?.kind !== 'agent' || info.agentId === undefined) return;
+    const record = this.host.sessionEventHandler.subAgentEventHandler.activityStore.get(
+      info.agentId,
+    );
+    if (record === undefined) return;
+    browser.tailOutput = formatSubagentActivityPreview(record);
+    browser.tailLoading = false;
   }
 
   private pushProps(tasks: readonly BackgroundTaskInfo[]): void {
@@ -321,6 +344,20 @@ export class TasksBrowserController {
     if (browser === undefined) return;
     if (browser.viewer !== undefined) return;
 
+    // Agent tasks get the activity detail view when this process holds a
+    // record for the agent; otherwise (e.g. a `lost` task after resume) fall
+    // through to the captured-output viewer.
+    const info = this.host.backgroundTasks.get(taskId);
+    if (info !== undefined && info.kind === 'agent' && info.agentId !== undefined) {
+      const record = this.host.sessionEventHandler.subAgentEventHandler.activityStore.get(
+        info.agentId,
+      );
+      if (record !== undefined) {
+        this.openAgentActivityViewer(taskId, info, record);
+        return;
+      }
+    }
+
     const session = this.host.session;
     if (session === undefined) {
       this.flash('No active session.');
@@ -338,7 +375,6 @@ export class TasksBrowserController {
     const current = state.tasksBrowser;
     if (current === undefined || current !== browser) return;
 
-    const info = this.host.backgroundTasks.get(taskId);
     const viewer = new TaskOutputViewer(
       {
         taskId,
@@ -351,9 +387,7 @@ export class TasksBrowserController {
       state.terminal,
     );
 
-    const savedBrowserChildren = [...state.ui.children];
-    state.ui.clear();
-    state.ui.addChild(viewer);
+    const takeover = beginScreenTakeover(state.ui, viewer);
     state.ui.setFocus(viewer);
     state.ui.requestRender(true);
 
@@ -363,7 +397,7 @@ export class TasksBrowserController {
 
     browser.viewer = {
       component: viewer,
-      savedChildren: savedBrowserChildren,
+      takeover,
       taskId,
       output,
       refreshId: 0,
@@ -371,10 +405,87 @@ export class TasksBrowserController {
     };
   }
 
+  private openAgentActivityViewer(
+    taskId: string,
+    info: BackgroundTaskInfo,
+    record: SubagentActivityRecord,
+  ): void {
+    const { state } = this.host;
+    const browser = state.tasksBrowser;
+    if (browser === undefined || browser.viewer !== undefined) return;
+
+    const viewer = new AgentActivityViewer(
+      {
+        taskId,
+        info,
+        record,
+        onClose: () => {
+          this.closeOutputViewer();
+        },
+      },
+      state.terminal,
+    );
+
+    const takeover = beginScreenTakeover(state.ui, viewer);
+    state.ui.setFocus(viewer);
+    state.ui.requestRender(true);
+
+    // The activity store is in-memory — refreshing is a local read, no RPC.
+    const pollTimer = setInterval(() => {
+      this.refreshAgentActivityViewer();
+    }, 1000);
+
+    browser.viewer = {
+      component: viewer,
+      takeover,
+      taskId,
+      output: '',
+      refreshId: 0,
+      pollTimer,
+    };
+  }
+
+  private refreshAgentActivityViewer(): void {
+    const { state } = this.host;
+    const viewer = state.tasksBrowser?.viewer;
+    if (viewer === undefined || !(viewer.component instanceof AgentActivityViewer)) return;
+
+    const info = this.host.backgroundTasks.get(viewer.taskId);
+    const agentId = info?.kind === 'agent' ? info.agentId : undefined;
+    const record =
+      agentId === undefined
+        ? undefined
+        : this.host.sessionEventHandler.subAgentEventHandler.activityStore.get(agentId);
+    viewer.component.setProps({
+      taskId: viewer.taskId,
+      info,
+      record,
+      onClose: () => {
+        this.closeOutputViewer();
+      },
+    });
+    state.ui.requestRender();
+  }
+
   private loadTail(taskId: string): void {
     const { state } = this.host;
     const browser = state.tasksBrowser;
     if (browser === undefined) return;
+
+    // Agent tasks capture output only on completion — serve the preview from
+    // the in-memory activity store instead of the RPC when a record exists.
+    const info = this.host.backgroundTasks.get(taskId);
+    if (info !== undefined && info.kind === 'agent' && info.agentId !== undefined) {
+      const record = this.host.sessionEventHandler.subAgentEventHandler.activityStore.get(
+        info.agentId,
+      );
+      if (record !== undefined) {
+        browser.tailOutput = formatSubagentActivityPreview(record);
+        browser.tailLoading = false;
+        this.repaint();
+        return;
+      }
+    }
 
     const session = this.host.session;
     if (session === undefined) {
@@ -427,10 +538,7 @@ export class TasksBrowserController {
     const viewer = browser.viewer;
     clearInterval(viewer.pollTimer);
     browser.viewer = undefined;
-    this.host.state.ui.clear();
-    for (const child of viewer.savedChildren) {
-      this.host.state.ui.addChild(child);
-    }
+    endScreenTakeover(this.host.state.ui, viewer.takeover);
     this.host.state.ui.setFocus(browser.component);
     this.host.state.ui.requestRender(true);
   }

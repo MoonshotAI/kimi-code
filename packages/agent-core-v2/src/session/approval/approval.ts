@@ -1,12 +1,3 @@
-/**
- * `approval` domain — session-scope approval broker.
- *
- * Defines the public contract of approval brokering: the `ApprovalRequest` /
- * `ApprovalDecision` models and the `ISessionApprovalService` used to request a
- * decision, resolve it, and list pending approvals. Session-scoped — one
- * broker per session.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 

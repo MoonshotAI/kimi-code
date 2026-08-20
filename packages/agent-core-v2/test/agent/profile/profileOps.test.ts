@@ -6,7 +6,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { AgentProfileService } from '#/agent/profile/profileService';
-import { ActiveToolsModel, ProfileModel } from '#/agent/profile/profileOps';
+import { profileActiveToolsKey, profileKey } from '#/agent/profile/profileOps';
 import {
   DEFAULT_AGENT_PROFILE_NAME,
   type EnvironmentDisclosureSnapshot,
@@ -34,14 +34,17 @@ import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { IWireService } from '#/wire/wire';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
-// Side-effect registration: `drivesThinkingThroughTraits('kimi')` (used by
-// the forced-effort override) answers through the provider-definition registry.
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 
-import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
+import {
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+  restoreTestEventDispatcher,
+  testWireScope,
+} from '../../wire/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'profile-test';
@@ -62,12 +65,6 @@ function createConfigStub(): IConfigService {
   } as unknown as IConfigService;
 }
 
-/**
- * The pure-data Model the kosong catalog hands out. No morphs: per-turn
- * intent (cache key / sampling / thinking effort+keep) now surfaces through
- * `IAgentProfileService.resolveRequestParams()` instead of `with*` call
- * records on a recording Model stub.
- */
 function createTestModel(
   options: {
     readonly id?: string;
@@ -134,13 +131,6 @@ function createModelCatalogStub(models: Readonly<Record<string, Model>> = {}): I
   };
 }
 
-/**
- * The one registry answer the profile reads: whether the (protocol,
- * providerType) pair drives thinking through traits, and whether that driver
- * demands strict effort validation (`strictThinkingValidation`). Mirrored
- * here from the real Kimi definitions: strict on the native openai
- * transport, lenient over anthropic, nothing on other protocols.
- */
 function createProtocolRegistryStub(): IProtocolAdapterRegistry {
   return {
     _serviceBrand: undefined,
@@ -191,16 +181,18 @@ function createSessionContextStub(): ISessionContext {
 let disposables: DisposableStore;
 let ix: TestInstantiationService;
 let log: IAppendLogStore;
-let wire: IWireService;
+let dispatcher: IEventDispatcher;
+let agentState: IAgentStateService;
 let svc: IAgentProfileService;
 let configValues: Record<string, unknown>;
 let modelCatalog: IModelCatalog;
 
 function buildHost(key: string): {
   ix: TestInstantiationService;
-  wire: IWireService;
+  dispatcher: IEventDispatcher;
   svc: IAgentProfileService;
   log: IAppendLogStore;
+  agentState: IAgentStateService;
 } {
   const host = disposables.add(new TestInstantiationService());
   host.stub(IFileSystemStorageService, new InMemoryStorageService());
@@ -256,12 +248,15 @@ function buildHost(key: string): {
   });
   host.set(IAgentStateService, new AgentStateService());
   host.set(IAgentProfileService, new SyncDescriptor(AgentProfileService));
-  const wire = registerTestAgentWire(host, testWireScope(SCOPE, key), {
+  registerTestAgentWire(host, testWireScope(SCOPE, key), {
     log: host.get(IAppendLogStore),
   });
+  const dispatcher = registerTestEventDispatcher(host);
+  const agentState = host.get(IAgentStateService);
   return {
+    agentState,
     ix: host,
-    wire,
+    dispatcher,
     svc: host.get(IAgentProfileService),
     log: host.get(IAppendLogStore),
   };
@@ -273,7 +268,8 @@ beforeEach(() => {
   modelCatalog = createModelCatalogStub();
   const host = buildHost(KEY);
   ix = host.ix;
-  wire = host.wire;
+  dispatcher = host.dispatcher;
+  agentState = host.agentState;
   svc = host.svc;
   log = host.log;
 });
@@ -281,7 +277,7 @@ beforeEach(() => {
 afterEach(() => disposables.dispose());
 
 async function readRecords(key = KEY): Promise<WireRecord[]> {
-  await wire.flush();
+  await dispatcher.flush();
   const out: WireRecord[] = [];
   for await (const record of log.read<WireRecord>(testWireScope(SCOPE, key), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
@@ -289,12 +285,12 @@ async function readRecords(key = KEY): Promise<WireRecord[]> {
   return out;
 }
 
-function modelOf(target: IWireService) {
-  return target.getModel(ProfileModel);
+function modelOf(target: IAgentStateService) {
+  return target.get(profileKey);
 }
 
-function activeToolsOf(target: IWireService) {
-  return target.getModel(ActiveToolsModel);
+function activeToolsOf(target: IAgentStateService) {
+  return target.get(profileActiveToolsKey);
 }
 
 describe('AgentProfileService (wire-backed config.update)', () => {
@@ -302,7 +298,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     svc.update({ profileName: DEFAULT_AGENT_PROFILE_NAME, systemPrompt: 'You are helpful.' });
     svc.update({ thinkingLevel: 'on' });
 
-    const model = modelOf(wire);
+    const model = modelOf(agentState);
     expect(model.profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
     expect(model.systemPrompt).toBe('You are helpful.');
     expect(model.thinkingLevel).toBe('on');
@@ -312,20 +308,21 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     expect(records).toEqual([
       {
         type: 'config.update',
+        agentId: 'test-agent',
         profileName: DEFAULT_AGENT_PROFILE_NAME,
         systemPrompt: 'You are helpful.',
         time: expect.any(Number),
       },
-      { type: 'config.update', thinkingEffort: 'on', time: expect.any(Number) },
+      { type: 'config.update', agentId: 'test-agent', thinkingEffort: 'on', time: expect.any(Number) },
     ]);
     expect(records.every((record) => 'payload' in record === false)).toBe(true);
   });
 
   it('re-dispatching an equal config is a no-op on the model (same reference)', () => {
     svc.update({ profileName: DEFAULT_AGENT_PROFILE_NAME });
-    const before = modelOf(wire);
+    const before = modelOf(agentState);
     svc.update({ profileName: DEFAULT_AGENT_PROFILE_NAME });
-    expect(modelOf(wire)).toBe(before);
+    expect(modelOf(agentState)).toBe(before);
   });
 
   it('persists and replays an allowlist reset to unrestricted', async () => {
@@ -341,16 +338,16 @@ describe('AgentProfileService (wire-backed config.update)', () => {
       systemPrompt: 'unrestricted',
       activeToolNames: undefined,
     });
-    expect(activeToolsOf(wire)).toBeUndefined();
+    expect(activeToolsOf(agentState)).toBeUndefined();
 
     const replay = buildHost('profile-replay-active-tools');
-    await restoreTestAgentWire(
-      replay.wire,
+    await restoreTestEventDispatcher(
+      replay.dispatcher,
       log,
       testWireScope(SCOPE, KEY),
       await readRecords(),
     );
-    expect(activeToolsOf(replay.wire)).toBeUndefined();
+    expect(activeToolsOf(replay.agentState)).toBeUndefined();
     replay.ix.dispose();
   });
 
@@ -385,13 +382,13 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     expect(records.filter((record) => record.type === 'config.update')).toHaveLength(0);
 
     const replay = buildHost('profile-replay-disclosure');
-    await restoreTestAgentWire(
-      replay.wire,
+    await restoreTestEventDispatcher(
+      replay.dispatcher,
       replay.log,
       testWireScope(SCOPE, 'profile-replay-disclosure'),
       records,
     );
-    expect(modelOf(replay.wire)).toMatchObject({
+    expect(modelOf(replay.agentState)).toMatchObject({
       systemPrompt: 'rendered prompt',
       environmentDisclosure: environment,
       renderGeneration: 7,
@@ -409,8 +406,8 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     };
 
     const replay = buildHost('profile-replay-legacy-generation');
-    await restoreTestAgentWire(
-      replay.wire,
+    await restoreTestEventDispatcher(
+      replay.dispatcher,
       replay.log,
       testWireScope(SCOPE, 'profile-replay-legacy-generation'),
       [
@@ -424,7 +421,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
       ],
     );
 
-    expect(modelOf(replay.wire)).toMatchObject({
+    expect(modelOf(replay.agentState)).toMatchObject({
       systemPrompt: 'legacy prompt',
       environmentDisclosure: environment,
       renderGeneration: 100,
@@ -453,13 +450,13 @@ describe('AgentProfileService (wire-backed config.update)', () => {
       },
     });
 
-    await restoreTestAgentWire(
-      host.wire,
+    await restoreTestEventDispatcher(
+      host.dispatcher,
       host.log,
       testWireScope(SCOPE, 'profile-replay'),
       records,
     );
-    expect(modelOf(host.wire).profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
+    expect(modelOf(host.agentState).profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
     expect(replayEmits).toBe(0);
 
     const written: WireRecord[] = [];
@@ -478,33 +475,33 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     const records = await readRecords();
 
     const host = buildHost('profile-replay-thinking');
-    await restoreTestAgentWire(
-      host.wire,
+    await restoreTestEventDispatcher(
+      host.dispatcher,
       host.log,
       testWireScope(SCOPE, 'profile-replay-thinking'),
       records,
     );
-    expect(modelOf(host.wire).thinkingLevel).toBe('on');
+    expect(modelOf(host.agentState).thinkingLevel).toBe('on');
   });
 
   it('replays legacy config.update thinkingLevel records', async () => {
     const host = buildHost('profile-replay-legacy-thinking-level');
 
-    await restoreTestAgentWire(
-      host.wire,
+    await restoreTestEventDispatcher(
+      host.dispatcher,
       host.log,
       testWireScope(SCOPE, 'profile-replay-legacy-thinking-level'),
       [{ type: 'config.update', thinkingLevel: 'high' }],
     );
 
-    expect(modelOf(host.wire).thinkingLevel).toBe('high');
+    expect(modelOf(host.agentState).thinkingLevel).toBe('high');
   });
 
   it('returns the persisted effort when a replayed model alias no longer resolves', async () => {
     const host = buildHost('profile-replay-removed-model');
 
-    await restoreTestAgentWire(
-      host.wire,
+    await restoreTestEventDispatcher(
+      host.dispatcher,
       host.log,
       testWireScope(SCOPE, 'profile-replay-removed-model'),
       [{
@@ -521,8 +518,8 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     const host = buildHost('profile-replay-conflicting-thinking-aliases');
 
     await expect(
-      restoreTestAgentWire(
-        host.wire,
+      restoreTestEventDispatcher(
+        host.dispatcher,
         host.log,
         testWireScope(SCOPE, 'profile-replay-conflicting-thinking-aliases'),
         [{ type: 'config.update', thinkingEffort: 'low', thinkingLevel: 'high' }],
@@ -543,9 +540,6 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
 
-    // The morph chain's replacement: the profile's dialect-free per-turn
-    // intent. Wire encoding (`extra_body.thinking.keep`) is the Kimi dialect's
-    // own hook now.
     expect(host.svc.resolveRequestParams()).toEqual({
       cacheKey: 'session-test',
       sampling: { temperature: 0.3 },
@@ -581,7 +575,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
     expect(host.svc.data().thinkingLevel).toBe('high');
-    expect(modelOf(host.wire).thinkingLevel).toBe('high');
+    expect(modelOf(host.agentState).thinkingLevel).toBe('high');
     expect(host.svc.resolveModelContext().thinkingLevel).toBe('max');
 
     expect(host.svc.resolveRequestParams()).toEqual({
@@ -621,8 +615,6 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
     host.svc.update({ modelAlias: 'claude-code', thinkingLevel: 'high' });
 
-    // The intent is dialect-free now; how a cache key reaches the Anthropic
-    // wire (`metadata.user_id`) is the dialect's own hook.
     expect(host.svc.resolveRequestParams()).toEqual({
       cacheKey: 'session-test',
       sampling: { temperature: 0.3 },
@@ -641,10 +633,6 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
 
-    // "Without Kimi generation kwargs" is no longer decidable at the profile:
-    // the durable record in `llmRequester.recordRequest` carries the
-    // thinking/sampling knobs unconditionally, and the Anthropic dialect
-    // encodes the thinking intent itself.
     expect(host.svc.resolveModelContext().thinkingLevel).toBe('max');
     expect(host.svc.resolveRequestParams()).toEqual({
       cacheKey: 'session-test',
@@ -747,10 +735,6 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
     host.svc.update({ modelAlias: 'claude-sonnet', thinkingLevel: 'high' });
 
-    // The cache-key intent is dialect-free now: the profile resolves it for
-    // every protocol. How each dialect encodes it (Kimi `prompt_cache_key`
-    // vs Anthropic `metadata.user_id` vs silently dropped) is the dialect
-    // hook's own decision, asserted at the kosong/provider composition layer.
     expect(host.svc.resolveRequestParams().cacheKey).toBe('session-test');
   });
 });

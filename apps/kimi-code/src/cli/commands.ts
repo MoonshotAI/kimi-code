@@ -2,10 +2,8 @@ import { CLI_COMMAND_NAME } from '#/constant/app';
 import { registerMigrateCommand } from '#/migration/index';
 import { Command, InvalidArgumentError, Option } from 'commander';
 
-import { isAcpV2Enabled } from './experimental-v2';
 import type { CLIOptions } from './options';
 import { registerAcpCommand } from './sub/acp';
-import { registerAcpV2Command } from './sub/acp-v2';
 import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
 import { registerLoginCommand } from './sub/login';
@@ -17,6 +15,7 @@ export type MainCommandHandler = (opts: CLIOptions) => void;
 export type MigrateCommandHandler = () => void;
 export type PluginNodeRunnerHandler = (entry: string, args: readonly string[]) => void;
 export type UpgradeCommandHandler = () => void | Promise<void>;
+export type UpdateDownloadHandler = (version: string, manual: boolean) => void;
 
 export function createProgram(
   version: string,
@@ -24,6 +23,7 @@ export function createProgram(
   onMigrate: MigrateCommandHandler,
   onPluginNodeRunner: PluginNodeRunnerHandler = () => {},
   onUpgrade: UpgradeCommandHandler = () => {},
+  onUpdateDownload: UpdateDownloadHandler = () => {},
 ): Command {
   const program = new Command(CLI_COMMAND_NAME)
     .description('The Starting Point for Next-Gen Agents')
@@ -119,9 +119,6 @@ export function createProgram(
   registerProviderCommand(program);
   registerAcpCommand(program);
   registerWebCommand(program);
-  if (isAcpV2Enabled()) {
-    registerAcpV2Command(program);
-  }
   registerLoginCommand(program);
   registerDoctorCommand(program);
   registerVisCommand(program);
@@ -141,6 +138,17 @@ export function createProgram(
     .allowUnknownOption(true)
     .action((entry: string, args: string[]) => {
       onPluginNodeRunner(entry, args);
+    });
+
+  // Self-spawned worker for native staged updates (detached background
+  // download, or foreground from `kimi upgrade` — `--manual` marks the
+  // latter's stage as user-requested). Hidden: not user-facing.
+  program
+    .command('__update_download', { hidden: true })
+    .argument('<version>')
+    .option('--manual', 'the stage answers an explicit user-initiated upgrade')
+    .action((targetVersion: string, options: { manual?: boolean }) => {
+      onUpdateDownload(targetVersion, options.manual === true);
     });
 
   program.argument('[args...]').action((args: string[]) => {
