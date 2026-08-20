@@ -121,7 +121,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   }
 
   exit(): void {
-    if (!this.isActive) return;
+    if (!this.agentState.get(towerKey)) return;
     void this.dispatcher.dispatch(new TowerModeExit({}));
   }
 

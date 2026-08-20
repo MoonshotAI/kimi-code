@@ -437,6 +437,20 @@ describe('AgentTowerService', () => {
     expect(events).toContainEqual({ type: 'agent.status.updated', towerMode: true });
   });
 
+  it('exit clears persisted tower state even while the tower flag is off', () => {
+    const tower = ix.get(IAgentTowerService);
+    tower.enter();
+    expect(tower.isActive).toBe(true);
+
+    towerFlagOn = false;
+    expect(tower.isActive).toBe(false);
+
+    tower.exit();
+
+    towerFlagOn = true;
+    expect(tower.isActive).toBe(false);
+  });
+
   it('restore keeps the feature inert while the tower flag is off', async () => {
     ix.stub(IAgentScopeContext, {
       agentId: 'main',
