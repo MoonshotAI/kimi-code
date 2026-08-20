@@ -40,7 +40,6 @@ export interface AuthFlowHost {
   resetSessionRuntime(): void;
   setSession(session: Session): Promise<void>;
   syncRuntimeState(session?: Session): Promise<void>;
-  closeSession(reason: string): Promise<void>;
   appendStartupNotice(extra: string): void;
   hydrateLazyConfigDefaults(): Promise<void>;
   readonly sessionEventHandler: SessionEventHandler;
@@ -132,18 +131,6 @@ export class AuthFlowController {
     host.updateTerminalTitle();
     void host.refreshSkillCommands(host.session);
     void host.refreshPluginCommands(host.session);
-  }
-
-  async clearActiveSessionAfterLogout(): Promise<void> {
-    await this.host.closeSession('logged out');
-    this.host.resetSessionRuntime();
-    this.host.setAppState({
-      sessionId: '',
-      model: '',
-      sessionTitle: null,
-    });
-    await this.host.refreshSkillCommands();
-    await this.host.refreshPluginCommands();
   }
 
   async refreshConfigAfterLogin(): Promise<void> {

@@ -1904,7 +1904,7 @@ describe('KimiTUI startup', () => {
     }
   });
 
-  it('tracks logout after managed credentials and session state are cleared', async () => {
+  it('keeps the session and clears model state when logging out the current provider', async () => {
     const session = makeSession();
     const harness = makeHarness(session, {
       getConfig: vi.fn(async () => ({
@@ -1926,17 +1926,21 @@ describe('KimiTUI startup', () => {
 
     await expect(driver.init()).resolves.toBe(false);
     harness.track.mockClear();
+    const showStatus = vi.spyOn(driver as any, 'showStatus').mockImplementation(() => {});
 
     vi.mocked(promptLogoutProviderSelection).mockResolvedValue('managed:kimi-code');
     await handleLogoutCommand(driver as any);
 
     expect(harness.auth.logout).toHaveBeenCalledWith('managed:kimi-code');
-    expect(session.close).toHaveBeenCalledOnce();
+    expect(session.close).not.toHaveBeenCalled();
     expect(driver.state.appState).toMatchObject({
-      sessionId: '',
+      sessionId: 'ses-1',
       model: '',
-      sessionTitle: null,
     });
+    expect(showStatus).toHaveBeenCalledWith(
+      'Logged out from Kimi Code. Current model is unavailable — /login or /model to continue.',
+      'warning',
+    );
     expect(harness.track).toHaveBeenCalledWith('logout', { provider: 'managed:kimi-code' });
   });
 

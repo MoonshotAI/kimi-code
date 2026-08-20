@@ -240,8 +240,10 @@ export async function handleLogoutCommand(host: SlashCommandHost): Promise<void>
   }
 
   if (target === currentProvider) {
+    // Keep the session: only the provider credential is gone. The next turn
+    // fails with model.not_configured until the user logs in again or picks
+    // another model.
     await host.authFlow.refreshConfigAfterLogout();
-    await host.authFlow.clearActiveSessionAfterLogout();
   } else {
     const updated = await host.harness.getConfig({ reload: true });
     host.setAppState({
@@ -253,5 +255,12 @@ export async function handleLogoutCommand(host: SlashCommandHost): Promise<void>
 
   host.track('logout', { provider: target });
   const label = target === DEFAULT_OAUTH_PROVIDER_NAME ? PRODUCT_NAME : target;
+  if (target === currentProvider) {
+    host.showStatus(
+      `Logged out from ${label}. Current model is unavailable — /login or /model to continue.`,
+      'warning',
+    );
+    return;
+  }
   host.showStatus(`Logged out from ${label}.`);
 }

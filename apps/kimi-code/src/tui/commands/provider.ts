@@ -88,29 +88,36 @@ async function handleProviderManagerDeleteSource(
 }
 
 async function handleProviderDelete(host: SlashCommandHost, providerId: string): Promise<void> {
+  const activeProvider =
+    host.state.appState.availableModels[host.state.appState.model]?.provider;
+
   if (providerId === DEFAULT_OAUTH_PROVIDER_NAME) {
     await host.harness.auth.logout(DEFAULT_OAUTH_PROVIDER_NAME);
     // Drop the process-wide region cache with the credential: derived
     // endpoints (updates, marketplace, site links, telemetry) must fall back
     // to the marker/default profile, not the logged-out region.
     refreshKimiRegion();
+  } else {
+    await host.harness.removeProvider(providerId);
+  }
+
+  if (activeProvider === providerId) {
+    // Keep the session, mirroring /logout: only the model display is cleared;
+    // the next turn fails with model.not_configured until the user logs in
+    // again or picks another model.
     await host.authFlow.refreshConfigAfterLogout();
-    await host.authFlow.clearActiveSessionAfterLogout();
+    host.showStatus(
+      `Provider "${providerId}" was used by the current model — /login or /model to continue.`,
+      'warning',
+    );
     return;
   }
 
-  const activeProvider =
-    host.state.appState.availableModels[host.state.appState.model]?.provider;
-  const config = await host.harness.removeProvider(providerId);
-  if (activeProvider === providerId) {
-    await host.authFlow.refreshConfigAfterLogout();
-    await host.authFlow.clearActiveSessionAfterLogout();
-  } else {
-    host.setAppState({
-      availableProviders: config.providers ?? {},
-      availableModels: config.models ?? {},
-    });
-  }
+  const updated = await host.harness.getConfig({ reload: true });
+  host.setAppState({
+    availableProviders: updated.providers ?? {},
+    availableModels: updated.models ?? {},
+  });
 }
 
 async function handleProviderAdd(host: SlashCommandHost): Promise<void> {
