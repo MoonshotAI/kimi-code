@@ -15,7 +15,18 @@ export async function readWorkspaceTrust(
   root: string,
 ): Promise<boolean> {
   try {
-    return (await docs.get<TrustRecord>(TRUST_SCOPE, trustKey(root))) !== undefined;
+    const canonicalKey = trustKey(root);
+    if ((await docs.get<TrustRecord>(TRUST_SCOPE, canonicalKey)) !== undefined) return true;
+
+    const legacyKey = encodeWorkDirKey(root);
+    if (legacyKey === canonicalKey) return false;
+    const legacy = await docs.get<TrustRecord>(TRUST_SCOPE, legacyKey);
+    if (legacy === undefined) return false;
+    try {
+      await docs.set(TRUST_SCOPE, canonicalKey, legacy);
+      await docs.delete(TRUST_SCOPE, legacyKey);
+    } catch {}
+    return true;
   } catch {
     return false;
   }

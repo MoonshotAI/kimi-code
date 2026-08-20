@@ -652,6 +652,7 @@ describe('McpOAuthService interactive flow serialization', () => {
       refresh_token: 'stale-refresh-token',
       token_type: 'Bearer',
     });
+    const tokensSavedBefore = fixture.events.filter((event) => event.type === 'tokens-saved').length;
 
     await expect(
       fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL),
@@ -660,6 +661,9 @@ describe('McpOAuthService interactive flow serialization', () => {
       fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL),
     ).rejects.toBeInstanceOf(AlreadyAuthorizedError);
     expect(authServer.counts.refresh).toBe(2);
+    expect(fixture.events.filter((event) => event.type === 'tokens-saved')).toHaveLength(
+      tokensSavedBefore + 2,
+    );
   }, 15000);
 });
 

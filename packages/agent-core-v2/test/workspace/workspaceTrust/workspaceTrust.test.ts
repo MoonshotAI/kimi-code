@@ -5,6 +5,7 @@ import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
@@ -20,6 +21,7 @@ import {
   WorkspaceTrustService,
   workspaceTrustTrustedKey,
 } from '#/workspace/workspaceTrust/workspaceTrustService';
+import { readWorkspaceTrust } from '#/workspace/workspaceTrust/trustRecord';
 
 import { registerStateServices } from '../../state/stubs';
 
@@ -109,6 +111,18 @@ describe('WorkspaceTrustService', () => {
     await second.ready;
 
     expect(second.isTrusted()).toBe(true);
+  });
+
+  it('migrates a legacy Windows trust marker to the canonical key', async () => {
+    const docs = new JsonAtomicDocumentStore(new FileStorageService(homeDir));
+    const root = 'C:\\Users\\Foo\\Repo';
+    const record = { root, trustedAt: 1 };
+    await docs.set('workspace-trust', encodeWorkDirKey(root), record);
+
+    expect(await readWorkspaceTrust(docs, root)).toBe(true);
+    await expect(
+      docs.get('workspace-trust', encodeWorkDirKey('c:/users/foo/repo')),
+    ).resolves.toEqual(record);
   });
 
   it('tracks different roots independently', async () => {

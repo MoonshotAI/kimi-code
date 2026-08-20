@@ -1,3 +1,5 @@
+import { resolve } from 'pathe';
+
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
@@ -44,7 +46,8 @@ export class McpRegistryService implements IMcpRegistryService {
         });
       }
     } else {
-      const workspaceRoot = (await findGitWorkTree(this.fs, query.cwd))?.root ?? query.cwd;
+      const cwd = resolve(query.cwd);
+      const workspaceRoot = (await findGitWorkTree(this.fs, cwd))?.root ?? cwd;
       if (!(await readWorkspaceTrust(this.docs, workspaceRoot))) {
         const userEntries = await this.store.list();
         for (const server of userEntries) {
@@ -60,7 +63,7 @@ export class McpRegistryService implements IMcpRegistryService {
       } else {
         const detailed = await loadMcpServersDetailed({
           fs: this.fs,
-          cwd: query.cwd,
+          cwd,
           homeDir: this.bootstrap.homeDir,
         });
         for (const [name, config] of Object.entries(detailed.servers)) {

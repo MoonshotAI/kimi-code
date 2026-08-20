@@ -138,7 +138,8 @@ function parseMcpJsonServers(data: unknown): Record<string, McpServerConfig> {
   if (!isRecord(data)) {
     throw new Error('expected a JSON object');
   }
-  const raw = data['mcpServers'] ?? {};
+  if (!('mcpServers' in data)) return {};
+  const raw = data['mcpServers'];
   if (!isRecord(raw)) {
     throw new Error('"mcpServers" must be an object');
   }

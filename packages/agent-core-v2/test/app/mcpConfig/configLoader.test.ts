@@ -60,6 +60,16 @@ describe('loadMcpServers', () => {
     expect(servers).toEqual({});
   });
 
+  it('rejects a null mcpServers field', async () => {
+    const home = makeTempDir();
+    const cwd = makeTempDir();
+    await writeJson(join(home, 'mcp.json'), { mcpServers: null });
+
+    await expect(loadMcpServers({ fs, cwd, homeDir: home })).rejects.toMatchObject({
+      code: ErrorCodes.CONFIG_INVALID,
+    });
+  });
+
   it('merges project-local mcp.json with user-global, project overriding on conflict', async () => {
     const home = makeTempDir();
     const cwd = makeTempDir();

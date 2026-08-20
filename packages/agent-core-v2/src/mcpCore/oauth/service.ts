@@ -353,25 +353,41 @@ export class McpOAuthService {
       provider.setRedirectUrl(new URL(callbackServer.redirectUri));
       await provider.ready;
       await provider.invalidateStaleRegistration(callbackServer.redirectUri);
-      const result = await auth(provider as OAuthClientProvider, {
-        serverUrl,
-        fetchFn: provider.createOAuthFetch(),
+      let tokensSaved = false;
+      const unsubscribeTokensSaved = this.onEvent((event) => {
+        if (
+          event.type === 'tokens-saved' &&
+          event.serverName === serverName &&
+          event.serverUrl === canonicalMcpOAuthResource(serverUrl)
+        ) {
+          tokensSaved = true;
+        }
       });
-      if (result !== 'REDIRECT') {
-        await callbackServer.close();
-        this.emit({
-          type: 'tokens-saved',
-          serverName,
-          serverUrl: canonicalMcpOAuthResource(serverUrl),
+      try {
+        const result = await auth(provider as OAuthClientProvider, {
+          serverUrl,
+          fetchFn: provider.createOAuthFetch(),
         });
-        throw new AlreadyAuthorizedError(serverName);
-      }
-      authorizationUrl = provider.takeAuthorizationUrl();
-      if (authorizationUrl === undefined) {
-        throw new Error2(
-          ErrorCodes.MCP_OAUTH_FAILED,
-          'OAuth provider did not capture an authorization URL',
-        );
+        if (result !== 'REDIRECT') {
+          await callbackServer.close();
+          if (!tokensSaved) {
+            this.emit({
+              type: 'tokens-saved',
+              serverName,
+              serverUrl: canonicalMcpOAuthResource(serverUrl),
+            });
+          }
+          throw new AlreadyAuthorizedError(serverName);
+        }
+        authorizationUrl = provider.takeAuthorizationUrl();
+        if (authorizationUrl === undefined) {
+          throw new Error2(
+            ErrorCodes.MCP_OAUTH_FAILED,
+            'OAuth provider did not capture an authorization URL',
+          );
+        }
+      } finally {
+        unsubscribeTokensSaved();
       }
     } catch (error) {
       await callbackServer.close().catch(() => undefined);

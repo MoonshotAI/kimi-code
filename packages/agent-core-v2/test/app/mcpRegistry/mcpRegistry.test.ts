@@ -1,7 +1,7 @@
 import { mkdtempSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'pathe';
+import { join, relative } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -216,6 +216,19 @@ describe('McpRegistryService', () => {
       const entries = await registry.list({ cwd: sub });
 
       expect(entries.map((entry) => entry.name)).toContain('projectOnly');
+    });
+
+    it('resolves a relative non-git cwd before checking workspace trust', async () => {
+      const project = mkdtempSync(join(tmpdir(), 'kimi-mcp-registry-non-git-'));
+      tempDirs.push(project);
+      await writeJson(join(project, '.mcp.json'), {
+        mcpServers: { relativeOnly: { command: 'relative-only' } },
+      });
+      trustedKey = project;
+
+      const entries = await registry.list({ cwd: relative(process.cwd(), project) });
+
+      expect(entries.map((entry) => entry.name)).toContain('relativeOnly');
     });
 
     it('exposes plugin servers as read-only entries with their effective config', async () => {
