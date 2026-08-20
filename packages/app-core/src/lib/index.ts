@@ -14,6 +14,7 @@ export * from './modelThinking';
 export * from './nativeWorkspaceDrop';
 export * from './normalizeToolName';
 export * from './oauthLoginCards';
+export * from './openGroups';
 export * from './parseSwarmResult';
 export * from './pathBasename';
 export * from './pathDirname';

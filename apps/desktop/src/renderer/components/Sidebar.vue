@@ -16,6 +16,7 @@ import {
 } from '../api/devBackend';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { logWarn } from '@moonshot-ai/app-core/lib';
+import { visibleOpenGroups } from '@moonshot-ai/app-core/lib';
 import {
   loadCollapsedWorkspaces,
   loadSidebarViewMode,
@@ -574,17 +575,14 @@ function selectSibling(delta: 1 | -1): void {
   emit('select', { sessionId: id, source: 'sidebar' });
 }
 
-// Open tab, grouped: workspaces with no open sessions render NOTHING — an
-// empty folder is noise after a cleanup, and the 工作空间 tab is the
-// directory for creating sessions (the Done tab's doneGroups already filters
-// the same way). The one exception is the ACTIVE workspace: its group stays
-// so the draft state keeps its "where I am" head fill (see the design doc's
-// Workspace group section). Keyboard nav is unaffected: empty groups
-// contribute no row ids either way.
+// Open tab, grouped: which groups render is decided by visibleOpenGroups —
+// the status-tabs view hides session-less workspaces (the 工作空间 tab is
+// their directory for new sessions); the legacy single-list form has no such
+// tab, so it keeps every group — archiving a workspace's last session must
+// not make the workspace unreachable there. Keyboard nav is unaffected:
+// empty groups contribute no row ids either way.
 const openGroups = computed(() =>
-  props.groups.filter(
-    (g) => g.sessions.length > 0 || g.workspace.id === props.activeWorkspaceId,
-  ),
+  visibleOpenGroups(props.groups, props.activeWorkspaceId, sidebarTabs.value),
 );
 
 // Done tab, grouped: aggregate the done rows under each workspace (in the
