@@ -1,7 +1,7 @@
 Launch a subagent to handle a task. The subagent runs as a same-process loop instance with its own context and wire file. Delegating also keeps the bulk of intermediate file contents out of your own context — you get a conclusion back instead of a pile of dumps.
 
 Writing the prompt:
-- By default, the subagent starts with zero context — it has not seen this conversation. Brief it like a colleague who just walked into the room: state the goal, list what you already know, hand over the specifics. When the task builds on this conversation, pass `fork: true` instead: the subagent then starts with a snapshot of your completed history (inheriting your own agent type, tool set, and model), so the prompt only needs the task itself.
+- The subagent starts with zero context — it has not seen this conversation. Brief it like a colleague who just walked into the room: state the goal, list what you already know, hand over the specifics.
 - Lookups (read this file, run that test): put the exact path or command in the prompt. The subagent should not have to search for things you already know.
 - Investigations (figure out X, find why Y): give the question, not prescribed steps — fixed steps become dead weight when the premise is wrong.
 - Do not delegate understanding. If the task hinges on a file path or line number, find it yourself first and write it into the prompt.

@@ -14,14 +14,17 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import {
+  FORK_EXPERIMENTAL_UNAVAILABLE,
   FORK_WITH_RESUME_UNAVAILABLE,
   forkIncompatibility,
   type SubagentSpawnPlan,
 } from '#/session/subagent/spawn';
+import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import {
   buildSubagentModelDescriptions,
   exposesSubagentModelChoice,
   resolveSubagentTimeoutMs,
+  stripSubagentForkParameter,
   stripSubagentModelParameter,
 } from '#/session/subagent/configSection';
 import {
@@ -32,6 +35,7 @@ import {
   type AgentSwarmToolInput,
 } from './agent-swarm';
 import AGENT_SWARM_DESCRIPTION from './agent-swarm.md?raw';
+import AGENT_SWARM_FORK_DESCRIPTION from './agent-swarm-fork.md?raw';
 
 const DEFAULT_SUBAGENT_TYPE = 'coder';
 
@@ -69,9 +73,12 @@ export class AgentSwarmTool implements IAgentSwarmTool {
   readonly name = 'AgentSwarm' as const;
 
   get parameters(): Record<string, unknown> {
-    return exposesSubagentModelChoice(this.config, this.flags)
+    const parameters = exposesSubagentModelChoice(this.config, this.flags)
       ? AGENT_SWARM_PARAMETERS
       : AGENT_SWARM_PARAMETERS_NO_MODEL;
+    return this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
+      ? parameters
+      : stripSubagentForkParameter(parameters);
   }
 
   private readonly callerAgentId: string;
@@ -89,14 +96,16 @@ export class AgentSwarmTool implements IAgentSwarmTool {
   }
 
   get description(): string {
+    let description = AGENT_SWARM_DESCRIPTION;
+    if (this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
+      description += `\n\n${AGENT_SWARM_FORK_DESCRIPTION}`;
+    }
     const modelLines = buildSubagentModelDescriptions(
       this.config,
       this.flags,
       this.profile.data().modelAlias,
     );
-    return modelLines === undefined
-      ? AGENT_SWARM_DESCRIPTION
-      : `${AGENT_SWARM_DESCRIPTION}\n\n${modelLines}`;
+    return modelLines === undefined ? description : `${description}\n\n${modelLines}`;
   }
 
   resolveExecution(args: AgentSwarmToolInput): ToolExecution {
@@ -138,6 +147,9 @@ export class AgentSwarmTool implements IAgentSwarmTool {
     toolCallId: string,
   ): Promise<string> {
     const fork = args.fork === true;
+    if (fork && !this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
+      throw new Error2(ErrorCodes.VALIDATION_FAILED, FORK_EXPERIMENTAL_UNAVAILABLE);
+    }
     if (fork && Object.keys(args.resume_agent_ids ?? {}).length > 0) {
       throw new Error2(ErrorCodes.VALIDATION_FAILED, FORK_WITH_RESUME_UNAVAILABLE);
     }

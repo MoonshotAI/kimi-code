@@ -49,12 +49,14 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { emitAgentRunSpawned, mirrorAgentRun, SubagentStarted } from '#/session/subagent/mirrorAgentRun';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
-import { forkIncompatibility } from '#/session/subagent/spawn';
+import { FORK_EXPERIMENTAL_UNAVAILABLE, forkIncompatibility } from '#/session/subagent/spawn';
+import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import {
   buildSubagentModelDescriptions,
   exposesSubagentModelChoice,
   formatSubagentTimeoutDescription,
   resolveSubagentTimeoutMs,
+  stripSubagentForkParameter,
   stripSubagentModelParameter,
 } from '#/session/subagent/configSection';
 import {
@@ -73,6 +75,7 @@ import { SubagentTask, type SubagentHandle } from './subagent-task';
 import AGENT_BACKGROUND_DISABLED_DESCRIPTION from './agent-background-disabled.md?raw';
 import AGENT_BACKGROUND_DESCRIPTION from './agent-background-enabled.md?raw';
 import AGENT_DESCRIPTION_BASE from './agent.md?raw';
+import AGENT_FORK_DESCRIPTION from './agent-fork.md?raw';
 
 const SUBAGENT_TOOL_PARAMETERS = toInputJsonSchema(SubagentToolInputSchema);
 const SUBAGENT_TOOL_PARAMETERS_NO_MODEL = stripSubagentModelParameter(SUBAGENT_TOOL_PARAMETERS);
@@ -82,9 +85,12 @@ export class SubagentTool implements ISubagentTool {
   readonly name: string = 'Agent';
 
   get parameters(): Record<string, unknown> {
-    return exposesSubagentModelChoice(this.config, this.flags)
+    const parameters = exposesSubagentModelChoice(this.config, this.flags)
       ? SUBAGENT_TOOL_PARAMETERS
       : SUBAGENT_TOOL_PARAMETERS_NO_MODEL;
+    return this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
+      ? parameters
+      : stripSubagentForkParameter(parameters);
   }
 
   private readonly callerAgentId: string;
@@ -124,6 +130,9 @@ export class SubagentTool implements ISubagentTool {
       ? AGENT_BACKGROUND_DESCRIPTION
       : AGENT_BACKGROUND_DISABLED_DESCRIPTION;
     let description = `${AGENT_DESCRIPTION_BASE}\n\n${backgroundDescription}`;
+    if (this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
+      description += `\n\n${AGENT_FORK_DESCRIPTION}`;
+    }
     const own = this.profile.data();
     const catalogProfiles = this.catalogProfiles();
     const allowlist = this.effectiveAllowlist(own, catalogProfiles);
@@ -212,6 +221,9 @@ export class SubagentTool implements ISubagentTool {
     }
 
     if (args.fork === true) {
+      if (!this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
+        return { output: FORK_EXPERIMENTAL_UNAVAILABLE, isError: true };
+      }
       const forkError = forkIncompatibility(args, this.profile.data());
       if (forkError !== undefined) {
         return { output: forkError, isError: true };
@@ -378,6 +390,9 @@ export class SubagentTool implements ISubagentTool {
       }
 
       if (args.fork === true) {
+        if (!this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
+          return { output: FORK_EXPERIMENTAL_UNAVAILABLE, isError: true };
+        }
         const forkError = forkIncompatibility(args, this.profile.data());
         if (forkError !== undefined) {
           return { output: forkError, isError: true };

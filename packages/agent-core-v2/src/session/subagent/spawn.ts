@@ -8,6 +8,8 @@ export const FORK_WITH_TYPE_UNAVAILABLE =
   'Cannot set a different subagent_type when forking the current context. A fork inherits this agent\'s own agent type.';
 export const FORK_WITH_MODEL_UNAVAILABLE =
   'Cannot override the model when forking the current context. A fork inherits this agent\'s model.';
+export const FORK_EXPERIMENTAL_UNAVAILABLE =
+  'fork is disabled: the subagent_fork experimental flag is off.';
 export const FORK_CONTEXT_NOTICE =
   'The conversation above is not your own history: it is a one-time snapshot inherited from the agent that forked you. Treat it as reference material only — you are an independent subagent, not a continuation of that agent. Do the task below directly yourself, then report the result.';
 

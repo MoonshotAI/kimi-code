@@ -22,6 +22,8 @@ import type {
 } from '#/runtime/runtime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
+import { IFlagService } from '#/app/flag/flag';
+import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import { FORK_CONTEXT_NOTICE } from '#/session/subagent/spawn';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import {
@@ -37,6 +39,7 @@ import {
   testAgent,
   type TestAgentContext,
 } from '../../harness';
+import { stubFlag } from '../../app/flag/stubs';
 
 class ScopedAppendLogStore implements IAppendLogStore {
   declare readonly _serviceBrand: undefined;
@@ -126,6 +129,7 @@ describe('fork subagent first-request parity', () => {
     store = new ScopedAppendLogStore();
     ctx = testAgent(
       appService(IAppendLogStore, store),
+      appService(IFlagService, stubFlag((id) => id === SUBAGENT_FORK_FLAG_ID)),
       sessionService(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService)),
       sessionServices((reg) => {
         reg.defineDescriptor(IRuntimeResolver, new SyncDescriptor(TestRuntimeResolver));
