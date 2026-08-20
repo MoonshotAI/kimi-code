@@ -873,10 +873,14 @@ export class Editor implements Component, Focusable {
 			return;
 		}
 
-		// Dedicated history actions always browse entries instead of moving the cursor.
+		// Dedicated history actions browse entries instead of moving the cursor.
+		// Like the Up-arrow path, entering history from the draft requires an empty
+		// editor so a draft in progress is never swept into history browsing.
 		if (kb.matches(data, "tui.editor.historyPrevious")) {
 			this.cancelAutocomplete();
-			this.navigateHistory(-1);
+			if (this.isEditorEmpty() || this.historyIndex > -1) {
+				this.navigateHistory(-1);
+			}
 			return;
 		}
 		if (kb.matches(data, "tui.editor.historyNext")) {
@@ -946,10 +950,9 @@ export class Editor implements Component, Focusable {
 
 		// Arrow key navigation (with history support)
 		if (kb.matches(data, "tui.editor.cursorUp")) {
-			if (
-				this.isOnFirstVisualLine() &&
-				(this.isEditorEmpty() || this.historyIndex > -1 || this.state.cursorCol === 0)
-			) {
+			// History recall is only entered from an empty editor (or while already
+			// browsing); with a draft in progress, Up stays pure cursor movement.
+			if (this.isOnFirstVisualLine() && (this.isEditorEmpty() || this.historyIndex > -1)) {
 				this.navigateHistory(-1);
 			} else if (this.isOnFirstVisualLine()) {
 				// Already at top - jump to start of line
