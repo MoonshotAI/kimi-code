@@ -297,6 +297,14 @@ html[data-color-scheme="dark"] {
      scale. */
   --menu-scroll-fade: var(--space-5);
 
+  /* -- §03 MenuItem md inset --------------------------------------------------
+     The standard dropdown row's padding (MenuItem primitive). Custom panel
+     content that must sit on the same row rhythm (e.g. the UserMenu usage
+     flyout) reads these tokens instead of copying the pixels, so a density
+     change lands everywhere at once. */
+  --menu-item-padding-block: 5px;
+  --menu-item-padding-inline: 9px;
+
   /* -- composer menu row geometry (slash / mention / add menus) ---------------
      The frame pads --space-1-5 × --space-3; rows hug the frame's block edge
      while their content lands on the composer's --space-4 text column, and

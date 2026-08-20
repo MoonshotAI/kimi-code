@@ -37,7 +37,7 @@ defineEmits<{ click: [event: MouseEvent] }>();
   align-items: center;
   gap: 7px;
   width: 100%;
-  padding: 5px 9px;
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;

@@ -569,21 +569,15 @@ async function onLogout(): Promise<void> {
   transform: scale(0.97) translateY(var(--menu-pop-shift, 2px));
 }
 
-/* This menu runs one step above the §03 default density (product call):
-   base-size labels and taller rows; the flyout panels follow suit. Horizontal
-   inset stays at the primitive's 9px so long labels (e.g. en "Upgrade
-   membership") still fit narrow sidebars. */
-.user-menu .ui-menu-item,
-.user-submenu .ui-menu-item {
-  padding: var(--space-2) 9px;
-  font-size: var(--text-base);
-}
-
+/* Rows ride the §03 MenuItem md density verbatim (7px icon gap, --text-sm
+   labels on --leading-tight) — no local override. The usage flyout is custom
+   content rather than MenuItems, so it reads the primitive's shared inset
+   tokens and mirrors its line box, with the reset hint one rung down. */
 .user-menu-usage {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1-5);
-  padding: var(--space-2) var(--space-3);
+  gap: var(--space-1);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
 }
 .user-menu-usage-state {
   display: flex;
@@ -592,7 +586,7 @@ async function onLogout(): Promise<void> {
   gap: var(--space-2);
   padding: var(--space-1) 0;
   color: var(--color-text-muted);
-  font-size: var(--text-base);
+  font-size: var(--text-sm);
 }
 .user-menu-usage-error {
   flex: 1;
@@ -617,19 +611,22 @@ async function onLogout(): Promise<void> {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-base);
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
   color: var(--color-text);
 }
 .user-menu-usage-hint {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
   color: var(--color-text-faint);
 }
 .user-menu-usage-value {
   flex: none;
-  font-size: var(--text-base);
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
   font-weight: var(--weight-medium);
   color: var(--color-text);
   font-variant-numeric: tabular-nums;
@@ -659,7 +656,7 @@ async function onLogout(): Promise<void> {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   color: var(--color-text-faint);
 }
 </style>
