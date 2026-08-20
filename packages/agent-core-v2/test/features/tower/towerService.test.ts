@@ -430,6 +430,12 @@ describe('AgentTowerService', () => {
 
     expect(tower.isActive).toBe(false);
     expect(events).toContainEqual({ type: 'agent.status.updated', towerMode: false });
+
+    towerFlagOn = true;
+    fireConfigChanged();
+
+    expect(tower.isActive).toBe(true);
+    expect(events).toContainEqual({ type: 'agent.status.updated', towerMode: true });
   });
 
   it('enter() is a no-op while a foreign session owns the tower in this process', async () => {

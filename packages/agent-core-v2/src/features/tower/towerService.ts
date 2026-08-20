@@ -64,21 +64,21 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       this.dispatcher.hooks.onDidRestore.register('tower', async (_ctx, next) => {
         await this.exitForeignTower();
         this.restoreTowerTools();
-        this.publishEffectiveInactive();
+        this.reconcileTowerProjection();
         await next();
       }),
     );
     if (featureManager !== undefined) {
       this._register(
         featureManager.onDidChangeUnits(() => {
-          this.publishEffectiveInactive();
+          this.reconcileTowerProjection();
         }),
       );
     }
     if (config !== undefined) {
       this._register(
         config.onDidChangeConfiguration(() => {
-          this.publishEffectiveInactive();
+          this.reconcileTowerProjection();
         }),
       );
     }
@@ -164,6 +164,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       return;
     }
     for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
+    this.lastPublished = true;
     void this.dispatcher.dispatch(
       new TowerModeEnter({ agentId: this.agentCtx.agentId, sessionId: this.sessionCtx.sessionId }),
     );
@@ -171,6 +172,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
 
   exit(): void {
     if (!this.agentState.get(towerKey)) return;
+    this.lastPublished = false;
     void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
   }
 
@@ -207,15 +209,23 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (!this.isActive) return;
     if (this.agentCtx.agentId !== 'main') return;
     for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
+    this.lastPublished = true;
     void this.dispatcher.dispatch(new AgentStatusUpdated({ agentId: this.agentCtx.agentId, towerMode: true }));
   }
 
-  private publishEffectiveInactive(): void {
+  private lastPublished: boolean | undefined;
+
+  private reconcileTowerProjection(): void {
     if (this.agentCtx.agentId !== 'main') return;
-    if (!this.agentState.get(towerKey)) return;
-    if (this.isActive) return;
+    if (!this.agentState.get(towerKey)) {
+      this.lastPublished = false;
+      return;
+    }
+    const effective = this.isActive;
+    if (this.lastPublished === effective) return;
+    this.lastPublished = effective;
     void this.dispatcher.dispatch(
-      new AgentStatusUpdated({ agentId: this.agentCtx.agentId, towerMode: false }),
+      new AgentStatusUpdated({ agentId: this.agentCtx.agentId, towerMode: effective }),
     );
   }
 }
