@@ -171,6 +171,17 @@ summary {
   --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
+  /* Top clearance reserved above dock cards: the approval/question card
+     max-height budgets are calc(var(--app-height, 100dvh) - <this>) so a tall
+     card always stops below the chat header. Single source for
+     ApprovalCard.vue, QuestionCard.vue and ChatDock.vue's dock-level budget —
+     adjust here and all three move together. */
+  --dock-card-top-clearance: 72px;
+  /* Operable-height floor for the question card's scrolling body: when the
+     card's fixed chrome (a very long title plus the footer) exhausts the
+     viewport budget on its own, the body never collapses below this and the
+     card-level scroller takes over. */
+  --question-card-body-min-h: 120px;
   /* Border-box height of the chat dock, written by ChatDock via ResizeObserver.
      Used to anchor fixed overlays (toasts, floating hints) just above the
      composer — dynamic so multi-line input growth keeps them clear. Left

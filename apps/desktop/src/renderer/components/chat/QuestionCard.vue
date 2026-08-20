@@ -219,8 +219,79 @@ function dismiss(): void {
 // the selection itself with the arrows; multi-select moves only the highlight
 // and Space toggles. Reset whenever the visible question changes.
 const highlight = ref(0);
+// The reset below zeroes the highlight, which fires the keyboard-follow
+// watcher in the same flush — and same-flush nextTick callbacks run in
+// watcher creation order, so that follow would execute AFTER the paging
+// scroll reset and redundantly pull row 0 (the new highlight) back into
+// view. Consume exactly one follow per reset that actually moves the
+// highlight, so paging's top-of-body reset stays the last word.
+let suppressKeyScrollFollow = false;
 watch([step, () => props.question.questionId], () => {
+  if (highlight.value !== 0) suppressKeyScrollFollow = true;
   highlight.value = 0;
+});
+
+// Root element: keyboard scroll-into-view and per-question scroll resets need
+// the card's two scroll containers (the body scroller and, when even the
+// fixed chrome overflows the viewport cap, the card itself).
+const cardEl = ref<HTMLElement | null>(null);
+
+// Keep the keyboard row inside the scrollport: ↑/↓ (and digit picks) move the
+// highlight — or the selection itself in single-select — which may sit
+// outside the visible band once the card is viewport-capped and the body
+// scrolls. The row is scrolled into the body's scrollport first, then into
+// the card's own (the fallback scroller is active when the chrome alone
+// exhausts the budget, which can push the whole body out of view). Manual
+// scrollTop math — scrollIntoView would also scroll ancestor scrollers (the
+// transcript behind the card). The watcher on `highlight` below covers only
+// moves; keys that leave the highlight in place (re-pressing the highlighted
+// row's digit, Space in multi-select, a boundary ↑/↓) call scrollKeyRowIntoView
+// from the key handler itself.
+function scrollIntoScrollport(scroller: HTMLElement, el: HTMLElement): void {
+  const scrollerRect = scroller.getBoundingClientRect();
+  const elRect = el.getBoundingClientRect();
+  const top = elRect.top - scrollerRect.top + scroller.scrollTop;
+  const bottom = top + elRect.height;
+  // An element taller than the scrollport aligns by its top edge — for an
+  // option row that keeps the number chip, glyph and label visible instead
+  // of aligning the row's bottom and hiding which answer is highlighted.
+  if (elRect.height >= scroller.clientHeight || top < scroller.scrollTop) scroller.scrollTop = top;
+  else if (bottom > scroller.scrollTop + scroller.clientHeight) scroller.scrollTop = bottom - scroller.clientHeight;
+}
+
+function scrollKeyRowIntoView(): void {
+  const card = cardEl.value;
+  const body = card?.querySelector<HTMLElement>('.qbody');
+  if (!card || !body) return;
+  // Locate the row by highlight index, not by visual state: single-select
+  // rows never get .highlighted, and re-picking the current answer (a digit
+  // re-press, or arrowing onto a pre-selected option) toggles it OFF — the
+  // row has neither class right when the explicit follow needs it. The
+  // option rows and the trailing "Other" row are all .qopt, in highlight
+  // order.
+  const row = body.querySelectorAll<HTMLElement>('.qopt')[highlight.value];
+  if (!row) return;
+  scrollIntoScrollport(body, row);
+  scrollIntoScrollport(card, row);
+}
+
+watch(highlight, () => {
+  if (suppressKeyScrollFollow) {
+    suppressKeyScrollFollow = false;
+    return;
+  }
+  void nextTick(scrollKeyRowIntoView);
+});
+
+// Paging between questions reuses the same .qbody/.qcard nodes — reset both
+// scroll containers so the next question starts at its top instead of
+// inheriting the previous question's scroll position.
+watch(step, () => {
+  void nextTick(() => {
+    const body = cardEl.value?.querySelector<HTMLElement>('.qbody');
+    if (body) body.scrollTop = 0;
+    if (cardEl.value) cardEl.value.scrollTop = 0;
+  });
 });
 
 // IME guard: while composing in the "Other" field every keystroke belongs to
@@ -282,8 +353,13 @@ function handleKeydown(e: KeyboardEvent): void {
     const next = Math.min(count - 1, Math.max(0, highlight.value + delta));
     // Clamped at the first/last row: the highlight didn't move, so don't
     // re-pick — pickSingle toggles an already-selected option off, which would
-    // clear the answer on a boundary keypress.
-    if (next === highlight.value) return;
+    // clear the answer on a boundary keypress. Still scroll the boundary row
+    // back into view — the watcher only fires on moves, and the user may have
+    // scrolled that row out of the body by hand.
+    if (next === highlight.value) {
+      void nextTick(scrollKeyRowIntoView);
+      return;
+    }
     highlight.value = next;
     const opt = q.options[highlight.value];
     if (opt) {
@@ -299,8 +375,15 @@ function handleKeydown(e: KeyboardEvent): void {
     e.preventDefault();
     const q = current.value;
     const opt = q.options[highlight.value];
-    if (opt) toggleMulti(q.id, opt.id);
-    else if (q.allowOther) pickOther(q.id);
+    if (opt) {
+      toggleMulti(q.id, opt.id);
+      // Space never moves the highlight, so the watcher can't follow — bring
+      // the toggled row back into view after a manual scroll away from it.
+      void nextTick(scrollKeyRowIntoView);
+    } else if (q.allowOther) {
+      pickOther(q.id);
+      void nextTick(scrollKeyRowIntoView);
+    }
     return;
   }
 
@@ -317,6 +400,10 @@ function handleKeydown(e: KeyboardEvent): void {
       } else {
         pickSingle(q.id, opt.id);
       }
+      // Re-pressing the highlighted row's digit leaves the highlight
+      // unchanged, so the watcher can't follow — scroll explicitly (a no-op
+      // duplicate when the highlight did move and the watcher scheduled one).
+      void nextTick(scrollKeyRowIntoView);
     }
   }
 }
@@ -326,7 +413,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 </script>
 
 <template>
-  <div class="qcard" :class="{ minimized }">
+  <div ref="cardEl" class="qcard" :class="{ minimized }">
     <!-- Header: the question itself is the title (step chip when there are
          several), minimize + dismiss pinned right. Same card language as the
          approval card. -->
@@ -443,23 +530,35 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 
 <style scoped>
 /* Floating neutral card — same language as the approval card: white surface,
-   hairline border, quiet radius, faint popover shadow above the
-   transcript. */
+   hairline border, quiet radius, faint popover shadow above the transcript.
+   Flex column capped just below the chat header, again like the approval
+   card: the title now wraps in full, so an uncapped card could grow past the
+   top of the bottom-anchored dock and push the question's start and the
+   minimize/dismiss buttons out of reach. The cap follows the VISUAL viewport
+   (--app-height mirrors visualViewport.height, see App.vue's setAppHeight);
+   .qbody is the internal scroll region, and overflow-y: auto on the card
+   itself is the scroller of last resort when even the fixed chrome exceeds
+   the cap. */
 .qcard {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(var(--app-height, 100dvh) - var(--dock-card-top-clearance));
   margin: var(--space-2) 0;
   background: var(--color-surface-raised);
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
-  overflow: hidden;
+  overflow: hidden auto;
   animation: kimi-card-in var(--duration-base) var(--ease-out);
 }
+.qcard > .qh,
+.qcard > .qfoot { flex: none; }
 /* Minimized bar: subtle hover fill as the click affordance. */
 .qcard.minimized { transition: background var(--duration-fast) var(--ease-out); }
 .qcard.minimized:hover { background: var(--color-hover); }
 
-/* Header — the question itself is the title (2-line clamp); step chip when
-   there are several questions, minimize + dismiss pinned right. */
+/* Header — the question itself is the title, wrapping in full; step chip
+   when there are several questions, minimize + dismiss pinned right. */
 .qh {
   display: flex;
   align-items: flex-start;
@@ -487,15 +586,14 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   font-size: var(--text-lg);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  /* Full-wrap contract: break anywhere so an unbroken run (hash, generated
+     id, base64) wraps instead of being clipped by the card's overflow. */
+  overflow-wrap: anywhere;
 }
 /* Minimized → single-line ellipsis. */
 .qcard.minimized .qtitle {
-  display: block;
   white-space: nowrap;
+  overflow: hidden;
   text-overflow: ellipsis;
 }
 /* Header icon buttons — pinned right, optically centred on the title's first
@@ -509,8 +607,14 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 .qcard.minimized .qmin { margin-top: 0; }
 .qcard.minimized .qclose { margin-top: 0; }
 
-/* Body */
+/* Body — internal scroll region once the card hits its viewport cap. The
+   floor keeps the options reachable when the fixed chrome (a very long title
+   plus the footer) exhausts the budget on its own: instead of collapsing to
+   zero and clipping the options inside an unscrollable sliver, the body keeps
+   an operable height and the card-level scroller takes over. */
 .qbody {
+  min-height: min(var(--question-card-body-min-h), calc(var(--app-height, 100dvh) * 0.25));
+  overflow-y: auto;
   padding: var(--space-3) var(--space-4) 0;
   color: var(--color-text);
   font: var(--text-base)/var(--leading-normal) var(--font-ui);

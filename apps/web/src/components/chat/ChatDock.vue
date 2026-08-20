@@ -282,6 +282,11 @@ const compactPills = ref(false);
 const panelOriginX = ref('50%');
 
 function onPillClick(panel: 'bash' | 'subagent' | 'todos' | 'goal' | 'plan', e: MouseEvent): void {
+  // A pending question takes the dock's full height budget (see
+  // .chat-dock.has-question), so the work panel — anchored above the dock's
+  // top edge — would open mostly off-screen. Keep it closed until the
+  // question resolves.
+  if (props.pendingQuestion) return;
   const pillEl = e.currentTarget as HTMLElement | null;
   if (pillEl && dockRef.value) {
     const pr = pillEl.getBoundingClientRect();
@@ -387,6 +392,17 @@ watch(
   { immediate: true },
 );
 
+// A question arriving while the work panel is open takes over the dock's
+// full height budget, so the panel — anchored above the dock's top edge —
+// would slide mostly off-screen. Close it; onPillClick keeps it closed
+// until the question resolves.
+watch(
+  () => props.pendingQuestion,
+  (q) => {
+    if (q && props.dockPanel) emit('close-dock-panel');
+  },
+);
+
 let dockResizeObserver: ResizeObserver | null = null;
 
 function publishDockHeight(): void {
@@ -429,7 +445,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
     class="chat-dock"
     :class="[
       mobile ? 'align-mobile' : 'align-center',
-      { 'has-popup': raisedForPanel, 'has-approval': !!pendingApproval && !pendingQuestion, 'pills-compact': compactPills },
+      { 'has-popup': raisedForPanel, 'has-approval': !!pendingApproval && !pendingQuestion, 'has-question': !!pendingQuestion, 'pills-compact': compactPills },
     ]"
     @click.stop
   >
@@ -655,6 +671,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
     <QuestionCard
       v-if="pendingQuestion"
       :key="pendingQuestion.questionId"
+      class="dock-question"
       :question="pendingQuestion"
       :busy-kind="questionBusyKind"
       @answer="(qid, resp) => emit('answer', qid, resp)"
@@ -991,20 +1008,24 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
   margin-top: 8px;
 }
 
-/* Approval showing: the dock takes over the card's height budget
-   (calc(var(--app-height, 100dvh) - 72px), see ApprovalCard — --app-height
-   mirrors the visual viewport, so the iOS keyboard shrinks the budget where
-   dvh does not) as a flex column, so an expanded card yields the work
-   pills' height instead of pushing them past the pane's top edge. */
-.chat-dock.has-approval {
+/* Approval or question card showing: the dock takes over the card's height
+   budget (calc(var(--app-height, 100dvh) - var(--dock-card-top-clearance)),
+   see ApprovalCard — --app-height mirrors the visual viewport, so the iOS
+   keyboard shrinks the budget where dvh does not) as a flex column, so an
+   expanded card yields the work pills' height instead of pushing them past
+   the pane's top edge. */
+.chat-dock.has-approval,
+.chat-dock.has-question {
   display: flex;
   flex-direction: column;
-  max-height: calc(var(--app-height, 100dvh) - 72px);
+  max-height: calc(var(--app-height, 100dvh) - var(--dock-card-top-clearance));
 }
-.chat-dock.has-approval > .dock-workbar {
+.chat-dock.has-approval > .dock-workbar,
+.chat-dock.has-question > .dock-workbar {
   flex: none;
 }
-.chat-dock.has-approval > .dock-approval {
+.chat-dock.has-approval > .dock-approval,
+.chat-dock.has-question > .dock-question {
   min-height: 0;
 }
 

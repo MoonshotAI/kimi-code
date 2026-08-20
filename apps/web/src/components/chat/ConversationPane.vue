@@ -410,6 +410,11 @@ const dockPanel = ref<'bash' | 'subagent' | 'todos' | 'goal' | 'plan' | null>(nu
 const changesCount = computed(() => (props.gitInfo ? props.changes?.length ?? 0 : 0));
 
 function toggleDockPanel(panel: 'bash' | 'subagent' | 'todos' | 'goal' | 'plan'): void {
+  // A pending question takes the dock's full height budget, so the work
+  // panel — anchored above the dock's top edge — would open mostly
+  // off-screen. Refuse to open until the question resolves (ChatDock's pill
+  // guard alone doesn't cover programmatic opens like focusGoal below).
+  if (pendingQuestion.value) return;
   dockPanel.value = dockPanel.value === panel ? null : panel;
 }
 
@@ -419,8 +424,10 @@ function closeDockPanel(): void {
 
 function focusGoal(): void {
   // The composer toolbar's goal button opens the goal's dock panel (the goal
-  // pill's expanded view).
-  if (props.goal) dockPanel.value = 'goal';
+  // pill's expanded view). Same pending-question guard as toggleDockPanel —
+  // this path is reachable from the mobile settings page while a question is
+  // already waiting.
+  if (props.goal && !pendingQuestion.value) dockPanel.value = 'goal';
 }
 
 // A panel whose backing item went away closes itself — the goal pill's panel

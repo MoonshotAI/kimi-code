@@ -551,7 +551,7 @@ onUpdated(updateScrollSeams);
 .appr {
   display: flex;
   flex-direction: column;
-  max-height: calc(var(--app-height, 100dvh) - 72px);
+  max-height: calc(var(--app-height, 100dvh) - var(--dock-card-top-clearance));
   margin: var(--space-2) 0;
   background: var(--color-surface-raised);
   border: 0.5px solid var(--color-line);
