@@ -122,6 +122,7 @@ export class McpOAuthService {
   private readonly refreshes = new Map<string, Promise<void>>();
   private readonly refreshTimers = new Map<string, McpOAuthScheduledTask>();
   private readonly activeAuthorizations = new Map<string, Promise<SharedAuthorizationFlow>>();
+  private readonly backgroundTasks = new Set<Promise<unknown>>();
   private shuttingDown = false;
   private shutdownPromise: Promise<void> | undefined;
 
@@ -184,6 +185,15 @@ export class McpOAuthService {
     };
   }
 
+  protected trackBackgroundTask(task: Promise<unknown>): void {
+    if (this.shuttingDown) return;
+    this.backgroundTasks.add(task);
+    void task.then(
+      () => this.backgroundTasks.delete(task),
+      () => this.backgroundTasks.delete(task),
+    );
+  }
+
   /**
    * Single-flight token refresh per credential: concurrent callers share one
    * in-flight SDK `auth()` run, so two sessions expiring together cannot race
@@ -213,8 +223,10 @@ export class McpOAuthService {
    * aborting the whole sweep.
    */
   async sweepProactiveRefresh(): Promise<void> {
+    if (this.shuttingDown) return;
     const keys = await this.store.list();
     for (const key of keys) {
+      if (this.shuttingDown) return;
       if (!key.endsWith(META_SUFFIX)) continue;
       const meta = await readStoreMeta(this.store, key, this.log);
       if (meta === undefined) continue;
@@ -248,6 +260,7 @@ export class McpOAuthService {
     this.stopProactiveRefresh();
     const authorizations = [...this.activeAuthorizations.values()];
     const refreshes = [...this.refreshes.values()];
+    const backgroundTasks = [...this.backgroundTasks];
     this.activeAuthorizations.clear();
     this.shutdownPromise = (async () => {
       try {
@@ -259,6 +272,7 @@ export class McpOAuthService {
             }),
           ),
           Promise.allSettled(refreshes),
+          Promise.allSettled(backgroundTasks),
         ]);
       } finally {
         this.listeners.clear();

@@ -21,9 +21,16 @@ export class AppMcpOAuthService extends McpOAuthService {
       resolveClientName: () => identity.current().slug,
       log,
     });
-    void identity.resolved().then(() => this.sweepProactiveRefresh()).catch((error: unknown) => {
-      log.warn(`mcp oauth proactive-refresh sweep failed: ${String(error)}`);
-    });
+    void identity
+      .resolved()
+      .then(() => {
+        const sweep = this.sweepProactiveRefresh();
+        this.trackBackgroundTask(sweep);
+        return sweep;
+      })
+      .catch((error: unknown) => {
+        log.warn(`mcp oauth proactive-refresh sweep failed: ${String(error)}`);
+      });
   }
 }
 
