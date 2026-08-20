@@ -55,10 +55,8 @@ export async function applySessionAgentConfig(
   }
   if (agentConfig.tower_mode !== undefined) {
     const tower = agent.accessor.get(IAgentTowerService);
-    if (tower.isActive !== agentConfig.tower_mode) {
-      if (agentConfig.tower_mode) tower.enter();
-      else tower.exit();
-    }
+    if (agentConfig.tower_mode) tower.enter();
+    else tower.exit();
   }
   if (agentConfig.goal_objective !== undefined) {
     await agent.accessor.get(IAgentGoalService).createGoal({ objective: agentConfig.goal_objective });

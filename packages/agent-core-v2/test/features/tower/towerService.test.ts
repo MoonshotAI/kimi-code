@@ -768,20 +768,24 @@ describe('TowerModeInjection', () => {
     expect(lastTowerReminder(context)).toContain('Tower mode is no longer active');
   });
 
-  it('injects nothing once the tower flag is turned off, even with the mode active', async () => {
+  it('emits the exit reminder once when the tower flag is turned off with an active reminder in context', async () => {
     tower.enter();
 
     await injectDynamic(injector);
     expect(towerReminderMessages(context)).toHaveLength(1);
 
     towerFlagOn = false;
+    await injectDynamic(injector);
+
+    expect(towerReminderMessages(context)).toHaveLength(2);
+    expect(lastTowerReminder(context)).toContain('Tower mode is no longer active');
+
     appendAssistantTurn(ctx, context, 'assistant one');
-    appendAssistantTurn(ctx, context, 'assistant two');
     await injectDynamic(injector);
     ctx.appendUserMessage([{ type: 'text', text: 'next task' }]);
     await injectDynamic(injector);
 
-    expect(towerReminderMessages(context)).toHaveLength(1);
+    expect(towerReminderMessages(context)).toHaveLength(2);
   });
 
   it('does not inject anything when tower mode is inactive from the start', async () => {

@@ -25,13 +25,13 @@ export class TowerModeInjection extends Service {
       injector.register<typeof TOWER_MODE_EXIT_DISCLOSURE>(
         TOWER_MODE_INJECTION_VARIANT,
         ({ injectedPositions, lastInjectedAt: injectedAt, lastDisclosure }) => {
-          if (!this.flags.enabled(TOWER_FLAG_ID)) return undefined;
           if (!this.tower.isActive) {
             if (injectedPositions.length === 0 || lastDisclosure === TOWER_MODE_EXIT_DISCLOSURE) {
               return undefined;
             }
             return { content: TOWER_MODE_EXIT_REMINDER, disclosure: TOWER_MODE_EXIT_DISCLOSURE };
           }
+          if (!this.flags.enabled(TOWER_FLAG_ID)) return undefined;
           if (injectedPositions.length === 0 || lastDisclosure === TOWER_MODE_EXIT_DISCLOSURE) {
             return TOWER_MODE_FULL_REMINDER;
           }
