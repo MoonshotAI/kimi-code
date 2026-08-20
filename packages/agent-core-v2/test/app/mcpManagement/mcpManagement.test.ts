@@ -459,33 +459,35 @@ describe('McpManagementService', () => {
       await expect(store.list()).resolves.toEqual([]);
     });
 
-    it.each([
-      ['add', () => management.addServer(stdioServer('plugin-demo:docs', 'add-version'))],
-      ['update', () => management.updateServer(stdioServer('plugin-demo:docs', 'update-version'))],
-      ['remove', () => management.removeServer('plugin-demo:docs')],
-    ])(
-      'rejects %s when an enabled plugin collides with a mutable global entry',
-      async (_operation, mutate) => {
-        await store.add(stdioServer('plugin-demo:docs', 'global-version'));
-        pluginEntries = [
-          {
-            name: 'plugin-demo:docs',
-            config: { transport: 'http', url: 'https://example.com/mcp' },
-            pluginId: 'demo',
-            serverName: 'docs',
-          },
-        ];
+    it('lets a mutable global entry be maintained past an enabled plugin collision', async () => {
+      await store.add(stdioServer('plugin-demo:docs', 'global-version'));
+      pluginEntries = [
+        {
+          name: 'plugin-demo:docs',
+          config: { transport: 'http', url: 'https://example.com/mcp' },
+          pluginId: 'demo',
+          serverName: 'docs',
+        },
+      ];
 
-        await expect(mutate()).rejects.toMatchObject({
-          code: ErrorCodes.REQUEST_INVALID,
-          message:
-            'MCP server "plugin-demo:docs" is read-only: it is contributed by plugin "demo" — update the plugin manifest instead',
-        });
-        await expect(store.get('plugin-demo:docs')).resolves.toMatchObject({
-          command: 'global-version',
-        });
-      },
-    );
+      await expect(
+        management.addServer(stdioServer('plugin-demo:docs', 'add-version')),
+      ).rejects.toMatchObject({
+        code: ErrorCodes.REQUEST_INVALID,
+        message: 'MCP server "plugin-demo:docs" already exists',
+      });
+
+      await management.updateServer(stdioServer('plugin-demo:docs', 'update-version'));
+      await expect(store.get('plugin-demo:docs')).resolves.toMatchObject({
+        command: 'update-version',
+      });
+
+      const remaining = await management.removeServer('plugin-demo:docs');
+      expect(remaining.filter((entry) => entry.name === 'plugin-demo:docs')).toEqual([
+        expect.objectContaining({ source: 'plugin', mutable: false }),
+      ]);
+      await expect(store.list()).resolves.toEqual([]);
+    });
 
     it('never blocks mutations on a disabled plugin descriptor', async () => {
       pluginEntries = [

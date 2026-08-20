@@ -127,6 +127,7 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
 
   private async guardMutation(name: string, query: McpRegistryQuery): Promise<void> {
     const matches = (await this.registry.list(query)).filter((entry) => entry.name === name);
+    if (matches.some((entry) => entry.source === 'global' && entry.mutable)) return;
     for (const entry of matches) throwReadOnlyMcpServer(entry);
   }
 
