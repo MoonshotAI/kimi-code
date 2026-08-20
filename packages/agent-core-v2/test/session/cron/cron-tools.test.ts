@@ -127,11 +127,9 @@ function createToolHarness(options: {
       deleted.push(id);
       deletedAgentIds.push(agentId);
     },
-    loadFromStore: async () => {},
     start: () => Promise.resolve(),
     stop: async () => {},
     tick: () => Promise.resolve(),
-    flushPersist: async () => {},
     handleMissed: () => undefined,
   };
 

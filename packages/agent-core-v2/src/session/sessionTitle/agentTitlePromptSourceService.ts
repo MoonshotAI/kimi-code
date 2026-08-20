@@ -12,6 +12,7 @@ import type { ContentPart } from '#/kosong/contract/message';
 import {
   IAgentTitlePromptSource,
   type TitleDigestExcerpt,
+  type TitleDigestTurn,
   type TitleTurnExcerpt,
 } from './agentTitlePromptSource';
 
@@ -58,24 +59,27 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
 
   async digestExcerpt(): Promise<TitleDigestExcerpt> {
     const all = this.combinedMessages();
-    const firstUserIndex = all.findIndex(isNaturalLanguagePrompt);
-    if (firstUserIndex < 0) return {};
-    let lastUserIndex = -1;
-    for (let index = all.length - 1; index >= 0; index--) {
-      if (isNaturalLanguagePrompt(all[index]!)) {
-        lastUserIndex = index;
-        break;
+    const seenMessageIds = new Set<string>();
+    const userIndexes: number[] = [];
+    for (let index = 0; index < all.length; index++) {
+      const message = all[index]!;
+      if (!isNaturalLanguagePrompt(message)) continue;
+      if (message.id !== undefined) {
+        if (seenMessageIds.has(message.id)) continue;
+        seenMessageIds.add(message.id);
       }
+      userIndexes.push(index);
     }
-    const firstUser = promptMetadataTextFromUserMessage(all[firstUserIndex]!);
-    const lastUser =
-      lastUserIndex > firstUserIndex
-        ? promptMetadataTextFromUserMessage(all[lastUserIndex]!)
-        : undefined;
-    const assistant =
-      finalAssistantText(all.slice(lastUserIndex + 1)) ??
-      finalAssistantText(all.slice(firstUserIndex + 1));
-    return { firstUser, lastUser, assistant };
+    const turns: TitleDigestTurn[] = [];
+    for (let i = 0; i < userIndexes.length; i++) {
+      const userIndex = userIndexes[i]!;
+      const user = promptMetadataTextFromUserMessage(all[userIndex]!);
+      if (user === undefined) continue;
+      const spanEnd = i + 1 < userIndexes.length ? userIndexes[i + 1]! : all.length;
+      const assistant = finalAssistantText(all.slice(userIndex + 1, spanEnd));
+      turns.push({ user, assistant });
+    }
+    return { turns };
   }
 
   private combinedMessages(): ContextMessage[] {

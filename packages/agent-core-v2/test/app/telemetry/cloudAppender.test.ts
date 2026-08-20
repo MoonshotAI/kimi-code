@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -45,12 +45,15 @@ function statusResponse(status: number): Response {
 }
 
 function baseOptions(
-  overrides: Partial<CloudAppenderOptions> & { homeDir?: string } = {},
+  overrides: Partial<CloudAppenderOptions> & { homeDir?: string; bootstrapEnv?: NodeJS.ProcessEnv } = {},
 ): CloudAppenderOptions {
-  const { homeDir: dir = '', storage, ...rest } = overrides;
+  const { homeDir: dir = '', storage, bootstrapEnv, ...rest } = overrides;
   return {
     storage: storage ?? new FileStorageService(dir),
-    bootstrap: { ...stubBootstrap(), clientIdentity: { ...stubClientIdentity, version: '1.0.0' } },
+    bootstrap: {
+      ...stubBootstrap(dir === '' ? undefined : dir, bootstrapEnv),
+      clientIdentity: { ...stubClientIdentity, version: '1.0.0' },
+    },
     deviceId: 'dev',
     appName: 'test-app',
     sleep: async () => {},
@@ -60,13 +63,28 @@ function baseOptions(
 
 describe('CloudAppender', () => {
   let homeDir: string;
+  let savedOauthHost: string | undefined;
+  let savedLegacyOauthHost: string | undefined;
+  let savedKimiHome: string | undefined;
 
   beforeEach(() => {
     homeDir = mkdtempSync(join(tmpdir(), 'cloud-appender-'));
+    savedOauthHost = process.env['KIMI_CODE_OAUTH_HOST'];
+    savedLegacyOauthHost = process.env['KIMI_OAUTH_HOST'];
+    savedKimiHome = process.env['KIMI_CODE_HOME'];
+    delete process.env['KIMI_CODE_OAUTH_HOST'];
+    delete process.env['KIMI_OAUTH_HOST'];
+    process.env['KIMI_CODE_HOME'] = homeDir;
   });
 
   afterEach(() => {
     rmSync(homeDir, { recursive: true, force: true });
+    if (savedOauthHost === undefined) delete process.env['KIMI_CODE_OAUTH_HOST'];
+    else process.env['KIMI_CODE_OAUTH_HOST'] = savedOauthHost;
+    if (savedLegacyOauthHost === undefined) delete process.env['KIMI_OAUTH_HOST'];
+    else process.env['KIMI_OAUTH_HOST'] = savedLegacyOauthHost;
+    if (savedKimiHome === undefined) delete process.env['KIMI_CODE_HOME'];
+    else process.env['KIMI_CODE_HOME'] = savedKimiHome;
   });
 
   it('sends a flattened, prefixed payload with user_id and context', async () => {
@@ -101,6 +119,94 @@ describe('CloudAppender', () => {
     expect(typeof event?.['context_core_version']).toBe('string');
     expect(typeof event?.['event_id']).toBe('string');
     expect(typeof event?.['timestamp']).toBe('number');
+  });
+
+  it('derives the global endpoint when the env pins the global region', async () => {
+    process.env['KIMI_CODE_OAUTH_HOST'] = 'https://auth.kimi.ai';
+    const requests: CapturedRequest[] = [];
+    const appender = new CloudAppender(
+      baseOptions({
+        homeDir,
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+
+    appender.track('tool.call', { name: 'bash' });
+    await appender.flush();
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe('https://telemetry-logs.kimi.ai/v1/event');
+  });
+
+  it('reads the install marker from the bootstrapped home for the default endpoint', async () => {
+    writeFileSync(join(homeDir, 'region'), 'global\n');
+    const requests: CapturedRequest[] = [];
+    const appender = new CloudAppender(
+      baseOptions({
+        homeDir,
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+
+    appender.track('tool.call', { name: 'bash' });
+    await appender.flush();
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe('https://telemetry-logs.kimi.ai/v1/event');
+  });
+
+  it('honors the marker opt-out from the bootstrap env bag (no process.env needed)', async () => {
+    writeFileSync(join(homeDir, 'region'), 'global\n');
+    const requests: CapturedRequest[] = [];
+    const appender = new CloudAppender(
+      baseOptions({
+        homeDir,
+        bootstrapEnv: { KIMI_CODE_REGION_MARKER: 'off' },
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+
+    appender.track('tool.call', { name: 'bash' });
+    await appender.flush();
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe('https://telemetry-logs.kimi.com/v1/event');
+  });
+
+  it('honors KIMI_CODE_REGION_MARKER=off so embedded servers ignore the install marker', async () => {
+    writeFileSync(join(homeDir, 'region'), 'global\n');
+    const savedMarkerFlag = process.env['KIMI_CODE_REGION_MARKER'];
+    process.env['KIMI_CODE_REGION_MARKER'] = 'off';
+    try {
+      const requests: CapturedRequest[] = [];
+      const appender = new CloudAppender(
+        baseOptions({
+          homeDir,
+          fetchImpl: makeFetch((req) => {
+            requests.push(req);
+            return okResponse();
+          }),
+        }),
+      );
+
+      appender.track('tool.call', { name: 'bash' });
+      await appender.flush();
+
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.url).toBe('https://telemetry-logs.kimi.com/v1/event');
+    } finally {
+      if (savedMarkerFlag === undefined) delete process.env['KIMI_CODE_REGION_MARKER'];
+      else process.env['KIMI_CODE_REGION_MARKER'] = savedMarkerFlag;
+    }
   });
 
   it('applies setContext sessionId and model updates to subsequent events', async () => {

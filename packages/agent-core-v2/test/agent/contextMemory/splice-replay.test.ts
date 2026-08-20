@@ -16,7 +16,7 @@ import {
 } from '#/agent/contextMemory/contextEvents';
 import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { ContentPart } from '#/kosong/contract/message';
@@ -151,13 +151,15 @@ interface Host {
   eventBus: IEventBus;
 }
 
-const noopTokenCounting: IAgentTokenCountingService = {
+const noopTokenCounting: ISessionTokenCountingService = {
   _serviceBrand: undefined,
   strategy: 'measured+estimated',
   get: () => ({ size: 0, measured: 0, estimated: 0 }),
   measured: () => {},
   latestMeasured: () => 0,
   statusSize: () => 0,
+  recordTruncation: () => {},
+  rebase: () => {},
   requestSize: () => 0,
   estimateText: () => 0,
   estimateMessage: () => 0,
@@ -171,7 +173,7 @@ function buildHost(key: string): Host {
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.stub(IAgentBlobService, blob);
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
-  ix.set(IAgentTokenCountingService, noopTokenCounting);
+  ix.set(ISessionTokenCountingService, noopTokenCounting);
   ix.set(IAgentContextMemoryService, new SyncDescriptor(AgentContextMemoryService));
   const wire = registerTestAgentWire(ix, testWireScope(SCOPE, key), {
     log: ix.get(IAppendLogStore),
@@ -209,23 +211,23 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     const host = buildHost(KEY);
     const model = () => host.agentState.get(contextMemoryKey);
 
-    await host.dispatcher.dispatch(new ContextAppendMessage({ message: userMessage('a') }));
-    await host.dispatcher.dispatch(new ContextAppendMessage({ message: userMessage('b') }));
+    await host.dispatcher.dispatch(new ContextAppendMessage({ agentId: 'test-agent', message: userMessage('a') }));
+    await host.dispatcher.dispatch(new ContextAppendMessage({ agentId: 'test-agent', message: userMessage('b') }));
     expect(model()).toHaveLength(2);
 
     let prev = model();
-    await host.dispatcher.dispatch(new ContextAppendMessage({ message: userMessage('c') }));
+    await host.dispatcher.dispatch(new ContextAppendMessage({ agentId: 'test-agent', message: userMessage('c') }));
     expect(model()).not.toBe(prev);
     expect(model()).toHaveLength(3);
 
     prev = model();
-    await host.dispatcher.dispatch(new ContextUndo({ count: 1 }));
+    await host.dispatcher.dispatch(new ContextUndo({ agentId: 'test-agent', count: 1 }));
     expect(model()).not.toBe(prev);
     expect(model()).toHaveLength(2);
 
     prev = model();
     await host.dispatcher.dispatch(
-      new ContextApplyCompaction({ summary: 'sum', compactedCount: 1, tokensBefore: 0, tokensAfter: 0 }),
+      new ContextApplyCompaction({ agentId: 'test-agent', summary: 'sum', compactedCount: 1, tokensBefore: 0, tokensAfter: 0 }),
     );
     expect(model()).not.toBe(prev);
     expect(model()).toHaveLength(2);
@@ -236,7 +238,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     });
 
     prev = model();
-    await host.dispatcher.dispatch(new ContextClear({}));
+    await host.dispatcher.dispatch(new ContextClear({ agentId: 'test-agent' }));
     expect(model()).not.toBe(prev);
     expect(model()).toHaveLength(0);
 
@@ -447,7 +449,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     const big = 'A'.repeat(200);
     const dataUri = `data:image/png;base64,${big}`;
 
-    await host.dispatcher.dispatch(new ContextAppendMessage({ message: imageMessage(big) }));
+    await host.dispatcher.dispatch(new ContextAppendMessage({ agentId: 'test-agent', message: imageMessage(big) }));
     await host.dispatcher.flush();
 
     const live = host.agentState.get(contextMemoryKey);
@@ -480,9 +482,14 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     const host = buildHost(KEY);
     const big = 'A'.repeat(200);
 
-    await host.dispatcher.dispatch(new ContextAppendMessage({ message: imageMessage(big) }));
     await host.dispatcher.dispatch(
-      new ContextAppendLoopEvent({ event: { type: 'step.begin', uuid: 'interrupted' } }),
+      new ContextAppendMessage({ agentId: 'test-agent', message: imageMessage(big) }),
+    );
+    await host.dispatcher.dispatch(
+      new ContextAppendLoopEvent({
+        agentId: 'test-agent',
+        event: { type: 'step.begin', uuid: 'interrupted' },
+      }),
     );
     await host.dispatcher.flush();
     const records = await readRecords(host.log);
@@ -496,12 +503,18 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     );
     expect(blob.loadCalls).toBeGreaterThanOrEqual(1);
 
-    await replay.dispatcher.dispatch(new ContextAppendMessage({ message: userMessage('retry') }));
     await replay.dispatcher.dispatch(
-      new ContextAppendLoopEvent({ event: { type: 'step.begin', uuid: 'recovered' } }),
+      new ContextAppendMessage({ agentId: 'test-agent', message: userMessage('retry') }),
     );
     await replay.dispatcher.dispatch(
       new ContextAppendLoopEvent({
+        agentId: 'test-agent',
+        event: { type: 'step.begin', uuid: 'recovered' },
+      }),
+    );
+    await replay.dispatcher.dispatch(
+      new ContextAppendLoopEvent({
+        agentId: 'test-agent',
         event: {
           type: 'content.part',
           stepUuid: 'recovered',
@@ -510,7 +523,10 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       }),
     );
     await replay.dispatcher.dispatch(
-      new ContextAppendLoopEvent({ event: { type: 'step.end', uuid: 'recovered' } }),
+      new ContextAppendLoopEvent({
+        agentId: 'test-agent',
+        event: { type: 'step.end', uuid: 'recovered' },
+      }),
     );
 
     const rebuilt = replay.agentState.get(contextMemoryKey);

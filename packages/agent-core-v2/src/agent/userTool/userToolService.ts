@@ -37,6 +37,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
   private readonly registrations = new Map<string, IDisposable>();
 
   constructor(
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
@@ -65,12 +66,16 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
   }
 
   register(input: UserToolRegistration): void {
-    void this.dispatcher.dispatch(new ToolsRegisterUserTool(input));
+    void this.dispatcher.dispatch(
+      new ToolsRegisterUserTool({ ...input, agentId: this.scopeContext.agentId }),
+    );
     this.applyRegister(input);
   }
 
   unregister(name: string): void {
-    void this.dispatcher.dispatch(new ToolsUnregisterUserTool({ name }));
+    void this.dispatcher.dispatch(
+      new ToolsUnregisterUserTool({ agentId: this.scopeContext.agentId, name }),
+    );
     this.applyUnregister(name);
   }
 

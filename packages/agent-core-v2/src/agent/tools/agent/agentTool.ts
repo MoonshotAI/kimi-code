@@ -20,6 +20,7 @@ import {
 } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
@@ -38,8 +39,10 @@ import { type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import {
+  rootDelegationExtras,
   subagentAllowlistFor,
   subagentTypeNotAllowedMessage,
+  withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
@@ -95,6 +98,7 @@ export class SubagentTool implements ISubagentTool {
   }
 
   private readonly callerAgentId: string;
+  private readonly callerAgent: AgentContext;
   private readonly canRunInBackground: () => boolean;
   private catalogReady = false;
   private frozenCatalogProfiles: readonly AgentProfile[] | undefined;
@@ -119,6 +123,7 @@ export class SubagentTool implements ISubagentTool {
     @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
   ) {
     this.callerAgentId = scopeContext.agentId;
+    this.callerAgent = scopeContext.agentContext;
     this.canRunInBackground = () =>
       this.toolPolicy.isToolActive('TaskList') &&
       this.toolPolicy.isToolActive('TaskOutput') &&
@@ -133,8 +138,9 @@ export class SubagentTool implements ISubagentTool {
       ? AGENT_BACKGROUND_DESCRIPTION
       : AGENT_BACKGROUND_DISABLED_DESCRIPTION;
     let description = `${AGENT_DESCRIPTION_BASE}\n\n${backgroundDescription}`;
-    const allowlist = subagentAllowlistFor(this.catalog, this.profile.data());
+    const own = this.profile.data();
     const catalogProfiles = this.catalogProfiles();
+    const allowlist = this.effectiveAllowlist(own, catalogProfiles);
     const profiles =
       allowlist === undefined
         ? catalogProfiles
@@ -164,6 +170,33 @@ export class SubagentTool implements ISubagentTool {
     const profiles = this.catalog.list();
     if (this.catalogReady) this.frozenCatalogProfiles = profiles;
     return profiles;
+  }
+
+  private delegationExtras(
+    own: {
+      readonly profileName?: string;
+      readonly subagents?: readonly string[];
+    },
+    profiles: readonly AgentProfile[],
+  ): readonly string[] | undefined {
+    if (this.callerAgentId !== 'main') return undefined;
+    return rootDelegationExtras(this.catalog, own, profiles);
+  }
+
+  private effectiveAllowlist(
+    own: {
+      readonly profileName?: string;
+      readonly subagents?: readonly string[];
+    },
+    profiles: readonly AgentProfile[],
+  ): readonly string[] | undefined {
+    const allowlist = subagentAllowlistFor(
+      this.catalog,
+      own,
+      this.delegationExtras(own, profiles),
+    );
+    if (allowlist === undefined || own.subagents !== undefined) return allowlist;
+    return withoutDelegatingTargets(this.catalog, allowlist);
   }
 
   private knownToolReferences(): ToolReference[] {
@@ -213,7 +246,7 @@ export class SubagentTool implements ISubagentTool {
   }
 
   private resumeProfileName(agentId: string): string | undefined {
-    const target = this.lifecycle.get(agentId);
+    const target = this.lifecycle.findAgentHandle(agentId);
     if (target === undefined) return undefined;
     return target.accessor.get(IAgentProfileService).data().profileName;
   }
@@ -224,7 +257,7 @@ export class SubagentTool implements ISubagentTool {
     controller: AbortController,
     runtime: Runtime,
   ): Promise<SubagentHandle> {
-    const requester = this.lifecycle.get(this.callerAgentId);
+    const requester = this.lifecycle.get(this.callerAgent);
     if (requester === undefined) {
       throw new Error2(
         ErrorCodes.AGENT_NOT_FOUND,
@@ -241,7 +274,7 @@ export class SubagentTool implements ISubagentTool {
     let displayModel: string | undefined;
     let promptText = args.prompt;
     if (isResume) {
-      const target = this.lifecycle.get(resumeAgentId);
+      const target = this.lifecycle.findAgentHandle(resumeAgentId);
       if (target === undefined) {
         throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent instance "${resumeAgentId}" does not exist`, {
           details: { agentId: resumeAgentId },
@@ -258,7 +291,7 @@ export class SubagentTool implements ISubagentTool {
         : DEFAULT_PROFILE_NAME;
       await this.catalog.ready;
       const own = this.profile.data();
-      const allowlist = subagentAllowlistFor(this.catalog, own);
+      const allowlist = this.effectiveAllowlist(own, this.catalog.list());
       if (allowlist !== undefined && !allowlist.includes(requestedProfileName)) {
         throw new Error2(
           ErrorCodes.AGENT_TYPE_NOT_ALLOWED,
@@ -312,8 +345,19 @@ export class SubagentTool implements ISubagentTool {
       });
     }
 
+    const runInBackground = args.run_in_background === true;
+    emitAgentRunSpawned(requester, agentId, {
+      profileName,
+      parentToolCallId: toolCallId,
+      description: args.description,
+      runInBackground,
+      model: displayModel,
+    });
+
+    const target = this.lifecycle.findAgentHandle(agentId);
+    if (target === undefined) throw new Error(`Agent "${agentId}" does not exist`);
     const run = await this.subagents.run(
-      agentId,
+      target.accessor.get(IAgentScopeContext).agentContext,
       { kind: 'prompt', prompt: promptText },
       { signal: controller.signal },
     );
@@ -331,8 +375,7 @@ export class SubagentTool implements ISubagentTool {
       profileName,
       parentToolCallId: toolCallId,
       model: displayModel,
-      thinkingEffort: this.lifecycle
-        .get(agentId)
+      thinkingEffort: this.lifecycle.findAgentHandle(agentId)
         ?.accessor.get(IAgentProfileService)
         .getEffectiveThinkingLevel(),
       completion: mirrored.then((r) => ({ result: r.summary, usage: r.usage })),
@@ -445,7 +488,7 @@ export class SubagentTool implements ISubagentTool {
         };
       }
 
-      const requester = this.lifecycle.get(this.callerAgentId);
+      const requester = this.lifecycle.get(this.callerAgent);
       if (requester !== undefined) {
         emitAgentRunSpawned(requester, handle.agentId, {
           profileName: handle.profileName,

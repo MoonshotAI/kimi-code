@@ -29,6 +29,7 @@ import {
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
+import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { subagentLabels } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -265,7 +266,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     controller: AbortController,
     binding: SubagentBinding | undefined,
   ): Promise<SubagentHandle> {
-    const requester = this.lifecycle.get(this.callerAgentId);
+    const requester = this.lifecycle.findAgentHandle(this.callerAgentId);
     if (requester === undefined) {
       throw new Error(`Caller agent "${this.callerAgentId}" does not exist`);
     }
@@ -297,7 +298,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     });
 
     const run = await this.subagents.run(
-      agentId,
+      agentContextOf(created),
       { kind: 'prompt', prompt },
       { signal: controller.signal },
     );

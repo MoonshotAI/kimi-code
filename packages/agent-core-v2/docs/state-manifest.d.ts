@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 100 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 17 keys · Agent: 96 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -42,7 +42,6 @@
 //     cron.parsedCache                   src/session/cron/sessionCronServiceImpl.ts
 //     cron.seededFromStore               src/session/cron/sessionCronServiceImpl.ts
 //     cron.started                       src/session/cron/sessionCronServiceImpl.ts
-//     cron.tasks                         src/session/cron/sessionCronServiceImpl.ts
 //     interaction.nextId                 src/session/interaction/interactionService.ts
 //     interaction.pending                src/session/interaction/interactionService.ts
 //     interaction.recentlyResolved       src/session/interaction/interactionService.ts
@@ -128,6 +127,7 @@
 //     runtimeBinding                                  src/agent/runtimeBinding/runtimeBindingOps.ts
 //     shellCommand.tasks                              src/agent/shellCommand/shellCommandService.ts
 //     skill                                           src/agent/skill/skillOps.ts
+//     staleGuard                                      src/features/staleGuard/staleGuardOps.ts
 //     stepRetry.failedAttempts                        src/agent/stepRetry/stepRetryService.ts
 //     stepRetry.lastFailedDriverId                    src/agent/stepRetry/stepRetryService.ts
 //     swarm                                           src/features/swarm/swarmOps.ts
@@ -137,8 +137,6 @@
 //     task.ghosts                                     src/agent/task/taskService.ts
 //     task.notificationDelivery                       src/agent/task/taskService.ts
 //     task.scheduledNotificationKeys                  src/agent/task/taskService.ts
-//     todo                                            src/session/todo/todoOps.ts
-//     tokenCounting                                   src/agent/tokenCounting/tokenCountingOps.ts
 //     toolDedupe.activeStep                           src/agent/toolDedupe/toolDedupeService.ts
 //     toolDedupe.activeTurnId                         src/agent/toolDedupe/toolDedupeService.ts
 //     toolDedupe.callKeyByCallId                      src/agent/toolDedupe/toolDedupeService.ts
@@ -152,9 +150,6 @@
 //     toolSelect.pendingLoaded                        src/agent/toolSelect/toolSelectService.ts
 //     tower                                           src/features/tower/towerOps.ts
 //     turn                                            src/agent/loop/turnOps.ts
-//     usage                                           src/agent/usage/usageOps.ts
-//     usage.currentTurn                               src/agent/usage/usageService.ts
-//     usage.currentTurnId                             src/agent/usage/usageService.ts
 //     userTool                                        src/agent/userTool/userToolOps.ts
 
 /** App-scope keys registered into IAppStateService. */
@@ -453,15 +448,6 @@ export interface SessionStateSnapshot {
   }>;
   'cron.seededFromStore': Set<string>;
   'cron.started': boolean;
-  'cron.tasks': Map<string, /* CronTask — packages/agent-core-v2/src/app/cron/cronTask.ts */ {
-    readonly id: string;
-    readonly cron: string;
-    readonly prompt: string;
-    readonly createdAt: number;
-    readonly recurring?: boolean;
-    readonly lastFiredAt?: number;
-    readonly tags?: Readonly<Record<string, string>>;
-  }>;
   // src/session/interaction/interactionService.ts
   'interaction.nextId': number;
   'interaction.pending': Map<string, /* Pending — packages/agent-core-v2/src/session/interaction/interactionService.ts */ {
@@ -1358,10 +1344,10 @@ export interface AgentStateSnapshot {
   // src/agent/media/mediaToolsRegistrar.ts
   'media.registeredKey': string | undefined;
   // src/agent/permissionMode/injection/permissionModeInjection.ts
-  'permissionMode.lastMode': 'manual' | 'yolo' | 'auto' | undefined;
+  'permissionMode.lastMode': 'manual' | 'auto' | 'yolo' | undefined;
   // src/agent/permissionMode/permissionModeOps.ts
   // replayable · durable — folds: PermissionSetMode
-  'permissionMode': /* PermissionMode — packages/agent-core-v2/src/agent/permissionPolicy/types.ts */ 'manual' | 'yolo' | 'auto';
+  'permissionMode': /* PermissionMode — packages/agent-core-v2/src/agent/permissionPolicy/types.ts */ 'manual' | 'auto' | 'yolo';
   // replayable · durable — folds: PermissionSetMode
   'permissionMode.configured': boolean;
   // src/agent/permissionRules/permissionRulesOps.ts
@@ -1535,16 +1521,6 @@ export interface AgentStateSnapshot {
   // replayable · durable · undoable — folds: ContextAppendMessage, TaskWaitDelivered
   'task.notificationDelivery': readonly string[];
   'task.scheduledNotificationKeys': Set<string>;
-  // src/agent/tokenCounting/tokenCountingOps.ts
-  // replayable · durable — folds: TokenCountingMeasured, TokenCountingTruncated, TokenCountingRebased
-  'tokenCounting': /* TokenCountingState — packages/agent-core-v2/src/agent/tokenCounting/tokenCountingOps.ts */ {
-    readonly anchors: readonly /* TokenAnchor — packages/agent-core-v2/src/agent/tokenCounting/tokenCountingOps.ts */ {
-      readonly length: number;
-      readonly tokens: number;
-      readonly measured: boolean;
-    }[];
-    readonly tokens: number;
-  };
   // src/agent/toolDedupe/toolDedupeService.ts
   'toolDedupe.activeStep': number;
   'toolDedupe.activeTurnId': number | undefined;
@@ -1559,24 +1535,6 @@ export interface AgentStateSnapshot {
   'toolExecutor.toolCallDupTypes': Map<string, /* ToolCallDupType — packages/agent-core-v2/src/agent/toolExecutor/toolExecutor.ts */ 'same_step' | 'cross_step'>;
   // src/agent/toolSelect/toolSelectService.ts
   'toolSelect.pendingLoaded': Set<string>;
-  // src/agent/usage/usageOps.ts
-  // replayable · durable — folds: UsageRecord
-  'usage': /* UsageModelState — packages/agent-core-v2/src/agent/usage/usageOps.ts */ {
-    readonly byModel: Record<string, /* TokenUsage — packages/agent-core-v2/src/kosong/contract/usage.ts */ {
-      inputOther: number;
-      output: number;
-      inputCacheRead: number;
-      inputCacheCreation: number;
-    }>;
-  };
-  // src/agent/usage/usageService.ts
-  'usage.currentTurn': /* TokenUsage — packages/agent-core-v2/src/kosong/contract/usage.ts */ {
-    inputOther: number;
-    output: number;
-    inputCacheRead: number;
-    inputCacheCreation: number;
-  } | undefined;
-  'usage.currentTurnId': number | undefined;
   // src/agent/userTool/userToolOps.ts
   // replayable · durable — folds: ToolsRegisterUserTool, ToolsUnregisterUserTool
   'userTool': /* UserToolModelState — packages/agent-core-v2/src/agent/userTool/userToolOps.ts */ Map<string, /* UserToolRegistration — packages/agent-core-v2/src/agent/userTool/userTool.ts */ {
@@ -1645,6 +1603,9 @@ export interface AgentStateSnapshot {
     readonly id?: string;
     readonly revisionCount?: Readonly<Record<string, number>>;
   };
+  // src/features/staleGuard/staleGuardOps.ts
+  // replayable · durable — folds: StaleGuardRecorded, StaleGuardCleared
+  'staleGuard': /* StaleGuardModelState — packages/agent-core-v2/src/features/staleGuard/staleGuardOps.ts */ Map<string, number>;
   // src/features/swarm/swarmOps.ts
   // replayable · durable — folds: SwarmModeEnter, SwarmModeExit
   'swarm': 'task' | 'tool' | 'manual' | null;
@@ -1652,7 +1613,7 @@ export interface AgentStateSnapshot {
   // replayable · durable — folds: TowerModeEnter, TowerModeExit
   'tower': boolean;
   // src/session/cron/cronOps.ts
-  // replayable · transient — folds: CronAdd, CronDelete, CronCursor
+  // replayable · durable — folds: CronAdd, CronDelete, CronCursor
   'cron': /* CronModelState — packages/agent-core-v2/src/session/cron/cronOps.ts */ Map<string, /* CronTask — packages/agent-core-v2/src/app/cron/cronTask.ts */ {
     readonly id: string;
     readonly cron: string;
@@ -1668,17 +1629,11 @@ export interface AgentStateSnapshot {
     readonly id: string;
     readonly kind: /* InteractionKind — packages/agent-core-v2/src/session/interaction/interaction.ts */ 'approval' | 'question' | 'user_tool';
     readonly toolCallId?: string;
-    readonly agentId?: string;
+    readonly agentId: string;
     readonly request: unknown;
     readonly resolved: boolean;
     readonly response?: unknown;
   }>;
-  // src/session/todo/todoOps.ts
-  // replayable · durable · undoable — folds: ToolsUpdateStore
-  'todo': readonly /* TodoItem — packages/agent-core-v2/src/session/todo/todoItem.ts */ {
-    readonly title: string;
-    readonly status: /* TodoStatus — packages/agent-core-v2/src/session/todo/todoItem.ts */ 'pending' | 'in_progress' | 'done';
-  }[];
 }
 
 export type AgentStateKey = keyof AgentStateSnapshot;

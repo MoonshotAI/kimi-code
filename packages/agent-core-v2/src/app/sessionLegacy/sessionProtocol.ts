@@ -77,6 +77,6 @@ export const sessionStatusResponseSchema = z.object({
   swarm_mode: z.boolean(),
   context_tokens: z.number().int().nonnegative(),
   max_context_tokens: z.number().int().nonnegative().optional(),
-  context_usage: z.number().min(0).max(1),
+  context_usage: z.number().min(0).max(1).optional(),
 });
 export type SessionStatusResponse = z.infer<typeof sessionStatusResponseSchema>;

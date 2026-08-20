@@ -79,7 +79,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
       eventBus.subscribe(ContextUndone, () => {
         this.restoreTelemetryMode();
         void this.dispatcher.dispatch(
-          new AgentStatusUpdated({ planMode: this.isActive }),
+          new AgentStatusUpdated({ agentId: this.agentCtx.agentId, planMode: this.isActive }),
         );
       }),
     );
@@ -168,7 +168,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     let enterRecorded = false;
     try {
       await this.ensurePlanDirectory(planFilePath);
-      await this.dispatcher.dispatch(new PlanModeEnter({ id }));
+      await this.dispatcher.dispatch(new PlanModeEnter({ agentId: this.agentCtx.agentId, id }));
       this.telemetryContext.set({ mode: 'plan' });
       enterRecorded = true;
       if (createFile) {
@@ -183,7 +183,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
   }
 
   cancel(id?: string): void {
-    void this.dispatcher.dispatch(new PlanModeCancel({ id }));
+    void this.dispatcher.dispatch(new PlanModeCancel({ agentId: this.agentCtx.agentId, id }));
     this.telemetryContext.set({ mode: 'agent' });
   }
 
@@ -194,7 +194,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
   }
 
   exit(id?: string): void {
-    void this.dispatcher.dispatch(new PlanModeExit({ id }));
+    void this.dispatcher.dispatch(new PlanModeExit({ agentId: this.agentCtx.agentId, id }));
     this.telemetryContext.set({ mode: 'agent' });
   }
 
@@ -210,6 +210,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     await this.blobs.put(scope, key, bytes);
     await this.dispatcher.dispatch(
       new PlanRevision({
+        agentId: this.agentCtx.agentId,
         id,
         version,
         path: `${scope}/${key}`,

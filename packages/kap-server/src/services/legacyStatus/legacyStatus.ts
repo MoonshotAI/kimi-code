@@ -1,10 +1,11 @@
 import {
+  agentContextOf,
   FLOW_FLAG_ID,
   IAgentFlowService,
   IAgentProfileService,
-  IAgentTokenCountingService,
-  IAgentUsageService,
   IFlagService,
+  ISessionTokenCountingService,
+  ISessionUsageService,
   IModelCatalog,
   IModelService,
   MAIN_AGENT_ID,
@@ -98,17 +99,18 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   const profile = agent.accessor.get(IAgentProfileService) as
     | IAgentProfileService
     | undefined;
-  const usageService = agent.accessor.get(IAgentUsageService) as
-    | IAgentUsageService
+  const usageService = agent.accessor.get(ISessionUsageService) as
+    | ISessionUsageService
     | undefined;
-  const tokenCounting = agent.accessor.get(IAgentTokenCountingService) as
-    | IAgentTokenCountingService
+  const tokenCounting = agent.accessor.get(ISessionTokenCountingService) as
+    | ISessionTokenCountingService
     | undefined;
   if (profile === undefined || usageService === undefined || tokenCounting === undefined) {
     return undefined;
   }
-  const usage = usageService.status();
-  const contextTokens = tokenCounting.statusSize();
+  const context = agentContextOf(agent);
+  const usage = usageService.status(context);
+  const contextTokens = tokenCounting.statusSize(context);
   const capabilities = profile.getModelCapabilities();
   let maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
   if (maxContextTokens === 0 && profile.getModel() === '') {

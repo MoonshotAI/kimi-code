@@ -1233,6 +1233,9 @@ export class KimiTUI {
       content: '',
     };
     const outputComponent = new ShellRunComponent(() => this.state.ui.requestRender());
+    // Inherit the current ctrl+o state, same as freshly mounted tool calls —
+    // the global toggle only reaches components that exist when it fires.
+    if (this.state.toolOutputExpanded) outputComponent.setExpanded(true);
     this.shellOutputStreams.set(commandId, { entry: outputEntry, component: outputComponent });
     this.state.transcriptEntries.push(outputEntry);
     markTranscriptComponent(outputComponent, outputEntry);

@@ -51,6 +51,11 @@ export interface SessionCreatedEvent {
   readonly session: Session;
 }
 
+export interface SessionArchivedEvent {
+  readonly type: 'event.session.archived';
+  readonly workspace_id: string;
+}
+
 export interface WorkspaceCreatedEvent {
   readonly type: 'event.workspace.created';
   readonly workspace: Workspace;
@@ -228,6 +233,7 @@ export type AgentEvent =
   | AgentDisposedEvent
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
+  | SessionArchivedEvent
   | WorkspaceCreatedEvent
   | WorkspaceUpdatedEvent
   | WorkspaceDeletedEvent
