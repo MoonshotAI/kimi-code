@@ -189,7 +189,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--space-2);
   max-width: min(960px, calc(100vw - var(--space-6) * 2));
-  max-height: calc(100vh - var(--space-6) * 2);
+  max-height: calc(var(--app-height, 100vh) - var(--space-6) * 2);
 }
 .media-lightbox-frame {
   max-width: 100%;
@@ -201,7 +201,7 @@ onBeforeUnmount(() => {
 .media-lightbox-media {
   display: block;
   max-width: 100%;
-  max-height: calc(100vh - var(--space-6) * 4);
+  max-height: calc(var(--app-height, 100vh) - var(--space-6) * 4);
   object-fit: contain;
 }
 .media-lightbox-name {

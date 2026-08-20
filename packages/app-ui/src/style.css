@@ -301,6 +301,12 @@ html[data-color-scheme="dark"] {
   /* The autocomplete family's frostier surface (the dock work panel shares
      it): 70% page background over the shared blur. */
   --color-menu-bg-frost: color-mix(in srgb, var(--color-bg) 70%, transparent);
+  /* §03 TopBar .frost — the sticky-nav frosted-glass recipe (78% surface over
+     a saturated 12px blur), the sole glassmorphism exception beside the menu
+     family. Tokenized so the TopBar primitive and the mobile top bar can
+     never drift. */
+  --color-topbar-bg-frost: color-mix(in srgb, var(--color-surface) 78%, transparent);
+  --p-topbar-backdrop: saturate(150%) blur(12px);
   /* Overlay scroll thumb on the autocomplete menus: 16% ink at rest, 48% on
      hover. */
   --color-menu-scrollbar: color-mix(in srgb, var(--color-text) 16%, transparent);

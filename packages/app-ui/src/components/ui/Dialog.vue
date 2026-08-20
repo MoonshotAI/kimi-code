@@ -40,6 +40,10 @@ const props = withDefaults(defineProps<{
   /** Element (or selector / resolver) to receive focus when the dialog opens.
    *  Falls back to the first focusable element, then the dialog panel. */
   initialFocus?: HTMLElement | string | (() => HTMLElement | null | undefined);
+  /** Set false to leave focus where it is on open — touch hosts (the dialog
+   *  rendered as a bottom sheet) where grabbing it would pop the software
+   *  keyboard over the content. */
+  focusOnOpen?: boolean;
 }>(), {
   closeOnOverlay: true,
   closeOnEsc: true,
@@ -47,6 +51,7 @@ const props = withDefaults(defineProps<{
   height: 'auto',
   padded: true,
   level: 'raised',
+  focusOnOpen: true,
 });
 
 const emit = defineEmits<{
@@ -119,10 +124,14 @@ watch(
     if (isOpen) {
       openDialogCount.value += 1;
       previouslyFocused = document.activeElement;
-      await nextTick();
-      const initial = resolveInitialFocus();
-      const list = focusables();
-      (initial ?? list[0] ?? panel.value)?.focus();
+      // focusOnOpen=false (touch sheets): leave focus untouched so no software
+      // keyboard pops over the content.
+      if (props.focusOnOpen) {
+        await nextTick();
+        const initial = resolveInitialFocus();
+        const list = focusables();
+        (initial ?? list[0] ?? panel.value)?.focus();
+      }
     } else {
       openDialogCount.value = Math.max(0, openDialogCount.value - 1);
       if (previouslyFocused instanceof HTMLElement) {
@@ -240,5 +249,34 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
   gap: 10px;
   padding: 14px 22px 20px;
+}
+
+/* Mobile (≤640px): the centered modal becomes a bottom-anchored full-width
+   sheet (rounded top, slides up). The height budget follows the shell's
+   visual-viewport pinning (--app-height) so the sheet shrinks with the
+   software keyboard; 100dvh fallback where the app never sets it. */
+@media (max-width: 640px) {
+  .ui-dialog__overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .ui-dialog {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(var(--app-height, 100dvh) * 0.86);
+    border-right: none;
+    border-bottom: none;
+    border-left: none;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    padding-bottom: var(--safe-bottom, 0px);
+    animation: ui-dialog-sheet-up var(--duration-slow) var(--ease-out);
+  }
+  .ui-dialog--fixed-height {
+    height: calc(var(--app-height, 100dvh) * 0.86);
+  }
+}
+@keyframes ui-dialog-sheet-up {
+  from { transform: translateY(101%); }
+  to { transform: translateY(0); }
 }
 </style>

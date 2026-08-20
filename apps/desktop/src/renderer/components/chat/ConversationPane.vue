@@ -2835,7 +2835,7 @@ defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone
    card is raised so the attachment always paints behind it. */
 .empty-composer :deep(.composer-card) { position: relative; z-index: var(--z-sticky); }
 /* Landing textarea rests at three lines; the :not(.expanded) guard leaves the
-   expanded editor's own 70vh bounds in charge. */
+   expanded editor's own 70%-of-app-height bounds in charge. */
 .empty-composer:not(.expanded) :deep(.ph) { min-height: 3lh; }
 .ws-bar {
   margin-top: calc(-1 * var(--space-4));

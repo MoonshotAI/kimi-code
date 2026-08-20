@@ -6,6 +6,7 @@
 <script setup lang="ts">
 import { onUnmounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { openSheetCount } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 
@@ -39,6 +40,11 @@ function onKeydown(e: KeyboardEvent): void {
 watch(
   () => props.modelValue,
   (open) => {
+    // The sheet's slot in the shared overlay stack (openDialogCount's
+    // counterpart) so page-level chrome — the warning toasts — can yield
+    // while a sheet owns the screen.
+    if (open) openSheetCount.value += 1;
+    else openSheetCount.value = Math.max(0, openSheetCount.value - 1);
     if (typeof document === 'undefined') return;
     if (open) document.addEventListener('keydown', onKeydown);
     else document.removeEventListener('keydown', onKeydown);
@@ -47,6 +53,8 @@ watch(
 );
 
 onUnmounted(() => {
+  // Release this sheet's slot if it unmounts while still open (parent v-if).
+  if (props.modelValue) openSheetCount.value = Math.max(0, openSheetCount.value - 1);
   if (typeof document !== 'undefined') document.removeEventListener('keydown', onKeydown);
 });
 </script>
@@ -96,7 +104,7 @@ onUnmounted(() => {
   border-bottom: none;
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   box-shadow: var(--shadow-xl);
-  max-height: 86vh;
+  max-height: calc(var(--app-height, 100dvh) * 0.86);
   display: flex;
   flex-direction: column;
   min-height: 0;

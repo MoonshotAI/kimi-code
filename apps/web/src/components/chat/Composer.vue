@@ -174,10 +174,10 @@ function toggleExpand(): void {
   expanded.value = !expanded.value;
   // Re-fit the textarea after the min/max-height swap between modes, then
   // recompute growth against the *post-toggle* resting height. Without this,
-  // collapsing would keep the isGrown measured against the expanded 70vh
+  // collapsing would keep the isGrown measured against the expanded 70%-of-app-height
   // min-height, hiding the toggle even though the collapsed draft is still
   // multi-line. (This does not affect the expanded state itself — once
-  // expanded, it stays at 70vh until toggled back or sent.)
+  // expanded, it stays at that height until toggled back or sent.)
   void nextTick(() => {
     autosize();
     recomputeGrown();
@@ -189,9 +189,9 @@ function toggleExpand(): void {
 }
 
 // Collapse the expanded editor after a successful send/steer and re-fit the
-// textarea once the 70vh min-height is gone. On image-only sends the text is
+// textarea once the expanded min-height is gone. On image-only sends the text is
 // already empty, so the draft watcher never re-runs autosize — without this,
-// the textarea keeps the inline height measured at 70vh and the collapsed cap
+// the textarea keeps the inline height measured while expanded and the collapsed cap
 // (1/4 viewport) leaves an oversized empty box until the next keystroke.
 function collapseAndRefit(): void {
   if (!expanded.value) return;
@@ -2353,7 +2353,7 @@ function selectModel(modelId: string): void {
   text-autospace: normal;
   background: transparent;
   min-height: 36px;
-  max-height: calc(100vh / 4);
+  max-height: calc(var(--app-height, 100dvh) / 4);
   overflow-y: auto;
   scrollbar-width: none;
   line-height: 1.5;
@@ -2378,8 +2378,8 @@ function selectModel(modelId: string): void {
    bottom toolbar row, and padding so nothing gets clipped. Content beyond it
    scrolls internally. */
 .composer.expanded .ph {
-  min-height: 70vh;
-  max-height: 70vh;
+  min-height: calc(var(--app-height, 100dvh) * 0.7);
+  max-height: calc(var(--app-height, 100dvh) * 0.7);
 }
 
 /* /compact chip */
@@ -3435,6 +3435,31 @@ function selectModel(modelId: string): void {
   }
   .pd-desc {
     font-size: var(--text-xs);
+  }
+}
+
+/* Touch: invisible rings grow the round mobile controls' hit area toward the
+   44px minimum, glyph and visual size unchanged. */
+@media (max-width: 640px) and (hover: none) {
+  .send,
+  .stop,
+  .attach-btn,
+  .expand-btn,
+  .model-pill {
+    position: relative;
+  }
+  .send::before,
+  .stop::before,
+  .attach-btn::before,
+  .expand-btn::before,
+  .model-pill::before {
+    content: "";
+    position: absolute;
+    inset: -6px;
+  }
+  /* 22px glyph needs the wider ring. */
+  .expand-btn::before {
+    inset: -11px;
   }
 }
 

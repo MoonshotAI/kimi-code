@@ -1278,5 +1278,5 @@ function archiveTime(iso: string): string {
 /* Enlarge the settings frame a bit (Dialog `xl` = 760px wide, fixed-height
    680px). Scoped to this dialog only. */
 :deep(.ui-dialog) { width: min(980px, 96vw); }
-:deep(.ui-dialog--fixed-height) { height: min(780px, calc(100vh - var(--space-8) * 2)); }
+:deep(.ui-dialog--fixed-height) { height: min(780px, calc(var(--app-height, 100vh) - var(--space-8) * 2)); }
 </style>

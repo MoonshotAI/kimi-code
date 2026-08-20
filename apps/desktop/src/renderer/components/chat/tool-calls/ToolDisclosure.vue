@@ -145,6 +145,12 @@ const chevronLabel = computed(() =>
   cursor: pointer;
   user-select: none;
 }
+/* Touch: the head row is the tap target — lift it to the 44px minimum. */
+@media (hover: none) {
+  .tl-head.clickable {
+    min-height: var(--touch-target-min);
+  }
+}
 
 .tl-ic {
   display: inline-flex;

@@ -61,7 +61,11 @@ function metaText(m: AppModel): string {
 }
 
 // Focus the search box on open; restore focus to the opener on close.
-useDialogFocus(dialogRef, searchRef);
+// Touch skips the autofocus — focusing the input on open pops the software
+// keyboard over half the list (the panel itself still takes focus).
+const isCoarsePointer =
+  typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches;
+useDialogFocus(dialogRef, isCoarsePointer ? undefined : searchRef);
 
 const providerTabs = computed(() => {
   const seen = new Set<string>();
@@ -168,7 +172,7 @@ function selectTab(tabId: string): void {
 </script>
 
 <template>
-  <Dialog :open="true" :close-on-esc="false" :title="t('model.title')" size="lg" height="fixed" :padded="false" @close="emit('close')">
+  <Dialog :open="true" :close-on-esc="false" :title="t('model.title')" size="lg" height="fixed" :padded="false" :focus-on-open="!isCoarsePointer" @close="emit('close')">
     <div ref="dialogRef" class="mp">
       <!-- Search -->
       <div class="search-wrap">
@@ -178,7 +182,7 @@ function selectTab(tabId: string): void {
           :placeholder="t('model.searchPlaceholder')"
           autocomplete="off"
           spellcheck="false"
-          autofocus
+          :autofocus="!isCoarsePointer"
           @compositionstart="handleCompositionStart"
           @compositionend="handleCompositionEnd"
         />
@@ -470,6 +474,11 @@ function selectTab(tabId: string): void {
   color: var(--color-text-faint);
 }
 .hint-dot { margin: 0 var(--space-1); }
+
+/* Touch: no keyboard, no shortcut bar. */
+@media (hover: none) {
+  .footer-hint { display: none; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .chip, .model-row, .model-star, .search-clear { transition: none; }

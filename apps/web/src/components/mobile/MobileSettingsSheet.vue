@@ -1,15 +1,16 @@
 <!-- apps/kimi-web/src/components/mobile/MobileSettingsSheet.vue -->
-<!-- Mobile settings: a bottom sheet that surfaces the desktop Composer-toolbar -->
-<!-- controls as big tappable rows — model (opens ModelPicker), thinking level -->
-<!-- (inline cycle picker), plan mode (toggle), permission (cycle), and a -->
-<!-- read-only context-usage meter — plus the desktop settings-popover prefs -->
-<!-- (theme / color scheme / language) and the sign-in/out entry, which previously -->
-<!-- had no mobile counterpart. -->
+<!-- Mobile settings bottom sheet, grouped the way the desktop Settings dialog -->
+<!-- is: a "Current session" card (model → ModelPicker, thinking segments, plan -->
+<!-- / swarm toggles, permission, read-only context meter + cache note), an -->
+<!-- "App preferences" card (color scheme / language / font size / server -->
+<!-- version), and an "Account" module (profile card with sign in/out, then the -->
+<!-- shared PlanUsageCard) — hairline-separated rows in rounded surface cards, -->
+<!-- the Settings dialog's settings-group shell vocabulary. -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ConversationStatus, PermissionMode } from '../../types';
-import type { AppModel, AppSession, ManagedUserInfo, ThinkingLevel } from '../../api/types';
+import type { AppModel, ManagedUserInfo, ThinkingLevel } from '../../api/types';
 import type { ColorScheme, FontScale } from '@moonshot-ai/app-client/client';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
@@ -22,21 +23,20 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
-import { logWarn } from '@moonshot-ai/app-core/lib';
+import PlanUsageCard from '../settings/PlanUsageCard.vue';
 import { formatTokens } from '@moonshot-ai/app-core/lib';
-import { Badge, Button, Icon, Input, SegmentedControl } from '@moonshot-ai/app-ui';
+import { Badge, Icon, SegmentedControl } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 
 // A stacked global confirm (e.g. sign-out) owns Escape while it's open.
 const { isConfirmOpen } = useConfirmDialog();
 
+const client = useKimiWebClient();
+
 const props = withDefaults(
   defineProps<{
     modelValue: boolean;
-    /** View to open on (default 'main'); the archive undo toast deep-links to
-        the archived restore sub-view. */
-    initialView?: 'main' | 'archived';
     status: ConversationStatus;
     thinking?: ThinkingLevel;
     planMode?: boolean;
@@ -48,7 +48,7 @@ const props = withDefaults(
     colorScheme?: ColorScheme;
     fontScale?: FontScale;
     /** Managed Kimi account credential state from GET /api/v1/auth — drives the
-        sign-in/out row (third-party providers must not keep it "signed in"
+        account module (third-party providers must not keep it "signed in"
         after a Kimi logout). */
     managedProviderStatus?: string | null;
     /** Signed-in managed-account profile (GET /oauth/userinfo) — avatar +
@@ -146,6 +146,8 @@ const showAvatar = computed(() => Boolean(props.managedUserInfo?.avatar) && !ava
 // Server-supplied level label (may be ''), shown as a badge next to the name.
 const accountLevel = computed(() => props.managedUserInfo?.userLevelName?.trim() ?? '');
 
+const signedIn = computed(() => props.managedProviderStatus === 'authenticated');
+
 // Same escalation colours as the Composer's permission menu: yolo is the
 // warning level, auto (fully autonomous, never asks) is the danger level.
 const permColor = computed<string>(() => {
@@ -196,107 +198,6 @@ function onLogout(): void {
   emit('logout');
   emit('update:modelValue', false);
 }
-
-// ---------------------------------------------------------------------------
-// Archived-sessions sub-view — mirrors the desktop Settings "Archived" tab so
-// the mobile archive confirmation (which points users to Settings to restore)
-// is true here too. Loads all archived sessions once when the view opens;
-// search + sort run client-side over the full set.
-// ---------------------------------------------------------------------------
-const client = useKimiWebClient();
-type SheetView = 'main' | 'archived';
-const view = ref<SheetView>('main');
-
-const archivedItems = ref<AppSession[]>([]);
-const archivedLoading = ref(false);
-const archivedLoaded = ref(false);
-const archiveQuery = ref('');
-const archiveSort = ref<'archived-desc' | 'created-desc' | 'name-asc'>('archived-desc');
-
-const ARCHIVED_PAGE_SIZE = 100;
-
-async function loadAllArchived(): Promise<void> {
-  if (archivedLoading.value) return;
-  archivedLoading.value = true;
-  archivedLoaded.value = false;
-  try {
-    const all: AppSession[] = [];
-    let beforeId: string | undefined;
-    for (;;) {
-      const page = await client.loadArchivedSessions({ beforeId, pageSize: ARCHIVED_PAGE_SIZE });
-      all.push(...page.items);
-      if (!page.hasMore || page.items.length === 0) break;
-      const next = page.items.at(-1)?.id;
-      if (next === undefined) break;
-      beforeId = next;
-    }
-    archivedItems.value = all;
-    archivedLoaded.value = true;
-  } catch (err) {
-    logWarn('loadAllArchived failed', err);
-  } finally {
-    archivedLoading.value = false;
-  }
-}
-
-function openArchived(): void {
-  view.value = 'archived';
-  archiveQuery.value = '';
-  void loadAllArchived();
-}
-
-// Deep link (e.g. the archive undo toast's "Settings"): apply the requested
-// initial view each time the sheet opens.
-watch(
-  () => props.modelValue,
-  (open) => {
-    if (open && props.initialView === 'archived') openArchived();
-  },
-);
-
-function backToMain(): void {
-  view.value = 'main';
-}
-
-const filteredArchived = computed<AppSession[]>(() => {
-  const q = archiveQuery.value.trim().toLowerCase();
-  let rows = archivedItems.value.filter((s) => s.archived === true);
-  if (q) rows = rows.filter((s) => s.title.toLowerCase().includes(q));
-  rows = rows.slice();
-  if (archiveSort.value === 'archived-desc') {
-    // archivedAt carries the archive moment; sessions archived before the
-    // field existed fall back to updatedAt (which was the archive bump then).
-    rows.sort((a, b) =>
-      (b.archivedAt ?? b.updatedAt).localeCompare(a.archivedAt ?? a.updatedAt),
-    );
-  } else if (archiveSort.value === 'created-desc') {
-    rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  } else {
-    rows.sort((a, b) => a.title.localeCompare(b.title, 'zh'));
-  }
-  return rows;
-});
-
-async function onRestore(id: string): Promise<void> {
-  const ok = await client.restoreSession(id);
-  if (ok) archivedItems.value = archivedItems.value.filter((s) => s.id !== id);
-}
-
-function archiveTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const pad = (n: number): string => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-// Reset to the main view whenever the sheet is closed, so reopening starts at
-// the top rather than mid-list.
-watch(
-  () => props.modelValue,
-  (open) => {
-    if (!open) view.value = 'main';
-  },
-);
 </script>
 
 <template>
@@ -306,243 +207,217 @@ watch(
     :close-on-esc="!isConfirmOpen"
     @update:model-value="emit('update:modelValue', $event)"
   >
-    <template v-if="view === 'main'">
+    <!-- ======================= Current session ======================= -->
     <div class="group-title">{{ t('mobile.groupSession') }}</div>
+    <div class="card">
+      <!-- Model → opens ModelPicker -->
+      <button type="button" class="srow" @click="onPickModel">
+        <span class="srow-main">
+          <span class="srow-label">{{ t('status.statusModel') }}</span>
+          <span class="srow-sub">{{ status.model }}</span>
+        </span>
+        <span class="chev">›</span>
+      </button>
 
-    <!-- Model → opens ModelPicker -->
-    <button type="button" class="srow" @click="onPickModel">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('status.statusModel') }}</span>
-        <span class="srow-sub">{{ status.model }}</span>
-      </span>
-      <span class="chev">›</span>
-    </button>
-
-    <!-- Thinking level → segmented control (or read-only value when single/unsupported) -->
-    <div class="srow read-only">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('status.statusThinking') }}</span>
+      <!-- Thinking level → segmented control (or read-only value when single/unsupported) -->
+      <div class="srow read-only">
+        <span class="srow-main">
+          <span class="srow-label">{{ t('status.statusThinking') }}</span>
+          <span
+            v-if="thinkingAvailability === 'unsupported'"
+            class="srow-sub"
+          >{{ t('status.modeNotSupported') }}</span>
+        </span>
+        <SegmentedControl
+          v-if="thinkingSegments.length > 1"
+          :model-value="activeThinkingSegment"
+          :options="thinkingOptions"
+          size="sm"
+          @update:model-value="setThinkingSegment"
+        />
         <span
-          v-if="thinkingAvailability === 'unsupported'"
-          class="srow-sub"
-        >{{ t('status.modeNotSupported') }}</span>
-      </span>
-      <SegmentedControl
-        v-if="thinkingSegments.length > 1"
-        :model-value="activeThinkingSegment"
-        :options="thinkingOptions"
-        size="sm"
-        @update:model-value="setThinkingSegment"
-      />
-      <span
-        v-else
-        class="srow-val"
-        :class="{ dim: thinkingLevel === 'off' }"
-      >{{ thinkingLevel === 'off' ? t('status.planOff') : effortLabel(thinkingLevel) }}</span>
+          v-else
+          class="srow-val"
+          :class="{ dim: thinkingLevel === 'off' }"
+        >{{ thinkingLevel === 'off' ? t('status.planOff') : effortLabel(thinkingLevel) }}</span>
+      </div>
+
+      <!-- Plan mode → real toggle switch -->
+      <button type="button" class="srow" role="switch" :aria-checked="planOn" @click="onTogglePlan">
+        <span class="srow-main">
+          <span class="srow-label">{{ t('status.statusPlanMode') }}</span>
+          <span class="srow-sub">{{ t('mobile.planModeSub') }}</span>
+        </span>
+        <span class="toggle" :class="{ on: planOn }" aria-hidden="true" />
+      </button>
+
+      <!-- Goal: a switch only while genuinely toggleable (armed, no live goal);
+           with a live goal the row navigates to the goal's panel instead — a
+           switch that "doesn't switch" would lie to AT. -->
+      <button v-if="!goalActive" type="button" class="srow" role="switch" :aria-checked="goalOn" @click="onToggleGoal">
+        <span class="srow-main">
+          <span class="srow-label">{{ t('status.goalLabel') }}</span>
+          <span class="srow-sub">{{ t('mobile.goalModeSub') }}</span>
+        </span>
+        <span class="toggle" :class="{ on: goalOn }" aria-hidden="true" />
+      </button>
+      <button v-else type="button" class="srow" @click="onToggleGoal">
+        <span class="srow-main">
+          <span class="srow-label">{{ t('status.goalLabel') }}</span>
+          <span class="srow-sub">{{ t('mobile.goalModeSub') }}</span>
+        </span>
+        <Icon class="srow-chevron" name="chevron-right" size="sm" aria-hidden="true" />
+      </button>
+
+      <!-- Swarm mode → real toggle switch -->
+      <button type="button" class="srow" role="switch" :aria-checked="swarmOn" @click="emit('toggleSwarm')">
+        <span class="srow-main">
+          <span class="srow-label">{{ t('status.statusSwarmMode') }}</span>
+          <span class="srow-sub">{{ t('mobile.swarmModeSub') }}</span>
+        </span>
+        <span class="toggle" :class="{ on: swarmOn }" aria-hidden="true" />
+      </button>
+
+      <!-- Permission → cycle (sub-line + chevron) -->
+      <button type="button" class="srow" @click="cyclePermission">
+        <span class="srow-main">
+          <span class="srow-label">{{ t('status.statusPermission') }}</span>
+          <span class="srow-sub" :style="{ color: permColor }">{{ permSub }}</span>
+        </span>
+        <span class="chev">›</span>
+      </button>
+
+      <!-- Context usage → read-only mini meter + value -->
+      <div class="srow read-only">
+        <span class="srow-main">
+          <span class="srow-label">{{ t('status.statusContext') }}</span>
+          <span class="srow-sub">{{ ctxValue }}</span>
+        </span>
+        <span class="ctx-meter" :aria-label="ctxValue">
+          <i :style="{ width: ctxPct + '%' }" />
+        </span>
+      </div>
     </div>
 
-    <!-- Prompt-cache invalidation note — same text as the desktop model dropdown,
-         covering both the model row above and this thinking control. -->
+    <!-- Prompt-cache invalidation note — same text as the desktop model
+         dropdown, covering both the model and thinking rows above. -->
     <div class="cache-note">{{ t('status.cacheNote') }}</div>
 
-    <!-- Plan mode → real toggle switch -->
-    <button type="button" class="srow" role="switch" :aria-checked="planOn" @click="onTogglePlan">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('status.statusPlanMode') }}</span>
-        <span class="srow-sub">{{ t('mobile.planModeSub') }}</span>
-      </span>
-      <span class="toggle" :class="{ on: planOn }" aria-hidden="true" />
-    </button>
-
-    <!-- Goal: a switch only while genuinely toggleable (armed, no live goal);
-         with a live goal the row navigates to the goal's panel instead — a
-         switch that "doesn't switch" would lie to AT. -->
-    <button v-if="!goalActive" type="button" class="srow" role="switch" :aria-checked="goalOn" @click="onToggleGoal">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('status.goalLabel') }}</span>
-        <span class="srow-sub">{{ t('mobile.goalModeSub') }}</span>
-      </span>
-      <span class="toggle" :class="{ on: goalOn }" aria-hidden="true" />
-    </button>
-    <button v-else type="button" class="srow" @click="onToggleGoal">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('status.goalLabel') }}</span>
-        <span class="srow-sub">{{ t('mobile.goalModeSub') }}</span>
-      </span>
-      <Icon class="srow-chevron" name="chevron-right" size="sm" aria-hidden="true" />
-    </button>
-
-    <!-- Swarm mode → real toggle switch -->
-    <button type="button" class="srow" role="switch" :aria-checked="swarmOn" @click="emit('toggleSwarm')">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('status.statusSwarmMode') }}</span>
-        <span class="srow-sub">{{ t('mobile.swarmModeSub') }}</span>
-      </span>
-      <span class="toggle" :class="{ on: swarmOn }" aria-hidden="true" />
-    </button>
-
-    <!-- Permission → cycle (sub-line + chevron) -->
-    <button type="button" class="srow" @click="cyclePermission">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('status.statusPermission') }}</span>
-        <span class="srow-sub" :style="{ color: permColor }">{{ permSub }}</span>
-      </span>
-      <span class="chev">›</span>
-    </button>
-
-    <!-- Context usage → read-only mini meter + value -->
-    <div class="srow read-only">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('status.statusContext') }}</span>
-        <span class="srow-sub">{{ ctxValue }}</span>
-      </span>
-      <span class="ctx-meter" :aria-label="ctxValue">
-        <i :style="{ width: ctxPct + '%' }" />
-      </span>
-    </div>
-
+    <!-- ======================= App preferences ======================= -->
     <div class="group-title">{{ t('mobile.groupApp') }}</div>
-
-    <!-- Archived sessions → opens the archived restore sub-view -->
-    <button type="button" class="srow" @click="openArchived">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('mobile.archivedSessions') }}</span>
-        <span class="srow-sub">{{ t('mobile.archivedSessionsSub') }}</span>
-      </span>
-      <span class="chev">›</span>
-    </button>
-
-    <!-- App preferences (the desktop settings-popover controls) -->
-    <div class="srow read-only pref">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('theme.colorSchemeLabel') }}</span>
-      </span>
-      <SegmentedControl
-        :model-value="colorScheme ?? 'system'"
-        :options="[
-          { value: 'light', label: t('theme.light'), icon: 'light-mode' },
-          { value: 'dark', label: t('theme.dark'), icon: 'dark-mode' },
-          { value: 'system', label: t('theme.system') },
-        ]"
-        @update:model-value="onColorScheme"
-      />
-    </div>
-
-    <div class="srow read-only pref">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('sidebar.language') }}</span>
-      </span>
-      <LanguageSwitcher />
-    </div>
-
-    <div class="srow read-only pref">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('settings.uiFontSize') }}</span>
-      </span>
-      <SegmentedControl
-        :model-value="fontScale"
-        :options="[
-          { value: 'small', label: 'S' },
-          { value: 'medium', label: 'M' },
-          { value: 'large', label: 'L' },
-          { value: 'xlarge', label: 'XL' },
-        ]"
-        :aria-label="t('settings.uiFontSize')"
-        @update:model-value="emit('setFontScale', $event as FontScale)"
-      />
-    </div>
-
-    <!-- Account: signed-in profile + sign in / out -->
-    <div v-if="managedProviderStatus === 'authenticated'" class="srow read-only acct-profile">
-      <span class="acct-avatar" aria-hidden="true">
-        <img v-if="showAvatar" :src="managedUserInfo?.avatar" alt="" @error="avatarLoadFailed = true" />
-        <Icon v-else name="user" size="md" />
-      </span>
-      <span class="srow-main">
-        <span class="acct-name-row">
-          <span class="srow-label">{{ managedUserInfo?.nickname || t('sidebar.defaultUserName') }}</span>
-          <Badge v-if="accountLevel" class="acct-level" variant="neutral" size="sm">{{ accountLevel }}</Badge>
+    <div class="card">
+      <div class="srow read-only pref">
+        <span class="srow-main">
+          <span class="srow-label">{{ t('theme.colorSchemeLabel') }}</span>
         </span>
-        <span class="srow-sub">{{ t('settings.signedIn') }}</span>
-      </span>
-    </div>
-    <button v-if="managedProviderStatus === 'authenticated'" type="button" class="srow acct out" @click="onLogout">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('sidebar.signOut') }}</span>
-      </span>
-    </button>
-    <button v-else type="button" class="srow acct in" @click="onLogin">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('sidebar.signIn') }}</span>
-      </span>
-    </button>
-
-    <!-- Server version -->
-    <div v-if="serverVersion" class="srow read-only">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('settings.serverVersion') }}</span>
-      </span>
-      <span class="srow-val dim">{{ serverVersion }}</span>
-    </div>
-    </template>
-
-    <template v-else>
-      <!-- Archived sessions sub-view -->
-      <div class="arch-subhead">
-        <button type="button" class="arch-back" @click="backToMain">
-          <span class="chev back">‹</span> {{ t('mobile.archivedBack') }}
-        </button>
-        <span class="arch-count">{{ t('mobile.sessionCount', { n: filteredArchived.length }) }}</span>
-      </div>
-
-      <div class="arch-tools">
-        <Input
-          class="arch-search-input"
-          :model-value="archiveQuery"
-          size="sm"
-          :placeholder="t('settings.archivedSearch')"
-          @update:model-value="archiveQuery = $event"
-        />
         <SegmentedControl
-          size="sm"
-          :model-value="archiveSort"
+          :model-value="colorScheme ?? 'system'"
           :options="[
-            { value: 'archived-desc', label: t('settings.archivedSortArchived') },
-            { value: 'created-desc', label: t('settings.archivedSortCreated') },
-            { value: 'name-asc', label: t('settings.archivedSortName') },
+            { value: 'light', label: t('theme.light'), icon: 'light-mode' },
+            { value: 'dark', label: t('theme.dark'), icon: 'dark-mode' },
+            { value: 'system', label: t('theme.system') },
           ]"
-          @update:model-value="archiveSort = $event as 'archived-desc' | 'created-desc' | 'name-asc'"
+          @update:model-value="onColorScheme"
         />
       </div>
 
-      <div v-if="archivedLoading" class="arch-empty">{{ t('settings.archivedLoadingAll') }}</div>
-
-      <template v-else-if="filteredArchived.length > 0">
-        <div v-for="s in filteredArchived" :key="s.id" class="arch-row">
-          <div class="arch-meta">
-            <div class="arch-name">{{ s.title }}</div>
-            <div class="arch-time">{{ t('settings.archivedAt', { time: archiveTime(s.archivedAt ?? s.updatedAt) }) }}</div>
-          </div>
-          <Button variant="secondary" size="sm" @click="onRestore(s.id)">{{ t('settings.archivedRestore') }}</Button>
-        </div>
-      </template>
-
-      <div v-else class="arch-empty">
-        {{ archivedItems.length === 0 ? t('settings.archivedEmpty') : t('settings.archivedNoMatch') }}
+      <div class="srow read-only pref">
+        <span class="srow-main">
+          <span class="srow-label">{{ t('sidebar.language') }}</span>
+        </span>
+        <LanguageSwitcher />
       </div>
-    </template>
+
+      <div class="srow read-only pref">
+        <span class="srow-main">
+          <span class="srow-label">{{ t('settings.uiFontSize') }}</span>
+        </span>
+        <SegmentedControl
+          :model-value="fontScale"
+          :options="[
+            { value: 'small', label: 'S' },
+            { value: 'medium', label: 'M' },
+            { value: 'large', label: 'L' },
+            { value: 'xlarge', label: 'XL' },
+          ]"
+          :aria-label="t('settings.uiFontSize')"
+          @update:model-value="emit('setFontScale', $event as FontScale)"
+        />
+      </div>
+
+      <!-- Server version -->
+      <div v-if="serverVersion" class="srow read-only">
+        <span class="srow-main">
+          <span class="srow-label">{{ t('settings.serverVersion') }}</span>
+        </span>
+        <span class="srow-val dim">{{ serverVersion }}</span>
+      </div>
+    </div>
+
+    <!-- ======================= Account ======================= -->
+    <div class="group-title">{{ t('mobile.groupAccount') }}</div>
+    <div class="card">
+      <template v-if="signedIn">
+        <!-- Signed-in profile -->
+        <div class="srow read-only acct-profile">
+          <span class="acct-avatar" aria-hidden="true">
+            <img v-if="showAvatar" :src="managedUserInfo?.avatar" alt="" @error="avatarLoadFailed = true" />
+            <Icon v-else name="user" size="md" />
+          </span>
+          <span class="srow-main">
+            <span class="acct-name-row">
+              <span class="srow-label">{{ managedUserInfo?.nickname || t('sidebar.defaultUserName') }}</span>
+              <Badge v-if="accountLevel" class="acct-level" variant="neutral" size="sm">{{ accountLevel }}</Badge>
+            </span>
+            <span class="srow-sub">{{ t('settings.signedIn') }}</span>
+          </span>
+        </div>
+        <button type="button" class="srow acct out" @click="onLogout">
+          <span class="srow-main">
+            <span class="srow-label">{{ t('sidebar.signOut') }}</span>
+          </span>
+        </button>
+      </template>
+      <button v-else type="button" class="srow acct in" @click="onLogin">
+        <span class="srow-main">
+          <span class="srow-label">{{ t('sidebar.signIn') }}</span>
+        </span>
+      </button>
+    </div>
+
+    <!-- Plan usage — the Settings dialog's PlanUsageCard, fetching per open. -->
+    <div v-if="signedIn && modelValue" class="usage">
+      <PlanUsageCard :on-fetch-usage="client.getUsage" />
+    </div>
   </BottomSheet>
 </template>
 
 <style scoped>
+/* Section titles — the Settings dialog's .sec-title vocabulary. */
 .group-title {
-  padding: var(--space-3) var(--space-3) var(--space-1);
+  padding: var(--space-4) max(var(--space-4), var(--safe-right)) var(--space-2) max(var(--space-4), var(--safe-left));
   font-family: var(--font-ui);
-  font-size: var(--text-xs);
+  font-size: var(--text-base);
   font-weight: var(--weight-medium);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-text-faint);
+  color: var(--color-text);
+}
+.group-title:first-child {
+  padding-top: 0;
+}
+
+/* Rounded surface card per group (the Settings dialog's settings-group /
+   PlanUsageCard pu-group shell): rows hairline-separated inside. */
+.card {
+  margin: 0 max(var(--space-4), var(--safe-right)) 0 max(var(--space-4), var(--safe-left));
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+.card > .srow {
+  border-radius: 0;
+}
+.card > .srow + .srow {
+  border-top: 0.5px solid var(--color-line);
 }
 
 .srow:disabled {
@@ -555,7 +430,7 @@ watch(
   gap: var(--space-3);
   width: 100%;
   min-height: 52px;
-  padding: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   background: none;
   border: none;
   border-radius: var(--radius-md);
@@ -578,9 +453,7 @@ watch(
 .srow-sub {
   font-size: var(--text-base);
   color: var(--color-text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .srow-val {
   flex: none;
@@ -594,9 +467,9 @@ watch(
   color: var(--color-text-muted);
 }
 
-/* Prompt-cache note under the thinking row — mirrors .md-cache-note in Composer. */
+/* Prompt-cache note under the session card — mirrors .md-cache-note in Composer. */
 .cache-note {
-  padding: 0 var(--space-3) var(--space-2);
+  padding: var(--space-1) max(var(--space-4), var(--safe-right)) 0 max(var(--space-4), var(--safe-left));
   font-size: var(--text-xs);
   color: var(--color-text-faint);
   line-height: 1.4;
@@ -637,8 +510,14 @@ watch(
 }
 .toggle.on::after { left: 21px; }
 
-/* App preference rows: segmented theme/color-scheme toggles + language switcher. */
-.srow.pref { cursor: default; }
+/* App preference rows: label line above the control (segmented / switcher). */
+.srow.pref {
+  flex-wrap: wrap;
+  cursor: default;
+}
+.srow.pref .srow-main {
+  flex: 1 0 100%;
+}
 
 /* Account rows */
 .srow.acct.in .srow-label { color: var(--color-accent-hover); font-weight: 500; }
@@ -678,124 +557,32 @@ watch(
   text-overflow: ellipsis;
 }
 
+/* Plan usage module — aligned with the cards. */
+.usage {
+  margin: var(--space-4) max(var(--space-4), var(--safe-right)) 0 max(var(--space-4), var(--safe-left));
+}
+.usage :deep(.sec) {
+  margin-bottom: 0;
+}
+
 /* Context meter (96px prototype) */
 .ctx-meter {
   flex: none;
   width: 96px;
-  height: 7px;
+  height: 5px;
   border-radius: var(--radius-full);
-  background: var(--color-surface-sunken);
+  background: var(--color-line);
   overflow: hidden;
 }
 .ctx-meter i {
   display: block;
   height: 100%;
+  border-radius: var(--radius-full);
   background: var(--color-accent);
-}
-
-@media (max-width: 640px) {
-  .srow {
-    align-items: flex-start;
-    gap: 10px;
-    min-width: 0;
-    padding: 14px max(14px, var(--safe-right)) 14px max(14px, var(--safe-left));
-  }
-  .group-title {
-    padding-left: max(14px, var(--safe-left));
-    padding-right: max(14px, var(--safe-right));
-  }
-  .cache-note {
-    padding-left: max(14px, var(--safe-left));
-    padding-right: max(14px, var(--safe-right));
-  }
-  .srow-main {
-    flex: 1 1 auto;
-  }
-  .srow-sub {
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-  .srow.pref {
-    flex-wrap: wrap;
-  }
-  .srow.pref .srow-main {
-    flex: 1 0 100%;
-  }
-  .srow-val,
-  .chev,
-  .toggle,
-  .ctx-meter {
-    margin-top: 2px;
-  }
 }
 
 .srow,
 .srow-sub,
 .srow-val,
 .cache-note { font-family: var(--sans); }
-
-/* Archived sessions sub-view */
-.arch-subhead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3) var(--space-1);
-}
-.arch-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  border: none;
-  background: none;
-  padding: var(--space-1) var(--space-2) var(--space-1) 0;
-  font-family: var(--font-ui);
-  font-size: var(--text-base);
-  color: var(--color-accent-hover);
-  cursor: pointer;
-}
-.chev.back { font-size: 20px; }
-.arch-count {
-  font-family: var(--font-ui);
-  font-size: var(--text-sm);
-  color: var(--color-text-faint);
-}
-.arch-tools {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  flex-wrap: wrap;
-}
-.arch-search-input { flex: 1; min-width: 160px; }
-.arch-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-height: 56px;
-  padding: var(--space-2) var(--space-3);
-  border-top: 0.5px solid var(--color-line);
-}
-.arch-row:first-of-type { border-top: none; }
-.arch-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.arch-name {
-  font-family: var(--font-ui);
-  font-size: var(--text-base);
-  color: var(--color-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.arch-time {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--color-text-faint);
-}
-.arch-empty {
-  padding: var(--space-6) var(--space-4);
-  text-align: center;
-  font-family: var(--font-ui);
-  font-size: var(--text-sm);
-  color: var(--color-text-faint);
-}
 </style>

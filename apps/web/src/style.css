@@ -287,67 +287,6 @@ body {
   hyphens: none;
 }
 
-/* ---------------------------------------------------------------------------
-   Mobile dialogs → bottom sheets.
-   On narrow viewports the centered modal overlays used by ModelPicker,
-   StatusPanel, AddWorkspaceDialog and
-   LoginDialog become bottom-anchored full-width sheets (rounded top, slides up).
-   The selectors are compound (`.backdrop .dialog`, specificity 0,2,0) so they
-   win over each component's scoped `.dialog` rule regardless of injection order.
-   Desktop (>640px) keeps the existing centered modal untouched.
-   --------------------------------------------------------------------------- */
-@media (max-width: 640px) {
-  .backdrop {
-    align-items: flex-end;
-    justify-content: stretch;
-  }
-  .backdrop .dialog {
-    width: 100%;
-    max-width: 100%;
-    max-height: 88vh;
-    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-    border-left: none;
-    border-right: none;
-    border-bottom: none;
-    /* The hairline keeps the sheet edge visible in dark mode, where a black
-       drop shadow on a near-black page disappears. */
-    border-top: 0.5px solid var(--line);
-    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.18);
-    animation: kimi-sheet-up 0.26s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-}
-
-@keyframes kimi-sheet-up {
-  from { transform: translateY(101%); }
-  to { transform: translateY(0); }
-}
-
-/* ---------------------------------------------------------------------------
-   Overlay stability: every floating surface (dialog backdrops, the onboarding
-   overlay, bottom sheets, the settings popover) is position:fixed and MUST
-   resolve against the viewport. If anything ever leaves a transform/filter/
-   perspective on <html> or <body> — e.g. a residual animation, or a dark-mode
-   browser extension that wraps the page when it treats the app as "dark" — that
-   element becomes the containing block for fixed descendants and every overlay
-   drifts. `!important` author declarations beat both animations and the page's
-   own styles, so forbid those properties on the root. Harmless: the root never
-   needs a transform of its own.
-   --------------------------------------------------------------------------- */
-/* Belt-and-suspenders for the same problem (works even if a transform can't be
-   reset because an extension set it inline-!important): every full-screen
-   overlay is position:fixed with `inset: 0`, which sizes against the fixed
-   containing block. If that block is a collapsed/transformed <html>, `inset: 0`
-   shrinks the overlay and its centered card drifts. Viewport-unit min-size is
-   measured against the VIEWPORT, not the containing block, so the overlay always
-   fills the screen and its card re-centers. No-op in a normal browser. Global
-   (not scoped) with !important so it wins over each dialog's scoped .backdrop. */
-.backdrop,
-.ob-backdrop {
-  min-width: 100vw !important;
-  min-height: 100vh !important;
-  min-height: 100dvh !important;
-}
-
 /* Content text (messages, titles, descriptions, buttons) uses a real UI sans.
    Paths, code, tab labels, timestamps and badges keep --mono because they set it
    per-element — so chrome stays crisp and code-like while content reads soft. */
@@ -548,11 +487,18 @@ body {
   font-size: var(--ui-font-size-xs);
 }
 
+/* Mobile message readability: bump the content font by redefining the
+   variable itself — .md .markdown-renderer p/li pin --content-font-size at
+   the element level, so a container font-size bump never reached assistant
+   prose. Quotes/tables keep their one-step-down relationship. */
 @media (max-width: 640px) {
-  .u-bub .u-text,
-  .a-msg .msg,
-  .ph {
-    font-size: max(16px, var(--ui-font-size-xl));
+  :root {
+    --content-font-size: calc(var(--md-b1) + 2px);
+  }
+  .md .markdown-renderer blockquote,
+  .md .markdown-renderer td,
+  .md .markdown-renderer th {
+    font-size: calc(var(--md-b2) + 2px);
   }
 }
 

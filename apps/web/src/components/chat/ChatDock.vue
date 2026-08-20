@@ -860,6 +860,15 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
   align-items: center;
   gap: var(--space-2);
 }
+/* Mobile: hug the content instead of pinning the height — a filtered view
+   with two rows should not leave half the panel blank. The base max-height
+   (min(360px, 50vh)) still caps it and the body scrolls inside. */
+@media (max-width: 640px) {
+  .dock-work-panel.panel-subagent,
+  .dock-work-panel.panel-bash {
+    height: auto;
+  }
+}
 .dock-work-head {
   display: flex;
   align-items: center;

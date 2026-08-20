@@ -284,10 +284,10 @@ const expanded = ref(false);
 function toggleExpand(): void {
   expanded.value = !expanded.value;
   // Re-measure growth against the *post-toggle* resting height. Without this,
-  // collapsing would keep the isGrown measured against the expanded 70vh
+  // collapsing would keep the isGrown measured against the expanded 70%-of-app-height
   // min-height, hiding the toggle even though the collapsed draft is still
   // multi-line. (This does not affect the expanded state itself — once
-  // expanded, it stays at 70vh until toggled back or sent.)
+  // expanded, it stays at that height until toggled back or sent.)
   void nextTick(() => {
     recomputeGrown();
     // Return focus to the editor so the user can keep typing right away;
@@ -2569,7 +2569,7 @@ function selectModel(modelId: string): void {
   text-autospace: normal;
   background: transparent;
   min-height: 36px;
-  max-height: calc(100vh / 4);
+  max-height: calc(var(--app-height, 100dvh) / 4);
   overflow-y: auto;
   scrollbar-width: none;
   line-height: 1.5;
@@ -2605,7 +2605,7 @@ function selectModel(modelId: string): void {
   outline: none;
   white-space: pre-wrap;
   overflow-wrap: break-word;
-  /* Fill the host's minimum box (36px resting / 70vh expanded) so clicking
+  /* Fill the host's minimum box (36px resting / 70%-of-app-height expanded) so clicking
      anywhere in the visible editor area lands on the contenteditable and can
      focus/place the caret — not on the inert host below the last line. */
   min-height: inherit;
@@ -2643,8 +2643,8 @@ function selectModel(modelId: string): void {
    bottom toolbar row, and padding so nothing gets clipped. Content beyond it
    scrolls internally. */
 .composer.expanded .ph {
-  min-height: 70vh;
-  max-height: 70vh;
+  min-height: calc(var(--app-height, 100dvh) * 0.7);
+  max-height: calc(var(--app-height, 100dvh) * 0.7);
 }
 
 /* /compact chip */
@@ -3692,6 +3692,31 @@ function selectModel(modelId: string): void {
   }
   .pd-desc {
     font-size: var(--text-xs);
+  }
+}
+
+/* Touch: invisible rings grow the round mobile controls' hit area toward the
+   44px minimum, glyph and visual size unchanged. */
+@media (max-width: 640px) and (hover: none) {
+  .send,
+  .stop,
+  .attach-btn,
+  .expand-btn,
+  .model-pill {
+    position: relative;
+  }
+  .send::before,
+  .stop::before,
+  .attach-btn::before,
+  .expand-btn::before,
+  .model-pill::before {
+    content: "";
+    position: absolute;
+    inset: -6px;
+  }
+  /* 22px glyph needs the wider ring. */
+  .expand-btn::before {
+    inset: -11px;
   }
 }
 

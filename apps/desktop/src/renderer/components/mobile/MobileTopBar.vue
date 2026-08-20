@@ -1,31 +1,30 @@
 <!-- apps/web/src/components/mobile/MobileTopBar.vue -->
-<!-- Mobile title bar (50px): a 28px dark workspace square, a tappable middle -->
-<!-- zone showing the mono `workspace / session ⌄` path with a status sub-line -->
-<!-- (● running · branch · N sessions), and a trailing sliders button. Tapping -->
-<!-- the middle opens the switcher sheet; the sliders open the settings sheet. -->
-<!-- Terminal Pro styling, no emoji. -->
+<!-- Mobile title bar (50px + safe-top), frosted glass — the design system's -->
+<!-- sole glassmorphism exception, reserved for sticky nav bars (§03 TopBar -->
+<!-- .frost). One full-height tap target opens the switcher sheet: an optional -->
+<!-- leading status (the session's ONE display status — approval/question pill, -->
+<!-- running spinner, unread dot — same precedence as sidebar rows) ahead of a -->
+<!-- single vertically-centred `workspace / session ⌄` line. The trailing -->
+<!-- sliders button opens the settings sheet. Terminal Pro styling, no emoji. -->
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceView } from '../../types';
-import { Icon, IconButton } from '@moonshot-ai/app-ui';
+import type { SessionDisplayStatus } from '@moonshot-ai/app-core/lib';
+import { Badge, Icon, IconButton, Spinner } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 
 const props = withDefaults(
   defineProps<{
-    /** Active workspace (for the chip glyph + name). */
+    /** Active workspace (the left, quiet side of the path line). */
     workspace: WorkspaceView | null;
-    /** Active session title (the right, bold side of the mono path). */
+    /** Active session title (the right, strong side of the path line). */
     sessionTitle?: string;
-    /** True when the active session is doing work (drives the status dot/text). */
-    running?: boolean;
-    /** Current git branch (sub-line). */
-    branch?: string;
-    /** Number of sessions in the active workspace (sub-line). */
-    sessionCount?: number;
+    /** The active session's one display status (idle renders nothing). */
+    status?: SessionDisplayStatus;
   }>(),
-  { workspace: null, sessionTitle: '', running: false, branch: '', sessionCount: 0 },
+  { workspace: null, sessionTitle: '', status: 'idle' },
 );
 
 const emit = defineEmits<{
@@ -33,44 +32,31 @@ const emit = defineEmits<{
   openSettings: [];
 }>();
 
-/** First letter of the workspace name for the square glyph. */
-const chip = computed<string>(() => {
-  const w = props.workspace;
-  const src = (w?.name || w?.root || '').trim();
-  const ch = src.charAt(0);
-  return ch ? ch.toUpperCase() : 'K';
-});
-
 const wsName = computed<string>(() => props.workspace?.name ?? t('workspace.noWorkspace'));
-
-const statusText = computed<string>(() =>
-  props.running ? t('mobile.running') : t('mobile.idle'),
-);
 </script>
 
 <template>
   <div class="topbar">
-    <span class="wsq">{{ chip }}</span>
-
     <button
       type="button"
-      class="tb-mid"
+      class="tb-main"
       :aria-label="t('mobile.openSwitcher')"
       @click="emit('openSwitcher')"
     >
-      <span class="tb-path">
-        <span class="ws">{{ wsName }}</span>
+      <span v-if="status !== 'idle'" class="st" aria-hidden="true">
+        <Badge v-if="status === 'awaiting-approval'" variant="warning" size="sm">{{ t('workspace.awaitingPermission') }}</Badge>
+        <Badge v-else-if="status === 'awaiting-question'" variant="info" size="sm">{{ t('workspace.awaitingAnswer') }}</Badge>
+        <Spinner v-else-if="status === 'running'" size="sm" />
+        <Badge v-else-if="status === 'aborted'" variant="danger" size="sm">{{ t('workspace.aborted') }}</Badge>
+        <span v-else-if="status === 'unread'" class="unread-dot" />
+      </span>
+      <span class="tb-line">
+        <span class="dir" :class="{ solo: !sessionTitle }">{{ wsName }}</span>
         <template v-if="sessionTitle">
           <span class="sl">/</span>
-          <span class="se">{{ sessionTitle }}</span>
+          <span class="tt">{{ sessionTitle }}</span>
         </template>
-        <span class="cv">⌄</span>
-      </span>
-      <span class="tb-sub">
-        <span class="rd" :class="{ on: running }" />
-        <span>{{ statusText }}</span>
-        <template v-if="branch"> · {{ branch }}</template>
-        <template v-if="sessionCount > 0"> · {{ t('mobile.sessionCount', { n: sessionCount }) }}</template>
+        <Icon class="cv" name="chevron-down" size="sm" />
       </span>
     </button>
 
@@ -88,87 +74,99 @@ const statusText = computed<string>(() =>
 .topbar {
   display: flex;
   align-items: center;
-  gap: 10px;
   /* Grow the bar by the top inset so the 50px content row stays below the
      status bar / notch in standalone PWA mode and landscape. */
   height: calc(50px + var(--safe-top));
   flex: none;
   padding: var(--safe-top) max(12px, var(--safe-right)) 0 max(12px, var(--safe-left));
   border-bottom: 0.5px solid var(--color-line);
-  background: var(--color-bg);
+  /* Frosted glass, the §03 TopBar .frost token recipe — content scrolling
+     underneath reads through like a native nav bar. */
+  background: var(--color-topbar-bg-frost);
+  -webkit-backdrop-filter: var(--p-topbar-backdrop);
+  backdrop-filter: var(--p-topbar-backdrop);
   font-family: var(--font-ui);
+  -webkit-user-select: none;
+  user-select: none;
 }
 
-/* Workspace square */
-.wsq {
-  flex: none;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-md);
-  background: var(--color-text);
-  color: var(--color-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--font-mono);
-  font-weight: var(--weight-medium);
-  font-size: var(--ui-font-size-sm);
-}
-
-/* Middle tappable zone */
-.tb-mid {
+/* Switcher tap target: status + path line, the full row height. */
+.tb-main {
   flex: 1;
   min-width: 0;
   height: 100%;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 1px;
+  align-items: center;
+  gap: 8px;
+  margin-right: 4px;
+  padding: 0 6px 0 0;
   background: none;
   border: none;
-  padding: 0;
-  cursor: pointer;
+  border-radius: var(--radius-md);
+  font: inherit;
+  color: inherit;
   text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.tb-main:active {
+  opacity: 0.55;
 }
 
-.tb-path {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: var(--ui-font-size-sm);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.tb-path .ws { color: var(--color-text); }
-.tb-path .sl { color: var(--color-text-faint); }
-.tb-path .se {
-  color: var(--color-text);
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.tb-path .cv { color: var(--color-text-faint); flex: none; }
-
-.tb-sub {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
-  color: var(--color-text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.tb-sub .rd {
+.st {
   flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: var(--color-text-faint);
+  display: inline-flex;
+  align-items: center;
 }
-.tb-sub .rd.on { background: var(--color-success); }
 
-.topbar .tb-path { font-family: var(--sans); }
+/* Single centred line: quiet workspace, strong session, faint chevron. */
+.tb-line {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: max(16px, var(--ui-font-size-xl));
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.tb-line .dir {
+  flex: none;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-faint);
+}
+/* No session: the workspace name IS the title. */
+.tb-line .dir.solo {
+  max-width: none;
+  min-width: 0;
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+}
+.tb-line .sl {
+  flex: none;
+  color: var(--color-text-faint);
+}
+.tb-line .tt {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+}
+.tb-line .cv {
+  flex: none;
+  align-self: center;
+  color: var(--color-text-faint);
+}
+
+/* Same dot as the sidebar rows. */
+.unread-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+}
 </style>

@@ -24,9 +24,9 @@ defineProps<{ frost?: boolean }>();
   border-radius: var(--radius-lg);
 }
 .ui-topbar--frost {
-  background: color-mix(in srgb, var(--color-surface) 78%, transparent);
-  -webkit-backdrop-filter: saturate(150%) blur(12px);
-  backdrop-filter: saturate(150%) blur(12px);
+  background: var(--color-topbar-bg-frost);
+  -webkit-backdrop-filter: var(--p-topbar-backdrop);
+  backdrop-filter: var(--p-topbar-backdrop);
 }
 .ui-topbar__title { flex: 1; font-weight: var(--weight-medium); font-size: var(--text-sm); color: var(--color-text); min-width: 0; }
 .ui-topbar__actions { display: inline-flex; align-items: center; gap: var(--space-1); }

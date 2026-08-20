@@ -368,6 +368,14 @@ function onQueueEdit(index: number): void {
   emit('editQueued', index);
 }
 
+// Touch: tapping the body must NOT pull the draft back (a stray tap would
+// silently dequeue it into the composer) — the row carries an explicit edit
+// button instead (see .q-edit, touch-only).
+function onQueueBodyTap(index: number): void {
+  if (typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches) return;
+  onQueueEdit(index);
+}
+
 function onQueueDragStart(index: number, event: DragEvent): void {
   dragFrom.value = index;
   if (!event.dataTransfer) return;
@@ -1198,7 +1206,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               class="q-body"
               :title="t('composer.editQueued')"
               :ref="(el) => registerUserTextEl(queueClampId(item), el)"
-              @click="onQueueEdit(qi)"
+              @click="onQueueBodyTap(qi)"
             >
               <span v-if="item.text" class="u-text q-text"><ComposerText :text="item.text" :interactive="false" /></span>
               <span v-else class="q-text q-text-placeholder">
@@ -1239,6 +1247,16 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               />
             </template>
           </div>
+          <!-- Touch-only explicit edit: on hover devices the body itself is
+               tap-to-edit; on touch a stray tap must not dequeue the draft. -->
+          <button
+            type="button"
+            class="q-edit"
+            :aria-label="t('composer.editQueued')"
+            @click.stop="onQueueEdit(qi)"
+          >
+            <Icon name="pencil" size="sm" />
+          </button>
           <Tooltip :text="t('composer.remove')">
           <button
             type="button"
@@ -1890,7 +1908,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   overflow-wrap: anywhere;
 }
 
-/* Mobile font bump (+2px) */
+/* Mobile */
 @media (max-width: 640px) {
   .chat {
     box-sizing: border-box;
@@ -1903,10 +1921,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   .a-msg {
     width: 100%;
     max-width: 100%;
-  }
-  .u-bub .u-text,
-  .a-msg .msg {
-    font-size: var(--ui-font-size-xl);
   }
   .a-msg :deep(.md),
   .a-msg :deep(.markdown-renderer),
@@ -2182,6 +2196,43 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .q-rm:hover {
   background: var(--color-danger-soft);
   color: var(--color-danger);
+}
+
+/* Touch-only explicit edit affordance; hidden where tap-to-edit is safe. */
+.q-edit {
+  display: none;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-faint);
+  cursor: pointer;
+}
+.q-edit:hover {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+@media (hover: none) {
+  /* The grip's HTML5 drag never fires on touch — drop the dead affordance. */
+  .q-grip { display: none; }
+  .q-edit { display: inline-flex; }
+  /* Remove/edit stay visible (no hover to reveal them) and grow to the 44px
+     touch minimum via an invisible ring, glyph size unchanged. */
+  .q-rm,
+  .q-edit {
+    opacity: 1;
+    position: relative;
+  }
+  .q-rm::before,
+  .q-edit::before {
+    content: "";
+    position: absolute;
+    inset: -11px;
+  }
 }
 /* Drag reorder: dim the row being dragged, show an insertion line on the target. */
 .q-turn.q-dragging .q-bub {

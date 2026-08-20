@@ -438,9 +438,4 @@ function isRunStreaming(block: { items: { sourceIndex: number; kind?: string; du
   }
 }
 
-@media (max-width: 640px) {
-  .tf-body-inner .msg {
-    font-size: var(--ui-font-size-xl);
-  }
-}
 </style>

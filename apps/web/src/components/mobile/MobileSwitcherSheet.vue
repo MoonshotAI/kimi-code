@@ -1,9 +1,10 @@
 <!-- apps/kimi-web/src/components/mobile/MobileSwitcherSheet.vue -->
 <!-- Mobile switcher bottom sheet, mirroring the desktop sidebar: a "+ New
-     chat" row, then collapsible workspace groups (folder icon + name +
-     path sub-line + per-group "+") with their session rows beneath.
-     Tapping a session selects it AND closes the sheet; tapping a group header
-     folds it, same as the desktop sidebar. -->
+     chat" action block (hairline-separated), then collapsible workspace
+     groups — a single-line header (folder icon + name + faint inline path +
+     per-group "…" and "+") with single-line session rows beneath (title +
+     right-aligned time + "…"). Tapping a session selects it AND closes the
+     sheet; tapping a group header folds it, same as the desktop sidebar. -->
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -196,15 +197,17 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
     :model-value="modelValue"
     @update:model-value="emit('update:modelValue', $event)"
   >
-    <!-- + New chat (mirrors the sidebar's top button) -->
-    <button type="button" class="newrow" @click="onCreate">
-      <Icon name="message" size="sm" />
-      {{ t('sidebar.newChat') }}
-    </button>
-    <button type="button" class="newrow secondary" @click="onAddWorkspace">
-      <Icon name="folder" size="sm" />
-      {{ t('sidebar.newWorkspace') }}
-    </button>
+    <!-- + New chat / workspace (mirrors the sidebar's top buttons) -->
+    <div class="actions">
+      <button type="button" class="newrow" @click="onCreate">
+        <Icon name="chat-new" size="sm" />
+        {{ t('sidebar.newChat') }}
+      </button>
+      <button type="button" class="newrow secondary" @click="onAddWorkspace">
+        <Icon name="folder" size="sm" />
+        {{ t('sidebar.newWorkspace') }}
+      </button>
+    </div>
 
     <!-- Workspace groups with their sessions -->
     <div class="mlist">
@@ -222,12 +225,10 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
           <Icon v-if="isCollapsed(g.workspace.id)" class="mgh-folder" name="folder-closed" size="sm" />
           <Icon v-else class="mgh-folder" name="folder" size="sm" />
 
-          <div class="mgh-main">
-            <span class="mgh-name">{{ g.workspace.name }}</span>
-            <Tooltip :text="g.workspace.root">
-              <span class="mgh-path">{{ g.workspace.shortPath }}</span>
-            </Tooltip>
-          </div>
+          <span class="mgh-name">{{ g.workspace.name }}</span>
+          <Tooltip :text="g.workspace.root">
+            <span class="mgh-path">{{ g.workspace.shortPath }}</span>
+          </Tooltip>
 
           <span
             v-if="isCollapsed(g.workspace.id) && wsAttention(g.workspace.id) > 0"
@@ -249,7 +250,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
             :label="t('workspace.newInGroup')"
             @click.stop="onCreateInWorkspace(g.workspace.id)"
           >
-            <Icon name="plus" size="md" />
+            <Icon name="chat-new" size="md" />
           </IconButton>
 
           <!-- Workspace menu: copy path / delete (two-step confirm) -->
@@ -270,11 +271,9 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
             :class="{ cur: s.id === activeId }"
             @click="onSelectSession(s.id)"
           >
-            <div class="m">
-              <div class="t" :class="{ run: s.busy, aborted: !s.busy && (attentionBySession[s.id] ?? 0) === 0 && s.lastTurnReason === 'failed' }">{{ s.title }}</div>
-              <div class="s">{{ s.time }}</div>
-            </div>
+            <span class="t" :class="{ run: s.busy, aborted: !s.busy && (attentionBySession[s.id] ?? 0) === 0 && s.lastTurnReason === 'failed' }">{{ s.title }}</span>
             <span v-if="(attentionBySession[s.id] ?? 0) > 0" class="att">{{ attentionBySession[s.id] }}</span>
+            <span class="time">{{ s.time }}</span>
             <IconButton
               size="lg"
               class="kb"
@@ -319,32 +318,36 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
 </template>
 
 <style scoped>
-/* ---- + New chat / workspace rows ---- */
+/* ---- Action block: New chat / New workspace, hairline-separated ---- */
+.actions {
+  padding: 0 var(--space-2) var(--space-2);
+  border-bottom: 0.5px solid var(--color-line);
+  margin-bottom: var(--space-1);
+}
 .newrow {
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: var(--space-3) var(--space-4);
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
   background: none;
   border: none;
   border-radius: var(--radius-md);
   color: var(--color-accent);
-  font-weight: 500;
-  font-size: var(--text-base);
+  font-family: var(--sans);
+  font-weight: var(--weight-medium);
+  font-size: var(--ui-font-size);
   cursor: pointer;
   text-align: left;
 }
 .newrow:hover { background: var(--color-hover); }
 .newrow:active { background: var(--color-surface-sunken); }
 .newrow.secondary {
-  padding-top: var(--space-2);
-  padding-bottom: var(--space-2);
   color: var(--color-text-muted);
-  font-weight: 400;
+  font-weight: var(--weight-regular);
 }
-.newrow.secondary:hover { background: var(--color-hover); }
-.newrow.secondary:active { background: var(--color-surface-sunken); color: var(--color-text); }
+.newrow.secondary:active { color: var(--color-text); }
 
 /* ---- List + alignment contract (mirrors the desktop sidebar):
         session titles start at --m-pad + --m-gutter + --m-gap, exactly under
@@ -364,80 +367,84 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
 }
 .mempty.small { padding: 10px 16px 12px var(--m-indent); text-align: left; font-size: var(--ui-font-size-xs); }
 
-/* ---- Workspace group header ---- */
-.mgroup { padding-top: 2px; }
+/* ---- Workspace group header: one 44px line ---- */
+.mgroup { padding-top: var(--space-2); }
 .mgh {
   display: flex;
   align-items: center;
   gap: var(--m-gap);
-  padding: 10px var(--m-pad) 6px;
+  min-height: 44px;
+  margin: 0 var(--space-2);
+  padding: 0 calc(var(--m-pad) - var(--space-2));
   border-radius: var(--radius-md);
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
   position: relative; /* anchors the workspace "…" menu */
 }
 .mgh:hover { background: var(--color-hover); }
 .mgh:active { background: var(--color-surface-sunken); }
 .mgh-folder { flex: none; color: var(--color-text-muted); }
-.mgh-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
 .mgh-name {
-  font-size: var(--ui-font-size-lg);
-  font-weight: 550;
-  color: var(--color-text);
+  flex: none;
+  max-width: 50%;
+  font-size: var(--ui-font-size-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .mgh-path {
-  font-size: var(--text-base);
-  font-weight: 425;
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
   color: var(--color-text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mgh-add { margin: -10px -12px -10px 0; }
+/* IconButton lg is exactly 44px — it sets the row height, no margin hacks.
+   Pull the trailing button out so its icon optically meets the row edge. */
+.mgh-more { margin: 0 calc(-1 * var(--space-2)); }
+.mgh-add { margin: 0 calc(-1 * var(--space-2)) 0 0; }
 .mgh-add:active { color: var(--color-text); background: var(--color-hover); }
-
-/* Workspace "…" menu trigger */
-.mgh-more { margin: -10px -8px; }
 .mgh-more:active { color: var(--color-text); background: var(--color-hover); }
 
-/* ---- Session rows ---- */
+/* ---- Session rows: one 44px line, time on the right ---- */
 .srow {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--m-pad) var(--space-3) var(--m-indent);
+  gap: var(--space-2);
+  min-height: 44px;
+  margin: 1px var(--space-2);
+  padding: 0 calc(var(--m-pad) - var(--space-2)) 0 calc(var(--m-indent) - var(--space-2));
   border-radius: var(--radius-md);
   cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
   position: relative;
 }
 .srow:hover { background: var(--color-hover); }
 .srow:active { background: var(--color-surface-sunken); }
 .srow.cur { background: var(--color-accent-soft); box-shadow: inset 0 0 0 1px var(--color-accent-bd); }
-.srow .m { flex: 1; min-width: 0; }
-.srow .m .t {
-  font-size: var(--text-base);
-  font-weight: 450;
+.srow .t {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--ui-font-size-sm);
+  font-weight: var(--weight-caption);
   line-height: var(--leading-tight);
   color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.srow.cur .m .t { color: var(--color-accent-hover); }
+.srow.cur .t { color: var(--color-accent-hover); }
 
 /* Running indicator — pulse dot in the indent gutter left of the title,
    mirroring the desktop SessionRow (.t.run::before). */
-.srow .m .t.run { position: relative; }
-.srow .m .t.run::before {
+.srow .t.run { position: relative; }
+.srow .t.run::before {
   content: '';
   position: absolute;
   left: -14px;
@@ -454,8 +461,8 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   50% { opacity: 0.35; }
 }
 /* Aborted: a static red dot in the same gutter slot (no pulse — it's finished). */
-.srow .m .t.aborted { position: relative; }
-.srow .m .t.aborted::before {
+.srow .t.aborted { position: relative; }
+.srow .t.aborted::before {
   content: '';
   position: absolute;
   left: -14px;
@@ -466,15 +473,11 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   border-radius: var(--radius-full);
   background: var(--color-danger);
 }
-.srow .m .s {
-  font-size: var(--text-base);
-  font-weight: 475;
+.srow .time {
+  flex: none;
+  font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
   color: var(--color-text-faint);
-  margin-top: 1px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .att {
   flex: none;
@@ -485,6 +488,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   border-radius: var(--radius-full);
   padding: 1px 7px;
 }
+.srow .kb { flex: none; margin: 0 calc(-1 * var(--space-2)) 0 0; }
 .srow .kb:active { color: var(--color-text); background: var(--color-hover); }
 
 /* Kebab menu — surface from Menu primitive; only positioning here. */
@@ -522,7 +526,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   border: none;
   border-radius: var(--radius-md);
   color: var(--color-text-muted);
-  font-size: var(--text-base);
+  font-size: var(--ui-font-size);
   cursor: pointer;
   text-align: left;
 }
@@ -532,15 +536,4 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   color: var(--color-text-faint);
   user-select: none;
 }
-
-.newrow { font-family: var(--sans); }
-.mlist .srow {
-  margin: 1px 8px;
-  border-radius: var(--radius-md);
-  border-bottom: none;
-  /* Trim both paddings by the 8px inset margin so session titles stay on the
-     sheet's --m-indent alignment line (under the workspace name). */
-  padding: 12px calc(var(--m-pad, 16px) - 8px) 12px calc(var(--m-indent, 39px) - 8px);
-}
-.mlist .srow.cur { box-shadow: inset 0 0 0 1px var(--color-accent-bd); }
 </style>

@@ -58,6 +58,7 @@ import type { AppConfig, OAuthRegion, ThinkingLevel } from './api/types';
 import { commitLevel, effectiveThinkingLevel, segmentsFor } from '@moonshot-ai/app-core/lib';
 import { modelDisplayName, subagentEffortSuffix } from '@moonshot-ai/app-core/lib';
 import { stripSkillPrefix, SKILL_COMMAND_PREFIX } from '@moonshot-ai/app-core/lib';
+import { sessionDisplayStatus, type SessionDisplayStatus } from '@moonshot-ai/app-core/lib';
 import { ActionToast, Icon, IconButton } from '@moonshot-ai/app-ui';
 import { isDesktop, isMacosDesktop, isWindowsDesktop } from '@moonshot-ai/app-core/lib';
 import WindowsTitleBar from './components/window/WindowsTitleBar.vue';
@@ -265,13 +266,28 @@ const activeLastTurnReason = computed(() => {
   return client.sessions.value.find((s) => s.id === id)?.lastTurnReason ?? null;
 });
 
-// Number of sessions in the active workspace (mobile top-bar sub-line).
-const activeWorkspaceSessionCount = computed<number>(
-  () => client.visibleWorkspace.value?.sessionCount ?? 0,
-);
-
 // running: true when activity is not idle
 const running = computed(() => client.activity.value !== 'idle');
+
+// The active session's ONE display status for the mobile top bar, resolved by
+// the shared app-core helper with the sidebar rows' precedence
+// (approval › question › running › aborted › unread). The detailed pending
+// lists hydrate after selection, so the list-level pendingInteraction goes in
+// as the fallback — the same input the sidebar rows pass.
+const activeDisplayStatus = computed<SessionDisplayStatus>(() => {
+  const id = client.activeSessionId.value;
+  const session = client.sessions.value.find((s) => s.id === id);
+  return sessionDisplayStatus({
+    // The session row's own busy fact (background tasks count), so the top
+    // bar never disagrees with the switcher/sidebar on the same session.
+    busy: session?.busy ?? false,
+    unread: client.unreadBySession.value[id ?? ''] ?? false,
+    questionCount: client.questions.value.length,
+    approvalCount: client.pendingApprovals.value.length,
+    pendingInteraction: session?.pendingInteraction,
+    lastTurnReason: activeLastTurnReason.value ?? undefined,
+  });
+});
 
 // Static page title (app name only). The session title and workspace name are
 // intentionally excluded so the tab title stays stable. Prefixes an animated
@@ -829,16 +845,9 @@ const showSettings = ref(false);
 // Read once at SettingsDialog mount, then reset on close so later manual
 // opens land on General again.
 const settingsInitialTab = ref<'providers' | 'archived' | undefined>(undefined);
-
 // 实验室开关「多标签页侧边栏」：关（默认）时侧边栏是单一会话列表，归档动作与
 // toast 用回旧版文案（完成⇄恢复 的措辞只在状态标签页形态下出现）。
 const { sidebarTabs } = useSidebarTabs();
-// Same deep link for the mobile settings sheet (its archived sub-view).
-// Reset when the sheet closes so later manual opens land on the main view.
-const mobileSettingsInitialView = ref<'archived' | undefined>(undefined);
-watch(showMobileSettings, (open) => {
-  if (!open) mobileSettingsInitialView.value = undefined;
-});
 
 type SubmitPayload = {
   text: string;
@@ -1847,9 +1856,7 @@ function openPr(url: string): void {
       v-else
       :workspace="client.visibleWorkspace.value"
       :session-title="activeSessionTitle"
-      :running="running"
-      :branch="client.status.value.branch"
-      :session-count="activeWorkspaceSessionCount"
+      :status="activeDisplayStatus"
       @open-switcher="showMobileSwitcher = true"
       @open-settings="runShortcutAction('openSettings', 'button')"
     />
@@ -2226,9 +2233,13 @@ function openPr(url: string): void {
             </template>
             <template v-else>
               <button type="button" @click="undoArchive">{{ t('sidebar.archiveToastUndo') }}</button>
-              {{ t('sidebar.archiveToastMid') }}
-              <button type="button" @click="openArchivedSettings">{{ t('sidebar.archiveToastSettings') }}</button>
-              {{ t('sidebar.archiveToastTail') }}
+              <!-- Archived management lives on the desktop dialog only — on mobile
+                   the toast keeps just the undo. -->
+              <template v-if="!isMobile">
+                {{ t('sidebar.archiveToastMid') }}
+                <button type="button" @click="openArchivedSettings">{{ t('sidebar.archiveToastSettings') }}</button>
+                {{ t('sidebar.archiveToastTail') }}
+              </template>
             </template>
           </template>
           <template v-else-if="actionToast.kind === 'adminBatch'">
@@ -2278,7 +2289,6 @@ function openPr(url: string): void {
     <MobileSettingsSheet
       v-if="isMobile"
       v-model="showMobileSettings"
-      :initial-view="mobileSettingsInitialView"
       :status="client.status.value"
       :thinking="client.thinking.value"
       :models="client.models.value"

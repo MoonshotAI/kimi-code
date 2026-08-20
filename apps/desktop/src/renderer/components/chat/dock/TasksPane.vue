@@ -286,9 +286,17 @@ function taskEffort(task: TaskItem): string | undefined {
   user-select: none;
 }
 
-/* Mobile */
+/* Mobile: two-line rows — the title keeps the first line (time/chevron trail
+   it), the recovered command drops to a full-width second line aligned under
+   the title, so a long command can no longer crush the name to nothing. */
 @media (max-width: 640px) {
   .tp-main { flex-wrap: wrap; row-gap: var(--space-1); }
   .tp-name { font-size: var(--ui-font-size-sm); }
+  .tp-meta {
+    order: 10;
+    flex: 1 1 100%;
+    padding-left: calc(var(--p-ic-md) + var(--space-2));
+    font-size: var(--ui-font-size-xs);
+  }
 }
 </style>

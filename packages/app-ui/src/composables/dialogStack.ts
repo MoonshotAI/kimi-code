@@ -8,3 +8,12 @@ import { ref } from 'vue';
  * `Dialog.vue` as `open` flips.
  */
 export const openDialogCount = ref(0);
+
+/**
+ * Number of app-level `BottomSheet` instances currently open — the sheet
+ * counterpart of `openDialogCount`. Mobile warning toasts read this (with the
+ * dialog count) to drop below the scrim — and pause their countdown — while a
+ * sheet owns the screen. Incremented/decremented by `BottomSheet.vue` as
+ * `modelValue` flips.
+ */
+export const openSheetCount = ref(0);

@@ -1,11 +1,11 @@
 <!-- apps/kimi-web/src/components/WarningToasts.vue -->
 <!-- Floating stack of warning/error messages collected in the app state. -->
 <script setup lang="ts">
-import { onUnmounted, ref, watch } from 'vue';
+import { computed, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppNotice, AppWarning } from '../api/types';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
-import { Toast } from '@moonshot-ai/app-ui';
+import { Toast, openDialogCount, openSheetCount } from '@moonshot-ai/app-ui';
 
 const props = defineProps<{ warnings: AppWarning[] }>();
 const emit = defineEmits<{ dismiss: [index: number] }>();
@@ -122,6 +122,17 @@ function resumeTimer(id: number): void {
   runTimer(id, entry.remaining);
 }
 
+// A sheet or dialog owns the screen (openSheetCount / openDialogCount): the
+// stack slips under its scrim and every countdown pauses so nothing expires
+// unseen; closing the overlay resumes each toast where it left off.
+const overlayOpen = computed(() => openDialogCount.value + openSheetCount.value > 0);
+watch(overlayOpen, (open) => {
+  for (const item of toasts.value) {
+    if (open) pauseTimer(item.id);
+    else resumeTimer(item.id);
+  }
+});
+
 function toggleDetails(toast: ToastItem): void {
   toast.detailsOpen = !toast.detailsOpen;
   if (toast.detailsOpen) {
@@ -176,6 +187,10 @@ watch(
       }
       const item: ToastItem = { id: nextId++, key, warning, detailsOpen: false, copied: false };
       runTimer(item.id, toastDuration(warning));
+      // Arrived while a sheet/dialog owns the screen: park the countdown at
+      // once — the overlayOpen watch only reacts to transitions, so a toast
+      // created mid-overlay would otherwise expire unseen under the scrim.
+      if (overlayOpen.value) pauseTimer(item.id);
       return item;
     });
     for (const gone of unmatched) {
@@ -199,7 +214,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <TransitionGroup name="toast" tag="div" class="toasts" role="status" aria-live="polite">
+  <TransitionGroup name="toast" tag="div" class="toasts" :class="{ 'below-overlay': overlayOpen }" role="status" aria-live="polite">
     <Toast
       v-for="toast in toasts"
       :key="toast.id"
@@ -241,6 +256,12 @@ onUnmounted(() => {
   width: min(440px, calc(100vw - 32px));
   max-height: 56vh;
   overflow-y: auto;
+}
+/* A sheet/dialog owns the screen: slip under its scrim (dimmed reads as
+   backgrounded; the countdowns are already paused) instead of punching
+   through it. */
+.toasts.below-overlay {
+  z-index: var(--z-dropdown);
 }
 
 /* Toast enter/leave/move: new toasts slide in from the right and fade; dismissed
