@@ -12,10 +12,12 @@ import type { Event } from '@moonshot-ai/agent-core';
 import {
   IAgentLifecycleService,
   IAgentProfileService,
-  IAgentTokenCountingService,
-  IAgentUsageService,
+  IAgentScopeContext,
   IEventBus,
   ISessionInteractionService,
+  ISessionTokenCountingService,
+  ISessionUsageService,
+  makeAgentScopeContext,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
@@ -50,6 +52,10 @@ class FakeAgentHandle {
   readonly accessor;
   private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
+    this.services.set(
+      IAgentScopeContext,
+      makeAgentScopeContext({ agentId: id, agentScope: `agents/${id}` }),
+    );
     this.services.set(IEventBus, this.bus);
     this.accessor = {
       get: (token: unknown) => this.services.get(token),
@@ -101,12 +107,12 @@ const USAGE = {
 };
 
 function bindStatusServices(agent: FakeAgentHandle, model: string): void {
-  agent.set(IAgentTokenCountingService, { statusSize: () => 10 });
+  agent.set(ISessionTokenCountingService, { statusSize: () => 10 });
   agent.set(IAgentProfileService, {
     getModel: () => model,
     getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
   });
-  agent.set(IAgentUsageService, { status: () => USAGE });
+  agent.set(ISessionUsageService, { status: () => USAGE });
 }
 
 // ---------------------------------------------------------------------------

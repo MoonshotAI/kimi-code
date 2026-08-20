@@ -373,7 +373,10 @@ export class TranscriptService {
     snapshot: AgentTranscriptSnapshot,
   ): TranscriptOperation | undefined {
     const session = getLiveSessionById(this.deps.core.accessor, sessionId);
-    const agent = session?.accessor.get(IAgentLifecycleService).get(agentId);
+    const agent =
+      session === undefined
+        ? undefined
+        : session.accessor.get(IAgentLifecycleService).findAgentHandle(agentId);
     const status = agent?.accessor.get(IAgentLoopService).status();
     if (status?.state !== 'running' || status.activeTurnId === undefined) return undefined;
     const ordinal = status.activeTurnId;

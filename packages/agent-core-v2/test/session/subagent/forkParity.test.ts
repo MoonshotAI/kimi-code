@@ -78,6 +78,10 @@ class ScopedAppendLogStore implements IAppendLogStore {
   acquire(): IDisposable {
     return { dispose: () => {} };
   }
+
+  drainRetirements(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 class TestRuntimeResolver implements IRuntimeResolver {

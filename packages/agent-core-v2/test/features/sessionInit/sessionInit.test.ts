@@ -15,11 +15,14 @@ import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMd
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInitService } from '#/features/sessionInit/sessionInit';
 import { SessionInitService } from '#/features/sessionInit/sessionInitService';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 const WORK_DIR = '/project';
 const AGENTS_MD = 'latest project instructions';
@@ -57,10 +60,12 @@ describe('SessionInitService', () => {
         onWillStartAgentTask: { run: vi.fn(async () => {}) },
       },
       notifyAgentTaskStopped: vi.fn(),
-      get: vi.fn((id: string) => handles[id]),
+      get: vi.fn((context: AgentContext) => handles[context.agentId]),
+      findAgentHandle: vi.fn((agentId: string) => handles[agentId]),
+      list: vi.fn(() => Object.values(handles)),
       create: vi.fn(async () => handles['agent-0']),
-      run: vi.fn(async (agentId: string) => ({
-        agentId,
+      run: vi.fn(async (agent: AgentContext) => ({
+        agentId: agent.agentId,
         turn: {},
         completion: runCompletion,
       })),
@@ -103,6 +108,12 @@ describe('SessionInitService', () => {
       id: 'agent-0',
       accessor: {
         get: (id: unknown) => {
+          if (id === IAgentScopeContext) {
+            return {
+              agentId: 'agent-0',
+              agentContext: stubAgentContext('agent-0', 1),
+            };
+          }
           if (id === IAgentPermissionModeService) return permissionMode;
           if (id === IAgentProfileService)
             return { republishStatus, getEffectiveThinkingLevel: () => 'off' };
@@ -154,7 +165,7 @@ describe('SessionInitService', () => {
 
     expect(run).toHaveBeenCalledTimes(1);
     const runArgs = run.mock.calls[0]!;
-    expect(runArgs[0]).toBe('agent-0');
+    expect(runArgs[0]).toMatchObject({ agentId: 'agent-0', generation: 1 });
     expect(runArgs[1]).toMatchObject({ kind: 'prompt' });
     expect((runArgs[1] as { prompt: string }).prompt).toContain('Task requirements:');
 
@@ -208,9 +219,9 @@ describe('SessionInitService', () => {
 
   it('throws AGENT_NOT_FOUND when the main agent is missing', async () => {
     const lifecycle = ix.get(IAgentLifecycleService) as unknown as {
-      get: ReturnType<typeof vi.fn>;
+      list: ReturnType<typeof vi.fn>;
     };
-    lifecycle.get.mockReturnValue(undefined);
+    lifecycle.list.mockReturnValue([]);
     const svc = ix.get(ISessionInitService);
 
     const error = await svc.generateAgentsMd().catch((e) => e);

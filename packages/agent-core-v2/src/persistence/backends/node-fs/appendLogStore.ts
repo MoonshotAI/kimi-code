@@ -11,6 +11,14 @@ import {
 
 const textEncoder = new TextEncoder();
 
+const pendingRetirements = new Set<Promise<void>>();
+
+export async function drainAppendLogRetirements(): Promise<void> {
+  while (pendingRetirements.size > 0) {
+    await Promise.all(pendingRetirements);
+  }
+}
+
 interface LogState {
   pending: unknown[];
   flushPromise: Promise<void> | undefined;
@@ -118,6 +126,10 @@ export class AppendLogStore implements IAppendLogStore {
     await this.flush();
   }
 
+  drainRetirements(): Promise<void> {
+    return drainAppendLogRetirements();
+  }
+
   acquire(scope: string, key: string): IDisposable {
     const state = this.state(scope, key);
     state.refCount++;
@@ -171,7 +183,10 @@ export class AppendLogStore implements IAppendLogStore {
     state.refCount--;
     if (state.refCount > 0) return;
     state.retired = true;
-    state.retirement = this.settleRetiredState(scope, key, state).catch(() => undefined);
+    const retirement = this.settleRetiredState(scope, key, state).catch(() => undefined);
+    state.retirement = retirement;
+    pendingRetirements.add(retirement);
+    void retirement.finally(() => pendingRetirements.delete(retirement));
   }
 
   private async settleRetiredState(scope: string, key: string, state: LogState): Promise<void> {

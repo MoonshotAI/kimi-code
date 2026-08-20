@@ -7,8 +7,10 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
@@ -50,6 +52,8 @@ import {
 } from '#/features/swarm/session/agentRunBatch';
 import { ISessionSwarmService, type SessionSwarmSpawnTask, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';
 import { SessionSwarmService } from '#/features/swarm/session/sessionSwarmService';
+
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 describe('resolveSwarmMaxConcurrency', () => {
   it('returns undefined when the variable is unset', () => {
@@ -880,7 +884,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     handles = new Map();
     eventBus = eventBusStub();
     lifecycle = lifecycleStub(handles, eventBus);
-    subagents = subagentStub();
+    subagents = subagentStub(handles, lifecycle, eventBus);
     spawnAgent = subagents.spawn as ReturnType<typeof vi.fn>;
     runAgent = subagents.run as ReturnType<typeof vi.fn>;
     handles.set('main', agentHandle('main', lifecycle, eventBus));
@@ -1051,7 +1055,7 @@ describe('SessionSwarmService metadata compatibility', () => {
       }),
     );
     expect(runAgent).toHaveBeenCalledWith(
-      'agent-existing',
+      expect.objectContaining({ agentId: 'agent-existing' }),
       { kind: 'prompt', prompt: 'Continue' },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
@@ -1123,8 +1127,9 @@ describe('SessionSwarmService metadata compatibility', () => {
         published.push(event);
       });
       let retryRuns = 0;
-      runAgent.mockImplementation((agentId, request, options) => {
+      runAgent.mockImplementation((agent, request, options) => {
         options?.onReady?.();
+        const agentId = (agent as AgentContext).agentId;
         if (agentId === 'agent-retry') {
           retryRuns += 1;
           return {
@@ -1158,7 +1163,7 @@ describe('SessionSwarmService metadata compatibility', () => {
       ).toEqual(['agent-retry', 'agent-blocker']);
       expect(
         runAgent.mock.calls
-          .filter(([agentId]) => agentId === 'agent-retry')
+          .filter(([agent]) => (agent as AgentContext).agentId === 'agent-retry')
           .map(([, request]) => request),
       ).toEqual([{ kind: 'prompt', prompt: 'Continue' }, { kind: 'retry' }]);
     } finally {
@@ -1240,6 +1245,7 @@ function lifecycleStub(
   const lifecycle = {
     _serviceBrand: undefined,
     onDidCreate: Event.None,
+    onDidCreateScope: Event.None,
     onDidDispose: Event.None,
     create: vi.fn(async (opts: CreateAgentOptions = {}) => {
       if (opts.agentId !== undefined) {
@@ -1256,23 +1262,28 @@ function lifecycleStub(
       return handle;
     }),
     fork: vi.fn(),
-    get: (agentId: string) => handles.get(agentId),
+    get: (context: AgentContext) => handles.get(context.agentId),
+    findAgentHandle: (agentId: string) => handles.get(agentId),
     list: () => [...handles.values()],
-    remove: async (agentId: string) => {
-      handles.delete(agentId);
+    remove: async (context: AgentContext) => {
+      handles.delete(context.agentId);
     },
     broadcastPermissionMode: () => {},
   };
   return lifecycle as IAgentLifecycleService;
 }
 
-function subagentStub(): ISessionSubagentService {
+function subagentStub(
+  handles: Map<string, IAgentScopeHandle>,
+  lifecycle: IAgentLifecycleService,
+  eventBus: IEventBus,
+): ISessionSubagentService {
   return {
     _serviceBrand: undefined,
     hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
     onDidStopAgentTask: Event.None,
-    run: vi.fn(async (agentId: string) => ({
-      agentId,
+    run: vi.fn(async (agent: AgentContext) => ({
+      agentId: agent.agentId,
       turn: {} as never,
       completion: Promise.resolve({ summary: 'child summary' }),
     })),
@@ -1281,12 +1292,19 @@ function subagentStub(): ISessionSubagentService {
       model: input.model ?? 'kimi-test',
       fork: input.fork === true,
     })),
-    spawn: vi.fn(async (opts: SpawnSubagentOptions) => ({
-      agentId: 'agent-new',
-      profileName: opts.plan.profileName,
-      model: opts.plan.model,
-      promptText: opts.prompt,
-    })),
+    spawn: vi.fn(async (opts: SpawnSubagentOptions) => {
+      const handle = agentHandle('agent-new', lifecycle, eventBus, {
+        profileName: opts.plan.profileName,
+        modelAlias: opts.plan.model,
+      });
+      handles.set('agent-new', handle);
+      return {
+        agentId: 'agent-new',
+        profileName: opts.plan.profileName,
+        model: opts.plan.model,
+        promptText: opts.prompt,
+      };
+    }),
     notifyAgentTaskStopped: () => {},
   } as ISessionSubagentService;
 }
@@ -1343,6 +1361,14 @@ function agentHandle(
           } as unknown as IAgentLoopService;
         }
         if (serviceId === IAgentUserToolService) return userToolServiceStub();
+        if (serviceId === IAgentScopeContext) {
+          return {
+            _serviceBrand: undefined,
+            agentId: id,
+            agentContext: stubAgentContext(id, 1),
+            scope: (subKey?: string) => subKey ?? '',
+          };
+        }
         if (serviceId === IEventBus) return eventBus;
         if (serviceId === IEventDispatcher) return dispatcher;
         if (serviceId === ITelemetryService) return noopTelemetryService;

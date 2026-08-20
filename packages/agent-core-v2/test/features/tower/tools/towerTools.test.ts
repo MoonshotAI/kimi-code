@@ -41,6 +41,8 @@ import { ITowerStatusTool } from '#/features/tower/tools/status/status';
 import { TowerStatusTool } from '#/features/tower/tools/status/statusTool';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
+import { stubAgentContext } from '../../../agent/agentContext/stubs';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 
 const execFileAsync = promisify(execFile);
 const signal = new AbortController().signal;
@@ -70,6 +72,7 @@ let towerActive: boolean;
 let currentAgentId: string;
 let currentSessionId: string;
 let addedTools: string[];
+const agentContexts = new Map<string, AgentContext>();
 
 beforeEach(async () => {
   repo = await mkdtemp(join(tmpdir(), 'tower-tools-test-'));
@@ -82,6 +85,7 @@ beforeEach(async () => {
   currentAgentId = 'main';
   currentSessionId = 'session-test';
   addedTools = [];
+  agentContexts.clear();
 
   disposables = new DisposableStore();
   ix = createServices(disposables, {
@@ -102,6 +106,14 @@ beforeEach(async () => {
         _serviceBrand: undefined,
         get agentId() {
           return currentAgentId;
+        },
+        get agentContext() {
+          let context = agentContexts.get(currentAgentId);
+          if (context === undefined) {
+            context = stubAgentContext(currentAgentId, 0);
+            agentContexts.set(currentAgentId, context);
+          }
+          return context;
         },
         scope: (subKey?: string) => subKey ?? '',
       });

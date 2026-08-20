@@ -20,7 +20,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { todoKey, ToolsUpdateStore } from '#/session/todo/todoOps';
+import { ToolsUpdateStore } from '#/session/todo/todoOps';
+import { TodoAgentModelDefinition } from '#/session/todo/todoAgentModel';
 import { type ReplayableStateKey } from '#/state/state';
 import { IWireService } from '#/wire/wire';
 
@@ -197,7 +198,7 @@ describe('AgentConversationUndoService', () => {
     ctx.appendTurnExchange('u1', 'a1');
     ctx.appendTurnExchange('u2', 'a2');
     await ctx.dispatcher.dispatch(
-      new ContextApplyCompaction({ summary: 'legacy summary', compactedCount: 2 }),
+      new ContextApplyCompaction({ agentId: 'main', summary: 'legacy summary', compactedCount: 2 }),
     );
     expect(ctx.context.get().map((m) => m.role)).toEqual(['user', 'user', 'assistant']);
 
@@ -240,16 +241,16 @@ describe('AgentConversationUndoService', () => {
     const undo = ctx.get(IAgentConversationUndoService);
     ctx.appendTurnExchange('u1', 'a1');
     await ctx.dispatcher.dispatch(
-      new ToolsUpdateStore({ key: 'todo', value: [{ title: 'kept', status: 'pending' }] }),
+      new ToolsUpdateStore({ agentId: 'main', key: 'todo', value: [{ title: 'kept', status: 'pending' }] }),
     );
     ctx.appendTurnExchange('u2', 'a2');
     await ctx.dispatcher.dispatch(
-      new ToolsUpdateStore({ key: 'todo', value: [{ title: 'doomed', status: 'pending' }] }),
+      new ToolsUpdateStore({ agentId: 'main', key: 'todo', value: [{ title: 'doomed', status: 'pending' }] }),
     );
 
     await undo.undo(1);
 
-    expect(ctx.agentState.get(todoKey)).toEqual([{ title: 'kept', status: 'pending' }]);
+    expect(ctx.readModel(TodoAgentModelDefinition, (model) => model.items())).toEqual([{ title: 'kept', status: 'pending' }]);
   });
 
   it('restores plan mode and its telemetry mirror to their pre-turn value', async () => {

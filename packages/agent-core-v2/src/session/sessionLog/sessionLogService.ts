@@ -8,7 +8,7 @@ import { ISessionStateService } from '#/session/state/sessionState';
 import { ILogService, type LogLevel } from '#/_base/log/log';
 import { createFileLogWriter, type FileLogWriter } from '#/_base/log/fileLog';
 import { ILogOptions, resolveSessionLogPath } from '#/_base/log/logConfig';
-import { BoundLogger, type LogLevelState } from '#/_base/log/logService';
+import { BoundLogger, trackLogClose, type LogLevelState } from '#/_base/log/logService';
 
 export const sessionLogRootLevelKey = defineState<LogLevelState>('sessionLog.rootLevel', () => ({
   level: 'info',
@@ -61,7 +61,7 @@ export class SessionLogService extends BoundLogger implements ILogService {
 
   override dispose(): void {
     this.sink.flushSync();
-    void this.sink.close();
+    trackLogClose(this.sink.close());
     super.dispose();
   }
 }

@@ -15,6 +15,7 @@ import { stubFlag } from '../../app/flag/stubs';
 import type { IFlagService } from '#/app/flag/flag';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -23,8 +24,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
-import { tokenCountingKey } from '#/agent/tokenCounting/tokenCountingOps';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import {
   IAgentSystemReminderService,
   wrapSystemReminder,
@@ -245,7 +245,9 @@ function realSubagents(
     fork: async (): Promise<never> => {
       throw new Error('AgentSwarmTool tests do not reach spawn');
     },
-    get: (agentId: string) => (agentId === callerHandle.id ? callerHandle : undefined),
+    get: (context: AgentContext) =>
+      context.agentId === callerHandle.id ? callerHandle : undefined,
+    findAgentHandle: (agentId: string) => (agentId === callerHandle.id ? callerHandle : undefined),
     list: () => [callerHandle],
     remove: async () => {},
     broadcastPermissionMode: () => {},
@@ -287,11 +289,12 @@ describe('AgentSwarmService', () => {
     ix = disposables.add(new TestInstantiationService());
     ix.set(IEventBus, new SyncDescriptor(EventBusService));
     ix.stub(ILogService, stubLog());
-    ix.stub(IAgentTokenCountingService, {
+    ix.stub(ISessionTokenCountingService, {
       estimateText: () => 0,
       estimateMessage: () => 0,
       estimateMessages: () => 0,
-    } as unknown as IAgentTokenCountingService);
+      recordTruncation: () => {},
+    } as unknown as ISessionTokenCountingService);
     ix.set(IAgentContextMemoryService, new SyncDescriptor(AgentContextMemoryService));
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
@@ -315,7 +318,6 @@ describe('AgentSwarmService', () => {
       eventBus: ix.get(IEventBus),
     });
     registerTestEventDispatcher(ix);
-    ix.get(IAgentStateService).contributeState(tokenCountingKey);
     ix.set(IAgentSystemReminderService, new SyncDescriptor(AgentSystemReminderService));
     ix.set(IAgentSwarmService, new SyncDescriptor(AgentSwarmService));
   });
@@ -505,7 +507,12 @@ describe('AgentSwarmService', () => {
       records.push(record);
     }
     expect(records).toEqual([
-      { type: 'swarm_mode.enter', trigger: 'manual', time: expect.any(Number) },
+      {
+        type: 'swarm_mode.enter',
+        agentId: 'test-agent',
+        trigger: 'manual',
+        time: expect.any(Number),
+      },
     ]);
 
     const ix2 = disposables.add(new TestInstantiationService());

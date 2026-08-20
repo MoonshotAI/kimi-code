@@ -22,6 +22,7 @@ import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import type { RuntimeLease } from '#/runtime/runtime';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { SECONDARY_MODEL_SECTION } from '#/session/subagent/configSection';
@@ -39,6 +40,7 @@ import {
 import { stubLog } from '../../_base/log/stubs';
 import { stubFlag } from '../../app/flag/stubs';
 import { StubConfigService } from '../../kosong/stubs';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 const CALLER_ID = 'main';
 
@@ -141,6 +143,14 @@ describe('SessionSubagentService planSpawn and spawn', () => {
               acquire: acquireRuntime,
             };
           }
+          if (serviceId === IAgentScopeContext) {
+            return {
+              _serviceBrand: undefined,
+              agentId: CALLER_ID,
+              agentContext: stubAgentContext(CALLER_ID, 1),
+              scope: () => '',
+            };
+          }
           return undefined;
         },
       } as IAgentScopeHandle['accessor'],
@@ -157,6 +167,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       create: createAgent,
       fork: forkAgent,
       get: (agentId: string) => (agentId === CALLER_ID ? caller : undefined),
+      findAgentHandle: (agentId: string) => (agentId === CALLER_ID ? caller : undefined),
       list: () => [caller],
       remove: async () => {},
       broadcastPermissionMode: () => {},
@@ -403,7 +414,10 @@ describe('SessionSubagentService planSpawn and spawn', () => {
 
     await spawnForkChild(svc);
 
-    expect(forkAgent).toHaveBeenCalledWith('main', { labels: { parentAgentId: 'main' } });
+    expect(forkAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'main' }),
+      { labels: { parentAgentId: 'main' } },
+    );
     expect(createAgent).not.toHaveBeenCalled();
   });
 
@@ -441,7 +455,10 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     await expect(spawnForkChild(svc)).resolves.toMatchObject({ agentId: 'agent-fork' });
 
     expect(acquireRuntime).not.toHaveBeenCalled();
-    expect(forkAgent).toHaveBeenCalledWith('main', { labels: { parentAgentId: 'main' } });
+    expect(forkAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'main' }),
+      { labels: { parentAgentId: 'main' } },
+    );
   });
 
   it('wraps a create rejection with the secondary-model config hint', async () => {

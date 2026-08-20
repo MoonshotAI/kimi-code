@@ -14,6 +14,7 @@ import type {
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentUserToolService, type UserToolRegistration } from './userTool';
@@ -36,6 +37,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
   private readonly registrations = new Map<string, IDisposable>();
 
   constructor(
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
@@ -61,7 +63,9 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
     activeToolNames?: readonly string[],
   ): void {
     for (const registration of parent.list()) {
-      void this.dispatcher.dispatch(new ToolsRegisterUserTool(registration));
+      void this.dispatcher.dispatch(
+        new ToolsRegisterUserTool({ ...registration, agentId: this.scopeContext.agentId }),
+      );
       const activate =
         activeToolNames === undefined || activeToolNames.includes(registration.name);
       this.applyRegister(registration, { activate });
@@ -69,12 +73,16 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
   }
 
   register(input: UserToolRegistration): void {
-    void this.dispatcher.dispatch(new ToolsRegisterUserTool(input));
+    void this.dispatcher.dispatch(
+      new ToolsRegisterUserTool({ ...input, agentId: this.scopeContext.agentId }),
+    );
     this.applyRegister(input);
   }
 
   unregister(name: string): void {
-    void this.dispatcher.dispatch(new ToolsUnregisterUserTool({ name }));
+    void this.dispatcher.dispatch(
+      new ToolsUnregisterUserTool({ agentId: this.scopeContext.agentId, name }),
+    );
     this.applyUnregister(name);
   }
 

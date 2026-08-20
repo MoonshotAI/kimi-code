@@ -5,22 +5,27 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { inputTotal } from '#/kosong/contract/usage';
 import { IModelCatalog } from '#/kosong/model/catalog';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
 
 import { IAgentCacheProbeService } from './cacheProbe';
-import { IAgentUsageService, type UsageRecordedContext } from './usage';
+import { type UsageRecordedContext } from './usage';
 
 export class AgentCacheProbeService extends Service implements IAgentCacheProbeService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentUsageService usage: IAgentUsageService,
+    @ISessionUsageService usage: ISessionUsageService,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IModelCatalog private readonly models: IModelCatalog,
   ) {
     super();
     if (scopeContext.forkedFrom === undefined) return;
-    this._register(usage.onDidRecord((e) => this.probe(e)));
+    this._register(
+      usage.onDidRecord((e) => {
+        if (e.agent.agentId === scopeContext.agentId) this.probe(e);
+      }),
+    );
   }
 
   private probe(e: UsageRecordedContext): void {

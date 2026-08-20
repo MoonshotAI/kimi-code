@@ -1,4 +1,5 @@
 import { Service } from '#/_base/di/service';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { Error2, ErrorCodes } from '#/errors';
 import { LifecycleScope } from '#/app/scopes';
 import {
@@ -29,6 +30,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { createHooks } from '#/hooks';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 
 import {
   type AgentRunHandle,
@@ -73,11 +75,11 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     super();
   }
 
-  run(agentId: string, request: AgentRunRequest, opts: RunAgentOptions): Promise<AgentRunHandle> {
-    const handle = this.agentLifecycle.get(agentId);
+  run(agent: AgentContext, request: AgentRunRequest, opts: RunAgentOptions): Promise<AgentRunHandle> {
+    const handle = this.agentLifecycle.get(agent);
     if (handle === undefined) {
-      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agentId}" does not exist`, {
-        details: { agentId },
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agent.agentId}" does not exist`, {
+        details: { agentId: agent.agentId },
       });
     }
     return runAgentTurn(handle, request, {
@@ -154,7 +156,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       let created: IAgentScopeHandle;
       try {
         created = plan.fork
-          ? await this.agentLifecycle.fork(opts.callerAgentId, { labels: opts.labels })
+          ? await this.agentLifecycle.fork(agentContextOf(caller), { labels: opts.labels })
           : await this.agentLifecycle.create({
               binding: {
                 profile: plan.profileName,
@@ -218,7 +220,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
   }
 
   private requireCaller(agentId: string): IAgentScopeHandle {
-    const handle = this.agentLifecycle.get(agentId);
+    const handle = this.agentLifecycle.findAgentHandle(agentId);
     if (handle === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Caller agent "${agentId}" does not exist`, {
         details: { agentId },

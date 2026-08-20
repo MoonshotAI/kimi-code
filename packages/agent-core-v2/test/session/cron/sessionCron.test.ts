@@ -4,7 +4,11 @@ import { Emitter, Event } from '#/_base/event';
 import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle } from '#/_base/di/scope';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
+import {
+  IAgentLifecycleService,
+  type AgentScopeCreatedEvent,
+} from '#/session/agentLifecycle/agentLifecycle';
 import { CronCursor } from '#/session/cron/cronOps';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 
@@ -15,22 +19,26 @@ import {
   type TestAgentContext,
   type TestAgentOptions,
 } from '../../harness';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 interface CronHarness {
   readonly ctx: TestAgentContext;
-  readonly onDidCreate: Emitter<IAgentScopeHandle>;
+  readonly onDidCreateScope: Emitter<AgentScopeCreatedEvent>;
 }
 
 async function bootCronContext(options: TestAgentOptions = {}): Promise<CronHarness> {
-  const onDidCreate = new Emitter<IAgentScopeHandle>();
+  const onDidCreateScope = new Emitter<AgentScopeCreatedEvent>();
+  const mainAgent = stubAgentContext('main', 1);
   let mainHandle: IAgentScopeHandle | undefined;
   const lifecycleStub: IAgentLifecycleService = {
     _serviceBrand: undefined,
-    onDidCreate: onDidCreate.event,
-    onDidDispose: Event.None as Event<string>,
+    onDidCreate: Event.None as Event<AgentContext>,
+    onDidCreateScope: onDidCreateScope.event,
+    onDidDispose: Event.None as Event<AgentContext>,
     create: () => Promise.reject(new Error('not supported in this test')),
     fork: () => Promise.reject(new Error('not supported in this test')),
-    get: (agentId) => (agentId === 'main' ? mainHandle : undefined),
+    get: (agent) => (agent === mainAgent ? mainHandle : undefined),
+    findAgentHandle: (agentId) => (agentId === mainAgent.agentId ? mainHandle : undefined),
     list: () => (mainHandle === undefined ? [] : [mainHandle]),
     broadcastPermissionMode: () => {},
     remove: () => Promise.resolve(),
@@ -44,8 +52,8 @@ async function bootCronContext(options: TestAgentOptions = {}): Promise<CronHarn
     get: <T,>(id: ServiceIdentifier<T>): T => ctx.get(id),
   };
   mainHandle = { id: 'main', kind: LifecycleScope.Agent, accessor, dispose: () => {} };
-  onDidCreate.fire(mainHandle);
-  return { ctx, onDidCreate };
+  onDidCreateScope.fire({ context: mainAgent, handle: mainHandle });
+  return { ctx, onDidCreateScope };
 }
 
 describe('session cron wire persistence', () => {
@@ -65,7 +73,7 @@ describe('session cron wire persistence', () => {
       expect(types).toContain('cron.cursor');
     } finally {
       await first.ctx.dispose();
-      first.onDidCreate.dispose();
+      first.onDidCreateScope.dispose();
     }
 
     const second = await bootCronContext({
@@ -85,7 +93,7 @@ describe('session cron wire persistence', () => {
       });
     } finally {
       await second.ctx.dispose();
-      second.onDidCreate.dispose();
+      second.onDidCreateScope.dispose();
     }
   });
 
@@ -106,7 +114,7 @@ describe('session cron wire persistence', () => {
       expect(kept.id).not.toBe(dropped.id);
     } finally {
       await first.ctx.dispose();
-      first.onDidCreate.dispose();
+      first.onDidCreateScope.dispose();
     }
 
     const second = await bootCronContext({
@@ -119,7 +127,7 @@ describe('session cron wire persistence', () => {
       expect(resumed.list().map((task) => task.prompt)).toEqual(['keep']);
     } finally {
       await second.ctx.dispose();
-      second.onDidCreate.dispose();
+      second.onDidCreateScope.dispose();
     }
   });
 });

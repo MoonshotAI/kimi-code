@@ -83,7 +83,7 @@ export class SessionTitleService implements ISessionTitleService {
       if (current.titleKind === 'custom') return undefined;
       if (current.titleKind === 'generated') return undefined;
     }
-    const main = this.agentLifecycle.get(MAIN_AGENT_ID);
+    const main = this.agentLifecycle.findAgentHandle(MAIN_AGENT_ID);
     if (main === undefined) return undefined;
     const promptSource = main.accessor.get(IAgentTitlePromptSource);
     const input = await composeTitleInput(promptSource, source);

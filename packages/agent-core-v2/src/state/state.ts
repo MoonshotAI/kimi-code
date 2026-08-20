@@ -220,6 +220,56 @@ export function expandedStateFolds(
   return folds;
 }
 
+export type EventApplier = (event: any, ctx: FoldContext) => void;
+
+export function expandedModelAppliers(
+  owner: string,
+  undoable: boolean,
+  appliers: ReadonlyMap<Event2Class<any, any>, EventApplier>,
+  onUndo: ((count: number) => void) | undefined,
+): ReadonlyMap<Event2Class<any, any>, EventApplier> {
+  if (!undoable) return appliers;
+  if (undoableProtocol === undefined) {
+    throw new BugIndicatingError(
+      `Agent model '${owner}' is undoable but no undoable protocol is registered ` +
+        '(the contextMemory domain registers it at import time)',
+    );
+  }
+  const protocol = undoableProtocol;
+  if (appliers.has(protocol.events.undo)) {
+    throw new BugIndicatingError(
+      `Undoable agent model '${owner}' must not apply the undo event itself; ` +
+        'override onUndo on the model to customize the rollback',
+    );
+  }
+  const custom = onUndo !== undefined;
+  const expanded = new Map<Event2Class<any, any>, EventApplier>(appliers);
+  const domainAppend = expanded.get(protocol.events.appendMessage);
+  expanded.set(protocol.events.appendMessage, (event, ctx) => {
+    if (!custom && protocol.isUndoAnchor(event.message)) {
+      ctx.checkpoint();
+      return;
+    }
+    domainAppend?.(event, ctx);
+  });
+  for (const cls of [protocol.events.applyCompaction, protocol.events.clear]) {
+    const domain = expanded.get(cls);
+    expanded.set(cls, (event, ctx) => {
+      ctx.clearCheckpoints();
+      domain?.(event, ctx);
+    });
+  }
+  expanded.set(protocol.events.undo, (event, ctx) => {
+    if (!protocol.isValidUndoCount(event.count)) return;
+    if (onUndo !== undefined) {
+      onUndo(event.count);
+      return;
+    }
+    ctx.undoToCheckpoint(event.count);
+  });
+  return expanded;
+}
+
 export type DeepReadonly<T> = T extends (...args: infer A) => infer R
   ? (...args: A) => R
   : T extends ReadonlyMap<infer K, infer V>
