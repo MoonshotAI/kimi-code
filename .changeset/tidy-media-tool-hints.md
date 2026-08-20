@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix the model attempting to call unavailable tools after reading an image or binary file.
+Fix the model being directed to unavailable tools when it encounters an image or binary file.
