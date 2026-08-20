@@ -524,7 +524,13 @@ export class TranscriptService {
       messages,
       sawTurnPrompt ? { taskOriginTurnTaskIds } : undefined,
     );
-    return foldWireRecordFacts(records, base);
+    const lastTurn = base.items.findLast((item) => item.kind === 'turn');
+    const activity =
+      lastTurn?.kind === 'turn' && lastTurn.state === 'running' ? 'unknown' : 'idle';
+    return foldWireRecordFacts(records, {
+      ...base,
+      meta: { ...base.meta, activity },
+    });
   }
 
   /** Dispose the live store + binding for a session (session closed / server shutdown). */

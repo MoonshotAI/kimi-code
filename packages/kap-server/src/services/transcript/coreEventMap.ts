@@ -384,6 +384,7 @@ export class AgentTranscriptProjector {
     this.openText = undefined;
     this.openThinking = undefined;
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
+    ops.push({ op: 'meta.merge', meta: { activity: 'turn' } });
     return ops;
   }
 
@@ -421,6 +422,7 @@ export class AgentTranscriptProjector {
       usage: this.takeTurnUsage(turnId),
     };
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
+    ops.push({ op: 'meta.merge', meta: { activity: 'idle' } });
     this.currentStep = undefined;
     this.pendingTaskNotifications = [];
     if (event.reason === 'cancelled' && event.interruptReason === 'user_cancelled') {

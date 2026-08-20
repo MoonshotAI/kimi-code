@@ -1984,8 +1984,23 @@ describe('AgentTranscriptProjector', () => {
     expect(turnOps('t0', tx.getItems()).state).toBe('failed');
   });
 
-  it('maps cron / task origins onto the turn header', () => {
+  it('mirrors turn liveness into meta.activity', () => {
     const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    expect(tx.getMeta().activity).toBeUndefined();
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    expect(tx.getMeta().activity).toBe('turn');
+    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+    expect(tx.getMeta().activity).toBe('idle');
+    feed(ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } }));
+    expect(tx.getMeta().activity).toBe('turn');
+    feed(ev({ type: 'turn.ended', turnId: 2, reason: 'failed' }));
+    expect(tx.getMeta().activity).toBe('idle');
+  });
+
+  it('maps cron / task origins onto the turn header', () => {    const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
