@@ -99,6 +99,14 @@ export interface ServerStartOptions {
   readonly port?: number;
   readonly homeDir?: string;
   /**
+   * Environment bag handed to the engine bootstrap (`IBootstrapService.getEnv`).
+   * Defaults to `process.env`; hosts that need to override engine-level env
+   * reads (e.g. an embedded server pinning `KIMI_CODE_REGION_MARKER=off`)
+   * pass a merged bag here instead of mutating the host process's env, which
+   * would leak the override into every child process the host spawns.
+   */
+  readonly env?: NodeJS.ProcessEnv;
+  /**
    * Plugin marketplace catalog URL for `GET /api/v1/plugins/marketplace`.
    * Defaults to the `KIMI_CODE_PLUGIN_MARKETPLACE_URL` env var, then the
    * production catalog.
@@ -238,6 +246,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     {
       homeDir,
       configPath,
+      env: opts.env,
       clientIdentity: opts.hostIdentity,
       args: {
         requestHeaders: createKimiDefaultHeaders({ homeDir, ...opts.hostIdentity }),

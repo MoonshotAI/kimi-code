@@ -403,7 +403,9 @@ export class OAuthService extends Disposable implements IOAuthService {
     return resolveKimiRegion({
       configuredOAuthHost: oauth?.oauthHost,
       configuredOAuthKey: oauth?.key,
-      readMarker: process.env['KIMI_CODE_REGION_MARKER'] !== 'off',
+      readMarker:
+        (this.bootstrap.getEnv('KIMI_CODE_REGION_MARKER') ??
+          process.env['KIMI_CODE_REGION_MARKER']) !== 'off',
       homeDir: this.bootstrap.homeDir,
     });
   }

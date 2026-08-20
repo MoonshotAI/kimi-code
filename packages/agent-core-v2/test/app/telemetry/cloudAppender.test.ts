@@ -45,13 +45,13 @@ function statusResponse(status: number): Response {
 }
 
 function baseOptions(
-  overrides: Partial<CloudAppenderOptions> & { homeDir?: string } = {},
+  overrides: Partial<CloudAppenderOptions> & { homeDir?: string; bootstrapEnv?: NodeJS.ProcessEnv } = {},
 ): CloudAppenderOptions {
-  const { homeDir: dir = '', storage, ...rest } = overrides;
+  const { homeDir: dir = '', storage, bootstrapEnv, ...rest } = overrides;
   return {
     storage: storage ?? new FileStorageService(dir),
     bootstrap: {
-      ...stubBootstrap(dir === '' ? undefined : dir),
+      ...stubBootstrap(dir === '' ? undefined : dir, bootstrapEnv),
       clientIdentity: { ...stubClientIdentity, version: '1.0.0' },
     },
     deviceId: 'dev',
@@ -159,6 +159,27 @@ describe('CloudAppender', () => {
 
     expect(requests).toHaveLength(1);
     expect(requests[0]?.url).toBe('https://telemetry-logs.kimi.ai/v1/event');
+  });
+
+  it('honors the marker opt-out from the bootstrap env bag (no process.env needed)', async () => {
+    writeFileSync(join(homeDir, 'region'), 'global\n');
+    const requests: CapturedRequest[] = [];
+    const appender = new CloudAppender(
+      baseOptions({
+        homeDir,
+        bootstrapEnv: { KIMI_CODE_REGION_MARKER: 'off' },
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+
+    appender.track('tool.call', { name: 'bash' });
+    await appender.flush();
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe('https://telemetry-logs.kimi.com/v1/event');
   });
 
   it('honors KIMI_CODE_REGION_MARKER=off so embedded servers ignore the install marker', async () => {

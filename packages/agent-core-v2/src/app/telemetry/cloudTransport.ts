@@ -40,6 +40,9 @@ export interface CloudTransportOptions {
   /** Bootstrapped home for the default endpoint's region resolution (the
       install marker lives there, not necessarily under KIMI_CODE_HOME). */
   readonly homeDir?: string;
+  /** Pre-resolved marker opt-out from the host's bootstrap env (defaults to
+      reading KIMI_CODE_REGION_MARKER from the process env). */
+  readonly readMarker?: boolean;
   readonly getAccessToken?: () => string | null | Promise<string | null>;
   readonly fetchImpl?: typeof fetch;
   readonly retryBackoffsMs?: readonly number[];
@@ -62,12 +65,9 @@ const JSONL_SUFFIX = '.jsonl';
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-function defaultTelemetryEndpoint(homeDir?: string): string {
+function defaultTelemetryEndpoint(homeDir?: string, readMarker = true): string {
   return kimiRegionProfile(
-    resolveKimiRegion({
-      readMarker: process.env['KIMI_CODE_REGION_MARKER'] !== 'off',
-      homeDir,
-    }),
+    resolveKimiRegion({ readMarker, homeDir }),
   ).telemetryEndpoint;
 }
 
@@ -85,7 +85,12 @@ export class CloudTransport {
   constructor(options: CloudTransportOptions) {
     this.storage = options.storage;
     this.deviceId = options.deviceId;
-    this.endpoint = options.endpoint ?? defaultTelemetryEndpoint(options.homeDir);
+    this.endpoint =
+      options.endpoint ??
+      defaultTelemetryEndpoint(
+        options.homeDir,
+        options.readMarker ?? process.env['KIMI_CODE_REGION_MARKER'] !== 'off',
+      );
     this.getAccessToken = options.getAccessToken ?? null;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.retryBackoffsMs = options.retryBackoffsMs ?? RETRY_BACKOFFS_MS;
