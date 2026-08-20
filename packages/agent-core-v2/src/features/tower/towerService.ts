@@ -31,7 +31,7 @@ import {
   TOWER_TOOL_NAMES,
   TOWER_WORKER_PROFILE,
 } from './tower';
-import { TowerModeEnter, TowerModeExit, towerKey } from './towerOps';
+import { TowerModeEnter, TowerModeExit, towerKey, towerOwnerKey } from './towerOps';
 
 export const TOWER_MODE_TOOLS: readonly string[] = ['TowerInit', ...TOWER_TOOL_NAMES];
 
@@ -53,6 +53,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   ) {
     super();
     this.agentState.contributeState(towerKey);
+    this.agentState.contributeState(towerOwnerKey);
     this._register(
       this.dispatcher.hooks.onDidRestore.register('tower', async (_ctx, next) => {
         await this.exitForeignTower();
@@ -126,7 +127,9 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (this.agentCtx.agentId !== 'main') return;
     if (!this.flags.enabled(TOWER_FLAG_ID)) return;
     if (this.isActive) return;
-    void this.dispatcher.dispatch(new TowerModeEnter({ agentId: this.agentCtx.agentId }));
+    void this.dispatcher.dispatch(
+      new TowerModeEnter({ agentId: this.agentCtx.agentId, sessionId: this.sessionCtx.sessionId }),
+    );
     for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
   }
 
@@ -147,13 +150,19 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (!this.flags.enabled(TOWER_FLAG_ID)) return;
     if (this.agentCtx.agentId !== 'main') return;
     if (!this.agentState.get(towerKey)) return;
+    const owner = await this.resolveTowerOwner();
+    if (owner === undefined || owner === this.sessionCtx.sessionId) return;
+    void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
+  }
+
+  private async resolveTowerOwner(): Promise<string | undefined> {
+    const recorded = this.agentState.get(towerOwnerKey);
+    if (recorded !== undefined) return recorded;
     const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
-    const owner = await store.load().then(
+    return store.load().then(
       (state) => state.sessionId,
       () => undefined,
     );
-    if (owner === undefined || owner === this.sessionCtx.sessionId) return;
-    void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
   }
 
   private restoreTowerTools(): void {

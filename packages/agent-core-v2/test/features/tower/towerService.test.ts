@@ -694,6 +694,150 @@ describe('AgentTowerService', () => {
     }
   });
 
+  it('exits a replayed tower mode without a store when the enter record belongs to another session', async () => {
+    ix.stub(ISessionContext, {
+      cwd: '/nonexistent-tower-repo',
+      sessionId: 'session-original',
+    } as unknown as ISessionContext);
+    const tower = ix.get(IAgentTowerService);
+    tower.enter();
+
+    const log = ix.get(IAppendLogStore);
+    const records: WireRecord[] = [];
+    for await (const record of log.read<WireRecord>(
+      testWireScope('wire', 'tower-test'),
+      AGENT_WIRE_RECORD_KEY,
+    )) {
+      records.push(record);
+    }
+
+    const ix2 = disposables.add(new TestInstantiationService());
+    ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ix2.set(IEventBus, new SyncDescriptor(EventBusService));
+    ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
+    ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
+    ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
+    ix2.stub(ISessionContext, {
+      cwd: '/nonexistent-tower-repo',
+      sessionId: 'session-fork',
+    } as unknown as ISessionContext);
+    ix2.stub(IAgentContextInjectorService, {
+      register: () => ({ dispose: () => {} }),
+      reconcileWhenIdle: async () => {},
+    } as unknown as IAgentContextInjectorService);
+    ix2.stub(IAgentContextMemoryService, {
+      get: () => [],
+    } as unknown as IAgentContextMemoryService);
+    const restoredAdded: string[] = [];
+    ix2.stub(IAgentProfileService, {
+      data: () => ({ profileName: undefined }),
+      addActiveTool: (name: string) => {
+        restoredAdded.push(name);
+      },
+      removeActiveTool: () => {},
+    } as unknown as IAgentProfileService);
+    registerTestAgentWire(ix2, testWireScope('wire', 'tower-fork-noinit'), {
+      log: ix2.get(IAppendLogStore),
+      eventBus: ix2.get(IEventBus),
+    });
+    stubMainAgentScope(ix2);
+    const dispatcher = registerTestEventDispatcher(ix2);
+    ix2.set(IAgentTowerService, new SyncDescriptor(AgentTowerService));
+    const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
+    disposables.add(
+      ix2.get(IEventBus).subscribe((e) => {
+        if (e.type === 'agent.status.updated') {
+          events.push({ type: e.type, towerMode: (e as AgentStatusUpdated).towerMode });
+        }
+      }),
+    );
+    const restored = ix2.get(IAgentTowerService);
+
+    await restoreTestEventDispatcher(
+      dispatcher,
+      ix2.get(IAppendLogStore),
+      testWireScope('wire', 'tower-fork-noinit'),
+      records,
+    );
+
+    expect(restored.isActive).toBe(false);
+    expect(restoredAdded).toEqual([]);
+    expect(events).toContainEqual({ type: 'agent.status.updated', towerMode: false });
+  });
+
+  it('restores a pre-init tower mode on the owning session even without a store', async () => {
+    ix.stub(ISessionContext, {
+      cwd: '/nonexistent-tower-repo',
+      sessionId: 'session-owner',
+    } as unknown as ISessionContext);
+    const tower = ix.get(IAgentTowerService);
+    tower.enter();
+
+    const log = ix.get(IAppendLogStore);
+    const records: WireRecord[] = [];
+    for await (const record of log.read<WireRecord>(
+      testWireScope('wire', 'tower-test'),
+      AGENT_WIRE_RECORD_KEY,
+    )) {
+      records.push(record);
+    }
+
+    const ix2 = disposables.add(new TestInstantiationService());
+    ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ix2.set(IEventBus, new SyncDescriptor(EventBusService));
+    ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
+    ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
+    ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
+    ix2.stub(ISessionContext, {
+      cwd: '/nonexistent-tower-repo',
+      sessionId: 'session-owner',
+    } as unknown as ISessionContext);
+    ix2.stub(IAgentContextInjectorService, {
+      register: () => ({ dispose: () => {} }),
+      reconcileWhenIdle: async () => {},
+    } as unknown as IAgentContextInjectorService);
+    ix2.stub(IAgentContextMemoryService, {
+      get: () => [],
+    } as unknown as IAgentContextMemoryService);
+    const restoredAdded: string[] = [];
+    ix2.stub(IAgentProfileService, {
+      data: () => ({ profileName: undefined }),
+      addActiveTool: (name: string) => {
+        restoredAdded.push(name);
+      },
+      removeActiveTool: () => {},
+    } as unknown as IAgentProfileService);
+    registerTestAgentWire(ix2, testWireScope('wire', 'tower-resume-noinit'), {
+      log: ix2.get(IAppendLogStore),
+      eventBus: ix2.get(IEventBus),
+    });
+    stubMainAgentScope(ix2);
+    const dispatcher = registerTestEventDispatcher(ix2);
+    ix2.set(IAgentTowerService, new SyncDescriptor(AgentTowerService));
+    const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
+    disposables.add(
+      ix2.get(IEventBus).subscribe((e) => {
+        if (e.type === 'agent.status.updated') {
+          events.push({ type: e.type, towerMode: (e as AgentStatusUpdated).towerMode });
+        }
+      }),
+    );
+    const restored = ix2.get(IAgentTowerService);
+
+    await restoreTestEventDispatcher(
+      dispatcher,
+      ix2.get(IAppendLogStore),
+      testWireScope('wire', 'tower-resume-noinit'),
+      records,
+    );
+
+    expect(restored.isActive).toBe(true);
+    expect(restoredAdded).toEqual([...TOWER_MODE_TOOLS]);
+    expect(events).not.toContainEqual({ type: 'agent.status.updated', towerMode: false });
+  });
+
   it('restore does not touch the profile tool overlay while tower mode is inactive', async () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
