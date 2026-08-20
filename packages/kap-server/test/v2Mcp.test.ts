@@ -461,5 +461,46 @@ describe('server /api/v2/mcp', () => {
       expect(reset.body).toMatchObject({ code: 0, data: null });
       expect(stub.state.lastResetLocator).toEqual({ source: 'plugin', pluginId: 'p', serverName: 's' });
     });
+
+    it('rejects an overflowing auth:complete timeoutMs with 40001', async () => {
+      const stub = makeMcpStub();
+      await boot(stub);
+
+      const res = await call('POST', '/api/v2/mcp/auth:complete', {
+        flowId: 'flow-1',
+        timeoutMs: 2 ** 31,
+      });
+
+      expect(res.body.code).toBe(40001);
+      expect(stub.calls).toEqual([]);
+    });
+
+    it('aborts the engine wait when the client disconnects mid-complete', async () => {
+      const stub = makeMcpStub();
+      let seenSignal: AbortSignal | undefined;
+      let reached = false;
+      stub.service.completeServerAuth = async (_handle, options) => {
+        seenSignal = options?.signal;
+        reached = true;
+        await new Promise<void>((resolve) => {
+          options?.signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+      };
+      await boot(stub);
+
+      const controller = new AbortController();
+      const pending = authedFetch(server as RunningServer, base, '/api/v2/mcp/auth:complete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ flowId: 'flow-1' }),
+        signal: controller.signal,
+      });
+      await vi.waitFor(() => expect(reached).toBe(true));
+
+      controller.abort();
+
+      await expect(pending).rejects.toThrow();
+      await vi.waitFor(() => expect(seenSignal?.aborted).toBe(true));
+    });
   });
 });

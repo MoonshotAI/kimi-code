@@ -1,3 +1,5 @@
+import type { ServerResponse } from 'node:http';
+
 import {
   ErrorCodes,
   IConfigService,
@@ -97,7 +99,12 @@ const inspectServersBodySchema = z.object({
 
 const authCompleteBodySchema = z.object({
   flowId: z.string().min(1),
-  timeoutMs: z.number().int().min(1).optional(),
+  timeoutMs: z
+    .number()
+    .int()
+    .min(1)
+    .max(2 ** 31 - 1)
+    .optional(),
 });
 
 const authCancelBodySchema = z.object({ flowId: z.string().min(1) });
@@ -484,11 +491,20 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       tags: ['v2-mcp'],
     },
     async (req, reply) => {
+      const { raw } = reply as unknown as { raw: ServerResponse };
+      const disconnect = new AbortController();
+      const onClose = (): void => {
+        if (raw.writableFinished) return;
+        disconnect.abort();
+      };
+      raw.once('close', onClose);
       try {
-        await management().completeServerAuth(req.body);
+        await management().completeServerAuth(req.body, { signal: disconnect.signal });
         reply.send(okEnvelope(null, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);
+      } finally {
+        raw.off('close', onClose);
       }
     },
   );
