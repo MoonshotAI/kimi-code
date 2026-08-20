@@ -3,9 +3,11 @@ import { readFile } from 'node:fs/promises';
 
 import {
   IAgentLifecycleService,
+  IFlagService,
   ISessionIndex,
   ISessionMetadata,
   IAgentLoopService,
+  TOWER_FLAG_ID,
   followSessionLifecycles,
   getLiveSessionById,
   reduceContextTranscript,
@@ -505,7 +507,12 @@ export class TranscriptService {
     }
     const messages = [...reduceContextTranscript(records).entries];
     const base = groupMessagesIntoSnapshot(messages);
-    return foldWireRecordFacts(records, base);
+    const snapshot = foldWireRecordFacts(records, base);
+    if (snapshot.meta.modes?.tower === undefined) return snapshot;
+    if (this.deps.core.accessor.get(IFlagService).enabled(TOWER_FLAG_ID)) return snapshot;
+    const modes = { ...snapshot.meta.modes, tower: undefined };
+    const cleared = modes.plan === undefined && modes.swarm === undefined && modes.tower === undefined;
+    return { ...snapshot, meta: { ...snapshot.meta, modes: cleared ? undefined : modes } };
   }
 
   /** Dispose the live store + binding for a session (session closed / server shutdown). */

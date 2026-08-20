@@ -7,6 +7,7 @@ import {
   IAgentLoopService,
   IAgentTaskService,
   IEventBus,
+  IFlagService,
   ISessionIndex,
   ISessionInteractionService,
   ISessionMetadata,
@@ -16,6 +17,7 @@ import {
   LifecycleScope,
   SessionInteractionService,
   StateRegistry,
+  TOWER_FLAG_ID,
   type Event2,
   type ISessionScopeHandle,
   type ISessionStateService,
@@ -1820,6 +1822,56 @@ describe('AgentTranscriptProjector', () => {
         expect.objectContaining({ kind: 'taskref', refId: 'ref-task_1', taskId: 'task_1' }),
       ]);
       service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('gates the cold tower mode badge behind the tower experiment flag', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-tower-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'hi' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: 1000,
+        },
+        { type: 'tower_mode.enter', time: 2000 },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      const serviceWith = (flagOn: boolean) =>
+        new TranscriptService({
+          homeDir: home,
+          core: {
+            accessor: {
+              get: (token: unknown) => {
+                if (token === ISessionManager) return { get: () => undefined, list: () => [] };
+                if (token === IWorkspaceInstanceManager) {
+                  return { list: () => [], onDidChange: () => ({ dispose: () => undefined }) };
+                }
+                if (token === ISessionIndex) return { get: async () => ({ workspaceId: 'ws' }) };
+                if (token === IFlagService) {
+                  return { enabled: (id: string) => flagOn && id === TOWER_FLAG_ID };
+                }
+                return undefined;
+              },
+            },
+          } as unknown as Scope,
+        });
+
+      const withFlag = await serviceWith(true).readColdSnapshot('s1', 'main');
+      expect(withFlag!.meta.modes).toEqual({ tower: {} });
+
+      const withoutFlag = await serviceWith(false).readColdSnapshot('s1', 'main');
+      expect(withoutFlag!.meta.modes).toBeUndefined();
     } finally {
       await rm(home, { recursive: true, force: true });
     }
