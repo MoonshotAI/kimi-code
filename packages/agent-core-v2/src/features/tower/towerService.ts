@@ -186,7 +186,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   }
 
   private async exitForeignTower(): Promise<void> {
-    if (!this.flags.enabled(TOWER_FLAG_ID)) return;
     if (this.agentCtx.agentId !== 'main') return;
     if (!this.agentState.get(towerKey)) return;
     const owner = await this.resolveTowerOwner();
