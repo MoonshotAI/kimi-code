@@ -31,11 +31,15 @@ const MAX_TITLE_INPUT_LENGTH = 1000;
 
 const MAX_TITLE_PROMPTS = 3;
 
-const MAX_TITLE_USER_SEGMENT = 300;
+const MAX_TITLE_USER_SEGMENT = 400;
 
-const MAX_TITLE_FIRST_TURN_ASSISTANT = 600;
+const MAX_TITLE_FIRST_TURN_ASSISTANT = 300;
 
-const MAX_TITLE_DIGEST_ASSISTANT = 400;
+const MAX_TITLE_DIGEST_USER_SEGMENT = 200;
+
+const MAX_TITLE_DIGEST_ASSISTANT = 200;
+
+const MAX_TITLE_DIGEST_INPUT_LENGTH = 3000;
 
 export class SessionTitleService implements ISessionTitleService {
   declare readonly _serviceBrand: undefined;
@@ -161,7 +165,7 @@ export class SessionTitleService implements ISessionTitleService {
 function titleInputFromPrompts(prompts: readonly string[]): string | undefined {
   if (prompts.length === 0) return undefined;
   return prompts
-    .map((prompt) => `user: ${prompt}`)
+    .map((prompt) => `user: ${prompt.slice(0, MAX_TITLE_USER_SEGMENT)}`)
     .join('\n')
     .slice(0, MAX_TITLE_INPUT_LENGTH);
 }
@@ -181,18 +185,38 @@ async function composeTitleInput(
   if (source === 'digest') {
     const excerpt = await promptSource.digestExcerpt();
     const lines: string[] = [];
-    if (excerpt.firstUser !== undefined) {
-      lines.push(`user: ${excerpt.firstUser.slice(0, MAX_TITLE_USER_SEGMENT)}`);
+    for (const turn of excerpt.turns) {
+      lines.push(`user: ${turn.user.slice(0, MAX_TITLE_DIGEST_USER_SEGMENT)}`);
+      if (turn.assistant !== undefined) {
+        lines.push(`assistant: ${turn.assistant.slice(0, MAX_TITLE_DIGEST_ASSISTANT)}`);
+      }
     }
-    if (excerpt.lastUser !== undefined) {
-      lines.push(`user: ${excerpt.lastUser.slice(0, MAX_TITLE_USER_SEGMENT)}`);
-    }
-    if (excerpt.assistant !== undefined) {
-      lines.push(`assistant: ${excerpt.assistant.slice(0, MAX_TITLE_DIGEST_ASSISTANT)}`);
-    }
-    return lines.length === 0 ? undefined : lines.join('\n');
+    return elideTitleDigestLines(lines);
   }
   return titleInputFromPrompts(await promptSource.firstUserPrompts(MAX_TITLE_PROMPTS));
+}
+
+const TITLE_DIGEST_ELISION_MARKER = '...';
+
+function elideTitleDigestLines(lines: readonly string[]): string | undefined {
+  if (lines.length === 0) return undefined;
+  const joined = lines.join('\n');
+  if (joined.length <= MAX_TITLE_DIGEST_INPUT_LENGTH) return joined;
+  let budget = MAX_TITLE_DIGEST_INPUT_LENGTH - TITLE_DIGEST_ELISION_MARKER.length - 2;
+  const head: string[] = [];
+  for (const line of lines.slice(0, 2)) {
+    if (budget < line.length + 1) break;
+    head.push(line);
+    budget -= line.length + 1;
+  }
+  const tail: string[] = [];
+  for (let index = lines.length - 1; index >= head.length; index--) {
+    const line = lines[index]!;
+    if (budget < line.length + 1) break;
+    tail.unshift(line);
+    budget -= line.length + 1;
+  }
+  return [...head, TITLE_DIGEST_ELISION_MARKER, ...tail].join('\n');
 }
 
 registerScopedService(

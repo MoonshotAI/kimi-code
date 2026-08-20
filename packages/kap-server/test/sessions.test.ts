@@ -643,7 +643,7 @@ describe('server-v2 /api/v1/sessions', () => {
     });
     expect(digested.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
     expect(toolsRequest?.params.chat_content).toBe(
-      'user: first REST prompt\nuser: third REST prompt',
+      'user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt',
     );
   });
 
