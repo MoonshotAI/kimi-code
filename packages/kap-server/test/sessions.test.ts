@@ -701,7 +701,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(after.body.data.permission).toBe('yolo');
   });
 
-  it('accepts tower_mode agent_config and reflects it in GET /status', async () => {
+  it('rejects tower_mode agent_config when the tower feature is unavailable', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
@@ -714,11 +714,12 @@ describe('server-v2 /api/v1/sessions', () => {
     const on = await postJson(`/api/v1/sessions/${id}/profile`, {
       agent_config: { tower_mode: true },
     });
-    expect(on.body.code).toBe(0);
+    expect(on.body.code).not.toBe(0);
+    expect(on.body.msg).toContain('tower mode could not be enabled');
     const after = await getJson<{
       tower_mode?: boolean;
     }>(`/api/v1/sessions/${id}/status`);
-    expect(typeof after.body.data.tower_mode).toBe('boolean');
+    expect(after.body.data.tower_mode).toBe(false);
 
     const off = await postJson(`/api/v1/sessions/${id}/profile`, {
       agent_config: { tower_mode: false },

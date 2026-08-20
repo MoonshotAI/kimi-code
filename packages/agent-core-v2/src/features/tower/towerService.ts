@@ -170,6 +170,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (!this.agentState.get(towerKey)) return;
     const owner = await this.resolveTowerOwner();
     if (owner === undefined || owner === this.sessionCtx.sessionId) return;
+    if (this.sessions.get(owner) === undefined) return;
     void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
   }
 

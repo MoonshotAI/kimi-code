@@ -1,6 +1,7 @@
 import type { Session } from '@moonshot-ai/kimi-code-sdk';
 
 import {
+  LLM_NOT_SET_MESSAGE,
   NO_ACTIVE_SESSION_MESSAGE,
   TOWER_STATUS_PROMPT,
   TOWER_TEARDOWN_PROMPT,
@@ -34,6 +35,13 @@ export async function handleTowerCommand(host: SlashCommandHost, args: string): 
 
 async function startTowerObjective(host: SlashCommandHost, objective: string): Promise<void> {
   const wasActive = host.state.appState.towerMode;
+  // Validate prompt prerequisites before mutating the mode — otherwise a
+  // rejected objective (no model configured) would leave tower on with the
+  // next ordinary prompt unexpectedly running under the tower injection.
+  if (host.state.appState.model.trim().length === 0) {
+    host.showError(LLM_NOT_SET_MESSAGE);
+    return;
+  }
   // The engine's enter is idempotent, so never let the cached state skip the
   // mutation: it may be stale (mode changed elsewhere or an unlanded event).
   if (!(await setTowerMode(host, true))) return;

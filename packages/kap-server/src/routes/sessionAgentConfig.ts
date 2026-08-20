@@ -55,8 +55,17 @@ export async function applySessionAgentConfig(
   }
   if (agentConfig.tower_mode !== undefined) {
     const tower = agent.accessor.get(IAgentTowerService);
-    if (agentConfig.tower_mode) await tower.enter();
-    else tower.exit();
+    if (agentConfig.tower_mode) {
+      await tower.enter();
+      if (!tower.isActive) {
+        throw new Error2(
+          ErrorCodes.SESSION_TOWER_MODE_INVALID,
+          'tower mode could not be enabled — the tower feature is unavailable in this process, or another live session owns the workspace tower',
+        );
+      }
+    } else {
+      tower.exit();
+    }
   }
   if (agentConfig.goal_objective !== undefined) {
     await agent.accessor.get(IAgentGoalService).createGoal({ objective: agentConfig.goal_objective });

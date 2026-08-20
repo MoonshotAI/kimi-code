@@ -5,6 +5,7 @@ import type { Session } from '@moonshot-ai/kimi-code-sdk';
 import { handleTowerCommand } from '#/tui/commands/index';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import {
+  LLM_NOT_SET_MESSAGE,
   TOWER_STATUS_PROMPT,
   TOWER_TEARDOWN_PROMPT,
 } from '#/tui/constant/kimi-tui';
@@ -15,6 +16,7 @@ function makeHost(
     towerMode?: boolean;
     engineV2?: boolean;
     refuseTowerEntry?: boolean;
+    model?: string;
   } = {},
 ) {
   let engineMode = overrides.towerMode ?? false;
@@ -29,6 +31,7 @@ function makeHost(
     state: {
       appState: {
         towerMode: overrides.towerMode ?? false,
+        model: overrides.model ?? 'test-model',
       },
     },
     engineV2: overrides.engineV2 ?? true,
@@ -131,6 +134,16 @@ describe('handleTowerCommand', () => {
     expect(host.setAppState).toHaveBeenCalledWith({ towerMode: true });
     expect(host.showNotice).toHaveBeenCalledWith('Tower mode: ON');
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
+  });
+
+  it('refuses the objective without touching the mode when no model is configured', async () => {
+    const { host, session } = makeHost({ towerMode: false, model: '' });
+
+    await handleTowerCommand(host, 'Ship feature X');
+
+    expect(host.showError).toHaveBeenCalledWith(LLM_NOT_SET_MESSAGE);
+    expect(session.setTowerMode).not.toHaveBeenCalled();
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
   it('re-asserts tower mode idempotently for the objective when already on, without a notice', async () => {
