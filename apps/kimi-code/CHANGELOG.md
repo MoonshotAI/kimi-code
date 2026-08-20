@@ -1,5 +1,87 @@
 # @moonshot-ai/kimi-code
 
+## 0.38.0
+
+### Minor Changes
+
+- [#2862](https://github.com/MoonshotAI/kimi-code/pull/2862) [`3d77620`](https://github.com/MoonshotAI/kimi-code/commit/3d7762003a4a35cbeb8571d471c6898a006152e6) Thanks [@liruifengv](https://github.com/liruifengv)! - Support two OAuth login methods — kimi.ai and kimi.com.
+
+- [#3060](https://github.com/MoonshotAI/kimi-code/pull/3060) [`8440801`](https://github.com/MoonshotAI/kimi-code/commit/8440801de47ddae29224430048e1228b80cde370) Thanks [@chengluyu](https://github.com/chengluyu)! - Add the WaitFor tool: the agent can now wait for a background task to finish within the current turn instead of ending the turn and being re-invoked.
+
+### Patch Changes
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Label inline subagent cards in the message stream with their foreground or background mode.
+
+- [#3121](https://github.com/MoonshotAI/kimi-code/pull/3121) [`3899079`](https://github.com/MoonshotAI/kimi-code/commit/3899079a2c851bd0b3f1cbf1d3d2fd9026fc6abb) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix config.toml entries being lost when the file had a syntax error or was edited outside the app.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Add copy buttons next to the server version and server address in settings.
+
+- [#3119](https://github.com/MoonshotAI/kimi-code/pull/3119) [`a34d02a`](https://github.com/MoonshotAI/kimi-code/commit/a34d02a64f9b1526ec84e161d8c377654b413624) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Add 13 data sources to the official Kimi Datasource plugin — Chinese government data (NDA/NBS) and standards (GB/HB/DB/TT), eight international organization datasets (WHO, FAO, UNSD, ECB, Eurostat, UNICEF, OECD, FRED), Xinhua Finance, and Caixin. Update the plugin from the Official tab in /plugins.
+
+- [#3096](https://github.com/MoonshotAI/kimi-code/pull/3096) [`67fbcdf`](https://github.com/MoonshotAI/kimi-code/commit/67fbcdf1ba7dceeebb58875b3b7c81b4b30cf0de) Thanks [@sailist](https://github.com/sailist)! - Edit and Write now require reading an existing file before modifying it, and reject the write when the file changed on disk since it was last read.
+
+- [#3101](https://github.com/MoonshotAI/kimi-code/pull/3101) [`d96b4a0`](https://github.com/MoonshotAI/kimi-code/commit/d96b4a0149f3ddf3d4910cc6eb87366dbb130ede) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - Stop retrying requests blocked by the provider content filter; the filter notice now shows immediately.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Keep empty workspace groups visible in the legacy sidebar after their last session is archived.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Hide button hover tooltips outside a menu while the menu is open.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Keep the model picker menu on the workspace home within the viewport.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Fix the workspace group title showing untranslated text in the search dialog.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Fix the settings dialog dropdown list being clipped by the scroll area, and lock the content behind it while the list is open.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Keep the slash command and @ mention panels on the workspace home within the viewport.
+
+- [#3052](https://github.com/MoonshotAI/kimi-code/pull/3052) [`6595a69`](https://github.com/MoonshotAI/kimi-code/commit/6595a6989a68163e10a85c8edf1726b30d6d2c2b) Thanks [@RealKai42](https://github.com/RealKai42)! - Fix 422 errors from some OpenAI-compatible providers when a conversation includes tool calls.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Prevent text selection in the sidebar user menu and its plan usage submenu.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Fix slow session list loading when there are many workspaces.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Auto-open the browser authorization page after choosing a login region, redesign the authorization waiting page, and refresh the login state as soon as the window regains focus instead of waiting for the poll.
+
+- [#3083](https://github.com/MoonshotAI/kimi-code/pull/3083) [`571bcc2`](https://github.com/MoonshotAI/kimi-code/commit/571bcc2f751f02a37b0475b074a1e859c7fc4368) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix the missing OAuth authenticate tool for remote MCP servers that require login.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Upgrade the @ mention menu: file and skill candidates are merged and ranked by match quality, file search is faster, with path-fragment matching and hit highlighting.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Round menu items concentric with their menu frames.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Add a Pin action to the chat header more-menu to pin the current session to the sidebar pinned section.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Allow dragging the divider between the pinned section and the session list to resize both areas, with fade hints at the edges when the pinned section scrolls.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Improve the prompt queue interaction, with per-row steer and send.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Add kimi.com and kimi.ai OAuth login entries, and switch update and help links to the site matching the current login.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Remove sessions archived from another client from the session list immediately, without a manual refresh.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Label the timestamp at the bottom of the session menu as last active and tighten that row's padding.
+
+- [#3054](https://github.com/MoonshotAI/kimi-code/pull/3054) [`cfc3350`](https://github.com/MoonshotAI/kimi-code/commit/cfc335048378d3708666e11959c8d34507a1d659) Thanks [@Grapedge](https://github.com/Grapedge)! - Collapse long `!` shell command output instead of flooding the transcript. Press ctrl+o to expand or collapse it together with tool output.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Fix misaligned action buttons between the sidebar section headers and the session rows.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Remove the skill-activated card from skill activation messages.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Make skill-activation turns undoable so they can be withdrawn and resent.
+
+- [#3012](https://github.com/MoonshotAI/kimi-code/pull/3012) [`ca87c58`](https://github.com/MoonshotAI/kimi-code/commit/ca87c58e6205ddf0638e5d737a5f8e939e2132b9) Thanks [@sailist](https://github.com/sailist)! - Sub-agents no longer spawn their own sub-agents by default; custom agent profiles can still allow it explicitly.
+
+- [#3005](https://github.com/MoonshotAI/kimi-code/pull/3005) [`be8e017`](https://github.com/MoonshotAI/kimi-code/commit/be8e017597b83142282d7e6640076368bf244eae) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Fix background agent rows that could not be stopped right after they appeared, and stray rows left behind when an agent failed to start.
+
+- [#3046](https://github.com/MoonshotAI/kimi-code/pull/3046) [`f13f379`](https://github.com/MoonshotAI/kimi-code/commit/f13f3790448f64448c76a415500041443ae754e6) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix the model being directed to unavailable tools when it encounters an image or binary file.
+
+- [#3108](https://github.com/MoonshotAI/kimi-code/pull/3108) [`05f2ad5`](https://github.com/MoonshotAI/kimi-code/commit/05f2ad5ddad1addf10ead6f5274554ca10cde1f4) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: clearing a goal now removes it from the transcript view instead of leaving the stale goal displayed.
+
+- [#3108](https://github.com/MoonshotAI/kimi-code/pull/3108) [`05f2ad5`](https://github.com/MoonshotAI/kimi-code/commit/05f2ad5ddad1addf10ead6f5274554ca10cde1f4) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: attachments sent with a prompt now appear in the live transcript immediately instead of only after a reload.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Tighten the row height and spacing of the account menu and its submenus to match the standard menu density.
+
+- [#3135](https://github.com/MoonshotAI/kimi-code/pull/3135) [`2c5415f`](https://github.com/MoonshotAI/kimi-code/commit/2c5415f930db3edef3e79a4e88c4ee74af123600) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Give WaitFor tool calls a dedicated quiet-line display showing completed tasks, wait timeouts, and how many tasks are still running.
+
 ## 0.37.2
 
 ### Patch Changes

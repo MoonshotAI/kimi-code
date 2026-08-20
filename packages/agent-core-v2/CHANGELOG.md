@@ -1,5 +1,11 @@
 # @moonshot-ai/agent-core-v2
 
+## 0.4.1
+
+### Patch Changes
+
+- [#3109](https://github.com/MoonshotAI/kimi-code/pull/3109) [`f1208c8`](https://github.com/MoonshotAI/kimi-code/commit/f1208c8d7241e8ef428d83ff235f5a218911b342) Thanks [@liruifengv](https://github.com/liruifengv)! - Rework the session title excerpts: rebalance the segment budgets toward user prompts (400 chars each, assistant 300), cap each prompt in the `user_prompts` excerpt, and compose the `digest` excerpt from the full conversation arc — every natural-language user prompt in the live window paired with its own turn's final assistant text, interleaved chronologically, within per-segment caps and a 3000-char total budget (middle turns elided).
+
 ## 0.4.0
 
 ### Minor Changes
