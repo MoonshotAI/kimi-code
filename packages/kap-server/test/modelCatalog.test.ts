@@ -64,9 +64,6 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-model-catalog-'));
-    // Disable the background refresh scheduler so its startup refresh never
-    // races the route-level assertions below (it shares the IProviderDiscoveryService
-    // binding that the stub tests override).
     process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START'] = '0';
     process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS'] = '0';
   });
@@ -149,15 +146,6 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
     ]);
   });
 
-  it('hides the synthesized secondary-model derived entry from /models', async () => {
-    await boot(
-      `${CATALOG_TOML}\n[secondary_model]\nmodel = "turbo"\nmax_output_size = 8192\n`,
-    );
-    const { status, body } = await getJson<{ items: { model: string }[] }>('/api/v1/models');
-    expect(status).toBe(200);
-    expect(body.data.items.map((item) => item.model)).toEqual(['k2', 'turbo', 'gpt4o']);
-  });
-
   it('lists models without refreshing providers', async () => {
     const refreshProviderModels = vi.fn(async () => ({
       changed: [],
@@ -210,7 +198,6 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       has_api_key: true,
       status: 'connected',
       models: ['k2', 'turbo'],
-      // The single GET reveals the stored key; the list above never does.
       api_key: 'sk-test',
     });
 
@@ -325,6 +312,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       getManagedUserInfo: async () => ({ kind: 'error' as const, message: 'unused' }),
       resolveTokenProvider: () => undefined,
       getCachedAccessToken: async () => undefined,
+      getRegion: () => 'mainland-cn',
     };
   }
 

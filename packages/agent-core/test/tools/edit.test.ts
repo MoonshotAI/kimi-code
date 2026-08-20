@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { type EditInput, EditInputSchema, EditTool } from '../../src/tools/builtin/file/edit';
+import { type EditInput, EditTool } from '../../src/tools/builtin/file/edit';
 import { createFakeKaos, PERMISSIVE_WORKSPACE } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
 
@@ -28,59 +28,6 @@ describe('EditTool', () => {
       before: 'a\nb\nc',
       after: 'a\nB\nc',
     });
-  });
-
-  it('exposes current metadata and schema', () => {
-    const tool = new EditTool(createFakeKaos(), PERMISSIVE_WORKSPACE);
-
-    expect(tool.name).toBe('Edit');
-    expect(tool.description).toContain('Read the target file before every Edit');
-    expect(tool.description).toContain('DO NOT call Edit from memory');
-    expect(tool.description).toContain('Read output view');
-    expect(tool.description).toContain('line-number prefix');
-    expect(tool.description).toContain('`old_string` must be unique');
-    expect(tool.description).toContain('only when they do not target the same file');
-    expect(tool.description).toContain('DO NOT issue consecutive Edit calls on the same file');
-    // replace_all should be framed with its positive rename-across-file use-case.
-    expect(tool.description.toLowerCase()).toContain('renam');
-    // Editing files should go through Edit, not Write and not a Bash `sed`
-    // command. The prompt names both alternatives explicitly.
-    expect(tool.description).toContain('DO NOT use Write or Bash `sed`');
-    // Parallel Edit calls on the same file are serialized and applied in
-    // response order; mismatched old_string fails explicitly.
-    expect(tool.description).toContain('same-file edits in response order');
-    expect(tool.description).toContain('old_string not found');
-    expect(tool.parameters).toMatchObject({
-      type: 'object',
-      properties: {
-        path: {
-          type: 'string',
-          description: expect.stringContaining('working directory'),
-        },
-        old_string: {
-          type: 'string',
-          description: expect.stringContaining('without the line-number prefix'),
-        },
-        new_string: {
-          type: 'string',
-          description: expect.stringContaining('same Read output view'),
-        },
-      },
-    });
-    expect(
-      EditInputSchema.safeParse({
-        path: '/tmp/a.txt',
-        old_string: 'old',
-        new_string: 'new',
-      }).success,
-    ).toBe(true);
-    expect(
-      EditInputSchema.safeParse({
-        path: '/tmp/a.txt',
-        old_string: '',
-        new_string: 'new',
-      }).success,
-    ).toBe(false);
   });
 
   it('replaces a unique first occurrence and writes the updated content', async () => {

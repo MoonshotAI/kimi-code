@@ -3,13 +3,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
-
-import { LifecycleScope, ScopeActivation, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ClusterDb } from '@moonshot-ai/minidb/cluster';
-import { MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
+import { drainQueryStoreDisposals, MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
 import { IQueryStore } from '#/persistence/interface/queryStore';
 import { stubBootstrap } from '../../../app/bootstrap/stubs';
 import { stubLog } from '../../../_base/log/stubs';
@@ -36,6 +36,7 @@ describe('MiniDbQueryStore', () => {
   afterEach(async () => {
     disposeHost?.();
     disposeHost = undefined;
+    await drainQueryStoreDisposals();
     await fsp.rm(homeDir, { recursive: true, force: true });
   });
 
@@ -113,16 +114,29 @@ describe('MiniDbQueryStore', () => {
     expect(page2.nextCursor).toBeUndefined();
   });
 
-  it('ensureIndex is idempotent across value, compound and text kinds', async () => {
+  it('ensureIndex is idempotent across value and compound kinds', async () => {
     const store = build();
     await store.put(COLLECTION, 'a', { id: 'a', ws: 'x', n: 1, body: 'hello world' });
     await store.ensureIndex(COLLECTION, { kind: 'value', name: 'byWs', field: 'ws' });
     await store.ensureIndex(COLLECTION, { kind: 'value', name: 'byWs', field: 'ws' });
     await store.ensureIndex(COLLECTION, { kind: 'compound', name: 'byWsN', groupBy: 'ws', orderBy: 'n' });
-    await store.ensureIndex(COLLECTION, { kind: 'text', name: 'body', fields: ['body'] });
-    await store.ensureIndex(COLLECTION, { kind: 'text', name: 'body', fields: ['body'] });
+    await store.ensureIndex(COLLECTION, { kind: 'compound', name: 'byWsN', groupBy: 'ws', orderBy: 'n' });
     const page = await store.query(COLLECTION).where({ ws: 'x' }).execute();
     expect(page.items).toHaveLength(1);
+  });
+
+  it('rejects text indexes: the query-store is a structural read model', async () => {
+    const store = build();
+    await store.put(COLLECTION, 'a', { id: 'a', body: 'hello world' });
+    await expect(
+      store.ensureIndex(COLLECTION, { kind: 'text', name: 'body', fields: ['body'] }),
+    ).rejects.toThrow(/structural read model/);
+    await expect(
+      store.ensureIndex(COLLECTION, { kind: 'text', name: 'body', fields: ['body'] }),
+    ).rejects.toThrow(/structural read model/);
+    const storeDir = join(homeDir, 'cache', 'query-store');
+    const shardEntries = await fsp.readdir(join(storeDir, 'shard-00'));
+    expect(shardEntries.filter((name) => name.includes('text'))).toEqual([]);
   });
 
   it('stores checkpoints', async () => {
@@ -134,13 +148,9 @@ describe('MiniDbQueryStore', () => {
 
   it('shares the store with a second cluster instance instead of locking it out', async () => {
     const storeDir = join(homeDir, 'cache', 'query-store');
-    // A peer instance stands in for another kimi process: it has its own
-    // lock pool, so write locks are genuinely contended between the two.
     const peer = await ClusterDb.open({ dir: storeDir, shardCount: 16, valueCodec: 'json' });
     try {
       const store = build();
-      // Writes from the peer are visible here, and vice versa — the
-      // database-wide single-writer lockout (storage.locked) is gone.
       await peer.set(`${COLLECTION}${SEP}peer`, { id: 'peer', v: 1 });
       expect(await store.get(COLLECTION, 'peer')).toEqual({ id: 'peer', v: 1 });
       await store.put(COLLECTION, 'mine', { id: 'mine', v: 2 });
@@ -159,10 +169,6 @@ describe('MiniDbQueryStore', () => {
     disposeHost?.();
     disposeHost = undefined;
 
-    // A corrupt cluster registry surfaces as a SyntaxError on the next index
-    // op. The store answers with one process-lifetime rebuild: the directory
-    // is wiped (the read model is derivable, so data is NOT preserved) and
-    // the retried op succeeds against the fresh cluster.
     const registryFile = join(homeDir, 'cache', 'query-store', 'cluster.indexes.json');
     await fsp.writeFile(registryFile, '{ definitely not valid json');
 
@@ -281,8 +287,6 @@ describe('MiniDbQueryStore', () => {
     console.log(
       `[baseline] queryStore pageByColumn ${JSON.stringify({ rows: [1000, 10000], medianMs: [small, large] })}`,
     );
-    // 10x the rows must not cost 10x the time: the ordered-column walk is
-    // O(log N + limit), not a full scan.
     expect(large).toBeLessThan(small * 10 + 100);
   }, 60_000);
 

@@ -19,10 +19,12 @@ export const capabilityInstallProgressSchema = z.object({
   step: z.string().optional(),
   percent: z.number().optional(),
   error: z.string().optional(),
+  note: z.string().optional(),
 });
 
 export const capabilityStatusSchema = z.object({
   id: z.enum(['kimi-cu', 'kimi-webbridge']),
+  pluginId: z.string().optional(),
   displayName: z.string(),
   description: z.string(),
   supported: z.boolean(),

@@ -1,12 +1,3 @@
-/**
- * `sessionExport` domain — session diagnostic export contract.
- *
- * Defines the App-scope `ISessionExportService`, which packages a persisted
- * session directory plus optional global diagnostics into a zip archive. The
- * service coordinates live Session/Agent scope flushing before reading the
- * on-disk state, while the export manifest stays a JSON data contract.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export interface ShellEnvironment {
@@ -58,7 +49,6 @@ export interface ExportSessionResult {
 export interface ExportSessionOptions {
   readonly webLog?: string;
   readonly signal?: AbortSignal;
-  readonly maxArchiveBytes?: number;
 }
 
 export interface ISessionExportService {

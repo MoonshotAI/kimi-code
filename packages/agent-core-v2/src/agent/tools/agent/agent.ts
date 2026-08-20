@@ -1,13 +1,3 @@
-/**
- * `tools` domain — `ISubagentTool` contract (the `Agent` tool).
- *
- * Public contract of the `Agent` collaboration tool: the input/output zod
- * schemas the model-facing parameters are derived from, the tool-owned
- * constants (default profile name, resumed-agent label, fixed output
- * messages), and the `ISubagentTool` DI decorator that the implementation
- * registers against via `registerAgentToolService`. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';
@@ -56,16 +46,15 @@ export const SubagentToolInputSchema = z.preprocess(
         'If true, return immediately without waiting for completion. Prefer false unless the task can run independently and there is a clear benefit to not waiting.',
       ),
     model: z
-      .enum(['secondary', 'primary'])
+      .string()
       .optional()
       .describe(
-        'Which model to run the subagent on: "secondary" = the configured secondary model; "primary" = the main model you are running on (for hard, quality-sensitive tasks). This explicit choice overrides the selected agent type\'s model_preference; without either, secondary is the default when configured. Only effective when a secondary model is configured; otherwise the subagent inherits your model. Ignored when resuming — resumed subagents keep their own model.',
+        'Which model to run the subagent on: one of the aliases listed under "Available models" in this tool description, or "primary" for the main model you are running on (for hard, quality-sensitive tasks). When omitted, the configured default model is used. Ignored when resuming — resumed subagents keep their own model.',
       ),
   }),
 );
 
 export type SubagentToolInput = z.infer<typeof SubagentToolInputSchema>;
-
 
 export const SubagentToolOutputSchema = z.object({
   result: z.string().describe('Aggregated text output from the subagent'),
@@ -88,7 +77,6 @@ export const RESUME_WITH_TYPE_UNAVAILABLE =
 export const USER_INTERRUPTED_SUBAGENT_MESSAGE =
   'The subagent was stopped before it finished by user.';
 export const SUBAGENT_STOPPED_MESSAGE = 'The subagent was stopped before it finished.';
-
 
 export interface ISubagentTool extends AgentTool<SubagentToolInput> {
   readonly _serviceBrand: undefined;

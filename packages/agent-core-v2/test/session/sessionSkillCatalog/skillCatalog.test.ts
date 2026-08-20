@@ -1,19 +1,9 @@
-/**
- * Scenario: the Session-scope skill-catalog view over the seeded workspace data.
- *
- * Exercises `SessionSkillCatalogService` against a controlled
- * `ISessionSkillCatalogData` seed: snapshot forwarding, change-event
- * fan-out, session-local ad-hoc sink contributions, and the no-rescan
- * `reload()`. Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/session/sessionSkillCatalog/skillCatalog.test.ts`.
- */
-
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
+import { LifecycleScope } from '#/app/scopes';
 import {
   _clearScopedRegistryForTests,
-  LifecycleScope,
   registerScopedService,
 } from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
@@ -129,7 +119,6 @@ describe('SessionSkillCatalogService (seed view)', () => {
     const { host, catalog } = makeSession(seed.data);
     await catalog.load();
 
-    // A silent seed swap (no change event) becomes visible through reload.
     seed.replace(catalogOf(stubSkill('two')));
     const seen: string[] = [];
     const subscription = catalog.onDidChange((sourceId) => seen.push(sourceId));
@@ -160,7 +149,6 @@ describe('SessionSkillCatalogService (seed view)', () => {
       description: 'seeded',
       source: 'project',
     });
-    // Summaries are plain data — no catalog methods leak onto them.
     expect(Object.keys(seeded ?? {})).not.toContain('content');
     expect(summaries.some((summary) => summary.name === 'adhoc-only')).toBe(true);
     host.dispose();

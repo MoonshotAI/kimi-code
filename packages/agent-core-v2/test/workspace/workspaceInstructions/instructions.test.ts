@@ -1,14 +1,3 @@
-/**
- * Scenario: workspace AGENTS.md instructions — build-time snapshot,
- * watch-driven refresh, and the `workspaceInstructions.current` state
- * registration.
- *
- * Exercises the real `WorkspaceInstructionsService` against real temp
- * instruction files with a manually-fired fs-watch stub. Run:
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/workspace/workspaceInstructions/instructions.test.ts`.
- */
-
 import { mkdtempSync } from 'node:fs';
 import { rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -79,8 +68,6 @@ describe('WorkspaceInstructionsService', () => {
   }
 
   function fireWatch(path: string): void {
-    // The service watches each plan ROOT (brand home, real home, project
-    // root) recursively — fire on the root that contains the changed file.
     for (const [root, emitter] of watchFires) {
       if (path === root || path.startsWith(`${root}/`)) {
         emitter.fire({ path, action: 'modified', kind: 'file' });

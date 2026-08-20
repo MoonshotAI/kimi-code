@@ -1,14 +1,3 @@
-/**
- * `tools` domain — `IUpdateGoalTool` contract.
- *
- * Public contract of the UpdateGoal tool — the model's single lever over the
- * goal lifecycle: the input schema and the Agent-scope identifier used to
- * resolve the implementation through the container. The argument is
- * intentionally just a status enum — no reason or evidence. The model
- * explains itself in its own reply; the status is the machine-readable
- * signal. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

@@ -28,13 +28,22 @@ export const toolResultContentSchema = z.object({
 export type ToolResultContent = z.infer<typeof toolResultContentSchema>;
 
 export const imageSourceSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('url'), url: z.string().min(1) }),
+  z.object({
+    kind: z.literal('url'),
+    url: z.string().min(1),
+    // Provider-issued file id behind a reference such as `ms://…` — forwarded
+    // when the provider keys media by id. Matches the kap-server wire schema.
+    id: z.string().min(1).optional(),
+  }),
   z.object({
     kind: z.literal('base64'),
     media_type: z.string().min(1),
     data: z.string().min(1),
   }),
   z.object({ kind: z.literal('file'), file_id: z.string().min(1) }),
+  // Stored prompt/message projections address the Session-owned canonical
+  // copy; `file` remains the transient upload form accepted on submission.
+  z.object({ kind: z.literal('session_media'), file_id: z.string().min(1) }),
 ]);
 export type ImageSource = z.infer<typeof imageSourceSchema>;
 
@@ -44,7 +53,7 @@ export const imageContentSchema = z.object({
 });
 export type ImageContent = z.infer<typeof imageContentSchema>;
 
-// Video uses the same source shape as image (url / base64 / uploaded file id).
+// Video uses the same source shape as image (url / base64 / uploaded or Session media id).
 export const videoContentSchema = z.object({
   type: z.literal('video'),
   source: imageSourceSchema,

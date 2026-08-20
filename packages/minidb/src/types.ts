@@ -31,6 +31,15 @@ export interface OpenOptions {
   recovery?: RecoveryMode;
   readOnly?: boolean;
   onLockFail?: 'readonly';
+  /**
+   * Writer opens only: invoked synchronously right after the exclusive write
+   * lock is acquired — BEFORE any recovery/replay work runs. Hosts that
+   * supervise the open from another thread (e.g. kap-server's search worker,
+   * whose threads share the main process pid so pid-liveness alone can never
+   * reclaim the lock) use it to learn the lock token immediately and reap
+   * the lock after a mid-open crash.
+   */
+  onLockAcquired?: (info: { readonly token: string }) => void;
   /** Where to keep value bulk. 'memory' keeps values in RAM; 'disk' keeps only
    *  value pointers in RAM and reads values from the snapshot/WAL on demand. */
   valueMode?: ValueModeSetting;

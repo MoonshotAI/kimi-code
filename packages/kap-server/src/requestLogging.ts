@@ -1,20 +1,3 @@
-/**
- * Custom HTTP access logging for kap-server.
- *
- * Fastify's default request log records `res.statusCode`, but kap-server returns
- * HTTP 200 for *every* response by design — the real business outcome lives in
- * the envelope `code` field (see `error-handler.ts` and `protocol/envelope`).
- *
- * So we disable Fastify's built-in request logging and emit our own `request
- * completed` line that carries the envelope `code` instead of the meaningless
- * HTTP status code.
- *
- * The envelope code is captured in an `onSend` hook (where the serialized body
- * is available) and read back in an `onResponse` hook (where `elapsedTime` is
- * final). Envelopes always lead with `"code":<n>`, so a cheap prefix match
- * extracts it without parsing the whole body — large payloads stay cheap.
- */
-
 import type { FastifyInstance, FastifyReply } from 'fastify';
 
 /**
@@ -44,8 +27,6 @@ export function extractEnvelopeCode(payload: unknown): number | undefined {
  * `res.statusCode` for the envelope `code`.
  */
 export function registerRequestLogging(app: FastifyInstance): void {
-  // Per-request stash from `onSend` (payload known) to `onResponse` (timing
-  // known). Keyed by reply object so entries are GC'd with the request.
   const codes = new WeakMap<FastifyReply, number>();
 
   app.addHook('onSend', (req, reply, payload, done) => {

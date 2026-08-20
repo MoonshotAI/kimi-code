@@ -1,10 +1,3 @@
-/**
- * Shared test stubs for the `kosong/model` suites:
- * a config stub with real change events (plus a silent-mutation escape hatch
- * for the cache-invalidation tests) and an OAuth stub with a programmable
- * token provider.
- */
-
 import { Emitter, type Event } from '#/_base/event';
 import type { IOAuthService } from '#/app/auth/auth';
 import {
@@ -63,7 +56,7 @@ export class StubConfigService implements IConfigService {
 
   replace(domain: string, value: unknown): Promise<void> {
     const previousValue = this._values.get(domain);
-    if (value === undefined) {
+    if (value === undefined || value === null) {
       this._values.delete(domain);
     } else {
       this._values.set(domain, value);
@@ -75,7 +68,7 @@ export class StubConfigService implements IConfigService {
   replaceSections(sections: Readonly<Record<string, unknown>>): Promise<void> {
     for (const [domain, value] of Object.entries(sections)) {
       const previousValue = this._values.get(domain);
-      if (value === undefined) {
+      if (value === undefined || value === null) {
         this._values.delete(domain);
       } else {
         this._values.set(domain, value);
@@ -85,12 +78,6 @@ export class StubConfigService implements IConfigService {
     return Promise.resolve();
   }
 
-  /**
-   * Mutate a section WITHOUT firing the change event — simulates a config
-   * write that bypasses the services' change events (the cache-invalidation
-   * tests use it to prove the catalog cache only drops on
-   * `notifyConfigChanged()`).
-   */
   setSilent(domain: string, value: unknown): void {
     if (value === undefined) {
       this._values.delete(domain);
@@ -141,11 +128,6 @@ export function stubOAuthService(tokenProvider?: StubTokenProvider): IOAuthServi
   } as unknown as IOAuthService;
 }
 
-/**
- * The kosong-side OAuth port stub (`IModelOAuthTokens`), mirroring what the
- * real `app/kosongConfig` adapter does over `IOAuthService`: a programmable
- * token provider for `getAccessToken` and a probeable cached-token flag.
- */
 export function stubModelOAuthTokens(
   tokenProvider?: StubTokenProvider,
   cachedToken?: string,

@@ -92,7 +92,7 @@ describe('acp-server initialize handshake', () => {
         toAgent.end();
         toClient.end();
       } finally {
-        await rm(homeDir, { recursive: true, force: true });
+        await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       }
     },
     30_000,
@@ -125,7 +125,7 @@ describe('acp-server initialize handshake', () => {
         toAgent.end();
         toClient.end();
       } finally {
-        await rm(homeDir, { recursive: true, force: true });
+        await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       }
     },
     30_000,
@@ -178,7 +178,7 @@ describe('acp-server initialize handshake', () => {
         toAgent.end();
         toClient.end();
       } finally {
-        await rm(homeDir, { recursive: true, force: true });
+        await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       }
     },
     30_000,

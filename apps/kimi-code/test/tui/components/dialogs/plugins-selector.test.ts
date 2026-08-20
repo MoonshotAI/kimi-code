@@ -195,6 +195,33 @@ describe('plugins selector dialogs', () => {
     })).toBe('third-party');
   });
 
+  it('trusts the .ai Kimi plugin hosts with the same path rules', () => {
+    const labelFor = (originalSource: string) =>
+      pluginTrustLabel({
+        id: 'demo',
+        displayName: 'Demo',
+        enabled: true,
+        state: 'ok',
+        skillCount: 0,
+        mcpServerCount: 0,
+        enabledMcpServerCount: 0,
+        hookCount: 0,
+        commandCount: 0,
+        hasErrors: false,
+        source: 'zip-url',
+        originalSource,
+      });
+    // code.kimi.ai mirrors the cdnBase rules; cdn.kimi.ai the content-CDN ones.
+    expect(labelFor('https://code.kimi.ai/kimi-code/plugins/official/kimi-datasource.zip')).toBe('official');
+    expect(labelFor('https://code.kimi.ai/kimi-code/plugins/curated/superpowers.zip')).toBe('curated');
+    expect(labelFor('https://cdn.kimi.ai/kimi-computer-use/latest/kimi-cu-plugin.zip')).toBe('official');
+    expect(labelFor('https://cdn.kimi.ai/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip')).toBe('official');
+    // Non-plugin paths on the .ai hosts, and lookalike hosts, stay third-party.
+    expect(labelFor('https://code.kimi.ai/demo.zip')).toBe('third-party');
+    expect(labelFor('https://cdn.kimi.ai/unrelated/plugin.zip')).toBe('third-party');
+    expect(labelFor('https://code.kimi.ai.example.test/kimi-code/plugins/official/x.zip')).toBe('third-party');
+  });
+
   it('recognizes installed plugins by official provenance', () => {
     const base = {
       id: 'kimi-datasource',
@@ -213,6 +240,11 @@ describe('plugins selector dialogs', () => {
       ...base,
       source: 'zip-url',
       originalSource: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
+    })).toBe(true);
+    expect(isOfficialPluginInstall({
+      ...base,
+      source: 'zip-url',
+      originalSource: 'https://code.kimi.ai/kimi-code/plugins/official/kimi-datasource.zip',
     })).toBe(true);
     expect(isOfficialPluginInstall({
       ...base,
@@ -267,6 +299,21 @@ describe('plugins selector dialogs', () => {
   it('treats only the official Kimi CDN path as a trusted install source', () => {
     expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip')).toBe(true);
     expect(isOfficialPluginSource('https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip')).toBe(true);
+    expect(
+      isOfficialPluginSource(
+        'https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip',
+      ),
+    ).toBe(true);
+    // The .ai region family follows the same path rules.
+    expect(isOfficialPluginSource('https://code.kimi.ai/kimi-code/plugins/official/kimi-datasource.zip')).toBe(true);
+    expect(isOfficialPluginSource('https://cdn.kimi.ai/kimi-computer-use/latest/kimi-cu-plugin.zip')).toBe(true);
+    expect(
+      isOfficialPluginSource(
+        'https://cdn.kimi.ai/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip',
+      ),
+    ).toBe(true);
+    expect(isOfficialPluginSource('https://code.kimi.ai/kimi-code/plugins/curated/superpowers.zip')).toBe(false);
+    expect(isOfficialPluginSource('https://cdn.kimi.ai/unrelated/plugin.zip')).toBe(false);
     // Curated and other Kimi CDN paths are not "official" for the install gate.
     expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/curated/superpowers.zip')).toBe(false);
     expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/foo.zip')).toBe(false);
@@ -288,7 +335,7 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('Plugins');
     expect(out).toContain('Installed');
     expect(out).toContain('Official');
-    expect(out).toContain('Third-party');
+    expect(out).toContain('Curated');
     expect(out).toContain('Custom');
     expect(out).toContain('? Superpowers  enabled');
     expect(out).toContain('Space toggle');
@@ -551,9 +598,9 @@ describe('plugins selector dialogs', () => {
     });
   });
 
-  it('installs a Third-party entry whose id matches the pinned WebBridge', () => {
+  it('installs a Curated entry whose id matches the pinned WebBridge', () => {
     // A curated/custom marketplace entry can legitimately reuse the
-    // kimi-webbridge id; on the Third-party tab it must install normally, not
+    // kimi-webbridge id; on the Curated tab it must install normally, not
     // open the WebBridge page (that shortcut is reserved for the pinned row).
     const entries = [
       {
@@ -566,6 +613,8 @@ describe('plugins selector dialogs', () => {
     const { panel, onSelect } = makePanel({ initialTab: 'third-party' });
     panel.setMarketplace(entries, '/tmp/marketplace.json');
     const out = strip(renderRaw(panel));
+    expect(out).toContain('Curated');
+    expect(out).toContain('Third-party plugins from our partners.');
     expect(out).toContain('Kimi WebBridge  install');
     panel.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({
@@ -574,7 +623,7 @@ describe('plugins selector dialogs', () => {
     });
   });
 
-  it('installs the selected Third-party entry on Enter', () => {
+  it('installs the selected Curated entry on Enter', () => {
     const { panel, onSelect } = makePanel({ installed: [superpowers], initialTab: 'third-party' });
     panel.setMarketplace(marketplaceEntries, '/tmp/marketplace.json');
     panel.handleInput('\r');
@@ -604,14 +653,15 @@ describe('plugins selector dialogs', () => {
     });
   });
 
-  it('shows untiered marketplace entries on the Third-party tab', () => {
+  it('shows untiered custom marketplace entries without the partner description', () => {
     const untiered = [
       { id: 'custom-plugin', displayName: 'Custom Plugin', source: 'https://x/c.zip' },
     ];
-    const { panel } = makePanel({ initialTab: 'third-party' });
+    const { panel } = makePanel({ initialTab: 'third-party', catalogIsDefault: false });
     panel.setMarketplace(untiered, '/tmp/marketplace.json');
     const out = strip(renderRaw(panel));
     expect(out).toContain('Custom Plugin  install');
+    expect(out).not.toContain('Third-party plugins from our partners.');
   });
 
   it('shows an update badge when the marketplace version is newer than installed', () => {
@@ -648,6 +698,34 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('Superpowers  enabled  update 4.0.0 → 5.0.0');
   });
 
+  it('updates the Windows backing plugin through its capability entry', () => {
+    const installed = [
+      {
+        ...superpowers,
+        id: 'kimi-cu-win',
+        displayName: 'Kimi Computer Use for Windows',
+        version: '0.2.13',
+      },
+    ];
+    const capability = makeCapability({ pluginId: 'kimi-cu-win' });
+    const entry = {
+      id: 'kimi-cu',
+      tier: 'official' as const,
+      displayName: 'Kimi Computer Use',
+      version: '0.2.14',
+      source: 'capability:kimi-cu',
+      builtIn: true,
+    };
+    const { panel, onSelect } = makePanel({ installed, capabilities: [capability] });
+    panel.setMarketplace([entry], '/tmp/marketplace.json');
+
+    expect(strip(renderRaw(panel))).toContain(
+      'Kimi Computer Use for Windows  enabled  update 0.2.13 → 0.2.14',
+    );
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'install', entry });
+  });
+
   it('keeps installation state separate from capability readiness', () => {
     const installed = [
       { ...superpowers, id: 'kimi-cu', displayName: 'Kimi Computer Use', version: '0.5.4' },
@@ -676,6 +754,34 @@ describe('plugins selector dialogs', () => {
     expect(officialOut).toContain('Kimi Computer Use  installed · v0.5.4');
     expect(officialOut).toContain('1 installed · 0 available');
     expect(officialOut).not.toContain('needs permissions');
+  });
+
+  it('uses the Windows backing plugin id for Official installation state', () => {
+    const installed = [
+      {
+        ...superpowers,
+        id: 'kimi-cu-win',
+        displayName: 'Kimi Computer Use for Windows',
+        version: '0.2.14',
+      },
+    ];
+    const capabilities = [makeCapability({ pluginId: 'kimi-cu-win' })];
+    const entries = [
+      {
+        id: 'kimi-cu',
+        tier: 'official' as const,
+        displayName: 'Kimi Computer Use',
+        version: '0.2.14',
+        source: 'capability:kimi-cu',
+        builtIn: true,
+      },
+    ];
+    const { panel } = makePanel({ installed, capabilities, initialTab: 'official' });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Kimi Computer Use  installed · v0.2.14');
+    expect(out).toContain('1 installed · 0 available');
   });
 
   it('keeps Enter on the Installed tab consistent with other plugins', () => {

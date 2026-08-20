@@ -1,9 +1,3 @@
-/**
- *   GET  /v1/sessions/{session_id}/tasks                 query: {status?}
- *   GET  /v1/sessions/{session_id}/tasks/{task_id}       query: {with_output?, output_bytes?}
- *   POST /v1/sessions/{session_id}/tasks/{task_id}:cancel
- */
-
 import { z } from 'zod';
 
 import { taskSchema, taskStatusSchema } from './task';

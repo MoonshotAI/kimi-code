@@ -1,7 +1,3 @@
-/**
- * `goal` domain — public goal lifecycle and budget models.
- */
-
 export type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete';
 
 export type GoalActor = 'user' | 'model' | 'runtime' | 'system';

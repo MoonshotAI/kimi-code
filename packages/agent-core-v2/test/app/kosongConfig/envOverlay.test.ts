@@ -1,16 +1,3 @@
-/**
- * `app/kosongConfig` envOverlay tests — the `KIMI_MODEL_*` effective overlay:
- *
- *  - with `KIMI_MODEL_NAME` set it synthesizes the reserved env model +
- *    provider entries and selects the model; without it only the
- *    `modelOverrides` knobs apply;
- *  - the env provider's default `baseUrl` comes from the provider-definition
- *    registry (`resolveProviderEndpoint` against the same env the overlay
- *    reads): the Kimi chain yields `KIMI_BASE_URL` →
- *    `https://api.moonshot.ai/v1`;
- *  - `strip` keeps the synthesized values out of `config.toml`.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { ENV_MODEL_PROVIDER_KEY } from '#/app/kosongConfig/configSection';

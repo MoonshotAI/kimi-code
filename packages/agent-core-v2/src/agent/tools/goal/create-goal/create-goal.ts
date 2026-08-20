@@ -1,14 +1,3 @@
-/**
- * `tools` domain — `ICreateGoalTool` contract.
- *
- * Public contract of the CreateGoal tool: the input schema the model calls
- * with and the Agent-scope identifier used to resolve the implementation
- * through the container. The tool lets the main agent start an explicit goal
- * on the user's behalf; the goal becomes durable, structured state owned by
- * the agent's goal service, not text parsed from a slash command. Bound at
- * Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

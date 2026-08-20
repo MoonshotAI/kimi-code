@@ -11,10 +11,24 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { Service } from '@moonshot-ai/agent-core-v2/_base/di/service';
+import { CommandContribution } from '@moonshot-ai/agent-core-v2/agent/command/commandContribution';
+import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
+import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
+import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
+import { IAgentPromptService, reservePrompt } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
+
 import type { Klient } from '../../src/index.js';
+import type { TestEngine } from './engine.js';
 
 export interface KlientConformanceTarget {
   readonly klient: Klient;
+  /**
+   * The in-process engine's App scope. Both transports boot the engine
+   * in-process, so the suite can assemble dynamic units (e.g. contributed
+   * commands) through the production `IFeatureManager` path.
+   */
+  readonly app: TestEngine['app'];
   cleanup(): Promise<void>;
 }
 
@@ -95,6 +109,32 @@ export function defineKlientConformance(
         });
       } finally {
         await target.klient.session(created.id).close();
+      }
+    });
+
+    it('session createChild tags child markers while fork stays untagged', async () => {
+      const parent = await target.klient.global.sessions.create({
+        workDir: process.cwd(),
+        title: 'conformance parent',
+      });
+      try {
+        const child = await target.klient.session(parent.id).createChild();
+        try {
+          expect(child.custom?.['parent_session_id']).toBe(parent.id);
+          expect(child.custom?.['child_session_kind']).toBe('child');
+          expect(child.title).toBe('Child: conformance parent');
+        } finally {
+          await target.klient.session(child.id).close();
+        }
+        const forked = await target.klient.session(parent.id).fork();
+        try {
+          expect(forked.custom?.['parent_session_id']).toBeUndefined();
+          expect(forked.custom?.['child_session_kind']).toBeUndefined();
+        } finally {
+          await target.klient.session(forked.id).close();
+        }
+      } finally {
+        await target.klient.session(parent.id).close();
       }
     });
 
@@ -210,6 +250,31 @@ export function defineKlientConformance(
       expect(Array.isArray(browse.entries)).toBe(true);
     });
 
+    it('files save/get/delete round-trips bytes through the file store', async () => {
+      const files = target.klient.global.files;
+      const bytes = new Uint8Array([0, 1, 127, 128, 254, 255]);
+      const meta = await files.save({
+        data: bytes,
+        filename: 'conformance.bin',
+        mimeType: 'application/octet-stream',
+        expiresInSec: 3600,
+      });
+      expect(meta.id.startsWith('f_')).toBe(true);
+      expect(meta.name).toBe('conformance.bin');
+      expect(meta.media_type).toBe('application/octet-stream');
+      expect(meta.size).toBe(bytes.length);
+      expect(typeof meta.expires_at).toBe('string');
+
+      const downloaded = await files.get(meta.id);
+      expect(downloaded.meta).toEqual(meta);
+      expect([...downloaded.data]).toEqual([...bytes]);
+
+      await files.delete(meta.id);
+      // Both transports surface a deleted/expired upload as the same public
+      // RPCError code, never the engine's raw error type.
+      await expect(files.get(meta.id)).rejects.toMatchObject({ name: 'RPCError', code: 40404 });
+    });
+
     it('kosong lists models/providers and anonymous provider round-trips', async () => {
       const kosong = target.klient.global.kosong;
       expect(Array.isArray(await kosong.listModels())).toBe(true);
@@ -255,6 +320,101 @@ export function defineKlientConformance(
       expect(Array.isArray(await target.klient.global.plugins.list())).toBe(true);
       const status = await target.klient.global.auth.status();
       expect(typeof status.loggedIn).toBe('boolean');
+    });
+
+    it('agent runtime binding is available through every transport', async () => {
+      const created = await target.klient.global.sessions.create({
+        workDir: process.cwd(),
+        title: 'conformance runtime',
+      });
+      try {
+        const agent = target.klient.session(created.id).agent('main');
+        const binding = await agent.getRuntime();
+        expect(binding.runtimeId).toBe('local');
+        expect(binding.workspaceId.length).toBeGreaterThan(0);
+        await expect(agent.switchRuntime('missing-runtime')).rejects.toThrow(/missing-runtime/);
+        expect(await agent.getRuntime()).toEqual(binding);
+      } finally {
+        await target.klient.session(created.id).close();
+      }
+    });
+
+    it('agent commands list and run a contributed command', async () => {
+      const created = await target.klient.global.sessions.create({
+        workDir: process.cwd(),
+        title: 'conformance commands',
+      });
+      const calls: string[] = [];
+
+      // A dynamic App-scope unit contributing one command into the
+      // `CommandContribution` collection — the same path a Feature takes.
+      class ConformanceCommands extends Service {
+        static override readonly name = 'klient-conformance-commands';
+        constructor() {
+          super();
+          this.provide(CommandContribution, {
+            name: 'conformance-echo',
+            description: 'records its args',
+            run: (ctx) => {
+              calls.push(ctx.args);
+            },
+          });
+        }
+      }
+
+      const featureManager = target.app.accessor.get(IFeatureManager);
+      const handle = featureManager.provideUnit(ConformanceCommands);
+      try {
+        const agent = target.klient.session(created.id).agent('main');
+
+        // Dynamic assembly goes through the cascade — poll until visible.
+        let infos = await agent.listCommands();
+        const deadline = Date.now() + 5_000;
+        while (!infos.some((command) => command.name === 'conformance-echo')) {
+          if (Date.now() > deadline) break;
+          await new Promise((resolve) => {
+            setTimeout(resolve, 25);
+          });
+          infos = await agent.listCommands();
+        }
+        expect(infos.map((command) => command.name)).toContain('conformance-echo');
+        const echo = infos.find((command) => command.name === 'conformance-echo');
+        expect(echo).toMatchObject({ name: 'conformance-echo', description: 'records its args' });
+        expect(typeof echo?.source).toBe('string');
+
+        await agent.runCommand({ name: 'conformance-echo', args: 'hello commands' });
+        expect(calls).toEqual(['hello commands']);
+
+        // Unknown names fail with a coded engine error.
+        await expect(agent.runCommand({ name: 'conformance-missing' })).rejects.toThrow(
+          /Unknown command/,
+        );
+      } finally {
+        await handle.dispose();
+        await target.klient.session(created.id).close();
+      }
+    });
+
+    it('propagates prompt id conflicts with the same 40927 error', async () => {
+      const created = await target.klient.global.sessions.create({
+        workDir: process.cwd(),
+        title: 'conformance prompt conflict',
+      });
+      const session = getLiveSessionById(target.app.accessor, created.id);
+      if (session === undefined) throw new Error('conformance session was not materialized');
+      const main = await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+      const reservation = reservePrompt(main.accessor.get(IAgentPromptService), 'submission-1');
+      try {
+        await expect(
+          target.klient.session(created.id).agent('main').prompt({
+            input: [{ type: 'text', text: 'duplicate' }],
+            promptId: 'submission-1',
+          }),
+        ).rejects.toMatchObject({ name: 'RPCError', code: 40927 });
+      } finally {
+        reservation.dispose();
+        await target.klient.session(created.id).close();
+      }
     });
   });
 }

@@ -1,11 +1,3 @@
-/**
- * `contextProjector` domain — Agent-scope context projection contract.
- *
- * Defines wire-safe history projections and an opaque snapshot of the media
- * identities that a provider rejected, allowing later steps to strip only
- * that content while preserving newly generated recovery media.
- */
-
 import { createDecorator } from '#/_base/di/instantiation';
 import type { Message } from '#/kosong/contract/message';
 
@@ -17,17 +9,19 @@ export interface MediaStripSnapshot {
   readonly [mediaStripSnapshotBrand]: undefined;
 }
 
+export interface ProjectionPolicy {
+  readonly structure?: 'strict';
+  readonly media?: 'degraded' | { readonly strip: MediaStripSnapshot };
+}
+
 export interface IAgentContextProjectorService {
   readonly _serviceBrand: undefined;
 
-  project(messages: readonly ContextMessage[]): readonly Message[];
-  projectStrict(messages: readonly ContextMessage[]): readonly Message[];
-  projectMediaDegraded(messages: readonly ContextMessage[]): readonly Message[];
-  captureMediaStripSnapshot(messages: readonly ContextMessage[]): MediaStripSnapshot;
-  projectMediaStripped(
+  project(
     messages: readonly ContextMessage[],
-    snapshot?: MediaStripSnapshot,
+    policy?: ProjectionPolicy,
   ): readonly Message[];
+  captureMediaStripSnapshot(messages: readonly ContextMessage[]): MediaStripSnapshot;
 }
 
 export const IAgentContextProjectorService = createDecorator<IAgentContextProjectorService>(

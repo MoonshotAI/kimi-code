@@ -1,10 +1,3 @@
-/**
- * `_base` text helpers — model-text line-ending normalization.
- *
- * Normalizes CRLF → LF for display and re-materializes CRLF on write, so the
- * model sees a consistent view while the on-disk bytes stay faithful.
- */
-
 export type LineEndingStyle = 'lf' | 'crlf' | 'mixed';
 
 export interface ModelTextView {
@@ -55,4 +48,25 @@ export function materializeModelText(text: string, lineEndingStyle: LineEndingSt
 
 export function makeCarriageReturnsVisible(text: string): string {
   return text.replaceAll('\r', '\\r');
+}
+
+/**
+ * Split text into lines, keeping each line's trailing `\n` (the final line
+ * may lack one). Same semantics as Python's `str.splitlines(keepends=True)`
+ * restricted to `\n` boundaries.
+ */
+export function splitLinesKeepingTerminator(text: string): string[] {
+  if (text.length === 0) return [];
+  const lines: string[] = [];
+  let start = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text.codePointAt(i) === 0x0a) {
+      lines.push(text.slice(start, i + 1));
+      start = i + 1;
+    }
+  }
+  if (start < text.length) {
+    lines.push(text.slice(start));
+  }
+  return lines;
 }

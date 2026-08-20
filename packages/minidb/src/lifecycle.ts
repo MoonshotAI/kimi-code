@@ -25,6 +25,7 @@ import {
 import { readManifest, sweepGenerationTemps } from './generation-files.js';
 import { MaintenanceScheduler } from './maintenance.js';
 import { LockFile, LockError } from './lockfile.js';
+import type { LifecycleTracker } from './lifecycle-status.js';
 import { ValueReader } from './value-reader.js';
 import { Store } from './store.js';
 import type { StoreRecord } from './store.js';
@@ -92,6 +93,9 @@ export interface LifecycleHost<V> {
   store: Store;
   wal: WAL;
   valueReader?: ValueReader;
+  /** Per-open lifecycle telemetry (state machine + phase timings), driven by
+   *  this flow and the generation loader; read via MiniDb.lifecycleStatus(). */
+  lifecycle: LifecycleTracker;
   recoveryInfo: RecoveryInfo | null;
   stats: WalStats &
     CompactionTarget['stats'] & {
@@ -112,6 +116,7 @@ export interface LifecycleHost<V> {
  *  maintenance. On success the host instance is fully open; on failure every
  *  acquired resource is released before the error rethrows. */
 export async function openMiniDb<V>(db: LifecycleHost<V>, opts: OpenOptions, hooks: LifecycleHooks): Promise<void> {
+  const openT0 = performance.now();
   if (!opts || !opts.dir) throw new TypeError('MiniDb.open: opts.dir is required');
   db.dir = opts.dir;
   db.walPath = path.join(db.dir, WAL_FILE);
@@ -190,6 +195,20 @@ export async function openMiniDb<V>(db: LifecycleHost<V>, opts: OpenOptions, hoo
       } else {
         throw new LockError(`database is locked by another process: ${db.dir}`);
       }
+    } else {
+      // Report the held token BEFORE the heavy recovery work below: a
+      // supervisor (another thread orchestrating this open) learns the lock
+      // identity immediately and can reap the lock if this opener dies
+      // mid-recovery. The callback is purely observational — a throwing
+      // supervisor must not fail this open with the lock already held.
+      const heldToken = db.lock.heldToken;
+      if (heldToken !== undefined) {
+        try {
+          opts.onLockAcquired?.({ token: heldToken });
+        } catch {
+          // Intentionally swallowed — see above.
+        }
+      }
     }
   }
 
@@ -254,13 +273,19 @@ export async function openMiniDb<V>(db: LifecycleHost<V>, opts: OpenOptions, hoo
     if (db.indexGenerationsEnabled) generationLoaded = await hooks.tryLoadGeneration(opts.recovery ?? 'resync');
 
     if (!generationLoaded) {
+      // The loader already recorded a 'generation-load' attempt when it tried
+      // candidates; none at all leaves the state at 'no-generation'. Either
+      // way the legacy full recovery now runs.
+      db.lifecycle.transition('full-rebuild');
       const recT0 = performance.now();
+      const scanApply = { walScanMs: 0, walApplyMs: 0 };
       db.recoveryInfo = await recover({
         dir: db.dir,
         store: db.store,
         mode: opts.recovery ?? 'resync',
         truncate: !db.readOnly,
         valueMode: db.valueMode,
+        timings: scanApply,
         // Disk-backed values need the positioned reader attached to the SAME
         // inodes recovery scanned; recovery's generation pairing re-verifies
         // the attach and retries the whole pass when a rotation landed in
@@ -296,6 +321,8 @@ export async function openMiniDb<V>(db: LifecycleHost<V>, opts: OpenOptions, hoo
             : undefined,
       });
       db.stats.recoveryDurationMs += performance.now() - recT0;
+      db.lifecycle.time('walScanMs', scanApply.walScanMs);
+      db.lifecycle.time('walApplyMs', scanApply.walApplyMs);
       db.stats.recoveryBytes += db.recoveryInfo.snapshotBytes + db.recoveryInfo.walBytes;
       db.stats.recoveryFrames += db.recoveryInfo.snapshotFrames + db.recoveryInfo.walFrames;
       // Recovery may have truncated a torn WAL tail behind the WAL's back;
@@ -304,6 +331,7 @@ export async function openMiniDb<V>(db: LifecycleHost<V>, opts: OpenOptions, hoo
       if (db.recoveryInfo.truncatedWal) await db.wal.refreshSize();
       hooks.seedAccessFromStore();
       await hooks.rebuildAllIndexes();
+      db.lifecycle.time('fullRecoveryMs', performance.now() - recT0);
     }
 
     // A read-only instance never compacts: rotation would rename the live
@@ -331,6 +359,10 @@ export async function openMiniDb<V>(db: LifecycleHost<V>, opts: OpenOptions, hoo
         void hooks.buildGeneration('open').catch(() => {});
       }
     }
+    // open() is about to return: 'ready', or 'degraded' while a deferred
+    // text-index base build is still pending in the background.
+    db.lifecycle.time('openMs', performance.now() - openT0);
+    db.lifecycle.finishOpen();
   } catch (err) {
     // A background open-time compaction may still be in flight: settle it
     // before tearing down the WAL/store/handles it touches.

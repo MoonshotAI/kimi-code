@@ -229,3 +229,4 @@ goal ID 不应暴露给模型，因为它只是 runtime/UI 内部标识，没有
 goal 创建、暂停、恢复、阻塞、完成、清除都应发出 goal updated 事件。lifecycle 变化和 completion 变化应区分。completion 是一次终局事件，然后 snapshot 变 null。blocked/paused 保留 snapshot，UI 可以继续展示可恢复 goal。
 
 session 恢复时，active goal 会变 paused，避免重启后自动继续。fork session 时不继承 goal，并提醒模型不要继续源 session 的目标。
+

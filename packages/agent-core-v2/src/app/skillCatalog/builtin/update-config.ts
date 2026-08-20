@@ -1,7 +1,3 @@
-/**
- * `skillCatalog` domain — builtin `update-config` skill definition.
- */
-
 import type { SkillDefinition } from '#/app/skillCatalog/types';
 import { parseSkillText } from '#/app/skillCatalog/parser';
 import UPDATE_CONFIG_BODY from './update-config.md?raw';

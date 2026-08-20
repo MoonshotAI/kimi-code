@@ -1,12 +1,3 @@
-/**
- * Session/agent meta state that floats above the timeline.
- *
- * `meta` is global (never paginated) and state-merged, not appended: every
- * `meta.merge` op carries the freshest whole sub-state. The goal strip above
- * a composer is the canonical consumer — a goal simultaneously appears inline
- * as a 'goal' marker and here as floating status.
- */
-
 import type { StepUsage } from './turn';
 
 export type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete';
@@ -139,7 +130,8 @@ export interface TranscriptMeta {
   readonly agent?: AgentStatusMeta;
 }
 
-/** Contract shape of a `meta.merge` payload — like {@link TranscriptMeta}, but mode keys may be `null` to clear. */
-export type TranscriptMetaMerge = Omit<TranscriptMeta, 'modes'> & {
+/** Contract shape of a `meta.merge` payload — like {@link TranscriptMeta}, but mode keys and `goal` may be `null` to clear. */
+export type TranscriptMetaMerge = Omit<TranscriptMeta, 'modes' | 'goal'> & {
   readonly modes?: ModesMetaMerge;
+  readonly goal?: GoalMeta | null;
 };

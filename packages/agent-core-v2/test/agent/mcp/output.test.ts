@@ -293,8 +293,6 @@ describe('mcpResultToExecutableOutput', () => {
       'mcp__s__shot',
     );
     const parts = out.output as ContentPart[];
-    // The structured block sits OUTSIDE the media wrap, after the closing
-    // tag, so the image keeps its tool attribution.
     expect(parts[0]).toEqual({ type: 'text', text: '<mcp_tool_result name="mcp__s__shot">' });
     expect(parts.at(-2)).toEqual({ type: 'text', text: '</mcp_tool_result>' });
     const last = parts.at(-1);
@@ -313,7 +311,6 @@ describe('mcpResultToExecutableOutput', () => {
     const parts = out.output as ContentPart[];
     const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
     expect(joined).toContain('"evil":"ab"');
-    // Exactly one closing tag survives: the wrapper's own.
     expect(joined.split('</mcp-structured-result>')).toHaveLength(2);
   });
 
@@ -326,8 +323,6 @@ describe('mcpResultToExecutableOutput', () => {
           'modelcontextprotocol.io/progress': 1,
           'tools.mcp.com/trace': 'x',
           'example.com/custom': 2,
-          // Reserved only when another label FOLLOWS mcp/modelcontextprotocol:
-          // a trailing reserved word is a legitimate vendor namespace.
           'com.example.mcp/trace': 4,
           vendorKey: 3,
         },

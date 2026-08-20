@@ -2,6 +2,10 @@
 
 The isomorphic transcript rendering data layer — agent-granular L1 store, idempotent L2 operations, `off/turn/block/delta` L3 subscription granularity, framework-free L4 view registry, and turn-cursor pagination. Pure TypeScript (browser-safe, no engine imports) and the sole owner of all transcript contract types (`src/contract/`); consumed by `packages/kap-server` (engine events → transcript, REST + WS surface; live stores backfill history from the persisted per-agent wire records — main on first attach, any agent on demand, cold sessions rebuild any agent — with 0-based turn ordinals matching the engine's).
 
+## Comment conventions
+
+No comments — no file headers, no section banners, no statement-level narration; the code is the source of truth. The only exception is JSDoc attached to exported symbols (it flows into the generated `.d.ts` and IDE hover). Lint-suppression directives (`oxlint-disable` / `eslint-disable`) are allowed where they suppress an active rule for a deliberate pattern; other tooling directives (`@ts-expect-error`, `@ts-ignore`, …) stay banned — fix the underlying type problem instead. Enforced by `scripts/check-no-comments.mjs` (part of `pnpm lint`).
+
 ## Cold rebuild
 
 The cold rebuild is a two-level fold over `wire.jsonl` as the single source of truth: `history/groupTurns.ts` (context messages → turn tree) plus `history/foldFacts.ts` (non-context records → tasks, interactions, todos, goal/plan/swarm meta, and end-appended markers/taskrefs; interactions left pending at shutdown fold to `cancelled`).

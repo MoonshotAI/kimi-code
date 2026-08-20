@@ -1,12 +1,3 @@
-/**
- * Top-level timeline items of an AgentTranscript.
- *
- * `items: TranscriptItem[]` is the single ordered timeline. Turns are the
- * pagination unit; markers and taskrefs are attached to the "segment" that
- * follows the preceding turn (or the head segment before the first turn), so
- * every page is a contiguous, self-consistent slice.
- */
-
 import type { MarkerId, TaskId, TaskRefId } from './ids';
 import type { TranscriptTurn } from './turn';
 

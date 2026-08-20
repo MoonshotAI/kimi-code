@@ -297,6 +297,75 @@ describe('McpConnectionManager', () => {
     }
   });
 
+  it('rejects a disabled replacement config without touching the live entry', async () => {
+    const cm = new McpConnectionManager();
+    try {
+      const original = stdioConfig();
+      await cm.connectAll({ live: original });
+      expect(cm.get('live')).toMatchObject({ status: 'connected', toolCount: 3 });
+
+      // The rejection happens before the swap: the entry keeps the original
+      // config and the running client instead of a half-applied disabled one.
+      await expect(
+        cm.reconnect('live', { ...stdioConfig(), enabled: false }),
+      ).rejects.toMatchObject({ code: 'mcp.server_disabled' });
+      expect(cm.get('live')).toMatchObject({ status: 'connected', toolCount: 3 });
+      // Full internal view: any pre-rejection mutation would leak through here.
+      expect(cm.getRawEntry('live')?.config).toEqual(original);
+    } finally {
+      await cm.shutdown();
+    }
+  }, 15000);
+
+  it('reconnectAndJoin joins an in-flight reconnect instead of starting a second one', async () => {
+    const cm = new McpConnectionManager();
+    const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
+    cm.onStatusChange((entry) => {
+      seen.push({ name: entry.name, status: entry.status });
+    });
+    const delayedMockServer = `setTimeout(() => import(${JSON.stringify(
+      pathToFileURL(stdioFixture).href,
+    )}), 250)`;
+
+    try {
+      await cm.connectAll({
+        slow: {
+          transport: 'stdio',
+          command: process.execPath,
+          args: ['-e', delayedMockServer],
+          startupTimeoutMs: 5_000,
+        },
+      });
+      seen.length = 0;
+
+      await Promise.all([cm.reconnectAndJoin('slow'), cm.reconnectAndJoin('slow')]);
+
+      expect(cm.get('slow')?.status).toBe('connected');
+      expect(seen.filter((event) => event.name === 'slow').map((event) => event.status)).toEqual([
+        'pending',
+        'connected',
+      ]);
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20_000);
+
+  it('reconnectAfterCurrent queues one reconnect after the in-flight attempt', async () => {
+    const cm = new McpConnectionManager();
+    let finishCurrent!: () => void;
+    const current = new Promise<void>((resolve) => {
+      finishCurrent = resolve;
+    });
+    const reconnect = vi.spyOn(cm, 'reconnect').mockReturnValueOnce(current).mockResolvedValueOnce();
+
+    const first = cm.reconnectAndJoin('server');
+    const trailing = cm.reconnectAfterCurrent('server');
+    expect(reconnect).toHaveBeenCalledTimes(1);
+    finishCurrent();
+    await Promise.all([first, trailing]);
+    expect(reconnect).toHaveBeenCalledTimes(2);
+  });
+
   it('shutdown clears entries and is idempotent', async () => {
     const cm = new McpConnectionManager();
     await cm.connectAll({ alpha: stdioConfig() });
@@ -623,7 +692,7 @@ describe('McpConnectionManager', () => {
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
     } satisfies OAuthClientInformationFull);
-    provider.saveTokens({
+    await provider.saveTokens({
       access_token: 'stale-access-token',
       refresh_token: 'stale-refresh-token',
       token_type: 'Bearer',
@@ -861,6 +930,252 @@ describe('McpConnectionManager', () => {
   }, 15000);
 });
 
+describe('McpConnectionManager sources and config-aware reconnect', () => {
+  it('reconnectAndJoin joins an in-flight reconnect instead of starting a second one', async () => {
+    const cm = new McpConnectionManager();
+    const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
+    cm.onStatusChange((entry) => {
+      seen.push({ name: entry.name, status: entry.status });
+    });
+    const delayedMockServer = `setTimeout(() => import(${JSON.stringify(
+      pathToFileURL(stdioFixture).href,
+    )}), 250)`;
+
+    try {
+      await cm.connectAll({
+        slow: {
+          transport: 'stdio',
+          command: process.execPath,
+          args: ['-e', delayedMockServer],
+          startupTimeoutMs: 5_000,
+        },
+      });
+      seen.length = 0;
+
+      await Promise.all([cm.reconnectAndJoin('slow'), cm.reconnectAndJoin('slow')]);
+
+      expect(cm.get('slow')?.status).toBe('connected');
+      expect(seen.filter((event) => event.name === 'slow').map((event) => event.status)).toEqual([
+        'pending',
+        'connected',
+      ]);
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20_000);
+
+  it('tags entries with their config source and exposes the effective config', async () => {
+    const cm = new McpConnectionManager();
+    try {
+      await cm.connectAll(
+        { alpha: stdioConfig(), beta: stdioConfig() },
+        { alpha: 'global', beta: 'plugin' },
+      );
+      expect(cm.get('alpha')).toMatchObject({ source: 'global', status: 'connected' });
+      expect(cm.get('beta')).toMatchObject({ source: 'plugin', status: 'connected' });
+      expect(cm.get('alpha')?.config).toEqual(stdioConfig());
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
+  it('reconnect re-resolves the config through the resolver instead of the snapshot', async () => {
+    let resolvedConfig = stdioConfig(['/this/path/does/not/exist/anywhere']);
+    const cm = new McpConnectionManager({
+      configResolver: async () => ({
+        name: 'flaky',
+        config: resolvedConfig,
+        source: 'global' as const,
+        origin: '/home/user/.kimi-code/mcp.json',
+        mutable: true,
+      }),
+    });
+    try {
+      await cm.connectAll({ flaky: stdioConfig(['/this/path/does/not/exist/anywhere']) }, {
+        flaky: 'global',
+      });
+      expect(cm.get('flaky')?.status).toBe('failed');
+
+      resolvedConfig = stdioConfig();
+      await cm.reconnect('flaky');
+      expect(cm.get('flaky')?.status).toBe('connected');
+      expect(cm.get('flaky')?.config).toEqual(stdioConfig());
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
+  it('reconnect connects an unknown name straight from the resolver', async () => {
+    const cm = new McpConnectionManager({
+      configResolver: async (name) =>
+        name === 'late'
+          ? {
+              name,
+              config: stdioConfig(),
+              source: 'global' as const,
+              origin: '/home/user/.kimi-code/mcp.json',
+              mutable: true,
+            }
+          : undefined,
+    });
+    try {
+      await cm.reconnect('late');
+      expect(cm.get('late')).toMatchObject({ status: 'connected', source: 'global' });
+      await expect(cm.reconnect('missing')).rejects.toMatchObject({
+        code: 'mcp.server_not_found',
+      });
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
+  it('reconnect fails when the resolver reports a global server as removed', async () => {
+    const cm = new McpConnectionManager({
+      configResolver: async () => undefined,
+    });
+    try {
+      await cm.connectAll({ gone: stdioConfig() }, { gone: 'global' });
+      expect(cm.get('gone')?.status).toBe('connected');
+      await expect(cm.reconnect('gone')).rejects.toMatchObject({
+        code: 'mcp.server_not_found',
+        message: expect.stringContaining('no longer configured'),
+      });
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
+  it('reconnect keeps the cached snapshot for caller-sourced entries missing from the resolver', async () => {
+    const cm = new McpConnectionManager({
+      configResolver: async () => undefined,
+    });
+    try {
+      await cm.connectAll({ injected: stdioConfig() }, { injected: 'caller' });
+      expect(cm.get('injected')?.status).toBe('connected');
+      await cm.reconnect('injected');
+      expect(cm.get('injected')?.status).toBe('connected');
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
+  it('reconnect keeps the caller config even when the registry has a same-named entry', async () => {
+    // Caller injection shadows the on-disk layers for the session: a name-only
+    // reconnect must not silently switch the entry to the registry version.
+    const cm = new McpConnectionManager({
+      configResolver: async () => ({
+        name: 'injected',
+        config: { transport: 'stdio', command: '/this/path/does/not/exist/anywhere' },
+        source: 'global' as const,
+        origin: '/home/user/.kimi-code/mcp.json',
+        mutable: true,
+      }),
+    });
+    try {
+      await cm.connectAll({ injected: stdioConfig() }, { injected: 'caller' });
+      expect(cm.get('injected')?.status).toBe('connected');
+      await cm.reconnect('injected');
+      expect(cm.get('injected')).toMatchObject({
+        status: 'connected',
+        source: 'caller',
+        config: stdioConfig(),
+      });
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
+  it('reconnect rejects an explicit config for plugin-sourced entries', async () => {
+    const cm = new McpConnectionManager();
+    try {
+      await cm.connectAll({ 'plugin-demo:api': stdioConfig() }, { 'plugin-demo:api': 'plugin' });
+      await expect(cm.reconnect('plugin-demo:api', stdioConfig())).rejects.toMatchObject({
+        code: 'request.invalid',
+        message: expect.stringContaining('plugin manifest'),
+      });
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
+  it('reconnect with an explicit config replaces the stored config', async () => {
+    const cm = new McpConnectionManager();
+    try {
+      await cm.connectAll(
+        { swap: { transport: 'stdio', command: '/this/path/does/not/exist/anywhere' } },
+        { swap: 'global' },
+      );
+      expect(cm.get('swap')?.status).toBe('failed');
+      await cm.reconnect('swap', stdioConfig());
+      expect(cm.get('swap')).toMatchObject({ status: 'connected', config: stdioConfig() });
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
+  it('flips connected HTTP servers to needs-auth when a mid-session failure looks like a 401', async () => {
+    // Same terminal-transport-error hook as the `failed` case above, but with
+    // an OAuth service wired and a 401-flavored error: a token that dies
+    // mid-session is an auth problem, not a crash.
+    const mcpServer = new McpServer({ name: 'cm-auth-close', version: '0.0.1' });
+    mcpServer.registerTool(
+      'echo',
+      { description: 'Echoes text', inputSchema: { text: z.string() } },
+      ({ text }) => ({ content: [{ type: 'text', text }] }),
+    );
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+    });
+    await mcpServer.connect(transport);
+    const httpServer = createHttpServer((req, res) => {
+      void transport.handleRequest(req, res);
+    });
+    await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+    const port = (httpServer.address() as HttpAddress).port;
+
+    const storeDir = await mkdtemp(join(tmpdir(), 'kimi-mcp-oauth-close-'));
+    const oauthService = new McpOAuthService({ store: new JsonFileStore(storeDir) });
+    const cm = new McpConnectionManager({ oauthService });
+    try {
+      await cm.connectAll({
+        remote: {
+          transport: 'http',
+          url: `http://127.0.0.1:${port}/mcp`,
+          startupTimeoutMs: 5_000,
+        },
+      });
+      expect(cm.get('remote')?.status).toBe('connected');
+
+      const internalClient = (cm as unknown as {
+        entries: Map<string, { client?: { client: { onerror?: (e: Error) => void } } }>;
+      }).entries.get('remote')?.client?.client;
+      const unauthorized = new Error('POST to MCP server returned 401');
+      unauthorized.name = 'UnauthorizedError';
+      internalClient?.onerror?.(unauthorized);
+
+      for (let i = 0; i < 50; i++) {
+        if (cm.get('remote')?.status === 'needs-auth') break;
+        await sleep(25);
+      }
+      const entry = cm.get('remote');
+      expect(entry?.status).toBe('needs-auth');
+      expect(entry?.error).toContain('run /mcp-config login remote');
+    } finally {
+      await cm.shutdown();
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((err) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve();
+        });
+      });
+      await rm(storeDir, { recursive: true, force: true });
+    }
+  }, 15000);
+});
+
 describe('Session MCP startup', () => {
   it('stores default MCP OAuth credentials under the configured Kimi home', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'kimi-session-mcp-oauth-home-'));
@@ -883,7 +1198,7 @@ describe('Session MCP startup', () => {
         throw new Error('Expected session MCP manager to own an OAuth service');
       }
       const provider = oauthService.getProvider('gated', 'https://example.com/mcp');
-      provider.saveTokens({
+      await provider.saveTokens({
         access_token: 'session-token',
         token_type: 'Bearer',
       } satisfies OAuthTokens);

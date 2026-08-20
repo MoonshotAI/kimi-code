@@ -30,7 +30,14 @@ import {
 import type { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import { atomicWrite } from '@moonshot-ai/agent-core-v2/_base/utils/fs';
 
-import type { McpTestResult } from '#/types';
+import type {
+  AppMcpServerConfig,
+  AppMcpServerDescriptor,
+  AppMcpServerInspection,
+  GlobalMcpServerAuthState,
+  McpServerLocator,
+  McpTestResult,
+} from '#/types';
 
 interface GlobalMcpConfigFile {
   readonly raw: Record<string, unknown>;
@@ -142,38 +149,153 @@ export class GlobalMcpConfigStore {
   }
 }
 
-/** Byte-identical port of v1's `requireRemoteMcpServer` guard. */
-export function requireRemoteMcpServer(server: GlobalMcpServerConfig): McpRemoteServerConfig {
-  const config = mcpConfigWithoutName(server);
+/** Byte-identical port of v1's `requireRemoteMcpConfig` guard. */
+export function requireRemoteMcpConfig(
+  name: string,
+  config: McpServerConfig,
+): McpRemoteServerConfig {
   if (config.transport !== 'stdio') return config;
   throw new KimiError(
     ErrorCodes.REQUEST_INVALID,
-    `MCP server "${server.name}" does not use a remote transport`,
+    `MCP server "${name}" does not use a remote transport`,
   );
 }
 
-/** Byte-identical port of v1's `requireOAuthMcpServer` guard. */
-export function requireOAuthMcpServer(server: GlobalMcpServerConfig): McpRemoteServerConfig {
-  const config = requireRemoteMcpServer(server);
+/** Byte-identical port of v1's `requireOAuthMcpConfig` guard. */
+export function requireOAuthMcpConfig(
+  name: string,
+  input: McpServerConfig,
+): McpRemoteServerConfig {
+  const config = requireRemoteMcpConfig(name, input);
   if (config.bearerTokenEnvVar !== undefined) {
     throw new KimiError(
       ErrorCodes.REQUEST_INVALID,
-      `MCP server "${server.name}" uses a static bearer token`,
+      `MCP server "${name}" uses a static bearer token`,
     );
   }
   if (config.headers !== undefined && config.auth !== 'oauth') {
     throw new KimiError(
       ErrorCodes.REQUEST_INVALID,
-      `MCP server "${server.name}" uses static headers and is not marked for OAuth`,
+      `MCP server "${name}" uses static headers and is not marked for OAuth`,
     );
   }
   return config;
+}
+
+/** Byte-identical port of v1's `mcpServerId`. */
+export function mcpServerId(locator: McpServerLocator): string {
+  if (locator.source === 'global') return `global:${encodeURIComponent(locator.name)}`;
+  return `plugin:${encodeURIComponent(locator.pluginId)}:${encodeURIComponent(locator.serverName)}`;
+}
+
+/** Byte-identical port of v1's `describeMcpServerLocator`. */
+export function describeMcpServerLocator(locator: McpServerLocator): string {
+  if (locator.source === 'global') return locator.name;
+  return `${locator.pluginId}/${locator.serverName}`;
+}
+
+/** Inspection-time descriptor: the wire shape but with the full config. */
+export type AppMcpServerRuntimeDescriptor = Omit<AppMcpServerDescriptor, 'config'> & {
+  readonly config: McpServerConfig;
+};
+
+export type AppMcpServerRuntimeInspection = AppMcpServerRuntimeDescriptor &
+  Pick<AppMcpServerInspection, 'authStatus' | 'checkedAt' | 'error'>;
+
+/** Byte-identical port of v1's `sanitizeAppMcpServerInspection`. */
+export function sanitizeAppMcpServerInspection(
+  server: AppMcpServerRuntimeInspection,
+): AppMcpServerInspection {
+  return { ...server, config: sanitizeAppMcpServerConfig(server.config) };
+}
+
+/** Byte-identical port of v1's `sanitizeAppMcpServerConfig`. */
+export function sanitizeAppMcpServerConfig(config: McpServerConfig): AppMcpServerConfig {
+  if (config.transport === 'stdio') {
+    const { env, ...safe } = config;
+    return env === undefined ? safe : { ...safe, envKeys: Object.keys(env).toSorted() };
+  }
+  const { headers, ...safe } = config;
+  return headers === undefined ? safe : { ...safe, headerKeys: Object.keys(headers).toSorted() };
+}
+
+/** Byte-identical port of v1's `selectAppMcpServerDescriptors`. */
+export function selectAppMcpServerDescriptors(
+  catalog: readonly AppMcpServerRuntimeDescriptor[],
+  targets?: readonly McpServerLocator[],
+): readonly AppMcpServerRuntimeDescriptor[] {
+  if (targets === undefined) return catalog;
+  const byId = new Map(catalog.map((server) => [server.serverId, server]));
+  return targets.map((target) => {
+    const server = byId.get(mcpServerId(target));
+    if (server !== undefined) return server;
+    throw new KimiError(
+      ErrorCodes.MCP_SERVER_NOT_FOUND,
+      `MCP server "${describeMcpServerLocator(target)}" was not found`,
+    );
+  });
+}
+
+/**
+ * Byte-identical port of v1's `configuredMcpAuthState`: states decidable
+ * without connecting — anything pinned (stdio, bearer token, static
+ * non-OAuth headers) or disabled never enters the OAuth probe.
+ */
+export function configuredMcpAuthState(
+  server: AppMcpServerRuntimeDescriptor,
+): GlobalMcpServerAuthState | undefined {
+  if (!server.enabled || server.config.enabled === false) return 'not-applicable';
+  if (server.config.transport === 'stdio') return 'not-applicable';
+  if (server.config.bearerTokenEnvVar !== undefined) return 'bearer-token';
+  if (server.config.headers !== undefined && server.config.auth !== 'oauth') {
+    return 'not-applicable';
+  }
+  return undefined;
+}
+
+/** Byte-identical port of v1's `isOAuthProbeCandidate`. */
+export function isOAuthProbeCandidate(server: AppMcpServerRuntimeDescriptor): boolean {
+  return configuredMcpAuthState(server) === undefined;
 }
 
 /** Byte-identical port of v1's `mcpConfigWithoutName`. */
 export function mcpConfigWithoutName(server: GlobalMcpServerConfig): McpServerConfig {
   const { name: _name, ...config } = server;
   return config;
+}
+
+/**
+ * Byte-identical port of v1's inline-server validation (the `server` branch
+ * of `resolveMcpTestTarget`, shared with `addSessionMcpServer`): the schema
+ * strips unknown keys such as a stray `name`, so the name is re-attached.
+ */
+export function parseInlineMcpServer(server: GlobalMcpServerConfig): GlobalMcpServerConfig {
+  const parsed = McpServerConfigSchema.safeParse(server);
+  if (!parsed.success) {
+    throw new KimiError(
+      ErrorCodes.CONFIG_INVALID,
+      `Invalid MCP server "${server.name}": ${parsed.error.message}`,
+    );
+  }
+  return { name: server.name, ...parsed.data };
+}
+
+/**
+ * Byte-identical port of v1's reconnect-config validation
+ * (`SessionAPIImpl.reconnectMcpServer`): same schema strip, nameless result.
+ */
+export function parseReconnectMcpServerConfig(
+  name: string,
+  config: GlobalMcpServerConfig,
+): McpServerConfig {
+  const parsed = McpServerConfigSchema.safeParse(config);
+  if (!parsed.success) {
+    throw new KimiError(
+      ErrorCodes.CONFIG_INVALID,
+      `Invalid MCP server config for "${name}": ${parsed.error.message}`,
+    );
+  }
+  return parsed.data;
 }
 
 /**
@@ -222,7 +344,7 @@ function persistedEntry(server: GlobalMcpServerConfig): McpServerConfig {
   return entry;
 }
 
-function normalizeServerName(name: string): string {
+export function normalizeServerName(name: string): string {
   const normalized = name.trim();
   if (normalized.length > 0) return normalized;
   throw new KimiError(ErrorCodes.REQUEST_INVALID, 'MCP server name cannot be empty');

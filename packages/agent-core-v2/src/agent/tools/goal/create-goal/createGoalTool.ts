@@ -1,14 +1,3 @@
-/**
- * `tools` domain — `ICreateGoalTool` implementation.
- *
- * Resolves a CreateGoal call against the goal service (`goal`): guards
- * against the current goal changing between resolution and execution, then
- * creates the goal and returns its serialized snapshot. The approval display
- * carries a `goal_start` card unless the permission mode (`permissionMode`)
- * is `auto`. Registered for the main agent only, mirroring v1's
- * `agent.type === 'main'` gate. Bound at Agent scope.
- */
-
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import { toInputJsonSchema } from '#/tool/input-schema';

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { eq, gte, lt, valid } from 'semver';
 
-import { KIMI_CODE_TIPS_BANNER_URL } from '#/constant/app';
+import { kimiCodeTipsBannerUrl } from '#/constant/app';
 import type { BannerDisplay, BannerState } from '#/tui/types';
 
 import type { BannerDisplayState } from './state';
@@ -315,7 +315,7 @@ export function selectDisplayableBanner({
 export class BannerProvider {
   constructor(
     private readonly clientVersion: string,
-    private readonly url: string = KIMI_CODE_TIPS_BANNER_URL,
+    private readonly url: string = kimiCodeTipsBannerUrl(),
   ) {}
 
   async load(

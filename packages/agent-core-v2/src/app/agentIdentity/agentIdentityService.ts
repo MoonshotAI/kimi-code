@@ -1,17 +1,5 @@
-/**
- * `agentIdentity` domain — `IAgentIdentity` implementation.
- *
- * Builds the process-lifetime snapshot from the `[identity]` config section
- * (which already layers `env > config.toml`) and the host's declared display
- * name and request headers in `IBootstrapService.args`, once config has first
- * loaded; later `[identity]` edits take effect on the next start. Bound at
- * App scope, activated eagerly so the freeze is armed before any consumer can
- * observe config readiness — a config load failure still freezes, from
- * whatever the config service then serves, matching what every other section
- * consumer would read.
- */
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { CoreErrors } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';

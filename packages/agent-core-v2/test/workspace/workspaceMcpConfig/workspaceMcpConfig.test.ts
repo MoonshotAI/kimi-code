@@ -1,14 +1,3 @@
-/**
- * Scenario: workspace MCP config — the initial file+plugin merge (file wins
- * name collisions) and watch/plugin-reload-driven reconciliation published
- * as already-diffed change events.
- *
- * Exercises the real `WorkspaceMcpConfigService` against real temp config
- * files with a manually-fired fs-watch stub. Run:
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/workspace/workspaceMcpConfig/workspaceMcpConfig.test.ts`.
- */
-
 import { mkdtempSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -291,8 +280,6 @@ describe('WorkspaceMcpConfigService', () => {
     pluginServers = {};
     pluginReloads.fire({ added: [], removed: [], errors: [] });
 
-    // The merged view is unchanged (the file entry still wins), so no event
-    // fires and the snapshot stays put.
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
     expect(changes).toEqual([]);
     expect(service.servers()).toEqual({ shared: stdioConfig('file-version') });
