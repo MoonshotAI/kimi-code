@@ -7,7 +7,7 @@ import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import { log } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
 import type { AgentAPI, AgentEvent, KimiConfig, SDKAgentRPC, UsageStatus } from '#/rpc';
-import { generate } from '@moonshot-ai/kosong';
+import { generate, type ChatProvider } from '@moonshot-ai/kosong';
 
 import type { EnabledPluginSessionStart, EnabledPluginSystemPrompt, PluginCommandDef } from '#/plugin';
 import { expandCommandArguments } from '../plugin/commands';
@@ -298,6 +298,7 @@ export class Agent {
         // before dispatching), so it must not leave a request trace or a
         // diagnostic log line claiming a request was sent.
         if (requestOptions?.signal?.aborted !== true) {
+          this.warnAboutStaleThinkingEffort(provider, modelAlias);
           this.llmRequestLogger.logRequest({
             provider,
             modelAlias,
@@ -384,6 +385,43 @@ export class Agent {
       knownEfforts: supportEfforts.join(','),
       fallbackEffort: undefined,
     });
+  }
+
+  /**
+   * Request-time safety net for an effort resolved against older model
+   * metadata: a config reload swaps the declared effort list without
+   * re-running config resolution, leaving the cached effort outside the new
+   * list. The cached value is still sent unchanged (live sessions never
+   * re-resolve mid-flight); this restores the one-time diagnostic for that
+   * drift, on every protocol.
+   */
+  private warnAboutStaleThinkingEffort(
+    provider: ChatProvider,
+    modelAlias: string | undefined,
+  ): void {
+    try {
+      const effort = provider.thinkingEffort;
+      if (effort === null || effort === 'on' || effort === 'off') return;
+      const resolved =
+        modelAlias === undefined
+          ? undefined
+          : this.modelProvider?.resolveProviderConfig(modelAlias);
+      if (resolved === undefined) return;
+      const supportEfforts = resolved.supportEfforts?.filter((value) => value.length > 0);
+      if (supportEfforts === undefined || supportEfforts.length === 0) return;
+      if (supportEfforts.includes(effort)) return;
+      this.emitThinkingEffortWarning({
+        code: 'thinking-effort-not-listed',
+        message: `Thinking effort "${effort}" is not listed for model "${provider.modelName}" (known: ${supportEfforts.join(', ')}). The value will be sent unchanged to the backend.`,
+        modelAlias,
+        model: provider.modelName,
+        effort,
+        knownEfforts: supportEfforts.join(','),
+        fallbackEffort: undefined,
+      });
+    } catch {
+      // Capability diagnostics must never turn a sendable request into a failure.
+    }
   }
 
   private emitThinkingEffortWarning(warning: {
