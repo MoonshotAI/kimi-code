@@ -7,6 +7,7 @@ import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
 import { buildSlashItems, matchSlashItem, parseSlash, SKILL_COMMAND_PREFIX } from '@moonshot-ai/app-core/lib';
 import { formatTokens } from '@moonshot-ai/app-core/lib';
+import { useAppearance } from '@moonshot-ai/app-core';
 import type { IconName } from '@moonshot-ai/app-client/icons';
 import type { FileItem } from './MentionMenu.vue';
 import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView, ToolMedia, TurnAttachment } from '../../types';
@@ -1397,6 +1398,146 @@ const permLabel = computed(() => (permInfo.value ? t(permInfo.value.labelKey) : 
 const permIcon = computed<IconName>(() => permInfo.value?.icon ?? 'hand');
 
 // ---------------------------------------------------------------------------
+// Toolbar collapse — one valve, everything else rigid. The toolbar is a flex
+// row where the model name is the ONLY yielding element: the left cluster
+// (attach / permission / swarm) never crushes — under pressure its pills flip
+// straight from full text to icon circles. A single computed verdict drives
+// every stage change: the valve (model name) measured crushed below the
+// readability floor. Stage 0→1 flips the label pills to icons; the freed room
+// lets the name recover on its own (pure CSS). If it still lands below the
+// floor, stage 1→2 flips the model pill to its bare model icon. The way back
+// is hysteresis: a stage only re-opens once the row has grown past its
+// collapse point plus the margin, so the boundary can never flap.
+// ---------------------------------------------------------------------------
+const toolbarLabelsCollapsed = ref(false);
+const modelPillCollapsed = ref(false);
+const mpNameRef = ref<HTMLElement | null>(null);
+/* Thresholds live on the card as em-based CSS tokens (see .composer-card) so
+   they track the UI font scale and stay out of the script. */
+let labelsCollapsedAt = 0;
+let modelCollapsedAt = 0;
+
+function toolbarCollapseTokens(): { valveFloor: number; expandMargin: number } {
+  const style = toolbarRef.value ? getComputedStyle(toolbarRef.value) : null;
+  return {
+    valveFloor: style ? lengthToken(style, '--composer-valve-floor', 56) : 56,
+    expandMargin: style ? lengthToken(style, '--composer-valve-expand-margin', 48) : 48,
+  };
+}
+
+/* Reads a CSS length token that may be written in em: getComputedStyle
+   returns custom properties as the SPECIFIED token ("4em"), not a resolved
+   length — resolve em against the element's own computed font size (the
+   font-scale-aware size the tokens are meant to track). */
+function lengthToken(style: CSSStyleDeclaration, name: string, fallback: number): number {
+  const raw = style.getPropertyValue(name).trim();
+  const value = parseFloat(raw);
+  if (!Number.isFinite(value)) return fallback;
+  return raw.endsWith('em') ? value * parseFloat(style.fontSize) : value;
+}
+
+/* Genuine-crush test for an overflow:hidden flex label: Chrome reports
+   scrollWidth 0 once such an element lands at exactly 0 width (a one-frame
+   squeeze can land there without passing through the readable range), so a
+   zero-width element that still has text counts as fully crushed too. */
+function textCrushed(el: HTMLElement): boolean {
+  return (
+    el.scrollWidth > el.clientWidth + 1 ||
+    (el.clientWidth === 0 && (el.textContent?.length ?? 0) > 0)
+  );
+}
+
+function measureToolbarCollapse(): void {
+  const toolbar = toolbarRef.value;
+  if (!toolbar) return;
+  const { valveFloor, expandMargin } = toolbarCollapseTokens();
+  const width = toolbar.getBoundingClientRect().width;
+
+  // The way back, one stage at a time, re-measured on the settled layout.
+  if (modelPillCollapsed.value) {
+    if (width > modelCollapsedAt + expandMargin) {
+      modelPillCollapsed.value = false;
+      void nextTick(measureToolbarCollapse);
+    }
+    return;
+  }
+  if (toolbarLabelsCollapsed.value && width > labelsCollapsedAt + expandMargin) {
+    toolbarLabelsCollapsed.value = false;
+    void nextTick(measureToolbarCollapse);
+    return;
+  }
+
+  // The single verdict: the valve crushed below the floor advances exactly
+  // one stage; the settled re-measure decides whether another is needed.
+  const nameEl = mpNameRef.value;
+  const valveExhausted =
+    nameEl !== null &&
+    textCrushed(nameEl) &&
+    nameEl.getBoundingClientRect().width < valveFloor;
+  if (!valveExhausted) return;
+  if (!toolbarLabelsCollapsed.value) {
+    labelsCollapsedAt = width;
+    toolbarLabelsCollapsed.value = true;
+  } else {
+    modelCollapsedAt = width;
+    modelPillCollapsed.value = true;
+  }
+  void nextTick(measureToolbarCollapse);
+}
+
+let toolbarLabelObserver: ResizeObserver | null = null;
+onMounted(() => {
+  if (typeof ResizeObserver === 'undefined' || !toolbarRef.value) return;
+  toolbarLabelObserver = new ResizeObserver(measureToolbarCollapse);
+  toolbarLabelObserver.observe(toolbarRef.value);
+});
+onUnmounted(() => {
+  toolbarLabelObserver?.disconnect();
+  toolbarLabelObserver = null;
+});
+// Toolbar content changes without a resize (permission switch, swarm toggle,
+// compact chip, model/thinking switch, working/stop toggle, locale) shift
+// the space pressure too — as does the user's font-scale setting, which
+// resizes every label through --ui-font-size* without moving the toolbar
+// box, the font-display:swap font settling in after load, and sign-in /
+// upgrade / catalog changes swapping the right side between the login,
+// upgrade and model pills. Re-evaluate against the current width; while
+// collapsed, optimistically restore the labels first so eased pressure lets
+// them back in — the re-measure snaps them away again if the row is still
+// too tight.
+const { fontScale } = useAppearance();
+watch(
+  [
+    permLabel,
+    swarmOn,
+    showCompact,
+    thinkingSuffix,
+    () => props.status?.model,
+    () => props.working,
+    () => props.authReady,
+    () => props.managedSignedIn,
+    () => props.managedMembership,
+    () => props.models?.length,
+    fontScale,
+    locale,
+  ],
+  () => {
+    if (toolbarLabelsCollapsed.value) toolbarLabelsCollapsed.value = false;
+    if (modelPillCollapsed.value) modelPillCollapsed.value = false;
+    void nextTick(measureToolbarCollapse);
+  },
+);
+// The shipping font swaps in after first paint (font-display: swap) and can
+// change every label's width without any resize — re-measure once it lands.
+onMounted(() => {
+  void document.fonts?.ready.then(measureToolbarCollapse);
+});
+
+// The icon-only model pill carries its identity (name + thinking suffix) on
+// the tooltip and accessible name instead of visible text.
+const modelIconLabel = computed(() => `${props.status?.model ?? ''}${thinkingSuffix.value}`);
+
+// ---------------------------------------------------------------------------
 // Model dropdown — current provider models + thinking + more
 // ---------------------------------------------------------------------------
 
@@ -1550,7 +1691,7 @@ function selectModel(modelId: string): void {
     />
 
     <!-- Main composer card -->
-    <div class="composer-card">
+    <div class="composer-card" :class="{ 'labels-collapsed': toolbarLabelsCollapsed }">
       <!-- Attachment previews (inside the card, above the input row): media
            renders as MediaThumb thumbnails, files as AttachmentChip pills —
            the same two rows the sent bubble uses. The strip caps at two
@@ -1734,22 +1875,24 @@ function selectModel(modelId: string): void {
             <Icon name="plus" />
           </IconButton>
 
-          <!-- Permission pill — click to open dropdown -->
-          <span
-            v-if="status"
-            ref="permPillRef"
-            class="perm-pill"
-            :class="['perm-' + status.permission, { open: permDropdownOpen }]"
-            role="button"
-            tabindex="0"
-            :aria-label="permLabel"
-            @click.stop="togglePermDropdown"
-            @keydown.enter="togglePermDropdown"
-            @keydown.space.prevent="togglePermDropdown"
-          >
-            <Icon class="perm-pill-icon" :name="permIcon" size="md" />
-            <span class="perm-pill-label">{{ permLabel }}</span>
-          </span>
+          <!-- Permission pill — click to open dropdown. Icon-only collapsed:
+               the mode identity moves to the tooltip. -->
+          <Tooltip v-if="status" :text="toolbarLabelsCollapsed ? permLabel : null">
+            <span
+              ref="permPillRef"
+              class="perm-pill"
+              :class="['perm-' + status.permission, { open: permDropdownOpen }]"
+              role="button"
+              tabindex="0"
+              :aria-label="permLabel"
+              @click.stop="togglePermDropdown"
+              @keydown.enter="togglePermDropdown"
+              @keydown.space.prevent="togglePermDropdown"
+            >
+              <Icon class="perm-pill-icon" :name="permIcon" size="md" />
+              <span class="perm-pill-label">{{ permLabel }}</span>
+            </span>
+          </Tooltip>
 
           <!-- Permission dropdown — left-aligned to its trigger pill. -->
           <Transition name="composer-menu-pop">
@@ -1820,21 +1963,30 @@ function selectModel(modelId: string): void {
             </span>
           </Tooltip>
 
-          <!-- Model pill — click to open quick-switch dropdown -->
+          <!-- Model pill — click to open quick-switch dropdown. The toolbar's
+               final yield stage: the thinking suffix never truncates, and once
+               the model name is crushed below readability the pill sheds its
+               text and chevron for the bare model icon; the tooltip keeps the
+               identity. -->
+          <Tooltip v-if="status && !showSignIn && !showUpgrade" :text="modelPillCollapsed ? modelIconLabel : null">
           <button
-            v-if="status && !showSignIn && !showUpgrade"
             ref="modelPillRef"
             type="button"
             class="model-pill"
-            :class="{ open: dropdownOpen }"
+            :class="{ open: dropdownOpen, 'icon-only': modelPillCollapsed }"
             aria-haspopup="menu"
             :aria-expanded="dropdownOpen"
+            :aria-label="modelPillCollapsed ? modelIconLabel : undefined"
             @click.stop="toggleDropdown"
           >
-            <span class="mp-name">{{ status.model }}</span>
-            <span v-if="thinkingSuffix" class="think-suffix">{{ thinkingSuffix }}</span>
-            <Icon class="cv" name="chevron-down" size="sm" />
+            <Icon v-if="modelPillCollapsed" name="model" size="md" />
+            <template v-else>
+              <span ref="mpNameRef" class="mp-name">{{ status.model }}</span>
+              <span v-if="thinkingSuffix" class="think-suffix">{{ thinkingSuffix }}</span>
+              <Icon class="cv" name="chevron-down" size="sm" />
+            </template>
           </button>
+          </Tooltip>
           <!-- Signed-in free managed account / no usable models — the pill slot
                becomes the upgrade entry (external link). -->
           <button
@@ -2035,6 +2187,12 @@ function selectModel(modelId: string): void {
   --composer-control-size: var(--space-8);
   --composer-send-size: var(--composer-control-size);
   --composer-control-inset: var(--space-2);
+  /* Toolbar collapse thresholds, read by the JS measure via getComputedStyle.
+     em so they track the UI font scale — the floor keeps ≈8 Latin chars of
+     the model name readable (name + version stays visible); ≈56px / ≈48px
+     at the 14px base. Sizes belong to the token system, not the script. */
+  --composer-valve-floor: 4em;
+  --composer-valve-expand-margin: 3.4em;
   position: relative;
   border: 0.5px solid var(--color-composer-line);
   border-radius: var(--radius-composer);
@@ -2247,6 +2405,7 @@ function selectModel(modelId: string): void {
   width: var(--composer-control-size);
   height: var(--composer-control-size);
   border-radius: var(--radius-full);
+  flex: none;
 }
 
 /* Add menu — a composer-wide action list above the composer (the
@@ -2460,6 +2619,9 @@ function selectModel(modelId: string): void {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* Keeps the left and right control clusters from kissing once the free
+     space between them is gone. */
+  gap: var(--space-2);
   padding: var(--space-1) var(--composer-control-inset) var(--composer-control-inset);
   position: relative;
 }
@@ -2480,11 +2642,16 @@ function selectModel(modelId: string): void {
   gap: var(--space-1);
   min-width: 0;
 }
-/* Only the left side clips; clipping the right side would shave the Send
-   button's lift shadow (the row is exactly as tall as the 32px circle). */
-.toolbar-left { flex: 0 1 auto; overflow: hidden; }
+/* The left cluster is rigid: its pills never crush — under pressure they flip
+   straight from full text to icon circles (see the toolbar collapse measure),
+   so there is no crushed intermediate state to clip. overflow stays only as a
+   backstop; the right side keeps its no-clip rule (clipping it would shave
+   the Send button's lift shadow). */
+.toolbar-left { flex: none; overflow: hidden; }
 .toolbar-right {
-  flex: 1 1 0;
+  /* The right side holds the row's only valve (the model name): it takes the
+     whole deficit, then the whole recovery when a collapsed stage frees room. */
+  flex: 1 1 auto;
   justify-content: flex-end;
 }
 
@@ -2556,6 +2723,14 @@ function selectModel(modelId: string): void {
   opacity: 0;
   transition: opacity var(--duration-base) var(--ease-out);
 }
+/* The × sits on circular surfaces in every state — nested in the pill's
+   rounded cap when the label shows, covering the icon-only circle when
+   collapsed — so its hover wash is always a circle, never the IconButton
+   primitive's rounded rect. (Two classes to outrank the primitive's own
+   scoped radius rule.) */
+.swarm-chip .swarm-x {
+  border-radius: var(--radius-full);
+}
 .swarm-chip:hover .swarm-x,
 .swarm-x:focus-visible {
   opacity: 1;
@@ -2564,6 +2739,22 @@ function selectModel(modelId: string): void {
    hit-tests is an accidental-dismiss trap — with a --touch-target-min hit
    ring around the --icon-button-sm button. */
 @media (hover: none) {
+  /* Touch hit rings (the swarm ×'s ::before) can reach a few px past the
+     last chip's box — (44−26)/2 = 9px past the button, and a squeezed chip
+     lets the × overflow the chip itself. The group shrink-wraps its content
+     and clips at its padding box, so this trailing padding gives the ring
+     room without moving any control. */
+  .toolbar-left {
+    padding-right: var(--space-2);
+  }
+  /* toolbar-left shrink-wraps its content and clips its overflow, and the
+     chip sits flush at the group's right edge — the ×'s hit ring reaches
+     (44−26)/2 = 9px past the button, ~5px beyond the chip, and would be
+     clipped (hit area and all) below the touch target. Give the chip that
+     much breathing room. */
+  .swarm-chip {
+    margin-right: calc((var(--touch-target-min) - var(--icon-button-sm)) / 2 - var(--space-1));
+  }
   .swarm-x {
     opacity: 1;
     position: relative;
@@ -2593,72 +2784,93 @@ function selectModel(modelId: string): void {
   flex: none;
 }
 
-@container (max-width: 620px) {
-  .perm-pill {
-    width: var(--composer-control-size);
-    height: var(--composer-control-size);
-    padding: 0;
-    justify-content: center;
-    flex: none;
+/* The permission / swarm pills are rigid parts of the left cluster: their
+   labels never ellipsize — under pressure the stage machine flips them
+   straight from full text to the icon-only circles below. The leading inset
+   matches the collapsed circle's centered icon ((control-size − icon) / 2 =
+   --space-2), so the glyph sits at the same x in both states. */
+.perm-pill,
+.swarm-chip {
+  flex: none;
+  padding-left: var(--space-2);
+}
+.swarm-ic,
+.swarm-x {
+  flex: none;
+}
+
+/* Icon-only collapse — stage 1 of the toolbar collapse (see
+   measureToolbarCollapse): under pressure the pills flip straight from full
+   text to these icon-only circles, and the matching leading inset keeps the
+   glyph anchored at the same x across the snap. */
+.labels-collapsed .perm-pill {
+  width: var(--composer-control-size);
+  height: var(--composer-control-size);
+  padding: 0;
+  justify-content: center;
+  flex: none;
+}
+.labels-collapsed .perm-pill-label { display: none; }
+/* Collapsed swarm chip: icon-only circle like the permission pill; hover
+   cross-fades the glyph into the dismiss ×, which covers the whole chip. */
+.labels-collapsed .swarm-chip {
+  position: relative;
+  width: var(--composer-control-size);
+  height: var(--composer-control-size);
+  padding: 0;
+  justify-content: center;
+  /* The uncollapsed chip may shrink (label ellipsis); the collapsed circle
+     must not — the × fills it inset 0, so a shrunken chip would also shrink
+     the dismiss hit area below the control size. */
+  flex: none;
+}
+.labels-collapsed .swarm-label { display: none; }
+.labels-collapsed .swarm-ic { transition: opacity var(--duration-base) var(--ease-out); }
+.labels-collapsed .swarm-chip:hover .swarm-ic { opacity: 0; }
+.labels-collapsed .swarm-x {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  margin-right: 0;
+}
+/* Touch: no hover morph — the swarm icon stays (it IS the on-state
+   indicator) and the dismiss rides as a small corner badge. The chip
+   grows to the touch minimum so the dismiss button covering it is a full
+   44×44 hit INSIDE toolbar-left's box — an outreaching ::before ring
+   would be clipped by its overflow. */
+@media (hover: none) {
+  .labels-collapsed .swarm-chip {
+    width: var(--touch-target-min);
+    height: var(--touch-target-min);
   }
-  .perm-pill-label { display: none; }
-  /* Collapsed swarm chip: icon-only circle like the permission pill; hover
-     cross-fades the glyph into the dismiss ×, which covers the whole chip. */
-  .swarm-chip {
-    position: relative;
-    width: var(--composer-control-size);
-    height: var(--composer-control-size);
-    padding: 0;
-    justify-content: center;
-  }
-  .swarm-label { display: none; }
-  .swarm-ic { transition: opacity var(--duration-base) var(--ease-out); }
-  .swarm-chip:hover .swarm-ic { opacity: 0; }
-  .swarm-x {
-    position: absolute;
+  .labels-collapsed .swarm-chip:hover .swarm-ic { opacity: 1; }
+  .labels-collapsed .swarm-x {
     inset: 0;
     width: auto;
     height: auto;
-    margin-right: 0;
+    opacity: 1;
+    background: transparent;
   }
-  /* Touch: no hover morph — the swarm icon stays (it IS the on-state
-     indicator) and the dismiss rides as a small corner badge. The chip
-     grows to the touch minimum so the dismiss button covering it is a full
-     44×44 hit INSIDE toolbar-left's box — an outreaching ::before ring
-     would be clipped by its overflow. */
-  @media (hover: none) {
-    .swarm-chip {
-      width: var(--touch-target-min);
-      height: var(--touch-target-min);
-    }
-    .swarm-chip:hover .swarm-ic { opacity: 1; }
-    .swarm-x {
-      inset: 0;
-      width: auto;
-      height: auto;
-      opacity: 1;
-      background: transparent;
-    }
-    /* The visible badge: a dot pinned inside the chip's corner, the close
-       glyph centred in it. */
-    .swarm-x::before {
-      inset: auto;
-      top: 0;
-      right: 0;
-      width: var(--p-ic-md);
-      height: var(--p-ic-md);
-      border-radius: var(--radius-full);
-      background: var(--color-selected);
-    }
-    /* Glyph = badge − --space-1-5 total inset, so size and offset both track
-       the badge token and the cross stays centred at any icon scale. */
-    .swarm-x :deep(svg) {
-      position: absolute;
-      top: calc(var(--space-1-5) / 2);
-      right: calc(var(--space-1-5) / 2);
-      width: calc(var(--p-ic-md) - var(--space-1-5));
-      height: calc(var(--p-ic-md) - var(--space-1-5));
-    }
+  /* The visible badge: a dot pinned inside the chip's corner, the close
+     glyph centred in it. */
+  .labels-collapsed .swarm-x::before {
+    inset: auto;
+    top: 0;
+    right: 0;
+    width: var(--p-ic-md);
+    height: var(--p-ic-md);
+    border-radius: var(--radius-full);
+    background: var(--color-selected);
+  }
+  /* Glyph = badge − --space-1-5 total inset, so size and offset both track
+     the badge token and the cross stays centred at any icon scale. */
+  .labels-collapsed .swarm-x :deep(svg) {
+    position: absolute;
+    top: calc(var(--space-1-5) / 2);
+    right: calc(var(--space-1-5) / 2);
+    width: calc(var(--p-ic-md) - var(--space-1-5));
+    height: calc(var(--p-ic-md) - var(--space-1-5));
   }
 }
 
@@ -2700,7 +2912,10 @@ function selectModel(modelId: string): void {
   box-shadow: var(--p-focus-ring);
 }
 .model-pill .mp-name {
-  flex: 0 1 auto;
+  /* The pill's only yielding part: the name absorbs the whole deficit (the
+     thinking suffix stays rigid, the chevron never shrinks), and once it is
+     measured crushed below readability the pill snaps to the bare icon. */
+  flex: 0 8 auto;
   font-weight: var(--weight-medium);
   color: var(--color-text);
   overflow: hidden;
@@ -2711,7 +2926,10 @@ function selectModel(modelId: string): void {
 .model-pill .think-suffix {
   color: var(--color-accent);
   font-weight: var(--weight-medium);
-  flex-shrink: 0;
+  /* Never ellipsized — the effort labels are all ≤4 letters, so the suffix
+     shows in full or not at all: it stays rigid while the name yields, and
+     the pill snaps to the bare icon before the crush could ever reach it. */
+  flex: none;
 }
 .model-pill .cv {
   color: var(--faint);
@@ -2726,6 +2944,19 @@ function selectModel(modelId: string): void {
 }
 .model-pill.open .cv {
   transform: rotate(180deg);
+}
+
+/* Model pill icon-only collapse — the toolbar's final yield stage (see
+   modelPillCollapsed): with the name measured truncated below readability the
+   pill sheds its text and chevron for the bare model icon, a fixed 32px
+   circle like the collapsed permission pill; the dropdown stays one tap away
+   and the tooltip carries the model + effort identity. */
+.model-pill.icon-only {
+  width: var(--composer-control-size);
+  height: var(--composer-control-size);
+  padding: 0;
+  justify-content: center;
+  flex: none;
 }
 
 /* Sign-in entry (no models) — same pill shape, accent text to read as an
@@ -3074,24 +3305,12 @@ function selectModel(modelId: string): void {
 
 /* ---- Narrow composer toolbar ----------------------------------------------
    Below a wide desktop the chat column can be narrower than the full toolbar
-   needs — with the sidebar open on a small window, and on phones. The desktop
-   toolbar shows every control on one row and toolbar-left / toolbar-right are
-   overflow:hidden, so without shedding ink the row clips its own content. The
-   context ring stays visible at every width (it is the live context-pressure
-   signal; the exact numbers live in its tooltip), the model name truncates
-   earlier, and the permission label is capped so the ring and the send button
-   are never squeezed out. Mobile (≤640px) additionally hides perm / modes via
-   the rules below (those live in MobileSettingsSheet there). */
-@media (max-width: 980px) {
-  /* Permission label is short (manual/yolo/auto); cap it defensively so a
-     longer label can never push the toolbar past its container. */
-  .perm-pill {
-    max-width: 104px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-}
+   needs — with the sidebar open on a small window, and on phones. Narrowing
+   is handled by the toolbar collapse stage machine (see
+   measureToolbarCollapse): the model name is the only yielding element and
+   the permission/swarm pills flip to icon circles under real pressure, so the
+   row never clips its own content. Mobile (≤640px) additionally hides perm /
+   modes via the rules below (those live in MobileSettingsSheet there). */
 
 /* ---- Mobile composer (prototype): round attach + rounded panel input +
        round blue send with a soft shadow. The .cin container loses its border

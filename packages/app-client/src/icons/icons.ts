@@ -79,6 +79,7 @@ import KimiList from '~icons/kimi/list';
 import KimiMail from '~icons/kimi/mail';
 import KimiMinus from '~icons/kimi/minus';
 import KimiMicroscope from '~icons/kimi/microscope';
+import KimiModel from '~icons/kimi/model';
 import KimiMore from '~icons/kimi/more';
 import KimiMusic from '~icons/kimi/music';
 import KimiPause from '~icons/kimi/pause';
@@ -186,6 +187,7 @@ import RawKimiList from '~icons/kimi/list?raw';
 import RawKimiMail from '~icons/kimi/mail?raw';
 import RawKimiMinus from '~icons/kimi/minus?raw';
 import RawKimiMicroscope from '~icons/kimi/microscope?raw';
+import RawKimiModel from '~icons/kimi/model?raw';
 import RawKimiMore from '~icons/kimi/more?raw';
 import RawKimiMusic from '~icons/kimi/music?raw';
 import RawKimiPause from '~icons/kimi/pause?raw';
@@ -350,6 +352,7 @@ export type IconName =
   | 'star-outline'
   | 'unpin'
   | 'dots-horizontal'
+  | 'model'
   | 'thinking';
 
 export type IconSize = 'sm' | 'md' | 'lg';
@@ -478,6 +481,9 @@ export const ICONS: Record<IconName, IconEntry> = {
   'star-outline': entry(RiStarLine, RawStarLine),
   unpin: entry(RiUnpinLine, RawUnpinLine),
   'dots-horizontal': entry(KimiMore, RawKimiMore),
+  // The composer's collapsed model selector (icon-only pill) — a designer
+  // export for that intent, not part of the upstream set.
+  model: entry(KimiModel, RawKimiModel),
   thinking: entry(KimiThinking, RawKimiThinking),
 };
 
@@ -609,6 +615,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'star',
       'star-outline',
       'dots-horizontal',
+      'model',
       'thinking',
       'light-mode',
       'dark-mode',
