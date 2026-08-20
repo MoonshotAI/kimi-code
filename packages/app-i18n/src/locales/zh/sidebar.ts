@@ -1,6 +1,8 @@
 export default {
   workspaceMeta: 'workspace · {branch}',
   sessionsHeader: '会话',
+  // 搜索弹窗里工作区分组的标题（与 sessionsHeader 对应）。
+  workspaces: '工作区',
   viewSwitcher: '列表管理',
   viewGroup: '视图',
   viewFlat: '平铺列表',

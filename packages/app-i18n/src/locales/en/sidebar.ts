@@ -1,6 +1,8 @@
 export default {
   workspaceMeta: 'workspace · {branch}',
   sessionsHeader: 'sessions',
+  // Search dialog section head above the workspace hits (sibling of sessionsHeader).
+  workspaces: 'workspaces',
   viewSwitcher: 'List options',
   viewGroup: 'View',
   viewFlat: 'Flat list',
