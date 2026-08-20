@@ -17,6 +17,7 @@ import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDo
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IEventService } from '#/app/event/event';
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import { WorkspaceService } from '#/app/workspace/workspaceService';
 import { FileWorkspacePersistence } from '#/app/workspace/fileWorkspacePersistence';
@@ -75,6 +76,10 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IHostFileSystem, hostFs),
+      stubPair(IEventService, {
+        publish: () => {},
+        subscribe: () => ({ dispose: () => {} }),
+      } as unknown as IEventService),
     ]);
     currentHost = host;
     return host.app.accessor.get(IWorkspaceAliases);

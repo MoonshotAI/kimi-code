@@ -1,7 +1,10 @@
 import type { ToolExecution } from '#/tool/toolContract';
-import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 
+import {
+  agentContextOfScope,
+  IAgentScopeContext,
+} from '#/agent/scopeContext/scopeContext';
 import { ISessionTodoService } from '#/session/todo/sessionTodo';
 import {
   TODO_LIST_TOOL_NAME,
@@ -23,7 +26,10 @@ export class TodoListTool implements ITodoListTool {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TodoListInputSchema);
 
-  constructor(@ISessionTodoService private readonly todo: ISessionTodoService) {}
+  constructor(
+    @ISessionTodoService private readonly todo: ISessionTodoService,
+    @IAgentScopeContext private readonly agent: IAgentScopeContext,
+  ) {}
 
   resolveExecution(args: TodoListInput): ToolExecution {
     const description =
@@ -36,16 +42,18 @@ export class TodoListTool implements ITodoListTool {
       description,
       approvalRule: this.name,
       execute: async () => {
+        const agent = agentContextOfScope(this.agent);
         if (args.todos === undefined) {
-          return { isError: false, output: renderTodoList(this.todo.getTodos()) };
+          const todos = await this.todo.getTodos(agent);
+          return { isError: false, output: renderTodoList(todos) };
         }
 
         const next: readonly TodoItem[] = args.todos.map((todo) => ({
           title: todo.title,
           status: todo.status,
         }));
-        this.todo.setTodos(next);
-        const stored = this.todo.getTodos();
+        await this.todo.setTodos(agent, next);
+        const stored = await this.todo.getTodos(agent);
         const output =
           stored.length === 0
             ? 'Todo list cleared.'
@@ -55,5 +63,3 @@ export class TodoListTool implements ITodoListTool {
     };
   }
 }
-
-registerAgentToolService(ITodoListTool, TodoListTool, { name: 'TodoList', domain: 'todo' });

@@ -13,7 +13,7 @@ import { IConfigService } from '#/app/config/config';
 import type { CronDeletedEvent, CronScheduledEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { type ClockSources, resolveClockSources, SYSTEM_CLOCKS } from '#/app/cron/clock';
-import { type CronConfig, CRON_SECTION } from '#/app/cron/configSection';
+import { type CronConfig, CRON_SECTION, DEFAULT_CRON_CONFIG } from '#/app/cron/configSection';
 import { computeNextCronRun, parseCronExpression, type ParsedCronExpression } from '#/app/cron/cron-expr';
 import { type CronTask, type CronTaskInit } from '#/app/cron/cronTask';
 import { renderCronFireXml } from '#/app/cron/format';
@@ -24,13 +24,8 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { BugIndicatingError } from '#/errors';
-
-import { ICronCreateTool } from '#/agent/tools/cron/cron-create/cron-create';
-import { ICronListTool } from '#/agent/tools/cron/cron-list/cron-list';
-import { ICronDeleteTool } from '#/agent/tools/cron/cron-delete/cron-delete';
 
 import { CronAdd, CronDelete, CronCursor, CronFired, cronKey } from './cronOps';
 import { ISessionCronService } from './sessionCronService';
@@ -80,9 +75,9 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     this.states.contributeState(cronStartedKey);
 
     this._register(
-      this.agentLifecycle.onDidCreate((handle) => {
+      this.agentLifecycle.onDidCreateScope(({ context, handle }) => {
         handle.accessor.get(IAgentStateService).contributeState(cronKey);
-        if (handle.id !== 'main') return;
+        if (context.agentId !== 'main') return;
         this.bindMainAgent(handle);
       }),
     );
@@ -90,7 +85,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     for (const handle of this.agentLifecycle.list()) {
       handle.accessor.get(IAgentStateService).contributeState(cronKey);
     }
-    const existingMain = this.agentLifecycle.get('main');
+    const existingMain = this.agentLifecycle.findAgentHandle('main');
     if (existingMain) {
       this.bindMainAgent(existingMain);
     }
@@ -103,7 +98,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
   }
 
   private get tasks(): ReadonlyMap<string, CronTask> {
-    const main = this.agentLifecycle.get('main');
+    const main = this.agentLifecycle.findAgentHandle('main');
     if (main === undefined) return new Map();
     return main.accessor.get(IAgentStateService).get(cronKey);
   }
@@ -142,20 +137,6 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
         await next();
       }),
     );
-
-    this.registerCronTools(handle);
-  }
-
-  private registerCronTools(handle: IAgentScopeHandle): void {
-    const registry = handle.accessor.get(IAgentToolRegistryService);
-    const tools = [
-      handle.accessor.get(ICronCreateTool),
-      handle.accessor.get(ICronListTool),
-      handle.accessor.get(ICronDeleteTool),
-    ];
-    for (const tool of tools) {
-      this._register(registry.register(tool, { source: 'builtin' }));
-    }
   }
 
   now(): number {
@@ -168,7 +149,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
   }
 
   private getCronConfig(): CronConfig {
-    return this.config.get<CronConfig>(CRON_SECTION);
+    return this.config.get<CronConfig>(CRON_SECTION) ?? DEFAULT_CRON_CONFIG;
   }
 
   isDisabled(): boolean {
@@ -250,7 +231,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     if (this.getCronConfig().disabled) return;
     if (this.tasks.size === 0) return;
 
-    const mainHandle = this.agentLifecycle.get('main');
+    const mainHandle = this.agentLifecycle.findAgentHandle('main');
     if (!mainHandle) return;
 
     const loop = mainHandle.accessor.get(IAgentLoopService);
@@ -340,7 +321,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
   ): Turn | undefined {
     if (tasks.length === 0) return undefined;
 
-    const mainHandle = this.agentLifecycle.get('main');
+    const mainHandle = this.agentLifecycle.findAgentHandle('main');
     if (!mainHandle) return undefined;
 
     const promptService = mainHandle.accessor.get(IAgentPromptService);
@@ -388,7 +369,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     task: CronTask,
     ctx: { readonly coalescedCount: number; readonly firedAt: number },
   ): Promise<boolean> {
-    const mainHandle = this.agentLifecycle.get('main');
+    const mainHandle = this.agentLifecycle.findAgentHandle('main');
     if (!mainHandle) return Promise.resolve(false);
 
     const promptService = mainHandle.accessor.get(IAgentPromptService);
@@ -454,13 +435,13 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
   }
 
   private dispatchCron(event: CronAdd | CronDelete | CronCursor): void {
-    const mainHandle = this.agentLifecycle.get('main');
+    const mainHandle = this.agentLifecycle.findAgentHandle('main');
     if (!mainHandle) return;
     void mainHandle.accessor.get(IEventDispatcher).dispatch(event);
   }
 
   private signalCron(event: CronFired): void {
-    const mainHandle = this.agentLifecycle.get('main');
+    const mainHandle = this.agentLifecycle.findAgentHandle('main');
     if (!mainHandle) return;
     void mainHandle.accessor.get(IEventDispatcher).dispatch(event);
   }

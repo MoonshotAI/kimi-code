@@ -230,7 +230,7 @@ describe('AgentDateChangeService', () => {
     expect(messageText(reminders[0] as ContextMessage)).toContain('2026-07-30');
   });
 
-  it('seeds and announces after resuming a legacy profile without disclosure metadata', async () => {
+  it('discloses the current date after resuming a legacy profile without disclosure metadata', async () => {
     const persistence = new InMemoryWireRecordPersistence();
     await ctx.dispose();
     ctx = createTestAgent({ persistence }, appService(IHostClock, clock));
@@ -257,13 +257,15 @@ describe('AgentDateChangeService', () => {
     await ctx.restorePersisted();
 
     await runWillBeginStepHooks(loop);
-    expect(dateReminders(context)).toHaveLength(0);
+    const initial = dateReminders(context);
+    expect(initial).toHaveLength(1);
+    expect(messageText(initial[0] as ContextMessage)).toContain('2026-07-30');
 
     clock.set('2026-07-31T04:00:00.000Z');
     await runWillBeginStepHooks(loop);
     const reminders = dateReminders(context);
-    expect(reminders).toHaveLength(1);
-    expect(messageText(reminders[0] as ContextMessage)).toContain('2026-07-31');
+    expect(reminders).toHaveLength(2);
+    expect(messageText(reminders[1] as ContextMessage)).toContain('2026-07-31');
   });
 
   it('announces a crossed midnight through a real bind rendered from the host clock', async () => {
@@ -278,14 +280,16 @@ describe('AgentDateChangeService', () => {
       await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: 'mock-model' });
 
       await runWillBeginStepHooks(loop);
-      expect(dateReminders(context)).toHaveLength(0);
+      const initial = dateReminders(context);
+      expect(initial).toHaveLength(1);
+      expect(messageText(initial[0] as ContextMessage)).toContain('2026-07-29');
 
       clock.set('2026-07-30T04:00:00.000Z');
       await runWillBeginStepHooks(loop);
 
       const reminders = dateReminders(context);
-      expect(reminders).toHaveLength(1);
-      expect(messageText(reminders[0] as ContextMessage)).toContain('2026-07-30');
+      expect(reminders).toHaveLength(2);
+      expect(messageText(reminders[1] as ContextMessage)).toContain('2026-07-30');
     } finally {
       await rm(homeDir, { recursive: true, force: true });
     }
@@ -357,29 +361,70 @@ describe('AgentDateChangeService', () => {
     expect(dateReminders(context)).toHaveLength(1);
   });
 
-  it('adopts today silently when the system prompt carries no date line', async () => {
+  it('re-discloses after undo removes the initial disclosure', async () => {
     updateSystemPromptWithoutDate(profile, ctx.get(ISessionContext).cwd);
+    context.append({
+      role: 'user',
+      content: [{ type: 'text', text: 'first turn' }],
+      toolCalls: [],
+      origin: { kind: 'user' },
+    });
+    await runWillBeginStepHooks(loop);
+    expect(dateReminders(context)).toHaveLength(1);
+
+    expect(context.undo(1)).toMatchObject({ removedCount: 1 });
+    expect(dateReminders(context)).toHaveLength(0);
+    context.append({
+      role: 'user',
+      content: [{ type: 'text', text: 'replacement turn' }],
+      toolCalls: [],
+      origin: { kind: 'user' },
+    });
 
     await runWillBeginStepHooks(loop);
 
-    expect(dateReminders(context)).toHaveLength(0);
-    expect(context.get()).toHaveLength(0);
+    const reminders = dateReminders(context);
+    expect(reminders).toHaveLength(1);
+    expect(messageText(reminders[0] as ContextMessage)).toContain('2026-07-29');
   });
 
-  it('announces a crossed midnight after the silent seed', async () => {
+  it('discloses the current date on the first step when the system prompt carries no date', async () => {
+    updateSystemPromptWithoutDate(profile, ctx.get(ISessionContext).cwd);
+
+    await runWillBeginStepHooks(loop);
+
+    const reminders = dateReminders(context);
+    expect(reminders).toHaveLength(1);
+    expect(messageText(reminders[0] as ContextMessage)).toContain('2026-07-29');
+    expect(reminders[0]?.origin).toMatchObject({
+      kind: 'injection',
+      variant: 'date_change',
+      disclosure: {
+        kind: 'date',
+        renderGeneration: 2,
+        localDate: '2026-07-29',
+        timeZone: TEST_TIME_ZONE,
+      },
+    });
+
+    await runWillBeginStepHooks(loop);
+    expect(dateReminders(context)).toHaveLength(1);
+  });
+
+  it('announces a crossed midnight after the initial disclosure', async () => {
     updateSystemPromptWithoutDate(profile, ctx.get(ISessionContext).cwd);
     await runWillBeginStepHooks(loop);
-    expect(dateReminders(context)).toHaveLength(0);
+    expect(dateReminders(context)).toHaveLength(1);
 
     clock.set('2026-07-30T04:00:00.000Z');
     await runWillBeginStepHooks(loop);
 
     const reminders = dateReminders(context);
-    expect(reminders).toHaveLength(1);
-    expect(messageText(reminders[0] as ContextMessage)).toContain('2026-07-30');
+    expect(reminders).toHaveLength(2);
+    expect(messageText(reminders[1] as ContextMessage)).toContain('2026-07-30');
 
     await runWillBeginStepHooks(loop);
-    expect(dateReminders(context)).toHaveLength(1);
+    expect(dateReminders(context)).toHaveLength(2);
   });
 
   it('treats an empty snapshot cwd as unknown and uses the disclosed date as baseline', async () => {
@@ -392,17 +437,17 @@ describe('AgentDateChangeService', () => {
     expect(messageText(reminders[0] as ContextMessage)).toContain('2026-07-29');
   });
 
-  it('seeds quietly then announces when the snapshot cwd is empty and no date is disclosed', async () => {
+  it('discloses then announces when the snapshot cwd is empty and no date is disclosed', async () => {
     updateSystemPromptWithoutDate(profile, '');
     await runWillBeginStepHooks(loop);
-    expect(dateReminders(context)).toHaveLength(0);
+    expect(dateReminders(context)).toHaveLength(1);
 
     clock.set('2026-07-30T04:00:00.000Z');
     await runWillBeginStepHooks(loop);
 
     const reminders = dateReminders(context);
-    expect(reminders).toHaveLength(1);
-    expect(messageText(reminders[0] as ContextMessage)).toContain('2026-07-30');
+    expect(reminders).toHaveLength(2);
+    expect(messageText(reminders[1] as ContextMessage)).toContain('2026-07-30');
   });
 
   it('never injects when the snapshot belongs to a different cwd', async () => {
@@ -440,7 +485,7 @@ describe('AgentDateChangeService', () => {
 
     clock.set('2026-07-30T04:00:00.000Z');
     await runWillBeginStepHooks(loop);
-    expect(dateReminders(context)).toHaveLength(0);
+    expect(dateReminders(context)).toHaveLength(1);
 
     manager.provideUnit(DateChangeFeature);
     expect(ctx.get(IAgentDateChangeService)).toBeDefined();
@@ -448,12 +493,14 @@ describe('AgentDateChangeService', () => {
     expect(states.get(dateChangeSeedKey)).toBeUndefined();
 
     await runWillBeginStepHooks(loop);
-    expect(dateReminders(context)).toHaveLength(0);
-    expect(states.get(dateChangeSeedKey)).toMatchObject({ localDate: '2026-07-30' });
+    const restored = dateReminders(context);
+    expect(restored).toHaveLength(2);
+    expect(messageText(restored[1] as ContextMessage)).toContain('2026-07-30');
 
     clock.set('2026-07-31T04:00:00.000Z');
     await runWillBeginStepHooks(loop);
-    expect(dateReminders(context)).toHaveLength(1);
-    expect(messageText(dateReminders(context)[0] as ContextMessage)).toContain('2026-07-31');
+    const reminders = dateReminders(context);
+    expect(reminders).toHaveLength(3);
+    expect(messageText(reminders[2] as ContextMessage)).toContain('2026-07-31');
   });
 });

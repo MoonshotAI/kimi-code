@@ -5,8 +5,8 @@
       "id": "kimi-datasource",
       "tier": "official",
       "displayName": "Kimi Datasource",
-      "version": "3.3.0",
-      "description": "Official datasource workflows.",
+      "version": "3.4.0",
+      "description": "Stocks and financials from Wind, S&P Capital IQ, SEC EDGAR, etc.; news from Caixin, Xinhua Finance; macro from World Bank, IMF, FRED, NBS; corporate, academic, legal data, and more",
       "keywords": ["data", "mcp"],
       "source": "./official/kimi-datasource"
     },
@@ -45,6 +45,16 @@
       "homepage": "https://github.com/GoogleChrome/modern-web-guidance",
       "keywords": ["web", "css", "browser", "frontend", "skills"],
       "source": "https://github.com/GoogleChrome/modern-web-guidance"
+    },
+    {
+      "id": "cloudbase",
+      "tier": "curated",
+      "displayName": "Tencent CloudBase",
+      "version": "0.2.0",
+      "description": "Build, deploy, and manage Tencent CloudBase apps — databases, cloud functions, storage, auth, and hosting, powered by cloudbase-mcp.",
+      "homepage": "https://github.com/TencentCloudBase/CloudBase-AI-Toolkit",
+      "keywords": ["cloudbase", "tencent-cloud", "baas", "database", "cloud-function", "mcp"],
+      "source": "https://github.com/TencentCloudBase/CloudBase-AI-Toolkit/releases/latest/download/cloudbase-kimi.zip"
     }
   ]
 }

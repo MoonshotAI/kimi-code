@@ -6,9 +6,10 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
  * - `first_turn`: the opening user prompt plus the first turn's final
  *   assistant text; strict — unavailable until the first turn has produced
  *   an assistant reply.
- * - `digest`: first user prompt + latest user prompt + the latest turn's
- *   final assistant text, using whatever the (possibly compacted) window
- *   still holds; meant for explicit regeneration on multi-turn sessions.
+ * - `digest`: the whole conversation arc — every natural-language user
+ *   prompt in the live window paired with its own turn's final assistant
+ *   text, using whatever the (possibly compacted) window still holds;
+ *   meant for explicit regeneration on multi-turn sessions.
  */
 export type SessionTitleSource = 'user_prompts' | 'first_turn' | 'digest';
 

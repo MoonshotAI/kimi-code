@@ -17,7 +17,7 @@
  */
 
 import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
-import { IAgentGoalService } from '@moonshot-ai/agent-core-v2/agent/goal/goal';
+import { IAgentGoalService } from '@moonshot-ai/agent-core-v2/features/goal/goal';
 import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
 import { IAgentPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/permissionRules';
@@ -25,9 +25,7 @@ import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
 import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
-import { IAgentTokenCountingService } from '@moonshot-ai/agent-core-v2/agent/tokenCounting/tokenCounting';
 import { IAgentToolRegistryService } from '@moonshot-ai/agent-core-v2/agent/toolRegistry/toolRegistry';
-import { IAgentUsageService } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import { IAuthSummaryService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
@@ -170,18 +168,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
       { label: 'Set model', input: 'Model id', run: (svc, model) => call(svc, 'setModel', model) },
       { label: 'Refresh system prompt', run: (svc) => call(svc, 'refreshSystemPrompt') },
     ],
-  },
-  {
-    id: String(IAgentUsageService),
-    label: 'AgentUsageService',
-    scope: 'agent',
-    fetch: (svc) => call(svc, 'status'),
-  },
-  {
-    id: String(IAgentTokenCountingService),
-    label: 'AgentTokenCountingService',
-    scope: 'agent',
-    fetch: (svc) => call(svc, 'get'),
   },
   {
     id: String(IAgentPermissionModeService),

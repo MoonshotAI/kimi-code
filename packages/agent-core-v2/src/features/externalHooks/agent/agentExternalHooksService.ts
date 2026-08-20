@@ -3,6 +3,7 @@ import { IInstantiationService } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
 import { defineState } from '#/state/state';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTaskService, type AgentTaskInfo, type AgentTaskNotificationContext } from '#/agent/task/task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -27,7 +28,7 @@ import {
   PermissionApprovalResolved,
 } from '#/agent/toolApproval/toolApprovalService';
 import { IEventBus } from '#/app/event/eventBus';
-import { Event2 } from '#/app/event/event2';
+import { AgentEvent2 } from '#/app/event/event2';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
@@ -46,13 +47,14 @@ import {
 } from '../internal/userPrompt';
 
 export interface HookResultPayload {
+  readonly agentId: string;
   readonly turnId?: number;
   readonly hookEvent: string;
   readonly content: string;
   readonly blocked?: boolean;
 }
 
-export class HookResult extends Event2<HookResultPayload> {
+export class HookResult extends AgentEvent2<HookResultPayload> {
   static override readonly type = 'hook.result';
   static override readonly observable = true;
 }
@@ -74,6 +76,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
   ) {
     super();
@@ -361,6 +364,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
       });
       void this.dispatcher.dispatch(
         new HookResult({
+          agentId: this.scopeContext.agentId,
           hookEvent: block.event,
           content: block.message,
           blocked: true,
@@ -379,6 +383,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
       });
       void this.dispatcher.dispatch(
         new HookResult({
+          agentId: this.scopeContext.agentId,
           hookEvent: append.event,
           content: append.message,
         }),

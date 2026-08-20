@@ -1,4 +1,4 @@
-import type { Message } from '#/kosong/contract/message';
+import type { Message, ToolCall } from '#/kosong/contract/message';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { estimateTokens, estimateTokensForMessages } from '#/kosong/contract/tokens';
@@ -11,10 +11,13 @@ import {
   type TokenEstimate,
 } from '#/agent/contextMemory/compactionHandoff';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import {
+  closeTrailingOpenToolExchange,
+  INHERITED_IN_FLIGHT_TOOL_OUTPUT,
+} from '#/agent/contextMemory/openToolExchange';
 import { IWireService } from '#/wire/wire';
 import {
   IAgentContextMemoryService,
-  IAgentTokenCountingService,
   IAgentProfileService,
 } from '#/index';
 
@@ -23,14 +26,14 @@ import { createTestAgent, type TestAgentContext } from '../../harness';
 describe('Agent context', () => {
   let ctx: TestAgentContext;
   let context: IAgentContextMemoryService;
-  let tokenCounting: IAgentTokenCountingService;
+  let tokenCounting: TestAgentContext['tokenCounting'];
   let profile: IAgentProfileService;
   let wire: IWireService;
 
   beforeEach(() => {
     ctx = createTestAgent();
     context = ctx.get(IAgentContextMemoryService);
-    tokenCounting = ctx.get(IAgentTokenCountingService);
+    tokenCounting = ctx.tokenCounting;
     profile = ctx.get(IAgentProfileService);
     wire = ctx.get(IWireService);
   });
@@ -882,3 +885,94 @@ function textOf(message: Message): string {
     .map((part) => part.text)
     .join('');
 }
+
+describe('closeTrailingOpenToolExchange', () => {
+  const user: ContextMessage = {
+    role: 'user',
+    content: [{ type: 'text', text: 'hi' }],
+    toolCalls: [],
+  };
+  const readCall: ToolCall = { type: 'function', id: 'call_read', name: 'Read', arguments: '{}' };
+  const agentCall: ToolCall = { type: 'function', id: 'call_agent', name: 'Agent', arguments: '{}' };
+
+  it('returns an empty seed for an empty history', () => {
+    expect(closeTrailingOpenToolExchange([])).toEqual([]);
+  });
+
+  it('keeps a history without tool calls unchanged', () => {
+    const history = [user];
+    expect(closeTrailingOpenToolExchange(history)).toEqual(history);
+  });
+
+  it('keeps a fully answered trailing exchange unchanged', () => {
+    const history: ContextMessage[] = [
+      user,
+      { role: 'assistant', content: [], toolCalls: [readCall] },
+      {
+        role: 'tool',
+        toolCallId: 'call_read',
+        content: [{ type: 'text', text: 'contents' }],
+        toolCalls: [],
+      },
+    ];
+    expect(closeTrailingOpenToolExchange(history)).toEqual(history);
+  });
+
+  it('closes an unanswered trailing call with a synthetic in-flight result', () => {
+    const assistant: ContextMessage = {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'delegating the follow-up' }],
+      toolCalls: [agentCall],
+    };
+    const seed = closeTrailingOpenToolExchange([user, assistant]);
+
+    expect(seed).toHaveLength(3);
+    expect(seed.slice(0, 2)).toEqual([user, assistant]);
+    expect(seed[2]).toEqual({
+      role: 'tool',
+      toolCallId: 'call_agent',
+      content: [{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }],
+      toolCalls: [],
+    });
+  });
+
+  it('seals a partial assistant when closing an unanswered trailing call', () => {
+    const assistant: ContextMessage = {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'delegating the follow-up' }],
+      toolCalls: [agentCall],
+      partial: true,
+    };
+    const seed = closeTrailingOpenToolExchange([user, assistant]);
+
+    expect(seed[1]).toMatchObject({ role: 'assistant', partial: undefined });
+    expect(seed[2]).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call_agent',
+      content: [{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }],
+    });
+  });
+
+  it('fills only the unanswered calls of a partially answered parallel batch', () => {
+    const assistant: ContextMessage = {
+      role: 'assistant',
+      content: [],
+      toolCalls: [readCall, agentCall],
+    };
+    const answered: ContextMessage = {
+      role: 'tool',
+      toolCallId: 'call_read',
+      content: [{ type: 'text', text: 'contents' }],
+      toolCalls: [],
+    };
+    const seed = closeTrailingOpenToolExchange([user, assistant, answered]);
+
+    expect(seed).toHaveLength(4);
+    expect(seed.slice(0, 3)).toEqual([user, assistant, answered]);
+    expect(seed[3]).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call_agent',
+      content: [{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }],
+    });
+  });
+});

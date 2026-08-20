@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 
 import { eq, gte, lt, valid } from 'semver';
 
-import { KIMI_CODE_TIPS_BANNER_URL } from '#/constant/app';
 import type { BannerDisplay, BannerState } from '#/tui/types';
 
+import { getBannerConfig } from './banner-config';
 import type { BannerDisplayState } from './state';
 
 interface BannerVersionFields {
@@ -19,8 +19,11 @@ interface TipsBannerFallbackItem extends BannerVersionFields {
   banner_title?: string | null;
   banner_maintext?: string;
   banner_subtext?: string | null;
+  banner_start_time?: string | null;
+  banner_end_time?: string | null;
   banner_display?: unknown;
   banner_display_ttl_hours?: unknown;
+  banner_platform?: string | null;
 }
 
 interface TipsBannerJson extends BannerVersionFields {
@@ -35,6 +38,7 @@ interface TipsBannerJson extends BannerVersionFields {
   banner_display_ttl_hours?: unknown;
   banner_fallback_enabled?: boolean;
   banner_fallback_list?: unknown[];
+  banner_platform?: string | null;
 }
 
 interface BannerHashInput {
@@ -129,6 +133,15 @@ function meetsVersion(banner: BannerVersionFields, clientVersion: string): boole
   );
 }
 
+/** The CLI shows banners targeting every platform (missing / empty / 'all')
+    or the CLI itself; any other platform value ('desktop', 'web', …) hides
+    the banner here. */
+function meetsPlatform(value: unknown): boolean {
+  if (typeof value !== 'string') return true;
+  const platform = value.trim().toLowerCase();
+  return platform === '' || platform === 'all' || platform === 'cli';
+}
+
 function parseBannerDisplay(value: unknown): BannerDisplay {
   if (value === 'once') return 'once';
   if (value === 'cooldown') return 'cooldown';
@@ -198,6 +211,7 @@ function pickActiveBanner(
 ): BannerState | null {
   if (json.banner_enabled !== true) return null;
   if (!meetsVersion(json, clientVersion)) return null;
+  if (!meetsPlatform(json.banner_platform)) return null;
   const start = parseDate(json.banner_start_time);
   const end = parseDate(json.banner_end_time);
   if (!isWithinWindow(start, end, now)) return null;
@@ -219,6 +233,7 @@ function pickActiveBanner(
 function pickFallbackCandidates(
   json: TipsBannerJson,
   clientVersion: string,
+  now: Date,
 ): BannerState[] {
   if (json.banner_fallback_enabled !== true) return [];
   const list = Array.isArray(json.banner_fallback_list) ? json.banner_fallback_list : [];
@@ -228,6 +243,10 @@ function pickFallbackCandidates(
     const item = raw as TipsBannerFallbackItem;
     if (item.enabled !== true) continue;
     if (!meetsVersion(item, clientVersion)) continue;
+    if (!meetsPlatform(item.banner_platform)) continue;
+    const start = parseDate(item.banner_start_time);
+    const end = parseDate(item.banner_end_time);
+    if (!isWithinWindow(start, end, now)) continue;
     const mainText = normalizeText(item.banner_maintext);
     if (mainText === null) continue;
     const display = parseBannerDisplay(item.banner_display);
@@ -239,6 +258,8 @@ function pickFallbackCandidates(
         subText: item.banner_subtext,
         display,
         ttlHours: display === 'cooldown' ? parseBannerDisplayTtlHours(item.banner_display_ttl_hours) : undefined,
+        startTime: item.banner_start_time,
+        endTime: item.banner_end_time,
       }),
     );
   }
@@ -254,9 +275,10 @@ function pickRandomCandidate(candidates: BannerState[], random: () => number): B
 function pickFallbackBanner(
   json: TipsBannerJson,
   clientVersion: string,
+  now: Date,
   random: () => number,
 ): BannerState | null {
-  return pickRandomCandidate(pickFallbackCandidates(json, clientVersion), random);
+  return pickRandomCandidate(pickFallbackCandidates(json, clientVersion, now), random);
 }
 
 function parseShownAt(value: string | undefined): Date | null {
@@ -292,7 +314,7 @@ export function selectBannerState(
   const typed = typeof json === 'object' && json !== null ? (json as TipsBannerJson) : {};
   return (
     pickActiveBanner(typed, clientVersion, now) ??
-    pickFallbackBanner(typed, clientVersion, random)
+    pickFallbackBanner(typed, clientVersion, now, random)
   );
 }
 
@@ -306,44 +328,29 @@ export function selectDisplayableBanner({
   const typed = typeof json === 'object' && json !== null ? (json as TipsBannerJson) : {};
   const active = pickActiveBanner(typed, clientVersion, now);
   if (active !== null && shouldDisplayBanner(active, state, now)) return active;
-  const candidates = pickFallbackCandidates(typed, clientVersion).filter((candidate) =>
+  const candidates = pickFallbackCandidates(typed, clientVersion, now).filter((candidate) =>
     shouldDisplayBanner(candidate, state, now),
   );
   return pickRandomCandidate(candidates, random);
 }
 
 export class BannerProvider {
-  constructor(
-    private readonly clientVersion: string,
-    private readonly url: string = KIMI_CODE_TIPS_BANNER_URL,
-  ) {}
+  constructor(private readonly clientVersion: string) {}
 
-  async load(
-    fetchImpl: typeof fetch = fetch,
-    options: BannerProviderLoadOptions = {},
-  ): Promise<BannerState | null> {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => {
-        controller.abort();
-      }, 3000);
-      const response = await fetchImpl(this.url, { signal: controller.signal });
-      clearTimeout(timeout);
-      if (!response.ok) return null;
-      const json = await response.json();
-      const now = options.now ?? new Date();
-      const random = options.random ?? Math.random;
-      return options.state === undefined
-        ? selectBannerState(json, this.clientVersion, now, random)
-        : selectDisplayableBanner({
-            json,
-            clientVersion: this.clientVersion,
-            now,
-            random,
-            state: options.state,
-          });
-    } catch {
-      return null;
-    }
+  async load(options: BannerProviderLoadOptions = {}): Promise<BannerState | null> {
+    // getBannerConfig never throws; undefined means "config unavailable".
+    const json = await getBannerConfig();
+    if (json === undefined) return null;
+    const now = options.now ?? new Date();
+    const random = options.random ?? Math.random;
+    return options.state === undefined
+      ? selectBannerState(json, this.clientVersion, now, random)
+      : selectDisplayableBanner({
+          json,
+          clientVersion: this.clientVersion,
+          now,
+          random,
+          state: options.state,
+        });
   }
 }

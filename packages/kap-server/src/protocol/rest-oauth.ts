@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const oauthLoginStartRequestSchema = z.object({
   provider: z.string().min(1).optional(),
+  region: z.enum(['mainland-cn', 'global']).optional(),
 });
 export type OAuthLoginStartRequest = z.infer<typeof oauthLoginStartRequestSchema>;
 

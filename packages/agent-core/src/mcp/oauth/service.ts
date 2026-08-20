@@ -152,6 +152,9 @@ export class McpOAuthService {
   private readonly listeners = new Set<McpOAuthEventListener>();
   private readonly refreshes = new Map<string, Promise<void>>();
   private readonly refreshTimers = new Map<string, NodeJS.Timeout>();
+  /** In-flight timer-triggered proactive refreshes, awaited by {@link shutdown}. */
+  private readonly pendingProactiveRefreshes = new Set<Promise<void>>();
+  private shutdownStarted = false;
   /** In-flight interactive flows by credential store key; values resolve to the shared flow. */
   private readonly activeAuthorizations = new Map<string, Promise<SharedAuthorizationFlow>>();
 
@@ -261,11 +264,15 @@ export class McpOAuthService {
 
   /**
    * Release everything the service owns: pending proactive-refresh timers,
-   * in-flight interactive flows (closing their callback listeners), event
-   * listeners, and cached providers. Idempotent.
+   * in-flight proactive refreshes (awaited so their token writes and events
+   * land before listeners are dropped), in-flight interactive flows (closing
+   * their callback listeners), event listeners, and cached providers.
+   * Idempotent.
    */
   async shutdown(): Promise<void> {
+    this.shutdownStarted = true;
     this.stopProactiveRefresh();
+    await Promise.all(this.pendingProactiveRefreshes);
     const inFlight = [...this.activeAuthorizations.values()];
     this.activeAuthorizations.clear();
     await Promise.all(
@@ -531,6 +538,7 @@ export class McpOAuthService {
   }
 
   private scheduleRefresh(serverName: string, serverUrl: string | URL, expiresAt: number): void {
+    if (this.shutdownStarted) return;
     const canonicalUrl = canonicalMcpOAuthResource(serverUrl);
     const storeKey = mcpOAuthStoreKey(serverName, canonicalUrl);
     this.cancelScheduledRefresh(serverName, canonicalUrl);
@@ -557,13 +565,17 @@ export class McpOAuthService {
       timer = setTimeout(
         () => {
           this.refreshTimers.delete(storeKey);
-          void this.refresh(serverName, canonicalUrl).catch((error: unknown) => {
+          const pending = this.refresh(serverName, canonicalUrl).catch((error: unknown) => {
             this.emit({
               type: 'refresh-failed',
               serverName,
               serverUrl: canonicalUrl,
               error: error instanceof Error ? error.message : String(error),
             });
+          });
+          this.pendingProactiveRefreshes.add(pending);
+          void pending.finally(() => {
+            this.pendingProactiveRefreshes.delete(pending);
           });
         },
         Math.max(delay, 0),

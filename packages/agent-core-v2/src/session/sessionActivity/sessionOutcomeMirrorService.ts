@@ -34,11 +34,11 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
       })
       .catch(() => {});
     this.attachMain();
-    this._register(this.agents.onDidCreate((handle) => {
-      if (handle.id === MAIN_AGENT_ID) this.attachMain();
+    this._register(this.agents.onDidCreate((agent) => {
+      if (agent.agentId === MAIN_AGENT_ID) this.attachMain();
     }));
-    this._register(this.agents.onDidDispose((agentId) => {
-      if (agentId !== MAIN_AGENT_ID) return;
+    this._register(this.agents.onDidDispose((agent) => {
+      if (agent.agentId !== MAIN_AGENT_ID) return;
       this.mainSubscription?.dispose();
       this.mainSubscription = undefined;
     }));
@@ -52,7 +52,9 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
 
   private attachMain(): void {
     if (this.mainSubscription !== undefined) return;
-    const bus = this.agents.get(MAIN_AGENT_ID)?.accessor.get(IEventBus) as IEventBus | undefined;
+    const bus = this.agents.findAgentHandle(MAIN_AGENT_ID)?.accessor.get(IEventBus) as
+      | IEventBus
+      | undefined;
     if (bus === undefined) return;
     const subscription = new DisposableStore();
     this.mainSubscription = subscription;

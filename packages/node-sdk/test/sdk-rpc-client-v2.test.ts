@@ -35,6 +35,7 @@ import {
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
   getLiveSessionById,
+  agentContextOf,
   HostProcessError,
   IAgentLifecycleService,
   IHostRequestHeaders,
@@ -537,8 +538,14 @@ key = "${titleOAuthRef.key}"
       // The resumed session is a fresh, fully usable scope — not the handle
       // the temporary path just tore down.
       await client.renameSession({ id: 'ses_title_race', title: 'Resumed title' });
-      const sessions = await client.listSessions({ workDir });
-      expect(sessions.find((item) => item.id === 'ses_title_race')?.title).toBe('Resumed title');
+      await expect
+        .poll(
+          async () =>
+            (await client.listSessions({ workDir })).find((item) => item.id === 'ses_title_race')
+              ?.title,
+          { interval: 50, timeout: 4000 },
+        )
+        .toBe('Resumed title');
     } finally {
       await client.close();
       fetchSpy.mockRestore();
@@ -886,8 +893,8 @@ key = "${titleOAuthRef.key}"
 
       const handle = getLiveSessionById(client.engineAccessor, 'ses_todos');
       expect(handle).toBeDefined();
-      await handle!.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
-      handle!.accessor.get(ISessionTodoService).setTodos([
+      const main = await handle!.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+      await handle!.accessor.get(ISessionTodoService).setTodos(agentContextOf(main), [
         { title: 'write tests', status: 'in_progress' },
         { title: 'ship it', status: 'pending' },
       ]);
@@ -898,7 +905,9 @@ key = "${titleOAuthRef.key}"
       ]);
 
       const served = await client.getTodos({ sessionId: 'ses_todos' });
-      const stored = handle!.accessor.get(ISessionTodoService).getTodos();
+      const stored = await handle!
+        .accessor.get(ISessionTodoService)
+        .getTodos(agentContextOf(main));
       expect(served).not.toBe(stored);
       expect(served[0]).not.toBe(stored[0]);
       await expect(client.getTodos({ sessionId: 'ses_missing' })).rejects.toMatchObject({

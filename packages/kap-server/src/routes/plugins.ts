@@ -103,8 +103,10 @@ async function getSourceCheckoutLocation(): Promise<MarketplaceLocation | undefi
 }
 
 export interface PluginsRouteOptions {
-  /** Resolved catalog URL (server option / env already applied by start.ts). */
-  readonly marketplaceUrl: string;
+  /** Catalog URL resolver, invoked per request so a login region switch is
+      reflected without a restart (an explicitly configured URL from the
+      server option or env stays static). */
+  readonly marketplaceUrl: () => string;
   /**
    * True when the catalog location is the built-in default (neither the
    * server option nor the env var set) — only then does a failed remote read
@@ -135,7 +137,7 @@ export function registerPluginsRoutes(
       let read: { raw: string; location: MarketplaceLocation };
       try {
         read = await readPluginMarketplace({
-          source: opts.marketplaceUrl,
+          source: opts.marketplaceUrl(),
           workDir: process.cwd(),
           fetchImpl,
           sourceCheckoutLocation:

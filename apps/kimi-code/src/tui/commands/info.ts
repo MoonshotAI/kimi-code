@@ -17,7 +17,7 @@ import {
   FEEDBACK_TELEMETRY_EVENT,
   feedbackIdLine,
   feedbackSessionLine,
-  KIMI_CODE_SIGNUP_URL,
+  kimiCodeSignupUrl,
   withFeedbackVersionPrefix,
 } from '../constant/feedback';
 import { DEFAULT_OAUTH_PROVIDER_NAME, isManagedUsageProvider } from '../constant/kimi-tui';
@@ -55,7 +55,7 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
   }
   if (!signedIn) {
     host.showStatus(FEEDBACK_STATUS_NOT_SIGNED_IN);
-    host.showStatus(KIMI_CODE_SIGNUP_URL);
+    host.showStatus(kimiCodeSignupUrl());
     host.showStatus(FEEDBACK_ISSUE_URL);
     return;
   }

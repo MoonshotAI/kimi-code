@@ -72,8 +72,10 @@ export interface RegisterApiV1RoutesOptions {
   readonly connectionRegistry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
   readonly transcriptService: TranscriptService;
-  /** Catalog URL for the `/plugins/marketplace` route (resolved by start.ts). */
-  readonly pluginMarketplaceUrl: string;
+  /** Catalog URL resolver for the `/plugins/marketplace` route (start.ts
+      applies the option/env override; the default follows the active login
+      region per request). */
+  readonly pluginMarketplaceUrl: () => string;
   /** True when the catalog URL is the built-in default (no option/env set). */
   readonly pluginMarketplaceIsDefault: boolean;
   /**
