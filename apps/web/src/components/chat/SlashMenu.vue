@@ -56,6 +56,9 @@ const segmented = computed(() =>
 // dissolve toward an edge only while more content exists beyond it.
 const scrollEl = ref<HTMLElement | null>(null);
 const menuEl = ref<HTMLElement | null>(null);
+// Expose the root element so the composer can register the popup as a menu
+// surface (trackMenuSurface) while it is open.
+defineExpose({ el: menuEl });
 const scrolledUp = ref(false);
 const canScrollDown = ref(false);
 let resizeObserver: ResizeObserver | null = null;

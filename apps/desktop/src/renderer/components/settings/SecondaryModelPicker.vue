@@ -17,7 +17,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon } from '@moonshot-ai/app-ui';
+import { Icon, trackMenuSurface } from '@moonshot-ai/app-ui';
 import { segmentsFor, type ModelThinkingInfo } from '@moonshot-ai/app-core/lib';
 
 export type SecondaryModelGroup = { provider: string; options: Array<{ id: string; label: string }> };
@@ -51,6 +51,8 @@ const menuRef = ref<HTMLElement | null>(null);
 const flyoutRef = ref<HTMLElement | null>(null);
 const modelRowRefs = new Map<string, HTMLElement>();
 const open = ref(false);
+// A menu surface while open: tooltips outside it hide (native menu behavior).
+trackMenuSurface(open, menuRef);
 // Set on open when the space below the trigger cannot fit the menu — it then
 // opens upward (the Subagents section sits at the bottom of the Agent tab).
 const flipUp = ref(false);

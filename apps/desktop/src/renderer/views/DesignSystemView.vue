@@ -1038,6 +1038,7 @@ onUnmounted(() => {
             <!-- ===== Tooltip ===== -->
             <h3 class="sub">Tooltip</h3>
             <p>A CSS-only hover hint, wrapped in <code>.p-tip</code>. Inverted background (<code>--p-text</code> / <code>--p-bg</code>), single line, no wrapping — carries only short notes.</p>
+            <p>Component behavior contract (the <code>Tooltip</code> primitive and IconButton's <code>tooltip</code> prop, both backed by TooltipBubble): while any menu surface is open, every tooltip OUTSIDE it hides immediately and no new one may appear — a menu owns the screen, so a trigger's hint must never hang above its own dropdown (native menu behavior). Hints anchored INSIDE an open menu stay live, and ordinary hover behavior resumes once the last menu closes. <code>Menu.vue</code> and the <code>Select</code> listbox register as menu surfaces automatically; a bespoke menu surface (composer dropdowns, the slash/mention autocomplete popups, pickers) wires its open ref + panel element through <code>trackMenuSurface</code> from <code>@moonshot-ai/app-ui</code>.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Tooltip (hover the button)</span></div>
               <div class="stage p">

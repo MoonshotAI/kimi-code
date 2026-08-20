@@ -2,7 +2,8 @@
 <!-- Design-system §03 Menu: raised dropdown panel. Positioning is left to the
      consumer; this provides the surface + item layout. -->
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { registerMenuSurface } from '../../composables/menuStack';
 
 // `menu` for action lists (the default); `dialog` for popovers whose content
 // isn't menuitems (search inputs, grids — e.g. SessionEmojiPicker).
@@ -12,6 +13,14 @@ withDefaults(defineProps<{ role?: 'menu' | 'dialog' }>(), { role: 'menu' });
 // menu surface (positioning is intentionally left to the consumer).
 const el = ref<HTMLElement>();
 defineExpose({ el });
+
+// Menus render with v-if only while open, so mounted == open: register the
+// surface so TooltipBubble suppresses tooltips outside it (native behavior).
+let releaseSurface: (() => void) | undefined;
+onMounted(() => {
+  if (el.value) releaseSurface = registerMenuSurface(el.value);
+});
+onBeforeUnmount(() => releaseSurface?.());
 </script>
 
 <template>

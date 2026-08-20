@@ -14,6 +14,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, useAttrs, watch } from 'vue';
 import Icon from './Icon.vue';
 import { computeSelectMenuLayout, shouldBlockBehindScroll } from '../../lib/selectMenu';
+import { trackMenuSurface } from '../../composables/menuStack';
 
 defineOptions({ inheritAttrs: false });
 
@@ -48,6 +49,10 @@ const open = ref(false);
 const activeIndex = ref(-1);
 const listboxId = `ui-select-${Math.random().toString(36).slice(2, 9)}`;
 const menuStyle = ref<Record<string, string>>({});
+
+// While the listbox is up it is a menu surface: tooltips outside it hide
+// (native menu behavior) — see TooltipBubble / menuStack.
+trackMenuSurface(open, listRef);
 
 /** Fallbacks for the --space-1 / --space-2 derived geometry when a token
     can't be read (non-token host, parse failure). */

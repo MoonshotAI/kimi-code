@@ -15,6 +15,7 @@
      `tooltip` prop. -->
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { anyMenuOpen, isInOpenMenuSurface } from '../../composables/menuStack';
 
 type Placement = 'top' | 'bottom' | 'left' | 'right';
 
@@ -105,8 +106,16 @@ function position(anchorEl: HTMLElement): void {
   };
 }
 
+// Native menu rule: while any menu surface is open (menuStack), tooltips
+// outside the menu never show — the trigger's hint must not hang above its
+// own dropdown. Tooltips anchored INSIDE an open menu stay live.
+function tooltipSuppressed(): boolean {
+  return anyMenuOpen.value && !isInOpenMenuSurface(anchor());
+}
+
 function show(): void {
   if (!props.text) return;
+  if (tooltipSuppressed()) return;
   const anchorEl = anchor();
   if (!anchorEl) return;
   window.clearTimeout(showTimer);
@@ -224,6 +233,12 @@ function attach(): void {
 watch(() => [props.target, props.delegate], () => {
   hide();
   attach();
+});
+
+// A menu opening hides every tooltip outside it (the trigger's own hint
+// included), even mid-show-delay; inside-menu tooltips are unaffected.
+watch(anyMenuOpen, (menuOpen) => {
+  if (menuOpen && !isInOpenMenuSurface(anchor())) hide();
 });
 
 function onScrollOrResize(): void {

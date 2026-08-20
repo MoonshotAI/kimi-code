@@ -32,7 +32,7 @@ import type { ManagedMembership, PromptAttachment } from '@moonshot-ai/app-clien
 import AttachmentChip from './AttachmentChip.vue';
 import MediaLightbox from './MediaLightbox.vue';
 import MediaThumb from './MediaThumb.vue';
-import { ContextRing, Icon, IconButton, SegmentedControl, Spinner, Tooltip } from '@moonshot-ai/app-ui';
+import { ContextRing, Icon, IconButton, SegmentedControl, Spinner, Tooltip, trackMenuSurface } from '@moonshot-ai/app-ui';
 
 // ---------------------------------------------------------------------------
 // Props & emits
@@ -332,6 +332,16 @@ const {
   editorRef: textareaRef,
   searchFiles: () => props.searchFiles,
 });
+
+// The slash / mention autocomplete popups are menu surfaces too: while one is
+// open, tooltips outside it hide (native behavior — the add/permission/model
+// popups below register the same way).
+const slashMenuRef = ref<InstanceType<typeof SlashMenu> | null>(null);
+const mentionMenuRef = ref<InstanceType<typeof MentionMenu> | null>(null);
+const slashMenuEl = computed(() => slashMenuRef.value?.el ?? null);
+const mentionMenuEl = computed(() => mentionMenuRef.value?.el ?? null);
+trackMenuSurface(slashOpen, slashMenuEl);
+trackMenuSurface(mentionOpen, mentionMenuEl);
 
 // The component instance is reused across session switches (it is not keyed by
 // session), so reset per-session UI state when the active session changes:
@@ -919,7 +929,13 @@ const addMenuOpen = ref(false);
 const toolbarRef = ref<HTMLElement | null>(null);
 const addMenuRef = ref<HTMLElement | null>(null);
 const permPillRef = ref<HTMLElement | null>(null);
+const permDropdownRef = ref<HTMLElement | null>(null);
 const modelPillRef = ref<HTMLElement | null>(null);
+
+// The add / permission / model popups are bespoke menu surfaces (not the Menu
+// primitive): while one is open, tooltips outside it hide (native behavior).
+trackMenuSurface(addMenuOpen, addMenuRef);
+trackMenuSurface(permDropdownOpen, permDropdownRef);
 
 // Add-menu overlay scroll thumb (same vocabulary as the slash/mention
 // menus): the native bar is hidden so rows keep their full width.
@@ -1418,6 +1434,7 @@ const starredOtherModels = computed(() => {
 // Keyboard model for the quick-switch menu: focus the current row on open,
 // then ArrowUp / ArrowDown cycle through the rows (Esc already closes).
 const modelDropdownRef = ref<HTMLElement | null>(null);
+trackMenuSurface(dropdownOpen, modelDropdownRef);
 
 // Viewport clamp: the menu normally grows upward from the toolbar, but in
 // layouts where the composer sits high in the pane (workspace home) there is
@@ -1587,6 +1604,7 @@ function selectModel(modelId: string): void {
         <!-- Slash menu (above textarea) -->
         <SlashMenu
           v-if="slashOpen"
+          ref="slashMenuRef"
           :items="slashItems"
           :ranges="slashRanges"
           :active-index="slashActive"
@@ -1598,6 +1616,7 @@ function selectModel(modelId: string): void {
         <!-- Mention menu (above textarea) -->
         <MentionMenu
           v-if="mentionOpen"
+          ref="mentionMenuRef"
           :items="mentionItems"
           :active-index="mentionActive"
           :loading="mentionLoading"
@@ -1733,6 +1752,7 @@ function selectModel(modelId: string): void {
           <Transition name="composer-menu-pop">
             <div
               v-if="permDropdownOpen && status"
+              ref="permDropdownRef"
               class="perm-dropdown"
               :style="permissionMenuStyle"
               role="menu"

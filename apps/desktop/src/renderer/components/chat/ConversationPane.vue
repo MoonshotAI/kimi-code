@@ -16,7 +16,7 @@ import WorkspaceRecentSessions from './WorkspaceRecentSessions.vue';
 import ConversationToc, { type ConversationTocItem } from './ConversationToc.vue';
 import TranscriptSearch from './TranscriptSearch.vue';
 import KimiDoodle from '../KimiDoodle.vue';
-import { Icon, IconButton, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
+import { Icon, IconButton, Spinner, Tooltip, trackMenuSurface, useImeComposition } from '@moonshot-ai/app-ui';
 import { openUpgrade } from '@moonshot-ai/app-core/lib';
 import { getVisibleWorkspaces } from '@moonshot-ai/app-core/lib';
 import { safeRemove, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
@@ -208,6 +208,9 @@ const emit = defineEmits<{
 
 // Empty-composer workspace picker.
 const wsPickOpen = ref(false);
+const wsPanelRef = ref<HTMLElement | null>(null);
+// A bespoke menu surface while open: tooltips outside it hide (native behavior).
+trackMenuSurface(wsPickOpen, wsPanelRef);
 // Flip above the chip when there's more room there, and clamp the panel's
 // max-height to the scrollport so opening it can't shift the centred composer.
 const wsPickUp = ref(false);
@@ -2384,6 +2387,7 @@ defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone
                     </Tooltip>
                     <div
                       v-if="wsPickOpen"
+                      ref="wsPanelRef"
                       class="ws-panel"
                       :class="{ up: wsPickUp }"
                       :style="wsPickMaxHeight ? { maxHeight: wsPickMaxHeight } : undefined"
