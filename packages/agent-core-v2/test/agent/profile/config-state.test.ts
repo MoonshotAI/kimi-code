@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import type { ModelRecord } from '#/kosong/model/model';
+import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import {
   configServices,
   createTestAgent,
@@ -448,6 +449,39 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
           'Thinking effort "high" is not listed for model "compatible-model" (known: max). Falling back to the model\'s default effort "max".',
       }),
     });
+  });
+
+  it('normalizes a persisted unlisted effort to the declared default on resume', async () => {
+    await ctx.restore([
+      {
+        type: 'metadata',
+        protocol_version: WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+      },
+      {
+        type: 'profile.bind',
+        modelAlias: 'kimi-code/compatible',
+        profileName: 'restored-profile',
+        thinkingEffort: 'high',
+        systemPrompt: 'restored prompt',
+        disallowedTools: [],
+      },
+    ]);
+
+    expect(profile.data().thinkingLevel).toBe('max');
+    expect(ctx.allEvents).toContainEqual({
+      type: '[rpc]',
+      event: 'warning',
+      args: expect.objectContaining({
+        code: 'thinking-effort-not-listed',
+        message:
+          'Thinking effort "high" is not listed for model "compatible-model" (known: max). Falling back to the model\'s default effort "max".',
+      }),
+    });
+
+    await requester.request({}, undefined, new AbortController().signal);
+
+    expect(capturedThinking).toMatchObject({ effort: 'max' });
   });
 
   it('clamps off to the model default for always-on models, on any transport', () => {

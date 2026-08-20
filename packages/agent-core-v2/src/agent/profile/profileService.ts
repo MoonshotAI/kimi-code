@@ -203,6 +203,12 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         }
       }),
     );
+    this._register(
+      this.dispatcher.hooks.onDidRestore.register('profile', async (_ctx, next) => {
+        this.warnAboutThinkingEffortFallback(this.profileState.thinkingLevel);
+        await next();
+      }),
+    );
   }
 
   private get activeToolNamesOverlay(): readonly string[] | undefined {
@@ -702,11 +708,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private get thinkingLevel(): ThinkingEffort {
-    const stored = this.profileState.thinkingLevel;
-    if (stored === 'off' && this.alwaysThinkingModel) {
-      return this.resolveThinkingEffort(stored, this.tryResolveRawModel());
-    }
-    return stored;
+    return this.resolveThinkingEffort(this.profileState.thinkingLevel, this.tryResolveRawModel());
   }
 
   private resolveThinkingState(model: Model | undefined): {
@@ -745,10 +747,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private supportsThinkingEffort(effort: ThinkingEffort, model: Model | undefined): boolean {
     return modelSupportsThinkingEffort(effort, model, this.strictThinkingValidation(model));
-  }
-
-  private get alwaysThinkingModel(): boolean {
-    return this.tryResolveRawModel()?.alwaysThinking === true;
   }
 
   private tryResolveRawModel(): Model | undefined {
