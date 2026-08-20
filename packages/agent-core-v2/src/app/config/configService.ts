@@ -404,17 +404,18 @@ export class ConfigService extends Disposable implements IConfigService {
     }
     await this.enqueueStateTransition(async () => {
       this.assertPersistable();
-      const base = this.raw[domain];
-      const next = this.registry.merge(domain, base, patch);
-      const validated = this.registry.validate(domain, next);
-      const stripped = this.stripEnv(domain, validated);
-      if (stripped === undefined) {
-        delete this.raw[domain];
-      } else {
-        this.registry.validate(domain, stripped);
-        this.raw[domain] = stripped;
-      }
-      await this.persist(domain);
+      await this.persist(domain, (freshRaw) => {
+        this.raw = freshRaw;
+        const next = this.registry.merge(domain, freshRaw[domain], patch);
+        const validated = this.registry.validate(domain, next);
+        const stripped = this.stripEnv(domain, validated);
+        if (stripped === undefined) {
+          delete this.raw[domain];
+        } else {
+          this.registry.validate(domain, stripped);
+          this.raw[domain] = stripped;
+        }
+      });
       this.rebuildEffective('set', [domain]);
     });
   }
@@ -748,11 +749,14 @@ export class ConfigService extends Disposable implements IConfigService {
     );
   }
 
-  private async persist(domain: string): Promise<void> {
-    await this.persistDomains([domain]);
+  private async persist(domain: string, rebase?: (onDiskRaw: ResolvedConfig) => void): Promise<void> {
+    await this.persistDomains([domain], rebase);
   }
 
-  private async persistDomains(domains: readonly string[]): Promise<void> {
+  private async persistDomains(
+    domains: readonly string[],
+    rebase?: (onDiskRaw: ResolvedConfig) => void,
+  ): Promise<void> {
     this.assertPersistable();
     let onDisk: ResolvedConfig = {};
     try {
@@ -774,6 +778,9 @@ export class ConfigService extends Disposable implements IConfigService {
         `Refusing to persist config: ${this.bootstrap.configPath} could not be read; fix the file and reload before writing.`,
         { cause: error },
       );
+    }
+    if (rebase !== undefined) {
+      rebase(transformTomlData(onDisk, this.registry));
     }
     const absorbedExternal = JSON.stringify(onDisk) !== JSON.stringify(this.rawSnake);
     const nextRawSnake = cloneRecord(onDisk);

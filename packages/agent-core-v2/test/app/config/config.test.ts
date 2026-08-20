@@ -2730,4 +2730,27 @@ describe('ConfigService persistence guards', () => {
 
     disposables.dispose();
   });
+
+  it('rebases a set() merge onto external edits of the same section', async () => {
+    const { config, disposables, storage } = await createGuardedConfig(
+      '[providers.acme]\ntype = "openai"\napi_key = "sk-acme"\n',
+    );
+
+    await overwrite(
+      storage,
+      '[providers.acme]\ntype = "openai"\napi_key = "sk-acme"\n\n[providers.beta]\ntype = "openai"\napi_key = "sk-beta"\n',
+    );
+    await config.set(PROVIDERS_SECTION, { gamma: { type: 'openai', apiKey: 'sk-gamma' } });
+
+    const doc = await stored(storage);
+    expect(doc).toContain('[providers.beta]');
+    expect(doc).toContain('[providers.gamma]');
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme' },
+      beta: { type: 'openai', apiKey: 'sk-beta' },
+      gamma: { type: 'openai', apiKey: 'sk-gamma' },
+    });
+
+    disposables.dispose();
+  });
 });
