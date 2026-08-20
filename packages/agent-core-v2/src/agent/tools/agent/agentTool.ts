@@ -344,15 +344,6 @@ export class SubagentTool implements ISubagentTool {
       });
     }
 
-    const runInBackground = args.run_in_background === true;
-    emitAgentRunSpawned(requester, agentId, {
-      profileName,
-      parentToolCallId: toolCallId,
-      description: args.description,
-      runInBackground,
-      model: displayModel,
-    });
-
     const target = this.lifecycle.findAgentHandle(agentId);
     if (target === undefined) throw new Error(`Agent "${agentId}" does not exist`);
     const run = await this.subagents.run(

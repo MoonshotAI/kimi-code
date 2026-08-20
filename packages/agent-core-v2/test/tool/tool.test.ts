@@ -1335,6 +1335,29 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toContain('child result');
   });
 
+  it('emits subagent.spawned exactly once, after task registration, carrying the task id', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => ({ summary: 'child result' }),
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      subagent_type: 'explore',
+    });
+
+    const spawned = lifecycle.publishedEvents.filter(
+      (event) => event.type === 'subagent.spawned',
+    );
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0]).toMatchObject({
+      subagentId: 'agent-child',
+      taskId: expect.any(String),
+    });
+  });
+
   it('spawns the subagent on the pool default model when the tool call omits model', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
     const context = createAgentToolContext(lifecycle, secondaryModelFlags(), {
