@@ -119,6 +119,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
             return;
           }
           if (event.execution.display?.kind !== 'flow_jump_review') return;
+          if (this.jumpPolicy() !== 'approval') return;
           if (this.modeService.mode === 'auto') return;
           event.waitUntil(() => this.review.requestJumpApproval(event));
           return;

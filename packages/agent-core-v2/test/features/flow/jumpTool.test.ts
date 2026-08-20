@@ -77,7 +77,7 @@ describe('FlowJumpTool', () => {
     tool = ix.createInstance(FlowJumpTool);
   });
 
-  it('attaches a flow_jump_review display only under the approval policy', () => {
+  it('attaches a flow_jump_review display under every jump policy', () => {
     const execution = runnable(tool.resolveExecution(ARGS));
     expect(execution.display).toMatchObject({
       kind: 'flow_jump_review',
@@ -90,9 +90,15 @@ describe('FlowJumpTool', () => {
       reason: ARGS.reason,
     });
     policy = 'free';
-    expect(runnable(tool.resolveExecution(ARGS)).display).toBeUndefined();
+    expect(runnable(tool.resolveExecution(ARGS)).display).toMatchObject({
+      kind: 'flow_jump_review',
+      reason: ARGS.reason,
+    });
     policy = 'disabled';
-    expect(runnable(tool.resolveExecution(ARGS)).display).toBeUndefined();
+    expect(runnable(tool.resolveExecution(ARGS)).display).toMatchObject({
+      kind: 'flow_jump_review',
+      reason: ARGS.reason,
+    });
   });
 
   it('attaches no display for the current stage or an unknown stage', () => {
@@ -108,6 +114,7 @@ describe('FlowJumpTool', () => {
     const result = await runnable(tool.resolveExecution(ARGS)).execute(CTX);
     expect(result.isError).not.toBe(true);
     expect(result.output).toContain('Jumped to stage `verify`');
+    expect(result.output).toContain(`Reason: ${ARGS.reason}`);
     expect(jump).toHaveBeenCalledWith(
       expect.objectContaining({ to: 'verify', decidedBy: 'human' }),
     );

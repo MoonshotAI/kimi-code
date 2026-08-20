@@ -36,7 +36,6 @@ export class FlowJumpTool implements IFlowJumpTool {
     const parsed = FlowJumpInputSchema.safeParse(rawArgs);
     if (!parsed.success) return undefined;
     const args = parsed.data;
-    if (this.flow.jumpPolicy() !== 'approval') return undefined;
     const run = this.flow.run();
     const stage = this.flow.currentStage();
     if (!run.active || stage === undefined || stage.id === args.to) return undefined;
@@ -124,7 +123,7 @@ export class FlowJumpTool implements IFlowJumpTool {
         : '';
     return {
       isError: false,
-      output: `Jumped to stage \`${outcome.stage.id}\`.${autoNote}\n\n## Current stage: \`${outcome.stage.id}\`\n- Objective: ${outcome.stage.objective}\n- Completion: ${outcome.stage.completion}\n- Gate: ${outcome.stage.gate}${outcome.stage.notes === undefined ? '' : `\n- Notes: ${outcome.stage.notes}`}\n\nDispatch the stage to a worker with a self-contained brief, then verify its output against the completion criteria.`,
+      output: `Jumped to stage \`${outcome.stage.id}\`. Reason: ${args.reason}${autoNote}\n\n## Current stage: \`${outcome.stage.id}\`\n- Objective: ${outcome.stage.objective}\n- Completion: ${outcome.stage.completion}\n- Gate: ${outcome.stage.gate}${outcome.stage.notes === undefined ? '' : `\n- Notes: ${outcome.stage.notes}`}\n\nDispatch the stage to a worker with a self-contained brief, then verify its output against the completion criteria.`,
     };
   }
 }

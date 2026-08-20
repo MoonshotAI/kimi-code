@@ -949,5 +949,58 @@ describe('AgentFlowService', () => {
       expect(requestToolApproval).not.toHaveBeenCalled();
     });
   });
-});
+
+  describe('FlowJump review guard', () => {
+    const JUMP_REASON = 'triage already established by the user report';
+    const JUMP_DISPLAY: ToolInputDisplay = {
+      kind: 'flow_jump_review',
+      flow_id: 'issue-fix',
+      from_stage_id: 'triage',
+      to_stage_id: 'implement',
+      from_index: 0,
+      to_index: 1,
+      stage_total: 2,
+      reason: JUMP_REASON,
+    };
+
+    function jumpContext(display?: ToolInputDisplay): ResolvedToolExecutionHookContext {
+      const call: ToolCall = {
+        type: 'function',
+        id: 'call_jump',
+        name: 'FlowJump',
+        arguments: '{}',
+      };
+      return {
+        turnId: 0,
+        signal,
+        toolCall: call,
+        toolCalls: [call],
+        args: { to: 'implement', reason: JUMP_REASON },
+        execution: {
+          approvalRule: 'FlowJump',
+          display,
+          execute: async () => ({ output: '' }),
+        },
+      };
+    }
+
+    it('routes a displayed jump through tool approval under the approval policy', async () => {
+      service.start(DEFINITION, 'task');
+      await executorEvents.fireBeforeExecute(jumpContext(JUMP_DISPLAY));
+      expect(requestToolApproval).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips approval for a displayed jump under the free policy', async () => {
+      service.start({ ...DEFINITION, jumps: 'free' }, 'task');
+      const decision = await executorEvents.fireBeforeExecute(jumpContext(JUMP_DISPLAY));
+      expect(decision?.veto).toBeUndefined();
+      expect(requestToolApproval).not.toHaveBeenCalled();
+    });
+
+    it('skips approval for a displayed jump when jumps are disabled', async () => {
+      service.start({ ...DEFINITION, jumps: 'disabled' }, 'task');
+      await executorEvents.fireBeforeExecute(jumpContext(JUMP_DISPLAY));
+      expect(requestToolApproval).not.toHaveBeenCalled();
+    });
+  });
 });
