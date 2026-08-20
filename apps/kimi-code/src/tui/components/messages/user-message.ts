@@ -7,6 +7,7 @@ import { Spacer, Text, truncateToWidth, visibleWidth, type Component } from '@mo
 import { ImageThumbnail } from '#/tui/components/media/image-thumbnail';
 import { USER_MESSAGE_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
+import { formatTimestamp, timestampDisplayContextKey } from '#/tui/utils/format-time';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';
 import { markOsc133Zone } from '#/tui/utils/osc133';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
@@ -14,16 +15,34 @@ import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 export class UserMessageComponent implements Component {
   private text: string;
   private readonly bullet?: string;
+  private readonly timestamp?: number;
+  private showTimestamp = true;
   private spacerComponent: Spacer;
   private imageThumbnails: ImageThumbnail[];
 
-  private renderCache: { width: number; lines: string[] } | undefined;
+  private renderCache:
+    | { width: number; timestampContextKey: string; lines: string[] }
+    | undefined;
 
-  constructor(text: string, images?: ImageAttachment[], bullet?: string) {
+  constructor(
+    text: string,
+    images?: ImageAttachment[],
+    bullet?: string,
+    timestamp?: number,
+    showTimestamp = true,
+  ) {
     this.text = text;
     this.bullet = bullet;
+    this.timestamp = timestamp;
+    this.showTimestamp = showTimestamp;
     this.spacerComponent = new Spacer(1);
     this.imageThumbnails = images?.map((img) => new ImageThumbnail(img)) ?? [];
+  }
+
+  setShowTimestamp(show: boolean): void {
+    if (this.showTimestamp === show) return;
+    this.showTimestamp = show;
+    this.markRenderDirty();
   }
 
   private markRenderDirty(): void {
@@ -40,19 +59,19 @@ export class UserMessageComponent implements Component {
   render(width: number): string[] {
     const safeWidth = Math.max(0, width);
     if (safeWidth <= 0) return [''];
+    const now = Date.now();
+    const timestampContextKey = this.showTimestamp
+      ? timestampDisplayContextKey(this.timestamp, now)
+      : '';
 
     if (
       isRenderCacheEnabled() &&
       this.renderCache !== undefined &&
-      this.renderCache.width === safeWidth
+      this.renderCache.width === safeWidth &&
+      this.renderCache.timestampContextKey === timestampContextKey
     ) {
       return this.renderCache.lines;
     }
-
-    const marker = this.bullet ?? USER_MESSAGE_BULLET;
-    const bullet = marker.length > 0 ? currentTheme.boldFg('roleUser', marker) : '';
-    const bulletWidth = visibleWidth(bullet);
-    const contentWidth = Math.max(1, safeWidth - bulletWidth);
 
     const lines: string[] = [];
 
@@ -61,20 +80,28 @@ export class UserMessageComponent implements Component {
       lines.push(line);
     }
 
-    // Text is re-dyed from the current theme; invalidate() (theme change) clears
-    // the render cache so the new colours are picked up on the next render.
+    const marker = this.bullet ?? USER_MESSAGE_BULLET;
+    const formattedTime = this.showTimestamp ? formatTimestamp(this.timestamp, undefined, now) : '';
+    const bullet = marker.length > 0 ? currentTheme.boldFg('roleUser', marker) : '';
+    const bulletWidth = visibleWidth(bullet);
+    const contentWidth = formattedTime.length > 0 ? safeWidth : Math.max(1, safeWidth - bulletWidth);
+
+    if (formattedTime.length > 0) {
+      lines.push(`${bullet}${currentTheme.dim(formattedTime)}`);
+    }
+
     const coloredText = currentTheme.boldFg('roleUser', this.text);
     const textLines = new Text(coloredText, 0, 0).render(contentWidth);
     for (let i = 0; i < textLines.length; i++) {
-      const prefix = i === 0 ? bullet : ' '.repeat(bulletWidth);
+      const prefix = formattedTime.length === 0
+        ? (i === 0 ? bullet : ' '.repeat(bulletWidth))
+        : '';
       lines.push(prefix + textLines[i]);
     }
-
-    // Images — indented to align with text after the bullet
     for (const thumbnail of this.imageThumbnails) {
       const imageLines = thumbnail.render(contentWidth);
       for (const line of imageLines) {
-        lines.push(' '.repeat(bulletWidth) + line);
+        lines.push((formattedTime.length === 0 ? ' '.repeat(bulletWidth) : '') + line);
       }
     }
 
@@ -90,7 +117,7 @@ export class UserMessageComponent implements Component {
       }),
     );
     if (isRenderCacheEnabled()) {
-      this.renderCache = { width: safeWidth, lines: rendered };
+      this.renderCache = { width: safeWidth, timestampContextKey, lines: rendered };
     }
     return rendered;
   }

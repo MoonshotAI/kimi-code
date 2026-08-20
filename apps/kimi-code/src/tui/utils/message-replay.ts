@@ -41,6 +41,8 @@ export interface ReplayRenderContext {
   assistant: {
     thinking: string[];
     text: string[];
+    createdAt?: number;
+    completedAt?: number;
   };
   toolCalls: Map<string, ToolCallBlockData>;
   completedToolCallIds: Set<string>;
@@ -149,7 +151,7 @@ export function createReplayRenderContext(): ReplayRenderContext {
     turnIndex: 0,
     stepIndex: 0,
     currentTurnId: undefined,
-    assistant: { thinking: [], text: [] },
+    assistant: { thinking: [], text: [], createdAt: undefined, completedAt: undefined },
     toolCalls: new Map(),
     completedToolCallIds: new Set(),
     skillActivationIds: new Set(),
@@ -173,7 +175,7 @@ export function replayEntry(
   kind: TranscriptEntry['kind'],
   content: string,
   renderMode: TranscriptEntry['renderMode'],
-  extras: { detail?: string; bullet?: string } = {},
+  extras: { detail?: string; bullet?: string; createdAt?: number; endedAt?: number } = {},
 ): TranscriptEntry {
   return {
     id: nextTranscriptId(),
@@ -183,6 +185,8 @@ export function replayEntry(
     content,
     detail: extras.detail,
     bullet: extras.bullet,
+    createdAt: extras.createdAt,
+    endedAt: extras.endedAt,
   };
 }
 

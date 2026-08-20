@@ -2,12 +2,15 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { Container } from '@moonshot-ai/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   handleReloadCommand,
   handleReloadTuiCommand,
 } from '#/tui/commands/reload';
+import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
+import { UserMessageComponent } from '#/tui/components/messages/user-message';
 import { currentTheme } from '#/tui/theme';
 import type { SlashCommandHost } from '#/tui/commands';
 import {
@@ -35,6 +38,36 @@ afterEach(async () => {
 });
 
 describe('reload slash commands', () => {
+  it('re-renders mounted transcript timestamps when the preference is reloaded', async () => {
+    await writeTuiConfig('show_timestamp = false\n');
+    const host = makeHost();
+    const startedAt = new Date(2000, 0, 2, 10, 0, 0).getTime();
+    const user = new UserMessageComponent('existing user message', [], undefined, startedAt);
+    const assistant = new AssistantMessageComponent(true, startedAt, startedAt + 5_000);
+    assistant.updateContent('existing assistant message');
+    host.state.transcriptContainer.addChild(user);
+    host.state.transcriptContainer.addChild(assistant);
+
+    expect(stripSgr(host.state.transcriptContainer.render(120).join('\n'))).toContain(
+      '2000-01-02 10:00:00',
+    );
+
+    await handleReloadTuiCommand(host);
+
+    const transcript = stripSgr(host.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).not.toContain('2000-01-02 10:00:00');
+    expect(transcript).not.toContain('(took 5s)');
+    expect(transcript).toContain('existing user message');
+    expect(transcript).toContain('existing assistant message');
+
+    await writeTuiConfig('show_timestamp = true\n');
+    await handleReloadTuiCommand(host);
+
+    const restored = stripSgr(host.state.transcriptContainer.render(120).join('\n'));
+    expect(restored).toContain('2000-01-02 10:00:00');
+    expect(restored).toContain('(took 5s)');
+  });
+
   it('reloads tui.toml without touching Core session state', async () => {
     await writeTuiConfig(`
 theme = "light"
@@ -178,6 +211,10 @@ async function writeTuiConfig(text: string): Promise<void> {
   await writeFile(join(dir, 'tui.toml'), text, 'utf-8');
 }
 
+function stripSgr(text: string): string {
+  return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
+}
+
 function makeHost({
   session,
 }: {
@@ -195,6 +232,7 @@ function makeHost({
     editor: {
       setDisablePasteBurst: vi.fn(),
     },
+    transcriptContainer: new Container(),
     theme: {
       palette: {
         success: '#00ff00',

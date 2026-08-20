@@ -405,8 +405,9 @@ export class SessionEventHandler {
   }
 
   private handleStepBegin(event: TurnStepStartedEvent): void {
+    const startedAt = Date.now();
     this.host.streamingUI.flushNow();
-    this.host.streamingUI.setStep(event.step);
+    this.host.streamingUI.setStep(event.step, startedAt);
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeLiveTextBuffers('waiting');
     this.host.patchLivePane({
@@ -416,12 +417,19 @@ export class SessionEventHandler {
     });
     this.host.setAppState({
       streamingPhase: 'waiting',
-      streamingStartTime: Date.now(),
+      streamingStartTime: startedAt,
     });
   }
 
   private handleStepCompleted(event: TurnStepCompletedEvent): void {
+    const completedAt = Date.now();
     this.host.streamingUI.flushNow();
+    this.host.streamingUI.completeStep(
+      String(event.turnId),
+      event.step,
+      completedAt,
+      event.llmFirstTokenLatencyMs,
+    );
     this.clearStepRetry();
     this.host.noteStepUsage(event.usage);
     this.maybeShowDebugTiming(event);
@@ -523,6 +531,7 @@ export class SessionEventHandler {
     this.clearStepRetry();
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeLiveTextBuffers('idle');
+    this.host.streamingUI.discardStep(String(event.turnId), event.step);
     const reason = event.reason;
     if (reason === 'error') return;
     if (reason === 'aborted' || reason === undefined || reason === '') {

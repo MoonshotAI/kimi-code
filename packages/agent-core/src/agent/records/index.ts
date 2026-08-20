@@ -271,7 +271,7 @@ export class AgentRecords {
   }
 
   restore(record: AgentRecord): boolean {
-    this._restoring = { time: record.time ?? Date.now() };
+    this._restoring = { time: record.time };
     try {
       restoreAgentRecord(this.agent, record);
       return this.agent.replayBuilder.finishRestoringRecord(record.type);
