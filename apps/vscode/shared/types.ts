@@ -1,4 +1,4 @@
-import type { RunResult, StreamEvent } from "./legacy-sdk";
+import type { BackgroundTaskInfo, RunResult, StreamEvent } from "./legacy-sdk";
 
 export interface SessionConfig {
   model: string;
@@ -24,6 +24,11 @@ export interface FileChange {
   status: "Modified" | "Added" | "Deleted";
   additions: number;
   deletions: number;
+}
+
+export interface BackgroundTasksChangedPayload {
+  sessionId: string | null;
+  tasks: BackgroundTaskInfo[];
 }
 
 export interface ExtensionConfig {

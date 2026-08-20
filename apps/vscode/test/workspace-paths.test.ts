@@ -305,6 +305,7 @@ describe("Webview workspace paths (selected-directory containment)", () => {
     } as unknown as Session;
     const runtime = new SessionRuntime({
       session,
+      withInteractiveAgent: (_agentId, fn) => fn(),
       legacyApproval: { yolo: false, afk: false },
       broadcast: vi.fn(),
       captureBaseline: (summary, filePath, webviewIds) => {

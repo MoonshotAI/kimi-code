@@ -11,6 +11,7 @@ import type {
 } from "shared/legacy-sdk";
 import type {
   FileChange,
+  BackgroundTasksChangedPayload,
   SessionConfig,
   ExtensionConfig,
   WorkspaceStatus,
@@ -293,6 +294,18 @@ class Bridge {
 
   reloadWebview() {
     return this.call<{ ok: boolean }>(Methods.ReloadWebview);
+  }
+
+  listBackgroundTasks() {
+    return this.call<BackgroundTasksChangedPayload>(Methods.ListBackgroundTasks);
+  }
+
+  getBackgroundTaskOutput(taskId: string, tail?: number) {
+    return this.call<{ output: string }>(Methods.GetBackgroundTaskOutput, { taskId, tail });
+  }
+
+  stopBackgroundTask(taskId: string) {
+    return this.call<{ ok: boolean }>(Methods.StopBackgroundTask, { taskId });
   }
 }
 

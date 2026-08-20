@@ -8,6 +8,7 @@
 import type {
   ApprovalHandler,
   ApprovalRequest,
+  BackgroundTaskInfo,
   Event,
   JsonObject,
   PermissionMode,
@@ -42,6 +43,11 @@ interface FakeSessionBoundary {
   readonly handlerInstallations: { approval: number; question: number };
   readonly metadataUpdates: JsonObject[];
   readonly setPermissions: PermissionMode[];
+  setBackgroundTasks(tasks: readonly BackgroundTaskInfo[], agentId?: string): void;
+  setResumeAgentIds(agentIds: readonly string[]): void;
+  readonly taskOutputRequests: Array<{ agentId: string; taskId: string; tail?: number }>;
+  readonly stoppedTasks: Array<{ agentId: string; taskId: string }>;
+  withInteractiveAgent<T>(agentId: string, fn: () => T): T;
   readonly subscriptionCount: () => number;
   readonly cancelCount: () => number;
   readonly cancelCompactionCount: () => number;
@@ -66,6 +72,11 @@ function createFakeSession(): FakeSessionBoundary {
   let questionHandler: QuestionHandler | undefined;
   let nextPromptError: Error | undefined;
   let nextMetadataError: Error | undefined;
+  const backgroundTasks = new Map<string, readonly BackgroundTaskInfo[]>();
+  const taskOutputRequests: Array<{ agentId: string; taskId: string; tail?: number }> = [];
+  const stoppedTasks: Array<{ agentId: string; taskId: string }> = [];
+  let activeAgentId = "main";
+  let resumeAgentIds: readonly string[] = ["main"];
   let subscriptions = 0;
   let cancellations = 0;
   let compactionCancellations = 0;
@@ -85,6 +96,11 @@ function createFakeSession(): FakeSessionBoundary {
     id: summary.id,
     workDir: summary.workDir,
     summary,
+    getResumeState() {
+      return {
+        agents: Object.fromEntries(resumeAgentIds.map((agentId) => [agentId, {}])),
+      };
+    },
     setApprovalHandler(handler: ApprovalHandler | undefined) {
       approvalHandler = handler;
       if (handler !== undefined) handlerInstallations.approval += 1;
@@ -129,6 +145,16 @@ function createFakeSession(): FakeSessionBoundary {
       permission = mode;
       setPermissions.push(mode);
     },
+    async listBackgroundTasks() {
+      return backgroundTasks.get(activeAgentId) ?? [];
+    },
+    async getBackgroundTaskOutput(taskId: string, options?: { tail?: number }) {
+      taskOutputRequests.push({ agentId: activeAgentId, taskId, tail: options?.tail });
+      return `output from ${activeAgentId}`;
+    },
+    async stopBackgroundTask(taskId: string) {
+      stoppedTasks.push({ agentId: activeAgentId, taskId });
+    },
     async updateMetadata(patch: JsonObject) {
       if (nextMetadataError !== undefined) {
         const error = nextMetadataError;
@@ -149,6 +175,23 @@ function createFakeSession(): FakeSessionBoundary {
     handlerInstallations,
     metadataUpdates,
     setPermissions,
+    taskOutputRequests,
+    stoppedTasks,
+    withInteractiveAgent(agentId, fn) {
+      const previousAgentId = activeAgentId;
+      activeAgentId = agentId;
+      try {
+        return fn();
+      } finally {
+        activeAgentId = previousAgentId;
+      }
+    },
+    setBackgroundTasks(tasks, agentId = "main") {
+      backgroundTasks.set(agentId, tasks);
+    },
+    setResumeAgentIds(agentIds) {
+      resumeAgentIds = agentIds;
+    },
     subscriptionCount: () => subscriptions,
     cancelCount: () => cancellations,
     cancelCompactionCount: () => compactionCancellations,
@@ -179,6 +222,7 @@ function createRuntime(legacyApproval = DEFAULT_LEGACY_APPROVAL) {
   const baselines: BaselineRecord[] = [];
   const runtime = new SessionRuntime({
     session: sdk.session,
+    withInteractiveAgent: (agentId, fn) => sdk.withInteractiveAgent(agentId, fn),
     legacyApproval,
     broadcast: (event, data, webviewId) => broadcasts.push({ event, data, webviewId }),
     captureBaseline: (session, filePath, webviewIds) => {
@@ -375,6 +419,220 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
       type: "ContentPart",
       payload: { type: "think", think: "Checking the edge case" },
       _sessionId: "session-1",
+    });
+  });
+
+  describe("background tasks (publishes task lifecycle state to subscribed Webviews)", () => {
+    it("broadcasts the current task list when a background task starts", () => {
+      const { sdk, broadcasts } = createRuntime();
+      const info: BackgroundTaskInfo = {
+        taskId: "bash-1",
+        kind: "process",
+        description: "dev server",
+        status: "running",
+        command: "pnpm dev",
+        pid: 1234,
+        exitCode: null,
+        startedAt: 1000,
+        endedAt: null,
+      };
+
+      sdk.emit({
+        type: "background.task.started",
+        sessionId: "session-1",
+        agentId: "main",
+        info,
+      });
+
+      expect(broadcasts).toContainEqual({
+        event: Events.BackgroundTasksChanged,
+        data: { sessionId: "session-1", tasks: [info] },
+        webviewId: "view-1",
+      });
+    });
+
+    it("adds a transcript status card when a background task starts", () => {
+      const { sdk, broadcasts } = createRuntime();
+      const info: BackgroundTaskInfo = {
+        taskId: "bash-1",
+        kind: "process",
+        description: "dev server",
+        status: "running",
+        command: "pnpm dev",
+        pid: 1234,
+        exitCode: null,
+        startedAt: 1000,
+        endedAt: null,
+      };
+
+      sdk.emit({
+        type: "background.task.started",
+        sessionId: "session-1",
+        agentId: "main",
+        info,
+      });
+
+      expect(streamData(broadcasts)).toContainEqual({
+        type: "BackgroundTaskStatus",
+        payload: { info },
+        _sessionId: "session-1",
+      });
+    });
+
+    it("emits one terminal status card when the same task status is repeated", () => {
+      const { sdk, broadcasts } = createRuntime();
+      const info: BackgroundTaskInfo = {
+        taskId: "bash-1",
+        kind: "process",
+        description: "dev server",
+        status: "completed",
+        command: "pnpm dev",
+        pid: 1234,
+        exitCode: 0,
+        startedAt: 1000,
+        endedAt: 2000,
+      };
+      const event: Event = {
+        type: "background.task.terminated",
+        sessionId: "session-1",
+        agentId: "main",
+        info,
+      };
+
+      sdk.emit(event);
+      sdk.emit(event);
+
+      expect(
+        streamData(broadcasts).filter(
+          (streamEvent) =>
+            typeof streamEvent === "object" &&
+            streamEvent !== null &&
+            "type" in streamEvent &&
+            streamEvent.type === "BackgroundTaskStatus",
+        ),
+      ).toEqual([
+        {
+          type: "BackgroundTaskStatus",
+          payload: { info },
+          _sessionId: "session-1",
+        },
+      ]);
+    });
+
+    it("announces restored task state only to the requested subscribed Webview", async () => {
+      const { runtime, sdk, broadcasts } = createRuntime();
+      const info: BackgroundTaskInfo = {
+        taskId: "agent-1",
+        kind: "agent",
+        description: "review changes",
+        status: "completed",
+        agentId: "reviewer",
+        startedAt: 1000,
+        endedAt: 2000,
+      };
+      sdk.setBackgroundTasks([info]);
+      runtime.subscribe("view-2");
+
+      await runtime.announceBackgroundTasks("view-2");
+
+      expect(broadcasts).toEqual([
+        {
+          event: Events.BackgroundTasksChanged,
+          data: { sessionId: "session-1", tasks: [info] },
+          webviewId: "view-2",
+        },
+      ]);
+    });
+
+    it("announces tasks from every resumed agent when a session is restored", async () => {
+      const { runtime, sdk, broadcasts } = createRuntime();
+      const mainTask: BackgroundTaskInfo = {
+        taskId: "bash-main",
+        kind: "process",
+        description: "main task",
+        status: "running",
+        command: "pnpm dev",
+        pid: 1234,
+        exitCode: null,
+        startedAt: 1000,
+        endedAt: null,
+      };
+      const workerTask: BackgroundTaskInfo = {
+        taskId: "bash-worker",
+        kind: "process",
+        description: "worker task",
+        status: "completed",
+        command: "pnpm test",
+        pid: 5678,
+        exitCode: 0,
+        startedAt: 1100,
+        endedAt: 2000,
+      };
+      sdk.setResumeAgentIds(["main", "worker-1"]);
+      sdk.setBackgroundTasks([mainTask]);
+      sdk.setBackgroundTasks([workerTask], "worker-1");
+
+      await runtime.announceBackgroundTasks("view-1");
+
+      expect(broadcasts).toContainEqual({
+        event: Events.BackgroundTasksChanged,
+        data: { sessionId: "session-1", tasks: [mainTask, workerTask] },
+        webviewId: "view-1",
+      });
+    });
+
+    it("loads task output from the agent that announced the task", async () => {
+      const { runtime, sdk } = createRuntime();
+      const info: BackgroundTaskInfo = {
+        taskId: "bash-worker",
+        kind: "process",
+        description: "worker task",
+        status: "running",
+        command: "pnpm test",
+        pid: 5678,
+        exitCode: null,
+        startedAt: 1000,
+        endedAt: null,
+      };
+      sdk.emit({
+        type: "background.task.started",
+        sessionId: "session-1",
+        agentId: "worker-1",
+        info,
+      });
+
+      await expect(runtime.getBackgroundTaskOutput("bash-worker", 4000)).resolves.toBe(
+        "output from worker-1",
+      );
+
+      expect(sdk.taskOutputRequests).toEqual([
+        { agentId: "worker-1", taskId: "bash-worker", tail: 4000 },
+      ]);
+    });
+
+    it("stops a task through the agent that announced the task", async () => {
+      const { runtime, sdk } = createRuntime();
+      const info: BackgroundTaskInfo = {
+        taskId: "bash-worker",
+        kind: "process",
+        description: "worker task",
+        status: "running",
+        command: "pnpm test",
+        pid: 5678,
+        exitCode: null,
+        startedAt: 1000,
+        endedAt: null,
+      };
+      sdk.emit({
+        type: "background.task.started",
+        sessionId: "session-1",
+        agentId: "worker-1",
+        info,
+      });
+
+      await runtime.stopBackgroundTask("bash-worker");
+
+      expect(sdk.stoppedTasks).toEqual([{ agentId: "worker-1", taskId: "bash-worker" }]);
     });
   });
 

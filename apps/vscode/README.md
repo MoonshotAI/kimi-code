@@ -8,6 +8,7 @@ AI coding assistant for VS Code, built for long-context workflows and complex co
 - **Thinking controls**: Toggle reasoning or choose a model-supported thinking effort
 - **Provider-aware models**: Distinguish and select same-named models across configured providers
 - **Native editor integration**: Review AI-proposed changes directly in VS Code's diff viewer
+- **Background tasks**: Track running work, inspect live output, and stop tasks from the tasks panel
 - **MCP support**: Extend capabilities with Model Context Protocol servers
 - **Slash commands**: Quick actions like `/init` to analyze your project and `/compact` to manage context
 

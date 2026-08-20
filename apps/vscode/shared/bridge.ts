@@ -61,6 +61,10 @@ export const Methods = {
   ShowLogs: "showLogs",
   ReloadWebview: "reloadWebview",
   RespondQuestion: "respondQuestion",
+
+  ListBackgroundTasks: "listBackgroundTasks",
+  GetBackgroundTaskOutput: "getBackgroundTaskOutput",
+  StopBackgroundTask: "stopBackgroundTask",
 } as const;
 
 export type RpcMethod = (typeof Methods)[keyof typeof Methods];
@@ -96,6 +100,7 @@ export const Events = {
   FileChangesUpdated: "fileChangesUpdated",
   RollbackInput: "rollbackInput",
   LoginUrl: "loginUrl",
+  BackgroundTasksChanged: "backgroundTasksChanged",
 } as const;
 
 const rpcMethods = new Set<string>(Object.values(Methods));
@@ -148,6 +153,7 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
     case Methods.ClearTrackedFiles:
     case Methods.ShowLogs:
     case Methods.ReloadWebview:
+    case Methods.ListBackgroundTasks:
       return params === undefined;
 
     case Methods.AddInputHistory:
@@ -180,6 +186,13 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
         && isNonEmptyString(params["rpcRequestId"])
         && isNonEmptyString(params["questionRequestId"])
         && isStringRecord(params["answers"]);
+    case Methods.GetBackgroundTaskOutput:
+      return isPlainObject(params)
+        && isNonEmptyString(params["taskId"])
+        && (params["tail"] === undefined
+          || (Number.isInteger(params["tail"]) && (params["tail"] as number) > 0));
+    case Methods.StopBackgroundTask:
+      return isPlainObject(params) && isNonEmptyString(params["taskId"]);
     case Methods.SetPlanMode:
       return hasBoolean(params, "enabled");
     case Methods.SteerChat:

@@ -140,6 +140,9 @@ export class KimiRuntime {
     runtime.subscribe(options.webviewId);
     this.sessionByView.set(options.webviewId, runtime.id);
     await runtime.announceStatus(options.webviewId);
+    await runtime.announceBackgroundTasks(options.webviewId).catch((error: unknown) => {
+      this.log("Failed to announce background tasks", error);
+    });
     return runtime;
   }
 
@@ -152,6 +155,9 @@ export class KimiRuntime {
     if (existing !== undefined && this.sessionByView.get(webviewId) === session.id) {
       existing.subscribe(webviewId);
       await existing.announceStatus(webviewId);
+      await existing.announceBackgroundTasks(webviewId).catch((error: unknown) => {
+        this.log("Failed to announce background tasks", error);
+      });
       return existing;
     }
     await this.detachView(webviewId);
@@ -181,6 +187,9 @@ export class KimiRuntime {
     runtime.subscribe(webviewId);
     this.sessionByView.set(webviewId, runtime.id);
     await runtime.announceStatus(webviewId);
+    await runtime.announceBackgroundTasks(webviewId).catch((error: unknown) => {
+      this.log("Failed to announce background tasks", error);
+    });
     return runtime;
   }
 
@@ -233,6 +242,7 @@ export class KimiRuntime {
   private wrapSession(session: Session, legacyApproval: LegacyApprovalFlags): SessionRuntime {
     const runtime = new SessionRuntime({
       session,
+      withInteractiveAgent: (agentId, fn) => this.harness.withInteractiveAgent(agentId, fn),
       legacyApproval,
       broadcast: this.broadcast,
       captureBaseline: this.captureBaseline,

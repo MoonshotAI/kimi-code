@@ -79,8 +79,8 @@ function SessionItem({ session, isSelected, onSelect, onDelete, dirLabel }: Sess
 }
 
 export function SessionList({ onClose }: SessionListProps) {
-  const { loadSession, sessionId, startNewConversation, isStreaming } = useChatStore();
-  const { workspaceRoot, currentWorkDir, setCurrentWorkDir } = useSettingsStore();
+  const { restoreSession, sessionId, startNewConversation, isStreaming } = useChatStore();
+  const { workspaceRoot, currentWorkDir } = useSettingsStore();
   const [searchQuery, setSearchQuery] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<SessionInfo | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -122,18 +122,21 @@ export function SessionList({ onClose }: SessionListProps) {
 
   const doLoadSession = async (session: SessionInfo) => {
     try {
-      // Switch workDir if session is from a different directory
-      const activeWorkDir = currentWorkDir || workspaceRoot;
-      if (session.workDir !== activeWorkDir) {
-        const newWorkDir = session.workDir === workspaceRoot ? null : session.workDir;
-        const result = await bridge.setWorkDir(newWorkDir);
-        if (result.ok) {
-          setCurrentWorkDir(newWorkDir);
+      const restored = await restoreSession(session.id, async () => {
+        // Switch workDir if session is from a different directory
+        const settings = useSettingsStore.getState();
+        const activeWorkDir = settings.currentWorkDir ?? settings.workspaceRoot;
+        if (session.workDir !== activeWorkDir) {
+          const newWorkDir = session.workDir === settings.workspaceRoot ? null : session.workDir;
+          const result = await bridge.setWorkDir(newWorkDir);
+          if (result.ok) {
+            settings.setCurrentWorkDir(newWorkDir);
+          }
         }
+      });
+      if (restored) {
+        onClose();
       }
-      const events = await bridge.loadSessionHistory(session.id);
-      await loadSession(session.id, events);
-      onClose();
     } catch (error) {
       console.error("[SessionList] Failed to load session:", error);
       toast.error(`Unable to open the conversation: ${error instanceof Error ? error.message : String(error)}`);

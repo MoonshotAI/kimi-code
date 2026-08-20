@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { IconChevronUp, IconStack2, IconFileCode } from "@tabler/icons-react";
-import { useChatStore } from "@/stores";
+import { IconChevronUp, IconStack2, IconFileCode, IconTerminal2 } from "@tabler/icons-react";
+import { useChatStore, useTasksStore, visibleBackgroundTasks, runningTaskCount } from "@/stores";
 import { bridge, Events } from "@/services";
 import { cn } from "@/lib/utils";
 import { FileChangesPanel } from "./FileChangesPanel";
@@ -15,6 +15,8 @@ export function BottomToolbar() {
   const { queue } = useChatStore();
   const [activeTab, setActiveTab] = useState<TabId>(null);
   const [fileChanges, setFileChanges] = useState<FileChange[]>([]);
+  const tasks = useTasksStore((s) => s.tasks);
+  const setBrowserOpen = useTasksStore((s) => s.setBrowserOpen);
 
   useEffect(() => {
     return bridge.on<FileChange[]>(Events.FileChangesUpdated, setFileChanges);
@@ -32,7 +34,10 @@ export function BottomToolbar() {
 
   const hasQueue = queue.length > 0;
   const hasChanges = fileChanges.length > 0;
-  const hasTabs = hasQueue || hasChanges;
+  const visibleTasks = visibleBackgroundTasks(tasks);
+  const runningTasks = runningTaskCount(visibleTasks);
+  const hasTasks = visibleTasks.length > 0;
+  const hasTabs = hasQueue || hasChanges || hasTasks;
 
   const toggleTab = (tab: TabId) => {
     setActiveTab((prev) => (prev === tab ? null : tab));
@@ -86,6 +91,17 @@ export function BottomToolbar() {
                   <span className="text-green-600 dark:text-green-400">+{fileStats.additions}</span> <span className="text-red-600 dark:text-red-400">-{fileStats.deletions}</span>
                 </span>
                 <IconChevronUp className={cn("size-3 transition-transform", activeTab === "changes" && "rotate-180")} />
+              </button>
+            )}
+
+            {hasTasks && (
+              <button
+                onClick={() => setBrowserOpen(true)}
+                className="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs transition-colors hover:bg-muted/50 text-muted-foreground"
+                title="View background tasks"
+              >
+                <IconTerminal2 className={cn("size-3.5", runningTasks > 0 && "animate-pulse text-blue-500")} />
+                <span>{runningTasks > 0 ? `${runningTasks} Running` : "Tasks"}</span>
               </button>
             )}
           </div>

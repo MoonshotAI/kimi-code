@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type * as vscode from "vscode";
 
-import { Methods } from "../shared/bridge";
+import { Events, Methods } from "../shared/bridge";
 import { BridgeHandler } from "../src/bridge-handler";
 
 const host = vi.hoisted(() => {
@@ -28,6 +28,7 @@ const host = vi.hoisted(() => {
     setConfig: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
     resumeSession: vi.fn(),
+    withInteractiveAgent: vi.fn((_agentId: string, fn: () => unknown) => fn()),
     forkSession: vi.fn(),
     deleteSession: vi.fn(async () => undefined),
   };
@@ -86,6 +87,7 @@ vi.mock("@moonshot-ai/kimi-code-sdk", async (importOriginal) => {
 
 let bridge: BridgeHandler;
 let root: string;
+let broadcast: Mock<(event: string, data: unknown, webviewId?: string) => void>;
 let showLogs: Mock<() => void>;
 let writeLog: Mock<(message: string) => void>;
 let workspaceState: { get: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
@@ -93,6 +95,7 @@ let workspaceState: { get: ReturnType<typeof vi.fn>; update: ReturnType<typeof v
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "kimi-vscode-bridge-"));
   host.workspaceFolders.splice(0, host.workspaceFolders.length, { uri: new host.Uri(root) });
+  broadcast = vi.fn();
   showLogs = vi.fn();
   writeLog = vi.fn();
   host.harness.resumeSession.mockReset();
@@ -104,7 +107,7 @@ beforeEach(async () => {
   host.showWarningMessage.mockResolvedValue(undefined);
   workspaceState = { get: vi.fn((_key, fallback) => fallback), update: vi.fn() };
   bridge = new BridgeHandler(
-    vi.fn(),
+    broadcast,
     workspaceState as unknown as vscode.Memento,
     join(root, "global-storage"),
     vi.fn(),
@@ -211,6 +214,56 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
       error: "Invalid bridge params for method: showLogs",
     });
     expect(showLogs).not.toHaveBeenCalled();
+  });
+
+  it("rejects task listing when the no-params method receives a payload", async () => {
+    const result = await bridge.handle(
+      { id: "rpc-tasks", method: Methods.ListBackgroundTasks, params: {} },
+      "view-1",
+    );
+
+    expect(result).toEqual({
+      id: "rpc-tasks",
+      error: "Invalid bridge params for method: listBackgroundTasks",
+    });
+  });
+
+  it.each([
+    ["missing params", undefined],
+    ["missing task id", {}],
+    ["blank task id", { taskId: " " }],
+    ["non-string task id", { taskId: 42 }],
+  ])("rejects stopping a background task with %s", async (_, params) => {
+    const result = await bridge.handle(
+      { id: "rpc-stop-task", method: Methods.StopBackgroundTask, params },
+      "view-1",
+    );
+
+    expect(result).toEqual({
+      id: "rpc-stop-task",
+      error: "Invalid bridge params for method: stopBackgroundTask",
+    });
+  });
+
+  it.each([
+    ["zero", 0],
+    ["a negative integer", -1],
+    ["a fraction", 1.5],
+    ["a string", "4000"],
+  ])("rejects background task output when tail is %s", async (_, tail) => {
+    const result = await bridge.handle(
+      {
+        id: "rpc-task-output",
+        method: Methods.GetBackgroundTaskOutput,
+        params: { taskId: "bash-1", tail },
+      },
+      "view-1",
+    );
+
+    expect(result).toEqual({
+      id: "rpc-task-output",
+      error: "Invalid bridge params for method: getBackgroundTaskOutput",
+    });
   });
 
   it("does not execute an object-payload handler when a required field has the wrong type", async () => {
@@ -445,6 +498,31 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
     await vi.waitFor(() => expect(showLogs).toHaveBeenCalledOnce());
   });
 
+  it("clears previous task state when restored task lookup fails", async () => {
+    const session = {
+      ...createResumedSession("session-1", root),
+      listBackgroundTasks: vi.fn(async () => {
+        throw new Error("task lookup unavailable");
+      }),
+    };
+    host.harness.resumeSession.mockResolvedValueOnce(session as never);
+
+    await bridge.handle(
+      {
+        id: "rpc-1",
+        method: Methods.LoadKimiSessionHistory,
+        params: { kimiSessionId: "session-1" },
+      },
+      "view-1",
+    );
+
+    expect(broadcast).toHaveBeenCalledWith(
+      Events.BackgroundTasksChanged,
+      { sessionId: "session-1", tasks: [] },
+      "view-1",
+    );
+  });
+
   it("returns a readable error when persisted session state is corrupt without wedging the bridge", async () => {
     host.harness.resumeSession.mockRejectedValueOnce(
       new Error("Session state is invalid JSON at line 4"),
@@ -606,5 +684,6 @@ function createResumedSession(id: string, workDir: string) {
     setApprovalHandler: () => undefined,
     setQuestionHandler: () => undefined,
     onEvent: () => () => undefined,
+    listBackgroundTasks: async () => [],
   };
 }

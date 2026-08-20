@@ -5,19 +5,26 @@ import { ChatArea } from "./components/ChatArea";
 import { InputArea } from "./components/inputarea/InputArea";
 import { MCPServersModal } from "./components/MCPServersModal";
 import { WorkDirModal } from "./components/WorkDirModal";
+import { TasksModal } from "./components/TasksModal";
 import { ConfigErrorScreen } from "./components/ConfigErrorScreen";
 import { LoginScreen } from "./components/LoginScreen";
 import { Toaster, toast } from "./components/ui/sonner";
-import { useChatStore, useSettingsStore } from "./stores";
+import { useChatStore, useSettingsStore, useTasksStore } from "./stores";
 import { bridge, Events } from "./services";
 import { useAppInit, resolveAppView } from "./hooks/useAppInit";
 import { isPreflightError } from "shared/errors";
-import type { UIStreamEvent, StreamError, ExtensionConfig } from "shared/types";
+import type {
+  BackgroundTasksChangedPayload,
+  UIStreamEvent,
+  StreamError,
+  ExtensionConfig,
+} from "shared/types";
 import "./styles/index.css";
 
 function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
   const { processEvent, startNewConversation, sessionId } = useChatStore();
   const { setMCPServers, setExtensionConfig, extensionConfig } = useSettingsStore();
+  const applyTaskSnapshot = useTasksStore((s) => s.applySnapshot);
 
   useEffect(() => {
     return bridge.on(Events.StreamEvent, (event: UIStreamEvent) => {
@@ -39,6 +46,9 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
   useEffect(() => {
     const unsubs = [
       bridge.on(Events.MCPServersChanged, setMCPServers),
+      bridge.on(Events.BackgroundTasksChanged, (payload: BackgroundTasksChangedPayload) => {
+        applyTaskSnapshot(payload);
+      }),
       bridge.on(Events.ExtensionConfigChanged, ({ config }: { config: ExtensionConfig }) => setExtensionConfig(config)),
       bridge.on(Events.FocusInput, () => document.querySelector<HTMLTextAreaElement>("textarea")?.focus()),
       bridge.on(Events.NewConversation, () => {
@@ -48,7 +58,7 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
       }),
     ];
     return () => unsubs.forEach((u) => u());
-  }, [setMCPServers, setExtensionConfig, startNewConversation]);
+  }, [setMCPServers, setExtensionConfig, startNewConversation, applyTaskSnapshot]);
 
   useEffect(() => {
     if (!extensionConfig.enableNewConversationShortcut) return;
@@ -74,6 +84,7 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
       </div>
       <MCPServersModal />
       <WorkDirModal />
+      <TasksModal />
     </>
   );
 }

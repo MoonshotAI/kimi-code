@@ -128,6 +128,57 @@ export interface SubagentEvent {
   event: LegacyWireEvent;
 }
 
+export type BackgroundTaskStatus =
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'timed_out'
+  | 'killed'
+  | 'lost';
+
+export interface BackgroundTaskInfoBase {
+  taskId: string;
+  description: string;
+  status: BackgroundTaskStatus;
+  /** `false` means a tool call is still waiting on this task in the foreground. */
+  detached?: boolean;
+  startedAt: number;
+  endedAt: number | null;
+  stopReason?: string;
+  terminalNotificationSuppressed?: boolean;
+  timeoutMs?: number;
+}
+
+export interface ProcessBackgroundTaskInfo extends BackgroundTaskInfoBase {
+  kind: 'process';
+  command: string;
+  pid: number;
+  exitCode: number | null;
+}
+
+export interface AgentBackgroundTaskInfo extends BackgroundTaskInfoBase {
+  kind: 'agent';
+  agentId?: string;
+  subagentType?: string;
+  model?: string;
+  thinkingEffort?: string;
+}
+
+export interface QuestionBackgroundTaskInfo extends BackgroundTaskInfoBase {
+  kind: 'question';
+  questionCount: number;
+  toolCallId?: string;
+}
+
+export type BackgroundTaskInfo =
+  | ProcessBackgroundTaskInfo
+  | AgentBackgroundTaskInfo
+  | QuestionBackgroundTaskInfo;
+
+export function isBackgroundTaskTerminal(status: BackgroundTaskStatus): boolean {
+  return status !== 'running';
+}
+
 export type LegacyWireEvent =
   | { type: 'TurnBegin'; payload: TurnBegin & { forkable?: boolean } }
   | { type: 'TurnEnd'; payload: Record<string, never> }
@@ -142,6 +193,7 @@ export type LegacyWireEvent =
   | { type: 'ToolResult'; payload: ToolResult }
   | { type: 'SteerInput'; payload: { user_input: string | ContentPart[] } }
   | { type: 'SubagentEvent'; payload: SubagentEvent }
+  | { type: 'BackgroundTaskStatus'; payload: { info: BackgroundTaskInfo } }
   | { type: string; payload: unknown };
 
 export type StreamEvent =
