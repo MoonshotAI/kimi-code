@@ -60,6 +60,12 @@ describe('skill slash commands', () => {
     ]);
   });
 
+  it('keeps the skill prefix for an ordinary flow-typed skill outside the flow namespace', () => {
+    const built = buildSkillSlashCommands([skill('daily-report', 'flow')]);
+    expect(built.commands.map((command) => command.name)).toEqual(['skill:daily-report']);
+    expect(built.commandMap.get('skill:daily-report')).toBe('daily-report');
+  });
+
   it('sorts built-in skill slash commands before external skill commands', () => {
     const built = buildSkillSlashCommands([
       skill('zeta', 'prompt', { source: 'user' }),

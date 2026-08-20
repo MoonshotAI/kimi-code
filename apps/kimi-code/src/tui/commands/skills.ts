@@ -33,8 +33,13 @@ export function buildSkillSlashCommands(skills: readonly SkillSummary[]): SkillS
   const commandMap = new Map<string, string>();
   const sortedSkills = [...skills].toSorted(compareSkillSlashCommands);
   const commands = sortedSkills.filter(isUserActivatableSkill).map((skill) => {
+    // Projected flow skills already carry their `flow:` catalog prefix, so they
+    // keep their bare name; an ordinary file skill that merely declares
+    // `type: flow` still gets the `skill:` prefix like any other skill.
     const commandName =
-      skill.type === 'flow' || skill.source === 'builtin' || skill.isSubSkill === true
+      (skill.type === 'flow' && skill.name.startsWith('flow:')) ||
+      skill.source === 'builtin' ||
+      skill.isSubSkill === true
         ? skill.name
         : `skill:${skill.name}`;
     commandMap.set(commandName, skill.name);

@@ -34,6 +34,19 @@ function joinWorkspacePath(root: string, relative: string): string {
 }
 
 /**
+ * Whether a skill is an engine-managed projected flow: flow-typed AND inside
+ * the reserved `flow:` catalog namespace. An ordinary SKILL.md that merely
+ * declares `type: flow` matches neither flow admission nor flow lifecycle
+ * handling.
+ */
+export function isProjectedFlowSkill(
+  name: string | undefined,
+  type: string | undefined,
+): boolean {
+  return type === 'flow' && name !== undefined && name.startsWith(FLOW_SKILL_NAME_PREFIX);
+}
+
+/**
  * Canonical on-disk path of a project flow definition, as projected into the
  * skill catalog — automatic run starts verify an activation against it.
  */

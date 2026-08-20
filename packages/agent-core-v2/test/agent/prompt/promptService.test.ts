@@ -173,6 +173,28 @@ describe('AgentPromptService', () => {
     expect(prompt.list().pending.map((item) => item.id)).toEqual([one.id, two.id]);
   });
 
+  it('steers ordinary flow-typed skills that are not projected flows', async () => {
+    const { prompt, context, loop } = harness();
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const ordinaryFlowMessage = (name: string): ContextMessage => ({
+      role: 'user',
+      content: [{ type: 'text', text: `<skill>${name}</skill>` }],
+      toolCalls: [],
+      origin: {
+        kind: 'user',
+        skillActivations: [
+          { activationId: `act-${name}`, skillName: name, skillType: 'flow' },
+        ],
+      },
+    });
+    const one = await prompt.enqueue({ message: ordinaryFlowMessage('daily-report') });
+    const two = await prompt.enqueue({ message: ordinaryFlowMessage('weekly-report') });
+    const handles = await prompt.steer([one.id, two.id]);
+    expect(handles.map((item) => item.id)).toEqual([one.id, two.id]);
+    loop.drainNextBatch(context);
+  });
+
   it('steers selected prompts in FIFO order', async () => {
     const { prompt, context, loop } = harness();
     const active = await prompt.enqueue({ message: message('active') });

@@ -32,7 +32,7 @@ import { ISkillActivationDataService } from './skillActivationData';
 import { IFlagService } from '#/app/flag/flag';
 import { IConfigService } from '#/app/config/config';
 import { FLOW_FLAG_ID, IAgentFlowService } from '#/features/flow/flow';
-import { FLOW_SKILL_NAME_PREFIX } from '#/features/flow/flowsSkillSource';
+import { isProjectedFlowSkill } from '#/features/flow/flowsSkillSource';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { IEventService } from '#/app/event/event';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -372,7 +372,7 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       return this.prompt.inject(message);
     }
     const handle = await this.prompt.enqueue({ message });
-    if (origin.skillType === 'flow') this.trackQueuedFlowPrompt(handle);
+    if (isProjectedFlowSkill(origin.skillName, origin.skillType)) this.trackQueuedFlowPrompt(handle);
     return handle.launched;
   }
 
@@ -387,7 +387,7 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       skill_name: origin.skillName,
       trigger: origin.trigger,
     });
-    if (origin.skillType === 'flow') {
+    if (isProjectedFlowSkill(origin.skillName, origin.skillType)) {
       this.telemetry.track2('flow_invoked', {
         flow_name: origin.skillName,
       });
@@ -403,6 +403,3 @@ registerScopedService(
   'skill',
 );
 
-function isProjectedFlowSkill(name: string | undefined, type: string | undefined): boolean {
-  return type === 'flow' && name !== undefined && name.startsWith(FLOW_SKILL_NAME_PREFIX);
-}

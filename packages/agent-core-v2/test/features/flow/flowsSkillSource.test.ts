@@ -5,7 +5,7 @@ import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { IConfigService } from '#/app/config/config';
 import type { IFlagService } from '#/app/flag/flag';
 import { FLOW_FLAG_ID } from '#/features/flow/flow';
-import { FlowsSkillSource } from '#/features/flow/flowsSkillSource';
+import { FlowsSkillSource, isProjectedFlowSkill } from '#/features/flow/flowsSkillSource';
 import type { HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -114,6 +114,13 @@ describe('FlowsSkillSource', () => {
       '/ws/.kimi-code/flows',
       '/home/.kimi-code/flows',
     ]);
+  });
+
+  it('treats only prefixed flow-typed skills as projected flows', () => {
+    expect(isProjectedFlowSkill('flow:issue-fix', 'flow')).toBe(true);
+    expect(isProjectedFlowSkill('issue-fix', 'flow')).toBe(false);
+    expect(isProjectedFlowSkill('flow:issue-fix', 'prompt')).toBe(false);
+    expect(isProjectedFlowSkill(undefined, 'flow')).toBe(false);
   });
 
   it('a project flow shadows a user flow with the same id', async () => {
