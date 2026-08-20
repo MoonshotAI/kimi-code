@@ -333,6 +333,17 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 
 `timeout_ms` 可被环境变量 `KIMI_SUBAGENT_TIMEOUT_MS` 覆盖，优先级高于配置文件。
 
+## `swarm`
+
+`swarm` 控制 `AgentSwarm` 工具的启动节奏：swarm 批次开始时立即启动一定数量的 subagent，其余 subagent 按固定间隔逐个启动。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `initial_launch_limit` | `integer` | `5` | swarm 批次开始时立即启动的 subagent 数量 |
+| `launch_interval_ms` | `integer` | `700` | 启动数达到 `initial_launch_limit` 后，后续每次启动之间的间隔（毫秒）；`0` 表示无延迟地启动全部剩余 subagent |
+
+这些设置只影响初始启动节奏；当供应商限流时应用的速率限制退避行为不受影响。
+
 ## `mcp`
 
 | 字段 | 类型 | 默认值 | 说明 |

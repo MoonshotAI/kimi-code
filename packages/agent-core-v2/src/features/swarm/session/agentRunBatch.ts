@@ -5,6 +5,10 @@ import * as retry from 'retry';
 import { isUserCancellation } from '#/_base/utils/abort';
 import { setClampedTimeout } from '#/_base/utils/timer';
 import { BugIndicatingError, Error2, ErrorCodes } from '#/errors';
+import {
+  SWARM_INITIAL_LAUNCH_LIMIT_DEFAULT,
+  SWARM_LAUNCH_INTERVAL_MS_DEFAULT,
+} from '../configSection';
 import type { SessionSwarmRunResult, SessionSwarmTask } from './sessionSwarm';
 
 export interface AgentRunAttemptOptions {
@@ -34,8 +38,6 @@ export type AgentRunAttemptHandle = {
   }>;
 };
 
-const INITIAL_LAUNCH_LIMIT = 5;
-const INITIAL_LAUNCH_INTERVAL_MS = 700;
 const RATE_LIMIT_RETRY_BASE_MS = 3000;
 const RATE_LIMIT_RETRY_FACTOR = 2;
 const RATE_LIMIT_CAPACITY_SHRINK_INTERVAL_MS = 2000;
@@ -91,6 +93,8 @@ type ActiveAttempt<T> = {
 
 export type AgentRunBatchOptions = {
   readonly maxConcurrency?: number;
+  readonly initialLaunchLimit?: number;
+  readonly launchIntervalMs?: number;
 };
 
 export class AgentRunBatch<T> {
@@ -102,6 +106,8 @@ export class AgentRunBatch<T> {
   private readonly batchSignal: AbortSignal | undefined;
   private readonly batchAbortListener: () => void;
   private readonly maxConcurrency: number | undefined;
+  private readonly initialLaunchLimit: number;
+  private readonly launchIntervalMs: number;
   private normalLaunchCount = 0;
   private normalLaunchTimer: ReturnType<typeof setTimeout> | undefined;
   private rateLimitLaunchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -124,6 +130,8 @@ export class AgentRunBatch<T> {
     options: AgentRunBatchOptions = {},
   ) {
     this.maxConcurrency = options.maxConcurrency;
+    this.initialLaunchLimit = options.initialLaunchLimit ?? SWARM_INITIAL_LAUNCH_LIMIT_DEFAULT;
+    this.launchIntervalMs = options.launchIntervalMs ?? SWARM_LAUNCH_INTERVAL_MS_DEFAULT;
     this.states = tasks.map((task, index) => ({
       index,
       task,
@@ -183,7 +191,7 @@ export class AgentRunBatch<T> {
 
   private scheduleNormalLaunch(): void {
     while (
-      this.normalLaunchCount < INITIAL_LAUNCH_LIMIT &&
+      this.normalLaunchCount < this.initialLaunchLimit &&
       this.pending.length > 0 &&
       !this.rateLimitMode &&
       !this.isAtConcurrencyLimit()
@@ -208,7 +216,7 @@ export class AgentRunBatch<T> {
       this.startAttempt(this.pending.shift()!);
       this.normalLaunchCount += 1;
       this.schedule();
-    }, INITIAL_LAUNCH_INTERVAL_MS);
+    }, this.launchIntervalMs);
   }
 
   private isAtConcurrencyLimit(): boolean {

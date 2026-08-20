@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (25 sections · 2 overlay(s))
+# Index (26 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/app/skillCatalog/configSection.ts
 #   cron                     src/app/cron/configSection.ts
@@ -30,6 +30,7 @@
 #   secondaryModel           src/session/subagent/configSection.ts
 #   services                 src/app/auth/configSection.ts
 #   subagent                 src/session/subagent/configSection.ts
+#   swarm                    src/features/swarm/configSection.ts
 #   task                     src/agent/task/configSection.ts
 #   thinking                 src/app/kosongConfig/configSection.ts
 #   tokenCounting            src/agent/tokenCounting/configSection.ts
@@ -380,6 +381,16 @@ merge_all_available_skills = true
 
 [subagent]
 timeout_ms = 7200000
+
+# ##########################################################################
+# swarm
+#   owner: src/features/swarm/configSection.ts
+#   scope: core
+# ##########################################################################
+
+[swarm]
+initial_launch_limit = 5
+launch_interval_ms = 700
 
 # ##########################################################################
 # task

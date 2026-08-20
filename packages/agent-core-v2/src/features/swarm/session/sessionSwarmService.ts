@@ -29,7 +29,9 @@ import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ILogService } from '#/_base/log/log';
+import { IConfigService } from '#/app/config/config';
 
+import { SWARM_SECTION, type SwarmConfig } from '../configSection';
 import {
   ISessionSwarmService,
   type SessionSwarmRunArgs,
@@ -72,6 +74,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     @IRuntimeResolver private readonly runtimeResolver: IRuntimeResolver,
     @ILogService private readonly log: ILogService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IConfigService private readonly config: IConfigService,
   ) {}
 
   async getSwarmItem(args: {
@@ -108,7 +111,12 @@ export class SessionSwarmService implements ISessionSwarmService {
       },
     };
     const maxConcurrency = resolveSwarmMaxConcurrency();
-    const promise = new AgentRunBatch(launcher, linkedTasks, { maxConcurrency }).run();
+    const swarmConfig = this.config.get<SwarmConfig | undefined>(SWARM_SECTION);
+    const promise = new AgentRunBatch(launcher, linkedTasks, {
+      maxConcurrency,
+      initialLaunchLimit: swarmConfig?.initialLaunchLimit,
+      launchIntervalMs: swarmConfig?.launchIntervalMs,
+    }).run();
     void promise.finally(() => {
       for (const unlink of unlinks) unlink();
       if (this.inFlight.get(callerAgentId) === controller) this.inFlight.delete(callerAgentId);

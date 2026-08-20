@@ -3,6 +3,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
 
+import './configSection';
 import { IAgentSwarmService } from './agent/swarm';
 import { AgentSwarmService } from './agent/swarmService';
 import { ISessionSwarmService } from './session/sessionSwarm';
