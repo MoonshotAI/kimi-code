@@ -1004,6 +1004,10 @@ class PersistenceAppendLogStore implements IAppendLogStore {
     return toDisposable(() => { });
   }
 
+  drainRetirements(): Promise<void> {
+    return Promise.resolve();
+  }
+
   snapshot(): WireRecord[] {
     return this.persistence.records.map(cloneRecord);
   }
