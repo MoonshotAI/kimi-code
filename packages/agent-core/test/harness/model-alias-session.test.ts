@@ -190,9 +190,9 @@ max_context_size = 200000
       sessionId,
       agentId: 'main',
       type: 'warning',
-      code: 'anthropic-thinking-effort-not-listed',
+      code: 'thinking-effort-not-listed',
       message:
-        'Thinking effort "high" is not listed for model "compatible-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
+        'Thinking effort "high" is not listed for model "compatible-model" (known: max). Falling back to the model\'s default effort "max".',
     });
     const restored = await freshRpc.getConfig({ sessionId, agentId: 'main' });
     expect(restored.modelAlias).toBe('compatible/model');

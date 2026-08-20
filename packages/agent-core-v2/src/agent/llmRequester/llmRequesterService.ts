@@ -336,7 +336,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           signal,
         ),
       };
-      this.warnAboutAnthropicThinkingEffort(request);
+      this.warnAboutThinkingEffortNotListed(request);
       const logInput: LLMRequestLogInput = {
         protocol: request.model.protocol,
         providerType: request.model.providerType,
@@ -514,21 +514,15 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     return assigned === part.id ? part : { ...part, id: assigned };
   }
 
-  private warnAboutAnthropicThinkingEffort(request: ResolvedLLMRequest): void {
-    if (request.model.protocol !== 'anthropic') return;
+  private warnAboutThinkingEffortNotListed(request: ResolvedLLMRequest): void {
     const effort = request.thinkingEffort;
     if (effort === 'on' || effort === 'off') return;
-
-    let code: string;
-    let message: string;
-    let knownEfforts: string | undefined;
     const supportEfforts = request.model.supportEfforts?.filter((value) => value.length > 0);
     if (supportEfforts === undefined || supportEfforts.length === 0) return;
     if (supportEfforts.includes(effort)) return;
-    code = 'anthropic-thinking-effort-not-listed';
-    knownEfforts = supportEfforts.join(',');
-    message = `Thinking effort "${effort}" is not listed for model "${request.model.name}" (known: ${supportEfforts.join(', ')}). The configured value will be sent unchanged to the Anthropic-compatible backend.`;
-
+    const code = 'thinking-effort-not-listed';
+    const knownEfforts = supportEfforts.join(',');
+    const message = `Thinking effort "${effort}" is not listed for model "${request.model.name}" (known: ${supportEfforts.join(', ')}). The value will be sent unchanged to the backend.`;
     const key = [code, request.modelAlias, request.model.name, effort, knownEfforts].join('\u0000');
     if (this.emittedThinkingEffortWarnings.has(key)) return;
     this.emittedThinkingEffortWarnings.add(key);

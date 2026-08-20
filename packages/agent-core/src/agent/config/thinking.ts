@@ -71,9 +71,14 @@ function normalizeThinkingEffortForModel(
 
   const efforts = effortsFor(effective);
   if (!kimiProtocol) {
-    return effort === 'on' && efforts.length > 0
-      ? defaultThinkingEffortFor(effective)
-      : effort;
+    // Compatible protocols pass values through only while the model declares
+    // no effort list — with a declared list, an unlisted effort is a config
+    // mistake the backend would reject, so fall back like the Kimi wire does.
+    if (efforts.length === 0) return effort;
+    if (effort === 'on' || !efforts.includes(effort)) {
+      return defaultThinkingEffortFor(effective);
+    }
+    return effort;
   }
   if (!supportsThinking(effective)) return 'off';
   if (efforts.length === 0) return 'on';
@@ -84,25 +89,28 @@ function normalizeThinkingEffortForModel(
 }
 
 /**
- * Resolve the effective thinking effort for a session.
- *
- * Precedence:
- *   1. an explicit `requested` effort (per-session override) wins;
- *   2. `thinking.enabled === false` forces `'off'`;
- *   3. otherwise `thinking.effort` when set, else the model's default effort.
- *
- * A model that declares `always_thinking` can never resolve to `'off'`, on
- * any wire — a claimed off state would be a lie, since upstream keeps
- * reasoning at its default when no off encoding exists. (Compatible
- * protocols still receive every other requested value unchanged so their
- * backend can make the final capability decision.)
+ * A thinking-effort fallback: the configured value is not in the model's
+ * declared `support_efforts` list, so `resolved` (the model's default effort)
+ * is applied instead.
  */
-export function resolveThinkingEffort(
+export interface ThinkingEffortFallback {
+  readonly configured: ThinkingEffort;
+  readonly resolved: ThinkingEffort;
+}
+
+/**
+ * Resolve the effective thinking effort for a session, and report whether the
+ * resolution had to fall back to the model's default effort because the
+ * configured value is not in the model's declared `support_efforts` list.
+ * `'on'`/`'off'` are protocol encodings, not list members, so they never
+ * count as a fallback.
+ */
+export function resolveThinkingEffortWithFallback(
   requested: ThinkingEffort | undefined,
   config: ThinkingConfig | undefined,
   model: ModelAlias | undefined,
   kimiProtocol = false,
-): ThinkingEffort {
+): { readonly effort: ThinkingEffort; readonly fallback: ThinkingEffortFallback | undefined } {
   const effectiveModel = model === undefined ? undefined : effectiveModelAlias(model);
   // Normalize the configured value once: 'OFF' / ' off ' must be read as off
   // on every path, not passed upstream as a concrete effort; whitespace-only
@@ -132,5 +140,31 @@ export function resolveThinkingEffort(
         : defaultThinkingEffortFor(effectiveModel);
   }
 
-  return normalizeThinkingEffortForModel(effort, effectiveModel, kimiProtocol);
+  const efforts = effortsFor(effectiveModel);
+  const fallback: ThinkingEffortFallback | undefined =
+    effort !== 'on' && effort !== 'off' && efforts.length > 0 && !efforts.includes(effort)
+      ? { configured: effort, resolved: defaultThinkingEffortFor(effectiveModel) }
+      : undefined;
+  return { effort: normalizeThinkingEffortForModel(effort, effectiveModel, kimiProtocol), fallback };
+}
+
+/**
+ * Resolve the effective thinking effort for a session.
+ *
+ * Precedence:
+ *   1. an explicit `requested` effort (per-session override) wins;
+ *   2. `thinking.enabled === false` forces `'off'`;
+ *   3. otherwise `thinking.effort` when set, else the model's default effort.
+ *
+ * A model that declares `always_thinking` can never resolve to `'off'`, on
+ * any wire — a claimed off state would be a lie, since upstream keeps
+ * reasoning at its default when no off encoding exists.
+ */
+export function resolveThinkingEffort(
+  requested: ThinkingEffort | undefined,
+  config: ThinkingConfig | undefined,
+  model: ModelAlias | undefined,
+  kimiProtocol = false,
+): ThinkingEffort {
+  return resolveThinkingEffortWithFallback(requested, config, model, kimiProtocol).effort;
 }

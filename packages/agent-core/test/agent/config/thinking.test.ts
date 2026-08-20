@@ -156,7 +156,7 @@ describe('resolveThinkingEffort', () => {
 
   it('normalizes the requested effort (case/whitespace) on every wire', () => {
     expect(resolveThinkingEffort(' OFF ', undefined, effortModel, false)).toBe('off');
-    expect(resolveThinkingEffort(' Max ', undefined, effortModel, false)).toBe('max');
+    expect(resolveThinkingEffort(' High ', undefined, effortModel, false)).toBe('high');
     expect(resolveThinkingEffort('  ', undefined, effortModel, false)).toBe('medium');
   });
 
@@ -183,6 +183,30 @@ describe('resolveThinkingEffort', () => {
 
   it('falls back to the model default for an unsupported Kimi effort', () => {
     expect(resolveThinkingEffort('ultra', undefined, effortModel, true)).toBe('medium');
+  });
+
+  it('falls back to the model default for an unlisted effort on any protocol', () => {
+    // A declared supportEfforts list is authoritative on every wire: an
+    // unlisted configured or requested effort resolves to the model default
+    // instead of being sent upstream as-is.
+    const declared = model({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'xhigh'],
+      defaultEffort: 'xhigh',
+    });
+    expect(resolveThinkingEffort(undefined, { effort: 'high' }, declared, false)).toBe('xhigh');
+    expect(resolveThinkingEffort('high', undefined, declared, false)).toBe('xhigh');
+    expect(resolveThinkingEffort('medium', undefined, declared, false)).toBe('medium');
+    expect(resolveThinkingEffort('xhigh', undefined, declared, false)).toBe('xhigh');
+    // no declared defaultEffort -> middle entry of the list.
+    expect(resolveThinkingEffort('ultra', undefined, effortModel, false)).toBe('medium');
+  });
+
+  it('passes concrete efforts through unchanged when no effort list is declared', () => {
+    expect(resolveThinkingEffort('ultra', undefined, booleanModel, false)).toBe('ultra');
+    expect(resolveThinkingEffort(undefined, { effort: 'ultra' }, booleanModel, false)).toBe(
+      'ultra',
+    );
   });
 
   it('projects a concrete effort to on for a boolean-only Kimi model', () => {

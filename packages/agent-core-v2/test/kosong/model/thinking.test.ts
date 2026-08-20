@@ -65,10 +65,38 @@ describe('resolveThinkingEffortForModel', () => {
     expect(defaultThinkingEffortForModel(undefined)).toBe('off');
   });
 
-  it('normalizes unknown efforts back to the model default under kimi semantics', () => {
+  it('normalizes unknown efforts back to the model default on any wire', () => {
     expect(resolveThinkingEffortForModel('extreme', undefined, thinkingModel, true)).toBe('high');
-    expect(resolveThinkingEffortForModel('extreme', undefined, thinkingModel, false)).toBe('extreme');
+    expect(resolveThinkingEffortForModel('extreme', undefined, thinkingModel, false)).toBe('high');
     expect(resolveThinkingEffortForModel('on', undefined, thinkingModel, true)).toBe('high');
+    expect(resolveThinkingEffortForModel('on', undefined, thinkingModel, false)).toBe('high');
+  });
+
+  it('falls back to the declared default for an unlisted effort without strict validation', () => {
+    const declared = {
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'xhigh'],
+      defaultEffort: 'xhigh',
+    };
+    expect(resolveThinkingEffortForModel(undefined, { effort: 'high' }, declared, false)).toBe(
+      'xhigh',
+    );
+    expect(resolveThinkingEffortForModel('high', undefined, declared, false)).toBe('xhigh');
+    expect(resolveThinkingEffortForModel('medium', undefined, declared, false)).toBe('medium');
+  });
+
+  it('passes concrete efforts through when the model declares no effort list', () => {
+    expect(
+      resolveThinkingEffortForModel('extreme', undefined, { capabilities: ['thinking'] }, false),
+    ).toBe('extreme');
+    expect(
+      resolveThinkingEffortForModel(
+        undefined,
+        { effort: 'extreme' },
+        { capabilities: ['thinking'] },
+        false,
+      ),
+    ).toBe('extreme');
   });
 
   it('keeps always-thinking models on under kimi semantics', () => {

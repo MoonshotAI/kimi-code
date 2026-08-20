@@ -144,9 +144,11 @@ function normalizeThinkingEffortForModel(
   if (effort === 'off' && model?.alwaysThinking !== true) return 'off';
   const efforts = effortsFor(model);
   if (!strictValidation) {
-    return effort === 'on' && efforts.length > 0
-      ? defaultThinkingEffortForModel(model)
-      : effort;
+    if (efforts.length === 0) return effort;
+    if (effort === 'on' || !efforts.includes(effort)) {
+      return defaultThinkingEffortForModel(model);
+    }
+    return effort;
   }
   if (!modelSupportsThinking(model)) return 'off';
   if (efforts.length === 0) return 'on';
@@ -156,12 +158,17 @@ function normalizeThinkingEffortForModel(
   return effort;
 }
 
-export function resolveThinkingEffortForModel(
+export interface ThinkingEffortFallback {
+  readonly configured: ThinkingEffort;
+  readonly resolved: ThinkingEffort;
+}
+
+export function resolveThinkingEffortForModelWithFallback(
   requested: string | undefined,
   defaults: ThinkingDefaults | undefined,
   model: ModelThinkingMetadata | undefined,
   strictValidation = false,
-): ThinkingEffort {
+): { readonly effort: ThinkingEffort; readonly fallback: ThinkingEffortFallback | undefined } {
   const configured = normalizeRequestedThinkingEffort(defaults?.effort);
   const normalized = normalizeRequestedThinkingEffort(requested);
   let effort: ThinkingEffort;
@@ -179,7 +186,22 @@ export function resolveThinkingEffortForModel(
         ? configured
         : defaultThinkingEffortForModel(model);
   }
-  return normalizeThinkingEffortForModel(effort, model, strictValidation);
+  const efforts = effortsFor(model);
+  const fallback: ThinkingEffortFallback | undefined =
+    effort !== 'on' && effort !== 'off' && efforts.length > 0 && !efforts.includes(effort)
+      ? { configured: effort, resolved: defaultThinkingEffortForModel(model) }
+      : undefined;
+  return { effort: normalizeThinkingEffortForModel(effort, model, strictValidation), fallback };
+}
+
+export function resolveThinkingEffortForModel(
+  requested: string | undefined,
+  defaults: ThinkingDefaults | undefined,
+  model: ModelThinkingMetadata | undefined,
+  strictValidation = false,
+): ThinkingEffort {
+  return resolveThinkingEffortForModelWithFallback(requested, defaults, model, strictValidation)
+    .effort;
 }
 
 const KEEP_OFF_VALUES = new Set(['0', 'false', 'no', 'off', 'none', 'null']);

@@ -17,9 +17,10 @@ import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
 import type { AgentConfigData, AgentConfigUpdateData } from './types';
 import {
-  resolveThinkingEffort,
+  resolveThinkingEffortWithFallback,
   supportsThinkingEffort,
   type ThinkingEffort,
+  type ThinkingEffortFallback,
 } from './thinking';
 import type { ModelAlias } from '../../config/schema';
 import type { ResolvedRuntimeProvider } from '../../session/provider-manager';
@@ -68,25 +69,30 @@ export class ConfigState {
     const kimiProvider = targetProvider?.type === 'kimi';
     let unforcedThinkingEffort: ThinkingEffort | undefined;
     let thinkingEffort: ThinkingEffort | undefined;
+    let thinkingFallback: ThinkingEffortFallback | undefined;
     if (changed.thinkingEffort !== undefined) {
-      unforcedThinkingEffort = resolveThinkingEffort(
+      const resolution = resolveThinkingEffortWithFallback(
         changed.thinkingEffort,
         this.agent.kimiConfig?.thinking,
         targetModel,
         kimiProtocol,
       );
+      unforcedThinkingEffort = resolution.effort;
+      thinkingFallback = resolution.fallback;
     } else if (changed.modelAlias !== undefined) {
       // A bare model switch carries the previously resolved effort over to the
       // new model. Before any effort was resolved (fresh session bootstrap)
       // `undefined` lets resolveThinkingEffort fall through to the model
       // default — computed from the resolved provider, whose capabilities and
       // efforts include the provider-level protocol inference.
-      unforcedThinkingEffort = resolveThinkingEffort(
+      const resolution = resolveThinkingEffortWithFallback(
         this._unforcedThinkingEffort,
         this.agent.kimiConfig?.thinking,
         targetModel,
         kimiProtocol,
       );
+      unforcedThinkingEffort = resolution.effort;
+      thinkingFallback = resolution.fallback;
     }
     if (unforcedThinkingEffort !== undefined) {
       thinkingEffort =
@@ -129,8 +135,8 @@ export class ConfigState {
     if (this.hasProvider && (changed.cwd !== undefined || changed.modelAlias)) {
       this.agent.tools.initializeBuiltinTools();
     }
-    if (thinkingEffort !== undefined || changed.modelAlias !== undefined) {
-      this.agent.warnAboutCurrentAnthropicThinkingEffort();
+    if (thinkingFallback !== undefined) {
+      this.agent.warnAboutThinkingEffortFallback(targetAlias, targetModel, thinkingFallback);
     }
     this.agent.emitStatusUpdated(thinkingEffort !== undefined);
   }

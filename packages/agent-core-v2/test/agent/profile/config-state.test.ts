@@ -432,20 +432,20 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     expect(profile.data().thinkingLevel).toBe('max');
   });
 
-  it('preserves unlisted efforts with a warning for Kimi-managed Anthropic models', () => {
+  it('falls back to the model default with a warning for an unlisted effort', () => {
     profile.update({ modelAlias: 'kimi-code/compatible', thinkingLevel: 'max' });
 
     expect(() => {
       profile.setThinking('high');
     }).not.toThrow();
-    expect(profile.data().thinkingLevel).toBe('high');
+    expect(profile.data().thinkingLevel).toBe('max');
     expect(ctx.allEvents).toContainEqual({
       type: '[rpc]',
       event: 'warning',
       args: expect.objectContaining({
-        code: 'anthropic-thinking-effort-not-listed',
+        code: 'thinking-effort-not-listed',
         message:
-          'Thinking effort "high" is not listed for model "compatible-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
+          'Thinking effort "high" is not listed for model "compatible-model" (known: max). Falling back to the model\'s default effort "max".',
       }),
     });
   });

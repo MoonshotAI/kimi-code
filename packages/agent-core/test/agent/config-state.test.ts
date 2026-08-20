@@ -152,7 +152,7 @@ describe('ConfigState model capabilities', () => {
     expect(requestMaxTokens).toBe(131072);
   });
 
-  it('warns and sends when an Anthropic effort is not listed by the model', async () => {
+  it('warns and falls back when an Anthropic effort is not listed by the model', async () => {
     let requests = 0;
     const config: KimiConfig = {
       providers: {
@@ -178,7 +178,7 @@ describe('ConfigState model capabilities', () => {
       providerManager: new ProviderManager({ config }),
       generate: async (provider) => {
         requests += 1;
-        expect(provider.thinkingEffort).toBe('high');
+        expect(provider.thinkingEffort).toBe('max');
         return {
           id: 'response-1',
           message: { role: 'assistant', content: [], toolCalls: [] },
@@ -205,9 +205,9 @@ describe('ConfigState model capabilities', () => {
       type: '[rpc]',
       event: 'warning',
       args: {
-        code: 'anthropic-thinking-effort-not-listed',
+        code: 'thinking-effort-not-listed',
         message:
-          'Thinking effort "high" is not listed for model "compatible-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
+          'Thinking effort "high" is not listed for model "compatible-model" (known: max). Falling back to the model\'s default effort "max".',
       },
     });
   });
