@@ -358,6 +358,7 @@ export * from '#/features/goal/types';
 import '#/features/goal/goalFeature';
 import '#/features/staleGuard/staleGuardFeature';
 export * from '#/features/tower/tower';
+export * from '#/features/tower/towerFeature';
 export * from '#/features/tower/towerService';
 export * from '#/features/tower/towerRateLimit';
 export * from '#/features/tower/towerRateLimitService';

@@ -20,6 +20,7 @@ import {
   SessionInteractionService,
   StateRegistry,
   TOWER_FLAG_ID,
+  _setTowerFeatureAssembledForTests,
   type AgentContext,
   type Event2,
   type ISessionScopeHandle,
@@ -51,6 +52,8 @@ import {
   snapshotToOps,
   TRANSCRIPT_OPS_JOURNAL_CAPACITY,
 } from '../../src/services/transcript/transcriptService';
+
+_setTowerFeatureAssembledForTests(true);
 
 function ev(payload: Record<string, unknown>): ProjectorBusEvent {
   return payload as unknown as ProjectorBusEvent;
@@ -1875,6 +1878,14 @@ describe('AgentTranscriptProjector', () => {
 
       const withoutFlag = await serviceWith(false).readColdSnapshot('s1', 'main');
       expect(withoutFlag!.meta.modes).toBeUndefined();
+
+      _setTowerFeatureAssembledForTests(false);
+      try {
+        const notAssembled = await serviceWith(true).readColdSnapshot('s1', 'main');
+        expect(notAssembled!.meta.modes).toBeUndefined();
+      } finally {
+        _setTowerFeatureAssembledForTests(true);
+      }
 
       const childDir = join(home, 'sessions', 'ws', 's1', 'agents', 'worker-1');
       await mkdir(childDir, { recursive: true });

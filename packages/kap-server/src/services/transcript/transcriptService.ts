@@ -10,6 +10,7 @@ import {
   TOWER_FLAG_ID,
   followSessionLifecycles,
   getLiveSessionById,
+  isTowerFeatureAssembled,
   reduceContextTranscript,
   type IDisposable,
   type Scope,
@@ -514,7 +515,8 @@ export class TranscriptService {
     if (snapshot.meta.modes?.tower === undefined) return snapshot;
     if (
       agentId === MAIN_AGENT_ID &&
-      this.deps.core.accessor.get(IFlagService).enabled(TOWER_FLAG_ID)
+      this.deps.core.accessor.get(IFlagService).enabled(TOWER_FLAG_ID) &&
+      isTowerFeatureAssembled()
     ) {
       return snapshot;
     }
