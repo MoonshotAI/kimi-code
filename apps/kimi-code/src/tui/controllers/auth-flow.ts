@@ -82,6 +82,10 @@ export class AuthFlowController {
       if (effort !== undefined) {
         await host.session.setThinking(effort);
       }
+      // Logging out with the session retained zeroed the footer's context
+      // counters; resync from the live session even when setModel was a
+      // no-op (same alias), so contextTokens/contextUsage are accurate again.
+      await host.syncRuntimeState(host.session);
       return;
     }
 
