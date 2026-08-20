@@ -6,6 +6,7 @@ import type {
   KimiOAuthLoginResult,
   KimiOAuthLogoutResult,
   KimiOAuthTokenRef,
+  KimiRegion,
 } from '@moonshot-ai/kimi-code-oauth';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Error2 } from '#/_base/errors/errors';
@@ -26,10 +27,14 @@ export interface AuthStatus {
   readonly provider?: string;
 }
 
+export interface OAuthLoginOptions {
+  readonly region?: KimiRegion;
+}
+
 export interface IOAuthService {
   readonly _serviceBrand: undefined;
 
-  startLogin(provider?: string): Promise<OAuthFlowStart>;
+  startLogin(provider?: string, options?: OAuthLoginOptions): Promise<OAuthFlowStart>;
   getFlow(provider?: string): OAuthFlowSnapshot | undefined;
   cancelLogin(provider?: string): Promise<OAuthLoginCancelResponse>;
   logout(provider?: string): Promise<OAuthLogoutResponse>;
@@ -39,6 +44,7 @@ export interface IOAuthService {
   getManagedUserInfo(provider?: string): Promise<AuthManagedUserInfoResult>;
   resolveTokenProvider(provider: string, oauthRef?: OAuthRef): BearerTokenProvider | undefined;
   getCachedAccessToken(provider: string, oauthRef?: OAuthRef): Promise<string | undefined>;
+  getRegion(): KimiRegion;
 }
 
 export const IOAuthService: ServiceIdentifier<IOAuthService> =

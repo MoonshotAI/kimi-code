@@ -10,8 +10,10 @@ import { Emitter } from '#/_base/event';
 import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import {
+  rootDelegationExtras,
   subagentAllowlistFor,
   subagentTypeNotAllowedMessage,
+  withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -95,7 +97,14 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       : undefined;
     const requestedProfileName =
       requested ?? (fork ? (own.profileName ?? DEFAULT_PROFILE_NAME) : DEFAULT_PROFILE_NAME);
-    const allowlist = subagentAllowlistFor(this.catalog, own);
+    const extras =
+      input.callerAgentId === 'main'
+        ? rootDelegationExtras(this.catalog, own, this.catalog.list())
+        : undefined;
+    let allowlist = subagentAllowlistFor(this.catalog, own, extras);
+    if (allowlist !== undefined && own.subagents === undefined) {
+      allowlist = withoutDelegatingTargets(this.catalog, allowlist);
+    }
     if (!fork && allowlist !== undefined && !allowlist.includes(requestedProfileName)) {
       throw new Error2(
         ErrorCodes.AGENT_TYPE_NOT_ALLOWED,

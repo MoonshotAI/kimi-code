@@ -183,6 +183,8 @@ function stubSwarmCatalog(
     get: (name: string) =>
       [defaultProfile, ...targetProfiles].find((profile) => profile.name === name),
     getDefault: () => defaultProfile,
+    list: () => [defaultProfile, ...targetProfiles],
+    inspect: () => undefined,
   } as unknown as ISessionAgentProfileCatalog;
 }
 

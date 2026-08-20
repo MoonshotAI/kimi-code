@@ -58,7 +58,7 @@ import {
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
-import { parseActionSuffix } from './action-suffix';
+import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
 
 interface PromptRouteHost {
   get(
@@ -391,31 +391,55 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const { session_id, tail } = req.params as { session_id: string; tail: string };
-        const parsed = parseActionSuffix({
+        const target = resolveActionTarget({
           tail,
-          allowedActions: ['abort', 'steer'] as const,
+          actions: promptActions,
           resourceLabel: 'prompt',
         });
-        if (parsed.kind !== 'action') {
-          const message = parsed.kind === 'invalid' ? parsed.reason : `unsupported action: ${tail}`;
-          reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, message, req.id));
+        if ('message' in target) {
+          reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, target.message, req.id));
           return;
         }
         const resolved = await resolvePrompt(core, session_id);
-        if (parsed.action === 'abort') {
-          resolved.prompt.abort(parsed.id);
-          requestLog(req)?.info({ session_id, prompt_id: parsed.id }, 'prompt aborted');
-          reply.send(okEnvelope({ aborted: true }, req.id));
-        } else {
-          await resolved.prompt.steer([parsed.id]);
-          reply.send(okEnvelope({ steered: true, prompt_ids: [parsed.id] }, req.id));
-        }
+        await runAction({
+          action: target.action,
+          id: target.id,
+          actions: promptActions,
+          extra: { resolved, session_id, req, reply },
+        });
       } catch (error) {
         sendMappedError(reply, req, error);
       }
     },
   );
   app.post(actionRoute.path, actionRoute.options, actionRoute.handler as Parameters<PromptRouteHost['post']>[2]);
+}
+
+type PromptActionExtra = {
+  readonly resolved: Awaited<ReturnType<typeof resolvePrompt>>;
+  readonly session_id: string;
+  readonly req: { readonly id: string };
+  readonly reply: { readonly send: (payload: unknown) => unknown };
+};
+
+type PromptActionCtx = PromptActionExtra & { readonly id: string; readonly body: unknown };
+
+const promptActions: ActionTable<'abort' | 'steer', PromptActionExtra> = {
+  abort: { handle: abortPromptAction },
+  steer: { handle: steerPromptAction },
+};
+
+async function abortPromptAction(ctx: PromptActionCtx): Promise<void> {
+  const { resolved, session_id, req, reply, id } = ctx;
+  resolved.prompt.abort(id);
+  requestLog(req)?.info({ session_id, prompt_id: id }, 'prompt aborted');
+  reply.send(okEnvelope({ aborted: true }, req.id));
+}
+
+async function steerPromptAction(ctx: PromptActionCtx): Promise<void> {
+  const { resolved, req, reply, id } = ctx;
+  await resolved.prompt.steer([id]);
+  reply.send(okEnvelope({ steered: true, prompt_ids: [id] }, req.id));
 }
 
 function projectPromptList(snapshot: PromptQueueSnapshot) {

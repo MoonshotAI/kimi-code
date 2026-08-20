@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Emit subagent.spawned after the run's task registration so the signal carries the task id clients bind cancel/status actions to.
+Fix background agent rows that could not be stopped right after they appeared, and stray rows left behind when an agent failed to start.

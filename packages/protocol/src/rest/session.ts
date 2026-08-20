@@ -143,7 +143,7 @@ export const sessionStatusResponseSchema = z.object({
   /** Omitted when the context limit is unknown — 0 is the engine's "unknown"
    *  marker, never a real limit. */
   max_context_tokens: z.number().int().nonnegative().optional(),
-  context_usage: z.number().min(0).max(1),
+  context_usage: z.number().min(0).max(1).optional(),
 });
 export type SessionStatusResponse = z.infer<typeof sessionStatusResponseSchema>;
 

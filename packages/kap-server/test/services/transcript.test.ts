@@ -1116,7 +1116,9 @@ describe('AgentTranscriptProjector', () => {
     expect(marker).toMatchObject({ marker: 'goal', payload: { snapshot } });
 
     const clearedOps = projector.map(ev({ type: 'goal.updated', snapshot: null }));
-    expect(clearedOps.every((op) => op.op === 'marker.upsert')).toBe(true);
+    expect(clearedOps[0]).toEqual({ op: 'meta.merge', meta: { goal: null } });
+    tx.apply(clearedOps);
+    expect(tx.getMeta().goal).toBeUndefined();
   });
 
   it('mirrors plan / swarm mode slices into meta.modes (only when provided)', () => {

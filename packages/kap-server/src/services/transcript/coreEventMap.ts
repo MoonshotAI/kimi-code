@@ -1130,7 +1130,9 @@ export class AgentTranscriptProjector {
   }): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
     const snapshot = event.snapshot;
-    if (snapshot !== null) {
+    if (snapshot === null) {
+      ops.push({ op: 'meta.merge', meta: { goal: null } });
+    } else {
       ops.push({
         op: 'meta.merge',
         meta: {

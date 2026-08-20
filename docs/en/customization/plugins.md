@@ -97,7 +97,7 @@ Kimi WebBridge installs in two parts: after the steps above, you also need to [i
 
 Official plugins do not update automatically — when an update is available, you'll be prompted the next time you use the old version. To upgrade, repeat the installation steps above.
 
-### Kimi Datasource <Badge type="tip" text="v3.3.0" />
+### Kimi Datasource <Badge type="tip" text="v3.4.0" />
 
 Kimi Datasource is the official Kimi Code data plugin, letting you query financial market data, macroeconomic indicators, corporate registration records, academic literature, and Chinese laws and regulations in natural language — no manual API calls or data accounts required.
 
@@ -131,6 +131,10 @@ You must first complete OAuth login with a Kimi Code account via `/login`; data 
 | Corporate data | Business registration, equity chain, legal risk, and related-entity graph for mainland Chinese companies |
 | Academic literature | Millions of papers across physics, mathematics, CS, quantitative finance, economics — including preprints |
 | Legal | Chinese laws, regulations, and judicial cases — statute search and detail lookup across all authority levels, plus ordinary and authoritative case search |
+| Chinese government statistics | Open data catalogs from the National Data Administration, plus NBS macro indicators (national, provincial, and major-city time series) |
+| Chinese standards | National (GB), industry (HB), local (DB), and association (TT) standards lookup |
+| International organizations | Official open datasets from WHO, FAO, UNSD, ECB, Eurostat, UNICEF, OECD, and FRED — global health, food and agriculture, finance, and macro time series |
+| Financial news and data | Xinhua Finance announcements, news flashes, and policy updates; Caixin database with 600+ data APIs |
 | Smart screening | Well-known databases such as Gildata, covering natural-language screening for stocks, funds, and fund managers, plus macro-industry data, research reports, announcements, and news |
 
 #### Billing and limitations

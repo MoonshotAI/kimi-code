@@ -164,7 +164,32 @@ describe('AgentTitlePromptSource', () => {
     });
   });
 
-  it('digestExcerpt anchors the first prompt and lands on the latest turn', async () => {
+  it('digestExcerpt counts a queued prompt already appended to the context only once', async () => {
+    liveMessages = [
+      userMessage('one', '最早的问题'),
+      assistantMessage('a1', [{ type: 'text', text: '第一轮回答' }]),
+      userMessage('two', '进行中的问题'),
+    ];
+    queue = {
+      active: {
+        id: 'two',
+        userMessageId: 'two',
+        createdAt: '2026-01-01T00:00:01.000Z',
+        state: 'running',
+        message: userMessage('two', '进行中的问题'),
+      },
+      pending: [],
+    };
+
+    await expect(ix.get(IAgentTitlePromptSource).digestExcerpt()).resolves.toEqual({
+      turns: [
+        { user: '最早的问题', assistant: '第一轮回答' },
+        { user: '进行中的问题', assistant: undefined },
+      ],
+    });
+  });
+
+  it('digestExcerpt pairs every prompt with its own turn’s final assistant text', async () => {
     liveMessages = [
       userMessage('u1', '最初的目标'),
       assistantMessage('a1', [{ type: 'text', text: '第一轮回答' }]),
@@ -176,13 +201,37 @@ describe('AgentTitlePromptSource', () => {
     ];
 
     await expect(ix.get(IAgentTitlePromptSource).digestExcerpt()).resolves.toEqual({
-      firstUser: '最初的目标',
-      lastUser: '最近的要求',
-      assistant: '最新正文',
+      turns: [
+        { user: '最初的目标', assistant: '第一轮回答' },
+        { user: '中途追问', assistant: '中间回答' },
+        { user: '最近的要求', assistant: '最新正文' },
+      ],
     });
   });
 
-  it('digestExcerpt collapses a single-prompt conversation and skips dangling questions', async () => {
+  it('digestExcerpt covers every turn, even with a dangling tool-only span', async () => {
+    liveMessages = [
+      userMessage('u1', '最初的目标'),
+      assistantMessage('a1', [{ type: 'text', text: '第一轮回答' }]),
+      userMessage('u2', '第二个话题'),
+      assistantMessage('a2', [{ type: 'think', think: '只在思考' }]),
+      userMessage('u3', '第三个话题'),
+      assistantMessage('a3', [{ type: 'text', text: '第三轮回答' }]),
+      userMessage('u4', '最新的话题'),
+      assistantMessage('a4', [{ type: 'text', text: '最新回答' }]),
+    ];
+
+    await expect(ix.get(IAgentTitlePromptSource).digestExcerpt()).resolves.toEqual({
+      turns: [
+        { user: '最初的目标', assistant: '第一轮回答' },
+        { user: '第二个话题', assistant: undefined },
+        { user: '第三个话题', assistant: '第三轮回答' },
+        { user: '最新的话题', assistant: '最新回答' },
+      ],
+    });
+  });
+
+  it('digestExcerpt keeps a single-prompt conversation and dangling questions', async () => {
     liveMessages = [
       userMessage('u1', '唯一的问题'),
       assistantMessage('a1', [{ type: 'text', text: '唯一的回答' }]),
@@ -190,16 +239,18 @@ describe('AgentTitlePromptSource', () => {
     ];
 
     await expect(ix.get(IAgentTitlePromptSource).digestExcerpt()).resolves.toEqual({
-      firstUser: '唯一的问题',
-      lastUser: '还没得到回复的新问题',
-      assistant: '唯一的回答',
+      turns: [
+        { user: '唯一的问题', assistant: '唯一的回答' },
+        { user: '还没得到回复的新问题', assistant: undefined },
+      ],
     });
 
     liveMessages = [userMessage('u1', '唯一的问题')];
     await expect(ix.get(IAgentTitlePromptSource).digestExcerpt()).resolves.toEqual({
-      firstUser: '唯一的问题',
-      lastUser: undefined,
-      assistant: undefined,
+      turns: [{ user: '唯一的问题', assistant: undefined }],
     });
+
+    liveMessages = [];
+    await expect(ix.get(IAgentTitlePromptSource).digestExcerpt()).resolves.toEqual({ turns: [] });
   });
 });

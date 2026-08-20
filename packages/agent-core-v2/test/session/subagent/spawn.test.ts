@@ -168,6 +168,8 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       get: (name: string) => profiles.find((profile) => profile.name === name),
       getDefault: () => profiles[0]!,
       list: () => profiles,
+      inspect: (name: string) =>
+        profiles.some((profile) => profile.name === name) ? { sourceId: 'builtin' } : undefined,
     } as unknown as ISessionAgentProfileCatalog);
     ix.stub(IModelCatalog, {
       _serviceBrand: undefined,

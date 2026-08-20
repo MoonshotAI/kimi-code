@@ -688,6 +688,8 @@ export interface TurnStartedEvent {
   readonly prompt?: string;
   /** The prompt record id when the turn was opened by a prompt submission. */
   readonly promptId?: string;
+  /** Session-media references carried by the prompt (transcript attachments). */
+  readonly promptAttachments?: readonly { kind: 'image' | 'video' | 'audio'; fileId: string }[];
 }
 
 export interface TurnEndedEvent {
@@ -1659,6 +1661,9 @@ export const turnStartedEventSchema = z.object({
   origin: promptOriginSchema,
   prompt: z.string().optional(),
   promptId: z.string().optional(),
+  promptAttachments: z
+    .array(z.object({ kind: z.enum(['image', 'video', 'audio']), fileId: z.string() }))
+    .optional(),
 }) satisfies z.ZodType<TurnStartedEvent>;
 
 export const turnEndedEventSchema = z.object({

@@ -3,6 +3,7 @@ import { Event2 } from '#/app/event/event2';
 
 export interface SessionArchivedPayload {
   readonly sessionId: string;
+  readonly workspaceId: string;
 }
 
 export class SessionArchived extends Event2<{ readonly payload: SessionArchivedPayload }> {

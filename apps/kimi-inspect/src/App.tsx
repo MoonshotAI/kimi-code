@@ -4,9 +4,10 @@
  * event streams was removed server-side, so Service panels and the pending
  * interactions card fetch on demand and the sidebar polls.
  * Layout: header / icon rail / view. The `chat` view is a strip of the
- * left sidebar (workspaces + sessions), the session pane (session Services
- * / State tabs), the chat column, and the right dock (`RightPanel`) merging
- * the transcript audit and the agent inspector under Audit / Agent tabs;
+ * left sidebar (a workspace → session tree), the chat column, and the
+ * right dock (`RightPanel`) merging the transcript audit, the agent
+ * inspector, and the session pane under Audit / Agent / State / Session
+ * tabs;
  * the `models` view is the full-width model catalog; the `services` view is
  * the full-width app-scope Service reflection (`AppServicesView`); the
  * `workspace` view is the workspace-scope counterpart
@@ -32,7 +33,6 @@ import { NavRail, type AppView } from './components/NavRail';
 import { RightPanel } from './components/RightPanel';
 import { SearchView } from './components/SearchView';
 import { ServerSwitcher } from './components/ServerSwitcher';
-import { SessionPane } from './components/SessionPane';
 import { Sidebar } from './components/Sidebar';
 import { WorkspaceServicesView } from './components/WorkspaceServicesView';
 import { useConnection } from './connection';
@@ -136,7 +136,6 @@ export function App() {
         ) : (
           <>
             <Sidebar activeSessionId={sessionId} onSelectSession={setSessionId} />
-            <SessionPane sessionId={sessionId} ready={ready} />
             {resumeError !== null ? (
               <div className="flex flex-1 items-center justify-center p-6 text-center text-[12px] text-red-400">
                 Failed to open session: {errorMessage(resumeError)}

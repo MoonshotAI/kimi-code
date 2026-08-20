@@ -18,6 +18,8 @@ import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDo
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IEventService } from '#/app/event/event';
+import type { Event2 } from '#/app/event/event2';
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import { WorkspaceService } from '#/app/workspace/workspaceService';
 import { FileWorkspacePersistence } from '#/app/workspace/fileWorkspacePersistence';
@@ -32,6 +34,7 @@ interface SessionIndexLine {
 describe('WorkspaceService (file-backed)', () => {
   let homeDir: string;
   let currentHost: ReturnType<typeof createScopedTestHost> | undefined;
+  let published: Array<{ type: string; payload: unknown }>;
 
   beforeEach(async () => {
     _clearScopedRegistryForTests();
@@ -50,6 +53,7 @@ describe('WorkspaceService (file-backed)', () => {
       'workspace',
     );
     homeDir = await fsp.mkdtemp(join(os.tmpdir(), 'ws-registry-'));
+    published = [];
   });
 
   afterEach(async () => {
@@ -64,6 +68,15 @@ describe('WorkspaceService (file-backed)', () => {
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IHostFileSystem, hostFs),
+      stubPair(IEventService, {
+        publish: (event: Event2<any>) => {
+          published.push({
+            type: event.type,
+            payload: (event as { readonly payload?: unknown }).payload,
+          });
+        },
+        subscribe: () => ({ dispose: () => {} }),
+      } as unknown as IEventService),
     ]);
     currentHost = host;
     return host.app.accessor.get(IWorkspaceService);
@@ -113,6 +126,29 @@ describe('WorkspaceService (file-backed)', () => {
     const list = await restart().list();
     expect(list.map((w) => w.id)).toContain(created.id);
     expect(list.find((w) => w.id === created.id)?.name).toBe('proj');
+  });
+
+  it('publishes lifecycle events on create, touch, rename, and delete', async () => {
+    const service = build();
+    const created = await service.createOrTouch(homeDir, 'proj');
+    await service.createOrTouch(homeDir);
+    await service.update(created.id, { name: 'renamed' });
+    await service.delete(created.id);
+
+    expect(published.map((event) => event.type)).toEqual([
+      'event.workspace.created',
+      'event.workspace.updated',
+      'event.workspace.updated',
+      'event.workspace.deleted',
+    ]);
+    expect(published[0]?.payload).toMatchObject({ workspace: { id: created.id, name: 'proj' } });
+    expect(published[2]?.payload).toMatchObject({ workspace: { id: created.id, name: 'renamed' } });
+    expect(published[3]?.payload).toEqual({ workspaceId: created.id, root: homeDir });
+  });
+
+  it('publishes no event when deleting an unknown workspace', async () => {
+    await build().delete('wd_missing_000000000000');
+    expect(published).toEqual([]);
   });
 
   it('rebuilds from session_index.jsonl when workspaces.json is absent', async () => {

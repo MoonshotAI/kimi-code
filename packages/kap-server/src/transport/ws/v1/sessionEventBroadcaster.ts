@@ -9,6 +9,7 @@ import type {
   ISessionScopeHandle,
   Scope,
   SessionActivityState,
+  Workspace,
 } from '@moonshot-ai/agent-core-v2';
 import {
   IAgentLifecycleService,
@@ -47,6 +48,7 @@ import {
 
 import { toWireApproval } from '../../../routes/approvals';
 import { toWireQuestion } from '../../../routes/questions';
+import { toWireWorkspace } from '../../../routes/workspaces';
 import { projectPromptContentParts } from '../../../services/messages/messageProjection';
 import { readLegacyStatus, toLegacyPhase } from '../../../services/legacyStatus/legacyStatus';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
@@ -760,6 +762,48 @@ export class SessionEventBroadcaster {
       );
       return;
     }
+    if (event.type === 'event.session.archived') {
+      const payload = sessionArchivedPayload(corePayload);
+      if (payload === undefined) return;
+      void this.dispatchGlobal({
+        type: 'event.session.archived',
+        workspace_id: payload.workspaceId,
+        agentId: 'main',
+        sessionId: payload.sessionId,
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(GLOBAL_SESSION_ID, 'event.session.archived', error),
+      );
+      return;
+    }
+    if (event.type === 'event.workspace.created' || event.type === 'event.workspace.updated') {
+      const workspace = workspaceLifecyclePayload(corePayload);
+      if (workspace === undefined) return;
+      const type = event.type;
+      void (async () => {
+        const wire = await toWireWorkspace(this.opts.core, workspace);
+        await this.dispatchGlobal({
+          type,
+          workspace: wire,
+          agentId: 'main',
+          sessionId: GLOBAL_SESSION_ID,
+        } as Event);
+      })().catch((error: unknown) => this.logDispatchError(GLOBAL_SESSION_ID, type, error));
+      return;
+    }
+    if (event.type === 'event.workspace.deleted') {
+      const payload = workspaceDeletedPayload(corePayload);
+      if (payload === undefined) return;
+      void this.dispatchGlobal({
+        type: 'event.workspace.deleted',
+        workspace_id: payload.workspaceId,
+        root: payload.root,
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(GLOBAL_SESSION_ID, 'event.workspace.deleted', error),
+      );
+      return;
+    }
     if (event.type === 'session.meta.updated') {
       const payload = sessionMetaUpdatedPayload(corePayload);
       if (payload === undefined) return;
@@ -1438,6 +1482,52 @@ function sessionCreatedPayload(
       : undefined;
   if (sessionId === undefined || session === undefined) return undefined;
   return { sessionId, session };
+}
+
+function sessionArchivedPayload(
+  payload: unknown,
+): { sessionId: string; workspaceId: string } | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const candidate = payload as { sessionId?: unknown; workspaceId?: unknown };
+  if (typeof candidate.sessionId !== 'string' || candidate.sessionId.length === 0) {
+    return undefined;
+  }
+  if (typeof candidate.workspaceId !== 'string' || candidate.workspaceId.length === 0) {
+    return undefined;
+  }
+  return { sessionId: candidate.sessionId, workspaceId: candidate.workspaceId };
+}
+
+function workspaceLifecyclePayload(payload: unknown): Workspace | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const candidate = (payload as { workspace?: unknown }).workspace;
+  if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
+    return undefined;
+  }
+  const ws = candidate as Partial<Workspace>;
+  if (typeof ws.id !== 'string' || ws.id.length === 0) return undefined;
+  if (typeof ws.root !== 'string' || ws.root.length === 0) return undefined;
+  if (typeof ws.name !== 'string') return undefined;
+  if (typeof ws.createdAt !== 'number' || typeof ws.lastOpenedAt !== 'number') return undefined;
+  return {
+    id: ws.id,
+    root: ws.root,
+    name: ws.name,
+    createdAt: ws.createdAt,
+    lastOpenedAt: ws.lastOpenedAt,
+  };
+}
+
+function workspaceDeletedPayload(
+  payload: unknown,
+): { workspaceId: string; root: string } | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const candidate = payload as { workspaceId?: unknown; root?: unknown };
+  if (typeof candidate.workspaceId !== 'string' || candidate.workspaceId.length === 0) {
+    return undefined;
+  }
+  if (typeof candidate.root !== 'string' || candidate.root.length === 0) return undefined;
+  return { workspaceId: candidate.workspaceId, root: candidate.root };
 }
 
 interface CapabilityChangedPayload {
