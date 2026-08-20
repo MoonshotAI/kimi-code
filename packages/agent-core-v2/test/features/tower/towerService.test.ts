@@ -24,6 +24,7 @@ import { TowerStore } from '#/features/tower/protocol/index';
 import { IAgentTowerService, TOWER_FLAG_ID } from '#/features/tower/tower';
 import { AgentTowerService, TOWER_MODE_TOOLS } from '#/features/tower/towerService';
 import { towerKey } from '#/features/tower/towerOps';
+import { ProfileBind } from '#/agent/profile/profileOps';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
@@ -454,6 +455,23 @@ describe('AgentTowerService', () => {
 
     towerFlagOn = true;
     expect(tower.isActive).toBe(false);
+  });
+
+  it('reapplies the tower tool set when a profile bind clears the overlay', async () => {
+    ix.stub(IAgentScopeContext, {
+      agentId: 'main',
+      scope: (subKey?: string) => subKey ?? '',
+    });
+    const tower = ix.get(IAgentTowerService);
+    tower.enter();
+    expect(addedTools).toEqual([...TOWER_MODE_TOOLS]);
+
+    addedTools.length = 0;
+    ix.get(IEventBus).publish(
+      new ProfileBind({ thinkingEffort: 'off', systemPrompt: 'sys', disallowedTools: [] }),
+    );
+
+    expect(addedTools).toEqual([...TOWER_MODE_TOOLS]);
   });
 
   it('restore keeps the feature inert while the tower flag is off', async () => {

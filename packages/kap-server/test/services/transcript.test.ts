@@ -1872,6 +1872,15 @@ describe('AgentTranscriptProjector', () => {
 
       const withoutFlag = await serviceWith(false).readColdSnapshot('s1', 'main');
       expect(withoutFlag!.meta.modes).toBeUndefined();
+
+      const childDir = join(home, 'sessions', 'ws', 's1', 'agents', 'worker-1');
+      await mkdir(childDir, { recursive: true });
+      await writeFile(
+        join(childDir, 'wire.jsonl'),
+        `${records.map((r) => JSON.stringify(r)).join('\n')}\n`,
+      );
+      const child = await serviceWith(true).readColdSnapshot('s1', 'worker-1');
+      expect(child!.meta.modes).toBeUndefined();
     } finally {
       await rm(home, { recursive: true, force: true });
     }

@@ -5,12 +5,14 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { ProfileBind } from '#/agent/profile/profileOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
+import { IEventBus } from '#/app/event/eventBus';
 import { LifecycleScope } from '#/app/scopes';
 import { IFlagService } from '#/app/flag/flag';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -47,6 +49,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IFlagService private readonly flags: IFlagService,
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentContextMemoryService context: IAgentContextMemoryService,
+    @IEventBus eventBus: IEventBus,
   ) {
     super();
     this.agentState.contributeState(towerKey);
@@ -54,6 +57,13 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       this.dispatcher.hooks.onDidRestore.register('tower', async (_ctx, next) => {
         this.restoreTowerTools();
         await next();
+      }),
+    );
+    this._register(
+      eventBus.subscribe(ProfileBind, () => {
+        if (this.agentCtx.agentId !== 'main') return;
+        if (!this.isActive) return;
+        for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
       }),
     );
     this._register(new TowerModeInjection(injector, this, context, this.flags));

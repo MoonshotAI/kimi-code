@@ -509,7 +509,12 @@ export class TranscriptService {
     const base = groupMessagesIntoSnapshot(messages);
     const snapshot = foldWireRecordFacts(records, base);
     if (snapshot.meta.modes?.tower === undefined) return snapshot;
-    if (this.deps.core.accessor.get(IFlagService).enabled(TOWER_FLAG_ID)) return snapshot;
+    if (
+      agentId === MAIN_AGENT_ID &&
+      this.deps.core.accessor.get(IFlagService).enabled(TOWER_FLAG_ID)
+    ) {
+      return snapshot;
+    }
     const modes = { ...snapshot.meta.modes, tower: undefined };
     const cleared = modes.plan === undefined && modes.swarm === undefined && modes.tower === undefined;
     return { ...snapshot, meta: { ...snapshot.meta, modes: cleared ? undefined : modes } };
