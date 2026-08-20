@@ -28,6 +28,7 @@ import {
   ISessionLifecycleService,
   ISessionManager,
   IWorkspaceInstanceManager,
+  IWorkspaceSessions,
   MAIN_AGENT_ID,
   SessionInteractionService,
   StateRegistry,
@@ -360,6 +361,9 @@ function makeCore(
           list: () => [{ program: { accessor: handler.accessor } }],
           onDidChange: () => ({ dispose: () => {} }),
         };
+      }
+      if (token === IWorkspaceSessions) {
+        return { listRecent: async () => [], count: async () => 3 };
       }
       return undefined;
     },
@@ -1080,6 +1084,99 @@ describe('SessionEventBroadcaster', () => {
     expect(s1View.envelopes[0]!.session_id).not.toBe('__global__');
     expect(s2View.envelopes[0]!.session_id).toBe('s1');
     expect(s1View.envelopes[0]!.volatile).toBeUndefined();
+  });
+
+  it('fans out event.session.archived to every connection, including for cold sessions', async () => {
+    const globalView = collectingTarget();
+    bc.addGlobalTarget(globalView.target);
+
+    eventBus.emit({
+      type: 'event.session.archived',
+      payload: { sessionId: 'cold-1', workspaceId: 'wd_cold' },
+    });
+
+    await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+    expect(globalView.envelopes[0]).toMatchObject({
+      type: 'event.session.archived',
+      session_id: '__global__',
+      payload: {
+        type: 'event.session.archived',
+        agentId: 'main',
+        sessionId: 'cold-1',
+        workspace_id: 'wd_cold',
+      },
+    });
+    expect(globalView.deliveries).toEqual(['immediate']);
+  });
+
+  it('fans out event.workspace.created/updated with the wire workspace shape', async () => {
+    const globalView = collectingTarget();
+    bc.addGlobalTarget(globalView.target);
+
+    const workspace = {
+      id: 'wd_a',
+      root: '/repo/a',
+      name: 'repo-a',
+      createdAt: 1_000,
+      lastOpenedAt: 2_000,
+    };
+    eventBus.emit({ type: 'event.workspace.created', payload: { workspace } });
+
+    await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+    expect(globalView.envelopes[0]).toMatchObject({
+      type: 'event.workspace.created',
+      session_id: '__global__',
+      payload: {
+        type: 'event.workspace.created',
+        agentId: 'main',
+        sessionId: '__global__',
+        workspace: {
+          id: 'wd_a',
+          root: '/repo/a',
+          name: 'repo-a',
+          created_at: new Date(1_000).toISOString(),
+          last_opened_at: new Date(2_000).toISOString(),
+          session_count: 3,
+        },
+      },
+    });
+
+    eventBus.emit({
+      type: 'event.workspace.updated',
+      payload: { workspace: { ...workspace, name: 'renamed' } },
+    });
+    await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(2));
+    expect(globalView.envelopes[1]).toMatchObject({
+      type: 'event.workspace.updated',
+      payload: {
+        type: 'event.workspace.updated',
+        workspace: { id: 'wd_a', name: 'renamed', session_count: 3 },
+      },
+    });
+    expect(globalView.deliveries).toEqual(['immediate', 'immediate']);
+  });
+
+  it('fans out event.workspace.deleted with the workspace id and root', async () => {
+    const globalView = collectingTarget();
+    bc.addGlobalTarget(globalView.target);
+
+    eventBus.emit({
+      type: 'event.workspace.deleted',
+      payload: { workspaceId: 'wd_a', root: '/repo/a' },
+    });
+
+    await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+    expect(globalView.envelopes[0]).toMatchObject({
+      type: 'event.workspace.deleted',
+      session_id: '__global__',
+      payload: {
+        type: 'event.workspace.deleted',
+        agentId: 'main',
+        sessionId: '__global__',
+        workspace_id: 'wd_a',
+        root: '/repo/a',
+      },
+    });
   });
 
   it('gates event.di.unit_changed to connections opted into the DI debug feed', async () => {

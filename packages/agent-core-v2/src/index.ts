@@ -496,6 +496,7 @@ export * from '#/app/projectLocalConfig/projectLocalConfig';
 export * from '#/app/workspace/workspace';
 export * from '#/app/workspace/workspaceService';
 export * from '#/app/workspace/workspaceAlias';
+export * from '#/app/workspace/workspaceEvents';
 export * from '#/app/workspace/workspacePersistence';
 export * from '#/app/workspace/fileWorkspacePersistence';
 export * from '#/app/workspaceAliases/workspaceAliases';

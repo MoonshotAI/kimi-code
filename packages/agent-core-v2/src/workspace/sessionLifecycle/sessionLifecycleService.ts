@@ -387,7 +387,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const meta = handle.accessor.get(ISessionMetadata);
     await meta.setArchived(true);
     await this.drainAgents(handle);
-    this.event.publish(new SessionArchived({ payload: { sessionId } }));
+    this.event.publish(
+      new SessionArchived({
+        payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
+      }),
+    );
     await this.announceWillClose({ sessionId, handle, reason: 'archive' });
     this.sessions.delete(sessionId);
     await drainSessionMetadataWrites();
