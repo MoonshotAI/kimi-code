@@ -63,52 +63,71 @@ export class FlowStartTool implements IFlowStartTool {
       };
     }
 
-    let text: string | undefined;
+    let projectText: string | undefined;
     const lease = this.runtime.acquire(['fs']);
     try {
       if (lease.runtime.identity.generation !== generation) {
         return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
       }
       try {
-        text = await lease.runtime.fs!.readText(path);
+        projectText = await lease.runtime.fs!.readText(path);
       } catch {
-        text = undefined;
+        projectText = undefined;
       }
     } finally {
       lease.dispose();
     }
 
-    let sourcePath = path;
-    if (text === undefined) {
-      const userPath = userFlowDefinitionPath(this.bootstrap.homeDir, args.flow);
-      try {
-        text = await this.hostFs.readText(userPath);
-        sourcePath = userPath;
-      } catch {
-        return {
-          isError: true,
-          output: `Could not read the flow definition at ${path} or ${userPath}. Check that the file exists under ${FLOWS_PROJECT_DIR}/ or ${userFlowsDir(this.bootstrap.homeDir)}/.`,
-        };
-      }
+    const project =
+      projectText === undefined ? undefined : this.validateDefinition(projectText, path, args.flow);
+    if (project?.definition !== undefined) {
+      return this.startRun(project.definition, args);
     }
 
+    const userPath = userFlowDefinitionPath(this.bootstrap.homeDir, args.flow);
+    let userText: string | undefined;
+    try {
+      userText = await this.hostFs.readText(userPath);
+    } catch {
+      userText = undefined;
+    }
+    const user =
+      userText === undefined ? undefined : this.validateDefinition(userText, userPath, args.flow);
+    if (user?.definition !== undefined) {
+      return this.startRun(user.definition, args);
+    }
+
+    if (project !== undefined) return { isError: true, output: project.error! };
+    if (user !== undefined) return { isError: true, output: user.error! };
+    return {
+      isError: true,
+      output: `Could not read the flow definition at ${path} or ${userPath}. Check that the file exists under ${FLOWS_PROJECT_DIR}/ or ${userFlowsDir(this.bootstrap.homeDir)}/.`,
+    };
+  }
+
+  private validateDefinition(
+    text: string,
+    sourcePath: string,
+    flowId: string,
+  ): { definition?: FlowDefinition; error?: string } {
     let definition: FlowDefinition;
     try {
       definition = parseFlowDefinition(text);
     } catch (error) {
       if (error instanceof FlowDefinitionParseError) {
-        return { isError: true, output: `${error.message} (${sourcePath})` };
+        return { error: `${error.message} (${sourcePath})` };
       }
       throw error;
     }
-
-    if (definition.id !== args.flow) {
+    if (definition.id !== flowId) {
       return {
-        isError: true,
-        output: `The definition at ${sourcePath} declares id \`${definition.id}\`, which does not match the requested flow \`${args.flow}\`. Fix the file's id or request the flow by its declared id.`,
+        error: `The definition at ${sourcePath} declares id \`${definition.id}\`, which does not match the requested flow \`${flowId}\`. Fix the file's id or request the flow by its declared id.`,
       };
     }
+    return { definition };
+  }
 
+  private startRun(definition: FlowDefinition, args: FlowStartInput): ExecutableToolResult {
     if (this.flow.hasPendingActivation()) {
       return {
         isError: true,

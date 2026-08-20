@@ -147,4 +147,28 @@ describe('FlowStartTool', () => {
     expect(result.output).toContain('/home/.kimi-code/flows/issue-fix.md');
     expect(start).not.toHaveBeenCalled();
   });
+
+  it('falls back to a valid user definition when the project file is invalid', async () => {
+    fileText = 'not a flow definition';
+    userFileText = VALID_DEFINITION;
+    const result = await execute('issue-fix');
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('Flow run started: `issue-fix`');
+  });
+
+  it('falls back to the user definition when the project id mismatches, and reports the project error when the user file is missing', async () => {
+    fileText = VALID_DEFINITION.replace('id: issue-fix', 'id: other-flow');
+    userFileText = VALID_DEFINITION;
+    const fallback = await execute('issue-fix');
+    expect(fallback.isError).not.toBe(true);
+    expect(fallback.output).toContain('Flow run started: `issue-fix`');
+
+    start.mockClear();
+    userFileText = undefined;
+    active = false;
+    const failed = await execute('issue-fix');
+    expect(failed.isError).toBe(true);
+    expect(failed.output).toContain('does not match');
+    expect(start).not.toHaveBeenCalled();
+  });
 });

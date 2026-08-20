@@ -12,6 +12,18 @@ export const FLOW_ADVANCE_TOOL_NAME = 'FlowAdvance';
 export const FLOW_ABORT_TOOL_NAME = 'FlowAbort';
 export const FLOW_JUMP_TOOL_NAME = 'FlowJump';
 
+/**
+ * Builtin flow tool names. They are registered supervisor-only (main agent),
+ * so a spawned worker never receives them regardless of its profile's
+ * allowlist.
+ */
+export const FLOW_TOOL_NAMES: ReadonlySet<string> = new Set([
+  FLOW_START_TOOL_NAME,
+  FLOW_ADVANCE_TOOL_NAME,
+  FLOW_ABORT_TOOL_NAME,
+  FLOW_JUMP_TOOL_NAME,
+]);
+
 export const FLOWS_PROJECT_DIR = '.kimi-code/flows';
 
 export const FlowGateKindSchema = z.enum(['ai', 'human', 'ai-then-human']);

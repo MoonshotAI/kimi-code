@@ -28,6 +28,8 @@ import {
   FLOW_ADVANCE_TOOL_NAME,
   FLOW_FLAG_ID,
   FLOW_JUMP_TOOL_NAME,
+  FLOW_START_TOOL_NAME,
+  FLOW_TOOL_NAMES,
   FlowDefinitionSchema,
   IAgentFlowService,
   type FlowAdvanceOutcome,
@@ -49,13 +51,6 @@ import {
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { FlowJumped, FlowRunEnded, FlowRunStarted, FlowVerdict, flowGatesKey, flowKey } from './flowOps';
-
-const FLOW_TOOL_NAMES: ReadonlySet<string> = new Set([
-  'FlowStart',
-  'FlowAdvance',
-  'FlowAbort',
-  'FlowJump',
-]);
 
 export class AgentFlowService extends Disposable implements IAgentFlowService {
   declare readonly _serviceBrand: undefined;
@@ -141,8 +136,10 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => {
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
-        if (event.toolCall.name !== 'TodoList') return;
-        const startsInBatch = event.toolCalls.some((call) => call.name === 'FlowStart');
+        if (event.toolCall.name !== 'TodoList' || !this.isBuiltinTool('TodoList')) return;
+        const startsInBatch = event.toolCalls.some(
+          (call) => call.name === FLOW_START_TOOL_NAME && this.isBuiltinFlowTool(call.name),
+        );
         if (!this.run().active && !startsInBatch) return;
         event.veto(
           denyToolExecution(
@@ -157,6 +154,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
       eventBus.subscribe(ContextUndone, () => {
         this.epoch += 1;
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
+        if (this.scopeContext.agentId !== 'main') return;
         void this.dispatcher.dispatch(new AgentStatusUpdated({ flowRun: this.summary() }));
       }),
     );
@@ -185,6 +183,10 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
 
   private isBuiltinFlowTool(name: string): boolean {
     if (!FLOW_TOOL_NAMES.has(name)) return false;
+    return this.isBuiltinTool(name);
+  }
+
+  private isBuiltinTool(name: string): boolean {
     return this.toolRegistry
       .listReferences()
       .some((reference) => reference.name === name && reference.source === 'builtin');

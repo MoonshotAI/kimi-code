@@ -74,6 +74,7 @@ describe('AgentFlowService', () => {
   let contextMessages: ContextMessage[];
   let configHandlers: ((e: ConfigChangedEvent) => void)[];
   let flowToolSource: 'builtin' | 'user';
+  let todoToolSource: 'builtin' | 'user';
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -96,13 +97,16 @@ describe('AgentFlowService', () => {
       homeDir: '/home/.kimi-code',
     } as unknown as IBootstrapService);
     ix.stub(IAgentToolRegistryService, {
-      listReferences: () =>
-        ['FlowStart', 'FlowAdvance', 'FlowAbort', 'FlowJump'].map((name) => ({
+      listReferences: () => [
+        ...['FlowStart', 'FlowAdvance', 'FlowAbort', 'FlowJump'].map((name) => ({
           name,
           source: flowToolSource,
         })),
+        { name: 'TodoList', source: todoToolSource },
+      ],
     } as unknown as IAgentToolRegistryService);
     flowToolSource = 'builtin';
+    todoToolSource = 'builtin';
     activationDataStore = new Map();
     contextMessages = [];
     configHandlers = [];
@@ -308,6 +312,20 @@ describe('AgentFlowService', () => {
     expect(seen).toEqual([
       { flowId: 'issue-fix', stageId: 'triage', stageIndex: 0, stageTotal: 2, gate: 'human' },
     ]);
+  });
+
+  it('does not publish a flow status for a worker-agent undo', () => {
+    agentId = 'worker-1';
+    const seen: unknown[] = [];
+    disposables.add(
+      ix.get(IEventBus).subscribe((e) => {
+        if (e.type === 'agent.status.updated') {
+          seen.push((e as AgentStatusUpdated).flowRun);
+        }
+      }),
+    );
+    ix.get(IEventBus).publish(new ContextUndone({ turns: 1 }));
+    expect(seen).toEqual([]);
   });
 
   it('jump moves the pointer, records the audit entry, and bumps the epoch', () => {
@@ -784,6 +802,48 @@ describe('AgentFlowService', () => {
       const decision = await executorEvents.fireBeforeExecute(context);
       expect(decision?.veto?.isError).toBe(true);
       expect(decision?.veto?.output).toContain('flow run');
+    });
+
+    it('leaves a shadowing TodoList registration alone during a run', async () => {
+      todoToolSource = 'user';
+      service.start(DEFINITION, 'task');
+      const todoCall: ToolCall = {
+        type: 'function',
+        id: 'call_todo_shadow',
+        name: 'TodoList',
+        arguments: '{}',
+      };
+      const context: ResolvedToolExecutionHookContext = {
+        turnId: 0,
+        signal,
+        toolCall: todoCall,
+        toolCalls: [todoCall],
+        args: {},
+        execution: { approvalRule: 'TodoList', execute: async () => ({ output: '' }) },
+      };
+      expect(await executorEvents.fireBeforeExecute(context)).toBeUndefined();
+    });
+
+    it('ignores a shadowing FlowStart when judging a batched TodoList', async () => {
+      flowToolSource = 'user';
+      const todoCall: ToolCall = {
+        type: 'function',
+        id: 'call_todo_batch',
+        name: 'TodoList',
+        arguments: '{}',
+      };
+      const context: ResolvedToolExecutionHookContext = {
+        turnId: 0,
+        signal,
+        toolCall: todoCall,
+        toolCalls: [
+          todoCall,
+          { type: 'function', id: 'call_start_shadow', name: 'FlowStart', arguments: '{}' },
+        ],
+        args: {},
+        execution: { approvalRule: 'TodoList', execute: async () => ({ output: '' }) },
+      };
+      expect(await executorEvents.fireBeforeExecute(context)).toBeUndefined();
     });
   });
 
