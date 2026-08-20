@@ -279,16 +279,22 @@ function findOptimisticUserEchoIndex(messages: AppMessage[], message: AppMessage
   return -1;
 }
 
-function appendToolOutputToMessages(messages: AppMessage[], toolCallId: string, outputChunk: string): AppMessage[] {
+function appendToolOutputToMessages(messages: AppMessage[], toolCallId: string, outputChunk: string, replace: boolean): AppMessage[] {
   let changed = false;
   const next = messages.map((message) => {
     let contentChanged = false;
     const content = message.content.map((part) => {
       if (part.type !== 'toolUse' || part.toolCallId !== toolCallId) return part;
       contentChanged = true;
+      const lines = part.outputLines ?? [];
+      // A replace update rewrites the line it previously emitted (e.g.
+      // WaitFor's per-second status tick) instead of accumulating one line
+      // per update; with no prior line it simply lands as the first.
+      const outputLines =
+        replace && lines.length > 0 ? [...lines.slice(0, -1), outputChunk] : [...lines, outputChunk];
       return {
         ...part,
-        outputLines: [...(part.outputLines ?? []), outputChunk],
+        outputLines,
       };
     });
     if (!contentChanged) return message;
@@ -693,7 +699,7 @@ export function reduceAppEvent(
     case 'toolOutput': {
       const sid = event.sessionId;
       const msgs = next.messagesBySession[sid] ?? [];
-      next.messagesBySession[sid] = appendToolOutputToMessages(msgs, event.toolCallId, event.outputChunk);
+      next.messagesBySession[sid] = appendToolOutputToMessages(msgs, event.toolCallId, event.outputChunk, event.replace === true);
       break;
     }
 
@@ -914,6 +920,14 @@ export function reduceAppEvent(
           return { ...t, text: (t.text ?? '') + event.outputChunk };
         }
         const outputLines = t.outputLines ?? [];
+        // A replace progress update (e.g. a subagent's WaitFor tick) rewrites
+        // the line it previously emitted instead of appending one per second;
+        // with no prior line it simply lands as the first.
+        if (event.replace === true) {
+          const lines =
+            outputLines.length > 0 ? [...outputLines.slice(0, -1), event.outputChunk] : [event.outputChunk];
+          return { ...t, outputLines: lines };
+        }
         if (outputLines.at(-1) === event.outputChunk) return t;
         const lines = [...outputLines, event.outputChunk];
         return {

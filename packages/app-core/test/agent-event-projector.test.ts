@@ -52,6 +52,76 @@ describe('subagentProgressText', () => {
   });
 });
 
+describe('main-agent tool.progress projection', () => {
+  it('passes a replace update through to toolOutput', () => {
+    const projector = createAgentProjector({ t });
+    const events = projector.project(
+      'tool.progress',
+      { turnId: 1, toolCallId: 'tc_1', update: { kind: 'status', text: 'Waiting 1s / 15s', replace: true } },
+      's1',
+    );
+    expect(events).toContainEqual({
+      type: 'toolOutput',
+      sessionId: 's1',
+      toolCallId: 'tc_1',
+      outputChunk: 'Waiting 1s / 15s',
+      stream: 'stdout',
+      replace: true,
+    });
+  });
+
+  it('marks a plain update as non-replacing', () => {
+    const projector = createAgentProjector({ t });
+    const events = projector.project(
+      'tool.progress',
+      { turnId: 1, toolCallId: 'tc_1', update: { kind: 'status', text: 'working…' } },
+      's1',
+    );
+    expect(events).toContainEqual({
+      type: 'toolOutput',
+      sessionId: 's1',
+      toolCallId: 'tc_1',
+      outputChunk: 'working…',
+      stream: 'stdout',
+      replace: false,
+    });
+  });
+
+  it('passes replace through on the subagent progress path', () => {
+    const projector = createAgentProjector({ t });
+    const events = projector.project(
+      'tool.progress',
+      { agentId: 'sub-1', turnId: 1, toolCallId: 'tc_1', update: { kind: 'status', text: 'Waiting 1s / 15s', replace: true } },
+      's1',
+    );
+    expect(events).toContainEqual({
+      type: 'taskProgress',
+      sessionId: 's1',
+      taskId: 'sub-1',
+      outputChunk: 'Waiting 1s / 15s',
+      stream: 'stdout',
+      replace: true,
+    });
+  });
+
+  it('marks plain subagent progress updates as non-replacing', () => {
+    const projector = createAgentProjector({ t });
+    const events = projector.project(
+      'tool.progress',
+      { agentId: 'sub-1', turnId: 1, toolCallId: 'tc_1', update: { kind: 'status', text: 'working…' } },
+      's1',
+    );
+    expect(events).toContainEqual({
+      type: 'taskProgress',
+      sessionId: 's1',
+      taskId: 'sub-1',
+      outputChunk: 'working…',
+      stream: 'stdout',
+      replace: false,
+    });
+  });
+});
+
 describe('subagent streaming text', () => {
   it('forwards a subagent assistant.delta as a text-kind taskProgress', () => {
     const projector = createAgentProjector({ t });

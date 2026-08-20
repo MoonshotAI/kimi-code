@@ -60,6 +60,7 @@ const TOOL_GLYPH: Record<string, IconName> = {
   getgoal: 'target',
   setgoalbudget: 'target',
   updategoal: 'target',
+  waitfor: 'clock',
   // Cron scheduling tools share a calendar motif: schedule / list / cancel.
   croncreate: 'calendar-schedule',
   cronlist: 'calendar-todo',

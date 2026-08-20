@@ -1335,3 +1335,139 @@ describe('sessionWorkChanged fallback freshness', () => {  it('does not clear a 
     expect(state.turnRetryBySession[SID]).toEqual(retry);
   });
 });
+
+describe('reduceAppEvent toolOutput replace', () => {
+  function stateWithToolUse(toolCallId: string, messageId: string): KimiClientState {
+    const message: AppMessage = {
+      id: messageId,
+      sessionId: SID,
+      role: 'assistant',
+      content: [{ type: 'toolUse', toolCallId, toolName: 'WaitFor', input: {} }],
+      createdAt: new Date().toISOString(),
+    };
+    return reduceAppEvent(createInitialState(), { type: 'messageCreated', message }, meta());
+  }
+
+  function toolUseLines(state: KimiClientState, messageId: string): string[] | undefined {
+    const part = state.messagesBySession[SID]
+      ?.find((m) => m.id === messageId)
+      ?.content.find((p) => p.type === 'toolUse');
+    return part?.type === 'toolUse' ? part.outputLines : undefined;
+  }
+
+  function toolOutput(toolCallId: string, outputChunk: string, replace?: boolean) {
+    return { type: 'toolOutput', sessionId: SID, toolCallId, outputChunk, stream: 'stdout', replace } as const;
+  }
+
+  it('appends chunks by default', () => {
+    let state = stateWithToolUse('tc_1', 'm_1');
+    state = reduceAppEvent(state, toolOutput('tc_1', 'line 1'), meta());
+    state = reduceAppEvent(state, toolOutput('tc_1', 'line 2', false), meta());
+    expect(toolUseLines(state, 'm_1')).toEqual(['line 1', 'line 2']);
+  });
+
+  it('rewrites the last line on replace updates', () => {
+    let state = stateWithToolUse('tc_1', 'm_1');
+    state = reduceAppEvent(state, toolOutput('tc_1', 'Waiting 1s / 15s', true), meta());
+    state = reduceAppEvent(state, toolOutput('tc_1', 'Waiting 2s / 15s', true), meta());
+    state = reduceAppEvent(state, toolOutput('tc_1', 'Waiting 3s / 15s', true), meta());
+    expect(toolUseLines(state, 'm_1')).toEqual(['Waiting 3s / 15s']);
+  });
+
+  it('rewrites only the last line on replace, keeping earlier ones', () => {
+    let state = stateWithToolUse('tc_1', 'm_1');
+    state = reduceAppEvent(state, toolOutput('tc_1', 'first'), meta());
+    state = reduceAppEvent(state, toolOutput('tc_1', 'second'), meta());
+    state = reduceAppEvent(state, toolOutput('tc_1', 'tick 1', true), meta());
+    state = reduceAppEvent(state, toolOutput('tc_1', 'tick 2', true), meta());
+    expect(toolUseLines(state, 'm_1')).toEqual(['first', 'tick 2']);
+  });
+
+  it('pushes a replace chunk when there is no prior line', () => {
+    let state = stateWithToolUse('tc_1', 'm_1');
+    state = reduceAppEvent(state, toolOutput('tc_1', 'Waiting 1s / 15s', true), meta());
+    expect(toolUseLines(state, 'm_1')).toEqual(['Waiting 1s / 15s']);
+  });
+
+  it('only touches the message carrying the matching toolCallId', () => {
+    let state = stateWithToolUse('tc_1', 'm_1');
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'messageCreated',
+        message: {
+          id: 'm_2',
+          sessionId: SID,
+          role: 'assistant',
+          content: [{ type: 'toolUse', toolCallId: 'tc_2', toolName: 'Bash', input: {} }],
+          createdAt: new Date().toISOString(),
+        },
+      },
+      meta(),
+    );
+    state = reduceAppEvent(state, toolOutput('tc_2', 'Waiting 1s / 15s', true), meta());
+    state = reduceAppEvent(state, toolOutput('tc_2', 'Waiting 2s / 15s', true), meta());
+    expect(toolUseLines(state, 'm_1')).toBeUndefined();
+    expect(toolUseLines(state, 'm_2')).toEqual(['Waiting 2s / 15s']);
+  });
+});
+
+describe('reduceAppEvent taskProgress replace', () => {
+  function stateWithTask(taskId: string): KimiClientState {
+    const task: AppTask = {
+      id: taskId,
+      sessionId: SID,
+      kind: 'subagent',
+      description: 'Wait for tests',
+      status: 'running',
+      createdAt: new Date().toISOString(),
+    };
+    return reduceAppEvent(createInitialState(), { type: 'taskCreated', sessionId: SID, task }, meta());
+  }
+
+  function taskLines(state: KimiClientState, taskId: string): string[] | undefined {
+    return state.tasksBySession[SID]?.find((task) => task.id === taskId)?.outputLines;
+  }
+
+  function taskProgress(taskId: string, outputChunk: string, replace?: boolean) {
+    return { type: 'taskProgress', sessionId: SID, taskId, outputChunk, stream: 'stdout', replace } as const;
+  }
+
+  it('rewrites the last progress line on replace updates', () => {
+    let state = stateWithTask('sub-1');
+    state = reduceAppEvent(state, taskProgress('sub-1', 'Waiting 1s / 15s', true), meta());
+    state = reduceAppEvent(state, taskProgress('sub-1', 'Waiting 2s / 15s', true), meta());
+    state = reduceAppEvent(state, taskProgress('sub-1', 'Waiting 3s / 15s', true), meta());
+    expect(taskLines(state, 'sub-1')).toEqual(['Waiting 3s / 15s']);
+  });
+
+  it('rewrites only the last line, keeping earlier progress lines', () => {
+    let state = stateWithTask('sub-1');
+    state = reduceAppEvent(state, taskProgress('sub-1', 'Calling Read: src/a.ts'), meta());
+    state = reduceAppEvent(state, taskProgress('sub-1', 'Calling WaitFor: bg_7f3a'), meta());
+    state = reduceAppEvent(state, taskProgress('sub-1', 'Waiting 1s / 15s', true), meta());
+    state = reduceAppEvent(state, taskProgress('sub-1', 'Waiting 2s / 15s', true), meta());
+    expect(taskLines(state, 'sub-1')).toEqual(['Calling Read: src/a.ts', 'Waiting 2s / 15s']);
+  });
+
+  it('pushes a replace chunk when there is no prior line', () => {
+    let state = stateWithTask('sub-1');
+    state = reduceAppEvent(state, taskProgress('sub-1', 'Waiting 1s / 15s', true), meta());
+    expect(taskLines(state, 'sub-1')).toEqual(['Waiting 1s / 15s']);
+  });
+
+  it('still concatenates text-kind chunks regardless of the line path', () => {
+    let state = stateWithTask('sub-1');
+    state = reduceAppEvent(
+      state,
+      { type: 'taskProgress', sessionId: SID, taskId: 'sub-1', outputChunk: 'Hello', stream: 'stdout', kind: 'text' },
+      meta(),
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskProgress', sessionId: SID, taskId: 'sub-1', outputChunk: ' world', stream: 'stdout', kind: 'text' },
+      meta(),
+    );
+    expect(state.tasksBySession[SID]?.find((task) => task.id === 'sub-1')?.text).toBe('Hello world');
+  });
+});

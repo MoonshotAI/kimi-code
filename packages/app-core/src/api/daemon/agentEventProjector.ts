@@ -346,6 +346,14 @@ function projectSubagentProgress(
 
   const text = subagentProgressText(t, rawType, payload);
   if (text === null || text.length === 0) return [];
+  // A `replace` tool-progress update (e.g. a subagent's WaitFor tick) rewrites
+  // the status line it previously emitted rather than growing the panel by one
+  // line per second.
+  const update = rawType === 'tool.progress' ? payload['update'] : undefined;
+  const replace =
+    update !== undefined && update !== null && typeof update === 'object'
+      ? (update as Record<string, unknown>)['replace'] === true
+      : false;
   const previous = state.subagentMeta.get(subagentId);
   const task = patchSubagent(t, state, sessionId, subagentId, {
     status: 'running',
@@ -354,7 +362,7 @@ function projectSubagentProgress(
   });
   const out: AppEvent[] = [];
   if (task) out.push({ type: 'taskCreated', sessionId, task });
-  out.push({ type: 'taskProgress', sessionId, taskId: subagentId, outputChunk: text, stream: 'stdout' });
+  out.push({ type: 'taskProgress', sessionId, taskId: subagentId, outputChunk: text, stream: 'stdout', replace });
   return out;
 }
 
@@ -451,7 +459,7 @@ function appendToolUse(
   msg.content.push({ type: 'toolUse', toolCallId, toolName, input, outputLines });
 }
 
-function toolProgressOutput(payload: Record<string, unknown>): { outputChunk: string; stream: 'stdout' | 'stderr' } | null {
+function toolProgressOutput(payload: Record<string, unknown>): { outputChunk: string; stream: 'stdout' | 'stderr'; replace: boolean } | null {
   const update = payload['update'];
   const updateRecord = update && typeof update === 'object' ? update as Record<string, unknown> : null;
   const streamRaw = updateRecord?.['stream'] ?? updateRecord?.['kind'] ?? payload['stream'];
@@ -463,7 +471,10 @@ function toolProgressOutput(payload: Record<string, unknown>): { outputChunk: st
     (typeof payload['output'] === 'string' && payload['output']) ||
     (typeof payload['message'] === 'string' && payload['message']) ||
     '';
-  return chunk.length > 0 ? { outputChunk: chunk, stream } : null;
+  // A `replace` update rewrites the status line it previously emitted (e.g.
+  // WaitFor's per-second wait tick) rather than adding a new one.
+  const replace = updateRecord?.['replace'] === true;
+  return chunk.length > 0 ? { outputChunk: chunk, stream, replace } : null;
 }
 
 function finishAssistantMessage(state: SessionState, messageId: string): void {
@@ -941,6 +952,7 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
             toolCallId,
             outputChunk: progress.outputChunk,
             stream: progress.stream,
+            replace: progress.replace,
           });
         }
         break;

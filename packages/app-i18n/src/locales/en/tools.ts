@@ -18,6 +18,16 @@ export default {
     goal_get: 'Read Goal',
     goal_budget: 'Set Goal Budget',
     goal_update: 'Update Goal',
+    waitfor: 'Wait',
+  },
+  waitfor: {
+    waitingAny: 'Waiting for any background task',
+    waitingTask: 'Waiting for {id}',
+    noTasks: 'No background tasks running',
+    timedOut: 'Timed out',
+    stillRunning: '{count} still running',
+    moreFinished: '+{count} finished during wait',
+    moreRunning: '+{count} more',
   },
   swarm: {
     progress: '{done} / {total}',

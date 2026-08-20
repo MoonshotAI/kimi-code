@@ -18,6 +18,16 @@ export default {
     goal_get: '读取目标',
     goal_budget: '设置目标预算',
     goal_update: '更新目标',
+    waitfor: '等待',
+  },
+  waitfor: {
+    waitingAny: '等待任一后台任务',
+    waitingTask: '等待 {id}',
+    noTasks: '没有后台任务在运行',
+    timedOut: '等待超时',
+    stillRunning: '{count} 个仍在运行',
+    moreFinished: '另有 {count} 个在等待期间完成',
+    moreRunning: '还有 {count} 个',
   },
   swarm: {
     progress: '{done} / {total}',

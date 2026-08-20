@@ -34,6 +34,7 @@ const NAME_ALIASES: Record<string, string> = {
   get_goal: 'getgoal',
   set_goal_budget: 'setgoalbudget',
   update_goal: 'updategoal',
+  wait_for: 'waitfor',
 };
 
 export function normalizeToolName(name: string): string {

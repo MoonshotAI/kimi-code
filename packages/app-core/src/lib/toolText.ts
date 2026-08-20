@@ -32,6 +32,7 @@ const TOOL_LABEL_KEYS: Record<string, string> = {
   getgoal: 'tools.label.goal_get',
   setgoalbudget: 'tools.label.goal_budget',
   updategoal: 'tools.label.goal_update',
+  waitfor: 'tools.label.waitfor',
 };
 
 export function toolLabel(t: Translator, name: string): string {

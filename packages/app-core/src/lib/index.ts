@@ -16,6 +16,7 @@ export * from './normalizeToolName';
 export * from './oauthLoginCards';
 export * from './openGroups';
 export * from './parseSwarmResult';
+export * from './parseWaitForResult';
 export * from './pathBasename';
 export * from './pathDirname';
 export * from './pathRelativeTo';

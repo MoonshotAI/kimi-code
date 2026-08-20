@@ -691,7 +691,11 @@ export type AppEvent =
   // transcript. The web layer routes these to the side-chat panel.
   | { type: 'agentDelta'; sessionId: string; agentId: string; delta: { text?: string; thinking?: string } }
   | { type: 'agentTurnEnded'; sessionId: string; agentId: string; reason?: string }
-  | { type: 'toolOutput'; sessionId: string; toolCallId: string; outputChunk: string; stream: 'stdout' | 'stderr' }
+  | { type: 'toolOutput'; sessionId: string; toolCallId: string; outputChunk: string; stream: 'stdout' | 'stderr';
+      /** True when the chunk rewrites the previously emitted line in place
+          (a `replace` tool-progress update, e.g. WaitFor's per-second status
+          tick) instead of appending a new one. Absent/false = append. */
+      replace?: boolean }
   | { type: 'approvalRequested'; sessionId: string; approval: AppApprovalRequest }
   | { type: 'approvalResolved'; sessionId: string; approvalId: string; decision: ApprovalDecision; resolvedAt: string; feedback?: string; selectedLabel?: string }
   | { type: 'approvalExpired'; sessionId: string; approvalId: string }
@@ -711,6 +715,10 @@ export type AppEvent =
        * (`AppTask.text`), shown live in the detail panel like a thinking block.
        */
       kind?: 'line' | 'text';
+      /** True when a line-kind chunk rewrites the previously emitted progress
+          line in place (a `replace` tool-progress update, e.g. a subagent's
+          WaitFor tick) instead of appending a new one. Absent/false = append. */
+      replace?: boolean;
     }
   | { type: 'taskCompleted'; sessionId: string; taskId: string; status: AppTaskStatus; outputPreview?: string; outputBytes?: number }
   // Prompt-level lifecycle (distinct from turn-level): a prompt that never

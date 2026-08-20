@@ -15,6 +15,7 @@ import PlanTool from './PlanTool.vue';
 import ReadTool from './ReadTool.vue';
 import SwarmTool from './SwarmTool.vue';
 import TodoTool from './TodoTool.vue';
+import WaitForTool from './WaitForTool.vue';
 import WebFetchTool from './WebFetchTool.vue';
 
 type ToolRenderer = Component;
@@ -59,6 +60,8 @@ export function resolveToolRenderer(tool: ToolCall): ToolRenderer {
     case 'setgoalbudget':
     case 'updategoal':
       return GoalTool;
+    case 'waitfor':
+      return WaitForTool;
     default:
       return GenericTool;
   }
