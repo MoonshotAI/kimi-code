@@ -237,6 +237,8 @@ import {
   PRINT_WAIT_CEILING_S_DEFAULT,
   ProfileError,
   ProfileErrors,
+  Error2 as V2Error2,
+  ErrorCodes as V2ErrorCodes,
   resolveAgentTaskConfig,
   resolveConfigPath,
   resolveKimiHome,
@@ -2124,6 +2126,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const tower = agent.accessor.get(IAgentTowerService);
     if (input.enabled) {
       await tower.enter();
+      if (!tower.isActive) {
+        throw new V2Error2(
+          V2ErrorCodes.SESSION_TOWER_MODE_INVALID,
+          'tower mode could not be enabled — the tower feature is unavailable in this process, or another live session owns the workspace tower',
+        );
+      }
     } else {
       tower.exit();
     }

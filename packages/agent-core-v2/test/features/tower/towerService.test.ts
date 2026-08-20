@@ -30,6 +30,7 @@ import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { IFeatureManager } from '#/app/feature/featureManager';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import type { ToolCall } from '#/kosong/contract/message';
@@ -121,6 +122,7 @@ describe('AgentTowerService', () => {
   let removedTools: string[];
   let activeTools: string[] | undefined;
   let liveSessionIds: string[];
+  let fireUnitsChanged: () => void = () => {};
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -139,6 +141,12 @@ describe('AgentTowerService', () => {
     ix.stub(ISessionManager, {
       get: (id: string) => (liveSessionIds.includes(id) ? {} : undefined),
     } as unknown as ISessionManager);
+    ix.stub(IFeatureManager, {
+      onDidChangeUnits: (handler: () => void) => {
+        fireUnitsChanged = handler;
+        return { dispose: () => {} };
+      },
+    } as unknown as IFeatureManager);
     addedTools = [];
     removedTools = [];
     activeTools = undefined;
@@ -367,6 +375,30 @@ describe('AgentTowerService', () => {
 
       expect(tower.isActive).toBe(false);
       expect(addedTools).toEqual([]);
+    } finally {
+      _setTowerFeatureAssembledForTests(true);
+    }
+  });
+
+  it('publishes towerMode:false when the tower feature becomes unavailable while active', async () => {
+    const tower = ix.get(IAgentTowerService);
+    await tower.enter();
+    expect(tower.isActive).toBe(true);
+    const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
+    disposables.add(
+      ix.get(IEventBus).subscribe((e) => {
+        if (e.type === 'agent.status.updated') {
+          events.push({ type: e.type, towerMode: (e as AgentStatusUpdated).towerMode });
+        }
+      }),
+    );
+
+    _setTowerFeatureAssembledForTests(false);
+    try {
+      fireUnitsChanged();
+
+      expect(tower.isActive).toBe(false);
+      expect(events).toContainEqual({ type: 'agent.status.updated', towerMode: false });
     } finally {
       _setTowerFeatureAssembledForTests(true);
     }
@@ -621,7 +653,7 @@ describe('AgentTowerService', () => {
 
     expect(restored.isActive).toBe(false);
     expect(restoredAdded).toEqual([]);
-    expect(events).toEqual([]);
+    expect(events).toEqual([{ type: 'agent.status.updated', towerMode: false }]);
   });
 
   it('restore keeps a persisted enter record inert on a non-main agent', async () => {

@@ -956,6 +956,28 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('rejects setTowerMode when the tower feature is unavailable', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_tower_off', workDir });
+
+      await expect(client.setTowerMode({ sessionId: 'ses_tower_off', enabled: true }))
+        .rejects.toMatchObject({ code: 'session.tower_mode_invalid' });
+      expect((await client.getStatus({ sessionId: 'ses_tower_off' })).towerMode).toBe(false);
+
+      await client.setTowerMode({ sessionId: 'ses_tower_off', enabled: false });
+      expect((await client.getStatus({ sessionId: 'ses_tower_off' })).towerMode).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      await client.close();
+    }
+  });
+
   it('exposes Session.setTowerMode and getStatus().towerMode on the v2 harness', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));

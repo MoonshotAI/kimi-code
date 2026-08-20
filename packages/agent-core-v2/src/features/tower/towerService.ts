@@ -12,6 +12,7 @@ import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
+import { IFeatureManager } from '#/app/feature/featureManager';
 import { LifecycleScope } from '#/app/scopes';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
@@ -49,6 +50,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @ISessionContext private readonly sessionCtx: ISessionContext,
     @IFlagService private readonly flags: IFlagService,
     @ISessionManager private readonly sessions: ISessionManager,
+    @IFeatureManager featureManager: IFeatureManager,
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentContextMemoryService context: IAgentContextMemoryService,
     @IEventBus eventBus: IEventBus,
@@ -60,9 +62,17 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       this.dispatcher.hooks.onDidRestore.register('tower', async (_ctx, next) => {
         await this.exitForeignTower();
         this.restoreTowerTools();
+        this.publishEffectiveInactive();
         await next();
       }),
     );
+    if (featureManager !== undefined) {
+      this._register(
+        featureManager.onDidChangeUnits(() => {
+          this.publishEffectiveInactive();
+        }),
+      );
+    }
     this._register(
       eventBus.subscribe(AgentStatusUpdated, () => {
         if (this.agentCtx.agentId !== 'main') return;
@@ -189,6 +199,15 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (this.agentCtx.agentId !== 'main') return;
     for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
     void this.dispatcher.dispatch(new AgentStatusUpdated({ agentId: this.agentCtx.agentId, towerMode: true }));
+  }
+
+  private publishEffectiveInactive(): void {
+    if (this.agentCtx.agentId !== 'main') return;
+    if (!this.agentState.get(towerKey)) return;
+    if (this.isActive) return;
+    void this.dispatcher.dispatch(
+      new AgentStatusUpdated({ agentId: this.agentCtx.agentId, towerMode: false }),
+    );
   }
 }
 
