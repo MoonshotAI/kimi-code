@@ -14,6 +14,7 @@ export const SKILL_SOURCE_PRIORITY = {
   extra: 10,
   user: 20,
   workspace: 30,
+  flows: 35,
 } as const;
 
 export const PLUGIN_SKILL_SOURCE_ID = 'plugin';

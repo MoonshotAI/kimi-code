@@ -20,6 +20,7 @@ export interface SkillActivatedPayload {
   readonly activationId: string;
   readonly skillName: string;
   readonly trigger: string;
+  readonly skillType?: string;
   readonly skillArgs?: string;
   readonly skillPath?: string;
   readonly skillSource?: SkillSource;
@@ -40,6 +41,7 @@ export const skillKey = defineState('skill', (): null => null)
       activationId: e.origin.activationId,
       skillName: e.origin.skillName,
       trigger: e.origin.trigger,
+      skillType: e.origin.skillType,
       skillArgs: e.origin.skillArgs,
       skillPath: e.origin.skillPath,
       skillSource: e.origin.skillSource,

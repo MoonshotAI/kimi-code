@@ -35,6 +35,8 @@ import {
   SubagentToolInputSchema,
   type SubagentToolInput,
 } from '#/agent/tools/agent/agent';
+import { buildProfileDescriptions } from '#/agent/tools/agent/agentTool';
+import { isToolActive as evaluateProfileToolActive } from '#/agent/toolPolicy/evaluate';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS, SECONDARY_MODEL_SECTION, SUBAGENT_SECTION } from '#/session/subagent/configSection';
 import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import { Error2, ErrorCodes } from '#/errors';
@@ -3755,3 +3757,41 @@ function hookPayloadAssertCommand(expected: {
   ].filter((line) => line.length > 0).join('');
   return `node -e ${JSON.stringify(script)}`;
 }
+
+describe('buildProfileDescriptions flow-tool advertising', () => {
+  const profile = {
+    name: 'agent',
+    description: 'Default agent',
+    tools: ['Read', 'FlowStart'],
+  } as unknown as AgentProfile;
+  const isActive = (
+    p: { readonly tools?: readonly string[]; readonly disallowedTools?: readonly string[] },
+    name: string,
+    source: 'builtin' | 'user' | 'mcp',
+  ) => evaluateProfileToolActive(p, name, source);
+
+  it('omits builtin supervisor-only flow tools from the advertised list', () => {
+    const lines = buildProfileDescriptions(
+      [profile],
+      [
+        { name: 'Read', source: 'builtin' },
+        { name: 'FlowStart', source: 'builtin' },
+      ],
+      isActive,
+    );
+    expect(lines).toContain('Read');
+    expect(lines).not.toContain('FlowStart');
+  });
+
+  it('keeps a shadowing non-builtin registration of a flow tool name advertised', () => {
+    const lines = buildProfileDescriptions(
+      [profile],
+      [
+        { name: 'Read', source: 'builtin' },
+        { name: 'FlowStart', source: 'user' },
+      ],
+      isActive,
+    );
+    expect(lines).toContain('FlowStart');
+  });
+});

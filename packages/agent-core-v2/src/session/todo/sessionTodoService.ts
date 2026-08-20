@@ -7,6 +7,8 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { agentSpaceOf } from '#/agent/agentContext/agentSpace';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IFlagService } from '#/app/flag/flag';
+import { FLOW_FLAG_ID, IAgentFlowService } from '#/features/flow/flow';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { IEventBus } from '#/app/event/eventBus';
@@ -110,7 +112,12 @@ export class SessionTodoService extends Service implements ISessionTodoService {
       agent,
       getTodos: () => agentSpaceOf(agent).use(TodoAgentModelDefinition, (model) => model.items()),
       getHistory: () => memory.get(),
-      isToolActive: () => toolPolicy.isToolActive(TODO_LIST_TOOL_NAME, 'builtin'),
+      isToolActive: () =>
+        toolPolicy.isToolActive(TODO_LIST_TOOL_NAME, 'builtin') &&
+        !(
+          handle.accessor.get(IFlagService).enabled(FLOW_FLAG_ID) &&
+          handle.accessor.get(IAgentFlowService).run().active
+        ),
       registerReminder: (provider) => injector.register(TODO_LIST_REMINDER_VARIANT, provider),
       subscribeChange: (listener) =>
         this.onDidChange((change) => {

@@ -302,6 +302,50 @@ describe('approval adapter', () => {
     ]);
   });
 
+  it('adapts a flow gate review into a flow_gate block with gate choices', () => {
+    const adapted = adaptApprovalRequest({
+      toolCallId: 'tc-flow',
+      toolName: 'FlowAdvance',
+      action: 'Submitting pass verdict for stage review',
+      display: {
+        kind: 'flow_gate_review',
+        flow_id: 'issue-fix',
+        task: 'fix issue #3017',
+        stage_id: 'review',
+        stage_index: 3,
+        stage_total: 5,
+        gate: 'ai-then-human',
+        objective: 'Independent review',
+        completion: 'No substantive issue remains',
+        next_stage_id: 'report',
+        criteria: [{ criterion: 'review clean', met: true, evidence: 'round 2 surfaced nothing' }],
+        note: 'reviewer passed',
+      },
+    });
+
+    expect(adapted.description).toBe('');
+    expect(adapted.display).toEqual([
+      {
+        type: 'flow_gate',
+        flow_id: 'issue-fix',
+        task: 'fix issue #3017',
+        stage_id: 'review',
+        stage_index: 3,
+        stage_total: 5,
+        objective: 'Independent review',
+        completion: 'No substantive issue remains',
+        next_stage_id: 'report',
+        criteria: [{ criterion: 'review clean', met: true, evidence: 'round 2 surfaced nothing' }],
+        note: 'reviewer passed',
+      },
+    ]);
+    expect(adapted.choices).toEqual([
+      { label: 'Pass the gate', response: 'approved' },
+      { label: 'Reject with feedback', response: 'rejected', requires_feedback: true },
+      { label: 'Reject', response: 'rejected', selected_label: 'Reject' },
+    ]);
+  });
+
   it('maps approved-for-session responses into core approval payloads', () => {
     expect(
       adaptPanelResponse({

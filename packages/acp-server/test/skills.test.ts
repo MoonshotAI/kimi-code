@@ -55,11 +55,19 @@ describe('buildAcpSkillSlashCommands', () => {
   it('filters out skills the user cannot activate', () => {
     const { commands } = buildAcpSkillSlashCommands([
       skill('reference-only', { type: 'reference' }),
-      skill('flow-one', { type: 'flow' }),
+      skill('flow:flow-one', { type: 'flow' }),
       skill('inline-one'),
     ]);
 
-    expect(commands.map((command) => command.name)).toEqual(['skill:flow-one', 'skill:inline-one']);
+    expect(commands.map((command) => command.name)).toEqual(['flow:flow-one', 'skill:inline-one']);
+  });
+
+  it('keeps the skill prefix for an ordinary flow-typed skill outside the flow namespace', () => {
+    const { commands, commandMap } = buildAcpSkillSlashCommands([
+      skill('daily-report', { type: 'flow' }),
+    ]);
+    expect(commands.map((command) => command.name)).toEqual(['skill:daily-report']);
+    expect(commandMap.get('skill:daily-report')).toBe('daily-report');
   });
 
   it('drops skills whose command name collides with an ACP builtin', () => {

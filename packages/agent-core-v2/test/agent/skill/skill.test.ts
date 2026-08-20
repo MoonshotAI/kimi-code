@@ -28,6 +28,10 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { Turn } from '#/agent/loop/loop';
 import { executeTool } from '../../tools/fixtures/execute-tool';
 import { stubSkill } from '../../app/skillCatalog/stubs';
+import { ISkillActivationDataService } from '#/agent/skill/skillActivationData';
+import { IFlagService } from '#/app/flag/flag';
+import { FLOW_FLAG_ID, IAgentFlowService } from '#/features/flow/flow';
+import { IConfigService } from '#/app/config/config';
 import { registerTestAgentWireServices } from '../../wire/stubs';
 import {
   createTestAgent,
@@ -101,6 +105,15 @@ describe('AgentSkillService', () => {
         reg.definePartialInstance(IEventService, { publish: () => {} });
         reg.defineInstance(ISessionContext, stubSessionContext());
         reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+        reg.definePartialInstance(ISkillActivationDataService, {
+          put: () => {},
+          take: () => undefined,
+        });
+        reg.definePartialInstance(IFlagService, { enabled: () => false });
+        reg.definePartialInstance(IConfigService, {
+          get: (<T,>() => undefined as T) as IConfigService['get'],
+          onDidChangeConfiguration: () => ({ dispose: () => {} }),
+        });
       },
     });
     skills = new InMemorySkillCatalog();
@@ -204,6 +217,15 @@ describe('SkillTool', () => {
         reg.definePartialInstance(IEventService, { publish: () => {} });
         reg.defineInstance(ISessionContext, stubSessionContext());
         reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+        reg.definePartialInstance(ISkillActivationDataService, {
+          put: () => {},
+          take: () => undefined,
+        });
+        reg.definePartialInstance(IFlagService, { enabled: () => false });
+        reg.definePartialInstance(IConfigService, {
+          get: (<T,>() => undefined as T) as IConfigService['get'],
+          onDidChangeConfiguration: () => ({ dispose: () => {} }),
+        });
       },
     });
     skills = new InMemorySkillCatalog();
@@ -439,5 +461,92 @@ describe('AgentSkillService busy delivery (harness)', () => {
     expect(types.filter((type) => type === 'turn.steer')).toHaveLength(1);
     const steer = persistence.records.find((record) => record.type === 'turn.steer');
     expect(steer).toMatchObject({ origin: { kind: 'skill_activation', skillArgs: 'mission-1' } });
+  });
+});
+
+describe('AgentSkillService flow flag race', () => {
+  it('aborts a flow prompt whose flag was disabled while it was being queued', async () => {
+    const disposables = new DisposableStore();
+    let flowOn = true;
+    const abort = vi.fn(() => true);
+    const discard = vi.fn();
+    const take = vi.fn(() => undefined);
+    const ix = createServices(disposables, {
+      additionalServices: (reg) => {
+        reg.definePartialInstance(IAgentPromptService, {
+          enqueue: async () => {
+            flowOn = false;
+            return {
+              id: 'p-race',
+              state: 'pending',
+              createdAt: '2026-01-01T00:00:00.000Z',
+              launched: Promise.resolve(undefined),
+              completion: new Promise(() => {}),
+            } as never;
+          },
+          abort,
+          clear: () => {},
+        });
+        reg.definePartialInstance(IAgentLoopService, {
+          status: () => ({ state: 'idle', activeTurnId: undefined, pendingTurnIds: [], hasPendingRequests: false, activeTraceId: undefined }),
+        });
+        registerTestAgentWireServices(reg, 'wire/skill-flow-race');
+        reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
+        reg.definePartialInstance(IAgentToolRegistryService, {
+          register: () => ({ dispose: () => {} }),
+        });
+        reg.definePartialInstance(ISessionMetadata, {
+          read: async () => ({ id: 'test-session', createdAt: 0, updatedAt: 0, archived: false }),
+          update: async () => {},
+        });
+        reg.definePartialInstance(IEventService, { publish: () => {} });
+        reg.defineInstance(ISessionContext, stubSessionContext());
+        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+        reg.definePartialInstance(ISkillActivationDataService, { put: () => {}, take });
+        reg.definePartialInstance(IFlagService, {
+          enabled: (id: string) => flowOn && id === FLOW_FLAG_ID,
+        });
+        reg.definePartialInstance(IAgentFlowService, {
+          run: () => ({ active: false }),
+          hasPendingActivation: () => false,
+          discardPendingActivation: discard,
+        });
+        reg.definePartialInstance(IConfigService, {
+          get: (<T,>() => undefined as T) as IConfigService['get'],
+          onDidChangeConfiguration: () => ({ dispose: () => {} }),
+        });
+      },
+    });
+    try {
+      const catalog = new InMemorySkillCatalog();
+      catalog.register(
+        stubSkill('flow:issue-fix', {
+          description: 'run the issue-fix flow',
+          metadata: { name: 'flow:issue-fix', type: 'flow' },
+          source: 'project',
+          data: { id: 'issue-fix', stages: [] },
+        }),
+      );
+      const skillCatalog: ISessionSkillCatalog = {
+        _serviceBrand: undefined,
+        catalog,
+        ready: Promise.resolve(),
+        onDidChange: () => ({ dispose: () => {} }),
+        load: async () => {},
+        reload: async () => {},
+        list: async () => catalog.listSkills().map(summarizeSkill),
+      };
+      ix.set(ISessionSkillCatalog, skillCatalog);
+      ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
+      const svc = ix.get(IAgentSkillService);
+      await expect(svc.activate({ name: 'flow:issue-fix', args: 'fix it' })).rejects.toMatchObject({
+        code: 'request.invalid',
+      });
+      expect(abort).toHaveBeenCalledWith('p-race');
+      expect(discard).toHaveBeenCalled();
+      expect(take).toHaveBeenCalled();
+    } finally {
+      disposables.dispose();
+    }
   });
 });

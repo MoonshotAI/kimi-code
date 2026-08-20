@@ -20,6 +20,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -27,6 +28,8 @@ import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { IFlagService } from '#/app/flag/flag';
+import { FLOW_FLAG_ID, IAgentFlowService } from '#/features/flow/flow';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionTodoService } from '#/session/todo/sessionTodo';
@@ -49,10 +52,14 @@ interface FakeAgent {
   readonly context: AgentContext;
   readonly handle: IAgentScopeHandle;
   readonly registeredVariants: string[];
+  readonly variantHandlers: Map<string, () => unknown>;
   readonly activeReminders: () => number;
   readonly journal: WireRecord[];
   readonly dispatcher: IEventDispatcher;
   readonly restore: (records: readonly WireRecord[]) => Promise<void>;
+  readonly setFlowActive: (active: boolean) => void;
+  readonly setToolActive: (active: boolean) => void;
+  readonly setHistory: (history: readonly ContextMessage[]) => void;
 }
 
 const noopBlob: IAgentBlobService = {
@@ -66,14 +73,19 @@ function makeFakeAgent(agentId: string, generation = 1): FakeAgent {
   const scope = makeAgentScopeContext({ agentId, agentScope: `agents/${agentId}`, generation });
   const context = scope.agentContext;
   const registeredVariants: string[] = [];
+  const variantHandlers = new Map<string, () => unknown>();
   const journal: WireRecord[] = [];
   const eventBus = new EventBusService();
   eventBus.activateAgent(context);
   let activeReminders = 0;
+  let flowActive = false;
+  let toolActive = false;
+  let history: readonly ContextMessage[] = [];
   const injectorStub = {
     _serviceBrand: undefined,
-    register: (variant: string) => {
+    register: (variant: string, provider: () => unknown) => {
       registeredVariants.push(variant);
+      variantHandlers.set(variant, provider);
       activeReminders += 1;
       return toDisposable(() => {
         activeReminders -= 1;
@@ -82,11 +94,19 @@ function makeFakeAgent(agentId: string, generation = 1): FakeAgent {
   };
   const memoryStub = {
     _serviceBrand: undefined,
-    get: () => [],
+    get: () => history,
   };
   const profileStub = {
     _serviceBrand: undefined,
-    isToolActive: () => false,
+    isToolActive: () => toolActive,
+  };
+  const flagStub = {
+    _serviceBrand: undefined,
+    enabled: (id: string) => id === FLOW_FLAG_ID,
+  };
+  const flowStub = {
+    _serviceBrand: undefined,
+    run: () => ({ active: flowActive }),
   };
   const ix = new TestInstantiationService();
   ix.set(IAgentScopeContext, scope);
@@ -104,6 +124,8 @@ function makeFakeAgent(agentId: string, generation = 1): FakeAgent {
       if (id === IAgentProfileService) return profileStub as unknown as T;
       if (id === IAgentToolPolicyService) return profileStub as unknown as T;
       if (id === IEventBus) return eventBus as unknown as T;
+      if (id === IFlagService) return flagStub as unknown as T;
+      if (id === IAgentFlowService) return flowStub as unknown as T;
       if (id === IWireService) return ix.get(IWireService) as unknown as T;
       if (id === IEventDispatcher) return dispatcher as unknown as T;
       if (id === IAgentStateService) return ix.get(IAgentStateService) as unknown as T;
@@ -121,12 +143,22 @@ function makeFakeAgent(agentId: string, generation = 1): FakeAgent {
       },
     },
     registeredVariants,
+    variantHandlers,
     activeReminders: () => activeReminders,
     journal,
     dispatcher,
     restore: async (records) => {
       journal.push(...records);
       await dispatcher.restore();
+    },
+    setFlowActive: (active) => {
+      flowActive = active;
+    },
+    setToolActive: (active) => {
+      toolActive = active;
+    },
+    setHistory: (next) => {
+      history = next;
     },
   };
 }
@@ -256,6 +288,28 @@ describe('SessionTodoService', () => {
     ]);
     expect(main.activeReminders()).toBe(1);
     expect(sub.activeReminders()).toBe(1);
+    runtime.dispose();
+  });
+
+  it('suppresses the stale reminder while a flow run is active', async () => {
+    const main = makeFakeAgent('main');
+    main.setToolActive(true);
+    main.setHistory(
+      Array.from({ length: 12 }, (): ContextMessage => ({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'working' }],
+        toolCalls: [],
+      })),
+    );
+    const runtime = makeTodoRuntime(makeLifecycleStub([main.handle]));
+    await runtime.service.setTodos(main.context, [{ title: 'main todo', status: 'pending' }]);
+    const provider = main.variantHandlers.get(TODO_LIST_REMINDER_VARIANT);
+    expect(provider).toBeDefined();
+    expect(provider!()).toContain('main todo');
+    main.setFlowActive(true);
+    expect(provider!()).toBeUndefined();
+    main.setFlowActive(false);
+    expect(provider!()).toContain('main todo');
     runtime.dispose();
   });
 

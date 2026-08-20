@@ -291,7 +291,46 @@ export function displayBlockToAcpContent(block: ToolInputDisplay): ToolCallConte
     if (text === null) return null;
     return { type: 'content', content: { type: 'text', text } };
   }
+  if (block.kind === 'flow_gate_review') {
+    return { type: 'content', content: { type: 'text', text: composeFlowGateContent(block) } };
+  }
+  if (block.kind === 'flow_jump_review') {
+    const lines = [
+      `Flow \`${block.flow_id}\`${block.task === undefined ? '' : ` — ${block.task}`}`,
+      `Jump: \`${block.from_stage_id}\` (${block.from_index + 1}/${block.stage_total}) → \`${block.to_stage_id}\` (${block.to_index + 1}/${block.stage_total})`,
+      `Reason: ${block.reason}`,
+    ];
+    return { type: 'content', content: { type: 'text', text: lines.join('\n') } };
+  }
   return null;
+}
+
+/**
+ * Render the text body of a `flow_gate_review` display block: the stage
+ * context, the authoritative objective/completion, the per-criterion
+ * verdicts with evidence, the supervisor note, and the advance outcome.
+ */
+function composeFlowGateContent(
+  block: Extract<ToolInputDisplay, { kind: 'flow_gate_review' }>,
+): string {
+  const lines = [
+    `Flow gate review — \`${block.flow_id}\` stage \`${block.stage_id}\` (${block.stage_index + 1}/${block.stage_total})`,
+  ];
+  if (block.task !== undefined && block.task.length > 0) lines.push(`Task: ${block.task}`);
+  lines.push(`Objective: ${block.objective}`, `Completion: ${block.completion}`, '');
+  for (const criterion of block.criteria) {
+    lines.push(
+      `${criterion.met ? '✓' : '✗'} ${criterion.criterion}${criterion.evidence ? ` — ${criterion.evidence}` : ''}`,
+    );
+  }
+  if (block.note !== undefined && block.note.length > 0) lines.push('', `Note: ${block.note}`);
+  lines.push(
+    '',
+    block.next_stage_id === undefined
+      ? 'Passing finishes the run.'
+      : `Passing advances to stage \`${block.next_stage_id}\`.`,
+  );
+  return lines.join('\n');
 }
 
 /**

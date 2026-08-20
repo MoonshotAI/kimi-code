@@ -88,6 +88,79 @@ describe('ApprovalPanelComponent', () => {
     expect(out).toContain('2. Do not start');
   });
 
+  it('renders a flow gate review with its own header, criteria checklist, and note', () => {
+    const pending: PendingApproval = {
+      data: {
+        id: 'approval_flow',
+        tool_call_id: 'tool_flow',
+        tool_name: 'FlowAdvance',
+        action: 'Submitting pass verdict for stage review',
+        description: '',
+        display: [
+          {
+            type: 'flow_gate',
+            flow_id: 'issue-fix',
+            task: 'fix issue #3017',
+            stage_id: 'review',
+            stage_index: 3,
+            stage_total: 5,
+            objective: 'Independent review',
+            completion: 'No substantive issue remains',
+            next_stage_id: 'report',
+            criteria: [
+              { criterion: 'review clean', met: true, evidence: 'round 2 surfaced nothing' },
+              { criterion: 'suite green', met: false, evidence: 'one flake left' },
+            ],
+            note: 'reviewer passed',
+          },
+        ],
+        choices: [
+          { label: 'Pass the gate', response: 'approved' },
+          { label: 'Reject with feedback', response: 'rejected', requires_feedback: true },
+          { label: 'Reject', response: 'rejected' },
+        ],
+      },
+    };
+    const out = strip(new ApprovalPanelComponent(pending, () => {}).render(80).join('\n'));
+    expect(out).toContain('Pass this stage gate?');
+    expect(out).toContain('flow issue-fix · stage review (4/5) · next stage: report');
+    expect(out).toContain('task: fix issue #3017');
+    expect(out).toContain('objective: Independent review');
+    expect(out).toContain('completion: No substantive issue remains');
+    expect(out).toContain('✓ review clean');
+    expect(out).toContain('round 2 surfaced nothing');
+    expect(out).toContain('✗ suite green');
+    expect(out).toContain('note: reviewer passed');
+    expect(out).toContain('1. Pass the gate');
+  });
+
+  it('says a final-stage flow gate finishes the run', () => {
+    const pending: PendingApproval = {
+      data: {
+        id: 'approval_flow_last',
+        tool_call_id: 'tool_flow_last',
+        tool_name: 'FlowAdvance',
+        action: 'Submitting pass verdict for stage report',
+        description: '',
+        display: [
+          {
+            type: 'flow_gate',
+            flow_id: 'issue-fix',
+            stage_id: 'report',
+            stage_index: 4,
+            stage_total: 5,
+            objective: 'Deliver the report',
+            completion: 'Report delivered',
+            criteria: [{ criterion: 'report delivered', met: true, evidence: 'posted' }],
+          },
+        ],
+        choices: [{ label: 'Pass the gate', response: 'approved' }],
+      },
+    };
+    const out = strip(new ApprovalPanelComponent(pending, () => {}).render(80).join('\n'));
+    expect(out).toContain('flow issue-fix · stage report (5/5) · passing finishes the run');
+  });
+
   it('renders dangerous shell warnings with simple copy and no icon', () => {
     const pending: PendingApproval = {
       data: {

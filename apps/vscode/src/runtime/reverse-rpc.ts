@@ -15,7 +15,10 @@ export type ReverseRpcEvent =
   | { type: "QuestionRequest"; payload: LegacyQuestionRequest };
 
 export class ReverseRpcController {
-  private readonly approvals = new Map<string, (response: CoreApprovalResponse) => void>();
+  private readonly approvals = new Map<
+    string,
+    { resolve: (response: CoreApprovalResponse) => void; flowGate: boolean }
+  >();
   private readonly questions = new Map<string, (result: QuestionResult) => void>();
 
   constructor(private readonly emit: (event: ReverseRpcEvent) => void) {}
@@ -23,7 +26,12 @@ export class ReverseRpcController {
   requestApproval(request: ApprovalRequest): Promise<CoreApprovalResponse> {
     const id = randomUUID();
     return new Promise((resolve) => {
-      this.approvals.set(id, resolve);
+      this.approvals.set(id, {
+        resolve,
+        flowGate:
+          request.display?.kind === "flow_gate_review" ||
+          request.display?.kind === "flow_jump_review",
+      });
       this.emit({ type: "ApprovalRequest", payload: approvalPayload(id, request) });
     });
   }
@@ -52,15 +60,26 @@ export class ReverseRpcController {
   }
 
   respondApproval(id: string, response: ApprovalResponse): boolean {
-    const resolve = this.approvals.get(id);
-    if (!resolve) return false;
+    const pending = this.approvals.get(id);
+    if (!pending) return false;
     this.approvals.delete(id);
     if (response === "approve_for_session") {
-      resolve({ decision: "approved", scope: "session" });
+      // A flow gate never installs a session rule: the engine re-asks every
+      // human gate regardless, so a session-scope answer degrades to a
+      // one-shot approval instead of recording a rule it will not honor.
+      pending.resolve(
+        pending.flowGate ? { decision: "approved" } : { decision: "approved", scope: "session" },
+      );
     } else if (response === "approve") {
-      resolve({ decision: "approved" });
+      pending.resolve({ decision: "approved" });
+    } else if (pending.flowGate) {
+      // The label proves a user actually clicked No — flow-gate provenance
+      // treats a bare rejection as an unobserved transport failure and
+      // refuses to record it as a human verdict. Other tools keep the bare
+      // rejection shape their consumers expect.
+      pending.resolve({ decision: "rejected", selectedLabel: "Reject" });
     } else {
-      resolve({ decision: "rejected" });
+      pending.resolve({ decision: "rejected" });
     }
     return true;
   }
@@ -74,8 +93,8 @@ export class ReverseRpcController {
   }
 
   cancelAll(reason: string): void {
-    for (const resolve of this.approvals.values()) {
-      resolve({ decision: "cancelled", feedback: reason });
+    for (const pending of this.approvals.values()) {
+      pending.resolve({ decision: "cancelled", feedback: reason });
     }
     for (const resolve of this.questions.values()) {
       resolve(null);

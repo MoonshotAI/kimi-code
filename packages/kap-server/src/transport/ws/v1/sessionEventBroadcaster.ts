@@ -261,7 +261,52 @@ export class SessionEventBroadcaster {
         if (state.targets.has(target)) state.transcriptSeeded.add(target);
       }
     }
+    this.enqueueStatusSnapshot(state, target);
     return true;
+  }
+
+  private enqueueStatusSnapshot(state: SessionState, target: BroadcastTarget): void {
+    state.queue = state.queue
+      .then(() => {
+        const sub = state.targets.get(target);
+        if (sub === undefined) return;
+        const session = getLiveSessionById(this.opts.core.accessor, state.sessionId);
+        if (session === undefined) return;
+        const main = session.accessor
+          .get(IAgentLifecycleService)
+          .list()
+          .find((handle) => handle.id === MAIN_AGENT_ID);
+        if (main === undefined) return;
+        const snapshot = readLegacyStatus(main);
+        if (snapshot === undefined) return;
+        const event = {
+          type: 'agent.status.updated',
+          agentId: MAIN_AGENT_ID,
+          sessionId: state.sessionId,
+          ...snapshot,
+        } as unknown as Event;
+        const envelope = this.buildEnvelope(state.journal.seq, state.sessionId, event, {
+          epoch: state.journal.epoch,
+          volatile: true,
+        });
+        if (!matchesAgentFilter(envelope, sub.agentFilter)) return;
+        if (suppressedByTranscript(envelope, sub.transcriptGrades)) {
+          const flowFrame = flowOnlyEnvelope(envelope);
+          if (flowFrame === undefined) return;
+          try {
+            target.send(flowFrame);
+          } catch {
+          }
+          return;
+        }
+        try {
+          target.send(envelope);
+        } catch {
+        }
+      })
+      .catch((error: unknown) =>
+        this.logDispatchDropped(state.sessionId, 'agent.status.updated', error),
+      );
   }
 
   /**
@@ -1193,7 +1238,16 @@ export class SessionEventBroadcaster {
     } else {
       for (const [target, sub] of targets) {
         if (!matchesAgentFilter(envelope, sub.agentFilter)) continue;
-        if (suppressedByTranscript(envelope, sub.transcriptGrades)) continue;
+        if (suppressedByTranscript(envelope, sub.transcriptGrades)) {
+          const flowFrame = flowOnlyEnvelope(envelope);
+          if (flowFrame !== undefined) {
+            try {
+              target.send(flowFrame);
+            } catch {
+            }
+          }
+          continue;
+        }
         try {
           target.send(envelope);
         } catch {
@@ -1331,6 +1385,28 @@ const TRANSCRIPT_PROJECTED_EVENT_TYPES: ReadonlySet<string> = new Set([
   'event.approval.requested',
   'event.approval.resolved',
 ]);
+
+function flowOnlyEnvelope(envelope: EventEnvelope): EventEnvelope | undefined {
+  if (envelope.type !== 'agent.status.updated') return undefined;
+  const payload = envelope.payload as {
+    flowRun?: unknown;
+    agentId?: unknown;
+    sessionId?: unknown;
+    time?: unknown;
+  };
+  if (payload.flowRun === undefined) return undefined;
+  return {
+    ...envelope,
+    volatile: true,
+    payload: {
+      type: 'agent.status.updated',
+      agentId: payload.agentId,
+      sessionId: payload.sessionId,
+      time: payload.time,
+      flowRun: payload.flowRun,
+    },
+  };
+}
 
 function suppressedByTranscript(
   envelope: EventEnvelope,

@@ -35,18 +35,18 @@ describe('skill slash commands', () => {
         path: '/skills/parent/nested-review/SKILL.md',
       }),
       skill('agent-only', 'agent'),
-      skill('commit', 'flow'),
+      skill('flow:commit', 'flow'),
     ]);
 
     expect(built.commands.map((command) => command.name)).toEqual([
-      'skill:commit',
+      'flow:commit',
       'skill:nested-review',
       'skill:review',
     ]);
     expect(built.commands[0]).toMatchObject({
-      name: 'skill:commit',
+      name: 'flow:commit',
       aliases: [],
-      description: 'commit skill',
+      description: 'flow:commit skill',
     });
     expect(built.commands[1]).toMatchObject({
       name: 'skill:nested-review',
@@ -54,10 +54,16 @@ describe('skill slash commands', () => {
       description: 'Nested review skill',
     });
     expect([...built.commandMap.entries()]).toEqual([
-      ['skill:commit', 'commit'],
+      ['flow:commit', 'flow:commit'],
       ['skill:nested-review', 'nested-review'],
       ['skill:review', 'review'],
     ]);
+  });
+
+  it('keeps the skill prefix for an ordinary flow-typed skill outside the flow namespace', () => {
+    const built = buildSkillSlashCommands([skill('daily-report', 'flow')]);
+    expect(built.commands.map((command) => command.name)).toEqual(['skill:daily-report']);
+    expect(built.commandMap.get('skill:daily-report')).toBe('daily-report');
   });
 
   it('sorts built-in skill slash commands before external skill commands', () => {

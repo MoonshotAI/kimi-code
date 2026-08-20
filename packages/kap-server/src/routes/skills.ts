@@ -1,10 +1,13 @@
 import {
   builtinProductSkillsEnabled,
+  discoverFlowSkills,
   visibleBuiltinSkills,
   Error2,
   ErrorCodes,
   EXTRA_SKILL_DIRS_SECTION,
+  FLOW_FLAG_ID,
   IAgentSkillService,
+  IHostFileSystem,
   IBootstrapService,
   IConfigService,
   IFileService,
@@ -26,6 +29,7 @@ import {
   configuredRoots,
   projectRoots,
   sessionMediaOriginalsDir,
+  userFlowsDir,
   userRoots,
   type ContentPart,
   type ISessionScopeHandle,
@@ -300,12 +304,19 @@ async function listWorkspaceSkillsForRoot(
     configuredRoots(extraSkillDirs, workDir, bootstrap.osHomeDir, 'extra'),
     plugins.pluginSkillRoots(),
   ]);
-  const [user, project, explicit, extra, plugin] = await Promise.all([
+  const [user, project, explicit, extra, plugin, flows] = await Promise.all([
     discovery.discover(userRootList),
     discovery.discover(projectRootList),
     discovery.discover(explicitRootList),
     discovery.discover(extraRootList),
     discovery.discover(pluginRootList),
+    flags.enabled(FLOW_FLAG_ID)
+      ? discoverFlowSkills(
+          core.accessor.get(IHostFileSystem),
+          workDir,
+          userFlowsDir(bootstrap.homeDir),
+        )
+      : Promise.resolve({ skills: [] as readonly SkillDefinition[] }),
   ]);
 
   const catalog = new InMemorySkillCatalog();
@@ -319,6 +330,7 @@ async function listWorkspaceSkillsForRoot(
     { skills: user.skills, priority: SKILL_SOURCE_PRIORITY.user },
     { skills: explicit.skills, priority: SKILL_SOURCE_PRIORITY.user },
     { skills: project.skills, priority: SKILL_SOURCE_PRIORITY.workspace },
+    { skills: flows.skills, priority: SKILL_SOURCE_PRIORITY.flows },
   ].toSorted((a, b) => a.priority - b.priority);
   for (const { skills } of ordered) {
     for (const skill of skills) catalog.register(skill, { replace: true });
@@ -364,6 +376,7 @@ function sendMappedError(
         reply.send(errEnvelope(ErrorCode.FILE_NOT_FOUND, err.message, requestId, err.stack));
         return;
       case ErrorCodes.VALIDATION_FAILED:
+      case ErrorCodes.REQUEST_INVALID:
         reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
         return;
     }

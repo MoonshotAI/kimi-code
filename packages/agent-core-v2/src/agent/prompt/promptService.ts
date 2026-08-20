@@ -52,6 +52,7 @@ import { PromptAccepted, promptAdmissionKey } from './promptOps';
 import { daemonFileRefFromPart } from '#/agent/media/mediaRef';
 import { materializePromptDaemonRefs } from '#/agent/media/promptMediaIntake';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { isProjectedFlowSkill } from '#/features/flow/flowsSkillSource';
 
 export interface PromptCompletedPayload {
   readonly agentId: string;
@@ -314,6 +315,27 @@ export class AgentPromptService implements IAgentPromptService {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
     }
     const selected = this.pending.filter((item) => ids.has(item.id));
+    const flowActivations = selected.reduce((count, item) => {
+      const origin = item.message.origin;
+      if (origin?.kind === 'skill_activation') {
+        return count + (isProjectedFlowSkill(origin.skillName, origin.skillType) ? 1 : 0);
+      }
+      if (origin?.kind === 'user') {
+        return (
+          count +
+          (origin.skillActivations ?? []).filter((entry) =>
+            isProjectedFlowSkill(entry.skillName, entry.skillType),
+          ).length
+        );
+      }
+      return count;
+    }, 0);
+    if (flowActivations > 1) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        'Cannot steer multiple flow activations into one step: each flow run needs its own prompt.',
+      );
+    }
     const activeAtEntry = this.active;
     const { message: rerouted, captions } = this.extractCompressionCaptions(mergeSteerMessages(selected));
     await this.materializeDaemonRefs(rerouted);
