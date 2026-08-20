@@ -165,10 +165,6 @@ describe('server /api/v2/mcp', () => {
   let home: string | undefined;
   let base: string;
 
-  beforeEach(() => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
-  });
-
   afterEach(async () => {
     vi.unstubAllEnvs();
     if (server !== undefined) {
@@ -208,45 +204,7 @@ describe('server /api/v2/mcp', () => {
     return { status: res.status, body: (await res.json()) as EnvelopeWire<T> };
   }
 
-  describe('flag off', () => {
-    beforeEach(() => {
-      vi.stubEnv('KIMI_CODE_EXPERIMENTAL_MCP_MANAGEMENT', undefined);
-    });
-
-    it('every route answers the 40928 envelope without calling the service', async () => {
-      const stub = makeMcpStub();
-      await boot(stub);
-      const probes: Array<readonly [string, string, unknown?]> = [
-        ['GET', '/api/v2/mcp/servers'],
-        ['GET', '/api/v2/mcp/servers/a'],
-        ['POST', '/api/v2/mcp/servers', STDIO_A],
-        ['PUT', '/api/v2/mcp/servers/a', { transport: 'stdio', command: 'run-a' }],
-        ['DELETE', '/api/v2/mcp/servers/a'],
-        ['POST', '/api/v2/mcp/servers:test', { name: 'a' }],
-        ['POST', '/api/v2/mcp/servers:inspect', {}],
-        ['GET', '/api/v2/mcp/auth-statuses'],
-        ['POST', '/api/v2/mcp/auth:begin', { source: 'global', name: 'a' }],
-        ['POST', '/api/v2/mcp/auth:complete', { flowId: 'flow-1' }],
-        ['POST', '/api/v2/mcp/auth:cancel', { flowId: 'flow-1' }],
-        ['POST', '/api/v2/mcp/auth:reset', { source: 'global', name: 'a' }],
-      ];
-      for (const [method, path, body] of probes) {
-        const { status, body: envelope } = await call(method, path, body);
-        expect(status, path).toBe(200);
-        expect(envelope.code, path).toBe(40928);
-        expect(envelope.data, path).toBeNull();
-        expect(envelope.msg, path).toContain('mcp_management');
-        expect(typeof envelope.request_id).toBe('string');
-      }
-      expect(stub.calls).toEqual([]);
-    });
-  });
-
-  describe('flag on', () => {
-    beforeEach(() => {
-      vi.stubEnv('KIMI_CODE_EXPERIMENTAL_MCP_MANAGEMENT', '1');
-    });
-
+  describe('routes', () => {
     it('round-trips a server through add/get/update/remove', async () => {
       const stub = makeMcpStub();
       await boot(stub);

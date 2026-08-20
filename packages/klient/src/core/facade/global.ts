@@ -236,10 +236,7 @@ export interface GlobalHostFsFacade {
  * The unified MCP management plane (engine `IMcpManagementService`, App
  * scope): CRUD on the user-level `mcp.json`, a connection test probe, the
  * locator-addressed inspection catalog, the auth-status surface, and the
- * locator-addressed OAuth flow operations. Gated by the `mcp_management`
- * experimental flag — while disabled, every method rejects with
- * `RPCError(40928)` on every transport (and `/api/v2/mcp` answers the same
- * code over HTTP).
+ * locator-addressed OAuth flow operations.
  */
 export interface GlobalMcpFacade {
   list(input?: { cwd?: string }): Promise<readonly McpManagedServer[]>;

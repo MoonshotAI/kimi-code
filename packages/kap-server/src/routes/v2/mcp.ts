@@ -2,13 +2,10 @@ import type { ServerResponse } from 'node:http';
 
 import {
   ErrorCodes,
-  IConfigService,
   IMcpManagementService,
   isError2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
-import { mcpManagementFlag } from '@moonshot-ai/agent-core-v2/app/mcpManagement/flag';
 import {
   McpServerHttpConfigSchema,
   McpServerSseConfigSchema,
@@ -172,7 +169,6 @@ const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }
 
 const baseErrorSchemas = {
   [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
-  [ErrorCode.MCP_MANAGEMENT_DISABLED]: {},
 };
 
 const namedServerErrorSchemas = {
@@ -194,11 +190,6 @@ function sendMappedError(
       case ErrorCodes.CONFIG_INVALID:
         reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
         return;
-      case ErrorCodes.MCP_MANAGEMENT_DISABLED:
-        reply.send(
-          errEnvelope(ErrorCode.MCP_MANAGEMENT_DISABLED, err.message, requestId, err.stack),
-        );
-        return;
       case ErrorCodes.MCP_OAUTH_FAILED:
         reply.send(errEnvelope(ErrorCode.MCP_OAUTH_FAILED, err.message, requestId, err.stack));
         return;
@@ -209,34 +200,6 @@ function sendMappedError(
 
 export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
   const management = (): IMcpManagementService => core.accessor.get(IMcpManagementService);
-
-  const gate = (
-    req: { id: string },
-    reply: { send(payload: unknown): unknown },
-    done: (err?: Error) => void,
-  ): void => {
-    void core.accessor.get(IConfigService).ready.then(
-      () => {
-        if (core.accessor.get(IFlagService).enabled(mcpManagementFlag.id)) {
-          done();
-          return;
-        }
-        reply.send(
-          errEnvelope(
-            ErrorCode.MCP_MANAGEMENT_DISABLED,
-            `the MCP management plane is experimental and disabled; enable the '${mcpManagementFlag.id}' flag (${mcpManagementFlag.env}=1 or [experimental] ${mcpManagementFlag.id} = true)`,
-            req.id,
-          ),
-        );
-      },
-      (error: unknown) => done(error instanceof Error ? error : new Error(String(error))),
-    );
-  };
-
-  const gated = (options: { preHandler: unknown[]; schema: Record<string, unknown> }) => ({
-    ...options,
-    preHandler: [gate, ...options.preHandler],
-  });
 
   const listServersRoute = defineRoute(
     {
@@ -260,7 +223,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
   );
   app.get(
     listServersRoute.path,
-    gated(listServersRoute.options),
+    (listServersRoute.options),
     listServersRoute.handler as Parameters<V2McpRouteHost['get']>[2],
   );
 
@@ -286,7 +249,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
   );
   app.get(
     getServerRoute.path,
-    gated(getServerRoute.options),
+    (getServerRoute.options),
     getServerRoute.handler as Parameters<V2McpRouteHost['get']>[2],
   );
 
@@ -313,7 +276,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
   );
   app.post(
     addServerRoute.path,
-    gated(addServerRoute.options),
+    (addServerRoute.options),
     addServerRoute.handler as Parameters<V2McpRouteHost['post']>[2],
   );
 
@@ -344,7 +307,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
   );
   app.put(
     updateServerRoute.path,
-    gated(updateServerRoute.options),
+    (updateServerRoute.options),
     updateServerRoute.handler as Parameters<V2McpRouteHost['put']>[2],
   );
 
@@ -371,7 +334,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
   );
   app.delete(
     removeServerRoute.path,
-    gated(removeServerRoute.options),
+    (removeServerRoute.options),
     removeServerRoute.handler as Parameters<V2McpRouteHost['delete']>[2],
   );
 
@@ -397,7 +360,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
   );
   app.post(
     testServerRoute.path,
-    gated(testServerRoute.options),
+    (testServerRoute.options),
     testServerRoute.handler as Parameters<V2McpRouteHost['post']>[2],
   );
 
@@ -423,7 +386,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
   );
   app.post(
     inspectServersRoute.path,
-    gated(inspectServersRoute.options),
+    (inspectServersRoute.options),
     inspectServersRoute.handler as Parameters<V2McpRouteHost['post']>[2],
   );
 
@@ -452,7 +415,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
   );
   app.get(
     authStatusesRoute.path,
-    gated(authStatusesRoute.options),
+    (authStatusesRoute.options),
     authStatusesRoute.handler as Parameters<V2McpRouteHost['get']>[2],
   );
 
@@ -478,7 +441,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
   );
   app.post(
     authBeginRoute.path,
-    gated(authBeginRoute.options),
+    (authBeginRoute.options),
     authBeginRoute.handler as Parameters<V2McpRouteHost['post']>[2],
   );
 
@@ -513,7 +476,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
   );
   app.post(
     authCompleteRoute.path,
-    gated(authCompleteRoute.options),
+    (authCompleteRoute.options),
     authCompleteRoute.handler as Parameters<V2McpRouteHost['post']>[2],
   );
 
@@ -538,7 +501,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
   );
   app.post(
     authCancelRoute.path,
-    gated(authCancelRoute.options),
+    (authCancelRoute.options),
     authCancelRoute.handler as Parameters<V2McpRouteHost['post']>[2],
   );
 
@@ -564,7 +527,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
   );
   app.post(
     authResetRoute.path,
-    gated(authResetRoute.options),
+    (authResetRoute.options),
     authResetRoute.handler as Parameters<V2McpRouteHost['post']>[2],
   );
 }

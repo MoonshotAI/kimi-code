@@ -5,7 +5,7 @@
  * differs per file.
  */
 
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -14,7 +14,6 @@ import { join } from 'node:path';
 import { Service } from '@moonshot-ai/agent-core-v2/_base/di/service';
 import { CommandContribution } from '@moonshot-ai/agent-core-v2/agent/command/commandContribution';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
-import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { IAgentPromptService, reservePrompt } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
@@ -52,21 +51,7 @@ export function defineKlientConformance(
     let target: KlientConformanceTarget;
 
     beforeAll(async () => {
-      // Hermetic flag baseline: the engine freezes its env snapshot at
-      // bootstrap (inside `makeTarget`), so a developer shell exporting
-      // `KIMI_CODE_EXPERIMENTAL_FLAG`/`..._MCP_MANAGEMENT` must not leak into
-      // the flag-gated mcp tests below. `vi.stubEnv(name, undefined)` deletes
-      // the var; the suite re-enables the flag through
-      // `IFlagService.setConfigOverrides` at runtime instead.
-      vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', undefined);
-      vi.stubEnv('KIMI_CODE_EXPERIMENTAL_MCP_MANAGEMENT', undefined);
       target = await makeTarget();
-    });
-
-    afterEach(() => {
-      // The engine's env snapshot is frozen at bootstrap (beforeAll), so
-      // restoring the shell env after each test cannot reach it.
-      vi.unstubAllEnvs();
     });
 
     afterAll(async () => {
@@ -337,22 +322,9 @@ export function defineKlientConformance(
       expect(typeof status.loggedIn).toBe('boolean');
     });
 
-    it('global mcp plane rejects calls with 40928 while the flag is off', async () => {
+    it('global mcp round-trips user-level server CRUD', async () => {
       const mcp = target.klient.global.mcp;
-
-      // Flag off (the default): every method rejects with the same RPCError
-      // code on both transports — the same code `/api/v2/mcp` answers.
-      await expect(mcp.list()).rejects.toMatchObject({ name: 'RPCError', code: 40928 });
-      await expect(
-        mcp.add({ server: { name: 'conf-mcp', transport: 'stdio', command: 'conf-command' } }),
-      ).rejects.toMatchObject({ name: 'RPCError', code: 40928 });
-    });
-
-    it('global mcp round-trips user-level server CRUD once the flag is on', async () => {
-      const mcp = target.klient.global.mcp;
-      const flags = target.app.accessor.get(IFlagService);
       const cwd = await mkdtemp(join(tmpdir(), 'klient-conf-mcp-crud-'));
-      flags.setConfigOverrides({ mcp_management: true });
       try {
         expect(await mcp.list({ cwd })).toEqual([]);
 
@@ -389,169 +361,126 @@ export function defineKlientConformance(
           code: 40408,
         });
       } finally {
-        flags.setConfigOverrides(undefined);
         await rm(cwd, { recursive: true, force: true });
       }
     });
 
     it('global mcp probes an inline server config without persisting it', async () => {
       const mcp = target.klient.global.mcp;
-      const flags = target.app.accessor.get(IFlagService);
-      flags.setConfigOverrides({ mcp_management: true });
+      // Inline probe against a scratch cwd: the binary runs but never
+      // speaks MCP, so the connection test reports a clean failure.
+      const probeCwd = await mkdtemp(join(tmpdir(), 'klient-conf-mcp-probe-'));
       try {
-        // Inline probe against a scratch cwd: the binary runs but never
-        // speaks MCP, so the connection test reports a clean failure.
-        const probeCwd = await mkdtemp(join(tmpdir(), 'klient-conf-mcp-probe-'));
-        try {
-          const probe = await mcp.test({
-            server: {
-              name: 'conf-probe',
-              transport: 'stdio',
-              command: process.execPath,
-              args: ['--version'],
-              startupTimeoutMs: 10_000,
-            },
-            cwd: probeCwd,
-          });
-          expect(probe.success).toBe(false);
-          expect(typeof probe.output).toBe('string');
-        } finally {
-          await rm(probeCwd, { recursive: true, force: true });
-        }
-        expect(await mcp.list()).toEqual([]);
+        const probe = await mcp.test({
+          server: {
+            name: 'conf-probe',
+            transport: 'stdio',
+            command: process.execPath,
+            args: ['--version'],
+            startupTimeoutMs: 10_000,
+          },
+          cwd: probeCwd,
+        });
+        expect(probe.success).toBe(false);
+        expect(typeof probe.output).toBe('string');
       } finally {
-        flags.setConfigOverrides(undefined);
+        await rm(probeCwd, { recursive: true, force: true });
       }
+      expect(await mcp.list()).toEqual([]);
     });
 
     it('global mcp resolves locators and classifies auth offline', async () => {
       const mcp = target.klient.global.mcp;
-      const flags = target.app.accessor.get(IFlagService);
-      flags.setConfigOverrides({ mcp_management: true });
+      await mcp.add({
+        server: { name: 'conf-mcp', transport: 'stdio', command: 'conf-command' },
+      });
       try {
-        await mcp.add({
-          server: { name: 'conf-mcp', transport: 'stdio', command: 'conf-command' },
+        // The locator surface: resolve a legacy name, inspect nothing/all.
+        expect(await mcp.resolveByName({ name: 'conf-mcp' })).toEqual({
+          source: 'global',
+          name: 'conf-mcp',
         });
-        try {
-          // The locator surface: resolve a legacy name, inspect nothing/all.
-          expect(await mcp.resolveByName({ name: 'conf-mcp' })).toEqual({
-            source: 'global',
-            name: 'conf-mcp',
-          });
-          expect(await mcp.inspect({ targets: [] })).toEqual([]);
-          await expect(
-            mcp.inspect({ targets: [{ source: 'global', name: 'conf-missing' }] }),
-          ).rejects.toMatchObject({ name: 'RPCError', code: 40408 });
+        expect(await mcp.inspect({ targets: [] })).toEqual([]);
+        await expect(
+          mcp.inspect({ targets: [{ source: 'global', name: 'conf-missing' }] }),
+        ).rejects.toMatchObject({ name: 'RPCError', code: 40408 });
 
-          // Offline auth classification of a stdio server needs no probe, and
-          // an OAuth flow against a stdio target is request.invalid → 40001.
-          expect(await mcp.authStatuses()).toEqual([
-            { name: 'conf-mcp', authStatus: 'not-applicable' },
-          ]);
-          await expect(
-            mcp.beginAuth({ locator: { source: 'global', name: 'conf-mcp' } }),
-          ).rejects.toMatchObject({ name: 'RPCError', code: 40001 });
-        } finally {
-          await mcp.remove({ name: 'conf-mcp' });
-        }
+        // Offline auth classification of a stdio server needs no probe, and
+        // an OAuth flow against a stdio target is request.invalid → 40001.
+        expect(await mcp.authStatuses()).toEqual([
+          { name: 'conf-mcp', authStatus: 'not-applicable' },
+        ]);
+        await expect(
+          mcp.beginAuth({ locator: { source: 'global', name: 'conf-mcp' } }),
+        ).rejects.toMatchObject({ name: 'RPCError', code: 40001 });
       } finally {
-        flags.setConfigOverrides(undefined);
+        await mcp.remove({ name: 'conf-mcp' });
       }
     });
 
     it('global mcp completeAuth rejects an unknown flowId with 40001', async () => {
       const mcp = target.klient.global.mcp;
-      const flags = target.app.accessor.get(IFlagService);
-      flags.setConfigOverrides({ mcp_management: true });
-      try {
-        await expect(mcp.completeAuth({ flowId: 'conf-unknown-flow' })).rejects.toMatchObject({
-          name: 'RPCError',
-          code: 40001,
-        });
-      } finally {
-        flags.setConfigOverrides(undefined);
-      }
+      await expect(mcp.completeAuth({ flowId: 'conf-unknown-flow' })).rejects.toMatchObject({
+        name: 'RPCError',
+        code: 40001,
+      });
     });
 
     it('global mcp OAuth failures map to the 40929 wire code on every transport', async () => {
       const mcp = target.klient.global.mcp;
-      const flags = target.app.accessor.get(IFlagService);
-      flags.setConfigOverrides({ mcp_management: true });
+      await mcp.add({
+        server: {
+          name: 'conf-oauth-failure',
+          transport: 'http',
+          url: 'http://127.0.0.1:1/mcp',
+          auth: 'oauth',
+        },
+      });
       try {
-        await mcp.add({
-          server: {
-            name: 'conf-oauth-failure',
-            transport: 'http',
-            url: 'http://127.0.0.1:1/mcp',
-            auth: 'oauth',
-          },
-        });
-        try {
-          await expect(
-            mcp.beginAuth({ locator: { source: 'global', name: 'conf-oauth-failure' } }),
-          ).rejects.toMatchObject({ name: 'RPCError', code: 40929 });
-        } finally {
-          await mcp.remove({ name: 'conf-oauth-failure' });
-        }
+        await expect(
+          mcp.beginAuth({ locator: { source: 'global', name: 'conf-oauth-failure' } }),
+        ).rejects.toMatchObject({ name: 'RPCError', code: 40929 });
       } finally {
-        flags.setConfigOverrides(undefined);
+        await mcp.remove({ name: 'conf-oauth-failure' });
       }
     });
 
     it('global mcp cancelAuth ignores an unknown flowId', async () => {
       const mcp = target.klient.global.mcp;
-      const flags = target.app.accessor.get(IFlagService);
-      flags.setConfigOverrides({ mcp_management: true });
-      try {
-        await expect(mcp.cancelAuth({ flowId: 'conf-unknown-flow' })).resolves.toBeUndefined();
-      } finally {
-        flags.setConfigOverrides(undefined);
-      }
+      await expect(mcp.cancelAuth({ flowId: 'conf-unknown-flow' })).resolves.toBeUndefined();
     });
 
     it('global mcp resetAuth clears a remote oauth server through the transport', async () => {
       const mcp = target.klient.global.mcp;
-      const flags = target.app.accessor.get(IFlagService);
-      flags.setConfigOverrides({ mcp_management: true });
+      await mcp.add({
+        server: {
+          name: 'conf-oauth',
+          transport: 'http',
+          url: 'https://example.com/mcp',
+          auth: 'oauth',
+        },
+      });
       try {
-        await mcp.add({
-          server: {
-            name: 'conf-oauth',
-            transport: 'http',
-            url: 'https://example.com/mcp',
-            auth: 'oauth',
-          },
-        });
-        try {
-          // Invalidate is offline: no stored grant and no network needed.
-          await expect(
-            mcp.resetAuth({ locator: { source: 'global', name: 'conf-oauth' } }),
-          ).resolves.toBeUndefined();
-        } finally {
-          await mcp.remove({ name: 'conf-oauth' });
-        }
+        // Invalidate is offline: no stored grant and no network needed.
+        await expect(
+          mcp.resetAuth({ locator: { source: 'global', name: 'conf-oauth' } }),
+        ).resolves.toBeUndefined();
       } finally {
-        flags.setConfigOverrides(undefined);
+        await mcp.remove({ name: 'conf-oauth' });
       }
     });
 
     it('global mcp resetAuth rejects a stdio locator with 40001', async () => {
       const mcp = target.klient.global.mcp;
-      const flags = target.app.accessor.get(IFlagService);
-      flags.setConfigOverrides({ mcp_management: true });
+      await mcp.add({
+        server: { name: 'conf-stdio', transport: 'stdio', command: 'conf-command' },
+      });
       try {
-        await mcp.add({
-          server: { name: 'conf-stdio', transport: 'stdio', command: 'conf-command' },
-        });
-        try {
-          await expect(
-            mcp.resetAuth({ locator: { source: 'global', name: 'conf-stdio' } }),
-          ).rejects.toMatchObject({ name: 'RPCError', code: 40001 });
-        } finally {
-          await mcp.remove({ name: 'conf-stdio' });
-        }
+        await expect(
+          mcp.resetAuth({ locator: { source: 'global', name: 'conf-stdio' } }),
+        ).rejects.toMatchObject({ name: 'RPCError', code: 40001 });
       } finally {
-        flags.setConfigOverrides(undefined);
+        await mcp.remove({ name: 'conf-stdio' });
       }
     });
 

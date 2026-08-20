@@ -3,9 +3,7 @@
  * `agent-core-v2/app/mcpManagement/mcpManagement.ts`; `McpServerSource` /
  * `McpRegistryPluginOrigin` / `McpRegistryQuery` mirror
  * `agent-core-v2/app/mcpRegistry/mcpRegistry.ts`, and the redacted config
- * shape mirrors `agent-core-v2/mcpCore/configView.ts`. The plane is gated by
- * the `mcp_management` flag at the dispatcher edge (`RPCError` 40928 while
- * disabled), matching kap-server's `/api/v2/mcp` gate.
+ * shape mirrors `agent-core-v2/mcpCore/configView.ts`.
  */
 
 import { z } from 'zod';

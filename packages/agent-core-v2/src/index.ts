@@ -448,8 +448,6 @@ import '#/app/mcpConfig/oauthService';
 export * from '#/app/mcpRegistry/mcpRegistry';
 import '#/app/mcpRegistry/mcpRegistryService';
 export * from '#/app/mcpManagement/mcpManagement';
-export { McpManagementErrors } from '#/app/mcpManagement/errors';
-import '#/app/mcpManagement/flag';
 import '#/app/mcpManagement/mcpManagementService';
 export * from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 export * from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
