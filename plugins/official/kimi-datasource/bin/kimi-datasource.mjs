@@ -18,7 +18,7 @@ import { arch, homedir, hostname, release, type } from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 
-const VERSION = '3.3.0';
+const VERSION = '3.4.0';
 const DEFAULT_KIMI_CODE_OAUTH_HOST = 'https://auth.kimi.com';
 const DEFAULT_KIMI_CODE_BASE_URL = 'https://api.kimi.com/coding/v1';
 const API_URL = datasourceApiUrl();
@@ -72,6 +72,19 @@ const TOOLS = [
             'gildata',
             'sec_edgar',
             'sp_data',
+            'china_nda',
+            'china_nbs',
+            'china_standards',
+            'who',
+            'fao',
+            'unsd',
+            'ecb',
+            'eurostat',
+            'unicef',
+            'oecd',
+            'fred',
+            'xhcj',
+            'caixin',
           ],
           description:
             'Data source name. Capabilities: stock_finance_data / yahoo_finance = general quotes and financials ' +
@@ -81,7 +94,14 @@ const TOOLS = [
             'wind = A-share intraday minute series, funds, bonds (map PE/PB/ROE-style field names via wind_search_fields first); ' +
             'gildata = natural-language stock/fund screening; ' +
             'sec_edgar = US filings (10-K/10-Q, S-1, Form 4, 13F, 8-K); ' +
-            'sp_data = S&P fundamentals (consensus estimates, valuation ratios, transcripts).',
+            'sp_data = S&P fundamentals (consensus estimates, valuation ratios, transcripts); ' +
+            'china_nda = CN government open data catalogs (National Data Administration registry + provincial platforms); ' +
+            'china_nbs = CN NBS macro indicators and time series (national / provincial / major-city scopes); ' +
+            'china_standards = CN standards (GB national, HB industry, DB local, TT association); ' +
+            'who / fao / unsd / ecb / eurostat / unicef / oecd / fred = international organization open data ' +
+            '(global health, food & agriculture, UN statistics, ECB & EU statistics, child indicators, OECD datasets, US & global macro series); ' +
+            'xhcj = Xinhua Finance (CNFIC) news flashes, announcements, and policies; ' +
+            'caixin = Caixin database (600+ data APIs, discover via caixin_api_search first).',
         },
       },
       required: ['name'],
