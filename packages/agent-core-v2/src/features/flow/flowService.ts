@@ -155,7 +155,9 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         this.epoch += 1;
         if (!this.flags.enabled(FLOW_FLAG_ID)) return;
         if (this.scopeContext.agentId !== 'main') return;
-        void this.dispatcher.dispatch(new AgentStatusUpdated({ flowRun: this.summary() }));
+        void this.dispatcher.dispatch(
+          new AgentStatusUpdated({ agentId: this.scopeContext.agentId, flowRun: this.summary() }),
+        );
       }),
     );
     this._register(
@@ -175,7 +177,10 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         if (!flagNow) this.pendingActivations.clear();
         if (this.scopeContext.agentId !== 'main') return;
         void this.dispatcher.dispatch(
-          new AgentStatusUpdated({ flowRun: flagNow ? this.summary() : null }),
+          new AgentStatusUpdated({
+            agentId: this.scopeContext.agentId,
+            flowRun: flagNow ? this.summary() : null,
+          }),
         );
       }),
     );

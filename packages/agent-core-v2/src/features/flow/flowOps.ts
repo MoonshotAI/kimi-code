@@ -2,6 +2,7 @@
 import { z } from 'zod';
 
 import { AgentStatusUpdated, type AgentFlowRunStatus } from '#/agent/usage/usageEvents';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { Event2 } from '#/app/event/event2';
 import { defineState } from '#/state/state';
 
@@ -107,14 +108,14 @@ export const flowKey = defineState('flow', (): FlowRunState => ({ active: false 
     else s.jumpPolicy = e.jumpPolicy;
     delete s.endedReason;
     delete s.endedNote;
-    ctx.emit(new AgentStatusUpdated({ flowRun: flowRunStatus(s) }));
+    ctx.emit(new AgentStatusUpdated({ agentId: MAIN_AGENT_ID, flowRun: flowRunStatus(s) }));
   })
   .on(FlowJumped, (s, e, ctx) => {
     if (!s.active) return;
     const target = s.stages?.findIndex((stage) => stage.id === e.toStage) ?? -1;
     if (target < 0) return;
     s.currentStageIndex = target;
-    ctx.emit(new AgentStatusUpdated({ flowRun: flowRunStatus(s) }));
+    ctx.emit(new AgentStatusUpdated({ agentId: MAIN_AGENT_ID, flowRun: flowRunStatus(s) }));
   })
   .on(FlowVerdict, (s, e, ctx) => {
     if (!s.active) return;
@@ -122,7 +123,7 @@ export const flowKey = defineState('flow', (): FlowRunState => ({ active: false 
     if (s.stages?.[index]?.id !== e.stage) return;
     if (e.result === 'pass') s.currentStageIndex = index + 1;
     if ((s.currentStageIndex ?? 0) >= (s.stages?.length ?? 0)) s.active = false;
-    ctx.emit(new AgentStatusUpdated({ flowRun: flowRunStatus(s) }));
+    ctx.emit(new AgentStatusUpdated({ agentId: MAIN_AGENT_ID, flowRun: flowRunStatus(s) }));
   })
   .on(FlowRunEnded, (s, e, ctx) => {
     s.active = false;
@@ -131,7 +132,7 @@ export const flowKey = defineState('flow', (): FlowRunState => ({ active: false 
     s.endedReason = e.reason;
     if (e.note === undefined) delete s.endedNote;
     else s.endedNote = e.note;
-    ctx.emit(new AgentStatusUpdated({ flowRun: null }));
+    ctx.emit(new AgentStatusUpdated({ agentId: MAIN_AGENT_ID, flowRun: null }));
   });
 
 export const flowGatesKey = defineState('flow.gates', (): FlowGatesState => ({ records: [] }))

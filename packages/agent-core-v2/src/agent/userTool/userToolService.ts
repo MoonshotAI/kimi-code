@@ -43,7 +43,6 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly agentState: IAgentStateService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
     super();
     this.agentState.contributeState(userToolKey);

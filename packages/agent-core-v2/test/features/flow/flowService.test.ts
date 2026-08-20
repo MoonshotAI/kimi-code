@@ -16,7 +16,7 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { SkillActivate, skillKey } from '#/agent/skill/skillOps';
 import { ContextUndone } from '#/agent/undo/undoService';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISkillActivationDataService } from '#/agent/skill/skillActivationData';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -24,7 +24,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService, type ConfigChangedEvent } from '#/app/config/config';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
-import { IEventBus } from '#/app/event/eventBus';
+import { IEventBus, type ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IFlagService } from '#/app/flag/flag';
 import { FLOW_FLAG_ID, IAgentFlowService, type FlowDefinition } from '#/features/flow/flow';
@@ -75,6 +75,7 @@ describe('AgentFlowService', () => {
   let configHandlers: ((e: ConfigChangedEvent) => void)[];
   let flowToolSource: 'builtin' | 'user';
   let todoToolSource: 'builtin' | 'user';
+  let scopeFor: (id: string) => ReturnType<typeof makeAgentScopeContext>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -145,11 +146,22 @@ describe('AgentFlowService', () => {
       eventBus: ix.get(IEventBus),
     });
     agentId = 'main';
-    ix.stub(IAgentScopeContext, {
-      get agentId() {
-        return agentId;
-      },
-    } as unknown as IAgentScopeContext);
+    const scopes = new Map<string, ReturnType<typeof makeAgentScopeContext>>();
+    scopeFor = (id: string) => {
+      let scope = scopes.get(id);
+      if (scope === undefined) {
+        scope = makeAgentScopeContext({ agentId: id, agentScope: '' });
+        scopes.set(id, scope);
+        (ix.get(IEventBus) as ISessionEventBus).activateAgent(scope.agentContext);
+      }
+      return scope;
+    };
+    ix.stub(
+      IAgentScopeContext,
+      new Proxy({} as IAgentScopeContext, {
+        get: (_target, prop) => (scopeFor(agentId) as unknown as Record<string | symbol, unknown>)[prop],
+      }),
+    );
     dispatcher = registerTestEventDispatcher(ix);
     agentState = ix.get(IAgentStateService);
     ix.set(IAgentFlowService, new SyncDescriptor(AgentFlowService));
@@ -303,12 +315,12 @@ describe('AgentFlowService', () => {
         }
       }),
     );
-    ix.get(IEventBus).publish(new ContextUndone({ turns: 1 }));
+    ix.get(IEventBus).publish(new ContextUndone({ agentId: 'main', turns: 1 }), scopeFor('main').agentContext);
     expect(seen).toEqual([null]);
 
     service.start(DEFINITION, 'fix #123');
     seen.length = 0;
-    ix.get(IEventBus).publish(new ContextUndone({ turns: 1 }));
+    ix.get(IEventBus).publish(new ContextUndone({ agentId: 'main', turns: 1 }), scopeFor('main').agentContext);
     expect(seen).toEqual([
       { flowId: 'issue-fix', stageId: 'triage', stageIndex: 0, stageTotal: 2, gate: 'human' },
     ]);
@@ -324,7 +336,10 @@ describe('AgentFlowService', () => {
         }
       }),
     );
-    ix.get(IEventBus).publish(new ContextUndone({ turns: 1 }));
+    ix.get(IEventBus).publish(
+      new ContextUndone({ agentId: 'worker-1', turns: 1 }),
+      scopeFor('worker-1').agentContext,
+    );
     expect(seen).toEqual([]);
   });
 
@@ -418,6 +433,7 @@ describe('AgentFlowService', () => {
   it('conversation undo rolls back the stage pointer but keeps the gate audit trail', async () => {
     await dispatcher.dispatch(
       new ContextAppendMessage({
+        agentId: 'main',
         message: {
           role: 'user',
           content: [{ type: 'text', text: 'anchor' }],
@@ -431,7 +447,7 @@ describe('AgentFlowService', () => {
     expect(service.currentStage()?.id).toBe('implement');
     expect(service.gates().records).toHaveLength(1);
 
-    await dispatcher.dispatch(new ContextUndo({ count: 1 }));
+    await dispatcher.dispatch(new ContextUndo({ agentId: 'main', count: 1 }));
 
     expect(agentState.get(flowKey)).toEqual({ active: false });
     expect(agentState.get(flowGatesKey).records).toHaveLength(1);
@@ -476,7 +492,7 @@ describe('AgentFlowService', () => {
         skillPath,
         skillArgs: task,
       } as const;
-      await dispatcher.dispatch(new SkillActivate({ origin }));
+      await dispatcher.dispatch(new SkillActivate({ agentId, origin }));
       if (options.appendPrompt !== false) {
         contextMessages.push({
           role: 'user',
