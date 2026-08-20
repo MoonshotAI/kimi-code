@@ -351,6 +351,24 @@ describe('AgentTowerService', () => {
     expect(formatDenyMessage).not.toHaveBeenCalled();
   });
 
+  it('denies tower tools while the tower flag is off, even with the mode active', async () => {
+    const tower = ix.get(IAgentTowerService);
+    await tower.enter();
+    expect(tower.isActive).toBe(true);
+    towerFlagOn = false;
+
+    const decision = await fire(hookContext([toolCall('TowerTeardown', 'call_td')]));
+
+    expect(decision).toEqual({
+      veto: {
+        output: expect.stringContaining('The tower experiment is disabled'),
+        isError: true,
+      },
+    });
+    expect(permissionGateRan).toBe(false);
+    expect(formatDenyMessage).toHaveBeenCalledTimes(1);
+  });
+
   it('enter() is a no-op while the tower flag is off', async () => {
     towerFlagOn = false;
     const tower = ix.get(IAgentTowerService);

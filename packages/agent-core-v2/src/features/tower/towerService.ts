@@ -98,6 +98,19 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     this._register(new TowerModeInjection(injector, this, context, this.flags));
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => {
+        if (this.flags.enabled(TOWER_FLAG_ID)) return;
+        if (!TOWER_MODE_TOOLS.includes(event.toolCall.name)) return;
+        event.veto(
+          denyToolExecution(
+            this.toolApproval.formatDenyMessage(
+              'The tower experiment is disabled — tower tools are inert. Re-enable the experiment (a restart is required if it was just turned on) before driving the tower protocol.',
+            ),
+          ),
+        );
+      }),
+    );
+    this._register(
+      toolExecutor.onBeforeExecuteTool((event) => {
         if (!this.flags.enabled(TOWER_FLAG_ID)) return;
         if (!this.isActive) return;
         if (event.toolCall.name !== 'TodoList') return;
