@@ -314,15 +314,19 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
   if (!segments.includes(arg)) {
     const providerType = host.state.appState.availableProviders[effective.provider]?.type;
     const protocol = effective.protocol ?? providerType;
-    if (protocol !== 'anthropic') {
+    // With a declared effort list the engine falls back to the model default
+    // for every protocol, so an unlisted value is rejected like any invalid
+    // input. Only Anthropic-compatible models WITHOUT a declared list keep
+    // the warn-and-send escape hatch — there the engine passes the value
+    // through for the backend to judge.
+    if (protocol !== 'anthropic' || (effective.supportEfforts?.length ?? 0) > 0) {
       host.showError(
         `Unsupported thinking effort "${arg}" for ${alias}. Available: ${segments.join(', ')}`,
       );
       return;
     }
-    const knownEfforts = effective.supportEfforts?.join(', ') ?? 'none declared';
     host.showStatus(
-      `Thinking effort "${arg}" is not listed for ${alias} (known: ${knownEfforts}). Sending "${arg}" unchanged; the configured provider will validate it.`,
+      `Thinking effort "${arg}" is not declared for ${alias}. Sending "${arg}" unchanged; the configured provider will validate it.`,
       'warning',
     );
   }

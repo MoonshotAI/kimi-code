@@ -8129,7 +8129,9 @@ describe('/model status displayName override', () => {
 });
 
 describe('/effort support_efforts override', () => {
-  it('warns and applies efforts hidden by an Anthropic support_efforts override', async () => {
+  it('rejects efforts hidden by an Anthropic support_efforts override', async () => {
+    // The engine falls back to the declared default for unlisted efforts on
+    // every protocol, so the TUI rejects them like any other invalid value.
     const session = makeSession();
     const { driver } = await makeDriver(session, {
       getConfig: vi.fn(async () => ({
@@ -8156,6 +8158,38 @@ describe('/effort support_efforts override', () => {
     driver.handleUserInput('/effort max');
 
     await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain(
+        'Unsupported thinking effort "max" for k2. Available: off, low, high',
+      );
+    });
+    expect(session.setThinking).not.toHaveBeenCalled();
+  });
+
+  it('still sends unlisted efforts unchanged for Anthropic models without a declared list', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'kimi', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 100,
+            displayName: 'Compatible Model',
+            capabilities: ['thinking'],
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true },
+      })),
+    });
+
+    driver.handleUserInput('/effort max');
+
+    await vi.waitFor(() => {
       expect(session.setThinking).toHaveBeenCalledWith('max');
     });
     await vi.waitFor(() => {
@@ -8163,7 +8197,7 @@ describe('/effort support_efforts override', () => {
     });
     const transcript = renderTranscript(driver).replaceAll(/\s+/g, ' ');
     expect(transcript).toContain(
-      'Thinking effort "max" is not listed for k2 (known: low, high). Sending "max" unchanged; the configured provider will validate it.',
+      'Thinking effort "max" is not declared for k2. Sending "max" unchanged; the configured provider will validate it.',
     );
     expect(transcript).toContain('Thinking set to max.');
   });
