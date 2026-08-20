@@ -1,59 +1,41 @@
 import { describe, expect, it } from 'vitest';
+import { fromCallback } from 'xstate';
 
+import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { createDecorator, type ServiceIdentifier, type ServicesAccessor } from '#/_base/di/instantiation';
-import { InstantiationService } from '#/_base/di/instantiationService';
 import { toDisposable } from '#/_base/di/lifecycle';
-import { Service } from '#/_base/di/service';
-import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { TestInstantiationService } from '#/_base/di/test';
 import { KeyedResourceLeasePool } from '#/_base/lifecycle/keyedResource';
-import { Emitter } from '#/_base/event';
-import { type IAgentScopeHandle } from '#/_base/di/scope';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { deactivateAgentContext } from '#/agent/agentContext/agentContextIdentity';
 import {
-  agentContextOf,
-  IAgentScopeContext,
-  makeAgentScopeContext,
-} from '#/agent/scopeContext/scopeContext';
-import { LifecycleScope } from '#/app/scopes';
+  AgentRuntimeHost,
+  defineAgentRuntime,
+  IAgentRuntimeHostService,
+} from '#/agent/runtime/agentRuntime';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { ContextUndone } from '#/agent/undo/undoService';
+import { ContextAppendMessage, ContextUndo } from '#/agent/contextMemory/contextEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionTodoService } from '#/session/todo/sessionTodo';
-import { TodoAgentEffectDefinition } from '#/session/todo/todoAgentEffect';
-import { TodoAgentModelDefinition } from '#/session/todo/todoAgentModel';
-import { SessionTodoService } from '#/session/todo/sessionTodoService';
-import { type TodoItem } from '#/session/todo/todoItem';
+import { IAgentTodo } from '#/session/todo/sessionTodo';
+import {
+  AgentTodoBinding,
+  TodoAgentRuntimeDefinition,
+} from '#/session/todo/todoAgentRuntime';
+import type { TodoItem } from '#/session/todo/todoItem';
 import { TODO_LIST_REMINDER_VARIANT } from '#/session/todo/todoListReminder';
-import { AgentEffectContribution } from '#/state/agentEffect';
-import { AgentModelContribution } from '#/state/agentModel';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 
 import { stubWireJournal } from '../../wire/stubs';
-import { stubAgentContext } from '../../agent/agentContext/stubs';
-
-interface FakeAgent {
-  readonly context: AgentContext;
-  readonly handle: IAgentScopeHandle;
-  readonly registeredVariants: string[];
-  readonly activeReminders: () => number;
-  readonly journal: WireRecord[];
-  readonly dispatcher: IEventDispatcher;
-  readonly restore: (records: readonly WireRecord[]) => Promise<void>;
-}
 
 const noopBlob: IAgentBlobService = {
   _serviceBrand: undefined,
@@ -62,358 +44,353 @@ const noopBlob: IAgentBlobService = {
   isBlobRef: () => false,
 };
 
-function makeFakeAgent(agentId: string, generation = 1): FakeAgent {
+interface RuntimeAgent {
+  readonly context: AgentContext;
+  readonly todo: IAgentTodo;
+  readonly dispatcher: IEventDispatcher;
+  readonly journal: WireRecord[];
+  readonly registeredVariants: string[];
+  readonly activeReminders: () => number;
+  readonly restore: (records: readonly WireRecord[]) => Promise<void>;
+  readonly dispose: () => void;
+}
+
+function runtimeHostService(host: AgentRuntimeHost): IAgentRuntimeHostService {
+  return {
+    _serviceBrand: undefined,
+    resolve: (agent, definition) => host.resolve(agent, definition),
+    participants: (agent) => host.participants(agent),
+    snapshot: (agent) => host.snapshot(agent),
+    inspect: (agent) => host.snapshot(agent),
+    disposeAgent: (agent) => { host.disposeAgent(agent); },
+  };
+}
+
+function makeRuntimeAgent(
+  host: AgentRuntimeHost,
+  service: IAgentRuntimeHostService,
+  accessors: Map<AgentContext, ServicesAccessor>,
+  agentId: string,
+  generation = 1,
+  beforeResolve?: (state: {
+    readonly context: AgentContext;
+    readonly activeReminders: () => number;
+  }) => void,
+): RuntimeAgent {
   const scope = makeAgentScopeContext({ agentId, agentScope: `agents/${agentId}`, generation });
   const context = scope.agentContext;
-  const registeredVariants: string[] = [];
   const journal: WireRecord[] = [];
+  const registeredVariants: string[] = [];
+  let reminders = 0;
   const eventBus = new EventBusService();
   eventBus.activateAgent(context);
-  let activeReminders = 0;
-  const injectorStub = {
+  const ix = new TestInstantiationService();
+  ix.set(IAgentScopeContext, scope);
+  ix.set(IAgentBlobService, noopBlob);
+  ix.set(IAgentStateService, new AgentStateService());
+  ix.set(IEventBus, eventBus);
+  ix.set(IWireService, stubWireJournal(journal));
+  ix.set(IAgentRuntimeHostService, service);
+  ix.set(IAgentContextInjectorService, {
     _serviceBrand: undefined,
     register: (variant: string) => {
       registeredVariants.push(variant);
-      activeReminders += 1;
-      return toDisposable(() => {
-        activeReminders -= 1;
-      });
+      reminders += 1;
+      return toDisposable(() => { reminders -= 1; });
     },
-  };
-  const memoryStub = {
+  } as unknown as IAgentContextInjectorService);
+  ix.set(IAgentContextMemoryService, {
     _serviceBrand: undefined,
     get: () => [],
-  };
-  const profileStub = {
+  } as unknown as IAgentContextMemoryService);
+  ix.set(IAgentToolPolicyService, {
     _serviceBrand: undefined,
     isToolActive: () => false,
-  };
-  const ix = new TestInstantiationService();
-  ix.set(IAgentScopeContext, scope);
-  ix.set(IEventBus, eventBus);
-  ix.set(IAgentBlobService, noopBlob);
-  ix.set(IWireService, stubWireJournal(journal));
-  ix.set(IAgentStateService, new AgentStateService());
+  } as unknown as IAgentToolPolicyService);
   ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
   const dispatcher = ix.get(IEventDispatcher);
-  const accessor: ServicesAccessor = {
-    get: <T>(id: ServiceIdentifier<T>): T => {
-      if (id === IAgentScopeContext) return scope as unknown as T;
-      if (id === IAgentContextInjectorService) return injectorStub as unknown as T;
-      if (id === IAgentContextMemoryService) return memoryStub as unknown as T;
-      if (id === IAgentProfileService) return profileStub as unknown as T;
-      if (id === IAgentToolPolicyService) return profileStub as unknown as T;
-      if (id === IEventBus) return eventBus as unknown as T;
-      if (id === IWireService) return ix.get(IWireService) as unknown as T;
-      if (id === IEventDispatcher) return dispatcher as unknown as T;
-      if (id === IAgentStateService) return ix.get(IAgentStateService) as unknown as T;
-      throw new Error(`unexpected service request in fake agent: ${String(id)}`);
-    },
-  };
+  const accessor: ServicesAccessor = { get: (id) => ix.get(id) };
+  accessors.set(context, accessor);
+  beforeResolve?.({ context, activeReminders: () => reminders });
+  const todo = host.resolve(context, TodoAgentRuntimeDefinition);
   return {
     context,
-    handle: {
-      id: agentId,
-      kind: LifecycleScope.Agent,
-      accessor,
-      dispose: () => {
-        ix.dispose();
-      },
-    },
-    registeredVariants,
-    activeReminders: () => activeReminders,
-    journal,
+    todo,
     dispatcher,
+    journal,
+    registeredVariants,
+    activeReminders: () => reminders,
     restore: async (records) => {
       journal.push(...records);
       await dispatcher.restore();
     },
-  };
-}
-
-interface LifecycleStub {
-  readonly service: IAgentLifecycleService;
-  readonly fireCreate: (handle: IAgentScopeHandle) => void;
-  readonly fireDispose: (agentId: string) => void;
-}
-
-function makeLifecycleStub(handles: readonly IAgentScopeHandle[] = []): LifecycleStub {
-  const onDidCreate = new Emitter<AgentContext>();
-  const onDidCreateScope = new Emitter<{
-    readonly context: AgentContext;
-    readonly handle: IAgentScopeHandle;
-  }>();
-  const onDidDispose = new Emitter<AgentContext>();
-  const byId = new Map(handles.map((handle) => [handle.id, handle]));
-  return {
-    service: {
-      _serviceBrand: undefined,
-      onDidCreate: onDidCreate.event,
-      onDidCreateScope: onDidCreateScope.event,
-      onDidDispose: onDidDispose.event,
-      get: (context: AgentContext) => {
-        const handle = byId.get(context.agentId);
-        if (handle === undefined) return undefined;
-        return agentContextOf(handle) === context ? handle : undefined;
-      },
-      findAgentHandle: (agentId: string) => byId.get(agentId),
-      list: () => [...byId.values()],
-      broadcastPermissionMode: () => {},
-      create: async () => {
-        throw new Error('not implemented');
-      },
-      fork: async () => {
-        throw new Error('not implemented');
-      },
-      remove: async () => {},
-    },
-    fireCreate: (handle) => {
-      const context = agentContextOf(handle);
-      byId.set(handle.id, handle);
-      onDidCreate.fire(context);
-      onDidCreateScope.fire({ context, handle });
-    },
-    fireDispose: (agentId) => {
-      const handle = byId.get(agentId);
-      if (handle === undefined) return;
-      const context = agentContextOf(handle);
-      byId.delete(agentId);
-      onDidDispose.fire(context);
-    },
-  };
-}
-
-interface ITodoDefinitions {}
-const ITodoDefinitions = createDecorator<ITodoDefinitions>('test-todo-definitions');
-
-class TodoDefinitions extends Service {
-  constructor() {
-    super();
-    this.provide(AgentModelContribution, TodoAgentModelDefinition);
-    this.provide(AgentEffectContribution, TodoAgentEffectDefinition);
-  }
-}
-
-interface TodoRuntime {
-  readonly service: ISessionTodoService;
-  readonly withdrawDefinitions: () => void;
-  readonly dispose: () => void;
-}
-
-function makeTodoRuntime(lifecycle: LifecycleStub): TodoRuntime {
-  const context = makeSessionContext({
-    sessionId: 'session-1',
-    workspaceId: 'workspace-1',
-    sessionDir: '/tmp/session-1',
-    sessionScope: 'sessions/session-1',
-    cwd: '/tmp',
-  });
-  const ix = new InstantiationService(
-    new ServiceCollection(
-      [IAgentLifecycleService, lifecycle.service],
-      [ISessionContext, context],
-    ),
-    true,
-  );
-  const definitions = ix.provide(ITodoDefinitions, new SyncDescriptor(TodoDefinitions));
-  ix.invokeFunction((accessor) => accessor.get(ITodoDefinitions));
-  ix.provide(ISessionTodoService, new SyncDescriptor(SessionTodoService));
-  const service = ix.invokeFunction((accessor) => accessor.get(ISessionTodoService));
-  return {
-    service,
-    withdrawDefinitions: () => {
-      definitions.dispose();
-    },
     dispose: () => {
+      accessors.delete(context);
+      deactivateAgentContext(context);
       ix.dispose();
     },
   };
+}
+
+function makeHost() {
+  const accessors = new Map<AgentContext, ServicesAccessor>();
+  const host = new AgentRuntimeHost((agent) => accessors.get(agent));
+  const registration = host.register(TodoAgentRuntimeDefinition);
+  const service = runtimeHostService(host);
+  return { host, registration, service, accessors };
 }
 
 function nextTick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-describe('SessionTodoService', () => {
-  it('lazily materializes Todo runtime and isolates agent state and subscriptions', async () => {
-    const main = makeFakeAgent('main');
-    const sub = makeFakeAgent('agent-1');
-    const lifecycle = makeLifecycleStub([main.handle, sub.handle]);
-    const runtime = makeTodoRuntime(lifecycle);
+describe('TodoAgentRuntime', () => {
+  it('isolates state by agent and generation', async () => {
+    const runtime = makeHost();
+    const main = makeRuntimeAgent(runtime.host, runtime.service, runtime.accessors, 'main', 1);
+    const sub = makeRuntimeAgent(runtime.host, runtime.service, runtime.accessors, 'agent-1', 1);
+    const next = makeRuntimeAgent(runtime.host, runtime.service, runtime.accessors, 'main', 2);
 
-    expect(main.registeredVariants).toEqual([]);
-    expect(sub.registeredVariants).toEqual([]);
-    await runtime.service.setTodos(main.context, [{ title: 'main todo', status: 'pending' }]);
+    await main.todo.replace([{ title: 'main todo', status: 'pending' }]);
+    await sub.todo.replace([{ title: 'sub todo', status: 'done' }]);
+
+    expect(main.todo.get()).toEqual([{ title: 'main todo', status: 'pending' }]);
+    expect(sub.todo.get()).toEqual([{ title: 'sub todo', status: 'done' }]);
+    expect(next.todo.get()).toEqual([]);
     expect(main.registeredVariants).toEqual([TODO_LIST_REMINDER_VARIANT]);
-    expect(sub.registeredVariants).toEqual([]);
-    await runtime.service.setTodos(sub.context, [{ title: 'sub todo', status: 'done' }]);
-
-    expect(await runtime.service.getTodos(main.context)).toEqual([
-      { title: 'main todo', status: 'pending' },
-    ]);
-    expect(await runtime.service.getTodos(sub.context)).toEqual([
-      { title: 'sub todo', status: 'done' },
-    ]);
-    expect(main.activeReminders()).toBe(1);
     expect(sub.activeReminders()).toBe(1);
-    runtime.dispose();
+    runtime.host.dispose();
+    main.dispose();
+    sub.dispose();
+    next.dispose();
   });
 
-  it('accepts only the current lifecycle-issued context object', async () => {
-    const main = makeFakeAgent('main', 4);
-    const runtime = makeTodoRuntime(makeLifecycleStub([main.handle]));
-    const forged = {
-      agentId: main.context.agentId,
-      generation: main.context.generation,
-    } as AgentContext;
-    const unknown = stubAgentContext('unknown');
+  it('materializes durable state before facade activation and starts the reminder once', () => {
+    const runtime = makeHost();
+    const agent = makeRuntimeAgent(
+      runtime.host,
+      runtime.service,
+      runtime.accessors,
+      'main',
+      1,
+      ({ context, activeReminders }) => {
+        expect(activeReminders()).toBe(0);
+        expect(runtime.host.snapshot(context).contributions[0]).toMatchObject({
+          status: 'materialized',
+          state: [],
+        });
+      },
+    );
 
-    expect(await runtime.service.getTodos(main.context)).toEqual([]);
-    await expect(runtime.service.getTodos(forged)).rejects.toThrow(
+    expect(agent.activeReminders()).toBe(1);
+    expect(runtime.host.resolve(agent.context, TodoAgentRuntimeDefinition)).toBe(agent.todo);
+    expect(agent.activeReminders()).toBe(1);
+    runtime.host.dispose();
+    agent.dispose();
+  });
+
+  it('rejects a forged context even when the matching runtime facade already exists', () => {
+    const runtime = makeHost();
+    const agent = makeRuntimeAgent(runtime.host, runtime.service, runtime.accessors, 'main', 7);
+    const forged = {
+      agentId: agent.context.agentId,
+      generation: agent.context.generation,
+      space: agent.context.space,
+    } as AgentContext;
+
+    expect(() => runtime.host.resolve(forged, TodoAgentRuntimeDefinition)).toThrow(
       'is not a lifecycle-issued context',
     );
-    await expect(runtime.service.getTodos(unknown)).rejects.toThrow(
-      'Agent unknown:1 is stale',
+    expect(() => runtime.host.participants(forged)).toThrow(
+      'is not a lifecycle-issued context',
     );
-    runtime.dispose();
+    runtime.host.dispose();
+    agent.dispose();
   });
 
-  it('fires agent-partitioned changes after writes', async () => {
-    const main = makeFakeAgent('main');
-    const sub = makeFakeAgent('agent-1');
-    const runtime = makeTodoRuntime(makeLifecycleStub([main.handle, sub.handle]));
-    const seen: Array<{ agent: AgentContext; todos: readonly TodoItem[] }> = [];
-    const subscription = runtime.service.onDidChange((change) => seen.push(change));
-
-    await runtime.service.setTodos(main.context, [{ title: 'a', status: 'pending' }]);
-    await runtime.service.setTodos(sub.context, [{ title: 'b', status: 'done' }]);
-    subscription.dispose();
-
-    expect(seen).toEqual([
-      { agent: main.context, todos: [{ title: 'a', status: 'pending' }] },
-      { agent: sub.context, todos: [{ title: 'b', status: 'done' }] },
-    ]);
-    runtime.dispose();
-  });
-
-  it('fires the restored list once when undo changes one agent state', async () => {
-    const main = makeFakeAgent('main');
-    const runtime = makeTodoRuntime(makeLifecycleStub([main.handle]));
-    await runtime.service.setTodos(main.context, [{ title: 'doomed', status: 'in_progress' }]);
-    const seen: TodoItem[][] = [];
-    const subscription = runtime.service.onDidChange((change) => seen.push([...change.todos]));
-
-    await main.restore([
-      { type: 'tools.update_store', key: 'todo', value: [{ title: 'kept', status: 'pending' }] },
-    ]);
-    await main.dispatcher.dispatch(new ContextUndone({ agentId: 'main', turns: 1 }));
-    await main.dispatcher.dispatch(new ContextUndone({ agentId: 'main', turns: 1 }));
-    subscription.dispose();
-
-    expect(seen).toEqual([[{ title: 'kept', status: 'pending' }]]);
-    runtime.dispose();
-  });
-
-  it('appends writes to the selected agent wire and replays them', async () => {
-    const main = makeFakeAgent('main');
-    const sub = makeFakeAgent('agent-1');
-    const runtime = makeTodoRuntime(makeLifecycleStub([main.handle, sub.handle]));
-
-    await runtime.service.setTodos(sub.context, [{ title: 'persist me', status: 'in_progress' }]);
-    expect(main.journal).toEqual([]);
-    expect(sub.journal).toEqual([
-      {
-        type: 'tools.update_store',
-        agentId: 'agent-1',
-        key: 'todo',
-        value: [{ title: 'persist me', status: 'in_progress' }],
-        time: expect.any(Number),
+  it('resolves the Agent DI facade once and reuses the stable binding', () => {
+    const runtime = makeHost();
+    const agent = makeRuntimeAgent(runtime.host, runtime.service, runtime.accessors, 'main');
+    let resolves = 0;
+    const countingHost: IAgentRuntimeHostService = {
+      ...runtime.service,
+      resolve: (context, definition, accessor) => {
+        resolves += 1;
+        return runtime.service.resolve(context, definition, accessor);
       },
-    ]);
-
-    await main.restore([
-      { type: 'tools.update_store', key: 'todo', value: [{ title: 'restored', status: 'done' }] },
-    ]);
-    expect(await runtime.service.getTodos(main.context)).toEqual([
-      { title: 'restored', status: 'done' },
-    ]);
-    runtime.dispose();
-  });
-
-  it('cleans malformed replay values', async () => {
-    const main = makeFakeAgent('main');
-    const runtime = makeTodoRuntime(makeLifecycleStub([main.handle]));
-    await main.restore([
+    };
+    const binding = new AgentTodoBinding(
+      countingHost,
       {
-        type: 'tools.update_store',
-        key: 'todo',
-        value: [
-          { title: 'valid', status: 'done' },
-          { title: 'missing status' },
-          { title: 123, status: 'pending' },
-          'garbage',
-          { title: 'bad status', status: 'wip' },
-        ],
-      } as unknown as WireRecord,
-    ]);
+        _serviceBrand: undefined,
+        agentId: agent.context.agentId,
+        agentContext: agent.context,
+        scope: () => 'agents/main',
+      },
+      agent.dispatcher,
+      {} as IAgentContextInjectorService,
+      {} as IAgentContextMemoryService,
+      {} as IAgentToolPolicyService,
+    );
 
-    expect(await runtime.service.getTodos(main.context)).toEqual([{ title: 'valid', status: 'done' }]);
-    runtime.dispose();
+    expect(binding.get()).toEqual([]);
+    binding.onDidChange(() => {}).dispose();
+    expect(resolves).toBe(1);
+    runtime.host.dispose();
+    agent.dispose();
   });
 
-  it('releases only the disposed agent runtime', async () => {
-    const main = makeFakeAgent('main');
-    const sub = makeFakeAgent('agent-1');
-    const lifecycle = makeLifecycleStub([main.handle, sub.handle]);
-    const runtime = makeTodoRuntime(lifecycle);
-    await runtime.service.getTodos(main.context);
-    await runtime.service.getTodos(sub.context);
+  it('appends the existing tools.update_store wire and restores malformed values safely', async () => {
+    const runtime = makeHost();
+    const agent = makeRuntimeAgent(runtime.host, runtime.service, runtime.accessors, 'main');
+    await agent.todo.replace([{ title: 'persist me', status: 'in_progress' }]);
 
-    lifecycle.fireDispose('main');
-    await nextTick();
+    expect(agent.journal).toEqual([{
+      type: 'tools.update_store',
+      agentId: 'main',
+      key: 'todo',
+      value: [{ title: 'persist me', status: 'in_progress' }],
+      time: expect.any(Number),
+    }]);
 
+    const restoredRuntime = makeHost();
+    const restored = makeRuntimeAgent(
+      restoredRuntime.host,
+      restoredRuntime.service,
+      restoredRuntime.accessors,
+      'main',
+    );
+    await restored.restore([{
+      type: 'tools.update_store',
+      key: 'todo',
+      value: [
+        { title: 'valid', status: 'done' },
+        { title: 'missing status' },
+        { title: 123, status: 'pending' },
+        'garbage',
+      ],
+    } as unknown as WireRecord]);
+
+    expect(restored.todo.get()).toEqual([{ title: 'valid', status: 'done' }]);
+    runtime.host.dispose();
+    restoredRuntime.host.dispose();
+    agent.dispose();
+    restored.dispose();
+  });
+
+  it('restores conversation undo and emits each actual change once', async () => {
+    const runtime = makeHost();
+    const agent = makeRuntimeAgent(runtime.host, runtime.service, runtime.accessors, 'main');
+    const seen: TodoItem[][] = [];
+    const subscription = agent.todo.onDidChange((todos) => { seen.push([...todos]); });
+
+    await agent.dispatcher.dispatch(new ContextAppendMessage({
+      agentId: 'main',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'first' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    }));
+    await agent.todo.replace([{ title: 'kept', status: 'pending' }]);
+    await agent.dispatcher.dispatch(new ContextAppendMessage({
+      agentId: 'main',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'second' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    }));
+    await agent.todo.replace([{ title: 'doomed', status: 'in_progress' }]);
+    seen.length = 0;
+
+    await agent.dispatcher.dispatch(new ContextUndo({ agentId: 'main', count: 1 }));
+    await agent.dispatcher.dispatch(new ContextUndo({ agentId: 'main', count: 0 }));
+
+    expect(agent.todo.get()).toEqual([{ title: 'kept', status: 'pending' }]);
+    expect(seen).toEqual([[{ title: 'kept', status: 'pending' }]]);
+    subscription.dispose();
+    runtime.host.dispose();
+    agent.dispose();
+  });
+
+  it('releases concrete actors on agent dispose and definition withdraw', async () => {
+    const runtime = makeHost();
+    const main = makeRuntimeAgent(runtime.host, runtime.service, runtime.accessors, 'main');
+    const sub = makeRuntimeAgent(runtime.host, runtime.service, runtime.accessors, 'agent-1');
+    expect(main.activeReminders()).toBe(1);
+    expect(sub.activeReminders()).toBe(1);
+
+    runtime.host.disposeAgent(main.context);
     expect(main.activeReminders()).toBe(0);
     expect(sub.activeReminders()).toBe(1);
-    await expect(runtime.service.getTodos(main.context)).rejects.toThrow('Agent main:1 is stale');
-    runtime.dispose();
-  });
+    expect(() => runtime.host.resolve(main.context, TodoAgentRuntimeDefinition)).not.toThrow();
 
-  it('isolates a recreated agent with the same id from the stale context', async () => {
-    const first = makeFakeAgent('main', 1);
-    const lifecycle = makeLifecycleStub([first.handle]);
-    const runtime = makeTodoRuntime(lifecycle);
-    await runtime.service.setTodos(first.context, [{ title: 'old', status: 'pending' }]);
-
-    lifecycle.fireDispose('main');
-    const second = makeFakeAgent('main', 2);
-    lifecycle.fireCreate(second.handle);
-    await nextTick();
-
-    await expect(runtime.service.getTodos(first.context)).rejects.toThrow(
-      'Agent main:1 is stale',
-    );
-    expect(await runtime.service.getTodos(second.context)).toEqual([]);
-    await runtime.service.setTodos(second.context, [{ title: 'new', status: 'done' }]);
-    expect(await runtime.service.getTodos(second.context)).toEqual([
-      { title: 'new', status: 'done' },
-    ]);
-    runtime.dispose();
-  });
-
-  it('withdraws Todo definitions and disposes materialized subscriptions', async () => {
-    const main = makeFakeAgent('main');
-    const runtime = makeTodoRuntime(makeLifecycleStub([main.handle]));
-    await runtime.service.getTodos(main.context);
-    expect(main.activeReminders()).toBe(1);
-
-    runtime.withdrawDefinitions();
-    await nextTick();
-
+    runtime.registration.withdraw();
     expect(main.activeReminders()).toBe(0);
-    await expect(runtime.service.getTodos(main.context)).rejects.toThrow(
-      'resource definition is unavailable',
-    );
-    runtime.dispose();
+    expect(sub.activeReminders()).toBe(0);
+    expect(() => runtime.host.resolve(sub.context, TodoAgentRuntimeDefinition)).toThrow('unavailable');
+    runtime.host.dispose();
+    main.dispose();
+    sub.dispose();
+  });
+
+  it('reports registered, materialized, retired, and definition generations', () => {
+    const accessors = new Map<AgentContext, ServicesAccessor>();
+    const host = new AgentRuntimeHost((agent) => accessors.get(agent));
+    const first = host.register(TodoAgentRuntimeDefinition);
+    const agent = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }).agentContext;
+
+    expect(host.snapshot(agent).contributions[0]).toMatchObject({
+      id: 'todo',
+      generation: 1,
+      status: 'registered',
+    });
+    host.participants(agent);
+    expect(host.snapshot(agent).contributions[0]).toMatchObject({ status: 'materialized', state: [] });
+    first.withdraw();
+    expect(host.snapshot(agent).contributions[0]).toMatchObject({ status: 'retired' });
+    const second = host.register(TodoAgentRuntimeDefinition);
+    expect(host.snapshot(agent).contributions[0]).toMatchObject({ generation: 2, status: 'registered' });
+    second.withdraw();
+    host.dispose();
+    deactivateAgentContext(agent);
+  });
+
+  it('retains actor failure status and inspection diagnostics', async () => {
+    const host = new AgentRuntimeHost();
+    const definition = defineAgentRuntime<number, object>({
+      id: 'failed-runtime',
+      logic: fromCallback(() => { throw new Error('actor failed'); }),
+      durable: {
+        events: [],
+        undoable: false,
+        transition: () => {},
+        read: () => 0,
+        commit: () => {},
+      },
+      createFacade: () => ({}),
+      inspect: () => ({ value: 0 }),
+    });
+    host.register(definition);
+    const agent = makeAgentScopeContext({
+      agentId: 'main',
+      agentScope: 'agents/main',
+    }).agentContext;
+
+    host.participants(agent);
+    await nextTick();
+
+    expect(host.snapshot(agent).contributions[0]).toMatchObject({
+      id: 'failed-runtime',
+      status: 'failed',
+      state: { value: 0 },
+      error: 'actor failed',
+    });
+    host.dispose();
+    deactivateAgentContext(agent);
   });
 });
 
@@ -457,51 +434,5 @@ describe('KeyedResourceLeasePool', () => {
     lease.release();
     await withdrawal;
     expect(disposed).toBe(true);
-  });
-
-  it('aborts an explicitly abortable resource during agent shutdown', async () => {
-    const events: string[] = [];
-    const pool = new KeyedResourceLeasePool(
-      { owner: 'todo.test', generation: 3 },
-      () => ({
-        abort: () => {
-          events.push('abort');
-        },
-        dispose: () => {
-          events.push('dispose');
-        },
-      }),
-    );
-    const lease = await pool.acquire('main');
-    const disposal = pool.disposeKey('main', 'agent-disposed', true);
-
-    await nextTick();
-    expect(events).toEqual(['abort']);
-    lease.release();
-    await disposal;
-    expect(events).toEqual(['abort', 'dispose']);
-  });
-
-  it('lets an explicitly abortable resource finish its lease on definition withdraw', async () => {
-    const events: string[] = [];
-    const pool = new KeyedResourceLeasePool(
-      { owner: 'todo.test', generation: 3 },
-      () => ({
-        abort: () => {
-          events.push('abort');
-        },
-        dispose: () => {
-          events.push('dispose');
-        },
-      }),
-    );
-    const lease = await pool.acquire('main');
-    const withdrawal = pool.withdraw();
-
-    await nextTick();
-    expect(events).toEqual([]);
-    lease.release();
-    await withdrawal;
-    expect(events).toEqual(['dispose']);
   });
 });

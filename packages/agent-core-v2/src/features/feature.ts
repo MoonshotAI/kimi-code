@@ -28,11 +28,10 @@ import {
   type AgentToolCtor,
   type AnyAgentTool,
 } from '#/agent/toolRegistry/toolContribution';
-import type {
-  AgentEffectDefinition,
-  SessionEffectDefinition,
-} from '#/state/agentEffect';
-import { AgentEffectContribution, SessionEffectContribution } from '#/state/agentEffect';
+import {
+  AgentRuntimeContributionPoint,
+  type AgentRuntimeDefinition,
+} from '#/agent/runtime/agentRuntime';
 import type {
   AgentModel,
   AgentModelDefinition,
@@ -55,12 +54,10 @@ export abstract class Feature extends Service {
     return this.provide(AgentModelContribution, definition as AgentModelDefinition<any, any>);
   }
 
-  contributeSessionEffect(definition: SessionEffectDefinition): FiberHandle {
-    return this.provide(SessionEffectContribution, definition);
-  }
-
-  contributeAgentEffect(definition: AgentEffectDefinition<any, any>): FiberHandle {
-    return this.provide(AgentEffectContribution, definition);
+  contributeAgentRuntime(
+    definition: AgentRuntimeDefinition<any, any>,
+  ): FiberHandle {
+    return this.provide(AgentRuntimeContributionPoint, definition);
   }
 
   contributeConfig<T>(

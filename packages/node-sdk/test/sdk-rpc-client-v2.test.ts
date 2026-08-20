@@ -35,12 +35,11 @@ import {
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
   getLiveSessionById,
-  agentContextOf,
   HostProcessError,
   IAgentLifecycleService,
+  IAgentTodo,
   IHostRequestHeaders,
   ISessionManager,
-  ISessionTodoService,
   OsProcessErrors,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -888,7 +887,7 @@ key = "${titleOAuthRef.key}"
       const handle = getLiveSessionById(client.engineAccessor, 'ses_todos');
       expect(handle).toBeDefined();
       const main = await handle!.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
-      await handle!.accessor.get(ISessionTodoService).setTodos(agentContextOf(main), [
+      await main.accessor.get(IAgentTodo).replace([
         { title: 'write tests', status: 'in_progress' },
         { title: 'ship it', status: 'pending' },
       ]);
@@ -899,9 +898,7 @@ key = "${titleOAuthRef.key}"
       ]);
 
       const served = await client.getTodos({ sessionId: 'ses_todos' });
-      const stored = await handle!
-        .accessor.get(ISessionTodoService)
-        .getTodos(agentContextOf(main));
+      const stored = main.accessor.get(IAgentTodo).get();
       expect(served).not.toBe(stored);
       expect(served[0]).not.toBe(stored[0]);
       await expect(client.getTodos({ sessionId: 'ses_missing' })).rejects.toMatchObject({

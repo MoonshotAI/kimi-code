@@ -23,6 +23,7 @@ import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBindi
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { isActiveAgentContext } from '#/agent/agentContext/agentContextIdentity';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
@@ -51,9 +52,11 @@ import { SessionCronServiceImpl } from '#/session/cron/sessionCronServiceImpl';
 import { CRON_SECTION } from '#/app/cron/configSection';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { SessionInteractionService } from '#/session/interaction/interactionService';
-import { ISessionTodoService } from '#/session/todo/sessionTodo';
-import { SessionTodoService } from '#/session/todo/sessionTodoService';
-import { TodoAgentModelDefinition } from '#/session/todo/todoAgentModel';
+import {
+  AgentRuntimeHost,
+  IAgentRuntimeHostService,
+} from '#/agent/runtime/agentRuntime';
+import { TodoAgentRuntimeDefinition } from '#/session/todo/todoAgentRuntime';
 import { interactionKey } from '#/session/interaction/interactionOps';
 import '#/agent/toolDedupe/toolDedupeService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -193,6 +196,15 @@ describe('AgentLifecycleService', () => {
     _clearAgentToolContributionsForTests();
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
+    const runtimeHost = disposables.add(new AgentRuntimeHost());
+    ix.set(IAgentRuntimeHostService, {
+      _serviceBrand: undefined,
+      resolve: (agent, definition) => runtimeHost.resolve(agent, definition),
+      participants: (agent) => runtimeHost.participants(agent),
+      snapshot: (agent) => runtimeHost.snapshot(agent),
+      inspect: (agent) => runtimeHost.snapshot(agent),
+      disposeAgent: (agent) => { runtimeHost.disposeAgent(agent); },
+    });
     ix.set(ISessionStateService, new SessionStateService());
     ix.set(IAgentStateService, new AgentStateService());
     ix.get(IAgentStateService).contributeState(permissionModeKey);
@@ -723,10 +735,20 @@ describe('AgentLifecycleService', () => {
         section === CRON_SECTION ? { disabled: true } : undefined) as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
     } as unknown as IConfigService);
-    ix.set(ISessionTodoService, new SyncDescriptor(SessionTodoService));
+    const runtimeHost = new AgentRuntimeHost(
+      (agent) => ix.get(IAgentLifecycleService).get(agent)?.accessor,
+    );
+    runtimeHost.register(TodoAgentRuntimeDefinition);
+    ix.set(IAgentRuntimeHostService, {
+      _serviceBrand: undefined,
+      resolve: (agent, definition) => runtimeHost.resolve(agent, definition),
+      participants: (agent) => runtimeHost.participants(agent),
+      snapshot: (agent) => runtimeHost.snapshot(agent),
+      inspect: (agent) => runtimeHost.snapshot(agent),
+      disposeAgent: (agent) => { runtimeHost.disposeAgent(agent); },
+    });
     ix.set(ISessionInteractionService, new SyncDescriptor(SessionInteractionService));
     ix.set(ISessionCronService, new SyncDescriptor(SessionCronServiceImpl));
-    ix.get(ISessionTodoService);
     ix.get(ISessionInteractionService);
     ix.get(ISessionCronService);
 
@@ -736,9 +758,9 @@ describe('AgentLifecycleService', () => {
     expect(state.replayableKeys().map((key) => key.name)).toEqual(
       expect.arrayContaining(['cron', 'interaction']),
     );
-    expect(
-      agentContextOf(main).space.use(TodoAgentModelDefinition, (model) => model.items()),
-    ).toEqual([{ title: 'bridged', status: 'pending' }]);
+    expect(runtimeHost.snapshot(agentContextOf(main)).contributions[0]?.state).toEqual([
+      { title: 'bridged', status: 'pending' },
+    ]);
     expect(state.get(interactionKey).get('i1')).toMatchObject({
       id: 'i1',
       kind: 'question',
@@ -970,11 +992,14 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     const first = await svc.create({ agentId: 'main' });
     const firstContext = agentContextOf(first);
+    expect(isActiveAgentContext(firstContext)).toBe(true);
 
     await svc.remove(firstContext);
+    expect(isActiveAgentContext(firstContext)).toBe(false);
     const second = await svc.create({ agentId: 'main' });
     const secondContext = agentContextOf(second);
 
+    expect(isActiveAgentContext(secondContext)).toBe(true);
     expect(secondContext.agentId).toBe(firstContext.agentId);
     expect(secondContext.generation).toBeGreaterThan(firstContext.generation);
     expect(secondContext).not.toBe(firstContext);

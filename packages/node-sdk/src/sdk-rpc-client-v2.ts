@@ -211,7 +211,7 @@ import {
   ISessionMcpHandle,
   ISessionMetadata,
   ISessionSkillCatalog,
-  ISessionTodoService,
+  IAgentTodo,
   ISessionWorkspaceContext,
   ITelemetryService,
   IWorkspaceAliases,
@@ -1853,9 +1853,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const session = this.requireLiveSession(input.sessionId);
     const main = session.accessor.get(IAgentLifecycleService).findAgentHandle(MAIN_AGENT_ID);
     if (main === undefined) return [];
-    const todos = await session.accessor
-      .get(ISessionTodoService)
-      .getTodos(agentContextOf(main));
+    const todos = main.accessor.get(IAgentTodo).get();
     return todos.map((todo) => ({ title: todo.title, status: todo.status }));
   }
 

@@ -13,6 +13,7 @@ import {
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
+import { deactivateAgentContext } from '#/agent/agentContext/agentContextIdentity';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import { permissionModeConfiguredKey } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
@@ -57,6 +58,7 @@ let nextAgentId = 0;
 export class AgentLifecycleService extends Disposable implements IAgentLifecycleService {
   declare readonly _serviceBrand: undefined;
   private readonly handles = new Map<string, IAgentScopeHandle>();
+  private readonly contexts = new Map<string, AgentContext>();
   private readonly onDidCreateEmitter = this._register(new Emitter<AgentContext>());
   private readonly onDidCreateScopeEmitter = this._register(new Emitter<AgentScopeCreatedEvent>());
   private readonly onDidDisposeEmitter = this._register(new Emitter<AgentContext>());
@@ -103,6 +105,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     );
     this._register({
       dispose: () => {
+        for (const context of this.contexts.values()) deactivateAgentContext(context);
+        this.contexts.clear();
         for (const d of this.interactionBusDisposables.values()) d.dispose();
         this.interactionBusDisposables.clear();
       },
@@ -158,23 +162,25 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       accessor.get(ISessionEventBus) as ISessionEventBus | undefined,
     );
     eventBus?.activateAgent(agent);
-    const handle = createScopedChildHandle(
-      this.instantiation,
-      LifecycleScope.Agent,
-      agentId,
-      {
-        seeds: [
-          [IAgentScopeContext, scopeContext],
-          [ITelemetryService, this.telemetry.withContext({ agent_id: agentId })],
-          [IAgentRuntimeBindingSeed, {
-            _serviceBrand: undefined,
-            binding: { workspaceId: this.ctx.workspaceId, runtimeId: opts.runtimeId ?? 'local' },
-          }],
-        ],
-      },
-    ) as IAgentScopeHandle;
-    this.handles.set(agentId, handle);
+    this.contexts.set(agentId, agent);
+    let handle: IAgentScopeHandle | undefined;
     try {
+      handle = createScopedChildHandle(
+        this.instantiation,
+        LifecycleScope.Agent,
+        agentId,
+        {
+          seeds: [
+            [IAgentScopeContext, scopeContext],
+            [ITelemetryService, this.telemetry.withContext({ agent_id: agentId })],
+            [IAgentRuntimeBindingSeed, {
+              _serviceBrand: undefined,
+              binding: { workspaceId: this.ctx.workspaceId, runtimeId: opts.runtimeId ?? 'local' },
+            }],
+          ],
+        },
+      ) as IAgentScopeHandle;
+      this.handles.set(agentId, handle);
       const wire = handle.accessor.get(IWireService);
       await wire.seal();
       await this.sessionMetadata.registerAgent(agentId, {
@@ -191,10 +197,14 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       await handle.accessor.get(IAgentToolActivationService).activate();
       return handle;
     } catch (error) {
-      if (this.handles.get(agentId) === handle) this.handles.delete(agentId);
+      if (handle !== undefined && this.handles.get(agentId) === handle) {
+        this.handles.delete(agentId);
+      }
+      this.contexts.delete(agentId);
+      deactivateAgentContext(agent);
       eventBus?.deactivateAgent(agent);
       try {
-        handle.dispose();
+        handle?.dispose();
       } catch { }
       this.onDidDisposeEmitter.fire(agent);
       throw error;
@@ -293,6 +303,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (handle === undefined) return;
     const agentId = context.agentId;
     this.handles.delete(agentId);
+    this.contexts.delete(agentId);
+    deactivateAgentContext(context);
     await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
     const loop = handle.accessor.get(IAgentLoopService);
     const compaction = handle.accessor.get(IAgentFullCompactionService).compacting;

@@ -2,6 +2,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { toDisposable } from '#/_base/di/lifecycle';
 import type { ServiceRegistration, TestInstantiationService } from '#/_base/di/test';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
+import { IAgentRuntimeHostService } from '#/agent/runtime/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentScopeContext, makeAgentScopeContext, type IAgentScopeContext as AgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -45,6 +46,21 @@ const noopEventBus: IEventBus = {
   subscribe: () => toDisposable(() => {}),
 };
 
+const noopRuntimeHost: IAgentRuntimeHostService = {
+  _serviceBrand: undefined,
+  resolve: () => { throw new Error('runtime unavailable'); },
+  participants: () => [],
+  snapshot: (agent) => ({
+    identity: { agentId: agent.agentId, generation: agent.generation },
+    contributions: [],
+  }),
+  inspect: (agent) => ({
+    identity: { agentId: agent.agentId, generation: agent.generation },
+    contributions: [],
+  }),
+  disposeAgent: () => {},
+};
+
 export function testWireScope(scope: string, journal: string): string {
   return `${scope}/${journal}`;
 }
@@ -80,6 +96,7 @@ export function registerTestAgentWireServices(
   registration.defineInstance(IAgentBlobService, noopBlob);
   registration.defineInstance(IEventBus, noopEventBus);
   registration.defineInstance(IAgentStateService, new AgentStateService());
+  registration.defineInstance(IAgentRuntimeHostService, noopRuntimeHost);
   registration.define(IWireService, WireService);
   registration.define(IEventDispatcher, EventDispatcherService);
 }
@@ -89,6 +106,8 @@ export function registerTestEventDispatcher(ix: TestInstantiationService): IEven
   if (previous !== undefined) {
     ix.set(IAgentStateService, previous as IAgentStateService);
   }
+  const runtimeHost = ix.set(IAgentRuntimeHostService, noopRuntimeHost);
+  if (runtimeHost !== undefined) ix.set(IAgentRuntimeHostService, runtimeHost as IAgentRuntimeHostService);
   ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
   return ix.get(IEventDispatcher);
 }

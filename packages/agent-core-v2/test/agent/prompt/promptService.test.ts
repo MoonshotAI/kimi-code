@@ -6,6 +6,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
+import { IAgentRuntimeHostService } from '#/agent/runtime/agentRuntime';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ContentPart } from '#/kosong/contract/message';
@@ -89,6 +90,7 @@ function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
       reg.defineInstance(IAgentLoopService, loop);
       reg.defineInstance(IWireService, stubWire());
       reg.defineInstance(IAgentBlobService, noopBlob);
+      reg.definePartialInstance(IAgentRuntimeHostService, { participants: () => [] });
       reg.define(IEventDispatcher, EventDispatcherService);
       reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
       reg.definePartialInstance(IAgentToolPolicyService, { setSessionDisabledTools: async () => {} });

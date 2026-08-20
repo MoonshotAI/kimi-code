@@ -26,7 +26,7 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { stripDynamicToolContext } from '#/agent/toolSelect/dynamicTools';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { ISessionTodoService } from '#/session/todo/sessionTodo';
+import { IAgentTodo } from '#/session/todo/sessionTodo';
 import { renderTodoList } from '#/session/todo/todoItem';
 import {
   APIContextOverflowError,
@@ -144,7 +144,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
-    @ISessionTodoService private readonly todo: ISessionTodoService,
+    @IAgentTodo private readonly todo: IAgentTodo,
     @IAgentScopeContext private readonly agent: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
@@ -794,7 +794,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private async postProcessSummary(summary: string): Promise<string> {
-    const todos = await this.todo.getTodos(agentContextOfScope(this.agent));
+    const todos = this.todo.get();
     if (todos.length === 0) {
       return summary;
     }

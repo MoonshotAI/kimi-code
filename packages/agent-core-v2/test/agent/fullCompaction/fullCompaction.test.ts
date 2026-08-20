@@ -31,7 +31,7 @@ import {
   IModelOAuthTokens,
   IAgentProfileService,
   IAgentToolRegistryService,
-  ISessionTodoService,
+  IAgentTodo,
   DYNAMIC_TOOL_SCHEMA_VARIANT,
   normalizeAgentProfile,
   type ExecutableTool,
@@ -2933,10 +2933,12 @@ describe('FullCompaction', () => {
       { title: 'Add tests', status: 'pending' },
     ] as const;
     const ctx = testAgent(
-      sessionServices((reg) => {
-        reg.definePartialInstance(ISessionTodoService, {
-          getTodos: async () => todos,
-        });
+      agentService(IAgentTodo, {
+        _serviceBrand: undefined,
+        get: () => todos,
+        replace: async () => {},
+        clear: async () => {},
+        onDidChange: () => ({ dispose: () => {} }),
       }),
     );
     ctx.configure({

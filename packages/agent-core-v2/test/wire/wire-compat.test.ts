@@ -16,11 +16,15 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import {
+  AgentRuntimeHost,
+  IAgentRuntimeHostService,
+} from '#/agent/runtime/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { defineState } from '#/state/state';
-import { TodoAgentModelDefinition } from '#/session/todo/todoAgentModel';
+import { TodoAgentRuntimeDefinition } from '#/session/todo/todoAgentRuntime';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
@@ -85,11 +89,22 @@ function makeContainer(storage: IFileSystemStorageService, logKey: string) {
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   const log = ix.get(IAppendLogStore);
   registerTestAgentWire(ix, testWireScope(SCOPE, logKey), { log });
+  const runtimeHost = new AgentRuntimeHost();
+  runtimeHost.register(TodoAgentRuntimeDefinition);
+  ix.set(IAgentRuntimeHostService, {
+    _serviceBrand: undefined,
+    resolve: (agent, definition) => runtimeHost.resolve(agent, definition),
+    participants: (agent) => runtimeHost.participants(agent),
+    snapshot: (agent) => runtimeHost.snapshot(agent),
+    inspect: (agent) => runtimeHost.snapshot(agent),
+    disposeAgent: (agent) => { runtimeHost.disposeAgent(agent); },
+  });
+  store.add({ dispose: () => { runtimeHost.dispose(); } });
   const dispatcher = registerTestEventDispatcher(ix);
   const agentState = ix.get(IAgentStateService);
   agentState.contributeState(compatCounterKey);
   agentState.contributeState(compatTagsKey);
-  return { ix, dispatcher, agentState, log };
+  return { ix, dispatcher, agentState, runtimeHost, log };
 }
 
 function makeReader(storage: IFileSystemStorageService): IAppendLogStore {
@@ -193,9 +208,8 @@ describe('wire.jsonl round-trip', () => {
 
     expect(legacy.agentState.get(compatCounterKey)).toEqual({ value: 7 });
     expect(
-      legacy.ix
-        .get(IAgentScopeContext)
-        .agentContext.space.use(TodoAgentModelDefinition, (model) => model.items()),
+      legacy.runtimeHost.snapshot(legacy.ix.get(IAgentScopeContext).agentContext)
+        .contributions[0]?.state,
     ).toEqual([{ title: 'legacy todo', status: 'pending' }]);
 
     expect(await collect(makeReader(storage), 'legacy')).toEqual([

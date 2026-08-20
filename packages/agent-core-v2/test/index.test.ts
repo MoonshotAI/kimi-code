@@ -29,7 +29,11 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
 import { ToolsUpdateStore } from '#/session/todo/todoOps';
-import { TodoAgentModelDefinition } from '#/session/todo/todoAgentModel';
+import {
+  AgentRuntimeHost,
+  IAgentRuntimeHostService,
+} from '#/agent/runtime/agentRuntime';
+import { TodoAgentRuntimeDefinition } from '#/session/todo/todoAgentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { Event2Class } from '#/app/event/event2';
@@ -177,12 +181,23 @@ describe('v1 wire vocabulary', () => {
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     const log2 = ix2.get(IAppendLogStore);
     registerTestAgentWire(ix2, SCOPE, { log: log2 });
+    const runtimeHost = new AgentRuntimeHost();
+    runtimeHost.register(TodoAgentRuntimeDefinition);
+    ix2.set(IAgentRuntimeHostService, {
+      _serviceBrand: undefined,
+      resolve: (agent, definition) => runtimeHost.resolve(agent, definition),
+      participants: (agent) => runtimeHost.participants(agent),
+      snapshot: (agent) => runtimeHost.snapshot(agent),
+      inspect: (agent) => runtimeHost.snapshot(agent),
+      disposeAgent: (agent) => { runtimeHost.disposeAgent(agent); },
+    });
+    store.add({ dispose: () => { runtimeHost.dispose(); } });
     const fresh = registerTestEventDispatcher(ix2);
 
     await restoreTestEventDispatcher(fresh, log2, SCOPE, records);
 
     const freshAgent = ix2.get(IAgentScopeContext).agentContext;
-    expect(freshAgent.space.use(TodoAgentModelDefinition, (model) => model.items())).toEqual([
+    expect(runtimeHost.snapshot(freshAgent).contributions[0]?.state).toEqual([
       { title: 'restore me', status: 'in_progress' },
     ]);
   });

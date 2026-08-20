@@ -22,7 +22,7 @@ import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import '#/agent/contextInjector/contextInjectorService';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from '../state/builtinReplayableKeys';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
@@ -117,7 +117,7 @@ import { type TokenUsage } from '#/kosong/contract/usage';
 import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import { type AgentModelDefinition } from '#/state/agentModel';
 import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';
-import { TodoAgentModelDefinition } from '#/session/todo/todoAgentModel';
+import { IAgentTodo } from '#/session/todo/sessionTodo';
 import { type TodoItem } from '#/session/todo/todoItem';
 import type { generate as kosongGenerate } from '#/kosong/contract/generate';
 import type { ChatProvider, GenerateOptions, StreamedMessage } from '#/kosong/contract/provider';
@@ -2437,7 +2437,7 @@ function resumeStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot {
         .filter((key) => key.replayable.undoable !== undefined)
         .map((key) => [key.name, ctx.get(IAgentStateService).get(key)]),
     ),
-    todos: ctx.readModel(TodoAgentModelDefinition, (model) => model.items()),
+    todos: ctx.get(IAgentTodo).get(),
     permission: permissionData,
     usage: usageStatus,
   };

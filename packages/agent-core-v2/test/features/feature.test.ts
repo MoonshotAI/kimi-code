@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { fromTransition } from 'xstate';
 import { z } from 'zod';
 
 import {
@@ -21,17 +22,11 @@ import { ConfigSectionContribution } from '#/app/config/configSectionContributio
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { FeatureManagerService } from '#/app/feature/featureManagerService';
 import { LifecycleScope } from '#/app/scopes';
+import { AgentRuntimeContributionPoint, type AgentRuntimeDefinition } from '#/agent/runtime/agentRuntime';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { Feature } from '#/features/feature';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
 import { FeatureAssemblyService } from '#/features/featureAssemblyService';
-import {
-  AgentEffectContribution,
-  defineAgentEffect,
-  SessionEffectContribution,
-  type AgentEffectDefinition,
-  type SessionEffectDefinition,
-} from '#/state/agentEffect';
 import {
   AgentModel,
   AgentModelContribution,
@@ -160,7 +155,7 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     host.dispose();
   });
 
-  it('registers model and effect definitions without materializing them', async () => {
+  it('registers model and runtime definitions without materializing them', async () => {
     let creates = 0;
     const sessionModel: SessionModelDefinition<number> = {
       id: 'test-feature.session-model',
@@ -174,20 +169,24 @@ describe('Feature — built-in capability assembly (src/features)', () => {
       state: { initial: () => 0, schema: z.custom<number>() },
       events: [],
     });
-    const sessionEffect: SessionEffectDefinition = {
-      id: 'test-feature.session-effect',
-      create: () => {
+    const runtime: AgentRuntimeDefinition<number, object> = {
+      id: 'test-feature.runtime',
+      logic: fromTransition(
+        (_state: number, event: { readonly type: 'commit'; readonly state: number }) => event.state,
+        0,
+      ),
+      durable: {
+        events: [],
+        undoable: false,
+        transition: () => {},
+        read: (snapshot) => (snapshot as typeof snapshot & { context: number }).context,
+        commit: (actor, state) => { actor.send({ type: 'commit', state }); },
+      },
+      createFacade: () => {
         creates += 1;
-        return { dispose: () => {} };
+        return {};
       },
     };
-    const agentEffect: AgentEffectDefinition<any, any> = defineAgentEffect({
-      id: 'test-feature.agent-effect',
-      create: () => {
-        creates += 1;
-        return { dispose: () => {} };
-      },
-    });
     class DomainFeature extends Feature {
       static override readonly name = 'domain-definitions';
 
@@ -195,8 +194,7 @@ describe('Feature — built-in capability assembly (src/features)', () => {
         super();
         this.contributeSessionModel(sessionModel);
         this.contributeAgentModel(agentModel);
-        this.contributeSessionEffect(sessionEffect);
-        this.contributeAgentEffect(agentEffect);
+        this.contributeAgentRuntime(runtime);
       }
     }
     class ReplacementFeature extends Feature {
@@ -214,14 +212,12 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     const views = [
       collectionViewOf(host.app, SessionModelContribution),
       collectionViewOf(host.app, AgentModelContribution),
-      collectionViewOf(host.app, SessionEffectContribution),
-      collectionViewOf(host.app, AgentEffectContribution),
+      collectionViewOf(host.app, AgentRuntimeContributionPoint),
     ];
     expect(views.map((view) => view.items)).toEqual([
       [sessionModel],
       [agentModel],
-      [sessionEffect],
-      [agentEffect],
+      [runtime],
     ]);
     expect(creates).toBe(0);
     expect(() => manager.provideUnit(ReplacementFeature)).toThrow(
