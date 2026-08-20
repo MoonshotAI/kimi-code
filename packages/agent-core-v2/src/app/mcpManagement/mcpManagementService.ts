@@ -54,11 +54,15 @@ import {
 } from './mcpManagement';
 
 const DEFAULT_AUTH_TIMEOUT_MS = 15 * 60_000;
+const AUTH_FLOW_IDLE_TIMEOUT_MS = 15 * 60_000;
 
 export class McpManagementService extends Disposable implements IMcpManagementService {
   declare readonly _serviceBrand: undefined;
 
-  private readonly authFlows = new Map<string, { flow: BeginAuthorizationResult }>();
+  private readonly authFlows = new Map<
+    string,
+    { flow: BeginAuthorizationResult; idleTimer: NodeJS.Timeout }
+  >();
 
   constructor(
     @IMcpRegistryService private readonly registry: IMcpRegistryService,
@@ -268,7 +272,13 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     try {
       const flow = await this.oauth.beginAuthorization(server.runtimeName, config.url);
       const flowId = randomUUID();
-      this.authFlows.set(flowId, { flow });
+      const idleTimer = setTimeout(() => {
+        const expired = this.authFlows.get(flowId);
+        this.authFlows.delete(flowId);
+        void expired?.flow.cancel();
+      }, AUTH_FLOW_IDLE_TIMEOUT_MS);
+      idleTimer.unref();
+      this.authFlows.set(flowId, { flow, idleTimer });
       return {
         status: 'authorization-required',
         flowId,
@@ -290,6 +300,7 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     if (active === undefined) {
       throw new Error2(ErrorCodes.REQUEST_INVALID, `Unknown MCP OAuth flow: ${handle.flowId}`);
     }
+    clearTimeout(active.idleTimer);
     try {
       await active.flow.complete({
         signal: options?.signal,
@@ -303,8 +314,18 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
   async cancelServerAuth(handle: Pick<McpServerAuthFlowHandle, 'flowId'>): Promise<void> {
     const active = this.authFlows.get(handle.flowId);
     if (active === undefined) return;
+    clearTimeout(active.idleTimer);
     this.authFlows.delete(handle.flowId);
     await active.flow.cancel();
+  }
+
+  override dispose(): void {
+    for (const active of this.authFlows.values()) {
+      clearTimeout(active.idleTimer);
+      void active.flow.cancel();
+    }
+    this.authFlows.clear();
+    super.dispose();
   }
 
   async resetServerAuth(locator: McpServerLocator): Promise<void> {

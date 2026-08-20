@@ -1298,6 +1298,41 @@ describe('McpManagementService', () => {
       });
     }, 20000);
 
+    it('expires an idle flow: the flow is cancelled and a later complete rejects as unknown', async () => {
+      await management.addServer({
+        name: 'oauthable',
+        transport: 'http',
+        url: 'https://oauthable.example.test/mcp',
+        auth: 'oauth',
+      });
+      const cancel = vi.fn(async () => undefined);
+      const beginSpy = vi.spyOn(oauth, 'beginAuthorization').mockResolvedValue({
+        authorizationUrl: new URL('https://oauthable.example.test/authorize'),
+        complete: vi.fn(async () => undefined),
+        cancel,
+      });
+      vi.useFakeTimers();
+      try {
+        const begun = await management.beginServerAuth({ source: 'global', name: 'oauthable' });
+        if (begun.status !== 'authorization-required') {
+          throw new Error(`expected authorization-required, got ${begun.status}`);
+        }
+
+        await vi.advanceTimersByTimeAsync(15 * 60_000);
+
+        expect(cancel).toHaveBeenCalledTimes(1);
+        await expect(
+          management.completeServerAuth({ flowId: begun.flowId, timeoutMs: 1000 }),
+        ).rejects.toMatchObject({
+          code: ErrorCodes.REQUEST_INVALID,
+          message: `Unknown MCP OAuth flow: ${begun.flowId}`,
+        });
+      } finally {
+        vi.useRealTimers();
+        beginSpy.mockRestore();
+      }
+    });
+
     it('complete rejects on timeout when the browser callback never arrives', async () => {
       const authServer = await startInteractiveAuthServer();
       const mcpUrl = `${authServer.origin}/mcp`;
