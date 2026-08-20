@@ -28,9 +28,10 @@ export interface IAgentTowerService {
 
   /**
    * Effective tower-mode state: the persisted state gated by the tower
-   * experimental flag — `false` while the flag is disabled even when the
-   * persisted state says active, so projections never report a mode whose
-   * feature is inert.
+   * experimental flag and the main-agent invariant — `false` while the flag
+   * is disabled or on a non-main agent even when the persisted state says
+   * active (legacy records replay past `enter()`'s guards), so projections
+   * never report a mode whose feature is inert.
    */
   readonly isActive: boolean;
   enter(): void;
