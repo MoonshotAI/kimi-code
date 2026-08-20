@@ -2941,7 +2941,9 @@ defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone
   text-align: left;
   background: none;
   border: none;
-  border-radius: var(--radius-sm);
+  /* Concentric with the panel frame: --radius-lg − hairline − --space-1 pad
+     = 7.5px. */
+  border-radius: var(--radius-dropdown-row);
   padding: var(--space-1) var(--space-2);
   cursor: pointer;
   font-family: var(--font-ui);
@@ -2996,7 +2998,9 @@ defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone
   text-align: left;
   background: none;
   border: none;
-  border-radius: var(--radius-sm);
+  /* Same concentric radius as .ws-row — this action owns the panel's bottom
+     corner, so it must not cut across the frame arc. */
+  border-radius: var(--radius-dropdown-row);
   padding: var(--space-2);
   cursor: pointer;
   font-family: var(--font-ui);

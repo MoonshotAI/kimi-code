@@ -517,6 +517,14 @@ async function onLogout(): Promise<void> {
   outline: none;
   box-shadow: var(--p-focus-ring);
 }
+/* macOS desktop: the sidebar footer pins the chip --sb-inset from the
+   window's left edge and its --space-2 block padding (also 8px) from the
+   bottom edge, so the chip's bottom-left arc shares the window corner's
+   center — concentric via --radius-window-chip. Web and other platforms
+   have no rounded container corner here and keep the uniform --radius-sm. */
+html.macos-desktop .user-menu-trigger {
+  border-bottom-left-radius: var(--radius-window-chip);
+}
 .user-menu-trigger svg {
   flex: none;
 }

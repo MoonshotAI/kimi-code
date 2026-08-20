@@ -283,6 +283,21 @@ html[data-color-scheme="dark"] {
   /* Menu frame and its rows share one curve — single-sourced from the
      composer's superellipse so they never drift apart. */
   --corner-shape-menu: var(--corner-shape-composer);
+  /* §03 dropdown menu (Menu/MenuItem) geometry — the trigger-dropdown family,
+     distinct from the composer autocomplete rows above: the panel insets its
+     items by --menu-pad (3.5px, so border + inset lands on the 4px grid), and
+     the item corner arc shares the frame's corner center — concentric:
+     --radius-lg − hairline border − --menu-pad = 8px. */
+  --menu-pad: 3.5px;
+  --radius-menu-item: calc(var(--radius-lg) - var(--menu-pad) - var(--p-hairline));
+  /* Select-family options (Select listbox, SecondaryModelPicker menus):
+     --radius-md frame + --space-1 pad + hairline border — concentric:
+     8px − 4px − 0.5px = 3.5px. */
+  --radius-select-option: calc(var(--radius-md) - var(--space-1) - var(--p-hairline));
+  /* Composer dropdown (model / permission) and workspace picker rows:
+     --radius-lg frame + --space-1 pad + hairline border — concentric:
+     12px − 4px − 0.5px = 7.5px. */
+  --radius-dropdown-row: calc(var(--radius-lg) - var(--space-1) - var(--p-hairline));
   /* The autocomplete family's frostier surface (the dock work panel shares
      it): 70% page background over the shared blur. */
   --color-menu-bg-frost: color-mix(in srgb, var(--color-bg) 70%, transparent);
@@ -291,6 +306,18 @@ html[data-color-scheme="dark"] {
   --color-menu-scrollbar: color-mix(in srgb, var(--color-text) 16%, transparent);
   --color-menu-scrollbar-hover: color-mix(in srgb, var(--color-text) 48%, transparent);
   --radius-full: 999px;
+
+  /* macOS window corner for hidden-titlebar (toolbar-free) windows — measured
+     on macOS 26 Tahoe from a window screenshot (calibrated against the 20pt
+     traffic-light spacing). Never used directly; chrome nested into a window
+     corner references it through calc(). */
+  --radius-window: 14px;
+  /* Sidebar footer chip (UserMenu trigger): the footer's row inset
+     (--sb-inset) and block padding (--space-2) both resolve to 8px, so the
+     chip sits 8px from the window's left and bottom edges and its
+     bottom-left arc shares the window corner's center — concentric:
+     --radius-window − 8px inset = 6px, exactly --radius-sm. */
+  --radius-window-chip: calc(var(--radius-window) - var(--space-2));
 
   /* Scroll-edge mask fade distance — referenced from JS-built gradients via
      var(), so the dock panels and the composer menus track the spacing

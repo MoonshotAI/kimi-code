@@ -507,7 +507,9 @@ onUnmounted(() => {
   min-height: 32px;
   padding: var(--space-1) var(--space-2);
   border: none;
-  border-radius: var(--radius-sm);
+  /* Concentric with the listbox frame: --radius-md − hairline − --space-1
+     pad = 3.5px. */
+  border-radius: var(--radius-select-option);
   background: transparent;
   color: var(--color-text);
   font: inherit;

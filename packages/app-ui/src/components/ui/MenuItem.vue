@@ -39,7 +39,10 @@ defineEmits<{ click: [event: MouseEvent] }>();
   width: 100%;
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   border: none;
-  border-radius: var(--radius-sm);
+  /* Concentric with the Menu frame: the corner arc shares the frame's corner
+     center (--radius-lg − hairline border − --menu-pad = 8px), so the
+     first/last rows round with the panel instead of cutting across it. */
+  border-radius: var(--radius-menu-item);
   background: transparent;
   color: var(--color-text);
   font-family: var(--font-ui);

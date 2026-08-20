@@ -32,7 +32,7 @@ onBeforeUnmount(() => releaseSurface?.());
 <style scoped>
 .ui-menu {
   min-width: 180px;
-  padding: 3.5px;
+  padding: var(--menu-pad);
   background: var(--color-menu-bg);
   -webkit-backdrop-filter: var(--p-menu-backdrop);
   backdrop-filter: var(--p-menu-backdrop);

@@ -3091,7 +3091,9 @@ function selectModel(modelId: string): void {
   font-size: var(--ui-font-size);
   color: var(--color-text);
   padding: 5px 9px;
-  border-radius: 6px;
+  /* Concentric with the dropdown frame: --radius-lg − hairline − --space-1
+     pad = 7.5px. */
+  border-radius: var(--radius-dropdown-row);
   text-align: left;
   transition: background var(--duration-base) var(--ease-out);
 }
@@ -3161,7 +3163,8 @@ function selectModel(modelId: string): void {
   align-items: center;
   gap: 8px;
   padding: 6px 9px;
-  border-radius: var(--radius-sm);
+  /* A row of the dropdown: same concentric radius as .md-row. */
+  border-radius: var(--radius-dropdown-row);
 }
 .md-thinking .md-name {
   font-family: var(--font-ui);
@@ -3203,7 +3206,9 @@ function selectModel(modelId: string): void {
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
-  padding: 5px;
+  /* Same panel inset as the model dropdown — rows stay concentric with the
+     frame (--radius-lg − hairline − --space-1 = 7.5px). */
+  padding: var(--space-1);
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -3221,7 +3226,7 @@ function selectModel(modelId: string): void {
   border: none;
   cursor: pointer;
   padding: 6px 7px;
-  border-radius: 6px;
+  border-radius: var(--radius-dropdown-row);
   text-align: left;
 }
 .pd-row:hover { background: var(--color-hover); }
