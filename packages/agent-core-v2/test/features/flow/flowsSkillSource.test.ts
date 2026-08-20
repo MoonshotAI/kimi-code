@@ -26,6 +26,7 @@ describe('FlowsSkillSource', () => {
   let files: Map<string, string>;
   let userFiles: Map<string, string>;
   let flowFlagOn: boolean;
+  let watchedRoots: string[];
   let source: FlowsSkillSource;
 
   beforeEach(() => {
@@ -50,8 +51,12 @@ describe('FlowsSkillSource', () => {
         return text;
       },
     } as unknown as IHostFileSystem;
+    watchedRoots = [];
     const fsWatch = {
-      watch: () => ({ ready: Promise.resolve(), onDidChange: Event.None, dispose: () => {} }),
+      watch: (root: string) => {
+        watchedRoots.push(root);
+        return { ready: Promise.resolve(), onDidChange: Event.None, dispose: () => {} };
+      },
     } as unknown as IHostFsWatchService;
     const workspace = { cwd: '/ws' } as unknown as IWorkspaceContext;
     const bootstrap = { homeDir: '/home/.kimi-code' } as unknown as IBootstrapService;
@@ -114,6 +119,10 @@ describe('FlowsSkillSource', () => {
       '/ws/.kimi-code/flows',
       '/home/.kimi-code/flows',
     ]);
+  });
+
+  it('watches both the project and the user flows directories', () => {
+    expect(watchedRoots).toEqual(['/ws', '/home/.kimi-code/flows']);
   });
 
   it('treats only prefixed flow-typed skills as projected flows', () => {

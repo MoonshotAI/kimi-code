@@ -126,11 +126,27 @@ export class FlowsSkillSource extends Disposable implements IFlowsSkillSource {
     this._register(handle);
     this._register(
       handle.onDidChange(() => {
-        this.watchDebounce.cancelAndSet(() => {
-          this.onDidChangeEmitter.fire();
-        }, WATCH_DEBOUNCE_MS);
+        this.fireDebounced();
       }),
     );
+    try {
+      const userHandle = fsWatch.watch(userFlowsDir(this.bootstrap.homeDir));
+      void Promise.resolve(userHandle.ready).catch(() => undefined);
+      this._register(userHandle);
+      this._register(
+        userHandle.onDidChange(() => {
+          this.fireDebounced();
+        }),
+      );
+    } catch {
+      return;
+    }
+  }
+
+  private fireDebounced(): void {
+    this.watchDebounce.cancelAndSet(() => {
+      this.onDidChangeEmitter.fire();
+    }, WATCH_DEBOUNCE_MS);
   }
 
   private flowsDir(): string {

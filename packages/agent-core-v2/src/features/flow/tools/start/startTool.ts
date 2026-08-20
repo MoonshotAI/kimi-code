@@ -35,7 +35,10 @@ export class FlowStartTool implements IFlowStartTool {
     });
     const path = view.resolve(`${FLOWS_PROJECT_DIR}/${args.flow}.md`);
     return {
-      accesses: ToolAccesses.readFile(path),
+      accesses: [
+        ...ToolAccesses.readFile(path),
+        ...ToolAccesses.readFile(userFlowDefinitionPath(this.bootstrap.homeDir, args.flow)),
+      ],
       description: `Starting flow ${args.flow}`,
       approvalRule: this.name,
       execute: () => this.execution(args, path, inspected.identity.generation),

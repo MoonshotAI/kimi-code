@@ -148,6 +148,13 @@ describe('FlowStartTool', () => {
     expect(start).not.toHaveBeenCalled();
   });
 
+  it('declares both candidate definition paths as read accesses', () => {
+    const execution = runnable(tool.resolveExecution({ flow: 'issue-fix', task: 'fix #1' }));
+    expect(
+      (execution.accesses ?? []).map((access) => (access.kind === 'file' ? access.path : access.kind)),
+    ).toEqual(['/ws/.kimi-code/flows/issue-fix.md', '/home/.kimi-code/flows/issue-fix.md']);
+  });
+
   it('falls back to a valid user definition when the project file is invalid', async () => {
     fileText = 'not a flow definition';
     userFileText = VALID_DEFINITION;
