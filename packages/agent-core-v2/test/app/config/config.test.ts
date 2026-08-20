@@ -35,8 +35,7 @@ import {
 } from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { ConfigSectionContribution } from '#/app/config/configSectionContributions';
-import '#/app/cron/configSection';
-import type { CronConfig } from '#/app/cron/configSection';
+import { CRON_SECTION, DEFAULT_CRON_CONFIG, type CronConfig } from '#/app/cron/configSection';
 import '#/app/skillCatalog/configSection';
 import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/app/skillCatalog/configSection';
 import {
@@ -2645,6 +2644,8 @@ describe('ConfigService persistence guards', () => {
     const { config, disposables, storage } = await createGuardedConfig(broken);
 
     expect(config.diagnostics().some((d) => d.severity === 'error')).toBe(true);
+    expect(config.get(PROVIDERS_SECTION)).toEqual({});
+    expect(config.get<CronConfig>(CRON_SECTION)).toEqual(DEFAULT_CRON_CONFIG);
 
     await expectPersistBlocked(config.set(THINKING_SECTION, { enabled: true }));
     await expectPersistBlocked(config.replace(THINKING_SECTION, { enabled: true }));
