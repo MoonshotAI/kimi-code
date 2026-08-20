@@ -206,7 +206,7 @@ describe('McpRegistryService', () => {
       ]);
     });
 
-    it('uses the canonical git root when checking trust from a subdirectory', async () => {
+    it('checks trust at the queried cwd rather than the canonical git root', async () => {
       const { project, sub } = await makeProject();
       await writeJson(join(project, '.mcp.json'), {
         mcpServers: { projectOnly: { command: 'project-only' } },
@@ -215,7 +215,24 @@ describe('McpRegistryService', () => {
 
       const entries = await registry.list({ cwd: sub });
 
-      expect(entries.map((entry) => entry.name)).toContain('projectOnly');
+      expect(entries.map((entry) => entry.name)).not.toContain('projectOnly');
+    });
+
+    it('lists project layers when the queried subdirectory cwd itself is trusted', async () => {
+      const { project, sub } = await makeProject();
+      await writeJson(join(project, '.mcp.json'), {
+        mcpServers: { projectOnly: { command: 'project-only' } },
+      });
+      await writeJson(join(sub, '.kimi-code', 'mcp.json'), {
+        mcpServers: { localOnly: { command: 'local-only' } },
+      });
+      trustedKey = sub;
+
+      const entries = await registry.list({ cwd: sub });
+
+      expect(entries.map((entry) => entry.name)).toEqual(
+        expect.arrayContaining(['projectOnly', 'localOnly']),
+      );
     });
 
     it('resolves a relative non-git cwd before checking workspace trust', async () => {

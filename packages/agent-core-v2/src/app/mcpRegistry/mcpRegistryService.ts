@@ -5,7 +5,6 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { ErrorCodes, Error2 } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { findGitWorkTree } from '#/app/git/workTree';
 import { loadMcpServersDetailed } from '#/app/mcpConfig/configLoader';
 import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import { IPluginService } from '#/app/plugin/plugin';
@@ -47,8 +46,7 @@ export class McpRegistryService implements IMcpRegistryService {
       }
     } else {
       const cwd = resolve(query.cwd);
-      const workspaceRoot = (await findGitWorkTree(this.fs, cwd))?.root ?? cwd;
-      if (!(await readWorkspaceTrust(this.docs, workspaceRoot))) {
+      if (!(await readWorkspaceTrust(this.docs, cwd))) {
         const userEntries = await this.store.list();
         for (const server of userEntries) {
           const { name, ...config } = server;
