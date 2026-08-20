@@ -1,6 +1,8 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 import {
   IAgentLifecycleService,
@@ -27,6 +29,7 @@ import {
   type ISessionStateService,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { TowerStore } from '@moonshot-ai/agent-core-v2/features/tower/protocol/index';
 import {
   AgentTranscript,
   TranscriptStore,
@@ -54,6 +57,8 @@ import {
 } from '../../src/services/transcript/transcriptService';
 
 _setTowerFeatureAssembledForTests(true);
+
+const execFileAsync = promisify(execFile);
 
 function ev(payload: Record<string, unknown>): ProjectorBusEvent {
   return payload as unknown as ProjectorBusEvent;
@@ -1853,17 +1858,27 @@ describe('AgentTranscriptProjector', () => {
       ];
       await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
 
-      const serviceWith = (flagOn: boolean) =>
+      const serviceWith = (
+        flagOn: boolean,
+        opts: { cwd?: string; liveSessionIds?: string[] } = {},
+      ) =>
         new TranscriptService({
           homeDir: home,
           core: {
             accessor: {
               get: (token: unknown) => {
-                if (token === ISessionManager) return { get: () => undefined, list: () => [] };
+                if (token === ISessionManager) {
+                  return {
+                    get: (id: string) => (opts.liveSessionIds?.includes(id) ? {} : undefined),
+                    list: () => [],
+                  };
+                }
                 if (token === IWorkspaceInstanceManager) {
                   return { list: () => [], onDidChange: () => ({ dispose: () => undefined }) };
                 }
-                if (token === ISessionIndex) return { get: async () => ({ workspaceId: 'ws' }) };
+                if (token === ISessionIndex) {
+                  return { get: async () => ({ workspaceId: 'ws', cwd: opts.cwd }) };
+                }
                 if (token === IFlagService) {
                   return { enabled: (id: string) => flagOn && id === TOWER_FLAG_ID };
                 }
@@ -1885,6 +1900,28 @@ describe('AgentTranscriptProjector', () => {
         expect(notAssembled!.meta.modes).toBeUndefined();
       } finally {
         _setTowerFeatureAssembledForTests(true);
+      }
+
+      const repo = await mkdtemp(join(tmpdir(), 'tower-cold-owner-'));
+      try {
+        await execFileAsync('git', ['init', '-b', 'main'], { cwd: repo });
+        await execFileAsync('git', ['config', 'user.email', 'tower-test@example.com'], { cwd: repo });
+        await execFileAsync('git', ['config', 'user.name', 'Tower Test'], { cwd: repo });
+        await writeFile(join(repo, 'README.md'), '# fixture\n');
+        await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+        await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+        await new TowerStore(repo).init('session-b');
+
+        const adoptedByLive = await serviceWith(true, {
+          cwd: repo,
+          liveSessionIds: ['session-b'],
+        }).readColdSnapshot('s1', 'main');
+        expect(adoptedByLive!.meta.modes).toBeUndefined();
+
+        const adoptedByDead = await serviceWith(true, { cwd: repo }).readColdSnapshot('s1', 'main');
+        expect(adoptedByDead!.meta.modes).toEqual({ tower: {} });
+      } finally {
+        await rm(repo, { recursive: true, force: true });
       }
 
       const childDir = join(home, 'sessions', 'ws', 's1', 'agents', 'worker-1');

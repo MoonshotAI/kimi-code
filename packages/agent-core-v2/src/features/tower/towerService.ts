@@ -11,6 +11,7 @@ import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
+import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { LifecycleScope } from '#/app/scopes';
@@ -51,6 +52,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IFlagService private readonly flags: IFlagService,
     @ISessionManager private readonly sessions: ISessionManager,
     @IFeatureManager featureManager: IFeatureManager,
+    @IConfigService config: IConfigService,
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentContextMemoryService context: IAgentContextMemoryService,
     @IEventBus eventBus: IEventBus,
@@ -69,6 +71,13 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (featureManager !== undefined) {
       this._register(
         featureManager.onDidChangeUnits(() => {
+          this.publishEffectiveInactive();
+        }),
+      );
+    }
+    if (config !== undefined) {
+      this._register(
+        config.onDidChangeConfiguration(() => {
           this.publishEffectiveInactive();
         }),
       );

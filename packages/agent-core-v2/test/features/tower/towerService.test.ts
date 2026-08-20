@@ -30,6 +30,7 @@ import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { IConfigService } from '#/app/config/config';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
@@ -402,6 +403,33 @@ describe('AgentTowerService', () => {
     } finally {
       _setTowerFeatureAssembledForTests(true);
     }
+  });
+
+  it('publishes towerMode:false when the flag is disabled through a live config change', async () => {
+    let fireConfigChanged: () => void = () => {};
+    ix.stub(IConfigService, {
+      onDidChangeConfiguration: (handler: () => void) => {
+        fireConfigChanged = handler;
+        return { dispose: () => {} };
+      },
+    } as unknown as IConfigService);
+    const tower = ix.get(IAgentTowerService);
+    await tower.enter();
+    expect(tower.isActive).toBe(true);
+    const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
+    disposables.add(
+      ix.get(IEventBus).subscribe((e) => {
+        if (e.type === 'agent.status.updated') {
+          events.push({ type: e.type, towerMode: (e as AgentStatusUpdated).towerMode });
+        }
+      }),
+    );
+
+    towerFlagOn = false;
+    fireConfigChanged();
+
+    expect(tower.isActive).toBe(false);
+    expect(events).toContainEqual({ type: 'agent.status.updated', towerMode: false });
   });
 
   it('enter() is a no-op while a foreign session owns the tower in this process', async () => {

@@ -5,6 +5,7 @@ import {
   IAgentLifecycleService,
   IFlagService,
   ISessionIndex,
+  ISessionManager,
   ISessionMetadata,
   IAgentLoopService,
   TOWER_FLAG_ID,
@@ -16,6 +17,10 @@ import {
   type Scope,
   type SessionMeta,
 } from '@moonshot-ai/agent-core-v2';
+import {
+  TowerStore,
+  resolveTowerRepoRoot,
+} from '@moonshot-ai/agent-core-v2/features/tower/protocol/index';
 import {
   TranscriptStore,
   foldWireRecordFacts,
@@ -513,16 +518,27 @@ export class TranscriptService {
     const base = groupMessagesIntoSnapshot(messages);
     const snapshot = foldWireRecordFacts(records, base);
     if (snapshot.meta.modes?.tower === undefined) return snapshot;
+    const flags = this.deps.core.accessor.get(IFlagService);
     if (
       agentId === MAIN_AGENT_ID &&
-      this.deps.core.accessor.get(IFlagService).enabled(TOWER_FLAG_ID) &&
-      isTowerFeatureAssembled(this.deps.core.accessor.get(IFlagService))
+      flags.enabled(TOWER_FLAG_ID) &&
+      isTowerFeatureAssembled(flags) &&
+      (await this.coldTowerOwnedHere(sessionId, summary.cwd))
     ) {
       return snapshot;
     }
     const modes = { ...snapshot.meta.modes, tower: undefined };
     const cleared = modes.plan === undefined && modes.swarm === undefined && modes.tower === undefined;
     return { ...snapshot, meta: { ...snapshot.meta, modes: cleared ? undefined : modes } };
+  }
+
+  private async coldTowerOwnedHere(sessionId: string, cwd: string | undefined): Promise<boolean> {
+    if (cwd === undefined) return true;
+    const owner = await new TowerStore(resolveTowerRepoRoot(cwd))
+      .load()
+      .then((state) => state.sessionId, () => undefined);
+    if (owner === undefined || owner === sessionId) return true;
+    return this.deps.core.accessor.get(ISessionManager).get(owner) === undefined;
   }
 
   /** Dispose the live store + binding for a session (session closed / server shutdown). */
