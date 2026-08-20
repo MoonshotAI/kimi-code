@@ -68,7 +68,6 @@ let ix: TestInstantiationService;
 let towerActive: boolean;
 let currentAgentId: string;
 let currentSessionId: string;
-let liveSessionIds: string[];
 const agentContexts = new Map<string, Readonly<{ agentId: string; generation: number }>>();
 
 beforeEach(async () => {
@@ -80,7 +79,6 @@ beforeEach(async () => {
 
   towerActive = false;
   currentAgentId = 'main';
-  liveSessionIds = [];
   currentSessionId = 'session-test';
   agentContexts.clear();
 
@@ -127,7 +125,7 @@ beforeEach(async () => {
         },
       });
       reg.defineInstance(ISessionManager, {
-        get: (id: string) => (liveSessionIds.includes(id) ? {} : undefined),
+        get: () => undefined,
       } as unknown as ISessionManager);
       reg.definePartialInstance(ITowerRateLimitService, {
         snapshot: () => ({ budget: 2, inflight: 0, blockedUntil: null }),
@@ -206,15 +204,18 @@ describe('TowerInitTool', () => {
     expect(state.roster.agents).toEqual([]);
   });
 
-  it('refuses to adopt while the owning session is live in this process', async () => {
+  it('refuses to adopt while the owning session lives in another process', async () => {
     await initViaTool();
-    liveSessionIds = ['session-test'];
+    await writeFile(
+      join(repo, '.tower/comms/lease.json'),
+      `${JSON.stringify({ pid: process.ppid, sessionId: 'session-test', at: new Date().toISOString() })}\n`,
+    );
     currentSessionId = 'session-next';
 
     const result = await run(ix.get(ITowerInitTool), {});
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('owned by live session session-test');
+    expect(result.output).toContain('owned by a live session (session-test)');
     const state = await new TowerStore(repo).load();
     expect(state.sessionId).toBe('session-test');
   });
@@ -248,7 +249,7 @@ describe('TowerPlanTool', () => {
 });
 
 describe('TowerTeardownTool', () => {
-  it('tears down the workspace and exits tower mode', async () => {
+  it('tears down the workspace, removes the lease, and exits tower mode', async () => {
     await initViaTool();
 
     const result = await run(ix.get(ITowerTeardownTool), {});
@@ -257,6 +258,22 @@ describe('TowerTeardownTool', () => {
     expect(result.output).toContain('tower teardown:');
     expect(result.output).toContain('Tower mode exited.');
     expect(towerActive).toBe(false);
+    expect(await new TowerStore(repo).readLease()).toBeUndefined();
+  });
+
+  it('refuses to tear down while the owning session lives in another process', async () => {
+    await initViaTool();
+    await writeFile(
+      join(repo, '.tower/comms/lease.json'),
+      `${JSON.stringify({ pid: process.ppid, sessionId: 'session-test', at: new Date().toISOString() })}\n`,
+    );
+    currentSessionId = 'session-next';
+
+    const result = await run(ix.get(ITowerTeardownTool), {});
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('dismantle that session');
+    expect((await new TowerStore(repo).readLease())?.sessionId).toBe('session-test');
   });
 });
 

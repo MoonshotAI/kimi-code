@@ -86,6 +86,17 @@ export interface TowerState {
   missions: TowerMission[];
 }
 
+/**
+ * Cross-process ownership lease. Written whenever a session claims or adopts
+ * the workspace; adoption and teardown are refused while the recorded pid is
+ * alive, so a live owner in ANY kimi process keeps its tower.
+ */
+export interface TowerLease {
+  readonly pid: number;
+  readonly sessionId: string;
+  readonly at: string;
+}
+
 export type TowerFindingType = 'bug' | 'improve' | 'vuln' | 'idea';
 export type TowerFindingSeverity = 'low' | 'medium' | 'high' | 'critical';
 

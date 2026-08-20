@@ -5,7 +5,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
-import { newTowerStore, runTowerTool } from '../support';
+import { newTowerStore, runTowerTool, towerOwnerAlive } from '../support';
 import DESCRIPTION from './init.md?raw';
 import { ITowerInitTool, TowerInitToolInputSchema, type TowerInitToolInput } from './init';
 
@@ -35,10 +35,10 @@ export class TowerInitTool implements ITowerInitTool {
           if (
             priorOwner !== undefined &&
             priorOwner !== this.sessionContext.sessionId &&
-            this.sessions.get(priorOwner) !== undefined
+            (await towerOwnerAlive(store, this.sessions, priorOwner))
           ) {
             throw new TowerProtocolError(
-              `tower workspace is owned by live session ${priorOwner} — adopting it would retire that session's roster. Use the tower from that session, or close it first.`,
+              `tower workspace is owned by a live session (${priorOwner}) — adopting it would retire that session's roster. Use the tower from that session, or close it first.`,
             );
           }
           const result = await store.init(this.sessionContext.sessionId);

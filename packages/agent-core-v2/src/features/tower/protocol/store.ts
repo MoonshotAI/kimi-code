@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir, open, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import picomatch from 'picomatch';
@@ -22,6 +22,7 @@ import {
   BROADCAST_NAME,
   FINDINGS_DIR,
   INBOX_DIR,
+  LEASE_FILE,
   LOG_DIR,
   MISSIONS_DIR,
   MISSIONS_INDEX,
@@ -41,6 +42,7 @@ import type {
   TowerFindingSeverity,
   TowerFindingType,
   TowerInboxItem,
+  TowerLease,
   TowerMission,
   TowerMissionKind,
   TowerMissionStatus,
@@ -180,6 +182,7 @@ export class TowerStore {
       missions: [],
     };
     await this.save(state);
+    if (sessionId !== undefined) await this.writeLease(sessionId);
     await writeFile(this.abs(ACTIVITY_LOG), '', 'utf8');
     await this.renderMissionsIndex(state);
     await this.appendLog(TOWER_NAME, 'init', { mode: state.mode, base }, MISSIONS_INDEX);
@@ -200,7 +203,12 @@ export class TowerStore {
     if (!(await hasAnyCommit(this.repoRoot))) return undefined;
     if (await this.isInitialized()) {
       const state = await this.load();
-      return state.sessionId;
+      const owner = state.sessionId;
+      if (owner === undefined || owner === sessionId) {
+        await this.writeLease(sessionId);
+        return sessionId;
+      }
+      return owner;
     }
 
     const base = await currentBranch(this.repoRoot);
@@ -227,6 +235,7 @@ export class TowerStore {
       }
       throw error;
     }
+    await this.writeLease(sessionId);
     await writeFile(this.abs(ACTIVITY_LOG), '', 'utf8');
     await this.renderMissionsIndex(state);
     await this.appendLog(TOWER_NAME, 'init', { mode: state.mode, base }, MISSIONS_INDEX);
@@ -253,12 +262,33 @@ export class TowerStore {
     );
     state.sessionId = sessionId;
     await this.save(state);
+    await this.writeLease(sessionId);
     await this.appendLog(TOWER_NAME, 'adopt', {
       session: sessionId,
       previous: previous ?? 'unknown',
       retired: stale.length > 0 ? stale.map((agent) => agent.name).join(',') : undefined,
     });
     return stale.map((agent) => agent.name);
+  }
+
+  async writeLease(sessionId: string): Promise<void> {
+    const lease: TowerLease = { pid: process.pid, sessionId, at: new Date().toISOString() };
+    await writeFile(this.abs(LEASE_FILE), `${JSON.stringify(lease)}\n`, 'utf8');
+  }
+
+  async readLease(): Promise<TowerLease | undefined> {
+    try {
+      return JSON.parse(await readFile(this.abs(LEASE_FILE), 'utf8')) as TowerLease;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async removeLease(): Promise<void> {
+    try {
+      await unlink(this.abs(LEASE_FILE));
+    } catch {
+    }
   }
 
   /** Add `.tower/` to `.git/info/exclude` (repo-local; tracked .gitignore stays untouched). */

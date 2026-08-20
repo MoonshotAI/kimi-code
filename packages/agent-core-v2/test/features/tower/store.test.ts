@@ -155,6 +155,14 @@ describe('init', () => {
     const log = await store.recentLog(5);
     expect(log.some((line) => line.includes(' adopt ') && line.includes('session=session-b') && line.includes('previous=session-a') && line.includes('retired=agent-build,reviewer-a'))).toBe(true);
   });
+
+  it('writes a pid lease on init and refreshes it on adopt', async () => {
+    await store.init('session-a');
+    expect((await store.readLease())?.sessionId).toBe('session-a');
+
+    await store.init('session-b');
+    expect((await store.readLease())?.sessionId).toBe('session-b');
+  });
 });
 
 describe('claim', () => {

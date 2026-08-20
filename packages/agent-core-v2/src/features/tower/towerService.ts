@@ -11,6 +11,7 @@ import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IEventBus } from '#/app/event/eventBus';
 import { LifecycleScope } from '#/app/scopes';
 import { IFlagService } from '#/app/flag/flag';
@@ -24,6 +25,7 @@ import {
   WORKTREES_DIR,
   resolveTowerRepoRoot,
 } from './protocol/index';
+import { towerOwnerAlive } from './tools/support';
 import {
   IAgentTowerService,
   TOWER_FLAG_ID,
@@ -49,6 +51,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentContextMemoryService context: IAgentContextMemoryService,
     @IEventBus eventBus: IEventBus,
+    @ISessionManager private readonly sessions: ISessionManager,
   ) {
     super();
     this.agentState.contributeState(towerKey);
@@ -132,10 +135,17 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (this.agentCtx.agentId !== 'main') return;
     if (!this.flags.enabled(TOWER_FLAG_ID)) return;
     if (this.isActive) return;
-    const owner = await new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd)).claim(
-      this.sessionCtx.sessionId,
+    const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
+    const priorOwner = await store.load().then(
+      (state) => state.sessionId,
+      () => undefined,
     );
-    if (owner !== undefined && owner !== this.sessionCtx.sessionId) return;
+    if (priorOwner !== undefined && priorOwner !== this.sessionCtx.sessionId) {
+      if (await towerOwnerAlive(store, this.sessions, priorOwner)) return;
+      await store.init(this.sessionCtx.sessionId);
+    } else {
+      await store.claim(this.sessionCtx.sessionId);
+    }
     for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
     void this.dispatcher.dispatch(
       new TowerModeEnter({ agentId: this.agentCtx.agentId, sessionId: this.sessionCtx.sessionId }),
