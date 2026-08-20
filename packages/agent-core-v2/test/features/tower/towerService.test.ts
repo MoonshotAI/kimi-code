@@ -24,7 +24,6 @@ import { TowerStore } from '#/features/tower/protocol/index';
 import { IAgentTowerService, TOWER_FLAG_ID } from '#/features/tower/tower';
 import { AgentTowerService, TOWER_MODE_TOOLS } from '#/features/tower/towerService';
 import { towerKey } from '#/features/tower/towerOps';
-import { ProfileBind } from '#/agent/profile/profileOps';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -116,6 +115,7 @@ describe('AgentTowerService', () => {
   let towerFlagOn: boolean;
   let addedTools: string[];
   let removedTools: string[];
+  let activeTools: string[] | undefined;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -132,13 +132,17 @@ describe('AgentTowerService', () => {
     ix.stub(IFlagService, stubFlag((id) => towerFlagOn && id === TOWER_FLAG_ID));
     addedTools = [];
     removedTools = [];
+    activeTools = undefined;
     ix.stub(IAgentProfileService, {
       data: () => ({ profileName: undefined }),
+      getActiveToolNames: () => activeTools,
       addActiveTool: (name: string) => {
         addedTools.push(name);
+        activeTools = [...(activeTools ?? []), name];
       },
       removeActiveTool: (name: string) => {
         removedTools.push(name);
+        activeTools = activeTools?.filter((candidate) => candidate !== name);
       },
     } as unknown as IAgentProfileService);
     ix.stub(IAgentContextInjectorService, {
@@ -467,23 +471,26 @@ describe('AgentTowerService', () => {
     expect(tower.isActive).toBe(false);
   });
 
-  it('reapplies the tower tool set when a profile bind clears the overlay', async () => {
+  it('reapplies the tower tool set when a profile change wipes the allow-list', async () => {
     const tower = ix.get(IAgentTowerService);
     tower.enter();
     expect(addedTools).toEqual([...TOWER_MODE_TOOLS]);
 
     addedTools.length = 0;
-    publishAsMain(
-      ix,
-      new ProfileBind({
-        agentId: 'main',
-        thinkingEffort: 'off',
-        systemPrompt: 'sys',
-        disallowedTools: [],
+    activeTools = ['Bash'];
+    const events: { readonly towerMode?: boolean }[] = [];
+    disposables.add(
+      ix.get(IEventBus).subscribe((e) => {
+        if (e.type === 'agent.status.updated') {
+          events.push({ towerMode: (e as AgentStatusUpdated).towerMode });
+        }
       }),
     );
+    publishAsMain(ix, new AgentStatusUpdated({ agentId: 'main' }));
 
     expect(addedTools).toEqual([...TOWER_MODE_TOOLS]);
+    expect(activeTools).toEqual(['Bash', ...TOWER_MODE_TOOLS]);
+    expect(events).toContainEqual({ towerMode: true });
   });
 
   it('restore keeps the feature inert while the tower flag is off', async () => {

@@ -5,7 +5,6 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { ProfileBind } from '#/agent/profile/profileOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -62,10 +61,16 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
-      eventBus.subscribe(ProfileBind, () => {
+      eventBus.subscribe(AgentStatusUpdated, () => {
         if (this.agentCtx.agentId !== 'main') return;
         if (!this.isActive) return;
+        const active = this.profile.getActiveToolNames();
+        if (active === undefined) return;
+        if (TOWER_MODE_TOOLS.every((name) => active.includes(name))) return;
         for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
+        void this.dispatcher.dispatch(
+          new AgentStatusUpdated({ agentId: this.agentCtx.agentId, towerMode: true }),
+        );
       }),
     );
     this._register(new TowerModeInjection(injector, this, context, this.flags));
@@ -127,10 +132,10 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (this.agentCtx.agentId !== 'main') return;
     if (!this.flags.enabled(TOWER_FLAG_ID)) return;
     if (this.isActive) return;
+    for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
     void this.dispatcher.dispatch(
       new TowerModeEnter({ agentId: this.agentCtx.agentId, sessionId: this.sessionCtx.sessionId }),
     );
-    for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
   }
 
   exit(): void {
