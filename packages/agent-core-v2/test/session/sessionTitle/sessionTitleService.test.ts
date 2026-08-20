@@ -199,6 +199,8 @@ describe('SessionTitleService', () => {
         };
         reg.definePartialInstance(IAgentLifecycleService, {
           get: () => mainAgent,
+          findAgentHandle: () => mainAgent,
+          list: () => [mainAgent],
         });
         reg.defineInstance(IEventService, events);
         reg.defineInstance(IProviderService, stubProviderService(providers));

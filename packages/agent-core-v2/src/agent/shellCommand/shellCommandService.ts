@@ -7,10 +7,11 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import { escapeXml } from '#/_base/utils/xml-escape';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import type { ToolUpdate } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { Event2 } from '#/app/event/event2';
+import { AgentEvent2 } from '#/app/event/event2';
 import { Error2, ErrorCodes } from '#/errors';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
@@ -21,35 +22,38 @@ import {
 } from './shellCommand';
 
 export interface ShellOutputPayload {
+  readonly agentId: string;
   readonly commandId: string;
   readonly update: ToolUpdate;
   readonly taskId?: string;
 }
 
-export class ShellOutput extends Event2<ShellOutputPayload> {
+export class ShellOutput extends AgentEvent2<ShellOutputPayload> {
   static override readonly type = 'shell.output';
   static override readonly observable = true;
 }
 export interface ShellOutput extends ShellOutputPayload {}
 
 export interface ShellStartedPayload {
+  readonly agentId: string;
   readonly commandId: string;
   readonly taskId: string;
 }
 
-export class ShellStarted extends Event2<ShellStartedPayload> {
+export class ShellStarted extends AgentEvent2<ShellStartedPayload> {
   static override readonly type = 'shell.started';
   static override readonly observable = true;
 }
 export interface ShellStarted extends ShellStartedPayload {}
 
 export interface ShellCompletedPayload {
+  readonly agentId: string;
   readonly commandId: string;
   readonly isError: boolean;
   readonly taskId?: string;
 }
 
-export class ShellCompleted extends Event2<ShellCompletedPayload> {
+export class ShellCompleted extends AgentEvent2<ShellCompletedPayload> {
   static override readonly type = 'shell.completed';
   static override readonly observable = true;
 }
@@ -71,6 +75,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentPromptService private readonly promptService: IAgentPromptService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     this.states.contributeState(shellCommandTasksKey);
@@ -113,6 +118,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
           if (input.commandId !== undefined) {
             void this.dispatcher.dispatch(
               new ShellOutput({
+                agentId: this.scopeContext.agentId,
                 commandId: input.commandId,
                 update,
                 taskId: this.shellCommandTasks.get(input.commandId),
@@ -124,7 +130,11 @@ export class AgentShellCommandService implements IAgentShellCommandService {
           if (input.commandId !== undefined) {
             this.shellCommandTasks.set(input.commandId, taskId);
             void this.dispatcher.dispatch(
-              new ShellStarted({ commandId: input.commandId, taskId }),
+              new ShellStarted({
+                agentId: this.scopeContext.agentId,
+                commandId: input.commandId,
+                taskId,
+              }),
             );
           }
         },
@@ -140,6 +150,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
         if (input.commandId !== undefined && stderr.length > 0) {
           void this.dispatcher.dispatch(
             new ShellOutput({
+              agentId: this.scopeContext.agentId,
               commandId: input.commandId,
               update: { kind: 'stderr', text: stderr },
               taskId: this.shellCommandTasks.get(input.commandId),
@@ -150,6 +161,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
       if (input.commandId !== undefined) {
         void this.dispatcher.dispatch(
           new ShellCompleted({
+            agentId: this.scopeContext.agentId,
             commandId: input.commandId,
             isError,
             taskId: this.shellCommandTasks.get(input.commandId),
@@ -165,6 +177,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
         if (message.length > 0) {
           void this.dispatcher.dispatch(
             new ShellOutput({
+              agentId: this.scopeContext.agentId,
               commandId: input.commandId,
               update: { kind: 'stderr', text: message },
               taskId: this.shellCommandTasks.get(input.commandId),
@@ -173,6 +186,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
         }
         void this.dispatcher.dispatch(
           new ShellCompleted({
+            agentId: this.scopeContext.agentId,
             commandId: input.commandId,
             isError: true,
             taskId: this.shellCommandTasks.get(input.commandId),

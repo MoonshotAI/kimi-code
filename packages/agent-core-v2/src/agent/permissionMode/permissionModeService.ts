@@ -48,7 +48,9 @@ export class AgentPermissionModeService extends Service implements IAgentPermiss
     const previousMode = this.mode;
     const changed = mode !== previousMode;
     if (!changed && this.agentState.get(permissionModeConfiguredKey)) return;
-    void this.dispatcher.dispatch(new PermissionSetMode({ mode }));
+    void this.dispatcher.dispatch(
+      new PermissionSetMode({ agentId: this.scopeContext.agentId, mode }),
+    );
     if (changed) this._onDidChangeMode.fire({ mode, previousMode });
   }
 

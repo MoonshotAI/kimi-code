@@ -127,7 +127,7 @@ describe('AgentToolApprovalService', () => {
           _serviceBrand: undefined,
           hooks: { onDidRestore: new OrderedHookSlot() },
           dispatch: async (event: Event2) => {
-            eventBus.publish(event);
+            eventBus.publish(event, ix.get(IAgentScopeContext).agentContext);
           },
         } as unknown as IEventDispatcher;
         reg.defineInstance(IEventDispatcher, dispatcher);
@@ -135,6 +135,7 @@ describe('AgentToolApprovalService', () => {
       },
       strict: true,
     });
+    (eventBus as EventBusService).activateAgent(ix.get(IAgentScopeContext).agentContext);
   });
   afterEach(() => {
     disposables.dispose();
@@ -174,6 +175,7 @@ describe('AgentToolApprovalService', () => {
       IAgentScopeContext,
       makeAgentScopeContext({ agentId: 'sub-1', agentScope: 'sub-1' }),
     );
+    (eventBus as EventBusService).activateAgent(ix.get(IAgentScopeContext).agentContext);
   }
 
   describe('resolvePermissionResolution', () => {

@@ -39,7 +39,6 @@ import {
   type ToolExecution,
 } from '#/index';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
@@ -260,7 +259,7 @@ describe('FullCompaction', () => {
       const candidate = event as { type?: unknown; event?: unknown };
       return candidate.type === '[wire]' && candidate.event === 'full_compaction.complete';
     });
-    expect(completeEvent?.args).toEqual({ time: '<time>' });
+    expect(completeEvent?.args).toEqual({ agentId: 'main', time: '<time>' });
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
       tools: Agent, AgentSwarm, EnterPlanMode, ExitPlanMode
@@ -2936,7 +2935,7 @@ describe('FullCompaction', () => {
     const ctx = testAgent(
       sessionServices((reg) => {
         reg.definePartialInstance(ISessionTodoService, {
-          getTodos: () => todos,
+          getTodos: async () => todos,
         });
       }),
     );
@@ -3388,7 +3387,7 @@ describe('goal reminder re-injection after full compaction', () => {
         lastCompactedTokenCount: number | null;
       }
     ).lastCompactedTokenCount;
-    expect(floor).toBe(ctx.get(IAgentTokenCountingService).get().size);
+    expect(floor).toBe(ctx.tokenCounting.get().size);
     expect(floor).toBe(tokensAfter);
 
     ctx.mockNextResponse({ type: 'text', text: 'Reply after compaction.' });

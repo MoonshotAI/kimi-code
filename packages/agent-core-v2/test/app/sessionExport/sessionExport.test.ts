@@ -29,6 +29,7 @@ import {
 } from '#/_base/di/test';
 import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { ILogService, type ILogService as LogService } from '#/_base/log/log';
 import { IWireService } from '#/wire/wire';
@@ -991,10 +992,12 @@ function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecyc
   return {
     _serviceBrand: undefined,
     onDidCreate: noopEvent,
+    onDidCreateScope: noopEvent,
     onDidDispose: noopEvent,
     create: async () => agents[0]!,
     fork: async () => agents[0]!,
-    get: (agentId) => agents.find((agent) => agent.id === agentId),
+    get: (context: AgentContext) => agents.find((agent) => agent.id === context.agentId),
+    findAgentHandle: (agentId: string) => agents.find((agent) => agent.id === agentId),
     list: () => agents,
     remove: async () => {},
     broadcastPermissionMode: () => {},

@@ -113,7 +113,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
 
     await runInjectionBoundary(ctx);
     ctx.get(IEventBus).publish(
-      new TurnStarted({ turnId: 2, origin: USER_PROMPT_ORIGIN }),
+      new TurnStarted({ agentId: 'main', turnId: 2, origin: USER_PROMPT_ORIGIN }),
     );
     await runInjectionBoundary(ctx);
 

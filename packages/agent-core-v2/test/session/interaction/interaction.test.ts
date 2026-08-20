@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { Event } from '#/_base/event';
 import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle } from '#/_base/di/scope';
@@ -81,8 +82,9 @@ describe('SessionInteractionService', () => {
       _serviceBrand: undefined,
       onDidCreate: Event.None,
       onDidDispose: Event.None,
-      list: () => [],
-      get: (id: string) => agents.get(id)?.handle,
+      list: () => [...agents.values()].map((agent) => agent.handle),
+      get: (context: AgentContext) => agents.get(context.agentId)?.handle,
+      findAgentHandle: (agentId: string) => agents.get(agentId)?.handle,
     } as unknown as IAgentLifecycleService);
     ix.set(ISessionStateService, new SessionStateService());
     ix.set(ISessionInteractionService, new SyncDescriptor(SessionInteractionService));
@@ -255,7 +257,7 @@ describe('SessionInteractionService', () => {
           id: 'i1',
           kind: 'question',
           toolCallId: undefined,
-          agentId: undefined,
+          agentId: 'main',
           request: { question: '?' },
         },
       },
@@ -276,6 +278,7 @@ describe('SessionInteractionService', () => {
       'interaction.resolved',
     ]);
     expect(payloadOf(main.dispatched[1]!)).toEqual({
+      agentId: 'main',
       id: 'i1',
       response: { decision: 'approved' },
     });
@@ -291,7 +294,11 @@ describe('SessionInteractionService', () => {
 
     const last = main.dispatched.at(-1);
     expect(last?.type).toBe('interaction.resolved');
-    expect(last === undefined ? undefined : payloadOf(last)).toEqual({ id: 'i1', response: { cancelled: true, reason: 'turn_ended' } });
+    expect(last === undefined ? undefined : payloadOf(last)).toEqual({
+      agentId: 'main',
+      id: 'i1',
+      response: { cancelled: true, reason: 'turn_ended' },
+    });
   });
 
   it('kernel semantics are unchanged when the origin agent is absent', async () => {
@@ -337,21 +344,27 @@ describe('interaction ops (wire-backed)', () => {
   it('request/resolved persist to the journal and fold into the model by id', async () => {
     await dispatcher.dispatch(
       new InteractionRequestEvent({
+        agentId: 'test-agent',
         id: 'i1',
         kind: 'approval',
         toolCallId: 'call-1',
-        agentId: 'main',
         request: { toolCallId: 'call-1' },
       }),
     );
-    await dispatcher.dispatch(new InteractionResolvedEvent({ id: 'i1', response: { decision: 'approved' } }));
+    await dispatcher.dispatch(
+      new InteractionResolvedEvent({
+        agentId: 'test-agent',
+        id: 'i1',
+        response: { decision: 'approved' },
+      }),
+    );
 
     const entry = agentState.get(interactionKey).get('i1');
     expect(entry).toMatchObject({
       id: 'i1',
       kind: 'approval',
       toolCallId: 'call-1',
-      agentId: 'main',
+      agentId: 'test-agent',
       resolved: true,
       response: { decision: 'approved' },
     });
@@ -362,12 +375,13 @@ describe('interaction ops (wire-backed)', () => {
         id: 'i1',
         kind: 'approval',
         toolCallId: 'call-1',
-        agentId: 'main',
+        agentId: 'test-agent',
         request: { toolCallId: 'call-1' },
         time: expect.any(Number),
       },
       {
         type: 'interaction.resolved',
+        agentId: 'test-agent',
         id: 'i1',
         response: { decision: 'approved' },
         time: expect.any(Number),
@@ -377,7 +391,9 @@ describe('interaction ops (wire-backed)', () => {
 
   it('resolved without a known request leaves the model unchanged', async () => {
     const before = agentState.get(interactionKey);
-    await dispatcher.dispatch(new InteractionResolvedEvent({ id: 'ghost', response: {} }));
+    await dispatcher.dispatch(
+      new InteractionResolvedEvent({ agentId: 'test-agent', id: 'ghost', response: {} }),
+    );
     expect(agentState.get(interactionKey)).toBe(before);
   });
 

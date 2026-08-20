@@ -12,8 +12,29 @@ export interface CollectionToken<T> {
   toString(): string;
 }
 
+export interface DefinitionToken<T> extends CollectionToken<T> {
+  readonly __definition?: T;
+}
+
+export interface DefinitionRecord<T> {
+  readonly definition: T;
+  readonly owner: string;
+  readonly generation: number;
+}
+
+export interface DefinitionChange<T> {
+  readonly current: DefinitionRecord<T> | undefined;
+  readonly previous: DefinitionRecord<T> | undefined;
+}
+
+export interface DefinitionView<T> {
+  readonly current: DefinitionRecord<T> | undefined;
+  readonly onDidChangeDefinition: Event<DefinitionChange<T>>;
+}
+
 const _collectionTokens = new Map<string, CollectionToken<unknown>>();
 const _collectionTokenSet = new WeakSet<object>();
+const _definitionTokenSet = new WeakSet<object>();
 const _collectionValidators = new WeakMap<
   object,
   (value: unknown, existing: readonly unknown[]) => void
@@ -53,8 +74,22 @@ export function collection<T>(
   return token;
 }
 
+export function definition<T>(name: string): DefinitionToken<T> {
+  const token = collection<T>(name, {
+    validate: (_value, existing) => {
+      if (existing.length > 0) throw new Error(`Definition ${name} already has an active provider`);
+    },
+  }) as DefinitionToken<T>;
+  _definitionTokenSet.add(token);
+  return token;
+}
+
 export function isCollectionToken(thing: unknown): thing is CollectionToken<unknown> {
   return typeof thing === 'function' && _collectionTokenSet.has(thing);
+}
+
+export function isDefinitionToken(thing: unknown): thing is DefinitionToken<unknown> {
+  return typeof thing === 'function' && _definitionTokenSet.has(thing);
 }
 
 export interface CollectionRecord<T> {
@@ -188,6 +223,19 @@ export class CollectionStore {
     return out;
   }
 
+  definitionFor<T>(token: CollectionToken<T>, consumer: object): DefinitionRecord<T> | undefined {
+    const record = this.storedRecordsFor(
+      token as CollectionToken<unknown>,
+      consumer,
+    )[0];
+    if (record === undefined) return undefined;
+    return {
+      definition: record.value as T,
+      owner: `${record.providerName}@${record.scopePath}`,
+      generation: record.id,
+    };
+  }
+
   private _isRelated(consumer: object, provider: object): boolean {
     for (let c: object | undefined = consumer; c !== undefined; c = this._parentOf(c)) {
       if (c === provider) return true;
@@ -199,9 +247,12 @@ export class CollectionStore {
   }
 }
 
-export class CollectionViewImpl<T> implements CollectionView<T> {
+export class CollectionViewImpl<T> implements CollectionView<T>, DefinitionView<T> {
   private readonly _onDidChange = new Emitter<CollectionChange<T>>();
+  private readonly _onDidChangeDefinition = new Emitter<DefinitionChange<T>>();
   readonly onDidChange: Event<CollectionChange<T>> = this._onDidChange.event;
+  readonly onDidChangeDefinition: Event<DefinitionChange<T>> =
+    this._onDidChangeDefinition.event;
 
   constructor(
     private readonly _store: CollectionStore,
@@ -217,17 +268,35 @@ export class CollectionViewImpl<T> implements CollectionView<T> {
     return this.records.map((record) => record.value);
   }
 
+  get current(): DefinitionRecord<T> | undefined {
+    return this._store.definitionFor(this.token, this.consumer);
+  }
+
   _fireDelta(kind: 'added' | 'removed', records: readonly StoredRecord[]): void {
+    const previous = kind === 'removed' ? this.definitionRecord(records[0]) : undefined;
     const values = records.map((record) => record.value as T);
     this._onDidChange.fire(
       kind === 'added'
         ? { added: values, removed: [] }
         : { added: [], removed: values },
     );
+    if (isDefinitionToken(this.token)) {
+      this._onDidChangeDefinition.fire({ current: this.current, previous });
+    }
   }
 
   dispose(): void {
     this._store.dropView(this as unknown as CollectionViewImpl<unknown>);
     this._onDidChange.dispose();
+    this._onDidChangeDefinition.dispose();
+  }
+
+  private definitionRecord(record: StoredRecord | undefined): DefinitionRecord<T> | undefined {
+    if (record === undefined) return undefined;
+    return {
+      definition: record.value as T,
+      owner: `${record.providerName}@${record.scopePath}`,
+      generation: record.id,
+    };
   }
 }

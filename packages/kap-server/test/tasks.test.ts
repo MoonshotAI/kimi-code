@@ -127,7 +127,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     const agent =
-      session.accessor.get(IAgentLifecycleService).get('main') ??
+      session.accessor.get(IAgentLifecycleService).findAgentHandle('main') ??
       (await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' }));
     return agent.accessor.get(IAgentTaskService);
   }

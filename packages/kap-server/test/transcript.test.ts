@@ -189,14 +189,14 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   async function ensureMainAgent(sessionId: string): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
-    if (session.accessor.get(IAgentLifecycleService).get('main') === undefined) {
+    if (session.accessor.get(IAgentLifecycleService).findAgentHandle('main') === undefined) {
       await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
     }
   }
 
   function mainAgentBus(sessionId: string): IEventBus {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
-    const agent = session!.accessor.get(IAgentLifecycleService).get('main');
+    const agent = session!.accessor.get(IAgentLifecycleService).findAgentHandle('main');
     return agent!.accessor.get(IEventBus);
   }
 
@@ -205,7 +205,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     messages: readonly ContextMessage[],
   ): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
-    const agent = session!.accessor.get(IAgentLifecycleService).get('main');
+    const agent = session!.accessor.get(IAgentLifecycleService).findAgentHandle('main');
     agent!.accessor.get(IAgentContextMemoryService).append(...messages);
     await agent!.accessor.get(IWireService).flush();
   }
@@ -489,7 +489,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     expect(
       getLiveSessionById(server!.core.accessor, id)!
         .accessor.get(IAgentLifecycleService)
-        .get('sub-1'),
+        .findAgentHandle('sub-1'),
     ).toBeUndefined();
 
     const { body } = await getJson<TranscriptContract>(
@@ -1261,7 +1261,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       selectedLabel: 'Revise',
       feedback: 'split it up',
     });
-    const agent = session!.accessor.get(IAgentLifecycleService).get('main');
+    const agent = session!.accessor.get(IAgentLifecycleService).findAgentHandle('main');
     await agent!.accessor.get(IWireService).flush();
 
     await server!.close();

@@ -12,7 +12,7 @@ import {
 } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { IEventBus } from '#/app/event/eventBus';
+import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import { permissionModeConfiguredKey } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
@@ -21,7 +21,11 @@ import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import {
+  agentContextOf,
+  IAgentScopeContext,
+  makeAgentScopeContext,
+} from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -41,23 +45,30 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   type AgentListFilter,
+  type AgentScopeCreatedEvent,
   type CreateAgentOptions,
   type ForkAgentOptions,
   IAgentLifecycleService,
 } from './agentLifecycle';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 
 let nextAgentId = 0;
 
 export class AgentLifecycleService extends Disposable implements IAgentLifecycleService {
   declare readonly _serviceBrand: undefined;
   private readonly handles = new Map<string, IAgentScopeHandle>();
-  private readonly onDidCreateEmitter = this._register(new Emitter<IAgentScopeHandle>());
-  private readonly onDidDisposeEmitter = this._register(new Emitter<string>());
+  private readonly onDidCreateEmitter = this._register(new Emitter<AgentContext>());
+  private readonly onDidCreateScopeEmitter = this._register(new Emitter<AgentScopeCreatedEvent>());
+  private readonly onDidDisposeEmitter = this._register(new Emitter<AgentContext>());
   private readonly interactionBusDisposables = new Map<string, IDisposable>();
   private readonly creating = new Map<string, Promise<IAgentScopeHandle>>();
+  private nextLifecycleGeneration = 0;
 
   get onDidCreate() {
     return this.onDidCreateEmitter.event;
+  }
+  get onDidCreateScope() {
+    return this.onDidCreateScopeEmitter.event;
   }
   get onDidDispose() {
     return this.onDidDisposeEmitter.event;
@@ -73,18 +84,20 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
-    this._register(this.onDidCreate((handle) => this.subscribeInteractionBus(handle)));
     this._register(
-      this.onDidCreate((handle) => {
+      this.onDidCreateScope(({ handle }) => this.subscribeInteractionBus(handle)),
+    );
+    this._register(
+      this.onDidCreateScope(({ handle }) => {
         handle.accessor.get(IAgentStateService).contributeState(interactionKey);
       }),
     );
     this._register(
-      this.onDidDispose((agentId) => {
-        const d = this.interactionBusDisposables.get(agentId);
+      this.onDidDispose((agent) => {
+        const d = this.interactionBusDisposables.get(agent.agentId);
         if (d !== undefined) {
           d.dispose();
-          this.interactionBusDisposables.delete(agentId);
+          this.interactionBusDisposables.delete(agent.agentId);
         }
       }),
     );
@@ -138,13 +151,20 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   private async doCreate(agentId: string, opts: CreateAgentOptions): Promise<IAgentScopeHandle> {
     const agentScope = this.ctx.scope(`agents/${agentId}`);
     const agentHomedir = join(this.bootstrap.homeDir, agentScope);
+    const generation = ++this.nextLifecycleGeneration;
+    const scopeContext = makeAgentScopeContext({ agentId, agentScope, generation });
+    const agent = scopeContext.agentContext;
+    const eventBus = this.instantiation.invokeFunction((accessor) =>
+      accessor.get(ISessionEventBus) as ISessionEventBus | undefined,
+    );
+    eventBus?.activateAgent(agent);
     const handle = createScopedChildHandle(
       this.instantiation,
       LifecycleScope.Agent,
       agentId,
       {
         seeds: [
-          [IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope })],
+          [IAgentScopeContext, scopeContext],
           [ITelemetryService, this.telemetry.withContext({ agent_id: agentId })],
           [IAgentRuntimeBindingSeed, {
             _serviceBrand: undefined,
@@ -164,17 +184,19 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         forkedFrom: opts.forkedFrom,
         labels: opts.labels,
       });
-      this.onDidCreateEmitter.fire(handle);
+      this.onDidCreateEmitter.fire(agent);
+      this.onDidCreateScopeEmitter.fire({ context: agent, handle });
       await handle.accessor.get(IEventDispatcher).restore();
       await this.bindBootstrap(handle, opts);
       await handle.accessor.get(IAgentToolActivationService).activate();
       return handle;
     } catch (error) {
       if (this.handles.get(agentId) === handle) this.handles.delete(agentId);
+      eventBus?.deactivateAgent(agent);
       try {
         handle.dispose();
       } catch { }
-      this.onDidDisposeEmitter.fire(agentId);
+      this.onDidDisposeEmitter.fire(agent);
       throw error;
     }
   }
@@ -195,12 +217,14 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     }
   }
 
-  async fork(sourceAgentId: string, opts?: ForkAgentOptions): Promise<IAgentScopeHandle> {
-    const source = this.handles.get(sourceAgentId);
+  async fork(sourceContext: AgentContext, opts?: ForkAgentOptions): Promise<IAgentScopeHandle> {
+    const source = this.get(sourceContext);
     if (source === undefined) {
-      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Source agent "${sourceAgentId}" does not exist`, {
-        details: { agentId: sourceAgentId },
-      });
+      throw new Error2(
+        ErrorCodes.AGENT_NOT_FOUND,
+        `Source agent "${sourceContext.agentId}" does not exist`,
+        { details: { agentId: sourceContext.agentId } },
+      );
     }
     if (opts?.agentId !== undefined && this.handles.has(opts.agentId)) {
       throw new Error2(ErrorCodes.AGENT_ALREADY_EXISTS, `Agent "${opts.agentId}" already exists`, {
@@ -235,7 +259,13 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     return child;
   }
 
-  get(agentId: string): IAgentScopeHandle | undefined {
+  get(context: AgentContext): IAgentScopeHandle | undefined {
+    const handle = this.handles.get(context.agentId);
+    if (handle === undefined) return undefined;
+    return agentContextOf(handle) === context ? handle : undefined;
+  }
+
+  findAgentHandle(agentId: string): IAgentScopeHandle | undefined {
     return this.handles.get(agentId);
   }
 
@@ -258,9 +288,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     }
   }
 
-  async remove(agentId: string): Promise<void> {
-    const handle = this.handles.get(agentId);
+  async remove(context: AgentContext): Promise<void> {
+    const handle = this.get(context);
     if (handle === undefined) return;
+    const agentId = context.agentId;
     this.handles.delete(agentId);
     await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
     const loop = handle.accessor.get(IAgentLoopService);
@@ -276,8 +307,12 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       compaction.abortController.abort(reason);
     }
     await Promise.all([loop.settled(), compactionSettled, prompt.drain(reason)]);
+    const agent = agentContextOf(handle);
     handle.dispose();
-    this.onDidDisposeEmitter.fire(agentId);
+    this.instantiation.invokeFunction((accessor) =>
+      (accessor.get(ISessionEventBus) as ISessionEventBus | undefined)?.deactivateAgent(agent),
+    );
+    this.onDidDisposeEmitter.fire(agent);
   }
 }
 

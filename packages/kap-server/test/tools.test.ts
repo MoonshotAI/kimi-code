@@ -119,7 +119,7 @@ describe('server-v2 /api/v1 tools + mcp', () => {
   async function ensureMainAgent(sessionId: string) {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
-    let agent = session.accessor.get(IAgentLifecycleService).get('main');
+    let agent = session.accessor.get(IAgentLifecycleService).findAgentHandle('main');
     agent ??= await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
     return agent;
   }

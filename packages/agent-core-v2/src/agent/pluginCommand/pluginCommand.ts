@@ -1,6 +1,6 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import { Event2 } from '#/app/event/event2';
+import { AgentEvent2 } from '#/app/event/event2';
 
 export interface ActivatePluginCommandPayload {
   readonly pluginId: string;
@@ -9,6 +9,7 @@ export interface ActivatePluginCommandPayload {
 }
 
 export interface PluginCommandActivatedPayload {
+  readonly agentId: string;
   readonly activationId: string;
   readonly pluginId: string;
   readonly commandName: string;
@@ -16,7 +17,7 @@ export interface PluginCommandActivatedPayload {
   readonly trigger: 'user-slash';
 }
 
-export class PluginCommandActivated extends Event2<PluginCommandActivatedPayload> {
+export class PluginCommandActivated extends AgentEvent2<PluginCommandActivatedPayload> {
   static override readonly type = 'plugin_command.activated';
   static override readonly observable = true;
 }

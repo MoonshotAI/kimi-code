@@ -183,7 +183,9 @@ describe('AgentTowerService', () => {
     )) {
       records.push(record);
     }
-    expect(records).toEqual([{ type: 'tower_mode.enter', time: expect.any(Number) }]);
+    expect(records).toEqual([
+      { type: 'tower_mode.enter', agentId: 'test-agent', time: expect.any(Number) },
+    ]);
 
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());

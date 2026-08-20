@@ -5,7 +5,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { resetUnexpectedErrorHandler, setUnexpectedErrorHandler } from '#/_base/errors/unexpectedError';
 import { Event } from '#/_base/event';
-import { IEventBus } from '#/app/event/eventBus';
+import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IConfigService } from '#/app/config/config';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -21,7 +21,7 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { IAgentUsageService } from '#/agent/usage/usage';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -36,6 +36,7 @@ import {
   restoreTestEventDispatcher,
   testWireScope,
 } from '../../wire/stubs';
+import { stubAgentContext } from '../agentContext/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'goal-test';
@@ -120,9 +121,9 @@ function buildHost(key: string): {
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   ix.stub(IAgentLoopService, createLoopStub());
-  ix.stub(IAgentUsageService, {
+  ix.stub(ISessionUsageService, {
     onDidRecord: Event.None,
-  } as unknown as IAgentUsageService);
+  } as unknown as ISessionUsageService);
   ix.stub(IAgentContextMemoryService, createContextStub());
   ix.stub(IAgentContextInjectorService, createInjectorStub());
   ix.stub(IAgentSystemReminderService, createSystemReminderStub());
@@ -135,13 +136,16 @@ function buildHost(key: string): {
     log: ix.get(IAppendLogStore),
     eventBus: ix.get(IEventBus),
   });
-  const dispatcher = registerTestEventDispatcher(ix);
-  const agentState = ix.get(IAgentStateService);
-  ix.stub(IAgentScopeContext, {
+  const mainScopeContext: IAgentScopeContext = {
     _serviceBrand: undefined,
     agentId: 'main',
+    agentContext: stubAgentContext('main', 1),
     scope: () => 'wire/agents/main',
-  });
+  };
+  ix.stub(IAgentScopeContext, mainScopeContext);
+  (ix.get(IEventBus) as ISessionEventBus).activateAgent(mainScopeContext.agentContext);
+  const dispatcher = registerTestEventDispatcher(ix);
+  const agentState = ix.get(IAgentStateService);
   ix.set(IAgentGoalService, new SyncDescriptor(AgentGoalService));
   return {
     dispatcher,

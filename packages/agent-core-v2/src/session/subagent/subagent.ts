@@ -2,6 +2,7 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import type { Event } from '#/_base/event';
 import type { TokenUsage } from '#/kosong/contract/usage';
 import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { Turn } from '#/agent/loop/loop';
 import type { Hooks } from '#/hooks';
 
@@ -43,7 +44,7 @@ export interface ISessionSubagentService {
 
   readonly onDidStopAgentTask: Event<AgentTaskStopHookContext>;
 
-  run(agentId: string, request: AgentRunRequest, opts: RunAgentOptions): Promise<AgentRunHandle>;
+  run(agent: AgentContext, request: AgentRunRequest, opts: RunAgentOptions): Promise<AgentRunHandle>;
 
   notifyAgentTaskStopped(context: AgentTaskStopHookContext): void;
 }
