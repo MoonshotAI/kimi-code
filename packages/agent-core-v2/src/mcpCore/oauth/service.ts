@@ -474,7 +474,12 @@ export class McpOAuthService {
       now: () => this.scheduler.now(),
       onTokensSaved: (tokens) => {
         this.emit({ type: 'tokens-saved', serverName, serverUrl: canonicalUrl });
-        if (typeof tokens.obtained_at === 'number' && typeof tokens.expires_in === 'number') {
+        if (
+          typeof tokens.obtained_at === 'number' &&
+          typeof tokens.expires_in === 'number' &&
+          typeof tokens.refresh_token === 'string' &&
+          tokens.refresh_token.length > 0
+        ) {
           this.scheduleRefresh(
             serverName,
             canonicalUrl,

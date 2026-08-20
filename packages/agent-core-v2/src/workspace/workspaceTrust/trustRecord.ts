@@ -1,4 +1,6 @@
-import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
+import { normalize } from 'pathe';
+
+import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
 const TRUST_SCOPE = 'workspace-trust';
@@ -13,7 +15,7 @@ export async function readWorkspaceTrust(
   root: string,
 ): Promise<boolean> {
   try {
-    return (await docs.get<TrustRecord>(TRUST_SCOPE, encodeWorkDirKey(root))) !== undefined;
+    return (await docs.get<TrustRecord>(TRUST_SCOPE, trustKey(root))) !== undefined;
   } catch {
     return false;
   }
@@ -24,12 +26,16 @@ export function writeWorkspaceTrust(
   root: string,
   trustedAt: number,
 ): Promise<void> {
-  return docs.set(TRUST_SCOPE, encodeWorkDirKey(root), { root, trustedAt });
+  return docs.set(TRUST_SCOPE, trustKey(root), { root, trustedAt });
 }
 
 export function deleteWorkspaceTrust(
   docs: IAtomicDocumentStore,
   root: string,
 ): Promise<void> {
-  return docs.delete(TRUST_SCOPE, encodeWorkDirKey(root));
+  return docs.delete(TRUST_SCOPE, trustKey(root));
+}
+
+function trustKey(root: string): string {
+  return encodeWorkDirKey(workspaceRootKey(normalize(root)));
 }

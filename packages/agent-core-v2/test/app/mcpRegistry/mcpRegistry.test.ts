@@ -6,6 +6,7 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { createServices } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
@@ -49,6 +50,7 @@ describe('McpRegistryService', () => {
   let pluginEntries: PluginMcpServerEntry[];
   let pluginError: Error | undefined;
   let trusted: boolean;
+  let trustedKey: string | undefined;
   let registry: IMcpRegistryService;
 
   beforeEach(() => {
@@ -59,6 +61,7 @@ describe('McpRegistryService', () => {
     pluginEntries = [];
     pluginError = undefined;
     trusted = true;
+    trustedKey = undefined;
     const ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IFileSystemStorageService, new InMemoryStorageService());
@@ -72,7 +75,12 @@ describe('McpRegistryService', () => {
         });
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
         reg.definePartialInstance(IAtomicDocumentStore, {
-          get: async <T>() => (trusted ? ({} as T) : undefined),
+          get: async <T>(_scope: string, key: string) => {
+            if (!trusted || (trustedKey !== undefined && key !== encodeWorkDirKey(trustedKey))) {
+              return undefined;
+            }
+            return {} as T;
+          },
         });
         reg.define(IMcpRegistryService, McpRegistryService);
       },
@@ -196,6 +204,18 @@ describe('McpRegistryService', () => {
         'plugin-demo:api',
         'userOnly',
       ]);
+    });
+
+    it('uses the canonical git root when checking trust from a subdirectory', async () => {
+      const { project, sub } = await makeProject();
+      await writeJson(join(project, '.mcp.json'), {
+        mcpServers: { projectOnly: { command: 'project-only' } },
+      });
+      trustedKey = project;
+
+      const entries = await registry.list({ cwd: sub });
+
+      expect(entries.map((entry) => entry.name)).toContain('projectOnly');
     });
 
     it('exposes plugin servers as read-only entries with their effective config', async () => {

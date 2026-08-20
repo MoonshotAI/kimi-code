@@ -762,6 +762,22 @@ describe('McpOAuthService proactive refresh scheduling', () => {
     await fixture.scheduler.advanceBy(10_000);
     expect(refreshSpy).not.toHaveBeenCalled();
   });
+
+  it('does not schedule an expiring grant without a refresh token', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    const refreshSpy = vi.spyOn(fixture.service, 'refresh');
+
+    await fixture.service.getProvider(SERVER_NAME, SERVER_URL).saveTokens({
+      access_token: 'a',
+      token_type: 'Bearer',
+      expires_in: 60,
+    });
+
+    await fixture.scheduler.advanceBy(60_000);
+    expect(refreshSpy).not.toHaveBeenCalled();
+    expect(fixture.events.some((event) => event.type === 'refresh-failed')).toBe(false);
+  });
 });
 
 describe('McpOAuthService shutdown', () => {
