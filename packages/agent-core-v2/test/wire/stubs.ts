@@ -4,8 +4,8 @@ import type { ServiceRegistration, TestInstantiationService } from '#/_base/di/t
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { IAgentScopeContext, type IAgentScopeContext as AgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IEventBus } from '#/app/event/eventBus';
+import { IAgentScopeContext, makeAgentScopeContext, type IAgentScopeContext as AgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
@@ -50,12 +50,7 @@ export function testWireScope(scope: string, journal: string): string {
 }
 
 export function stubAgentScopeContext(scope: string): AgentScopeContext {
-  return {
-    _serviceBrand: undefined,
-    agentId: 'test-agent',
-    scope: (subKey?: string): string =>
-      subKey === undefined || subKey === '' ? scope : `${scope}/${subKey}`,
-  };
+  return makeAgentScopeContext({ agentId: 'test-agent', agentScope: scope, generation: 0 });
 }
 
 export function registerTestAgentWire(
@@ -63,11 +58,16 @@ export function registerTestAgentWire(
   scope: string,
   dependencies: TestAgentWireDependencies = {},
 ): AgentWire {
-  ix.stub(IAgentScopeContext, stubAgentScopeContext(scope));
+  const agentScope = stubAgentScopeContext(scope);
+  ix.stub(IAgentScopeContext, agentScope);
   ix.set(IAppendLogStore, dependencies.log ?? noopLog);
   ix.set(IAgentBlobService, dependencies.blob ?? noopBlob);
   ix.set(IEventBus, dependencies.eventBus ?? noopEventBus);
   ix.set(IWireService, new SyncDescriptor(WireService));
+  const eventBus = ix.get(IEventBus);
+  if (typeof (eventBus as Partial<ISessionEventBus>).activateAgent === 'function') {
+    (eventBus as ISessionEventBus).activateAgent(agentScope.agentContext);
+  }
   return ix.get(IWireService);
 }
 

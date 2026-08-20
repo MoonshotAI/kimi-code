@@ -35,6 +35,7 @@ import {
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
   getLiveSessionById,
+  agentContextOf,
   HostProcessError,
   IAgentLifecycleService,
   IAgentTowerService,
@@ -887,8 +888,8 @@ key = "${titleOAuthRef.key}"
 
       const handle = getLiveSessionById(client.engineAccessor, 'ses_todos');
       expect(handle).toBeDefined();
-      await handle!.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
-      handle!.accessor.get(ISessionTodoService).setTodos([
+      const main = await handle!.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+      await handle!.accessor.get(ISessionTodoService).setTodos(agentContextOf(main), [
         { title: 'write tests', status: 'in_progress' },
         { title: 'ship it', status: 'pending' },
       ]);
@@ -899,7 +900,9 @@ key = "${titleOAuthRef.key}"
       ]);
 
       const served = await client.getTodos({ sessionId: 'ses_todos' });
-      const stored = handle!.accessor.get(ISessionTodoService).getTodos();
+      const stored = await handle!
+        .accessor.get(ISessionTodoService)
+        .getTodos(agentContextOf(main));
       expect(served).not.toBe(stored);
       expect(served[0]).not.toBe(stored[0]);
       await expect(client.getTodos({ sessionId: 'ses_missing' })).rejects.toMatchObject({

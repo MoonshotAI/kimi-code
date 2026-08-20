@@ -9,6 +9,7 @@ import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import {
   createServices,
+  type ServiceRegistration,
   type TestInstantiationService,
 } from '#/_base/di/test';
 import { AsyncEmitter, Emitter, Event, type IWaitUntil } from '#/_base/event';
@@ -30,6 +31,10 @@ import {
 import { IAgentExternalHooksService } from '#/features/externalHooks/agent/agentExternalHooks';
 import { AgentExternalHooksService } from '#/features/externalHooks/agent/agentExternalHooksService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import {
+  IAgentScopeContext,
+  makeAgentScopeContext,
+} from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
@@ -49,8 +54,8 @@ import { makeHookRunner } from './runner-stub';
 import type { AgentTaskInfo } from '#/agent/task/task';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { IEventBus } from '#/app/event/eventBus';
-import { EventBusService } from '#/app/event/eventBusService';
+import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
+import { AgentEventBusView, EventBusService } from '#/app/event/eventBusService';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IHostProcessService } from '#/os/interface/hostProcess';
@@ -258,6 +263,25 @@ function stubSessionLifecycle() {
   };
 }
 
+function registerAgentEventBus(reg: ServiceRegistration): void {
+  reg.defineInstance(
+    IAgentScopeContext,
+    makeAgentScopeContext({
+      agentId: 'main',
+      agentScope: 'sessions/workspace-1/session-1/agents/main',
+      generation: 1,
+    }),
+  );
+  reg.define(ISessionEventBus, EventBusService);
+  reg.define(IEventBus, AgentEventBusView);
+}
+
+function activateAgentEventBus(ix: TestInstantiationService): IEventBus {
+  const agent = ix.get(IAgentScopeContext).agentContext;
+  ix.get(ISessionEventBus).activateAgent(agent);
+  return ix.get(IEventBus);
+}
+
 describe('IExternalHooksRunnerService integration', () => {
   it('blocks a dangerous Bash command and allows a safe one via a PreToolUse script hook', async () => {
     const engine = makeHookRunner([
@@ -335,7 +359,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(IPluginService, {});
           reg.defineInstance(IAgentContextMemoryService, context);
           reg.defineInstance(IAgentLoopService, loop);
-          reg.define(IEventBus, EventBusService);
+          registerAgentEventBus(reg);
           reg.definePartialInstance(IAgentPromptService, {
             hooks: createHooks(['onBeforeSubmitPrompt']),
           });
@@ -347,6 +371,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(IAgentTaskService, {});
         },
       });
+      activateAgentEventBus(ix);
       ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
       ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
       ix.get(IAgentExternalHooksService);
@@ -381,6 +406,7 @@ describe('IExternalHooksRunnerService integration', () => {
 
       eventBus.publish(
         new TurnEnded({
+          agentId: 'main',
           turnId: 0,
           reason: 'completed',
           durationMs: 0,
@@ -441,7 +467,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(IPluginService, {});
           reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
-          reg.define(IEventBus, EventBusService);
+          registerAgentEventBus(reg);
           reg.definePartialInstance(IAgentPromptService, {
             hooks: createHooks(['onBeforeSubmitPrompt']),
           });
@@ -453,6 +479,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(IAgentTaskService, {});
         },
       });
+      activateAgentEventBus(ix);
       ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
       ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
       ix.get(IAgentExternalHooksService);
@@ -647,7 +674,7 @@ describe('IExternalHooksRunnerService integration', () => {
           });
           reg.defineInstance(IAgentContextMemoryService, context);
           reg.defineInstance(IAgentLoopService, loop);
-          reg.define(IEventBus, EventBusService);
+          registerAgentEventBus(reg);
           reg.definePartialInstance(IAgentPromptService, {
             hooks: createHooks(['onBeforeSubmitPrompt']),
           });
@@ -665,6 +692,7 @@ describe('IExternalHooksRunnerService integration', () => {
           } as unknown as IEventDispatcher);
         },
       });
+      activateAgentEventBus(ix);
       ix.set(IExternalHooksRunnerService, new SyncDescriptor(ExternalHooksRunnerService));
       ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
       ix.get(IAgentExternalHooksService);
@@ -1182,7 +1210,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(IPluginService, {});
           reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
-          reg.define(IEventBus, EventBusService);
+          registerAgentEventBus(reg);
           reg.definePartialInstance(IAgentPromptService, {
             hooks: createHooks(['onBeforeSubmitPrompt']),
           });
@@ -1194,6 +1222,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(IAgentTaskService, {});
         },
       });
+      activateAgentEventBus(ix);
       ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
       ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
       ix.get(IAgentExternalHooksService);
@@ -1202,6 +1231,7 @@ describe('IExternalHooksRunnerService integration', () => {
 
       eventBus.publish(
         new TurnStarted({
+          agentId: 'main',
           turnId: 3,
           origin: { kind: 'system_trigger', name: 'goal' },
         }),
@@ -1209,6 +1239,7 @@ describe('IExternalHooksRunnerService integration', () => {
       const queuedContent = [{ type: 'text' as const, text: 'later' }];
       eventBus.publish(
         new PromptQueued({
+          agentId: 'main',
           promptId: 'p1',
           content: queuedContent,
           queueLength: 2,
@@ -1216,6 +1247,7 @@ describe('IExternalHooksRunnerService integration', () => {
       );
       eventBus.publish(
         new TaskStarted({
+          agentId: 'main',
           info: {
             taskId: 'task-1',
             kind: 'process',

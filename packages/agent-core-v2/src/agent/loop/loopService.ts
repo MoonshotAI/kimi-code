@@ -21,6 +21,7 @@ import { OrderedHookSlot } from '#/hooks';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import type {
@@ -105,6 +106,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IConfigService private readonly config: IConfigService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -276,7 +278,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (job === undefined || (turnId !== undefined && job.turn.id !== turnId)) return false;
     if (job.controller.signal.aborted) return true;
     void this.dispatcher.dispatch(
-      new TurnCancel({ turnId: job.turn.id, target: 'active', reason: cancelReasonFor(cancellation) }),
+      new TurnCancel({
+        agentId: this.scopeContext.agentId,
+        turnId: job.turn.id,
+        target: 'active',
+        reason: cancelReasonFor(cancellation),
+      }),
     );
     job.controller.abort(cancellation);
     return true;
@@ -287,7 +294,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (index < 0) return false;
     const [job] = this.pendingTurns.splice(index, 1);
     if (job === undefined || job.turn.state !== 'queued') return false;
-    void this.dispatcher.dispatch(new TurnCancel({ turnId, target: 'queued', reason: cancelReasonFor(cancellation) }));
+    void this.dispatcher.dispatch(
+      new TurnCancel({
+        agentId: this.scopeContext.agentId,
+        turnId,
+        target: 'queued',
+        reason: cancelReasonFor(cancellation),
+      }),
+    );
     for (const step of job.steps.values()) step.cancel(cancellation);
     job.controller.abort(cancellation);
     job.turn.state = 'cancelled';
@@ -447,11 +461,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private startTurn(job: TurnJob): void {
     const origin = job.seed.origin;
-    void this.dispatcher.dispatch(new TurnPrompt({ input: job.seed.input, origin }));
+    void this.dispatcher.dispatch(
+      new TurnPrompt({ agentId: this.scopeContext.agentId, input: job.seed.input, origin }),
+    );
     job.turn.state = 'running';
     this.activeTurnJob = job;
     void this.dispatcher.dispatch(
       new TurnStarted({
+        agentId: this.scopeContext.agentId,
         turnId: job.turn.id,
         origin,
         prompt: isDisplayablePromptOrigin(origin) ? turnPromptText(job.seed.input, origin) : undefined,
@@ -504,9 +521,20 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           result.type === 'completed' ? undefined : interruptReasonFor(result);
         const durationMs = Date.now() - startedAt;
         void this.dispatcher.dispatch(
-          new TurnEnded({ turnId: turn.id, reason: result.type, error, durationMs, interruptReason }),
+          new TurnEnded({
+            agentId: this.scopeContext.agentId,
+            turnId: turn.id,
+            reason: result.type,
+            error,
+            durationMs,
+            interruptReason,
+          }),
         );
-        if (error !== undefined) void this.dispatcher.dispatch(new AgentErrorEvent(error));
+        if (error !== undefined) {
+          void this.dispatcher.dispatch(
+            new AgentErrorEvent({ ...error, agentId: this.scopeContext.agentId }),
+          );
+        }
         if (interruptReason !== undefined) {
           const interrupted: TurnInterruptedEvent = {
             turn_id: turn.id,
@@ -865,7 +893,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     onStarted: ((step: number) => void) | undefined,
   ): () => void {
     signal.throwIfAborted();
-    void this.dispatcher.dispatch(new TurnStepStarted({ turnId, step: currentStep, stepId: stepUuid }));
+    void this.dispatcher.dispatch(
+      new TurnStepStarted({
+        agentId: this.scopeContext.agentId,
+        turnId,
+        step: currentStep,
+        stepId: stepUuid,
+      }),
+    );
     this.context.appendLoopEvent({
       type: 'step.begin',
       uuid: stepUuid,
@@ -1041,6 +1076,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   ): void {
     void this.dispatcher.dispatch(
       new TurnStepCompleted({
+        agentId: this.scopeContext.agentId,
         turnId,
         step,
         stepId,
@@ -1067,6 +1103,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (activeStep === undefined) return;
     void this.dispatcher.dispatch(
       new TurnStepInterrupted({
+        agentId: this.scopeContext.agentId,
         turnId,
         step: activeStep,
         reason,
@@ -1095,12 +1132,16 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           case 'text':
             onResponseEvent();
             accumulate(part);
-            void this.dispatcher.dispatch(new AssistantDelta({ turnId, delta: part.text }));
+            void this.dispatcher.dispatch(
+              new AssistantDelta({ agentId: this.scopeContext.agentId, turnId, delta: part.text }),
+            );
             return;
           case 'think':
             onResponseEvent();
             accumulate(part);
-            void this.dispatcher.dispatch(new ThinkingDelta({ turnId, delta: part.think }));
+            void this.dispatcher.dispatch(
+              new ThinkingDelta({ agentId: this.scopeContext.agentId, turnId, delta: part.think }),
+            );
             return;
           case 'image_url':
           case 'audio_url':
@@ -1112,6 +1153,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             callsByIndex.set(part._streamIndex, { id: part.id, name: part.name });
             void this.dispatcher.dispatch(
               new ToolCallDelta({
+                agentId: this.scopeContext.agentId,
                 turnId,
                 toolCallId: part.id,
                 name: part.name,
@@ -1127,6 +1169,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             onResponseEvent();
             void this.dispatcher.dispatch(
               new ToolCallDelta({
+                agentId: this.scopeContext.agentId,
                 turnId,
                 toolCallId: toolCall.id,
                 name: toolCall.name,

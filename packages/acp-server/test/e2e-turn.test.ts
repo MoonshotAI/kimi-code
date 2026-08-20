@@ -506,11 +506,12 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     const wireId = (create.params as { update?: { toolCallId?: string } }).update?.toolCallId;
     const turnId = Number(wireId?.split(':')[0]);
     const session = getLiveSessionById(c.server.core.accessor, created.sessionId);
-    const agentHandle = session?.accessor.get(IAgentLifecycleService).get('main');
+    const agentHandle = session?.accessor.get(IAgentLifecycleService).findAgentHandle('main');
     const bus = agentHandle?.accessor.get(IEventBus);
     expect(bus).toBeDefined();
     bus!.publish(
       new ToolProgress({
+        agentId: 'main',
         turnId,
         toolCallId: 'call_1',
         update: { kind: 'stdout', text: 'raw-stdout-bytes' },
@@ -518,6 +519,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     );
     bus!.publish(
       new ToolProgress({
+        agentId: 'main',
         turnId,
         toolCallId: 'call_1',
         update: { kind: 'status', text: 'Still working…' },

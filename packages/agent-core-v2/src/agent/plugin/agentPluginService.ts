@@ -188,7 +188,12 @@ export class AgentPluginService extends Service implements IAgentPluginService {
   }
 
   private recordSessionStartSnapshot(content: string | undefined): void {
-    void this.dispatcher.dispatch(new PluginSessionStartEvent({ content: content ?? null }));
+    void this.dispatcher.dispatch(
+      new PluginSessionStartEvent({
+        agentId: this.scopeContext.agentId,
+        content: content ?? null,
+      }),
+    );
   }
 }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { fetchLatestFromCdn, fetchLatestVersionFromCdn } from '#/cli/update/cdn';
-import { KIMI_CODE_CDN_LATEST_JSON_URL, KIMI_CODE_CDN_LATEST_URL } from '#/constant/app';
+import { kimiCodeCdnLatestJsonUrl, kimiCodeCdnLatestUrl } from '#/constant/app';
 
 function mockFetchOk(body: string): typeof fetch {
   return vi.fn(async () => ({
@@ -54,7 +54,7 @@ describe('fetchLatestVersionFromCdn', () => {
     const f = mockFetchOk('  0.5.0\n');
     await expect(fetchLatestVersionFromCdn(f)).resolves.toBe('0.5.0');
     expect(f).toHaveBeenCalledWith(
-      KIMI_CODE_CDN_LATEST_URL,
+      kimiCodeCdnLatestUrl(),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
@@ -83,7 +83,7 @@ describe('fetchLatestVersionFromCdn', () => {
 
 describe('fetchLatestFromCdn', () => {
   it('parses latest.json and returns the manifest', async () => {
-    const f = mockRoutedFetch({ [KIMI_CODE_CDN_LATEST_JSON_URL]: { body: MANIFEST_BODY } });
+    const f = mockRoutedFetch({ [kimiCodeCdnLatestJsonUrl()]: { body: MANIFEST_BODY } });
     await expect(fetchLatestFromCdn(f)).resolves.toEqual({
       latest: '2.0.0',
       manifest: {
@@ -97,7 +97,7 @@ describe('fetchLatestFromCdn', () => {
       },
     });
     expect(f).toHaveBeenCalledWith(
-      KIMI_CODE_CDN_LATEST_JSON_URL,
+      kimiCodeCdnLatestJsonUrl(),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(f).toHaveBeenCalledTimes(1);
@@ -111,7 +111,7 @@ describe('fetchLatestFromCdn', () => {
       rollout: [],
       futureField: { nested: true },
     });
-    const f = mockRoutedFetch({ [KIMI_CODE_CDN_LATEST_JSON_URL]: { body } });
+    const f = mockRoutedFetch({ [kimiCodeCdnLatestJsonUrl()]: { body } });
     const result = await fetchLatestFromCdn(f);
     expect(result.manifest).toEqual({
       version: '2.0.0',
@@ -125,7 +125,7 @@ describe('fetchLatestFromCdn', () => {
       version: '2.0.0',
       publishedAt: '2026-06-12T00:00:00.000Z',
     });
-    const f = mockRoutedFetch({ [KIMI_CODE_CDN_LATEST_JSON_URL]: { body } });
+    const f = mockRoutedFetch({ [kimiCodeCdnLatestJsonUrl()]: { body } });
     const result = await fetchLatestFromCdn(f);
     expect(result.manifest?.rollout).toEqual([]);
   });
@@ -155,8 +155,8 @@ describe('fetchLatestFromCdn', () => {
   for (const [name, route] of fallbackCases) {
     it(`falls back to plain /latest when ${name}`, async () => {
       const f = mockRoutedFetch({
-        [KIMI_CODE_CDN_LATEST_JSON_URL]: route,
-        [KIMI_CODE_CDN_LATEST_URL]: { body: '1.9.0\n' },
+        [kimiCodeCdnLatestJsonUrl()]: route,
+        [kimiCodeCdnLatestUrl()]: { body: '1.9.0\n' },
       });
       await expect(fetchLatestFromCdn(f)).resolves.toEqual({
         latest: '1.9.0',
@@ -167,16 +167,16 @@ describe('fetchLatestFromCdn', () => {
 
   it('throws when both latest.json and plain /latest fail', async () => {
     const f = mockRoutedFetch({
-      [KIMI_CODE_CDN_LATEST_JSON_URL]: { status: 500 },
-      [KIMI_CODE_CDN_LATEST_URL]: { status: 500 },
+      [kimiCodeCdnLatestJsonUrl()]: { status: 500 },
+      [kimiCodeCdnLatestUrl()]: { status: 500 },
     });
     await expect(fetchLatestFromCdn(f)).rejects.toThrow(/HTTP 500/);
   });
 
   it('propagates the plain /latest error when the fallback also breaks', async () => {
     const f = mockRoutedFetch({
-      [KIMI_CODE_CDN_LATEST_JSON_URL]: new Error('json down'),
-      [KIMI_CODE_CDN_LATEST_URL]: { body: 'not-a-version' },
+      [kimiCodeCdnLatestJsonUrl()]: new Error('json down'),
+      [kimiCodeCdnLatestUrl()]: { body: 'not-a-version' },
     });
     await expect(fetchLatestFromCdn(f)).rejects.toThrow(/invalid semver/);
   });
@@ -185,14 +185,14 @@ describe('fetchLatestFromCdn', () => {
     vi.useFakeTimers();
     try {
       const f = vi.fn(async (input: string | URL, init?: RequestInit) => {
-        if (String(input) === KIMI_CODE_CDN_LATEST_JSON_URL) {
+        if (String(input) === kimiCodeCdnLatestJsonUrl()) {
           return new Promise<Response>((_resolve, reject) => {
             init?.signal?.addEventListener('abort', () => {
               reject(new Error('aborted'));
             }, { once: true });
           });
         }
-        if (String(input) === KIMI_CODE_CDN_LATEST_URL) {
+        if (String(input) === kimiCodeCdnLatestUrl()) {
           return { ok: true, status: 200, text: async () => '1.9.0\n' };
         }
         return { ok: false, status: 404, text: async () => '' };

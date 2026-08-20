@@ -27,6 +27,7 @@ import {
   CompactionStarted,
 } from '#/agent/fullCompaction/compactionOps';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
@@ -81,6 +82,7 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
     @IAgentFullCompactionService private readonly fullCompaction: IAgentFullCompactionService,
     @IAgentStateService private readonly states: IAgentStateService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
     super();
     this.states.contributeState(activityViewLifecycleKey);
@@ -366,7 +368,9 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
     };
     if (activityEqual(this.current, next)) return;
     this.current = next;
-    void this.dispatcher.dispatch(new AgentActivityUpdated(next));
+    void this.dispatcher.dispatch(
+      new AgentActivityUpdated({ ...next, agentId: this.scopeContext.agentId }),
+    );
   }
 }
 

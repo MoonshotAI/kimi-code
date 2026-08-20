@@ -19,6 +19,7 @@ import {
 } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
@@ -96,6 +97,7 @@ export class SubagentTool implements ISubagentTool {
   }
 
   private readonly callerAgentId: string;
+  private readonly callerAgent: AgentContext;
   private readonly canRunInBackground: () => boolean;
   private catalogReady = false;
   private frozenCatalogProfiles: readonly AgentProfile[] | undefined;
@@ -120,6 +122,7 @@ export class SubagentTool implements ISubagentTool {
     @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
   ) {
     this.callerAgentId = scopeContext.agentId;
+    this.callerAgent = scopeContext.agentContext;
     this.canRunInBackground = () =>
       this.toolPolicy.isToolActive('TaskList') &&
       this.toolPolicy.isToolActive('TaskOutput') &&
@@ -242,7 +245,7 @@ export class SubagentTool implements ISubagentTool {
   }
 
   private resumeProfileName(agentId: string): string | undefined {
-    const target = this.lifecycle.get(agentId);
+    const target = this.lifecycle.findAgentHandle(agentId);
     if (target === undefined) return undefined;
     return target.accessor.get(IAgentProfileService).data().profileName;
   }
@@ -253,7 +256,7 @@ export class SubagentTool implements ISubagentTool {
     controller: AbortController,
     runtime: Runtime,
   ): Promise<SubagentHandle> {
-    const requester = this.lifecycle.get(this.callerAgentId);
+    const requester = this.lifecycle.get(this.callerAgent);
     if (requester === undefined) {
       throw new Error2(
         ErrorCodes.AGENT_NOT_FOUND,
@@ -270,7 +273,7 @@ export class SubagentTool implements ISubagentTool {
     let displayModel: string | undefined;
     let promptText = args.prompt;
     if (isResume) {
-      const target = this.lifecycle.get(resumeAgentId);
+      const target = this.lifecycle.findAgentHandle(resumeAgentId);
       if (target === undefined) {
         throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent instance "${resumeAgentId}" does not exist`, {
           details: { agentId: resumeAgentId },
@@ -341,8 +344,19 @@ export class SubagentTool implements ISubagentTool {
       });
     }
 
+    const runInBackground = args.run_in_background === true;
+    emitAgentRunSpawned(requester, agentId, {
+      profileName,
+      parentToolCallId: toolCallId,
+      description: args.description,
+      runInBackground,
+      model: displayModel,
+    });
+
+    const target = this.lifecycle.findAgentHandle(agentId);
+    if (target === undefined) throw new Error(`Agent "${agentId}" does not exist`);
     const run = await this.subagents.run(
-      agentId,
+      target.accessor.get(IAgentScopeContext).agentContext,
       { kind: 'prompt', prompt: promptText },
       { signal: controller.signal },
     );
@@ -360,8 +374,7 @@ export class SubagentTool implements ISubagentTool {
       profileName,
       parentToolCallId: toolCallId,
       model: displayModel,
-      thinkingEffort: this.lifecycle
-        .get(agentId)
+      thinkingEffort: this.lifecycle.findAgentHandle(agentId)
         ?.accessor.get(IAgentProfileService)
         .getEffectiveThinkingLevel(),
       completion: mirrored.then((r) => ({ result: r.summary, usage: r.usage })),
@@ -474,7 +487,7 @@ export class SubagentTool implements ISubagentTool {
         };
       }
 
-      const requester = this.lifecycle.get(this.callerAgentId);
+      const requester = this.lifecycle.get(this.callerAgent);
       if (requester !== undefined) {
         emitAgentRunSpawned(requester, handle.agentId, {
           profileName: handle.profileName,

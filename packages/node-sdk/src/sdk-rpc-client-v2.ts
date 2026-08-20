@@ -175,6 +175,7 @@ import {
   drainSessionIndexMirror,
   ensureKimiHome,
   ensureMainAgent,
+  agentContextOf,
   IAgentActivityView,
   IAgentContextInjectorService,
   IAgentContextMemoryService,
@@ -191,7 +192,7 @@ import {
   IAgentSkillService,
   IAgentSwarmService,
   IAgentTaskService,
-  IAgentTokenCountingService,
+  ISessionTokenCountingService,
   IAgentToolPolicyService,
   IAgentToolRegistryService,
   IAgentTowerService,
@@ -1502,7 +1503,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       }
       const handle = await resumeSessionById(this.engineAccessor, sessionId);
       if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
-      const main = handle.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
+      const main = handle.accessor.get(IAgentLifecycleService).findAgentHandle(MAIN_AGENT_ID);
       await main?.accessor.get(IAgentPluginService).refreshSessionStart();
       this.wireSession(handle);
       return this.resumedSessionSummary(handle);
@@ -1523,7 +1524,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         await Promise.all(
           sessions.map(async (session) => {
             if (session.id === excludedSessionId) return;
-            const main = session.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
+            const main = session.accessor
+              .get(IAgentLifecycleService)
+              .findAgentHandle(MAIN_AGENT_ID);
             if (main === undefined) return;
             await main.accessor.get(IAgentPluginService).refreshSessionStart();
           }),
@@ -1661,7 +1664,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const session = this.requireLiveSession(sessionId);
     const agentId = this.interactiveAgentId;
     if (agentId === MAIN_AGENT_ID) return this.materializeMainAgent(session);
-    const agent = session.accessor.get(IAgentLifecycleService).get(agentId);
+    const agent = session.accessor.get(IAgentLifecycleService).findAgentHandle(agentId);
     if (agent === undefined) {
       throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agentId}" was not found`);
     }
@@ -1853,10 +1856,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async getTodos(input: SessionIdRpcInput): Promise<readonly SessionTodoItem[]> {
     const session = this.requireLiveSession(input.sessionId);
-    return session.accessor
+    const main = session.accessor.get(IAgentLifecycleService).findAgentHandle(MAIN_AGENT_ID);
+    if (main === undefined) return [];
+    const todos = await session.accessor
       .get(ISessionTodoService)
-      .getTodos()
-      .map((todo) => ({ title: todo.title, status: todo.status }));
+      .getTodos(agentContextOf(main));
+    return todos.map((todo) => ({ title: todo.title, status: todo.status }));
   }
 
   override async undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void> {
@@ -1899,7 +1904,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     }
     const message = buildImportContextMessage(input.content, input.source);
     const capability = agent.accessor.get(IAgentProfileService).data().modelCapabilities;
-    const currentTokenCount = agent.accessor.get(IAgentTokenCountingService).get().size;
+    const currentTokenCount = agent.accessor
+      .get(ISessionTokenCountingService)
+      .get(agentContextOf(agent)).size;
     assertImportFits(
       message,
       currentTokenCount,

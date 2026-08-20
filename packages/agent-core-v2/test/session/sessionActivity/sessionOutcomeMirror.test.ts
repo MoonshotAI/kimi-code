@@ -10,10 +10,11 @@ import {
   type Scope,
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
-import { Emitter } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import { AgentActivityUpdated } from '#/agent/activityView/activityView';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
@@ -21,9 +22,11 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
+  type AgentScopeCreatedEvent,
 } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionOutcomeMirror } from '#/session/sessionActivity/sessionOutcomeMirror';
 import { SessionOutcomeMirror } from '#/session/sessionActivity/sessionOutcomeMirrorService';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 class FakeBus {
   private readonly handlers = new Map<string, Array<(e: Event2) => void>>();
@@ -46,9 +49,11 @@ class FakeBus {
 class FakeAgentLifecycle implements IAgentLifecycleService {
   declare readonly _serviceBrand: undefined;
   readonly bus = new FakeBus();
-  private readonly createEmitter = new Emitter<IAgentScopeHandle>();
-  private readonly disposeEmitter = new Emitter<string>();
+  private readonly context: AgentContext = stubAgentContext(MAIN_AGENT_ID, 1);
+  private readonly createEmitter = new Emitter<AgentContext>();
+  private readonly disposeEmitter = new Emitter<AgentContext>();
   readonly onDidCreate = this.createEmitter.event;
+  readonly onDidCreateScope = Event.None as Event<AgentScopeCreatedEvent>;
   readonly onDidDispose = this.disposeEmitter.event;
   private mainPresent = false;
 
@@ -57,7 +62,11 @@ class FakeAgentLifecycle implements IAgentLifecycleService {
     accessor: { get: (token: unknown) => (token === IEventBus ? this.bus : undefined) },
   } as unknown as IAgentScopeHandle;
 
-  get(agentId: string): IAgentScopeHandle | undefined {
+  get(context: AgentContext): IAgentScopeHandle | undefined {
+    return context.agentId === MAIN_AGENT_ID && this.mainPresent ? this.mainHandle : undefined;
+  }
+
+  findAgentHandle(agentId: string): IAgentScopeHandle | undefined {
     return agentId === MAIN_AGENT_ID && this.mainPresent ? this.mainHandle : undefined;
   }
 
@@ -67,12 +76,12 @@ class FakeAgentLifecycle implements IAgentLifecycleService {
 
   addMain(): void {
     this.mainPresent = true;
-    this.createEmitter.fire(this.mainHandle);
+    this.createEmitter.fire(this.context);
   }
 
   removeMain(): void {
     this.mainPresent = false;
-    this.disposeEmitter.fire(MAIN_AGENT_ID);
+    this.disposeEmitter.fire(this.context);
   }
 
   create(): Promise<IAgentScopeHandle> {
@@ -138,12 +147,12 @@ describe('SessionOutcomeMirror (Session scope)', () => {
   });
 
   const started = (turnId = 1) =>
-    lifecycle.bus.publish(new TurnStarted({ turnId, origin: { kind: 'user' } }));
+    lifecycle.bus.publish(new TurnStarted({ agentId: 'main', turnId, origin: { kind: 'user' } }));
   const ended = (reason: TurnEnded['reason'], interruptReason?: TurnEnded['interruptReason'], turnId = 1) =>
-    lifecycle.bus.publish(new TurnEnded({ turnId, reason, interruptReason }));
+    lifecycle.bus.publish(new TurnEnded({ agentId: 'main', turnId, reason, interruptReason }));
   const activityBackfill = (turnId: number, reason: TurnEnded['reason']) =>
     lifecycle.bus.publish(
-      new AgentActivityUpdated({
+      new AgentActivityUpdated({ agentId: 'main',
         lifecycle: 'ready',
         background: [],
         lastTurn: { turnId, reason, at: 0 },
@@ -199,9 +208,9 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     second.accessor.get(ISessionOutcomeMirror);
     secondLifecycle.addMain();
     await tick();
-    secondLifecycle.bus.publish(new TurnEnded({ turnId: 1, reason: 'failed' }));
+    secondLifecycle.bus.publish(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'failed' }));
     expect(writes).toEqual(['failed']);
-    secondLifecycle.bus.publish(new TurnEnded({ turnId: 2, reason: 'completed' }));
+    secondLifecycle.bus.publish(new TurnEnded({ agentId: 'main', turnId: 2, reason: 'completed' }));
     expect(writes).toEqual(['failed', 'completed']);
   });
 

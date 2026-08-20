@@ -260,14 +260,41 @@ PTY 终端接口，仅 loopback 绑定时挂载。
 | `meta.updated_after` | 只看该时间（epoch 毫秒）之后更新过的会话 |
 | `meta.updated_before` | 只看该时间（epoch 毫秒）之前更新过的会话 |
 | `meta.archived` | `true` / `false`（默认）/ `all` |
+| `meta.has_prompt` | `true` 只保留有用户 prompt 的会话，`false` 只保留空会话（等价 `GET /api/v1/sessions` 的 `exclude_empty`） |
+| `view` | `flat`（默认）/ `by_workspace`，见下文 |
+| `group.page_size` | `view=by_workspace` 时每个工作区返回的会话数：1–100，默认 5（使用 `id,archived` 投影时上限 10000）；未开分组视图时传入返回 `40001` |
 | `sort` | `meta.updated_at_desc`（默认）/ `meta.updated_at_asc` / `meta.created_at_desc` |
 | `include` | 逗号分隔的附加字段组；目前支持 `git`（分支与 PR 信息，按目录去重并缓存 60 秒） |
 | `fields` | 逗号分隔的字段投影；目前仅支持 `id,archived`，每项裁剪为 `{ id, archived }`（用于全选匹配场景）。不可与 `include=git` 同传（`40001`） |
-| `page_size` | 1–100，默认 50；使用 `id,archived` 投影时上限放宽至 10000 |
+| `page_size` | 1–100，默认 50；使用 `id,archived` 投影时上限放宽至 10000。`view=by_workspace` 时按组计数 |
 | `page_token` | 上一页返回的翻页令牌 |
 | `page` | 无状态的 1 起始页码；与 `page_token` 互斥（同传返回 `40001`） |
 
 响应每项固定包含 `workspace`、`meta`、`activity` 三组，`include=git` 时附加 `git` 组；`fields=id,archived` 时仅返回 `{ id, archived }`。每页额外携带 `total`，即过滤后的集合大小。翻页令牌绑定首页查询条件（含投影），中途改条件返回 `40922`。`page` 模式是跳页用的无状态替代：每次请求都是独立快照，不签发令牌，`next_page_token` 恒为 `null`。
+
+`view=by_workspace` 时，同一份过滤、排序后的集合会重新投影为按工作区分组的形态，概览页因此可以用一次请求替代「每个工作区各一轮询」：
+
+```json
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "groups": [
+      {
+        "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" },
+        "sessions": [ { "id": "session_...", "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "meta": { "title": "修复登录页", "last_prompt": "调整按钮间距", "created_at": 1787000000000, "updated_at": 1787000100000, "archived": false, "archived_at": null }, "activity": { "status": "idle" } } ],
+        "total": 42
+      }
+    ],
+    "total": 7,
+    "has_more": true,
+    "next_page_token": "eyJ2IjoxLCJmIjoi..."
+  },
+  "request_id": "req_..."
+}
+```
+
+每组携带该工作区按请求 `sort` 排序的前 `group.page_size` 条会话，以及该工作区匹配过滤条件的会话总数 `total`（用作「查看全部」入口）。只有至少有一条匹配会话的工作区才会出现；组间按组内首条会话的 sort key 排序，相同则按工作区 id。`page` 与 `page_token` 按组翻页（外层 `total` 为组数），指纹绑定规则相同：令牌同时覆盖 `view` 与分组参数，翻页途中变更同样返回 `40922`。
 
 ### `POST /api/v2/sessions:archive` 与 `POST /api/v2/sessions:restore`
 
@@ -329,7 +356,7 @@ PTY 终端接口，仅 loopback 绑定时挂载。
 
 事件帧形状为 `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`，`type` 即事件类型。按投递范围分两类：
 
-- **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`。
+- **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.archived`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`。
 - **会话事件**：只发给订阅了该会话的连接，受 `agent_filter` 过滤。主要事件族：
 
 | 事件族 | 主要事件 |
@@ -341,6 +368,8 @@ PTY 终端接口，仅 loopback 绑定时挂载。
 | subagent | `subagent.spawned` / `started` / `suspended` / `completed` / `failed` |
 | 后台 | `task.started` / `terminated`、`shell.started` / `output` / `completed` |
 | 其他 | `compaction.*`、`skill.activated`、`goal.updated`、`prompt.*`、`error`、`warning` |
+
+有三个全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
 
 事件另分持久与易失两种：持久事件带严格递增的 `seq`，落盘并可回放；易失事件（各 `*.delta`、`tool.progress`、`shell.*` 等）标 `volatile: true`，不回放。消费易失文本流时用 `offset`（该轮次内的累计字符偏移）与本地已累积文本比对：小于本地长度说明是重复帧，大于说明有缺漏、需走快照恢复。
 

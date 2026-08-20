@@ -58,7 +58,9 @@ export async function setColdSessionArchived(
     }),
   );
   if (archived) {
-    accessor.get(IEventService).publish(new SessionArchived({ payload: { sessionId } }));
+    accessor
+      .get(IEventService)
+      .publish(new SessionArchived({ payload: { sessionId, workspaceId: summary.workspaceId } }));
   }
   return 'updated';
 }

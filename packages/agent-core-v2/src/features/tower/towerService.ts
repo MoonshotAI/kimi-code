@@ -125,13 +125,13 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (this.agentCtx.agentId !== 'main') return;
     if (!this.flags.enabled(TOWER_FLAG_ID)) return;
     if (this.isActive) return;
-    void this.dispatcher.dispatch(new TowerModeEnter({}));
+    void this.dispatcher.dispatch(new TowerModeEnter({ agentId: this.agentCtx.agentId }));
     for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
   }
 
   exit(): void {
     if (!this.agentState.get(towerKey)) return;
-    void this.dispatcher.dispatch(new TowerModeExit({}));
+    void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
   }
 
   get isActive(): boolean {
@@ -147,7 +147,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (!this.isActive) return;
     if (this.agentCtx.agentId !== 'main') return;
     for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
-    void this.dispatcher.dispatch(new AgentStatusUpdated({ towerMode: true }));
+    void this.dispatcher.dispatch(new AgentStatusUpdated({ agentId: this.agentCtx.agentId, towerMode: true }));
   }
 }
 

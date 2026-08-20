@@ -209,7 +209,9 @@ describe('AgentTowerService', () => {
     )) {
       records.push(record);
     }
-    expect(records).toEqual([{ type: 'tower_mode.enter', time: expect.any(Number) }]);
+    expect(records).toEqual([
+      { type: 'tower_mode.enter', agentId: 'test-agent', time: expect.any(Number) },
+    ]);
 
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
@@ -468,7 +470,12 @@ describe('AgentTowerService', () => {
 
     addedTools.length = 0;
     ix.get(IEventBus).publish(
-      new ProfileBind({ thinkingEffort: 'off', systemPrompt: 'sys', disallowedTools: [] }),
+      new ProfileBind({
+        agentId: 'main',
+        thinkingEffort: 'off',
+        systemPrompt: 'sys',
+        disallowedTools: [],
+      }),
     );
 
     expect(addedTools).toEqual([...TOWER_MODE_TOOLS]);

@@ -389,6 +389,46 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).toContain('pre</bash-stdout>post');
   });
 
+  it('collapses long replayed shell output to its first 10 rows', async () => {
+    const stdout = Array.from({ length: 30 }, (_, i) => `row-${String(i + 1).padStart(2, '0')}`).join(
+      '\n',
+    );
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [{ type: 'text', text: `<bash-stdout>${stdout}</bash-stdout><bash-stderr></bash-stderr>` }],
+        { origin: { kind: 'shell_command', phase: 'output' } },
+      ),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('... (20 more lines, ctrl+o to expand)');
+    expect(transcript).toContain('row-01');
+    expect(transcript).not.toContain('row-11');
+  });
+
+  it('replayed shell output inherits an already-on ctrl+o expand state', async () => {
+    const stdout = Array.from({ length: 30 }, (_, i) => `row-${String(i + 1).padStart(2, '0')}`).join(
+      '\n',
+    );
+    const initial = makeSession([]);
+    const resumed = makeSession([
+      message(
+        'user',
+        [{ type: 'text', text: `<bash-stdout>${stdout}</bash-stdout><bash-stderr></bash-stderr>` }],
+        { origin: { kind: 'shell_command', phase: 'output' } },
+      ),
+    ]);
+    const driver = await makeDriver(initial);
+    driver.state.toolOutputExpanded = true;
+    await driver.switchToSession(resumed, 'Resumed session (ses-replay).');
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('row-01');
+    expect(transcript).toContain('row-30');
+    expect(transcript).not.toContain('more lines');
+  });
+
   it('does not render neutral goal completion context reminders as transcript messages', async () => {
     const driver = await replayIntoDriver([
       message(
