@@ -21,7 +21,11 @@ import {
   WorkspaceTrustService,
   workspaceTrustTrustedKey,
 } from '#/workspace/workspaceTrust/workspaceTrustService';
-import { readWorkspaceTrust } from '#/workspace/workspaceTrust/trustRecord';
+import {
+  deleteWorkspaceTrust,
+  readWorkspaceTrust,
+  writeWorkspaceTrust,
+} from '#/workspace/workspaceTrust/trustRecord';
 
 import { registerStateServices } from '../../state/stubs';
 
@@ -123,6 +127,19 @@ describe('WorkspaceTrustService', () => {
     await expect(
       docs.get('workspace-trust', encodeWorkDirKey('c:/users/foo/repo')),
     ).resolves.toEqual(record);
+  });
+
+  it('deletes both canonical and legacy trust markers', async () => {
+    const docs = new JsonAtomicDocumentStore(new FileStorageService(homeDir));
+    const root = 'C:\\Users\\Foo\\Repo';
+    const legacyKey = encodeWorkDirKey(root);
+    await docs.set('workspace-trust', legacyKey, { root, trustedAt: 1 });
+    await writeWorkspaceTrust(docs, root, 2);
+
+    await deleteWorkspaceTrust(docs, root);
+
+    await expect(docs.get('workspace-trust', legacyKey)).resolves.toBeUndefined();
+    await expect(readWorkspaceTrust(docs, root)).resolves.toBe(false);
   });
 
   it('tracks different roots independently', async () => {

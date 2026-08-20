@@ -547,7 +547,7 @@ describe('McpOAuthService interactive flow serialization', () => {
     expect((await fixture.service.tokenState(SERVER_NAME, SERVER_URL)).hasTokens).toBe(true);
   }, 15000);
 
-  it('skips a refresh whose token read straddles the start of an interactive flow', async () => {
+  it('serializes an interactive flow behind a refresh whose token read is in flight', async () => {
     const memory = createMemoryMcpOAuthStore();
     let releaseTokensRead: () => void = () => undefined;
     const tokensReadGate = new Promise<void>((resolve) => {
@@ -587,18 +587,47 @@ describe('McpOAuthService interactive flow serialization', () => {
     const refresh = fixture.service.refresh(SERVER_NAME, SERVER_URL);
     await tokensReadHeld;
 
-    const flow = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
-    const complete = flow.complete({ timeoutMs: 10_000 });
-    expect(authServer.counts.refresh).toBe(1);
+    let began = false;
+    const begin = fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL).then((flow) => {
+      began = true;
+      return flow;
+    });
+    await Promise.resolve();
+    expect(began).toBe(false);
 
     releaseTokensRead();
-    await expect(refresh).resolves.toBeUndefined();
+    await expect(refresh).rejects.toThrow(/requires an interactive login/);
     expect(authServer.counts.refresh).toBe(1);
 
+    const flow = await begin;
+    const complete = flow.complete({ timeoutMs: 10_000 });
     await deliverCallback(flow);
     await complete;
     expect(authServer.counts.exchange).toBe(1);
     expect((await fixture.service.tokenState(SERVER_NAME, SERVER_URL)).hasTokens).toBe(true);
+  }, 15000);
+
+  it('waits for an in-flight refresh before starting an interactive flow', async () => {
+    const { fixture, authServer, writeStarted, releaseWrite } = await blockedRefreshFixture();
+    cleanups.push(() => {
+      releaseWrite();
+    });
+    const provider = await readyProvider(fixture);
+    const resetFlow = vi.spyOn(provider, 'resetFlow');
+
+    const refresh = fixture.service.refresh(SERVER_NAME, SERVER_URL);
+    await writeStarted;
+    const resetCountDuringRefresh = resetFlow.mock.calls.length;
+
+    const begin = fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    await Promise.resolve();
+    expect(resetFlow).toHaveBeenCalledTimes(resetCountDuringRefresh);
+
+    releaseWrite();
+    await refresh;
+    await expect(begin).rejects.toBeInstanceOf(AlreadyAuthorizedError);
+    expect(resetFlow.mock.calls.length).toBeGreaterThan(resetCountDuringRefresh);
+    expect(authServer.counts.exchange).toBe(0);
   }, 15000);
 
   it('lets only the initiating handle cancel the shared flow', async () => {

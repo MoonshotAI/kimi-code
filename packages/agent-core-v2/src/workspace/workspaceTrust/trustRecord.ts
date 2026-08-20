@@ -44,7 +44,12 @@ export function deleteWorkspaceTrust(
   docs: IAtomicDocumentStore,
   root: string,
 ): Promise<void> {
-  return docs.delete(TRUST_SCOPE, trustKey(root));
+  const canonicalKey = trustKey(root);
+  const legacyKey = encodeWorkDirKey(root);
+  return (async () => {
+    await docs.delete(TRUST_SCOPE, canonicalKey);
+    if (legacyKey !== canonicalKey) await docs.delete(TRUST_SCOPE, legacyKey);
+  })();
 }
 
 function trustKey(root: string): string {

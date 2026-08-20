@@ -302,6 +302,10 @@ export class McpOAuthService {
       throw new Error2(ErrorCodes.MCP_OAUTH_FAILED, 'MCP OAuth service is shutting down');
     }
     const storeKey = mcpOAuthStoreKey(serverName, serverUrl);
+    await this.refreshes.get(storeKey)?.catch(() => undefined);
+    if (this.shuttingDown) {
+      throw new Error2(ErrorCodes.MCP_OAUTH_FAILED, 'MCP OAuth service is shutting down');
+    }
     const inFlight = this.activeAuthorizations.get(storeKey);
     if (inFlight !== undefined) {
       const flow = await inFlight;
