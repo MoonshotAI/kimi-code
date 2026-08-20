@@ -41,6 +41,7 @@ const apiMock = {
   getFsHome: vi.fn(),
   getHealth: vi.fn(),
   getMeta: vi.fn(),
+  getSession: vi.fn(),
   listSessions: vi.fn(),
   listWorkspaces: vi.fn(),
   searchFiles: vi.fn(),
@@ -205,7 +206,7 @@ function createState(): ExtendedState {
 function createDeps(): UseWorkspaceStateDeps {
   return {
     taskPoller: {},
-    sideChat: {},
+    sideChat: { clearSideChatForSession: vi.fn() },
     modelProvider: { resolveThinkingForPrompt: async () => undefined },
     pushOperationFailure: vi.fn(),
     activity: computed(() => 'running'),
@@ -1896,6 +1897,7 @@ describe('useWorkspaceState — session list loading', () => {
     apiMock.listWorkspaces.mockReset().mockResolvedValue([]);
     apiMock.getFsHome.mockReset().mockResolvedValue({ home: '', recentRoots: [] });
     apiMock.listSessions.mockReset();
+    apiMock.getSession.mockReset();
   });
 
   function createSessionLoadRig(sessions: AppSession[]) {
@@ -2167,6 +2169,140 @@ describe('useWorkspaceState — session list loading', () => {
 
     expect(state.sessions.map((session) => session.id)).toEqual(['sess_1', 'sess_older']);
     expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+  });
+
+  it('does not resurrect a session archived remotely while the load was in flight', async () => {
+    const live = { ...createSession(), id: 'sess_live', busy: false };
+    const archived = { ...createSession(), id: 'sess_arch', busy: false };
+    const { state, workspaceState } = createSessionLoadRig([live]);
+    // No registered workspaces → the initial load walks the global v1 list.
+    // Hold its response so the remote archive lands mid-flight.
+    let resolveList: ((page: { items: AppSession[]; hasMore: boolean }) => void) | undefined;
+    apiMock.listSessions.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveList = resolve;
+        }),
+    );
+
+    const pending = workspaceState.load();
+    // Wait until the global walk's request is actually in flight, then land
+    // the remote archive: the row was never in the pool (nothing to remove
+    // right now) — the tombstone is the only thing standing between it and
+    // resurrection on commit.
+    await vi.waitFor(() => expect(apiMock.listSessions).toHaveBeenCalled());
+    await workspaceState.applyRemoteSessionArchived('sess_arch');
+    resolveList!({ items: [archived, live], hasMore: false });
+    await pending;
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_live']);
+  });
+
+  it('auto-selects from the committed pool, not the unfiltered load result', async () => {
+    // The archived row is the NEWEST item of the stale page — an unfiltered
+    // array would put it first and make it the auto-select target.
+    const archived = {
+      ...createSession(),
+      id: 'sess_arch',
+      busy: false,
+      updatedAt: '2026-06-01T00:00:00.000Z',
+    };
+    const live = {
+      ...createSession(),
+      id: 'sess_live',
+      busy: false,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const { state, deps, workspaceState } = createSessionLoadRig([live]);
+    state.activeSessionId = null;
+    let resolveList: ((page: { items: AppSession[]; hasMore: boolean }) => void) | undefined;
+    apiMock.listSessions.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveList = resolve;
+        }),
+    );
+
+    const pending = workspaceState.load();
+    await vi.waitFor(() => expect(apiMock.listSessions).toHaveBeenCalled());
+    await workspaceState.applyRemoteSessionArchived('sess_arch');
+    resolveList!({ items: [archived, live], hasMore: false });
+    await pending;
+
+    // The committed pool excludes sess_arch, so the auto-select picks
+    // sess_live directly (no by-id fetch of the archived row).
+    expect(apiMock.getSession).not.toHaveBeenCalledWith('sess_arch');
+    expect(deps.setActiveSessionId).toHaveBeenCalledWith('sess_live');
+    expect(deps.setActiveSessionId).not.toHaveBeenCalledWith('sess_arch');
+  });
+
+  it('preserves a concurrently backfilled row when the stale first page commits', async () => {
+    const rows = [1, 2, 3, 4, 5].map((i) => ({
+      ...createSession(),
+      id: `s${i}`,
+      workspaceId: 'wd_1',
+      busy: false,
+      updatedAt: new Date(Date.parse('2026-01-05T00:00:00.000Z') - i * 1000).toISOString(),
+    }));
+    const backfilled = {
+      ...createSession(),
+      id: 's6',
+      workspaceId: 'wd_1',
+      busy: false,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    apiMock.listWorkspaces.mockResolvedValue([workspace('wd_1', '/workspace', 'Workspace')]);
+    const state = createState();
+    state.sessions = [...rows];
+    state.activeSessionId = rows[0]!.id;
+    const deps = {
+      ...createDeps(),
+      modelProvider: { loadModels: vi.fn().mockResolvedValue(undefined) },
+      initialized: ref(false),
+      connectIssue: ref<string | null>(null),
+      setSessions: (next: AppSession[]) => {
+        state.sessions = next;
+      },
+      // The archive reconciliation removes rows through this dep — it must
+      // actually apply, or the backfill sees nothing to restore.
+      forgetSession: (id: string) => {
+        state.sessions = state.sessions.filter((s) => s.id !== id);
+      },
+      workspaceIdForSession: vi.fn(
+        (session: { workspaceId?: string; cwd: string }) =>
+          state.workspaces.find((item) => item.root === session.cwd)?.id ??
+          session.workspaceId ??
+          session.cwd,
+      ),
+    } as unknown as UseWorkspaceStateDeps;
+    const workspaceState = useWorkspaceState(state, deps);
+    state.sessionsHasMoreByWorkspace = { wd_1: true };
+    state.sessionsCursorByWorkspace = { wd_1: 's5' };
+    state.sessionsInitialCountByWorkspace = { wd_1: 5 };
+    // First call: the load's per-workspace page (held). Later calls: the
+    // archive backfill's page.
+    let resolveFirst: ((page: { items: AppSession[]; hasMore: boolean }) => void) | undefined;
+    apiMock.listSessions
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockResolvedValue({ items: [backfilled], hasMore: false });
+
+    const pending = workspaceState.load();
+    await vi.waitFor(() => expect(apiMock.listSessions).toHaveBeenCalled());
+    // The remote archive lands mid-load: s2 is removed and the backfill
+    // inserts s6 — then the STALE first page (s2 included, s6 absent) commits.
+    await workspaceState.applyRemoteSessionArchived('s2', 'wd_1');
+    await vi.waitFor(() => expect(apiMock.listSessions).toHaveBeenCalledTimes(2));
+    resolveFirst!({ items: rows, hasMore: false });
+    await pending;
+
+    // s2 stays filtered (tombstone); the concurrently backfilled s6 survives
+    // the wholesale commit instead of being overwritten away.
+    expect(state.sessions.map((s) => s.id)).toEqual(['s1', 's3', 's4', 's5', 's6']);
   });
 });
 

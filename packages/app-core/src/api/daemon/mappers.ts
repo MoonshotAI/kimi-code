@@ -598,6 +598,25 @@ export function toAppEvent(wire: WireEvent): AppEvent {
     case 'event.session.deleted':
       return { type: 'sessionDeleted', sessionId: w.session_id };
 
+    // Global frame (live + cold archive): the envelope session_id is the
+    // '__global__' watermark, the real session id rides in the payload.
+    // Malformed frames (no usable id) degrade to a silent no-op, not a warning.
+    case 'event.session.archived': {
+      const archivedId: unknown = w.payload?.sessionId ?? w.payload?.session_id;
+      if (typeof archivedId !== 'string' || archivedId.length === 0) {
+        return { type: 'unknown', raw: { _noop: true, _wireType: w.type } };
+      }
+      const archivedWorkspaceId: unknown = w.payload?.workspace_id;
+      return {
+        type: 'sessionArchived',
+        sessionId: archivedId,
+        workspaceId:
+          typeof archivedWorkspaceId === 'string' && archivedWorkspaceId.length > 0
+            ? archivedWorkspaceId
+            : undefined,
+      };
+    }
+
     // ----- Workspace lifecycle -----
     case 'event.workspace.created':
       return { type: 'workspaceCreated', workspace: toAppWorkspace(w.payload.workspace) };

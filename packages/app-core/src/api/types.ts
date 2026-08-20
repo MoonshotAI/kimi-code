@@ -663,6 +663,7 @@ export type AppEvent =
   | { type: 'workspaceDeleted'; workspaceId: string; root: string }
   | { type: 'sessionUpdated'; session: AppSession; changedFields: string[] }
   | { type: 'sessionDeleted'; sessionId: string }
+  | { type: 'sessionArchived'; sessionId: string; workspaceId?: string }
   | {
       type: 'sessionWorkChanged';
       sessionId: string;

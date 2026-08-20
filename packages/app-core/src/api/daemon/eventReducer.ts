@@ -1177,6 +1177,11 @@ export function reduceAppEvent(
     case 'workspaceDeleted':
       break;
 
+    // Same: remote-archive reconciliation (done-list fold, teardown, backfill)
+    // lives in the composable, which intercepts the event upstream.
+    case 'sessionArchived':
+      break;
+
     // Plugin/capability shelf state is not in the client store — consumers
     // (the desktop settings shelf) handle these upstream of the reducer.
     case 'pluginsChanged':

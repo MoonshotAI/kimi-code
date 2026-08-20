@@ -891,6 +891,13 @@ interface WireEventBase<T extends string, P> {
 type WireEventSessionCreated = WireEventBase<'event.session.created', { session: WireSession }>;
 type WireEventSessionUpdated = WireEventBase<'event.session.updated', { session: WireSession; changed_fields: string[] }>;
 type WireEventSessionDeleted = WireEventBase<'event.session.deleted', { session_id: string }>;
+// 全局帧：envelope 的 session_id 是 '__global__' 水位标记，真实 session id 在
+// payload（服务端发的是 camelCase sessionId，snake_case 作兜底容忍）。
+type WireEventSessionArchived = WireEventBase<'event.session.archived', {
+  workspace_id: string;
+  sessionId?: string;
+  session_id?: string;
+}>;
 type WireEventSessionWorkChanged = WireEventBase<'event.session.work_changed', {
   busy: boolean;
   main_turn_active?: boolean;
@@ -1062,6 +1069,7 @@ export type WireEvent =
   | WireEventSessionCreated
   | WireEventSessionUpdated
   | WireEventSessionDeleted
+  | WireEventSessionArchived
   | WireEventSessionWorkChanged
   | WireEventSessionStatusChanged
   | WireEventSessionUsageUpdated

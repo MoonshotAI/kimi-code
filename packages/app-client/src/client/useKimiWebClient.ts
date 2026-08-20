@@ -1461,6 +1461,20 @@ export function connectEventsIfNeeded(): void {
 
   eventConn = api.connectEvents({
     onEvent(appEvent, meta) {
+      // A remote archive (another client, or the server's cold archive path)
+      // is reconciled exactly like a local one — handled upstream of the
+      // reducer like the workspace lifecycle events.
+      if (appEvent.type === 'sessionArchived') {
+        void workspaceState
+          .applyRemoteSessionArchived(appEvent.sessionId, appEvent.workspaceId)
+          .then((genuine) => {
+            if (!genuine) return;
+            // Terminal teardown mirrors the sessionUpdated-archived path;
+            // idempotent, so the echo of our own archive is safe too.
+            notifySessionDestroyed(appEvent.sessionId);
+          });
+        return;
+      }
       // Workspace lifecycle events are global (not session-scoped) and update
       // rawState.workspaces directly — they bypass the reducer, which has no
       // workspace state.

@@ -661,6 +661,15 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     return { sessions: items, error: continuationError };
   }
 
+  /** Ids inserted into the pool by concurrent writers (archive backfills,
+   *  deep-link fetches, flat/loadMore pages, restores) while a full-list
+   *  request is in flight. A wholesale commit replaces the pool with a stale
+   *  baseline taken BEFORE those inserts — without this set the commit would
+   *  silently drop them (e.g. a just-backfilled row after a remote archive).
+   *  Cleared at the start of each full load; inserts outside a load cycle
+   *  never reach a commit. */
+  const poolInsertsDuringLoad = new Set<string>();
+
   /**
    * Replace the sessions list wholesale, preserving the live usage accumulated
    * from /status and the WS status stream: the list endpoint returns all-zero
@@ -670,9 +679,30 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    * v1 list frames never carry it.
    */
   function setSessionsPreservingLiveUsage(sessions: AppSession[]): void {
+    // Filter remote-archive tombstones: a load started BEFORE the archive
+    // event commits its (stale) pages now and must not resurrect the row.
+    const filtered =
+      archivedTombstoneIds.size === 0
+        ? sessions
+        : sessions.filter((s) => !archivedTombstoneIds.has(s.id));
+    // Preserve rows inserted while the request was in flight (the incoming
+    // baseline predates them) — tombstoned ones stay excluded, of course.
+    const filteredIds = new Set(filtered.map((s) => s.id));
+    const concurrent = rawState.sessions.filter(
+      (s) =>
+        poolInsertsDuringLoad.has(s.id) &&
+        !filteredIds.has(s.id) &&
+        !archivedTombstoneIds.has(s.id),
+    );
+    const merged =
+      concurrent.length === 0
+        ? filtered
+        : [...filtered, ...concurrent].sort(
+            (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+          );
     const liveById = new Map(rawState.sessions.map((s) => [s.id, s] as const));
     setSessions(
-      sessions.map((s) => {
+      merged.map((s) => {
         const live = liveById.get(s.id);
         if (live === undefined) return s;
         const keepUsage =
@@ -908,15 +938,21 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // The cursor kept moving — give up rather than commit a stale page.
       if (page === undefined) return;
       // Append de-duped against the latest list so a concurrently added/removed
-      // session is respected.
+      // session is respected. Remote-archive tombstones are honored too: the
+      // page may have been fetched before the archive event landed.
       const existing = new Set(rawState.sessions.map((s) => s.id));
-      const fresh = page.items.filter((s) => !existing.has(s.id));
+      const fresh = page.items.filter(
+        (s) => !existing.has(s.id) && !archivedTombstoneIds.has(s.id),
+      );
+      for (const s of fresh) poolInsertsDuringLoad.add(s.id);
       if (fresh.length > 0) setSessions([...rawState.sessions, ...fresh]);
-      // Advance the cursor to the end of the page we just fetched.
+      // Advance the cursor to the end of the page we just fetched — skipping
+      // tombstoned rows: an archived id as before_id can dead-end the next
+      // page (the archive backfill path re-anchors cursors for the same reason).
+      const pageTail = page.items.filter((s) => !archivedTombstoneIds.has(s.id)).at(-1);
       rawState.sessionsCursorByWorkspace = {
         ...rawState.sessionsCursorByWorkspace,
-        [workspaceId]:
-          page.items.length > 0 ? page.items[page.items.length - 1]!.id : beforeId,
+        [workspaceId]: pageTail?.id ?? beforeId,
       };
       // Trust the server's hasMore. Deriving it from the workspace session_count
       // is unsafe: archive/delete only removes the local session and leaves the
@@ -976,9 +1012,17 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    *  by extending the frontier over them. */
   function upsertFlatSessionsPage(page: V2SessionsPage, opts?: { resetFrontier?: boolean }): number {
     const existing = new Set(rawState.sessions.map((s) => s.id));
+    // Remote-archive tombstones apply here as everywhere a page commits: the
+    // page may have been fetched before the archive event landed.
     const fresh = page.items
-      .filter((s) => !existing.has(s.id) && (s.meta.last_prompt ?? '').length > 0)
+      .filter(
+        (s) =>
+          !existing.has(s.id) &&
+          !archivedTombstoneIds.has(s.id) &&
+          (s.meta.last_prompt ?? '').length > 0,
+      )
       .map(toAppSessionFromV2);
+    for (const s of fresh) poolInsertsDuringLoad.add(s.id);
     if (fresh.length > 0) setSessions([...rawState.sessions, ...fresh]);
     for (const item of page.items) {
       if (existing.has(item.id) && item.git !== undefined) {
@@ -999,6 +1043,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     return page.items.filter(
       (s) =>
         (s.meta.last_prompt ?? '').length > 0 &&
+        !archivedTombstoneIds.has(s.id) &&
         visibleWorkspaceIds.has(
           workspaceIdForSession({ workspaceId: s.workspace.id, cwd: s.workspace.cwd ?? '' }),
         ),
@@ -1083,14 +1128,24 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       archived: true,
     });
     const seen = new Set<string>();
-    rawState.doneSessions = page.items
+    const fresh = page.items
       .filter((s) => (s.meta.last_prompt ?? '').length > 0)
+      // A page fetched before a restore must not re-list the restored row as
+      // archived.
+      .filter((s) => !restoredRecentlyIds.has(s.id))
       .filter((s) => {
         if (seen.has(s.id)) return false;
         seen.add(s.id);
         return true;
       })
       .map(toAppSessionFromV2);
+    // The fetch may predate archive events that folded local copies into the
+    // done list meanwhile — a wholesale replace would drop them. Keep any
+    // tombstoned fold the fresh page lacks.
+    const preserved = rawState.doneSessions.filter(
+      (s) => archivedTombstoneIds.has(s.id) && !seen.has(s.id),
+    );
+    rawState.doneSessions = [...preserved, ...fresh];
     rawState.doneSessionsNextPageToken = page.nextPageToken;
     rawState.doneSessionsHasMore = page.hasMore;
   }
@@ -1145,7 +1200,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         }
         const existing = new Set(rawState.doneSessions.map((s) => s.id));
         const fresh = page.items
-          .filter((s) => !existing.has(s.id) && (s.meta.last_prompt ?? '').length > 0)
+          .filter(
+            (s) =>
+              !existing.has(s.id) &&
+              !restoredRecentlyIds.has(s.id) &&
+              (s.meta.last_prompt ?? '').length > 0,
+          )
           .map(toAppSessionFromV2);
         if (fresh.length > 0) rawState.doneSessions = [...rawState.doneSessions, ...fresh];
         rawState.doneSessionsNextPageToken = page.nextPageToken;
@@ -1205,7 +1265,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
             excludeEmpty: true,
           });
           const existing = new Set(rawState.sessions.map((s) => s.id));
-          const fresh = page.items.filter((s) => !existing.has(s.id));
+          const fresh = page.items.filter(
+            (s) => !existing.has(s.id) && !archivedTombstoneIds.has(s.id),
+          );
+          for (const s of fresh) poolInsertsDuringLoad.add(s.id);
           if (fresh.length > 0) {
             // A first page can hold newer rows than loadMore appends — restore
             // the global newest-first order sessions[0] readers rely on.
@@ -1289,6 +1352,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     let traceStatus = 'accepted';
     traceKeyEvent('app:load:start');
     rawState.loading = true;
+    // A new full-load cycle starts: concurrent inserts from the previous one
+    // were either committed or are stale by definition.
+    poolInsertsDuringLoad.clear();
     // The very first load gates on /auth before anything else: a transient
     // failure there (daemon still booting, network blip, 5xx) must NOT be read
     // as "not signed in" — that bounced users to /login until a manual refresh.
@@ -1321,8 +1387,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // hiding already-fetched rows.
       await loadWorkspaces();
       const loadedSessions = await loadInitialSessionsByWorkspace();
-      const sessions = loadedSessions ?? rawState.sessions;
       if (loadedSessions !== undefined) setSessionsPreservingLiveUsage(loadedSessions);
+      // Selection below must read the COMMITTED pool — the local array can
+      // still hold rows the commit filtered out (archive tombstones).
+      const sessions = rawState.sessions;
 
       // A reload swaps the pool for per-workspace v1 first pages — the flat
       // walk's seed/cursor/frontier described v2 pages whose rows are gone
@@ -1933,9 +2001,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   async function fetchSessionIntoList(sessionId: string): Promise<boolean> {
     try {
       const session = await getKimiWebApi().getSession(sessionId);
+      // An active snapshot for a tombstoned id is stale — it was read before
+      // the archive event landed. An archived row is the truthful state and
+      // may still be shown (deep link to an archived session).
+      if (!session.archived && archivedTombstoneIds.has(sessionId)) return false;
       if (!rawState.sessions.some((s) => s.id === session.id)) {
         // Append, not prepend: the list is recency-ordered and a deep-linked old
         // session shouldn't displace the most-recent ones at the top.
+        poolInsertsDuringLoad.add(session.id);
         appendSession(session);
       }
       return true;
@@ -1952,6 +2025,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       const session = await getKimiWebApi().getSession(sessionId);
       if (session.archived) return 'stale';
+      // Same staleness guard as fetchSessionIntoList: an active snapshot read
+      // before the archive event must not resurrect the row.
+      if (archivedTombstoneIds.has(sessionId)) return 'stale';
       if (!rawState.sessions.some((s) => s.id === session.id)) appendSession(session);
       return 'ok';
     } catch (err) {
@@ -3145,6 +3221,68 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
+  /** Tombstones for recently archived sessions. An archive removes the pool
+   *  row immediately, but list writes already in flight (full loads, flat or
+   *  per-workspace pages, backfills, by-id fetches) hold pre-archive snapshots
+   *  and would resurrect the row on commit — every such commit filters these
+   *  ids. Entries live until an explicit restore lifts them; the set is
+   *  FIFO-capped, which is safe because the stale-write window it guards is
+   *  seconds. */
+  const ARCHIVE_TOMBSTONE_CAP = 500;
+  const archivedTombstoneIds = new Set<string>();
+  function addArchiveTombstone(id: string): void {
+    if (archivedTombstoneIds.has(id)) return;
+    if (archivedTombstoneIds.size >= ARCHIVE_TOMBSTONE_CAP) {
+      const oldest = archivedTombstoneIds.values().next().value;
+      if (oldest !== undefined) archivedTombstoneIds.delete(oldest);
+    }
+    archivedTombstoneIds.add(id);
+  }
+
+  /** Ids restored recently (local or batch). Done-list pages fetched before a
+   *  restore can commit afterwards and re-add the row as archived — those
+   *  commits filter these ids. Same cap discipline as the archive tombstones. */
+  const restoredRecentlyIds = new Set<string>();
+  function addRestoredRecently(id: string): void {
+    if (restoredRecentlyIds.has(id)) return;
+    if (restoredRecentlyIds.size >= ARCHIVE_TOMBSTONE_CAP) {
+      const oldest = restoredRecentlyIds.values().next().value;
+      if (oldest !== undefined) restoredRecentlyIds.delete(oldest);
+    }
+    restoredRecentlyIds.add(id);
+  }
+
+  /** Successful restores per session (local clock ms; insertion-ordered and
+   *  size-capped like the archive tombstones). An archive frame for one of
+   *  these ids is ambiguous — the stale echo of the pre-restore archive and
+   *  a genuine new archive look identical, and cross-host clocks cannot order
+   *  them — so the frame is VERIFIED against the server's archived state.
+   *  Entries are lifted by a genuine archive or by cap eviction; there is NO
+   *  time expiry — a laptop sleeping for hours must not re-arm a stale echo. */
+  const restoredAtBySession = new Map<string, number>();
+  function markRestoredRecently(sessionId: string): void {
+    if (restoredAtBySession.has(sessionId)) restoredAtBySession.delete(sessionId);
+    if (restoredAtBySession.size >= ARCHIVE_TOMBSTONE_CAP) {
+      const oldest = restoredAtBySession.keys().next().value;
+      if (oldest !== undefined) restoredAtBySession.delete(oldest);
+    }
+    restoredAtBySession.set(sessionId, Date.now());
+  }
+
+  /** Local archive POSTs currently in flight. An archive EVENT confirms only
+   *  these ids (archiveConfirmedIds below) — recording every broadcast frame
+   *  (other clients' batch archives, never-loaded sessions) would grow the
+   *  confirmation set without bound, since most ids never see a local POST. */
+  const archiveInFlightIds = new Set<string>();
+
+  /** Server-confirmed archives for in-flight local POSTs (the event arrived).
+   *  The local archive failure path consumes these: a POST that rejects after
+   *  the server committed (response lost) is a success, not a failure — but
+   *  ONLY when the event confirmed it, never inferred from pool membership
+   *  (other list writes can drop the row for unrelated reasons). Bounded by
+   *  the in-flight set above. */
+  const archiveConfirmedIds = new Set<string>();
+
   /** Local archive/restore reconciliation shared by the single-session paths
    *  (archiveSession / restoreSession) and the session admin page's BATCH
    *  endpoints. Purely local: folds ids out of the pool into the done list
@@ -3156,6 +3294,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   async function applySessionsArchivedLocally(ids: string[], archived: boolean): Promise<void> {
     const idSet = new Set(ids);
     if (archived) {
+      // Tombstone the local archives too: a list write already in flight holds
+      // a pre-archive snapshot and would resurrect the row on commit.
+      for (const id of ids) addArchiveTombstone(id);
       const archivedAt = new Date().toISOString();
       // Feed the status view's 已完成 tab: the pool forgets archived rows, so
       // the done list keeps its own copy. archivedAt is stamped locally; the
@@ -3192,10 +3333,18 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // Restore: drop from the done list; fold its done-list copy back into the
     // pool only when the pool doesn't already know the row (a single restore
     // upserts the daemon-returned row first, so this is a batch-only path).
+    // The archive tombstone is lifted too — otherwise the next full-list
+    // commit would filter the just-restored session back out.
+    for (const id of ids) {
+      archivedTombstoneIds.delete(id);
+      addRestoredRecently(id);
+      markRestoredRecently(id);
+    }
     const copies = rawState.doneSessions.filter((s) => idSet.has(s.id));
     rawState.doneSessions = rawState.doneSessions.filter((s) => !idSet.has(s.id));
     for (const copy of copies) {
       if (!rawState.sessions.some((s) => s.id === copy.id)) {
+        poolInsertsDuringLoad.add(copy.id);
         upsertSessionSorted({ ...copy, archived: false });
       }
     }
@@ -3205,6 +3354,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   async function archiveSession(id: string): Promise<void> {
     try {
       const api = getKimiWebApi();
+      // Drop any stale confirmation from an earlier archive of the same id —
+      // only an event arriving after THIS request may vouch for it.
+      archiveConfirmedIds.delete(id);
+      archiveInFlightIds.add(id);
       // Capture the backfill inputs BEFORE the POST: afterwards the row may
       // already be gone (WS-driven removal mid-flight).
       const archived = rawState.sessions.find((s) => s.id === id);
@@ -3218,9 +3371,67 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         // Fire-and-forget: the undo toast must not wait for the fetch.
         void backfillWorkspaceSessions(workspaceId, id, archived.updatedAt, backfillTarget);
       }
+      archiveInFlightIds.delete(id);
+      archiveConfirmedIds.delete(id);
     } catch (err) {
-      pushOperationFailure('archiveSession', err, { sessionId: id });
+      archiveInFlightIds.delete(id);
+      // A POST that rejects after the server committed (response lost on the
+      // wire) is a success, not a failure — but only the archive EVENT proves
+      // the commit. Without it the error is real and must be surfaced.
+      if (!archiveConfirmedIds.delete(id)) {
+        pushOperationFailure('archiveSession', err, { sessionId: id });
+      }
     }
+  }
+
+  /** Remote archive reconciliation (`event.session.archived`): another client
+   *  (or the cold archive path) archived a session. Mirrors the local archive
+   *  exactly — same local reconciliation, same workspace backfill — so the UI
+   *  outcome does not depend on where the archive was initiated. Returns true
+   *  when the frame is genuine (the caller tears down terminals then); false
+   *  only when verification proves it a stale pre-restore echo. Idempotent:
+   *  the echo of our own archive, a duplicate frame, or a session we never
+   *  loaded is a no-op (the pool row is already gone). */
+  async function applyRemoteSessionArchived(
+    sessionId: string,
+    workspaceId?: string,
+  ): Promise<boolean> {
+    if (restoredAtBySession.has(sessionId)) {
+      // A restore happened recently: this frame may be the stale echo of the
+      // pre-restore archive or a genuine new one — indistinguishable without
+      // ordered clocks. Ask the server instead of guessing.
+      let archivedOnServer: boolean;
+      try {
+        archivedOnServer = (await getKimiWebApi().getSession(sessionId)).archived;
+      } catch {
+        // Unverifiable — do not tear down the restored state on a maybe-stale
+        // echo; the next event or refresh reconciles.
+        return false;
+      }
+      if (!archivedOnServer) return false;
+    }
+    // The event is the server's archive confirmation for an in-flight local
+    // archive POST of the same id (its catch consumes this). Recorded only
+    // NOW: a stale echo that failed verification above must never vouch for
+    // the new request it happened to race.
+    if (archiveInFlightIds.delete(sessionId)) archiveConfirmedIds.add(sessionId);
+    // A genuine archive lifts the restore markers: the server now lists the
+    // session as archived again, so the done list must no longer filter it.
+    restoredRecentlyIds.delete(sessionId);
+    restoredAtBySession.delete(sessionId);
+    // Tombstone BEFORE the no-op check: a full load already in flight holds
+    // stale pages and would resurrect the row on commit — even for a session
+    // this client never loaded (there is nothing to remove right now).
+    addArchiveTombstone(sessionId);
+    const archived = rawState.sessions.find((s) => s.id === sessionId);
+    if (archived === undefined && rawState.activeSessionId !== sessionId) return true;
+    const wsId = workspaceId ?? (archived !== undefined ? workspaceIdForSession(archived) : undefined);
+    const backfillTarget = wsId !== undefined ? loadedInWorkspace(wsId).length : 0;
+    await applySessionsArchivedLocally([sessionId], true);
+    if (archived !== undefined && wsId !== undefined) {
+      void backfillWorkspaceSessions(wsId, sessionId, archived.updatedAt, backfillTarget);
+    }
+    return true;
   }
 
   /** Export the given session (default: the active one). The id is captured
@@ -3774,6 +3985,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     deleteWorkspace,
     archiveSession,
     applySessionsArchivedLocally,
+    applyRemoteSessionArchived,
     exportSession,
     restoreSession,
     loadArchivedSessions,

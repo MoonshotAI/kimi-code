@@ -81,6 +81,31 @@ function createState({ pooledIds = [], pages, seeded = true }: SetupOptions) {
   };
 }
 
+describe('flat list — remote-archive tombstones', () => {
+  beforeEach(() => {
+    getKimiWebApiMock.mockReset();
+    setKimiClientDeps({ api: () => getKimiWebApiMock(), t: (key) => key });
+  });
+
+  afterEach(() => {
+    resetKimiClientDeps();
+  });
+
+  it('does not resurrect a tombstoned session when a flat page commits', async () => {
+    // The flat first page was fetched before the archive event landed — the
+    // tombstone must win over the stale page's fresh rows.
+    const { rawState, ws } = createState({
+      pages: [page([v2Item('s_arch'), v2Item('s_new')], false, null)],
+      seeded: false,
+    });
+
+    await ws.applyRemoteSessionArchived('s_arch');
+    await ws.ensureFlatSessions();
+
+    expect(rawState.sessions.map((s) => s.id)).toEqual(['s_new']);
+  });
+});
+
 describe('loadMoreFlatSessions — paging loop', () => {
   beforeEach(() => {
     getKimiWebApiMock.mockReset();

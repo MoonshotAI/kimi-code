@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { toAppMessage, toWireMessageContent } from '../src/api/daemon/mappers';
+import { toAppEvent, toAppMessage, toWireMessageContent } from '../src/api/daemon/mappers';
 import type { WireMessage } from '../src/api/daemon/wire';
 
 function wireMessage(content: WireMessage['content']): WireMessage {
@@ -50,5 +50,50 @@ describe('toWireMessageContent media sources', () => {
     expect(
       toWireMessageContent({ type: 'image', source: { kind: 'sessionMedia', fileId: 'f_sess' } }),
     ).toEqual({ type: 'image', source: { kind: 'session_media', file_id: 'f_sess' } });
+  });
+});
+
+describe('toAppEvent event.session.archived', () => {
+  // Global frame: the envelope session_id is the '__global__' watermark, the
+  // real session id rides in the payload.
+  function archivedFrame(payload: unknown) {
+    return {
+      type: 'event.session.archived',
+      seq: 1,
+      session_id: '__global__',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      payload,
+    } as const;
+  }
+
+  it('maps the payload session id (camelCase) and workspace_id', () => {
+    expect(
+      toAppEvent(archivedFrame({ workspace_id: 'wd_1', sessionId: 'sess_1' })),
+    ).toEqual({ type: 'sessionArchived', sessionId: 'sess_1', workspaceId: 'wd_1' });
+  });
+
+  it('tolerates a snake_case session_id in the payload', () => {
+    expect(
+      toAppEvent(archivedFrame({ workspace_id: 'wd_1', session_id: 'sess_1' })),
+    ).toEqual({ type: 'sessionArchived', sessionId: 'sess_1', workspaceId: 'wd_1' });
+  });
+
+  it('omits workspaceId when the payload does not carry one', () => {
+    expect(toAppEvent(archivedFrame({ sessionId: 'sess_1' }))).toEqual({
+      type: 'sessionArchived',
+      sessionId: 'sess_1',
+      workspaceId: undefined,
+    });
+  });
+
+  it('degrades a frame without a usable session id to a silent no-op', () => {
+    expect(toAppEvent(archivedFrame({ workspace_id: 'wd_1' }))).toEqual({
+      type: 'unknown',
+      raw: { _noop: true, _wireType: 'event.session.archived' },
+    });
+    expect(toAppEvent(archivedFrame({ workspace_id: 'wd_1', sessionId: '' }))).toEqual({
+      type: 'unknown',
+      raw: { _noop: true, _wireType: 'event.session.archived' },
+    });
   });
 });

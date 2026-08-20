@@ -12,6 +12,7 @@
 - **依赖方向 `code-app → kimi-code` 单向**：desktop 只经 `@moonshot-ai/*` 包名 import kimi-code 的 packages 源码，禁止跨包相对路径 import；`kimi-code` 不得 import `code-app`。
 - `apps/web` 只依赖 `@moonshot-ai/{app-core,app-i18n,app-markdown,app-ui,app-client,app-composer}` 共享包，不直接 import kimi-code 的包。
 - **不改包名**：`kimi-code-web`、`kimi-code-app`。
+- **不做旧服务端兼容逻辑**：web 与 desktop 客户端和服务端版本同步演进（desktop 内嵌 server 随包发布，web 产物由 server 提供），不为旧 daemon 写降级 / 回退路径；新接口直接按新契约消费，旧服务端上的失败按普通错误处理。
 - **两端逐步分叉是既定方向**：desktop 的原生功能（`window.kimiDesktop` 桥接）只在 `apps/desktop` 实现，web 保留原 daemon 实现、不回填；原生路径必须带无桥降级（探测不到桥时回退旧实现）。分叉清单在 `apps/desktop/docs/native-todos.md`——改两端共有的文件前先查它，手动同步副本时保留 desktop 侧的分叉块。
 - **开发顺序**：两端共有的 UI 改动优先在 `apps/desktop` 开发，完成后再同步到 `apps/web`（desktop 专属原生功能除外，见上条）。
 - **UI 改动必须遵循设计系统**：改组件 / 样式 / 布局 / 主题前，先读 canonical 设计规范 `apps/desktop/src/renderer/views/DesignSystemView.vue`（与 `apps/web` 同步；应用内长按侧栏 logo 打开）。新增 / 修改的 UI 必须与之匹配；涉及结构、约束或新组件模式时，同步更新该文档。组件原语（`@moonshot-ai/app-ui`）的结构性例外只有两个：(1) dock 工作面板行/卡片上的全覆盖隐形打开层（`TasksPane` 的 `.tp-open`、`SubagentGrid` 的 `.sg-open`）用原生 `<button>` 而非 Button 原语——它是无标签、无尺寸、无变体外观的纯交互层，Button 的 chrome 与 `:active` scale 不适用；(2) mention pill 的悬停 tooltip（`packages/app-composer` 的 `mentionTooltip`）——document 级裸 DOM 单例，锚点是 ProseMirror NodeView 和 pillify 后的 span，Vue 原语（Button/IconButton）够不到，其 open/copy 按钮按 Button 契约（尺寸、hover、`:focus-visible` 环）手工复刻，DesignSystemView 的 mention 段已备案。
