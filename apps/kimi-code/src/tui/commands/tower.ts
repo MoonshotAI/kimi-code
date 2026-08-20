@@ -42,15 +42,14 @@ async function startTowerObjective(host: SlashCommandHost, objective: string): P
 }
 
 async function applyTowerMode(host: SlashCommandHost, enabled: boolean): Promise<void> {
-  if (enabled && host.state.appState.towerMode) {
-    host.showStatus('Tower mode is already on.');
-    return;
-  }
-  if (!enabled && !host.state.appState.towerMode) {
-    host.showStatus('Tower mode is already off.');
-    return;
-  }
+  const wasActive = host.state.appState.towerMode;
+  // Like startTowerObjective: the setter is idempotent engine-side, so always
+  // reassert — a stale cache must not leave the authoritative mode unchanged.
   if (!(await setTowerMode(host, enabled))) return;
+  if (wasActive === enabled) {
+    host.showStatus(`Tower mode is already ${enabled ? 'on' : 'off'}.`);
+    return;
+  }
   host.showNotice(enabled ? 'Tower mode: ON' : 'Tower mode: OFF');
 }
 

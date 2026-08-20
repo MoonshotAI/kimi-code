@@ -97,22 +97,22 @@ describe('handleTowerCommand', () => {
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
-  it('does not call the session when tower mode is already on', async () => {
+  it('reasserts the mode idempotently when tower mode is already on', async () => {
     const { host, session } = makeHost({ towerMode: true });
 
     await handleTowerCommand(host, 'on');
 
-    expect(session.setTowerMode).not.toHaveBeenCalled();
+    expect(session.setTowerMode).toHaveBeenCalledWith(true);
     expect(host.showStatus).toHaveBeenCalledWith('Tower mode is already on.');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
-  it('does not call the session when tower mode is already off', async () => {
+  it('reasserts the mode idempotently when tower mode is already off', async () => {
     const { host, session } = makeHost({ towerMode: false });
 
     await handleTowerCommand(host, 'off');
 
-    expect(session.setTowerMode).not.toHaveBeenCalled();
+    expect(session.setTowerMode).toHaveBeenCalledWith(false);
     expect(host.showStatus).toHaveBeenCalledWith('Tower mode is already off.');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });

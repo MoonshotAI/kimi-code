@@ -1135,6 +1135,17 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getMeta().modes).toBeUndefined();
   });
 
+  it('mirrors the tower mode slice into meta.modes', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+
+    tx.apply(projector.map(ev({ type: 'agent.status.updated', towerMode: true })));
+    expect(tx.getMeta().modes).toEqual({ tower: {} });
+
+    tx.apply(projector.map(ev({ type: 'agent.status.updated', towerMode: false })));
+    expect(tx.getMeta().modes).toBeUndefined();
+  });
+
   it('mirrors status slices into meta.agent (shallow-merged across slices)', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
