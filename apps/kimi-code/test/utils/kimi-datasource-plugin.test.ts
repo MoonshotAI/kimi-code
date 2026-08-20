@@ -343,7 +343,7 @@ describe('kimi-datasource MCP server', () => {
         'caixin',
       ]);
       expect(call?.description).toContain(
-        'For a simple lookup, use one specialized source and stop after its first successful result',
+        'For a simple lookup, use one specialized source and stop once a result covers the user',
       );
       expect(call?.description).toContain('When the user names a data source, use that source');
       expect(call?.inputSchema.properties['data_source_name']?.description).toContain(
