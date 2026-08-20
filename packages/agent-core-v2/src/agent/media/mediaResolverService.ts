@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -248,8 +248,17 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     if (path.trim().length === 0) return videoTag(path);
     if (!requester.model.capabilities.video_in) return videoTag(path);
 
+    let identity: string;
+    try {
+      const info = await stat(path);
+      identity = `${info.size}\0${info.mtimeMs}`;
+    } catch {
+      signal?.throwIfAborted();
+      return videoTag(path);
+    }
+
     const providerKey = requester.model.providerType ?? requester.model.protocol;
-    const cacheKey = `file\0${path}\0${providerKey}`;
+    const cacheKey = `file\0${path}\0${identity}\0${providerKey}`;
     const memoed = this.resolved.get(cacheKey);
     if (memoed !== undefined) return memoed;
 
@@ -287,6 +296,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       return part;
     } catch (error) {
       if (signal?.aborted) throw error;
+      if (isVideoUploadAuthError(error)) throw error;
       const part = videoTag(path);
       this.resolved.set(cacheKey, part);
       return part;

@@ -782,6 +782,43 @@ describe('AgentMediaResolverService local file:// videos', () => {
     expect(upload).not.toHaveBeenCalled();
   });
 
+  it('rethrows an auth failure from a file:// upload so credential refresh can run', async () => {
+    const path = join(sessionDir, 'clip.mp4');
+    await writeFile(path, VIDEO_BYTES);
+    const upload = vi.fn(async () => {
+      throw Object.assign(new Error('unauthorized'), { statusCode: 401 });
+    });
+
+    await expect(
+      resolver(new Map()).resolve(
+        [videoMessage(pathToFileURL(path).href)],
+        requester({ uploadVideo: upload }),
+      ),
+    ).rejects.toThrow('unauthorized');
+  });
+
+  it('re-uploads a file:// video once its contents change', async () => {
+    const path = join(sessionDir, 'clip.mp4');
+    const res = resolver(new Map());
+    await writeFile(path, VIDEO_BYTES);
+    const first = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-first'));
+    const before = await res.resolve(
+      [videoMessage(pathToFileURL(path).href)],
+      requester({ uploadVideo: first }),
+    );
+
+    await writeFile(path, Buffer.concat([VIDEO_BYTES, Buffer.from(' second take')]));
+    const second = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-second'));
+    const after = await res.resolve(
+      [videoMessage(pathToFileURL(path).href)],
+      requester({ uploadVideo: second }),
+    );
+
+    expect(firstPart(before)).toEqual(msPart('prov-first'));
+    expect(firstPart(after)).toEqual(msPart('prov-second'));
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+
   it('degrades a file:// video when the model cannot accept video', async () => {
     const path = join(sessionDir, 'clip.mp4');
     await writeFile(path, VIDEO_BYTES);
