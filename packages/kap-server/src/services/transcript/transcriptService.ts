@@ -403,11 +403,11 @@ export class TranscriptService {
   }
 
   private livePromptBackfill(sessionId: string, agentId: string): TranscriptOperation[] {
-    const queue = getLiveSessionById(this.deps.core.accessor, sessionId)
+    const agent = getLiveSessionById(this.deps.core.accessor, sessionId)
       ?.accessor.get(IAgentLifecycleService)
-      .get(agentId)
-      ?.accessor.get(IAgentPromptService)
-      .list();
+      .get(agentId);
+    const promptService = agent === undefined ? undefined : agent.accessor.get(IAgentPromptService);
+    const queue = promptService?.list();
     if (queue === undefined) return [];
     const ops: TranscriptOperation[] = [];
     if (queue.active !== undefined) {
@@ -567,13 +567,7 @@ export class TranscriptService {
       .get(agentId)
       ?.accessor.get(IAgentLoopService)
       .status();
-    const lastTurn = folded.items.findLast((item) => item.kind === 'turn');
-    const activity =
-      status?.state === 'running'
-        ? 'turn'
-        : lastTurn?.kind === 'turn' && lastTurn.state === 'running'
-          ? 'unknown'
-          : 'idle';
+    const activity = status?.state === 'running' ? 'turn' : 'idle';
     return { ...folded, meta: { ...folded.meta, activity } };
   }
 

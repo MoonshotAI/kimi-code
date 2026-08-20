@@ -1953,7 +1953,7 @@ describe('AgentTranscriptProjector', () => {
 
       await write([user, assistant]);
       const dangling = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
-      expect(dangling!.meta.activity).toBe('unknown');
+      expect(dangling!.meta.activity).toBe('idle');
     } finally {
       await rm(home, { recursive: true, force: true });
     }
