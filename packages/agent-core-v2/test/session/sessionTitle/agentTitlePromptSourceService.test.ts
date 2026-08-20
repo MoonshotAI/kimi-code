@@ -164,6 +164,31 @@ describe('AgentTitlePromptSource', () => {
     });
   });
 
+  it('digestExcerpt counts a queued prompt already appended to the context only once', async () => {
+    liveMessages = [
+      userMessage('one', '最早的问题'),
+      assistantMessage('a1', [{ type: 'text', text: '第一轮回答' }]),
+      userMessage('two', '进行中的问题'),
+    ];
+    queue = {
+      active: {
+        id: 'two',
+        userMessageId: 'two',
+        createdAt: '2026-01-01T00:00:01.000Z',
+        state: 'running',
+        message: userMessage('two', '进行中的问题'),
+      },
+      pending: [],
+    };
+
+    await expect(ix.get(IAgentTitlePromptSource).digestExcerpt()).resolves.toEqual({
+      turns: [
+        { user: '最早的问题', assistant: '第一轮回答' },
+        { user: '进行中的问题', assistant: undefined },
+      ],
+    });
+  });
+
   it('digestExcerpt pairs every prompt with its own turn’s final assistant text', async () => {
     liveMessages = [
       userMessage('u1', '最初的目标'),

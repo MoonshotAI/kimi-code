@@ -184,37 +184,39 @@ async function composeTitleInput(
   }
   if (source === 'digest') {
     const excerpt = await promptSource.digestExcerpt();
-    const lines: string[] = [];
+    const turns: string[][] = [];
     for (const turn of excerpt.turns) {
-      lines.push(`user: ${turn.user.slice(0, MAX_TITLE_DIGEST_USER_SEGMENT)}`);
+      const group = [`user: ${turn.user.slice(0, MAX_TITLE_DIGEST_USER_SEGMENT)}`];
       if (turn.assistant !== undefined) {
-        lines.push(`assistant: ${turn.assistant.slice(0, MAX_TITLE_DIGEST_ASSISTANT)}`);
+        group.push(`assistant: ${turn.assistant.slice(0, MAX_TITLE_DIGEST_ASSISTANT)}`);
       }
+      turns.push(group);
     }
-    return elideTitleDigestLines(lines);
+    return elideTitleDigestTurns(turns);
   }
   return titleInputFromPrompts(await promptSource.firstUserPrompts(MAX_TITLE_PROMPTS));
 }
 
 const TITLE_DIGEST_ELISION_MARKER = '...';
 
-function elideTitleDigestLines(lines: readonly string[]): string | undefined {
-  if (lines.length === 0) return undefined;
-  const joined = lines.join('\n');
+function elideTitleDigestTurns(turns: readonly (readonly string[])[]): string | undefined {
+  if (turns.length === 0) return undefined;
+  const joined = turns.flat().join('\n');
   if (joined.length <= MAX_TITLE_DIGEST_INPUT_LENGTH) return joined;
   let budget = MAX_TITLE_DIGEST_INPUT_LENGTH - TITLE_DIGEST_ELISION_MARKER.length - 2;
   const head: string[] = [];
-  for (const line of lines.slice(0, 2)) {
+  for (const line of turns[0]!) {
     if (budget < line.length + 1) break;
     head.push(line);
     budget -= line.length + 1;
   }
   const tail: string[] = [];
-  for (let index = lines.length - 1; index >= head.length; index--) {
-    const line = lines[index]!;
-    if (budget < line.length + 1) break;
-    tail.unshift(line);
-    budget -= line.length + 1;
+  for (let index = turns.length - 1; index >= 1; index--) {
+    const group = turns[index]!;
+    const cost = group.reduce((sum, line) => sum + line.length + 1, 0);
+    if (budget < cost) break;
+    tail.unshift(...group);
+    budget -= cost;
   }
   return [...head, TITLE_DIGEST_ELISION_MARKER, ...tail].join('\n');
 }

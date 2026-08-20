@@ -59,9 +59,16 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
 
   async digestExcerpt(): Promise<TitleDigestExcerpt> {
     const all = this.combinedMessages();
+    const seenMessageIds = new Set<string>();
     const userIndexes: number[] = [];
     for (let index = 0; index < all.length; index++) {
-      if (isNaturalLanguagePrompt(all[index]!)) userIndexes.push(index);
+      const message = all[index]!;
+      if (!isNaturalLanguagePrompt(message)) continue;
+      if (message.id !== undefined) {
+        if (seenMessageIds.has(message.id)) continue;
+        seenMessageIds.add(message.id);
+      }
+      userIndexes.push(index);
     }
     const turns: TitleDigestTurn[] = [];
     for (let i = 0; i < userIndexes.length; i++) {

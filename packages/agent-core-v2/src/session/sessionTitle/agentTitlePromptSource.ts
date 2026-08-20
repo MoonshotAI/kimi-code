@@ -18,7 +18,7 @@ export interface TitleTurnExcerpt {
  */
 export interface TitleDigestTurn {
   readonly user: string;
-  readonly assistant?: string | undefined;
+  readonly assistant?: string;
 }
 
 /**

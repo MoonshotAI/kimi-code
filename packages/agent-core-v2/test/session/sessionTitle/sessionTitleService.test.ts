@@ -475,6 +475,7 @@ describe('SessionTitleService', () => {
     expect(content.length).toBeLessThanOrEqual(3000);
     expect(content.startsWith('user: 第0个')).toBe(true);
     expect(content).toContain('\n...\n');
+    expect(content.split('\n...\n')[1]?.startsWith('user: ')).toBe(true);
     expect(content.endsWith(`assistant: 第29个${'答'.repeat(180)}`)).toBe(true);
   });
 
