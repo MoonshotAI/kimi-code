@@ -926,7 +926,7 @@ key = "${titleOAuthRef.key}"
       const mainTower = () => {
         const handle = getLiveSessionById(client.engineAccessor, 'ses_tower');
         expect(handle).toBeDefined();
-        const agent = handle!.accessor.get(IAgentLifecycleService).get('main');
+        const agent = handle!.accessor.get(IAgentLifecycleService).findAgentHandle('main');
         expect(agent).toBeDefined();
         return agent!.accessor.get(IAgentTowerService);
       };
