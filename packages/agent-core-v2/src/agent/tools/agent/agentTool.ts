@@ -549,7 +549,7 @@ registerAgentToolService(ISubagentTool, SubagentTool, {
   requiredRuntimeCapabilities: ['process'],
 });
 
-function buildProfileDescriptions(
+export function buildProfileDescriptions(
   profiles: readonly AgentProfile[],
   tools: readonly ToolReference[],
   isToolActive: (
@@ -558,7 +558,12 @@ function buildProfileDescriptions(
     source: ToolReference['source'],
   ) => boolean,
 ): string {
-  const advertisableTools = tools.filter((tool) => !FLOW_TOOL_NAMES.has(tool.name));
+  const supervisorOnlyFlowTool = (name: string): boolean =>
+    FLOW_TOOL_NAMES.has(name) &&
+    !tools.some((tool) => tool.name === name && tool.source !== 'builtin');
+  const advertisableTools = tools.filter(
+    (tool) => !(FLOW_TOOL_NAMES.has(tool.name) && tool.source === 'builtin'),
+  );
   return profiles
     .map((profile) => {
       const details = [profile.description, profile.whenToUse].filter(
@@ -566,7 +571,7 @@ function buildProfileDescriptions(
       );
       const header = details.length === 0 ? `- ${profile.name}` : `- ${profile.name}: ${details.join(' ')}`;
       const activeTools = resolveActiveToolNames(profile)?.filter(
-        (name) => !FLOW_TOOL_NAMES.has(name),
+        (name) => !supervisorOnlyFlowTool(name),
       );
       const externallyRestricted = advertisableTools.some(
         (tool) =>

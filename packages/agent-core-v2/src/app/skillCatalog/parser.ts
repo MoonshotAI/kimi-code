@@ -88,6 +88,11 @@ export function parseSkillText(options: ParseSkillTextOptions): SkillDefinition 
       `Missing required frontmatter field ${field} in ${options.skillMdPath}`,
     );
   }
+  if ((name ?? options.skillDirName).startsWith('flow:')) {
+    throw new SkillParseError(
+      `Skill name "${name ?? options.skillDirName}" in ${options.skillMdPath} uses the reserved "flow:" namespace — it belongs to projected flow definitions under .kimi-code/flows/`,
+    );
+  }
 
   const skillPath = path.resolve(options.skillMdPath);
   const content = parsed.body.trim();
