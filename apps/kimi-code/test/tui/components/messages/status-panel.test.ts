@@ -18,6 +18,7 @@ describe('status panel report lines', () => {
       permissionMode: 'manual',
       planMode: false,
       towerMode: false,
+      towerAvailable: true,
       contextUsage: 0.25,
       contextTokens: 2500,
       maxContextTokens: 10000,
@@ -81,6 +82,7 @@ describe('status panel report lines', () => {
       permissionMode: 'manual',
       planMode: false,
       towerMode: false,
+      towerAvailable: true,
       contextUsage: 0,
       contextTokens: 0,
       maxContextTokens: 0,
@@ -100,6 +102,27 @@ describe('status panel report lines', () => {
     expect(lines.join('\n')).toContain('Tower mode   on');
   });
 
+  it('omits the tower mode row when the experiment is unavailable', () => {
+    const lines = buildStatusReportLines({
+      version: '1.2.3',
+      model: 'k2',
+      workDir: '/tmp/project',
+      sessionId: 'ses-1',
+      sessionTitle: null,
+      thinkingEffort: 'off',
+      permissionMode: 'manual',
+      planMode: false,
+      towerMode: false,
+      towerAvailable: false,
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      availableModels: {},
+    }).map(strip);
+
+    expect(lines.join('\n')).not.toContain('Tower mode');
+  });
+
   it('formats extra usage section in status report', () => {
     const lines = buildStatusReportLines({
       version: '1.2.3',
@@ -111,6 +134,7 @@ describe('status panel report lines', () => {
       permissionMode: 'manual',
       planMode: false,
       towerMode: false,
+      towerAvailable: true,
       contextUsage: 0,
       contextTokens: 0,
       maxContextTokens: 0,
@@ -150,6 +174,7 @@ describe('status panel report lines', () => {
       permissionMode: 'manual',
       planMode: false,
       towerMode: false,
+      towerAvailable: true,
       contextUsage: 0,
       contextTokens: 0,
       maxContextTokens: 0,

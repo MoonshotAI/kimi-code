@@ -45,6 +45,8 @@ export interface StatusReportOptions {
   readonly permissionMode: PermissionMode;
   readonly planMode: boolean;
   readonly towerMode: boolean;
+  /** Whether the tower experiment is enabled on engine v2 — gates the Tower mode row. */
+  readonly towerAvailable: boolean;
   readonly contextUsage: number;
   readonly contextTokens: number;
   readonly maxContextTokens: number;
@@ -114,9 +116,11 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
     { label: 'Directory', value: options.workDir },
     { label: 'Permissions', value: permission },
     { label: 'Plan mode', value: planMode ? 'on' : 'off' },
-    { label: 'Tower mode', value: towerMode ? 'on' : 'off' },
-    { label: 'Session', value: sessionId },
   ];
+  if (options.towerAvailable) {
+    rows.push({ label: 'Tower mode', value: towerMode ? 'on' : 'off' });
+  }
+  rows.push({ label: 'Session', value: sessionId });
   const title = options.sessionTitle?.trim();
   if (title !== undefined && title.length > 0) rows.push({ label: 'Title', value: title });
   if (options.statusError !== undefined) {
