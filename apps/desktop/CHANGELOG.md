@@ -1,5 +1,65 @@
 # kimi-code-app
 
+## 0.0.20
+
+### Patch Changes
+
+- [#275](https://github.com/MoonshotAI/kimi-code-app/pull/275) [`fcd48d4`](https://github.com/MoonshotAI/kimi-code-app/commit/fcd48d438d71f05b92e6072a111e379dadf5157b) - 消息流里的子代理卡片现在会标注「前台」或「后台」。
+
+- [#277](https://github.com/MoonshotAI/kimi-code-app/pull/277) [`2eaf627`](https://github.com/MoonshotAI/kimi-code-app/commit/2eaf6275fcd5b578be0dac499aa8c24639c0961d) - 修复输入框工具条在窗口很窄时按钮互相挤压遮挡的问题。
+
+- [#268](https://github.com/MoonshotAI/kimi-code-app/pull/268) [`89a7946`](https://github.com/MoonshotAI/kimi-code-app/commit/89a79466c3a881fa5f77b3e6603fabffd7a4b0ae) - 设置里的服务端版本和服务器地址旁边新增复制按钮，一键复制对应信息。
+
+- [#280](https://github.com/MoonshotAI/kimi-code-app/pull/280) [`afae048`](https://github.com/MoonshotAI/kimi-code-app/commit/afae048dad06d5c32536183a88f0e12350ff2861) - 修复归档最后一个会话后工作区从侧边栏消失的问题。
+
+- [#292](https://github.com/MoonshotAI/kimi-code-app/pull/292) [`b6af878`](https://github.com/MoonshotAI/kimi-code-app/commit/b6af8789d71ec04502da0331ce6a9591e28db871) - 修复打开下拉菜单后按钮的悬停提示仍停留在菜单上方的问题。
+
+- [#263](https://github.com/MoonshotAI/kimi-code-app/pull/263) [`86b67a6`](https://github.com/MoonshotAI/kimi-code-app/commit/86b67a6b2cc358729dcd1119518b485d0798dbdb) - 修复工作空间主页模型选择菜单显示不全的问题。
+
+- [#298](https://github.com/MoonshotAI/kimi-code-app/pull/298) [`5ef5e67`](https://github.com/MoonshotAI/kimi-code-app/commit/5ef5e6733becdbaa990ff00f1319b3eb67fb77f6) - 修复搜索弹窗里工作区分组标题显示为未翻译文本的问题。
+
+- [#269](https://github.com/MoonshotAI/kimi-code-app/pull/269) [`323fc9f`](https://github.com/MoonshotAI/kimi-code-app/commit/323fc9f520beeda60cc34bd3b2cbf8a871b73f06) - 修复设置对话框里的下拉选择列表会被滚动区域截断、展开时背后内容仍在滚动的问题。
+
+- [#263](https://github.com/MoonshotAI/kimi-code-app/pull/263) [`86b67a6`](https://github.com/MoonshotAI/kimi-code-app/commit/86b67a6b2cc358729dcd1119518b485d0798dbdb) - 修复工作空间主页斜杠命令和 @ 面板显示不全的问题。
+
+- [#267](https://github.com/MoonshotAI/kimi-code-app/pull/267) [`90e7cdf`](https://github.com/MoonshotAI/kimi-code-app/commit/90e7cdffeeededc05a8b29cc9740dfcab3a4596d) - 修复侧边栏用户菜单及套餐用量子菜单里的文字可以被鼠标拖选高亮的问题。
+
+- [#289](https://github.com/MoonshotAI/kimi-code-app/pull/289) [`866bb62`](https://github.com/MoonshotAI/kimi-code-app/commit/866bb62dffef105a685a805cd655cdd4c4206962) - 修复工作区较多时会话列表加载缓慢的问题。
+
+- [#215](https://github.com/MoonshotAI/kimi-code-app/pull/215) [`f0a7f5a`](https://github.com/MoonshotAI/kimi-code-app/commit/f0a7f5a0d97ebcd332977f86f43c3b2bb4dbf112) - 登录选区后自动打开浏览器授权页并重设计授权等待页；应用被授权深链唤起或窗口重新聚焦时立即刷新登录状态，不再等待轮询周期。
+
+- [#266](https://github.com/MoonshotAI/kimi-code-app/pull/266) [`03af189`](https://github.com/MoonshotAI/kimi-code-app/commit/03af18953b4bcbbf7ff78c7b880fafbf35b8b198) - @ 菜单升级：文件与技能候选合并按匹配度排序，文件搜索更快，支持路径片段匹配与命中字符高亮。
+
+- [#295](https://github.com/MoonshotAI/kimi-code-app/pull/295) [`1d0ade7`](https://github.com/MoonshotAI/kimi-code-app/commit/1d0ade75077aa778dc42485f8cae8e617f25245e) - 修复菜单项与菜单边框圆角不同心的问题。
+
+- [#302](https://github.com/MoonshotAI/kimi-code-app/pull/302) [`ad8a98f`](https://github.com/MoonshotAI/kimi-code-app/commit/ad8a98ff10c3f17dbcd6d67d3a3131e5645586e6) - 优化移动端样式。
+
+- [#277](https://github.com/MoonshotAI/kimi-code-app/pull/277) [`2eaf627`](https://github.com/MoonshotAI/kimi-code-app/commit/2eaf6275fcd5b578be0dac499aa8c24639c0961d) - 空间不足时输入框的模型选择器会折叠为图标，悬停仍可查看模型与推理强度。
+
+- [#277](https://github.com/MoonshotAI/kimi-code-app/pull/277) [`2eaf627`](https://github.com/MoonshotAI/kimi-code-app/commit/2eaf6275fcd5b578be0dac499aa8c24639c0961d) - 修复输入框空间充足时权限模式文字被隐藏的问题。
+
+- [#296](https://github.com/MoonshotAI/kimi-code-app/pull/296) [`f6942c0`](https://github.com/MoonshotAI/kimi-code-app/commit/f6942c06d917e13b137d948b1fd1c11605b8fdd0) - 会话右上角「...」菜单新增「置顶」，一键把当前会话固定到侧栏置顶区。
+
+- [#270](https://github.com/MoonshotAI/kimi-code-app/pull/270) [`97421a6`](https://github.com/MoonshotAI/kimi-code-app/commit/97421a6bca51bd6b542d4042bc4636b7105f9188) - 侧边栏置顶会话较多时，可拖动置顶区与会话列表之间的分隔条调整两个区域的高度，置顶区内部滚动时边缘会显示渐隐提示。
+
+- [#299](https://github.com/MoonshotAI/kimi-code-app/pull/299) [`b68e3a4`](https://github.com/MoonshotAI/kimi-code-app/commit/b68e3a450f8d6d67a3fb7d8a8f53a647970d682f) - 优化队列交互。
+
+- [#215](https://github.com/MoonshotAI/kimi-code-app/pull/215) [`f0a7f5a`](https://github.com/MoonshotAI/kimi-code-app/commit/f0a7f5a0d97ebcd332977f86f43c3b2bb4dbf112) - 登录入口新增 kimi.com / kimi.ai 两种 OAuth 登录选项，软件更新与帮助链接的站点随当前登录切换。
+
+- [#288](https://github.com/MoonshotAI/kimi-code-app/pull/288) [`9168642`](https://github.com/MoonshotAI/kimi-code-app/commit/9168642f59978ba13091c51dd11cebb7eed6a0c8) - 修复其他客户端归档会话后，会话列表需要刷新才会移除该会话的问题。
+
+- [#271](https://github.com/MoonshotAI/kimi-code-app/pull/271) [`198881a`](https://github.com/MoonshotAI/kimi-code-app/commit/198881a4299c5dff67d0794a50626fd6c2f09c7f) - 会话右键菜单底部的时间标注为「最后更新」，并收紧了该行间距。
+
+- [#294](https://github.com/MoonshotAI/kimi-code-app/pull/294) [`ce32c1a`](https://github.com/MoonshotAI/kimi-code-app/commit/ce32c1a239a765395afac1412d15dae997ce4d2d) - 修复侧栏「会话」「置顶」标题右侧按钮与会话条目右侧按钮不对齐的问题。
+
+- [#274](https://github.com/MoonshotAI/kimi-code-app/pull/274) [`bb4cb0b`](https://github.com/MoonshotAI/kimi-code-app/commit/bb4cb0b5bdc85533c19ffeb11f10ad493ebd55e9) - 删掉 skill 激活消息上的「已激活技能」卡片。
+
+- [#274](https://github.com/MoonshotAI/kimi-code-app/pull/274) [`bb4cb0b`](https://github.com/MoonshotAI/kimi-code-app/commit/bb4cb0b5bdc85533c19ffeb11f10ad493ebd55e9) - 修复 skill 激活的消息无法撤销重发的问题。
+
+- [#293](https://github.com/MoonshotAI/kimi-code-app/pull/293) [`d92d68b`](https://github.com/MoonshotAI/kimi-code-app/commit/d92d68b3304994196820dc253ba3b68b4e7698db) - 收紧左下角用户菜单及其子菜单的行高与间距，密度与其他菜单一致。
+
+- [#291](https://github.com/MoonshotAI/kimi-code-app/pull/291) [`2556a22`](https://github.com/MoonshotAI/kimi-code-app/commit/2556a223e6e7fda4f4ee94d0388ee5ca409cbbe3) - 等待后台任务的工具调用现在有专属展示，已完成的任务、等待超时和仍在运行的任务数一目了然。
+
 ## 0.0.19
 
 ### Patch Changes
