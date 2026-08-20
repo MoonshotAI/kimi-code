@@ -199,6 +199,9 @@ function sendMappedError(
           errEnvelope(ErrorCode.MCP_MANAGEMENT_DISABLED, err.message, requestId, err.stack),
         );
         return;
+      case ErrorCodes.MCP_OAUTH_FAILED:
+        reply.send(errEnvelope(ErrorCode.MCP_OAUTH_FAILED, err.message, requestId, err.stack));
+        return;
     }
   }
   throw err;

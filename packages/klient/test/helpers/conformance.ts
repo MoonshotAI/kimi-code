@@ -473,7 +473,7 @@ export function defineKlientConformance(
       }
     });
 
-    it('global mcp OAuth failures use transport-stable 50001 errors', async () => {
+    it('global mcp OAuth failures map to the 40929 wire code on every transport', async () => {
       const mcp = target.klient.global.mcp;
       const flags = target.app.accessor.get(IFlagService);
       flags.setConfigOverrides({ mcp_management: true });
@@ -489,7 +489,7 @@ export function defineKlientConformance(
         try {
           await expect(
             mcp.beginAuth({ locator: { source: 'global', name: 'conf-oauth-failure' } }),
-          ).rejects.toMatchObject({ name: 'RPCError', code: 50001 });
+          ).rejects.toMatchObject({ name: 'RPCError', code: 40929 });
         } finally {
           await mcp.remove({ name: 'conf-oauth-failure' });
         }

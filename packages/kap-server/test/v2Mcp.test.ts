@@ -358,6 +358,22 @@ describe('server /api/v2/mcp', () => {
       expect(res.body.data).toBeNull();
     });
 
+    it('maps the engine mcp.oauth_failed rejection to 40929', async () => {
+      const stub = makeMcpStub();
+      stub.service.completeServerAuth = async () => {
+        throw new Error2(
+          ErrorCodes.MCP_OAUTH_FAILED,
+          'OAuth flow for "a" failed: OAuth callback timed out',
+        );
+      };
+      await boot(stub);
+
+      const res = await call('POST', '/api/v2/mcp/auth:complete', { flowId: 'flow-1' });
+      expect(res.status).toBe(200);
+      expect(res.body.code).toBe(40929);
+      expect(res.body.data).toBeNull();
+    });
+
     it('maps a delete rejected with mcp.server_not_found to 40408', async () => {
       const stub = makeMcpStub();
       stub.service.removeServer = async (name) => {

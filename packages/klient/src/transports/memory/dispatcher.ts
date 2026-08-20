@@ -68,8 +68,8 @@ const NOT_FOUND = 40404;
 /** kap-server wire codes mirrored so memory/ipc surface the same numeric codes as `/api/v2/mcp`. */
 const MCP_SERVER_NOT_FOUND = 40408;
 const MCP_MANAGEMENT_DISABLED = 40928;
+const MCP_OAUTH_FAILED = 40929;
 const PROMPT_ID_CONFLICT = 40927;
-const INTERNAL_ERROR = 50001;
 
 /** Wire name of the engine's `IMcpManagementService` decorator id. */
 const MCP_MANAGEMENT_SERVICE = 'mcpManagementService';
@@ -92,7 +92,7 @@ function rethrowFileErrorAsRpc(error: unknown): never {
  * `RPCError`s carrying the kap-server wire codes, so memory and ipc behave
  * identically (a raw `Error2` would cross ipc as a generic 50001) and both
  * match `/api/v2/mcp` — `mcp.server_not_found` → 40408, `request.invalid` /
- * `config.invalid` → 40001.
+ * `config.invalid` → 40001, `mcp.oauth_failed` → 40929.
  */
 function rethrowMcpManagementErrorAsRpc(error: unknown): never {
   if (error instanceof Error2) {
@@ -103,7 +103,7 @@ function rethrowMcpManagementErrorAsRpc(error: unknown): never {
       case ErrorCodes.CONFIG_INVALID:
         throw new RPCError(REQUEST_INVALID, error.message, error.details);
       case ErrorCodes.MCP_OAUTH_FAILED:
-        throw new RPCError(INTERNAL_ERROR, error.message, error.details);
+        throw new RPCError(MCP_OAUTH_FAILED, error.message, error.details);
     }
   }
   throw error;
