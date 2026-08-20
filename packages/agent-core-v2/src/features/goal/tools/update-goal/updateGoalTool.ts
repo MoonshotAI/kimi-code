@@ -1,13 +1,11 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type ToolExecution } from '#/tool/toolContract';
-import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
-import { IAgentGoalService } from '#/agent/goal/goal';
+import { IAgentGoalService } from '#/features/goal/goal';
 import {
   buildGoalBlockedReasonPrompt,
   buildGoalCompletionSummaryPrompt,
-} from '#/agent/goal/tools/outcome-prompts';
+} from '#/features/goal/tools/outcome-prompts';
 
 import DESCRIPTION from './update-goal.md?raw';
 import {
@@ -93,9 +91,3 @@ function changedGoalOutput(status: UpdateGoalToolInput['status']): string {
   if (status === 'complete') return 'Goal not completed: the current goal changed.';
   return 'Goal not blocked: the current goal changed.';
 }
-
-registerAgentToolService(IUpdateGoalTool, UpdateGoalTool, {
-  name: 'UpdateGoal',
-  domain: 'goal',
-  when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',
-});

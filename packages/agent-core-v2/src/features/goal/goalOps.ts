@@ -1,6 +1,8 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
+import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
+import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AgentEvent2 } from '#/app/event/event2';
 import { defineState } from '#/state/state';
 
@@ -178,3 +180,36 @@ export const goalKey = defineState('goal', (): GoalModelState => null).replayabl
   })
   .on(GoalClear, () => null)
   .on(GoalForked, () => null);
+
+export const GOAL_FORK_CLEARED_REMINDER_NAME = 'goal_fork_cleared';
+
+export interface GoalForkNoticeState {
+  readonly goalPresent: boolean;
+  readonly reminderPending: boolean;
+}
+
+export const goalForkNoticeKey = defineState(
+  'goalForkNotice',
+  (): GoalForkNoticeState => ({ goalPresent: false, reminderPending: false }),
+).replayable({ schema: z.custom<GoalForkNoticeState>() })
+  .on(GoalCreate, (s) => {
+    s.goalPresent = true;
+  })
+  .on(GoalClear, (s) => {
+    s.goalPresent = false;
+  })
+  .on(GoalForked, (s) => {
+    s.reminderPending = s.goalPresent || s.reminderPending;
+    s.goalPresent = false;
+  })
+  .on(ContextAppendMessage, (s, e) => {
+    if (s.reminderPending && isGoalForkClearedReminder(e.message)) {
+      s.reminderPending = false;
+    }
+  });
+
+function isGoalForkClearedReminder(message: ContextMessage | undefined): boolean {
+  const origin = message?.origin;
+  if (origin?.kind === 'injection') return origin.variant === GOAL_FORK_CLEARED_REMINDER_NAME;
+  return origin?.kind === 'system_trigger' && origin.name === GOAL_FORK_CLEARED_REMINDER_NAME;
+}

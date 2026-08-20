@@ -1,10 +1,8 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type ToolExecution } from '#/tool/toolContract';
-import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
-import { IAgentGoalService } from '#/agent/goal/goal';
-import { goalResultForModel } from '#/agent/goal/tools/serialize';
+import { IAgentGoalService } from '#/features/goal/goal';
+import { goalResultForModel } from '#/features/goal/tools/serialize';
 
 import DESCRIPTION from './get-goal.md?raw';
 import { GetGoalToolInputSchema, IGetGoalTool, type GetGoalToolInput } from './get-goal';
@@ -28,9 +26,3 @@ export class GetGoalTool implements IGetGoalTool {
     };
   }
 }
-
-registerAgentToolService(IGetGoalTool, GetGoalTool, {
-  name: 'GetGoal',
-  domain: 'goal',
-  when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',
-});

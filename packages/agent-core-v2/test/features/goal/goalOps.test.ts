@@ -10,11 +10,11 @@ import { EventBusService } from '#/app/event/eventBusService';
 import { IConfigService } from '#/app/config/config';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentGoalService } from '#/agent/goal/goal';
-import { IGoalDeadlineScheduler } from '#/agent/goal/goalDeadlineScheduler';
-import { GoalDeadlineSchedulerService } from '#/agent/goal/goalDeadlineSchedulerService';
-import { AgentGoalService } from '#/agent/goal/goalService';
-import { goalKey } from '#/agent/goal/goalOps';
+import { IAgentGoalService } from '#/features/goal/goal';
+import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
+import { GoalDeadlineSchedulerService } from '#/features/goal/goalDeadlineSchedulerService';
+import { AgentGoalService } from '#/features/goal/goalService';
+import { goalKey } from '#/features/goal/goalOps';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -36,7 +36,7 @@ import {
   restoreTestEventDispatcher,
   testWireScope,
 } from '../../wire/stubs';
-import { stubAgentContext } from '../agentContext/stubs';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'goal-test';

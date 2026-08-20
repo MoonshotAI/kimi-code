@@ -1,19 +1,14 @@
 import { randomUUID } from 'node:crypto';
 
-import { z } from 'zod';
-
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { Disposable, MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { abortError } from '#/_base/utils/abort';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
-import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
-import { GoalInjection, GOAL_WAIT_FOR_GUIDANCE } from '#/agent/goal/injection/goalInjection';
+import { GoalInjection, GOAL_WAIT_FOR_GUIDANCE } from '#/features/goal/injection/goalInjection';
 import {
   IAgentLoopService,
   type AfterStepContext,
@@ -54,9 +49,10 @@ import { IAgentGoalService, type GoalReasonInput, type ResumeGoalInput } from '.
 import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import { IGoalDeadlineScheduler } from './goalDeadlineScheduler';
 import {
+  GOAL_FORK_CLEARED_REMINDER_NAME,
   GoalClear,
   GoalCreate,
-  GoalForked,
+  goalForkNoticeKey,
   goalKey,
   GoalUpdate,
   GoalUpdated,
@@ -89,8 +85,6 @@ const GOAL_FORK_CLEARED_REMINDER = [
   'Ignore earlier active-goal reminders from the source session.',
   'Handle requests normally unless the user starts a new goal.',
 ].join(' ');
-
-const GOAL_FORK_CLEARED_REMINDER_NAME = 'goal_fork_cleared';
 
 const GOAL_CONTINUATION_ORIGIN: PromptOrigin = {
   kind: 'system_trigger',
@@ -159,11 +153,6 @@ const GOAL_STEP_CAP_CONTINUATION_PROMPT = [
   GOAL_CONTINUATION_PROMPT,
 ].join(' ');
 
-interface GoalForkNoticeState {
-  readonly goalPresent: boolean;
-  readonly reminderPending: boolean;
-}
-
 interface PendingContinuation {
   readonly receipt: EnqueueReceipt;
   readonly goalId: string;
@@ -173,32 +162,6 @@ interface PendingContinuation {
 interface ResumeContinuation {
   readonly turnId: number;
   readonly goalId: string;
-}
-
-export const goalForkNoticeKey = defineState(
-  'goalForkNotice',
-  (): GoalForkNoticeState => ({ goalPresent: false, reminderPending: false }),
-).replayable({ schema: z.custom<GoalForkNoticeState>() })
-  .on(GoalCreate, (s) => {
-    s.goalPresent = true;
-  })
-  .on(GoalClear, (s) => {
-    s.goalPresent = false;
-  })
-  .on(GoalForked, (s) => {
-    s.reminderPending = s.goalPresent || s.reminderPending;
-    s.goalPresent = false;
-  })
-  .on(ContextAppendMessage, (s, e) => {
-    if (s.reminderPending && isGoalForkClearedReminder(e.message)) {
-      s.reminderPending = false;
-    }
-  });
-
-function isGoalForkClearedReminder(message: ContextMessage | undefined): boolean {
-  const origin = message?.origin;
-  if (origin?.kind === 'injection') return origin.variant === GOAL_FORK_CLEARED_REMINDER_NAME;
-  return origin?.kind === 'system_trigger' && origin.name === GOAL_FORK_CLEARED_REMINDER_NAME;
 }
 
 function isGoalContinuationOrigin(origin: TurnStarted['origin']): boolean {
@@ -1322,11 +1285,3 @@ function pauseReasonWithMessage(prefix: string, message: string | undefined): st
   const trimmed = message?.trim();
   return trimmed === undefined || trimmed.length === 0 ? prefix : `${prefix}: ${trimmed}`;
 }
-
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentGoalService,
-  AgentGoalService,
-  ScopeActivation.OnScopeCreated,
-  'goal',
-);

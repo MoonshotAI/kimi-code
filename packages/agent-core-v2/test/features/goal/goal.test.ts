@@ -9,16 +9,16 @@ import { TurnStarted } from '#/agent/loop/turnEvents';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
-import { IAgentGoalService } from '#/agent/goal/goal';
-import { IGoalDeadlineScheduler } from '#/agent/goal/goalDeadlineScheduler';
-import { type AgentGoalService } from '#/agent/goal/goalService';
-import { GoalUpdated } from '#/agent/goal/goalOps';
+import { IAgentGoalService } from '#/features/goal/goal';
+import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
+import { type AgentGoalService } from '#/features/goal/goalService';
+import { GoalUpdated } from '#/features/goal/goalOps';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
-import { UpdateGoalToolInputSchema } from '#/agent/tools/goal/update-goal/update-goal';
-import { UpdateGoalTool } from '#/agent/tools/goal/update-goal/updateGoalTool';
+import { UpdateGoalToolInputSchema } from '#/features/goal/tools/update-goal/update-goal';
+import { UpdateGoalTool } from '#/features/goal/tools/update-goal/updateGoalTool';
 import {
   createMaxStepsExceededError,
   IAgentLoopService,
@@ -67,10 +67,10 @@ import { stubFlag } from '../../app/flag/stubs';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
-import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
-import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
+import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
+import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { stubAgentSwarm } from './stubs';
-import { stubAgentContext } from '../agentContext/stubs';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 function createTestAgent(
   ...inputs: readonly (TestAgentServiceOverride | TestAgentOptions)[]

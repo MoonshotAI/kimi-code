@@ -34,13 +34,13 @@
 //   cron.add                           cron                                                            src/session/cron/cronOps.ts
 //   cron.cursor                        cron                                                            src/session/cron/cronOps.ts
 //   cron.delete                        cron                                                            src/session/cron/cronOps.ts
-//   forked                             goal, goalForkNotice                                            src/agent/goal/goalOps.ts
+//   forked                             goal, goalForkNotice                                            src/features/goal/goalOps.ts
 //   full_compaction.begin              fullCompaction                                                  src/agent/fullCompaction/compactionOps.ts
 //   full_compaction.cancel             fullCompaction                                                  src/agent/fullCompaction/compactionOps.ts
 //   full_compaction.complete           fullCompaction                                                  src/agent/fullCompaction/compactionOps.ts
-//   goal.clear                         goal, goalForkNotice                                            src/agent/goal/goalOps.ts
-//   goal.create                        goal, goalForkNotice                                            src/agent/goal/goalOps.ts
-//   goal.update                        goal                                                            src/agent/goal/goalOps.ts
+//   goal.clear                         goal, goalForkNotice                                            src/features/goal/goalOps.ts
+//   goal.create                        goal, goalForkNotice                                            src/features/goal/goalOps.ts
+//   goal.update                        goal                                                            src/features/goal/goalOps.ts
 //   interaction.request                interaction                                                     src/session/interaction/interactionOps.ts
 //   interaction.resolved               interaction                                                     src/session/interaction/interactionOps.ts
 //   interruptionReminder.recorded      interruptionReminder                                            src/agent/interruptionReminder/interruptionReminderOps.ts
@@ -216,7 +216,7 @@ interface CronDeletePayload {
 
 /**
  * states: goal, goalForkNotice
- * owner: src/agent/goal/goalOps.ts
+ * owner: src/features/goal/goalOps.ts
  */
 interface ForkedPayload {
   _name: 'forked';
@@ -255,7 +255,7 @@ interface FullCompactionCompletePayload {
 
 /**
  * states: goal, goalForkNotice
- * owner: src/agent/goal/goalOps.ts
+ * owner: src/features/goal/goalOps.ts
  */
 interface GoalClearPayload {
   _name: 'goal.clear';
@@ -264,7 +264,7 @@ interface GoalClearPayload {
 
 /**
  * states: goal, goalForkNotice
- * owner: src/agent/goal/goalOps.ts
+ * owner: src/features/goal/goalOps.ts
  */
 interface GoalCreatePayload {
   _name: 'goal.create';
@@ -284,7 +284,7 @@ interface GoalCreatePayload {
 
 /**
  * states: goal
- * owner: src/agent/goal/goalOps.ts
+ * owner: src/features/goal/goalOps.ts
  */
 interface GoalUpdatePayload {
   _name: 'goal.update';
