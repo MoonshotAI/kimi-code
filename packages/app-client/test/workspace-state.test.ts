@@ -43,6 +43,8 @@ const apiMock = {
   getMeta: vi.fn(),
   getSession: vi.fn(),
   listSessions: vi.fn(),
+  listSessionsV2: vi.fn(),
+  listSessionGroupsV2: vi.fn(),
   listWorkspaces: vi.fn(),
   searchFiles: vi.fn(),
   suggestFiles: vi.fn(),
@@ -1897,6 +1899,7 @@ describe('useWorkspaceState — session list loading', () => {
     apiMock.listWorkspaces.mockReset().mockResolvedValue([]);
     apiMock.getFsHome.mockReset().mockResolvedValue({ home: '', recentRoots: [] });
     apiMock.listSessions.mockReset();
+    apiMock.listSessionGroupsV2.mockReset();
     apiMock.getSession.mockReset();
   });
 
@@ -1931,117 +1934,6 @@ describe('useWorkspaceState — session list loading', () => {
 
     expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
     expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
-  });
-
-  it('keeps failed workspace sessions while replacing a successful shared-root workspace', async () => {
-    const error = new Error('legacy workspace unavailable');
-    const cached = {
-      ...createSession(),
-      id: 'sess_cached',
-      title: 'Cached legacy',
-      workspaceId: 'wd_legacy',
-      updatedAt: '2026-01-02T00:00:00.000Z',
-    };
-    const fresh = {
-      ...createSession(),
-      id: 'sess_fresh',
-      title: 'Fresh current',
-      workspaceId: 'wd_current',
-      updatedAt: '2026-01-03T00:00:00.000Z',
-    };
-    const staleCurrent = {
-      ...createSession(),
-      id: 'sess_stale',
-      title: 'Stale current',
-      workspaceId: 'wd_current',
-      updatedAt: '2026-01-01T00:00:00.000Z',
-    };
-    apiMock.listWorkspaces.mockResolvedValue([
-      workspace('wd_current', '/workspace', 'Workspace'),
-      workspace('wd_legacy', '/workspace', 'Workspace'),
-    ]);
-    apiMock.listSessions.mockImplementation(
-      async ({ workspaceId }: { workspaceId?: string }) => {
-        if (workspaceId === 'wd_current') return { items: [fresh], hasMore: false };
-        throw error;
-      },
-    );
-    const { state, deps, workspaceState } = createSessionLoadRig([cached, staleCurrent]);
-
-    await workspaceState.load();
-
-    expect(state.sessions.map((session) => session.id)).toEqual(['sess_fresh', 'sess_cached']);
-    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
-    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
-  });
-
-  it('keeps root-matched sessions when their stored workspace id is no longer registered', async () => {
-    const error = new Error('current workspace unavailable');
-    const cached = {
-      ...createSession(),
-      id: 'sess_cached',
-      title: 'Cached old workspace id',
-      workspaceId: 'wd_removed',
-      updatedAt: '2026-01-02T00:00:00.000Z',
-    };
-    const fresh = {
-      ...createSession(),
-      id: 'sess_fresh',
-      title: 'Fresh other workspace',
-      cwd: '/other-workspace',
-      workspaceId: 'wd_other',
-      updatedAt: '2026-01-03T00:00:00.000Z',
-    };
-    apiMock.listWorkspaces.mockResolvedValue([
-      workspace('wd_current', '/workspace', 'Workspace'),
-      workspace('wd_other', '/other-workspace', 'Other'),
-    ]);
-    apiMock.listSessions.mockImplementation(
-      async ({ workspaceId }: { workspaceId?: string }) => {
-        if (workspaceId === 'wd_current') throw error;
-        return { items: [fresh], hasMore: false };
-      },
-    );
-    const { state, deps, workspaceState } = createSessionLoadRig([cached]);
-
-    await workspaceState.load();
-
-    expect(state.sessions.map((session) => session.id)).toEqual(['sess_fresh', 'sess_cached']);
-    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
-    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
-  });
-
-  it('loads the next page when a retry follows an automatic continuation failure', async () => {
-    const error = new Error('automatic continuation unavailable');
-    const cached = {
-      ...createSession(),
-      title: 'Cached first page',
-      workspaceId: 'wd_1',
-      updatedAt: '2099-01-01T00:00:00.000Z',
-    };
-    const fresh = { ...cached, title: 'Fresh first page' };
-    const older = {
-      ...createSession(),
-      id: 'sess_older',
-      workspaceId: 'wd_1',
-      updatedAt: '2025-12-31T00:00:00.000Z',
-    };
-    apiMock.listWorkspaces.mockResolvedValue([workspace('wd_1', '/workspace', 'Workspace')]);
-    apiMock.listSessions
-      .mockResolvedValueOnce({ items: [fresh], hasMore: true })
-      .mockRejectedValueOnce(error)
-      .mockResolvedValue({ items: [older], hasMore: false });
-    const { state, deps, workspaceState } = createSessionLoadRig([cached]);
-
-    await workspaceState.load();
-
-    expect(state.sessions.map((session) => session.title)).toEqual(['Fresh first page']);
-    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
-
-    await workspaceState.loadMoreSessions('wd_1');
-
-    expect(state.sessions.map((session) => session.id)).toEqual(['sess_1', 'sess_older']);
-    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
   });
 
   it('recovers the global session list when a retry follows a second-page failure', async () => {
@@ -2095,50 +1987,37 @@ describe('useWorkspaceState — session list loading', () => {
     expect(result).toEqual({ sessions: [firstPage], error: undefined });
   });
 
-  it('preserves cached sessions when every workspace initial page rejects', async () => {
-    const firstError = new Error('workspace A unavailable');
-    const cachedA = {
-      ...createSession(),
-      id: 'sess_a',
-      cwd: '/workspace-a',
-      workspaceId: 'wd_a',
-    };
-    const cachedB = {
-      ...createSession(),
-      id: 'sess_b',
-      cwd: '/workspace-b',
-      workspaceId: 'wd_b',
-    };
-    apiMock.listWorkspaces.mockResolvedValue([
-      workspace('wd_a', '/workspace-a', 'A'),
-      workspace('wd_b', '/workspace-b', 'B'),
-    ]);
-    apiMock.listSessions.mockImplementation(
-      async ({ workspaceId }: { workspaceId?: string }) => {
-        if (workspaceId === 'wd_a') throw firstError;
-        throw new Error('workspace B unavailable');
-      },
-    );
-    const { state, deps, workspaceState } = createSessionLoadRig([cachedA, cachedB]);
-
-    await workspaceState.load();
-
-    expect(state.sessions.map((session) => session.id)).toEqual(['sess_a', 'sess_b']);
-    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
-    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', firstError);
-  });
-
   it('loads workspace sessions when a retry follows an initial failure', async () => {
     const cached = {
       ...createSession(),
       title: 'Cached',
       workspaceId: 'wd_1',
     };
-    const recovered = { ...cached, title: 'Recovered' };
+    // First grouped request fails (previous list kept); the retry succeeds.
+    const recoveredV2 = {
+      id: 'sess_1',
+      workspace: { id: 'wd_1', cwd: '/workspace' },
+      meta: {
+        title: 'Recovered',
+        last_prompt: 'p',
+        created_at: 1,
+        updated_at: 2,
+        archived: false,
+        archived_at: null,
+      },
+      activity: { status: 'idle' as const },
+    };
     apiMock.listWorkspaces.mockResolvedValue([workspace('wd_1', '/workspace', 'Workspace')]);
-    apiMock.listSessions
+    apiMock.listSessionGroupsV2
       .mockRejectedValueOnce(new Error('session index unavailable'))
-      .mockResolvedValue({ items: [recovered], hasMore: false });
+      .mockResolvedValue({
+        groups: [
+          { workspace: { id: 'wd_1', cwd: '/workspace' }, sessions: [recoveredV2], total: 1 },
+        ],
+        hasMore: false,
+        nextPageToken: null,
+        total: 1,
+      });
     const { state, workspaceState } = createSessionLoadRig([cached]);
 
     await workspaceState.load();
@@ -2279,25 +2158,46 @@ describe('useWorkspaceState — session list loading', () => {
     state.sessionsHasMoreByWorkspace = { wd_1: true };
     state.sessionsCursorByWorkspace = { wd_1: 's5' };
     state.sessionsInitialCountByWorkspace = { wd_1: 5 };
-    // First call: the load's per-workspace page (held). Later calls: the
-    // archive backfill's page.
-    let resolveFirst: ((page: { items: AppSession[]; hasMore: boolean }) => void) | undefined;
-    apiMock.listSessions
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            resolveFirst = resolve;
-          }),
-      )
-      .mockResolvedValue({ items: [backfilled], hasMore: false });
+    // The grouped first page is held; the archive backfill's v1 page answers.
+    let resolveFirst: ((page: unknown) => void) | undefined;
+    apiMock.listSessionGroupsV2.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve;
+        }),
+    );
+    apiMock.listSessions.mockResolvedValue({ items: [backfilled], hasMore: false });
 
     const pending = workspaceState.load();
-    await vi.waitFor(() => expect(apiMock.listSessions).toHaveBeenCalled());
+    await vi.waitFor(() => expect(apiMock.listSessionGroupsV2).toHaveBeenCalled());
     // The remote archive lands mid-load: s2 is removed and the backfill
     // inserts s6 — then the STALE first page (s2 included, s6 absent) commits.
     await workspaceState.applyRemoteSessionArchived('s2', 'wd_1');
-    await vi.waitFor(() => expect(apiMock.listSessions).toHaveBeenCalledTimes(2));
-    resolveFirst!({ items: rows, hasMore: false });
+    await vi.waitFor(() => expect(apiMock.listSessions).toHaveBeenCalledTimes(1));
+    resolveFirst!({
+      groups: [
+        {
+          workspace: { id: 'wd_1', cwd: '/workspace' },
+          sessions: rows.map((r) => ({
+            id: r.id,
+            workspace: { id: 'wd_1', cwd: '/workspace' },
+            meta: {
+              title: r.title,
+              last_prompt: 'p',
+              created_at: Date.parse(r.createdAt),
+              updated_at: Date.parse(r.updatedAt),
+              archived: false,
+              archived_at: null,
+            },
+            activity: { status: 'idle' as const },
+          })),
+          total: 5,
+        },
+      ],
+      hasMore: false,
+      nextPageToken: null,
+      total: 1,
+    });
     await pending;
 
     // s2 stays filtered (tombstone); the concurrently backfilled s6 survives
@@ -3690,5 +3590,536 @@ describe('useWorkspaceState — searchFiles (fs:suggest with fs:search fallback)
     const workspace = useWorkspaceState(createState(), createDeps());
     expect(await workspace.searchFiles('x')).toEqual([]);
     expect(apiMock.suggestFiles).not.toHaveBeenCalled();
+  });
+});
+
+describe('useWorkspaceState — grouped initial session load (view=by_workspace)', () => {
+  const BASE = Date.parse('2026-02-01T00:00:00.000Z');
+
+  function v2Session(id: string, index: number, workspaceId: string, cwd: string) {
+    return {
+      id,
+      workspace: { id: workspaceId, cwd },
+      meta: {
+        title: `title-${id}`,
+        last_prompt: `prompt-${id}`,
+        created_at: BASE - index * 1000,
+        updated_at: BASE - index * 1000,
+        archived: false,
+        archived_at: null,
+      },
+      activity: { status: 'idle' as const },
+    };
+  }
+
+  beforeEach(() => {
+    apiMock.getAuth.mockReset().mockResolvedValue({
+      ready: true,
+      defaultModel: 'kimi-code',
+      managedProvider: null,
+    });
+    apiMock.getHealth.mockReset().mockResolvedValue({ ok: true });
+    apiMock.getMeta.mockReset().mockResolvedValue({
+      serverVersion: '0.0.0',
+      openInApps: [],
+      dangerousBypassAuth: false,
+      backend: 'v2',
+    });
+    apiMock.getConfig.mockReset().mockResolvedValue({});
+    apiMock.getFsHome.mockReset().mockResolvedValue({ home: '', recentRoots: [] });
+    apiMock.listSessions.mockReset().mockResolvedValue({ items: [], hasMore: false });
+    apiMock.listSessionsV2.mockReset();
+    apiMock.listSessionGroupsV2.mockReset();
+    apiMock.listWorkspaces.mockReset().mockResolvedValue([
+      workspace('ws1', '/repo/ws1', 'ws1'),
+      workspace('ws2', '/repo/ws2', 'ws2'),
+      workspace('ws3', '/repo/ws3', 'ws3'),
+    ]);
+  });
+
+  function createLoadDeps(state: ExtendedState): UseWorkspaceStateDeps {
+    return {
+      ...createDeps(),
+      modelProvider: { loadModels: vi.fn().mockResolvedValue(undefined) },
+      // First-load path (waitForFirstAuth, no separate checkAuth).
+      initialized: ref(false),
+      connectIssue: ref<string | null>(null),
+      // Commit pool replacements so the test can read the merged list back.
+      setSessions: (next: AppSession[]) => {
+        state.sessions = next;
+      },
+      updateSession: (id: string, update: (s: AppSession) => AppSession) => {
+        state.sessions = state.sessions.map((s) => (s.id === id ? update(s) : s));
+      },
+      appendSession: (session: AppSession) => {
+        state.sessions = [...state.sessions, session];
+      },
+      workspaceIdForSession: (s: { workspaceId?: string; cwd: string }) => s.workspaceId ?? s.cwd,
+    } as unknown as UseWorkspaceStateDeps;
+  }
+
+  it('loads every workspace in one grouped request, with totals driving hasMore', async () => {
+    apiMock.listSessionGroupsV2.mockResolvedValue({
+      groups: [
+        {
+          workspace: { id: 'ws1', cwd: '/repo/ws1' },
+          sessions: [1, 2, 3, 4, 5].map((i) => v2Session(`s${i}`, i, 'ws1', '/repo/ws1')),
+          total: 7,
+        },
+        {
+          workspace: { id: 'ws2', cwd: '/repo/ws2' },
+          sessions: [v2Session('s6', 6, 'ws2', '/repo/ws2')],
+          total: 1,
+        },
+      ],
+      hasMore: false,
+      nextPageToken: null,
+      total: 2,
+    });
+    const state = createState();
+    const ws = useWorkspaceState(state, createLoadDeps(state));
+
+    await ws.load();
+
+    expect(apiMock.listSessionGroupsV2).toHaveBeenCalledTimes(1);
+    expect(apiMock.listSessionGroupsV2).toHaveBeenCalledWith({
+      groupPageSize: 5,
+      hasPrompt: true,
+    });
+    // The v1 per-workspace fan-out is fully replaced.
+    expect(apiMock.listSessions).not.toHaveBeenCalled();
+    expect(apiMock.listSessionsV2).not.toHaveBeenCalled();
+    // Newest-first merge of both groups.
+    expect(state.sessions.map((s) => s.id)).toEqual(['s1', 's2', 's3', 's4', 's5', 's6']);
+    // hasMore comes from the group's full matching total; the empty workspace
+    // (no group) defaults to a collapsed, exhausted state.
+    expect(state.sessionsHasMoreByWorkspace).toEqual({ ws1: true, ws2: false, ws3: false });
+    expect(state.sessionsCursorByWorkspace).toEqual({
+      ws1: 's5',
+      ws2: 's6',
+      ws3: undefined,
+    });
+    expect(state.sessionsInitialCountByWorkspace).toEqual({ ws1: 5, ws2: 5, ws3: 5 });
+  });
+
+  it('matches a server-canonicalized alias group to the registered workspace by root', async () => {
+    apiMock.listSessionGroupsV2.mockResolvedValue({
+      groups: [
+        {
+          // The group carries the canonical id (the registry entry keeps its own).
+          workspace: { id: 'wd_canonical', cwd: '/repo/ws1' },
+          sessions: [v2Session('s1', 1, 'wd_legacy', '/repo/ws1')],
+          total: 3,
+        },
+      ],
+      hasMore: false,
+      nextPageToken: null,
+      total: 1,
+    });
+    const state = createState();
+    const ws = useWorkspaceState(state, createLoadDeps(state));
+
+    await ws.load();
+
+    expect(state.sessions.map((s) => s.id)).toEqual(['s1']);
+    expect(state.sessionsHasMoreByWorkspace['ws1']).toBe(true);
+    expect(state.sessionsCursorByWorkspace['ws1']).toBe('s1');
+    expect(state.sessionsHasMoreByWorkspace['ws2']).toBe(false);
+  });
+
+  it('drains follow-up group pages with the opaque token', async () => {
+    apiMock.listSessionGroupsV2
+      .mockResolvedValueOnce({
+        groups: [
+          {
+            workspace: { id: 'ws1', cwd: '/repo/ws1' },
+            sessions: [v2Session('s1', 1, 'ws1', '/repo/ws1')],
+            total: 1,
+          },
+        ],
+        hasMore: true,
+        nextPageToken: 'gtok1',
+        total: 2,
+      })
+      .mockResolvedValueOnce({
+        groups: [
+          {
+            workspace: { id: 'ws2', cwd: '/repo/ws2' },
+            sessions: [v2Session('s2', 2, 'ws2', '/repo/ws2')],
+            total: 1,
+          },
+        ],
+        hasMore: false,
+        nextPageToken: null,
+        total: 2,
+      });
+    const state = createState();
+    const ws = useWorkspaceState(state, createLoadDeps(state));
+
+    await ws.load();
+
+    expect(apiMock.listSessionGroupsV2).toHaveBeenCalledTimes(2);
+    expect(apiMock.listSessionGroupsV2).toHaveBeenNthCalledWith(2, {
+      groupPageSize: 5,
+      hasPrompt: true,
+      pageToken: 'gtok1',
+    });
+    expect(state.sessions.map((s) => s.id)).toEqual(['s1', 's2']);
+  });
+
+  it('keeps the previous list when the grouped request fails', async () => {
+    apiMock.listSessionGroupsV2.mockRejectedValue(new Error('network down'));
+    const state = createState();
+    const failure = vi.fn();
+    const deps = { ...createLoadDeps(state), pushOperationFailure: failure };
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.load();
+
+    // No fallback on a transient failure (same server, same likely failure) —
+    // the previous pool stays and the error is surfaced.
+    expect(apiMock.listSessions).not.toHaveBeenCalled();
+    expect(state.sessions.map((s) => s.id)).toEqual(['sess_1']);
+    expect(failure).toHaveBeenCalled();
+  });
+
+  it('drains group pages until the token exhausts (no page cap)', async () => {
+    // 11 workspaces → 11 sequential pages of one group each, all loaded.
+    const workspaces = Array.from({ length: 11 }, (_, i) =>
+      workspace(`ws${i + 1}`, `/repo/ws${i + 1}`, `ws${i + 1}`),
+    );
+    apiMock.listWorkspaces.mockResolvedValue(workspaces);
+    for (let i = 0; i < 11; i += 1) {
+      const last = i === 10;
+      apiMock.listSessionGroupsV2.mockResolvedValueOnce({
+        groups: [
+          {
+            workspace: { id: `ws${i + 1}`, cwd: `/repo/ws${i + 1}` },
+            sessions: [v2Session(`s${i + 1}`, i + 1, `ws${i + 1}`, `/repo/ws${i + 1}`)],
+            total: 1,
+          },
+        ],
+        hasMore: !last,
+        nextPageToken: last ? null : `gtok${i + 1}`,
+        total: 11,
+      });
+    }
+    const state = createState();
+    const ws = useWorkspaceState(state, createLoadDeps(state));
+
+    await ws.load();
+
+    expect(apiMock.listSessionGroupsV2).toHaveBeenCalledTimes(11);
+    expect(state.sessions.map((s) => s.id)).toHaveLength(11);
+    expect(state.sessionsHasMoreByWorkspace['ws11']).toBe(false);
+  });
+
+  it('rehydrates live rows from the v1 read (restores mainTurnActive)', async () => {
+    apiMock.listSessionGroupsV2.mockResolvedValue({
+      groups: [
+        {
+          workspace: { id: 'ws1', cwd: '/repo/ws1' },
+          sessions: [
+            { ...v2Session('s_run', 1, 'ws1', '/repo/ws1'), activity: { status: 'running' as const } },
+            v2Session('s_idle', 2, 'ws1', '/repo/ws1'),
+          ],
+          total: 2,
+        },
+      ],
+      hasMore: false,
+      nextPageToken: null,
+      total: 1,
+    });
+    // The v1 read carries main_turn_active — the field the v2 domain lacks.
+    // Its other fields are an OLDER snapshot: a WS update landed meanwhile.
+    apiMock.getSession.mockReset().mockResolvedValue({
+      ...createSession(),
+      id: 's_run',
+      title: 'Stale snapshot title',
+      busy: true,
+      mainTurnActive: true,
+    });
+    const state = createState();
+    // Keep the active session inside the grouped page — otherwise the new
+    // active-session backfill issues its own getSession and pollutes the count.
+    state.activeSessionId = 's_run';
+    const ws = useWorkspaceState(state, createLoadDeps(state));
+
+    await ws.load();
+
+    expect(apiMock.getSession).toHaveBeenCalledTimes(1);
+    expect(apiMock.getSession).toHaveBeenCalledWith('s_run');
+    const run = state.sessions.find((s) => s.id === 's_run');
+    expect(run?.mainTurnActive).toBe(true);
+    // Only the hydration target fields merge — the stale snapshot must not
+    // roll back the fresher pooled row.
+    expect(run?.title).toBe('title-s_run');
+    // Idle rows are not hydrated.
+    expect(state.sessions.find((s) => s.id === 's_idle')?.mainTurnActive).toBeUndefined();
+  });
+
+  it('adopts a cleared activity state when the turn ended before the hydration read', async () => {
+    apiMock.listSessionGroupsV2.mockResolvedValue({
+      groups: [
+        {
+          workspace: { id: 'ws1', cwd: '/repo/ws1' },
+          sessions: [
+            { ...v2Session('s_run', 1, 'ws1', '/repo/ws1'), activity: { status: 'running' as const } },
+          ],
+          total: 1,
+        },
+      ],
+      hasMore: false,
+      nextPageToken: null,
+      total: 1,
+    });
+    // The turn ENDED between the grouped response and the hydration read —
+    // with no live event racing, the newer snapshot clears the stale state.
+    apiMock.getSession.mockReset().mockResolvedValue({
+      ...createSession(),
+      id: 's_run',
+      busy: false,
+      mainTurnActive: false,
+    });
+    const state = createState();
+    const ws = useWorkspaceState(state, createLoadDeps(state));
+
+    await ws.load();
+
+    const run = state.sessions.find((s) => s.id === 's_run');
+    expect(run?.busy).toBe(false);
+    expect(run?.mainTurnActive).toBe(false);
+  });
+
+  it('skips the hydration merge when a live event lands during the read', async () => {
+    apiMock.listSessionGroupsV2.mockResolvedValue({
+      groups: [
+        {
+          workspace: { id: 'ws1', cwd: '/repo/ws1' },
+          sessions: [
+            { ...v2Session('s_run', 1, 'ws1', '/repo/ws1'), activity: { status: 'running' as const } },
+          ],
+          total: 1,
+        },
+      ],
+      hasMore: false,
+      nextPageToken: null,
+      total: 1,
+    });
+    let resolveGet: ((value: unknown) => void) | undefined;
+    apiMock.getSession.mockReset().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveGet = resolve;
+        }),
+    );
+    const state = createState();
+    // Same as above: keep the active session inside the grouped page so the
+    // active-session backfill does not issue a competing getSession.
+    state.activeSessionId = 's_run';
+    const ws = useWorkspaceState(state, createLoadDeps(state));
+
+    const pending = ws.load();
+    await vi.waitFor(() => expect(apiMock.getSession).toHaveBeenCalled());
+    // A live event for this session lands while the read is in flight — the
+    // pool is newer, so the snapshot must not merge at all.
+    state.lastSeqBySession = { s_run: 42 };
+    resolveGet!({ ...createSession(), id: 's_run', busy: false, mainTurnActive: false });
+    await pending;
+
+    const run = state.sessions.find((s) => s.id === 's_run');
+    expect(run?.busy).toBe(true);
+  });
+
+  it('refills goal state for approval/question rows only after hydration lands', async () => {
+    apiMock.listSessionGroupsV2.mockResolvedValue({
+      groups: [
+        {
+          workspace: { id: 'ws1', cwd: '/repo/ws1' },
+          sessions: [
+            { ...v2Session('s_appr', 1, 'ws1', '/repo/ws1'), activity: { status: 'approval' as const } },
+          ],
+          total: 1,
+        },
+      ],
+      hasMore: false,
+      nextPageToken: null,
+      total: 1,
+    });
+    // v2 approval maps to busy=false + no main-turn flag; the parked turn is
+    // still open on the server, so the v1 read reports main_turn_active.
+    apiMock.getSession.mockReset().mockResolvedValue({
+      ...createSession(),
+      id: 's_appr',
+      busy: false,
+      mainTurnActive: true,
+    });
+    const state = createState();
+    const deps = createLoadDeps(state);
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.load();
+
+    // busy=false would skip the refill if the loop ran before hydration —
+    // the awaited hydration is what makes this call happen.
+    expect(deps.refillSessionGoalOnReload).toHaveBeenCalledWith('s_appr');
+  });
+
+  it('keeps the live model when a v2 row replaces a pooled session', async () => {
+    // The pool holds sess_1 with a resolved model ('kimi-code' from
+    // createSession); v2 rows carry model:'' — swapping the pool on reload
+    // must not reset it to the global default.
+    apiMock.listSessionGroupsV2.mockResolvedValue({
+      groups: [
+        {
+          workspace: { id: 'ws1', cwd: '/repo/ws1' },
+          sessions: [v2Session('sess_1', 1, 'ws1', '/repo/ws1')],
+          total: 1,
+        },
+      ],
+      hasMore: false,
+      nextPageToken: null,
+      total: 1,
+    });
+    const state = createState();
+    const ws = useWorkspaceState(state, createLoadDeps(state));
+
+    await ws.load();
+
+    expect(state.sessions.find((s) => s.id === 'sess_1')?.model).toBe('kimi-code');
+  });
+
+  it('backfills the active session into the swapped pool when it falls outside the first pages', async () => {
+    // The pool holds sess_1 (the ACTIVE session); the grouped first page
+    // covers only ws1's five newest — the swap would drop the active row and
+    // no auto-select / deep-link backfill would recover it.
+    apiMock.listSessionGroupsV2.mockResolvedValue({
+      groups: [
+        {
+          workspace: { id: 'ws1', cwd: '/repo/ws1' },
+          sessions: [1, 2, 3, 4, 5].map((i) => v2Session(`s${i}`, i, 'ws1', '/repo/ws1')),
+          total: 6,
+        },
+      ],
+      hasMore: false,
+      nextPageToken: null,
+      total: 1,
+    });
+    apiMock.getSession.mockReset().mockResolvedValue({
+      ...createSession(),
+      id: 'sess_1',
+      workspaceId: 'ws1',
+      cwd: '/repo/ws1',
+      busy: false,
+    });
+    const state = createState();
+    const ws = useWorkspaceState(state, createLoadDeps(state));
+
+    await ws.load();
+
+    expect(apiMock.getSession).toHaveBeenCalledWith('sess_1');
+    expect(state.sessions.map((s) => s.id)).toContain('sess_1');
+  });
+
+  it('clears the active id when the backfill confirms the session was deleted', async () => {
+    apiMock.listSessionGroupsV2.mockResolvedValue({
+      groups: [
+        {
+          workspace: { id: 'ws1', cwd: '/repo/ws1' },
+          sessions: [v2Session('s1', 1, 'ws1', '/repo/ws1')],
+          total: 1,
+        },
+      ],
+      hasMore: false,
+      nextPageToken: null,
+      total: 1,
+    });
+    // The active session is gone from the server (40401 = session not found).
+    apiMock.getSession.mockReset().mockRejectedValue(
+      new DaemonApiError({ code: 40401, msg: 'session does not exist', requestId: 'r' }),
+    );
+    const state = createState();
+    state.activeSessionId = 'sess_gone';
+    const deps = createLoadDeps(state);
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.load();
+
+    expect(deps.setActiveSessionId).toHaveBeenCalledWith(undefined);
+  });
+
+  it('refreshes the active session status after the pool swap', async () => {
+    apiMock.listSessionGroupsV2.mockResolvedValue({
+      groups: [
+        {
+          workspace: { id: 'ws1', cwd: '/repo/ws1' },
+          sessions: [v2Session('sess_1', 1, 'ws1', '/repo/ws1')],
+          total: 1,
+        },
+      ],
+      hasMore: false,
+      nextPageToken: null,
+      total: 1,
+    });
+    const state = createState();
+    const deps = createLoadDeps(state);
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.load();
+
+    expect(deps.refreshSessionStatus).toHaveBeenCalledWith('sess_1');
+  });
+
+  it('filters archive tombstones out of grouped rows and cursors', async () => {
+    apiMock.listSessionGroupsV2.mockResolvedValue({
+      groups: [
+        {
+          workspace: { id: 'ws1', cwd: '/repo/ws1' },
+          sessions: [
+            v2Session('s1', 1, 'ws1', '/repo/ws1'),
+            v2Session('s2', 2, 'ws1', '/repo/ws1'),
+            v2Session('s3', 3, 'ws1', '/repo/ws1'),
+          ],
+          total: 4,
+        },
+      ],
+      hasMore: false,
+      nextPageToken: null,
+      total: 1,
+    });
+    const state = createState();
+    const ws = useWorkspaceState(state, createLoadDeps(state));
+
+    // The grouped response was fetched before the archive event landed.
+    await ws.applyRemoteSessionArchived('s3');
+    await ws.load();
+
+    expect(state.sessions.map((s) => s.id)).toEqual(['s1', 's2']);
+    // The cursor comes from the filtered tail, never the archived page tail.
+    expect(state.sessionsCursorByWorkspace['ws1']).toBe('s2');
+    expect(state.sessionsHasMoreByWorkspace['ws1']).toBe(true);
+  });
+
+  it('falls back to the matched workspace root when a v2 row has no cwd', async () => {
+    apiMock.listSessionGroupsV2.mockResolvedValue({
+      groups: [
+        {
+          workspace: { id: 'ws1', cwd: '/repo/ws1' },
+          sessions: [
+            { ...v2Session('s1', 1, 'ws1', '/repo/ws1'), workspace: { id: 'ws1', cwd: null } },
+          ],
+          total: 1,
+        },
+      ],
+      hasMore: false,
+      nextPageToken: null,
+      total: 1,
+    });
+    const state = createState();
+    const ws = useWorkspaceState(state, createLoadDeps(state));
+
+    await ws.load();
+
+    expect(state.sessions.find((s) => s.id === 's1')?.cwd).toBe('/repo/ws1');
   });
 });

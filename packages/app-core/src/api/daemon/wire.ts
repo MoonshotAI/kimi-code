@@ -40,6 +40,22 @@ export interface WireV2SessionIdsPage {
   total: number;
 }
 
+// GET /api/v2/sessions?view=by_workspace 的分组分页结构：每组一个工作区，
+// 带排序后的前 group.page_size 条与该工作区的完整匹配 total；page/page_token
+// 翻页对象是组（顶层 total 是组数，与 flat 的会话数语义不同）。
+export interface WireV2SessionGroup {
+  workspace: { id: string; cwd: string | null };
+  sessions: V2Session[];
+  total: number;
+}
+
+export interface WireV2SessionGroupsPage {
+  groups: WireV2SessionGroup[];
+  has_more: boolean;
+  next_page_token: string | null;
+  total: number;
+}
+
 // POST /api/v2/sessions:archive | :restore 的响应 data。字段本身都是小写
 // 单词（id/ok/error/succeeded/failed），wire 与 app 形状一致。
 export interface WireV2BatchSessionResponse {

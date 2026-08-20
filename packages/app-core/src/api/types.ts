@@ -227,6 +227,42 @@ export interface V2SessionsPage {
   total: number;
 }
 
+/** view=by_workspace 的一组：一个工作区排序后的前 groupPageSize 条 + 该
+ *  工作区的完整匹配 total（≥ sessions.length，hasMore 的判定来源）。 */
+export interface V2SessionGroup {
+  workspace: { id: string; cwd: string | null };
+  sessions: V2Session[];
+  total: number;
+}
+
+export interface V2SessionGroupsPage {
+  groups: V2SessionGroup[];
+  hasMore: boolean;
+  /** hasMore=false 时为 null。 */
+  nextPageToken: string | null;
+  /** 组数（≠ 会话数——与 flat 页的 total 语义不同）。 */
+  total: number;
+}
+
+export interface ListSessionGroupsV2Input {
+  /** 每组返回的会话数，默认 5（服务端默认），范围同 flat 的 pageSize 上限。 */
+  groupPageSize?: number;
+  /** 对应 v1 exclude_empty：true 只要带 prompt 的会话。 */
+  hasPrompt?: boolean;
+  /** 按工作区过滤（OR 语义）。 */
+  workspaceIds?: string[];
+  /** 按状态过滤（OR 语义）。 */
+  statuses?: V2SessionActivityStatus[];
+  /** 默认 false（排除已归档）。 */
+  archived?: boolean | 'all';
+  /** 默认 meta.updated_at_desc；组内与组间共用同一排序。 */
+  sort?: V2SessionsSort;
+  /** 每页的组数，默认 50。 */
+  pageSize?: number;
+  /** 组翻页游标；绑定首页全部查询条件，漂移即 409 page_token_mismatch。 */
+  pageToken?: string;
+}
+
 /** `fields=id,archived` 投影返回的单项（全选匹配物化的最小形状）。 */
 export interface V2SessionIdProjection {
   id: string;
@@ -1245,6 +1281,9 @@ export interface KimiWebApi {
   /** GET /api/v2/sessions?fields=id,archived — ids 投影（全选匹配的物化来源，
       pageSize 上限 10000）。 */
   listSessionIdsV2(input?: ListSessionIdsV2Input): Promise<V2SessionIdsPage>;
+  /** GET /api/v2/sessions?view=by_workspace — 按工作区分组的会话列表（侧栏
+      分组视图首屏）。 */
+  listSessionGroupsV2(input?: ListSessionGroupsV2Input): Promise<V2SessionGroupsPage>;
   createSession(input: { title?: string; cwd?: string; model?: string; workspaceId?: string }): Promise<AppSession>;
   /** Fetch one session by id (deep links beyond the first listSessions page). */
   getSession(sessionId: string): Promise<AppSession>;

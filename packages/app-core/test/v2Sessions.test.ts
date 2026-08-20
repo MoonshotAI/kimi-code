@@ -199,6 +199,96 @@ describe('DaemonKimiWebApi.listSessionsV2', () => {
   });
 });
 
+// listSessionGroupsV2 — view=by_workspace 分组投影（侧栏分组视图首屏：一次
+// 请求替代逐工作区 N 个 v1 请求）。
+
+describe('DaemonKimiWebApi.listSessionGroupsV2', () => {
+  const identity = { clientId: 'web_t', clientName: 't', clientVersion: '0', clientUiMode: 'web' };
+
+  function makeApi(): DaemonKimiWebApi {
+    return new DaemonKimiWebApi({
+      origin: 'http://test.local',
+      identity,
+      projectorFactory: () => ({}) as AgentProjector,
+    });
+  }
+
+  function envelope(data: unknown): Response {
+    return new Response(JSON.stringify({ code: 0, msg: '', data, request_id: 'r' }), {
+      status: 200,
+    });
+  }
+
+  function v2Item(id: string): V2Session {
+    return {
+      id,
+      workspace: { id: 'ws1', cwd: '/w' },
+      meta: {
+        title: `title-${id}`,
+        last_prompt: null,
+        created_at: 1,
+        updated_at: 2,
+        archived: false,
+        archived_at: null,
+      },
+      activity: { status: 'idle' },
+    };
+  }
+
+  it('sends the grouped-view params and unwraps the groups page', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      envelope({
+        groups: [
+          { workspace: { id: 'ws1', cwd: '/w' }, sessions: [v2Item('a')], total: 7 },
+          { workspace: { id: 'ws2', cwd: '/x' }, sessions: [v2Item('b')], total: 1 },
+        ],
+        has_more: true,
+        next_page_token: 'gtok1',
+        total: 2,
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const page = await makeApi().listSessionGroupsV2({ groupPageSize: 5, hasPrompt: true });
+
+    const url = new URL(fetchMock.mock.calls[0]![0] as string);
+    expect(url.pathname).toBe('/api/v2/sessions');
+    expect(url.searchParams.get('view')).toBe('by_workspace');
+    expect(url.searchParams.get('group.page_size')).toBe('5');
+    expect(url.searchParams.get('meta.has_prompt')).toBe('true');
+    expect(page).not.toBeNull();
+    expect(page!.groups).toHaveLength(2);
+    expect(page!.groups[0]).toEqual({
+      workspace: { id: 'ws1', cwd: '/w' },
+      sessions: [expect.objectContaining({ id: 'a' })],
+      total: 7,
+    });
+    expect(page!.hasMore).toBe(true);
+    expect(page!.nextPageToken).toBe('gtok1');
+    expect(page!.total).toBe(2);
+  });
+
+  it('serializes filter arrays and the paging token through', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      envelope({ groups: [], has_more: false, next_page_token: null, total: 0 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await makeApi().listSessionGroupsV2({
+      workspaceIds: ['ws1', 'ws2'],
+      statuses: ['running'],
+      archived: 'all',
+      pageToken: 'gtok1',
+    });
+
+    const url = new URL(fetchMock.mock.calls[0]![0] as string);
+    expect(url.searchParams.getAll('workspace.id')).toEqual(['ws1', 'ws2']);
+    expect(url.searchParams.getAll('activity.status')).toEqual(['running']);
+    expect(url.searchParams.get('meta.archived')).toBe('all');
+    expect(url.searchParams.get('page_token')).toBe('gtok1');
+  });
+});
+
 describe('DaemonKimiWebApi batch archive/restore', () => {
   const identity = { clientId: 'web_t', clientName: 't', clientVersion: '0', clientUiMode: 'web' };
 

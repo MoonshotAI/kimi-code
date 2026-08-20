@@ -16,8 +16,27 @@ import type {
   KimiEventConnection,
   KimiEventHandlers,
   KimiWebApi,
+  V2Session,
 } from '@moonshot-ai/app-core/api';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
+
+/** Convert an AppSession fixture to the v2 grouped-wire shape the initial
+ *  load consumes (one group for the single stub workspace). */
+function v2Of(s: AppSession): V2Session {
+  return {
+    id: s.id,
+    workspace: { id: s.workspaceId ?? 'workspace-1', cwd: s.cwd },
+    meta: {
+      title: s.title,
+      last_prompt: s.lastPrompt ?? 'prompt',
+      created_at: Date.parse(s.createdAt),
+      updated_at: Date.parse(s.updatedAt),
+      archived: s.archived,
+      archived_at: null,
+    },
+    activity: { status: s.busy ? 'running' : 'idle' },
+  };
+}
 
 const clientApiMock: Record<string, unknown> = {};
 
@@ -192,6 +211,12 @@ describe('useKimiWebClient session work reconnect baseline', () => {
         return Promise.resolve({ items: initial, hasMore: false });
       },
     );
+    // The reconnect baseline is the pageSize-100 global walk; the initial
+    // load goes through the grouped endpoint and never touches listSessions.
+    const baselineCalls = () =>
+      listSessions.mock.calls.filter(
+        ([input]) => (input as { pageSize?: number } | undefined)?.pageSize === 100,
+      ).length;
     const connection: KimiEventConnection = {
       subscribe: vi.fn(),
       unsubscribe: vi.fn(),
@@ -246,6 +271,18 @@ describe('useKimiWebClient session work reconnect baseline', () => {
       ]),
       getFsHome: vi.fn(async () => ({ home: '/home/test', recentRoots: [] })),
       listSessions,
+      listSessionGroupsV2: vi.fn(async () => ({
+        groups: [
+          {
+            workspace: { id: 'workspace-1', cwd: '/workspace' },
+            sessions: initial.map(v2Of),
+            total: initial.length,
+          },
+        ],
+        hasMore: false,
+        nextPageToken: null,
+        total: 1,
+      })),
       getSessionSnapshot: vi.fn(async (id) => snapshot(initial.find((item) => item.id === id)!)),
       submitPrompt,
       getSessionStatus: vi.fn(async () => ({
@@ -290,7 +327,7 @@ describe('useKimiWebClient session work reconnect baseline', () => {
 
       handlers!.onConnectionChange(true);
       handlers!.onReplayComplete?.();
-      expect(listSessions).toHaveBeenCalledTimes(1);
+      expect(baselineCalls()).toBe(0);
       handlers!.onEvent(
         {
           type: 'approvalRequested',
@@ -324,7 +361,7 @@ describe('useKimiWebClient session work reconnect baseline', () => {
       handlers!.onConnectionChange(false);
       handlers!.onConnectionChange(true);
       await Promise.resolve();
-      expect(listSessions).toHaveBeenCalledTimes(1);
+      expect(baselineCalls()).toBe(0);
       handlers!.onReplayComplete?.();
       await reconnectRequested;
 

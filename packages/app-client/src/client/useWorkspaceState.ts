@@ -28,6 +28,7 @@ import type {
   KimiEventConnection,
   QuestionResponse,
   SessionPlanReview,
+  V2SessionGroupsPage,
   V2SessionsPage,
 } from '@moonshot-ai/app-core/api';
 import {
@@ -620,11 +621,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   // Backend max page size for GET /sessions. Bigger pages mean fewer round-trips
   // when draining the full session list.
   const SESSION_PAGE_SIZE = 100;
-  // On initial load, if the oldest session of the first page is still within
-  // this window, keep fetching older pages until the oldest loaded session falls
-  // outside it. Avoids clipping an active workspace's history at an arbitrary
-  // 5-session boundary when it has a run of recently-updated sessions.
-  const SESSIONS_RECENT_WINDOW_MS = 12 * 60 * 60 * 1000;
 
   /** Drain every page of sessions, newest first. A single global walk (instead of
    *  per-workspace) so sessions whose cwd is not a registered workspace root are
@@ -708,8 +704,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         const keepUsage =
           isPlaceholderSessionUsage(s.usage) && !isPlaceholderSessionUsage(live.usage);
         const pullRequest = s.pullRequest ?? live.pullRequest;
-        if (!keepUsage && pullRequest === s.pullRequest) return s;
-        return { ...s, usage: keepUsage ? live.usage : s.usage, pullRequest };
+        // v2 list rows carry no model ('') — keep the live one the same way
+        // (a reload would otherwise reset the active session to the default).
+        const model = (s.model ?? '') === '' ? live.model : s.model;
+        if (!keepUsage && pullRequest === s.pullRequest && model === s.model) return s;
+        return { ...s, usage: keepUsage ? live.usage : s.usage, pullRequest, model };
       }),
     );
   }
@@ -728,76 +727,157 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     return merged;
   }
 
-  /** Load the initial page of sessions for one workspace, then keep fetching
-   *  older pages while the oldest loaded session is still within
-   *  SESSIONS_RECENT_WINDOW_MS. Every page (including continuations) uses the
-   *  small initial page size so a sparse page cannot pull in days of history at
-   *  once. Continuation pages are also trimmed at the recent-window boundary,
-   *  keeping only up to the first session that falls outside the window. */
-  async function loadInitialSessionsForWorkspace(
-    workspaceId: string,
-  ): Promise<{
-    workspaceId: string;
-    page: { items: AppSession[]; hasMore: boolean };
-    error?: unknown;
-  }> {
+  /** Load every workspace's first page in ONE grouped request
+   *  (GET /api/v2/sessions?view=by_workspace): each group carries the
+   *  workspace's first SESSIONS_INITIAL_PAGE_SIZE sessions plus its full
+   *  matching total, which drives hasMore. Returns the merged, recency-sorted
+   *  list on success (pagination state committed), or undefined when the
+   *  request failed — the caller keeps the previous list. */
+  async function loadInitialSessionsGrouped(): Promise<AppSession[] | undefined> {
     const api = getKimiWebApi();
-    const items: AppSession[] = [];
-    const now = Date.now();
-    const ageOf = (s: AppSession): number => now - new Date(s.updatedAt).getTime();
-    let beforeId: string | undefined;
-    let hasMore = false;
-    let isFirstPage = true;
-    let continuationError: unknown;
-    for (;;) {
-      let page: { items: AppSession[]; hasMore: boolean };
-      try {
-        page = await api.listSessions({
-          workspaceId,
-          pageSize: SESSIONS_INITIAL_PAGE_SIZE,
-          beforeId,
-          excludeEmpty: true,
-        });
-      } catch (error) {
-        // A failed continuation page must not discard sessions already loaded
-        // from earlier pages; only a page-1 failure rejects the workspace load.
-        if (isFirstPage) throw error;
-        continuationError = error;
-        hasMore = true;
-        break;
-      }
-      hasMore = page.hasMore;
-      if (page.items.length === 0) break;
-      const oldest = page.items[page.items.length - 1]!;
-      const oldestBeyondWindow = ageOf(oldest) >= SESSIONS_RECENT_WINDOW_MS;
-
-      if (!isFirstPage && oldestBeyondWindow) {
-        // This continuation page crosses the recent-window boundary. Keep only
-        // up to and including the first session that falls outside the window
-        // (so the oldest loaded is the first one older than the window) and
-        // drop the older tail instead of loading the whole page.
-        const boundaryIndex = page.items.findIndex(
-          (s) => ageOf(s) >= SESSIONS_RECENT_WINDOW_MS,
-        );
-        const keep = boundaryIndex >= 0 ? boundaryIndex + 1 : page.items.length;
-        items.push(...page.items.slice(0, keep));
-        hasMore = page.hasMore || keep < page.items.length;
-        break;
-      }
-
-      items.push(...page.items);
-      isFirstPage = false;
-      if (!page.hasMore || oldestBeyondWindow) break;
-      beforeId = oldest.id;
+    const input = { groupPageSize: SESSIONS_INITIAL_PAGE_SIZE, hasPrompt: true } as const;
+    let firstPage: V2SessionGroupsPage;
+    try {
+      firstPage = await api.listSessionGroupsV2(input);
+    } catch (error) {
+      pushOperationFailure('load', error);
+      return undefined;
     }
-    return { workspaceId, page: { items, hasMore }, error: continuationError };
+    const groups = [...firstPage.groups];
+    // Drain the remaining group pages (workspaces past the first page of 50
+    // groups). The token binds the first page's conditions, so the input is
+    // re-sent unchanged; a token rejection is treated as a load failure.
+    let pageToken = firstPage.nextPageToken;
+    while (pageToken !== null) {
+      let next: V2SessionGroupsPage;
+      try {
+        next = await api.listSessionGroupsV2({ ...input, pageToken });
+      } catch (error) {
+        pushOperationFailure('load', error);
+        return undefined;
+      }
+      groups.push(...next.groups);
+      pageToken = next.nextPageToken;
+    }
+
+    // Map groups onto the registered workspaces: by id first (the common
+    // case), by root as the fallback for server-canonicalized alias ids (the
+    // group carries the canonical id while the registry entry keeps its own).
+    const groupById = new Map(groups.map((group) => [group.workspace.id, group] as const));
+    const groupByRoot = new Map(
+      groups
+        .filter((group) => group.workspace.cwd !== null)
+        .map((group) => [workspaceRootKey(group.workspace.cwd!), group] as const),
+    );
+    const loaded: AppSession[] = [];
+    const loadedIds = new Set<string>();
+    const hasMore: Record<string, boolean> = {};
+    const cursors: Record<string, string | undefined> = {};
+    const counts: Record<string, number> = {};
+    for (const workspace of rawState.workspaces) {
+      const group =
+        groupById.get(workspace.id) ?? groupByRoot.get(workspaceRootKey(workspace.root));
+      if (group === undefined) {
+        // Workspaces with no matching session are not in the response at all.
+        hasMore[workspace.id] = false;
+        cursors[workspace.id] = undefined;
+        counts[workspace.id] = SESSIONS_INITIAL_PAGE_SIZE;
+        continue;
+      }
+      // has_prompt is applied server-side; the last_prompt guard stays as a
+      // defensive net (mirrors the flat list's entry filter). Archive
+      // tombstones apply too: the grouped response may have been fetched
+      // before the archive event landed.
+      const items = group.sessions
+        .filter(
+          (s) =>
+            !archivedTombstoneIds.has(s.id) && (s.meta.last_prompt ?? '').length > 0,
+        )
+        .map((s) =>
+          toAppSessionFromV2(
+            // A null cwd falls back to the matched workspace's root — header
+            // cwd/branch and flat/pinned projections read it.
+            s.workspace.cwd === null
+              ? { ...s, workspace: { ...s.workspace, cwd: workspace.root } }
+              : s,
+          ),
+        );
+      for (const session of items) {
+        if (loadedIds.has(session.id)) continue;
+        loaded.push(session);
+        loadedIds.add(session.id);
+      }
+      // The group's total is the workspace's full matching count — the
+      // authoritative hasMore, no stale session_count guessing.
+      hasMore[workspace.id] = group.sessions.length < group.total;
+      // Cursor = oldest session of this group (pages are newest-first), the
+      // same before_id semantics loadMoreSessions pages with — taken from the
+      // FILTERED items so an archived row never becomes the cursor.
+      cursors[workspace.id] = items.length > 0 ? items[items.length - 1]!.id : undefined;
+      counts[workspace.id] = Math.max(items.length, SESSIONS_INITIAL_PAGE_SIZE);
+    }
+    rawState.sessionsHasMoreByWorkspace = hasMore;
+    rawState.sessionsCursorByWorkspace = cursors;
+    rawState.sessionsInitialCountByWorkspace = counts;
+    rawState.sessionsFullyLoaded = false;
+    // The v2 activity domain has no main-turn flag (running maps to busy
+    // only), while the v1 first page used to carry main_turn_active. Collect
+    // the live rows here; load() rehydrates them from the v1 read AFTER the
+    // pool swap commits (updating the old pool would be overwritten).
+    for (const group of groups) {
+      for (const item of group.sessions) {
+        const status = item.activity.status;
+        if (status === 'running' || status === 'approval' || status === 'question') {
+          pendingLiveHydrateIds.push(item.id);
+        }
+      }
+    }
+    loaded.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    return loaded;
   }
 
-  /** Fetch the first page of sessions for every known workspace concurrently.
-   *  Returns the merged, recency-sorted list and seeds per-workspace hasMore.
-   *  When every workspace request fails, returns undefined so the caller keeps
-   *  the previously loaded sessions instead of committing a false empty list. */
+  /** Ids of live v2 rows (running/approval/question) collected by the grouped
+   *  initial load, awaiting a v1-read rehydration of main_turn_active once
+   *  the new pool is committed. */
+  const pendingLiveHydrateIds: string[] = [];
+
+  /** Rehydrate one live session from the v1 read (GET /api/v1/sessions/{id}),
+   *  which carries main_turn_active — the field the v2 activity domain lacks.
+   *  Best-effort: a missing/deleted session or a failed read reconciles with
+   *  the next event. */
+  async function hydrateLiveSession(sessionId: string): Promise<void> {
+    // A live event for this session advances its seq — if one lands while the
+    // read is in flight, the pool is newer and the snapshot must not merge.
+    const startSeq = rawState.lastSeqBySession[sessionId] ?? 0;
+    let fresh: AppSession;
+    try {
+      fresh = await getKimiWebApi().getSession(sessionId);
+    } catch {
+      return;
+    }
+    if ((rawState.lastSeqBySession[sessionId] ?? 0) > startSeq) return;
+    // No live event raced the read: the snapshot is newer than the grouped
+    // rows, so its activity state is authoritative IN BOTH DIRECTIONS — a
+    // turn that ended in between clears the stale busy/main-turn bits too.
+    // Everything else keeps the pooled row (it may carry WS-driven state).
+    updateSession(sessionId, (s) => ({
+      ...s,
+      busy: fresh.busy,
+      mainTurnActive: fresh.mainTurnActive ?? s.mainTurnActive,
+      pendingInteraction: fresh.pendingInteraction ?? s.pendingInteraction,
+      lastTurnReason: fresh.lastTurnReason ?? s.lastTurnReason,
+    }));
+  }
+
+  /** Fetch the first page of sessions for every workspace in one grouped
+   *  request (loadInitialSessionsGrouped). Returns the merged, recency-sorted
+   *  list and seeds per-workspace hasMore. When the request fails, returns
+   *  undefined so the caller keeps the previously loaded sessions instead of
+   *  committing a false empty list. */
   async function loadInitialSessionsByWorkspace(): Promise<AppSession[] | undefined> {
+    // Drop hydration leftovers from a failed earlier load — they belong to
+    // that cycle's commit, which never happened.
+    pendingLiveHydrateIds.length = 0;
     const workspaces = rawState.workspaces;
     if (workspaces.length === 0) {
       // /workspaces may be unavailable or empty on older / partially-failing
@@ -816,96 +896,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (fallback.error !== undefined) pushOperationFailure('load', fallback.error);
       return sessions;
     }
-    const results = await Promise.allSettled(
-      workspaces.map((w) => loadInitialSessionsForWorkspace(w.id)),
-    );
-    const loaded: AppSession[] = [];
-    const loadedIds = new Set<string>();
-    const successfulPages = new Map<string, { items: AppSession[]; hasMore: boolean }>();
-    const failedWorkspaceIds = new Set<string>();
-    let firstError: unknown;
-    for (let index = 0; index < results.length; index++) {
-      const result = results[index]!;
-      if (result.status === 'fulfilled') {
-        successfulPages.set(result.value.workspaceId, result.value.page);
-        if (result.value.error !== undefined) {
-          if (failedWorkspaceIds.size === 0) firstError = result.value.error;
-          failedWorkspaceIds.add(result.value.workspaceId);
-        }
-        for (const session of result.value.page.items) {
-          if (loadedIds.has(session.id)) continue;
-          loaded.push(session);
-          loadedIds.add(session.id);
-        }
-        continue;
-      }
-      if (failedWorkspaceIds.size === 0) firstError = result.reason;
-      failedWorkspaceIds.add(workspaces[index]!.id);
-    }
-
-    // One failed workspace must not erase another workspace's successful page,
-    // nor the failed workspace's last usable rows. If every request failed,
-    // leave both sessions and pagination state untouched for a natural retry.
-    if (successfulPages.size === 0) {
-      pushOperationFailure('load', firstError);
-      return undefined;
-    }
-    const failedWorkspaceRoots = new Set(
-      workspaces
-        .filter((workspace) => failedWorkspaceIds.has(workspace.id))
-        .map((workspace) => workspace.root),
-    );
-    const registeredWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id));
-    for (const session of rawState.sessions) {
-      const belongsToFailedWorkspace =
-        session.workspaceId !== undefined && registeredWorkspaceIds.has(session.workspaceId)
-          ? failedWorkspaceIds.has(session.workspaceId)
-          : failedWorkspaceRoots.has(session.cwd) ||
-            failedWorkspaceIds.has(workspaceIdForSession(session));
-      if (!belongsToFailedWorkspace || loadedIds.has(session.id)) continue;
-      loaded.push(session);
-      loadedIds.add(session.id);
-    }
-
-    const hasMore: Record<string, boolean> = {};
-    const cursors: Record<string, string | undefined> = {};
-    const counts: Record<string, number> = {};
-    for (const { id: workspaceId } of workspaces) {
-      const page = successfulPages.get(workspaceId);
-      if (page === undefined) {
-        const previousHasMore = rawState.sessionsHasMoreByWorkspace[workspaceId];
-        const previousCursor = rawState.sessionsCursorByWorkspace[workspaceId];
-        const previousCount = rawState.sessionsInitialCountByWorkspace[workspaceId];
-        if (previousHasMore !== undefined) hasMore[workspaceId] = previousHasMore;
-        if (previousCursor !== undefined) cursors[workspaceId] = previousCursor;
-        if (previousCount !== undefined) counts[workspaceId] = previousCount;
-        continue;
-      }
-      // Trust the server's hasMore — the per-workspace session_count is only a
-      // (possibly stale) label total, not an authority on whether more pages exist.
-      hasMore[workspaceId] = page.hasMore;
-      // Cursor = oldest session of this page (pages are newest-first). Tracked
-      // separately from the loaded set so a deep-linked older session appended
-      // out of band cannot shift the cursor and skip intervening sessions.
-      cursors[workspaceId] =
-        page.items.length > 0 ? page.items[page.items.length - 1]!.id : undefined;
-      // Collapse target for the sidebar's in-group "show less" control: the
-      // first-page capacity, floored at a full page so a workspace that was
-      // empty or sparse on first paint does not hide sessions created later.
-      // If the initial load pulled more than a page (recent-window
-      // continuations), keep the larger count so collapse returns to what was
-      // first visible.
-      counts[workspaceId] = Math.max(page.items.length, SESSIONS_INITIAL_PAGE_SIZE);
-    }
-    rawState.sessionsHasMoreByWorkspace = hasMore;
-    rawState.sessionsCursorByWorkspace = cursors;
-    rawState.sessionsInitialCountByWorkspace = counts;
-    rawState.sessionsFullyLoaded = false;
-    // Keep rawState.sessions newest-first for readers that pick sessions[0]
-    // (e.g. auto-selecting the most recent session on first load).
-    loaded.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-    if (failedWorkspaceIds.size > 0) pushOperationFailure('load', firstError);
-    return loaded;
+    return loadInitialSessionsGrouped();
   }
 
   /** Fetch the next page of sessions for a workspace, triggered by an in-group
@@ -1392,6 +1383,15 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // still hold rows the commit filtered out (archive tombstones).
       const sessions = rawState.sessions;
 
+      // The pool swap is committed — now rehydrate the live rows the grouped
+      // load collected (its v2 rows have no main-turn flag). Awaited (one
+      // parallel RTT, a handful of ids at most) so the goal-refill loop below
+      // reads the hydrated mainTurnActive instead of racing it.
+      if (pendingLiveHydrateIds.length > 0) {
+        const ids = pendingLiveHydrateIds.splice(0);
+        await Promise.allSettled(ids.map((id) => hydrateLiveSession(id)));
+      }
+
       // A reload swaps the pool for per-workspace v1 first pages — the flat
       // walk's seed/cursor/frontier described v2 pages whose rows are gone
       // now, so resuming the stale cursor would skip live rows. Reset the
@@ -1424,6 +1424,30 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         const outcomes = await Promise.all(missingPinned.map((id) => backfillPinnedSession(id)));
         const stale = missingPinned.filter((_, i) => outcomes[i] === 'stale');
         if (stale.length > 0) unpinSessions(stale);
+      }
+
+      // The pool swap keeps only each workspace's first grouped page — a
+      // session opened via "show more" or a deep link (including the ACTIVE
+      // one) falls out of the list, and with activeSessionId still set no
+      // auto-select or deep-link backfill will recover it: its sidebar row
+      // disappears and every pool-driven projection degrades to defaults.
+      // Fetch it back exactly like a missing pin. A confirmed not-found means
+      // the session was deleted while we were away — clear the dead active id
+      // (a transient error keeps it for the next load's retry).
+      if (
+        rawState.activeSessionId !== undefined &&
+        !rawState.sessions.some((s) => s.id === rawState.activeSessionId)
+      ) {
+        const outcome = await fetchSessionIntoList(rawState.activeSessionId);
+        if (outcome === 'not-found') {
+          setActiveSessionId(undefined);
+          writeSessionUrl(undefined, 'replace');
+        }
+      }
+      // The kept rows' model/usage come from the pool (v2 rows carry neither)
+      // and may be stale after an offline window — refresh the active one.
+      if (rawState.activeSessionId !== undefined) {
+        await refreshSessionStatus(rawState.activeSessionId);
       }
 
       // A goal running in the background survives a client reload only in the
@@ -1468,7 +1492,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (!rawState.activeSessionId && urlSessionId !== undefined) {
         const available =
           rawState.sessions.some((s) => s.id === urlSessionId) ||
-          (await fetchSessionIntoList(urlSessionId));
+          (await fetchSessionIntoList(urlSessionId)) === 'ok';
         if (available) {
           await selectSession(urlSessionId, { urlMode: 'replace', skipTrack: true });
         }
@@ -1997,23 +2021,25 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   /** Fetch a session that is not in the loaded list (deep link beyond the first
-      page) and append it. Returns false when the daemon doesn't know it. */
-  async function fetchSessionIntoList(sessionId: string): Promise<boolean> {
+      page) and append it. 'not-found' means the daemon confirmed the id is
+      gone (or the row is a stale pre-archive snapshot); 'error' is transient
+      and worth retrying. */
+  async function fetchSessionIntoList(sessionId: string): Promise<'ok' | 'not-found' | 'error'> {
     try {
       const session = await getKimiWebApi().getSession(sessionId);
       // An active snapshot for a tombstoned id is stale — it was read before
       // the archive event landed. An archived row is the truthful state and
       // may still be shown (deep link to an archived session).
-      if (!session.archived && archivedTombstoneIds.has(sessionId)) return false;
+      if (!session.archived && archivedTombstoneIds.has(sessionId)) return 'not-found';
       if (!rawState.sessions.some((s) => s.id === session.id)) {
         // Append, not prepend: the list is recency-ordered and a deep-linked old
         // session shouldn't displace the most-recent ones at the top.
         poolInsertsDuringLoad.add(session.id);
         appendSession(session);
       }
-      return true;
-    } catch {
-      return false;
+      return 'ok';
+    } catch (err) {
+      return isDaemonApiError(err) && err.code === SESSION_NOT_FOUND_CODE ? 'not-found' : 'error';
     }
   }
 
@@ -2060,7 +2086,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // outside the loaded page): try to fetch it; on failure fall back to the most
     // recent session and FIX the URL so the bad entry doesn't stick around.
     void (async () => {
-      if (await fetchSessionIntoList(id)) {
+      if ((await fetchSessionIntoList(id)) === 'ok') {
         await selectSession(id, { urlMode: 'none', skipTrack: true });
         return;
       }
@@ -2103,7 +2129,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // older target. In-list sessions keep the fully synchronous path below,
       // so their rapid-click URL ordering is unaffected.
       const serial = ++selectSerial;
-      if (!(await fetchSessionIntoList(sessionId))) {
+      if ((await fetchSessionIntoList(sessionId)) !== 'ok') {
         return;
       }
       if (serial !== selectSerial) {

@@ -40,6 +40,7 @@ import type {
   KimiEventHandlers,
   KimiWebApi,
   ListSessionIdsV2Input,
+  ListSessionGroupsV2Input,
   ListSessionsV2Input,
   ManagedUsageResult,
   ManagedUserInfoResult,
@@ -58,6 +59,7 @@ import type {
   UpdateProviderInput,
   UpdateProviderResult,
   V2SessionIdsPage,
+  V2SessionGroupsPage,
   V2SessionsPage,
   V2BatchSessionResponse,
 } from '../types';
@@ -138,6 +140,7 @@ import type {
   WireUpdateProviderRequest,
   WireUpdateProviderResult,
   WireV2SessionIdsPage,
+  WireV2SessionGroupsPage,
   WireV2SessionsPage,
   WireV2BatchSessionResponse,
   WireWorkspace,
@@ -516,6 +519,28 @@ export class DaemonKimiWebApi implements KimiWebApi {
     };
     const data = await this.httpV2.get<WireV2SessionIdsPage>('/sessions', query);
     return { items: data.items, hasMore: data.has_more, nextPageToken: data.next_page_token, total: data.total };
+  }
+
+  /**
+   * GET /api/v2/sessions?view=by_workspace — 按工作区分组的会话列表（侧栏
+   * 分组视图的首屏来源）：一次请求返回每个有匹配会话的工作区的前
+   * group.page_size 条 + 该工作区完整匹配 total，替代逐工作区 N 个 v1 请求。
+   */
+  async listSessionGroupsV2(input?: ListSessionGroupsV2Input): Promise<V2SessionGroupsPage> {
+    const query: RestQuery = {
+      view: 'by_workspace',
+      'group.page_size': input?.groupPageSize,
+      'meta.has_prompt': input?.hasPrompt === undefined ? undefined : String(input.hasPrompt),
+      sort: input?.sort,
+      page_size: input?.pageSize,
+      page_token: input?.pageToken,
+      'meta.archived':
+        input?.archived === undefined ? undefined : String(input.archived),
+      'workspace.id': input?.workspaceIds,
+      'activity.status': input?.statuses,
+    };
+    const data = await this.httpV2.get<WireV2SessionGroupsPage>('/sessions', query);
+    return { groups: data.groups, hasMore: data.has_more, nextPageToken: data.next_page_token, total: data.total };
   }
 
   async createSession(input: {
