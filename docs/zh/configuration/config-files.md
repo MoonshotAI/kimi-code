@@ -192,28 +192,35 @@ display_name = "Kimi for Coding (custom)"
 
 ## `secondary_model`
 
-subagent 默认继承 main agent 正在运行的模型。`[secondary_model]` 节把这件事变成可配置的：为 subagent 准备一批候选模型（模型池）并指定默认绑定——通常是一个更便宜的模型，供不需要主模型能力的子任务使用。
+subagent 默认继承 main agent 正在运行的模型。`[secondary_model]` 节把这件事变成可配置的：为 subagent 准备一批候选模型（模型池）并指定默认绑定——典型用法是给不需要主模型能力的子任务换一个更便宜的模型。
 
 ### subagent 模型池
 
-该功能目前是实验功能，默认关闭。通过 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1` 启用，或使用 master `KIMI_CODE_EXPERIMENTAL_FLAG=1`。它在包括交互式 TUI 在内的所有启动方式下生效。实验功能关闭时，模型池配置不生效：subagent 继承调用方模型，会话启动也会跳过池校验。
+该功能目前是实验功能，默认关闭。通过 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1` 启用，或使用 master `KIMI_CODE_EXPERIMENTAL_FLAG=1`，在包括交互式 TUI 在内的所有启动方式下生效。实验功能关闭时模型池配置不生效：subagent 继承调用方模型，会话启动也会跳过池校验。
 
-只想让所有 subagent 默认换用一个模型时不需要 models 表——一行 `default_model` 就是只含一个条目的模型池：
+最小配置只有一行——单独写下的 `default_model` 就是只含一个条目的模型池：
 
 ```toml
 [secondary_model]
 default_model = "kimi-code/kimi-for-coding-highspeed"
 ```
 
-在交互式 TUI 中，也可以用 [`/secondary-model`](../reference/slash-commands.md) 命令（别名 `/subagent-model`）打开模型选择器来设置：选择后写入 `default_model`（已有 models 表而所选别名不在其中时，会一并补一条空描述条目），之后派生的 subagent 立即按新默认值绑定，无需重启会话。
-
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `default_model` | `string` | — | subagent 默认模型。配置 `[secondary_model.models]` 时必填，且必须是其中的 key；单独写下它（不写 models 表）则等价于只含它一个条目的模型池 |
-| `models` | `table<string, string>` | — | subagent 模型池。key 是 [`[models]`](#models) 中已配置条目的别名，value 是 main agent 挑选 subagent 模型时看到的描述（中英文均可；空字符串表示只列出别名、不给提示） |
-| `force` | `boolean` | `false` | 把所有 subagent 固定到 `default_model`：不再提供 `model` 参数，main agent 无法改选其他模型或 `"primary"`。必须配置 `default_model`，且不能与 `[secondary_model.models]` 同时使用 |
+| `default_model` | `string` | — | subagent 的默认模型 |
+| `models` | `table<string, string>` | — | subagent 模型池。key 是 [`[models]`](#models) 条目的别名，value 是给 main agent 的挑选提示 |
+| `force` | `boolean` | `false` | 把所有 subagent 固定到 `default_model`，收回 main agent 的选择权 |
 
-配置模型池（显式的 `[secondary_model.models]` 表，或仅一行 `default_model` 形成的隐式单条目池）即启用模型选择：`Agent` / `AgentSwarm` 工具会获得 `model` 参数，工具描述中会列出模型池（默认模型标注 `[default]`），main agent 可按次派生选择模型（除非设置了 `force`，见下文）。模型池只引用已配置的 [`[models]`](#models) 条目——下面的 `kimi-code/*` 别名由 `/login` 自动提供——并附上挑选提示：
+字段之间的约束：
+
+- `default_model`：配置 `models` 表时必填，且必须是其中的 key。
+- `models`：value 中英文均可；空字符串表示只列出别名、不给提示。
+- `force`：必须搭配 `default_model`，且不能与 `models` 表同用——表的意义在于提供选择，而 force 取消了选择。
+- `primary` 是保留字（含义见下文），不能作为池中 key。
+
+在交互式 TUI 中，也可以用 [`/secondary-model`](../reference/slash-commands.md) 命令（别名 `/subagent-model`）打开模型选择器：选择后写入 `default_model`（已有 models 表而所选别名不在其中时，会一并补一条空描述条目），之后派生的 subagent 立即按新默认值绑定，无需重启会话。
+
+配置了模型池（显式的 `models` 表或隐式的单条目池）即启用模型选择：`Agent` / `AgentSwarm` 工具会获得 `model` 参数，工具描述中列出模型池（默认模型标注 `[default]`），main agent 可按次派生选择模型。池 key 只能引用已配置的 [`[models]`](#models) 条目——下面的 `kimi-code/*` 别名由 `/login` 自动提供：
 
 ```toml
 [secondary_model]
@@ -224,9 +231,20 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 "kimi-code/kimi-for-coding" = "均衡的编码主力。适合大多数功能开发和代码修改任务。"
 ```
 
-派生时按以下顺序解析 subagent 的模型：工具调用显式传入的 `model` → `default_model`。`model` 参数接受池中任意别名，或 `"primary"` ——调用方自己正在运行的模型，始终合法，即使它不在池中。`default_model` 与 `[secondary_model.models]` 都未配置时，该参数不会出现，subagent 继承调用方模型。绑定池中别名时不携带显式 Thinking 档位——subagent 按 "全局 `[thinking]` 配置 → 所绑定模型的默认 effort" 自然解析，不继承调用方的档位；`"primary"` 则连模型带档位一起继承调用方。
+派生时按以下顺序解析 subagent 的模型：
 
-要彻底收回 main agent 的选择权——让所有 subagent 固定跑在同一个模型上——加上 `force = true`：
+1. 工具调用显式传入的 `model`
+2. `default_model`
+
+`model` 参数的取值规则：
+
+- 接受池中任意别名，或 `"primary"`——调用方自己正在运行的模型，始终合法，即使不在池中。
+- `default_model` 与 `models` 都未配置时该参数不存在，subagent 继承调用方模型。
+- 绑定池中别名时不携带显式 Thinking 档位：subagent 按 "全局 `[thinking]` 配置 → 所绑定模型的默认 effort" 解析，不继承调用方的档位。
+- `"primary"` 则连模型带档位一起继承调用方。
+- 传入的值既不是池中别名也不是 `"primary"` 时，本次派生报错并列出可选值。
+
+要收回 main agent 的选择权、让所有 subagent 固定跑同一个模型，加上 `force = true`：
 
 ```toml
 [secondary_model]
@@ -234,9 +252,14 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 force = true
 ```
 
-设置 `force` 后不再提供 `model` 参数（与完全未配置时一样），每次派生都绑定 `default_model`；显式传入 `model`（包括 `"primary"`）会报错。`force` 必须搭配 `default_model`，且不能与 `[secondary_model.models]` 表同时使用——表的意义在于提供选择，而 force 取消了选择。
+设置 `force` 后不再提供 `model` 参数（与完全未配置时一样），每次派生都绑定 `default_model`；显式传入 `model`（包括 `"primary"`）会报错。
 
-利用自然解析会落到所绑定模型的默认 effort 这一点，可以给池中不同条目配不同的 Thinking 档位：为同一个底层模型再注册一个 `[models]` 条目作为「变体」，用 [`[models."<alias>".overrides]`](#模型覆盖项) 只覆盖 `default_effort`，再把两个别名都放进模型池——main agent 挑选别名时便同时选定了档位。有两个前提：底层模型必须声明了 `support_efforts`（`managed:kimi-code` 下目前只有 k3 系列声明了档位）；且变体是独立条目，不会继承被指向条目的字段——`capabilities`、`support_efforts` 等元数据要完整照抄，否则 `default_effort` 不生效（它必须是 `support_efforts` 列表中的值）：
+### 为池内条目配置不同 Thinking 档位
+
+绑定池中别名时，subagent 的 Thinking 档位会落到所绑定模型的默认 effort。利用这一点，可以为同一底层模型注册一个「变体」条目，让 main agent 选别名时同时选定档位：
+
+1. 在 [`[models]`](#models) 中为同一底层模型再注册一个条目，用 [`[models."<alias>".overrides]`](#模型覆盖项) 只覆盖 `default_effort`。
+2. 把原别名和变体别名都放进模型池。
 
 ```toml
 # "kimi-code/k3" 由 /login 提供（默认 high 档）；这里为同一模型注册一个 max 档位变体
@@ -257,9 +280,19 @@ default_model = "kimi-code/k3"
 k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 ```
 
-注意 `default_effort` 是模型级默认值：一旦设置了全局 `[thinking].effort`，它对 main agent 和 subagent 都优先生效，变体的默认档位只在全局未设置时起作用。取值与回落规则同 [`[models]` 条目的 `default_effort`](#models)。
+两个前提：
 
-配置错误一律直接报错，不做静默回退：`default_model` 缺失、不是池中 key，或池中 key 无法解析到已配置的 `[models]` 条目时，会话的创建、恢复（resume）与 fork 都会在启动时直接失败；`force` 未搭配 `default_model` 或与 `[secondary_model.models]` 表同用时亦然。别名 `primary` 是保留字——它始终绑定调用方自己的模型——不能作为池中 key。工具调用传入的 `model` 既不是池中别名也不是 `"primary"` 时，本次派生报错并列出可选值。
+- 底层模型必须声明了 `support_efforts`（`managed:kimi-code` 下目前只有 k3 系列声明了档位）。
+- 变体是独立条目，不会继承被指向条目的字段——`capabilities`、`support_efforts` 等元数据要完整照抄，否则 `default_effort` 不生效（它必须是 `support_efforts` 列表中的值）。
+
+另外注意，`default_effort` 只是模型级默认值：全局 `[thinking].effort` 一旦设置，对 main agent 和 subagent 都优先生效，变体的默认档位只在全局未设置时起作用。取值与回落规则同 [`[models]` 条目的 `default_effort`](#models)。
+
+::: warning 注意
+配置错误一律直接报错，不做静默回退。出现以下情况时，会话的创建、恢复（resume）与 fork 都会在启动时失败：
+
+- `default_model` 缺失、不是池中 key，或池中 key 无法解析到已配置的 [`[models]`](#models) 条目；
+- `force` 未搭配 `default_model`，或与 `models` 表同时使用。
+:::
 
 ## `thinking`
 
