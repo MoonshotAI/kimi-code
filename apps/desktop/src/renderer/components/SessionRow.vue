@@ -960,19 +960,20 @@ function openPullRequest(): void {
   gap: var(--sb-gap, 6px);
   /* Reserve one button's width so the trailing slot (and thus the title) never
      shifts between the time and the actions, even for short times like "2m". */
-  min-width: 26px;
+  min-width: var(--icon-button-sm);
 }
 /* The cluster spans the slot's full (row) height and flex-centers the buttons,
    so the icons' vertical center IS the row's geometric center, decoupled from
-   any text metrics. Anchored to the row's right padding token minus a 3px
-   inset — the same inset as the buttons' vertical one ((32px row − 26px
-   button) / 2) — so the cluster sits equidistant from the pill's right edge
-   and its top/bottom edges. */
+   any text metrics. Anchored to the row's right padding token minus
+   --sb-action-inset — the same inset as the buttons' vertical one (half the
+   font-driven row's slack over the IconButton sm box, floored at the 16px
+   folder-icon rows and tracking the user's font scale) — so the cluster sits
+   equidistant from the pill's right edge and its top/bottom edges. */
 .act .ha {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: calc(3px - var(--se-pad-x));
+  right: calc(var(--sb-action-inset, 3px) - var(--se-pad-x));
   display: inline-flex;
   align-items: center;
   gap: 2px;

@@ -452,12 +452,13 @@ function onSessionDragStart(id: string, event: DragEvent): void {
    (mask fade on .gh-name) before it can reach the buttons. */
 .gh-actions {
   position: absolute;
-  /* Right edge lands 3px inside the row's border edge — the same anchor the
-     session-row hover cluster uses (.act .ha in SessionRow), so hovering a
-     group header vs a session row puts the trailing icons at the same x.
-     .gh-top is the containing block, whose right edge is one .gh padding
-     (--sb-pad-x − --sb-inset) in from the border edge; cancel that, keep 3px. */
-  right: calc(3px - (var(--sb-pad-x) - var(--sb-inset)));
+  /* Right edge lands --sb-action-inset inside the row's border edge — the same
+     anchor the session-row hover cluster uses (.act .ha in SessionRow), so
+     hovering a group header vs a session row puts the trailing icons at the
+     same x. .gh-top is the containing block, whose right edge is one .gh
+     padding (--sb-pad-x − --sb-inset) in from the border edge; cancel that,
+     keep the inset. */
+  right: calc(var(--sb-action-inset) - (var(--sb-pad-x) - var(--sb-inset)));
   top: 50%;
   transform: translateY(-50%);
   display: flex;

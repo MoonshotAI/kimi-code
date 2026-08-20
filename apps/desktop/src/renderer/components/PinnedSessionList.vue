@@ -685,13 +685,15 @@ function onContainerDragLeave(event: DragEvent): void {
 <style scoped>
 /* Section label — mirrors the sidebar's .side-section-label (scoped styles
    don't cross the component boundary), so the pinned caption reads exactly
-   like the WORKSPACES one below it. */
+   like the WORKSPACES one below it: --sb-pad-x leading alignment on the left,
+   the list's scrollbar track (--space-1) plus --sb-action-inset on the right
+   so the toggle's right edge shares the row buttons' vertical line. */
 .pinned-label {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 0 var(--space-3) var(--space-1) var(--space-2);
+  padding: 0 calc(var(--space-1) + var(--sb-action-inset)) var(--space-1) var(--space-2);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   font-weight: var(--weight-section-label);
@@ -752,18 +754,21 @@ function onContainerDragLeave(event: DragEvent): void {
 
 /* Cap the expanded rows so a long pinned set can't push the workspace list
    (and the footer) out of the column — the labels stay fixed, the rows
-   scroll internally. Thin overlay scrollbar mirroring the sidebar's. The
-   40vh cap is the resting/natural-height layout; once the resize handle is
-   offered, the draggable cap is written imperatively (inline max-height
+   scroll internally. Thin overlay-styled scrollbar mirroring the sidebar's.
+   The 40vh cap is the resting/natural-height layout; once the resize handle
+   is offered, the draggable cap is written imperatively (inline max-height
    overrides this — see the script's resizable block). The horizontal inset
    lives INSIDE the scroller (paired with the wrapper's negative margins) so
    the rows' right edge and the scrollbar track land exactly where the
    session list's do — .sessions carries the same inset inside its own
-   scroll container. */
+   scroll container. Same contract as .sessions: the custom 4px scrollbar is
+   classic, so its gutter stays reserved even when the rows fit — the pinned
+   rows' right edge never shifts against the session list's. */
 .pinned-rows {
   max-height: 40vh;
   overflow-y: auto;
   padding: 0 var(--sb-inset);
+  scrollbar-gutter: stable;
 }
 .pinned-rows::-webkit-scrollbar { width: var(--space-1); }
 .pinned-rows::-webkit-scrollbar-track { background: transparent; }
@@ -871,5 +876,28 @@ function onContainerDragLeave(event: DragEvent): void {
 .pinned.drop-active {
   border-radius: var(--radius-sm);
   box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+/* Firefox (the engine without ::-webkit-scrollbar) — same contract as
+   Sidebar's section label: the label gets the same browser-owned gutter
+   environment as the rows' scrollers (overflow + scrollbar-gutter: stable),
+   so the toggle's right edge shares the rows' line at any thin width —
+   nothing to measure; the label's right padding then drops the Chromium-only
+   --space-1 track compensation. The padding/negative-margin pairs reserve
+   the focus ring's spread (--p-focus-ring-w) so overflow can't clip it — on
+   top always, and on the right only when the font scale shrinks
+   --sb-action-inset below the ring (max/min clamp). No left reserve: the
+   toggle sits at the label's right end. This block sits after every base
+   rule it overrides (the .pinned-label padding shorthand in particular).
+   Inert on Chromium. */
+@supports not selector(::-webkit-scrollbar) {
+  .pinned-label {
+    overflow: hidden;
+    scrollbar-gutter: stable;
+    padding-top: var(--p-focus-ring-w);
+    margin-top: calc(var(--p-focus-ring-w) * -1);
+    padding-right: max(var(--sb-action-inset), var(--p-focus-ring-w));
+    margin-right: min(0px, var(--sb-action-inset) - var(--p-focus-ring-w));
+  }
 }
 </style>

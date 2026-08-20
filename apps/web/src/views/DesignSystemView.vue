@@ -263,6 +263,7 @@ onUnmounted(() => {
             <table class="dt">
               <thead><tr><th>Token</th><th>Value</th><th>Usage</th></tr></thead>
               <tbody>
+                <tr><td class="tk">--p-focus-ring-w</td><td class="val">3px</td><td>The focus ring's spread width — the rings below derive from it, and so does anything that must reserve room for the ring (clip protection)</td></tr>
                 <tr><td class="tk">--p-focus-ring</td><td class="val">0 0 0 3px var(--p-accent-soft)</td><td>Default focus ring (link, menu item, switch, checkbox)</td></tr>
                 <tr><td class="tk">--p-focus-ring-strong</td><td class="val">0 0 0 3px var(--p-accent-soft), 0 0 0 1px var(--p-accent)</td><td>Strong focus ring (button, primary action)</td></tr>
               </tbody>
@@ -1680,7 +1681,7 @@ onUnmounted(() => {
             </ul>
 
             <h3 class="sub">Sidebar alignment system (<code>--sb-*</code>)</h3>
-            <p>All sidebar rows (group head, session row, New chat, search, and Settings buttons) share 4 custom properties. Their 16px icon slots and <code>--sb-gap</code> place every label on the same x-axis as the workspace name.</p>
+            <p>All sidebar rows (group head, session row, New chat, search, and Settings buttons) share 5 custom properties. Their 16px icon slots and <code>--sb-gap</code> place every label on the same x-axis as the workspace name.</p>
             <table class="dt">
               <thead><tr><th>Token</th><th>Value</th><th>Usage</th></tr></thead>
               <tbody>
@@ -1688,10 +1689,11 @@ onUnmounted(() => {
                 <tr><td class="tk">--sb-pad-x</td><td class="val">20px</td><td>content start x (= --sb-inset + 8px row padding)</td></tr>
                 <tr><td class="tk">--sb-gutter</td><td class="val">16px</td><td>leading icon slot width — matches the workspace folder icon so the session title aligns under the workspace name</td></tr>
                 <tr><td class="tk">--sb-gap</td><td class="val">8px</td><td>gap between the icon slot and the text</td></tr>
+                <tr><td class="tk">--sb-action-inset</td><td class="val">calc((max(--ui-font-size-sm × --leading-tight, --p-ic-md) + 2 × --space-2 − --icon-button-sm) / 2) ≈ 3px</td><td>trailing action buttons sit this far inside the row box's right edge — exactly the buttons' vertical inset: half the font-driven row height's slack over the fixed IconButton sm box. The row height is the title line box floored at the group-head / directory rows' 16px folder icon, plus the vertical row padding, so the inset tracks the user's font scale without dropping below the icon-floored rows' slack; the session row's hover cluster, the group head's ⋯/+, and the section labels' buttons all share this one right edge</td></tr>
               </tbody>
             </table>
             <div class="callout info"><span class="ico">i</span><div>
-              The session title's starting x = <code>--sb-pad-x + --sb-gutter + --sb-gap</code>. The group head has a folder icon and the session row has a status slot; both icons are the same width and position, so the titles align naturally.
+              The session title's starting x = <code>--sb-pad-x + --sb-gutter + --sb-gap</code>. The group head has a folder icon and the session row has a status slot; both icons are the same width and position, so the titles align naturally. On the trailing side, the list's custom 4px scrollbar is <b>classic</b> — it reserves layout width whenever it shows — so <code>.sessions</code> (and the pinned rows' scroller) keeps its gutter reserved at all times (<code>scrollbar-gutter: stable</code>), and the section labels' right padding is <code>--space-1</code> (the track width) + <code>--sb-action-inset</code>: every trailing button — section-label buttons included — stays on the same right line whether or not the list scrolls, and the compensation lives on the labels (not <code>.sessions-head</code>) so the pinned section's drop-active frame stays symmetric. On Firefox (no <code>::-webkit-scrollbar</code>) the global <code>thin</code> scrollbar stays — users keep a draggable bar — and since its gutter width is browser-owned and unmeasurable from CSS, the two section labels get the SAME gutter environment (<code>overflow: hidden</code> + <code>scrollbar-gutter: stable</code>, which the browser sizes identically to the list's at any thin width) and drop the track-width padding: every trailing button shares the right line with nothing measured or hard-coded. The labels' padding/negative-margin pairs reserve the focus ring's spread (<code>--p-focus-ring-w</code>) against the overflow clip — always on top, and on the right only when the font scale shrinks <code>--sb-action-inset</code> below the ring (max/min clamped, so the button's right edge never leaves the shared line).
             </div></div>
 
             <h3 class="sub">Sidebar structure</h3>

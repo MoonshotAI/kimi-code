@@ -532,8 +532,12 @@ html[data-color-scheme="dark"] {
   --md-b3: calc(13px + var(--md-shift));
 
   /* -- focus ring (design-system §02) -------------------------------------- */
-  --p-focus-ring: 0 0 0 3px var(--color-accent-soft);
-  --p-focus-ring-strong: 0 0 0 3px var(--color-accent-soft), 0 0 0 1px var(--color-accent);
+  /* The ring's spread width as its own token: anything that must reserve
+     room for the ring (e.g. clip protection) derives from here, so a ring
+     retune can never strand a hardcoded offset. */
+  --p-focus-ring-w: 3px;
+  --p-focus-ring: 0 0 0 var(--p-focus-ring-w) var(--color-accent-soft);
+  --p-focus-ring-strong: 0 0 0 var(--p-focus-ring-w) var(--color-accent-soft), 0 0 0 1px var(--color-accent);
 
   /* -- selection (design-system §02; others.textSelected) ------------------ */
   --p-selection: rgba(23, 131, 255, 0.2);

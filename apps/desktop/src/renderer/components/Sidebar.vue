@@ -1914,11 +1914,26 @@ onBeforeUnmount(() => {
   /* Alignment contract, inherited by SessionRow and WorkspaceGroup:
      - row boxes (hover/selected pills) sit --sb-inset from the sidebar edges;
      - text/icons start at --sb-pad-x = --sb-inset + 8px row padding;
-     - row titles start at --sb-pad-x + --sb-gutter + --sb-gap. */
+     - row titles start at --sb-pad-x + --sb-gutter + --sb-gap;
+     - every trailing action button (row hover cluster, group-head ⋯/+,
+       section-label buttons) shares one right edge: --sb-action-inset inside
+       the row box's right border. The scrolling list reserves its scrollbar
+       track (--space-1) at all times (scrollbar-gutter: stable) and the
+       section labels' right padding adds the same track width, so the line
+       holds whether or not the list scrolls. */
   --sb-inset: var(--space-2);  /* row box inset from the sidebar edge */
   --sb-pad-x: var(--space-4);  /* content start x (inset + row padding) */
   --sb-gutter: 16px;           /* leading icon slot (matches the 16px folder icon, so the session title aligns under the workspace name) */
   --sb-gap: var(--space-2);    /* gap between the icon slot and the text */
+  /* Trailing action buttons sit this far inside the row box's right edge —
+     the same inset as the buttons' vertical one, so a button is equidistant
+     from the pill's right and top/bottom edges. The inset is half the row's
+     vertical slack: the row height is font-driven (title line box =
+     --ui-font-size-sm × --leading-tight, floored at the group-head /
+     directory rows' 16px folder icon, plus 2 × --space-2 vertical padding —
+     the .se/.gh 8px) minus the fixed IconButton sm box, so the whole
+     expression tracks the user's font scale. */
+  --sb-action-inset: calc((max(var(--ui-font-size-sm) * var(--leading-tight), var(--p-ic-md)) + 2 * var(--space-2) - var(--icon-button-sm)) / 2);
   /* Row hover wash — global --color-hover (lighter than the selected fill;
      both translucent, so they sit on any surface). */
   --sb-hover: var(--color-hover);
@@ -2095,7 +2110,10 @@ onBeforeUnmount(() => {
    group list. It owns the scroll-linked list seam (hairline + fade) at its
    bottom edge, shown only while the group list is scrolled. No background:
    nothing scrolls under it, so the surface (and the macOS vibrancy tint)
-   shows through unchanged. */
+   shows through unchanged. The scrollbar-track compensation for the right
+   edge lives on the section labels' own padding (see .side-section-label),
+   NOT here — keeping the head symmetric keeps the pinned section's
+   drop-active frame symmetric too. */
 .sessions-head {
   position: relative;
   z-index: 1;
@@ -2277,7 +2295,7 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: 3px;
+  right: var(--sb-action-inset);
   display: inline-flex;
   align-items: center;
   opacity: 0;
@@ -2375,7 +2393,7 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: 3px;
+  right: var(--sb-action-inset);
   display: inline-flex;
   align-items: center;
   opacity: 0;
@@ -2404,12 +2422,16 @@ onBeforeUnmount(() => {
    side inset and the bottom breathing room. Scrolled content clips at the
    .sessions-head seam. Scrollbar: the thin ::-webkit-scrollbar below; standard
    scrollbar-width would kill it on Chromium (see the global scrollbar block
-   in style.css). */
+   in style.css). The custom 4px scrollbar is classic — it reserves layout
+   width whenever it shows — so keep its gutter reserved even when the list
+   fits: the rows' right edge (and every trailing button's) then stays on one
+   line with .sessions-head in both states. */
 .sessions {
   flex: 1;
   overflow-y: auto;
   padding: 0 var(--sb-inset) var(--space-3);
   min-height: 0;
+  scrollbar-gutter: stable;
 }
 .sessions::-webkit-scrollbar { width: var(--space-1); }
 .sessions::-webkit-scrollbar-track { background: transparent; }
@@ -2449,13 +2471,18 @@ onBeforeUnmount(() => {
 .side-footer--shadowed::before { opacity: 1; }
 
 /* Section label — heads the workspace list below the action buttons. Aligns
-   with the rows' leading inset (--sb-pad-x) so it reads as the list's title. */
+   with the rows' leading inset (--sb-pad-x) so it reads as the list's title.
+   The right padding is the list's scrollbar track (--space-1, reserved there
+   at all times via scrollbar-gutter: stable) plus --sb-action-inset, so the
+   section action buttons' right edge lands on the same vertical line as the
+   row buttons' — compensating here, not on .sessions-head, keeps the pinned
+   section's drop-active frame symmetric. */
 .side-section-label {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 0 var(--space-3) var(--space-1) var(--space-2);
+  padding: 0 calc(var(--space-1) + var(--sb-action-inset)) var(--space-1) var(--space-2);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   font-weight: var(--weight-section-label);
@@ -2493,6 +2520,37 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+/* Firefox (the engine without ::-webkit-scrollbar — the same detector the
+   global scrollbar block in style.css uses): the global thin scrollbar
+   stays — users keep a draggable bar — and its stable gutter is
+   browser-owned, so no fixed compensation can ever match it. Instead the
+   section label gets the SAME gutter environment (a never-scrolling scroll
+   container with the gutter reserved), which the browser sizes identically
+   to the list's at any thin width — nothing to measure; the label's right
+   padding then drops the Chromium-only --space-1 track compensation. The
+   padding/negative-margin pairs reserve the focus ring's spread
+   (--p-focus-ring-w) so overflow can't clip it — on top always, and on the
+   right only when the font scale shrinks --sb-action-inset below the ring
+   (max/min clamp: at medium and up the pair collapses to the plain inset
+   and zero margin, so the button's right edge stays on the shared line at
+   every scale). No left reserve: the only focusable control sits at the
+   label's right end. This block must sit AFTER the base .side-section-label
+   rules — their padding shorthand would otherwise undo these overrides.
+   Inert on Chromium — desktop (Electron) never takes this branch. */
+@supports not selector(::-webkit-scrollbar) {
+  .side-section-label {
+    overflow: hidden;
+    scrollbar-gutter: stable;
+    padding-top: var(--p-focus-ring-w);
+    margin-top: calc(var(--p-focus-ring-w) * -1);
+    padding-right: max(var(--sb-action-inset), var(--p-focus-ring-w));
+    margin-right: min(0px, var(--sb-action-inset) - var(--p-focus-ring-w));
+  }
+  .sessions-head .pinned + .side-section-label {
+    margin-top: calc(var(--space-1) - var(--p-focus-ring-w));
+  }
 }
 
 /* Workspace drag-to-reorder: a line at the top (drop-before) or bottom
