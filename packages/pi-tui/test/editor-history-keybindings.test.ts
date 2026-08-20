@@ -57,4 +57,30 @@ describe("Editor prompt history keybindings", () => {
 		editor.handleInput("\x10"); // Ctrl+P on empty editor
 		assert.strictEqual(editor.getText(), "older prompt");
 	});
+
+	it("falls through to cursor movement when the guard blocks a shared Up binding", () => {
+		setKeybindings(
+			new KeybindingsManager(TUI_KEYBINDINGS, {
+				"tui.editor.historyPrevious": "up",
+			}),
+		);
+		const editor = new Editor(new TuiMainScreen(new VirtualTerminal()), defaultEditorTheme);
+		editor.addToHistory("prompt");
+		editor.setText("ab\ncd");
+
+		// Guard blocks history entry, but the shared default cursorUp binding must
+		// still move the cursor instead of dead-ending.
+		editor.handleInput("\x1b[A"); // Up with a draft - cursor to the first line
+		assert.strictEqual(editor.getText(), "ab\ncd");
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 2 });
+
+		editor.handleInput("\x1b[A"); // Up on the first line - jump to line start, no history
+		assert.strictEqual(editor.getText(), "ab\ncd");
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
+
+		// Empty editor: the same key enters history via historyPrevious
+		editor.setText("");
+		editor.handleInput("\x1b[A");
+		assert.strictEqual(editor.getText(), "prompt");
+	});
 });

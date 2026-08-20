@@ -880,8 +880,14 @@ export class Editor implements Component, Focusable {
 			this.cancelAutocomplete();
 			if (this.isEditorEmpty() || this.historyIndex > -1) {
 				this.navigateHistory(-1);
+				return;
 			}
-			return;
+			// Guard rejected the entry: if this key also drives cursorUp (defaults
+			// survive key reuse), fall through so the press still moves the cursor
+			// instead of dead-ending.
+			if (!kb.matches(data, "tui.editor.cursorUp")) {
+				return;
+			}
 		}
 		if (kb.matches(data, "tui.editor.historyNext")) {
 			this.cancelAutocomplete();
