@@ -101,6 +101,16 @@ function effortsFor(model: ModelThinkingMetadata | undefined): readonly string[]
   return model?.supportEfforts?.map(nonEmpty).filter((v): v is string => v !== undefined) ?? [];
 }
 
+function declaredDefaultEffortFor(
+  model: ModelThinkingMetadata | undefined,
+  efforts: readonly string[],
+): ThinkingEffort {
+  const declaredDefault = nonEmpty(model?.defaultEffort);
+  return (declaredDefault !== undefined && efforts.includes(declaredDefault)
+    ? declaredDefault
+    : middleOf(efforts)) as ThinkingEffort;
+}
+
 export function modelSupportsThinking(model: ModelThinkingMetadata | undefined): boolean {
   if (model === undefined) return false;
   return (
@@ -116,12 +126,7 @@ export function defaultThinkingEffortForModel(
 ): ThinkingEffort {
   if (model === undefined || !modelSupportsThinking(model)) return 'off';
   const efforts = effortsFor(model);
-  if (efforts.length > 0) {
-    const declaredDefault = nonEmpty(model.defaultEffort);
-    return (declaredDefault !== undefined && efforts.includes(declaredDefault)
-      ? declaredDefault
-      : middleOf(efforts)) as ThinkingEffort;
-  }
+  if (efforts.length > 0) return declaredDefaultEffortFor(model, efforts);
   return 'on';
 }
 
@@ -146,7 +151,7 @@ function normalizeThinkingEffortForModel(
   if (!strictValidation) {
     if (efforts.length === 0) return effort;
     if (effort === 'on' || !efforts.includes(effort)) {
-      return defaultThinkingEffortForModel(model);
+      return declaredDefaultEffortFor(model, efforts);
     }
     return effort;
   }
@@ -186,12 +191,13 @@ export function resolveThinkingEffortForModelWithFallback(
         ? configured
         : defaultThinkingEffortForModel(model);
   }
+  const resolved = normalizeThinkingEffortForModel(effort, model, strictValidation);
   const efforts = effortsFor(model);
   const fallback: ThinkingEffortFallback | undefined =
     effort !== 'on' && effort !== 'off' && efforts.length > 0 && !efforts.includes(effort)
-      ? { configured: effort, resolved: defaultThinkingEffortForModel(model) }
+      ? { configured: effort, resolved }
       : undefined;
-  return { effort: normalizeThinkingEffortForModel(effort, model, strictValidation), fallback };
+  return { effort: resolved, fallback };
 }
 
 export function resolveThinkingEffortForModel(

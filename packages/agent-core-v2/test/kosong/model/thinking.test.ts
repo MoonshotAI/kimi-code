@@ -10,6 +10,7 @@ import {
   requiresStrictThinkingValidation,
   resolveForcedThinkingEffort,
   resolveThinkingEffortForModel,
+  resolveThinkingEffortForModelWithFallback,
   resolveThinkingKeep,
   usesTraitDrivenThinking,
 } from '#/kosong/model/thinking';
@@ -97,6 +98,33 @@ describe('resolveThinkingEffortForModel', () => {
         false,
       ),
     ).toBe('extreme');
+  });
+
+  it('falls back to the declared default when the model omits the thinking capability', () => {
+    const declared = {
+      supportEfforts: ['low', 'medium', 'xhigh'],
+      defaultEffort: 'xhigh',
+    };
+    expect(resolveThinkingEffortForModel(undefined, { effort: 'high' }, declared, false)).toBe(
+      'xhigh',
+    );
+    expect(resolveThinkingEffortForModel('high', undefined, declared, false)).toBe('xhigh');
+    const withFallback = resolveThinkingEffortForModelWithFallback(
+      'high',
+      undefined,
+      declared,
+      false,
+    );
+    expect(withFallback.effort).toBe('xhigh');
+    expect(withFallback.fallback).toEqual({ configured: 'high', resolved: 'xhigh' });
+    expect(
+      resolveThinkingEffortForModel(
+        'high',
+        undefined,
+        { supportEfforts: ['low', 'medium', 'xhigh'] },
+        false,
+      ),
+    ).toBe('medium');
   });
 
   it('keeps always-thinking models on under kimi semantics', () => {

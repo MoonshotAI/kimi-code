@@ -4,6 +4,7 @@ import type { ModelAlias } from '../../../src/config';
 import {
   defaultThinkingEffortFor,
   resolveThinkingEffort,
+  resolveThinkingEffortWithFallback,
   supportsThinkingEffort,
 } from '../../../src/agent/config/thinking';
 
@@ -207,6 +208,30 @@ describe('resolveThinkingEffort', () => {
     expect(resolveThinkingEffort(undefined, { effort: 'ultra' }, booleanModel, false)).toBe(
       'ultra',
     );
+  });
+
+  it('falls back to the declared default when the model omits the thinking capability', () => {
+    // A model may declare support_efforts/default_effort without declaring
+    // the thinking capability; the declared list is still authoritative for
+    // the fallback — the unlisted value must not silently become 'off'.
+    const declared = model({
+      supportEfforts: ['low', 'medium', 'xhigh'],
+      defaultEffort: 'xhigh',
+    });
+    expect(resolveThinkingEffort(undefined, { effort: 'high' }, declared, false)).toBe('xhigh');
+    expect(resolveThinkingEffort('high', undefined, declared, false)).toBe('xhigh');
+    const withFallback = resolveThinkingEffortWithFallback('high', undefined, declared, false);
+    expect(withFallback.effort).toBe('xhigh');
+    expect(withFallback.fallback).toEqual({ configured: 'high', resolved: 'xhigh' });
+    // no declared defaultEffort -> middle entry of the list.
+    expect(
+      resolveThinkingEffort(
+        'high',
+        undefined,
+        model({ supportEfforts: ['low', 'medium', 'xhigh'] }),
+        false,
+      ),
+    ).toBe('medium');
   });
 
   it('projects a concrete effort to on for a boolean-only Kimi model', () => {

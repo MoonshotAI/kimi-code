@@ -25,6 +25,23 @@ function effortsFor(model: ModelAlias | undefined): readonly string[] {
 }
 
 /**
+ * Pick the fallback effort straight from the declared list: the declared
+ * `default_effort` when it is listed, else the middle entry. Unlike
+ * {@link defaultThinkingEffortFor} this skips the thinking-capability gate —
+ * a model that declares `support_efforts` without declaring the `thinking`
+ * capability still has a meaningful declared default to fall back to.
+ */
+function declaredDefaultEffortFor(
+  model: ModelAlias | undefined,
+  efforts: readonly string[],
+): ThinkingEffort {
+  const declaredDefault = model?.defaultEffort;
+  return declaredDefault !== undefined && efforts.includes(declaredDefault)
+    ? declaredDefault
+    : middleOf(efforts);
+}
+
+/**
  * Resolve the default thinking effort for a model from its declared metadata:
  *   - models that do not support thinking (or an unknown model) -> `'off'`
  *   - effort-capable models -> `default_effort`, else the middle entry of
@@ -38,12 +55,7 @@ export function defaultThinkingEffortFor(model: ModelAlias | undefined): Thinkin
   const effective = model === undefined ? undefined : effectiveModelAlias(model);
   if (!supportsThinking(effective)) return 'off';
   const efforts = effortsFor(effective);
-  if (efforts.length > 0) {
-    const declaredDefault = effective?.defaultEffort;
-    return declaredDefault !== undefined && efforts.includes(declaredDefault)
-      ? declaredDefault
-      : middleOf(efforts);
-  }
+  if (efforts.length > 0) return declaredDefaultEffortFor(effective, efforts);
   return 'on';
 }
 
@@ -76,7 +88,7 @@ function normalizeThinkingEffortForModel(
     // mistake the backend would reject, so fall back like the Kimi wire does.
     if (efforts.length === 0) return effort;
     if (effort === 'on' || !efforts.includes(effort)) {
-      return defaultThinkingEffortFor(effective);
+      return declaredDefaultEffortFor(effective, efforts);
     }
     return effort;
   }
@@ -140,12 +152,13 @@ export function resolveThinkingEffortWithFallback(
         : defaultThinkingEffortFor(effectiveModel);
   }
 
+  const resolved = normalizeThinkingEffortForModel(effort, effectiveModel, kimiProtocol);
   const efforts = effortsFor(effectiveModel);
   const fallback: ThinkingEffortFallback | undefined =
     effort !== 'on' && effort !== 'off' && efforts.length > 0 && !efforts.includes(effort)
-      ? { configured: effort, resolved: defaultThinkingEffortFor(effectiveModel) }
+      ? { configured: effort, resolved }
       : undefined;
-  return { effort: normalizeThinkingEffortForModel(effort, effectiveModel, kimiProtocol), fallback };
+  return { effort: resolved, fallback };
 }
 
 /**
