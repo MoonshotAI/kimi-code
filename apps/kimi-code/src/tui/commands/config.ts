@@ -523,6 +523,14 @@ async function performModelSwitch(
       const status = await session.getStatus();
       effectiveAlias = status.model ?? alias;
       effectiveEffort = status.thinkingEffort;
+      // A logout that retained the session zeroed the footer's context
+      // counters; the model switch is what heals the session here, so
+      // restore the counters from the live status too.
+      host.setAppState({
+        contextTokens: status.contextTokens,
+        maxContextTokens: status.maxContextTokens,
+        contextUsage: status.contextUsage,
+      });
     }
   } catch (error) {
     const msg = formatErrorMessage(error);
