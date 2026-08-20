@@ -200,6 +200,14 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'substitute-model',
+    aliases: [],
+    description: 'Configure the substitute model for rate-limit fallback',
+    priority: 91,
+    availability: 'always',
+    experimentalFlag: 'substitute-model',
+  },
+  {
     name: 'effort',
     aliases: ['thinking'],
     description: 'Switch thinking effort',

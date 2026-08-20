@@ -39,6 +39,11 @@ import type { GoalBudgetProperties } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
+import { IAgentProfileService } from '#/agent/profile/profile';
+import {
+  resolveSubstituteModelAlias,
+  resolveSubstituteCooldownMs,
+} from '#/session/substitute/configSection';
 import {
   ErrorCodes,
   Error2,
@@ -253,10 +258,24 @@ export const goalResumeContinuationKey = defineState<ResumeContinuation | undefi
   () => undefined as ResumeContinuation | undefined,
 );
 
+export const goalSubstituteModelActiveKey = defineState<boolean>(
+  'goal.substituteModelActive',
+  () => false,
+);
+export const goalSubstituteModelOriginalKey = defineState<string | undefined>(
+  'goal.substituteModelOriginal',
+  () => undefined as string | undefined,
+);
+export const goalSubstituteModelActivatedAtKey = defineState<number | undefined>(
+  'goal.substituteModelActivatedAt',
+  () => undefined as number | undefined,
+);
+
 export class AgentGoalService extends Disposable implements IAgentGoalService {
   declare readonly _serviceBrand: undefined;
 
   private readonly wallClockDeadline = this._register(new MutableDisposable<IDisposable>());
+  private readonly substituteRecoveryTimer = this._register(new MutableDisposable<IDisposable>());
   private pendingContinuation?: PendingContinuation;
 
   constructor(
@@ -274,6 +293,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     @IAgentUsageService usageService: IAgentUsageService,
     @IConfigService private readonly config: IConfigService,
     @IFlagService private readonly flags: IFlagService,
+    @IAgentProfileService private readonly profile: IAgentProfileService,
     @IGoalDeadlineScheduler private readonly deadlineScheduler: IGoalDeadlineScheduler,
     @IAgentScopeContext private readonly agentContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -293,6 +313,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.states.contributeState(goalExhaustedTurnBudgetGoalsKey);
     this.states.contributeState(goalLiveWallClockStartedAtKey);
     this.states.contributeState(goalResumeContinuationKey);
+    this.states.contributeState(goalSubstituteModelActiveKey);
+    this.states.contributeState(goalSubstituteModelOriginalKey);
+    this.states.contributeState(goalSubstituteModelActivatedAtKey);
     if (!this.isSupportedAgent) return;
     this._register(
       new GoalInjection(
@@ -448,6 +471,30 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   private set resumeContinuation(value: ResumeContinuation | undefined) {
     this.states.set(goalResumeContinuationKey, value);
+  }
+
+  private get substituteModelActive(): boolean {
+    return this.states.get(goalSubstituteModelActiveKey);
+  }
+
+  private set substituteModelActive(value: boolean) {
+    this.states.set(goalSubstituteModelActiveKey, value);
+  }
+
+  private get substituteModelOriginal(): string | undefined {
+    return this.states.get(goalSubstituteModelOriginalKey);
+  }
+
+  private set substituteModelOriginal(value: string | undefined) {
+    this.states.set(goalSubstituteModelOriginalKey, value);
+  }
+
+  private get substituteModelActivatedAt(): number | undefined {
+    return this.states.get(goalSubstituteModelActivatedAtKey);
+  }
+
+  private set substituteModelActivatedAt(value: number | undefined) {
+    this.states.set(goalSubstituteModelActivatedAtKey, value);
   }
 
   private get isSupportedAgent(): boolean {
@@ -883,10 +930,83 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       return true;
     }
     if (result.reason === 'failed') {
+      if (isRateLimitError(result.error) && this.canSwitchToSubstituteModel()) {
+        await this.switchToSubstituteModel(goalId);
+        return false;
+      }
       await this.pauseActiveGoal({ reason: goalFailurePauseReason(result.error) });
       return true;
     }
     return false;
+  }
+
+  private canSwitchToSubstituteModel(): boolean {
+    if (this.substituteModelActive) return false;
+    const substituteAlias = resolveSubstituteModelAlias(this.config, this.flags);
+    return substituteAlias !== undefined;
+  }
+
+  private async switchToSubstituteModel(goalId: string): Promise<void> {
+    const substituteAlias = resolveSubstituteModelAlias(this.config, this.flags);
+    if (substituteAlias === undefined) return;
+    const originalModel = this.profile.getModel();
+    this.substituteModelOriginal = originalModel;
+    this.substituteModelActive = true;
+    this.substituteModelActivatedAt = Date.now();
+    try {
+      await this.profile.setModel(substituteAlias);
+    } catch {
+      this.substituteModelActive = false;
+      this.substituteModelOriginal = undefined;
+      this.substituteModelActivatedAt = undefined;
+      await this.pauseActiveGoal({
+        reason: `Paused after provider rate limit (substitute model "${substituteAlias}" could not be applied)`,
+      });
+      return;
+    }
+    const cooldownMs = resolveSubstituteCooldownMs(this.config, this.flags);
+    this.reminders.appendSystemReminder(
+      `Primary model hit a rate limit. Switched to substitute model "${substituteAlias}" for ~${Math.round(cooldownMs / 60_000)} minutes until the primary recovers.`,
+      { kind: 'injection', variant: 'substitute_model_activated' },
+    );
+    this.telemetry.track2('substitute_model_activated', {
+      original_model: originalModel,
+      substitute_model: substituteAlias,
+    });
+    this.scheduleSubstituteRecovery(goalId, cooldownMs);
+  }
+
+  private scheduleSubstituteRecovery(goalId: string, cooldownMs: number): void {
+    this.substituteRecoveryTimer.value = this.deadlineScheduler.schedule(cooldownMs, () => {
+      void this.switchBackToOriginalModel(goalId);
+    });
+  }
+
+  private async switchBackToOriginalModel(goalId: string): Promise<void> {
+    if (!this.substituteModelActive) return;
+    if (!this.isActiveGoal(goalId)) {
+      this.clearSubstituteState();
+      return;
+    }
+    const originalModel = this.substituteModelOriginal;
+    this.clearSubstituteState();
+    if (originalModel === undefined) return;
+    try {
+      await this.profile.setModel(originalModel);
+      this.reminders.appendSystemReminder(
+        `Primary model recovered. Switched back from substitute model to "${originalModel}".`,
+        { kind: 'injection', variant: 'substitute_model_deactivated' },
+      );
+      this.telemetry.track2('substitute_model_deactivated', {
+        original_model: originalModel,
+      });
+    } catch {}
+  }
+
+  private clearSubstituteState(): void {
+    this.substituteModelActive = false;
+    this.substituteModelOriginal = undefined;
+    this.substituteModelActivatedAt = undefined;
   }
 
   private async settleGoalAfterContinuationFailure(
@@ -990,6 +1110,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.appendForkClearedReminder();
     this.wallClockDeadline.clear();
     this.liveWallClockStartedAt = undefined;
+    this.substituteRecoveryTimer.clear();
+    this.clearSubstituteState();
     const state = this.goalState;
     if (state === null) return;
     if (state.status === 'complete') {
@@ -1027,6 +1149,10 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.cancelPendingContinuation(opts.preserveLiveContinuation === true);
     this.wallClockDeadline.clear();
     this.liveWallClockStartedAt = undefined;
+    this.substituteRecoveryTimer.clear();
+    if (this.substituteModelActive) {
+      void this.switchBackToOriginalModel(this.goalState.goalId);
+    }
     void this.dispatcher.dispatch(new GoalClear({}));
     if (opts.emit !== false) this.emitGoalUpdated(null);
     if (opts.track !== false) this.telemetry.track2('goal_cleared', { actor });
@@ -1276,6 +1402,11 @@ function isMaxStepsTurnFailure(result: Pick<TurnEnded, 'reason' | 'error'>): boo
     result.reason === 'failed' &&
     normalizeGoalErrorPayload(result.error).code === LoopErrors.codes.LOOP_MAX_STEPS_EXCEEDED
   );
+}
+
+function isRateLimitError(error: unknown): boolean {
+  const payload = normalizeGoalErrorPayload(error);
+  return payload.code === ErrorCodes.PROVIDER_RATE_LIMIT;
 }
 
 function goalFailurePauseReason(error: unknown): string {

@@ -39,7 +39,6 @@
 import { z } from 'zod';
 
 import { Error2, ErrorCodes, isError2 } from '#/errors';
-import type { AgentModelPreference } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { isPlainObject } from '#/app/config/toml';
 import type { IFlagService } from '#/app/flag/flag';
 import {
@@ -57,7 +56,7 @@ import type { IModelCatalog } from '#/kosong/model/catalog';
 
 import { VISUAL_MODEL_FLAG_ID } from './flag';
 
-export type VisualModelChoice = AgentModelPreference;
+export type VisualModelChoice = 'primary' | 'visual';
 
 export function resolveVisualModel(
   config: IConfigService,

@@ -296,6 +296,15 @@ export interface GoalStatusChangedEvent extends GoalBudgetProperties {
   wall_clock_ms: number;
 }
 
+export interface SubstituteModelActivatedEvent {
+  original_model: string;
+  substitute_model: string;
+}
+
+export interface SubstituteModelDeactivatedEvent {
+  original_model: string;
+}
+
 export interface ToolCallDedupDetectedEvent {
   turn_id?: number;
   step_no: number;
@@ -775,6 +784,21 @@ export const telemetryEventDefinitions = {
       has_token_budget: 'Whether a token budget was set',
       has_turn_budget: 'Whether a turn budget was set',
       has_wall_clock_budget: 'Whether a wall-clock budget was set',
+    },
+  }),
+  substitute_model_activated: defineAgentTelemetryEvent<SubstituteModelActivatedEvent>({
+    owner: 'kimi-code',
+    comment: 'Substitute model activated after primary hit rate limit.',
+    properties: {
+      original_model: 'The primary model that was rate-limited',
+      substitute_model: 'The substitute model that was activated',
+    },
+  }),
+  substitute_model_deactivated: defineAgentTelemetryEvent<SubstituteModelDeactivatedEvent>({
+    owner: 'kimi-code',
+    comment: 'Substitute model deactivated, primary model recovered.',
+    properties: {
+      original_model: 'The primary model that was restored',
     },
   }),
   tool_call_dedup_detected: defineAgentTelemetryEvent<ToolCallDedupDetectedEvent>({

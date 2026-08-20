@@ -51,8 +51,7 @@
     "typescript": "6.0.2",
     "vitest": "4.1.4"
   },
-  "simple-git-hooks": {
-  },
+  "simple-git-hooks": {},
   "lint-staged": {
     "*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}": [
       "oxlint --fix --quiet",
@@ -62,5 +61,9 @@
   "engines": {
     "node": ">=24.15.0"
   },
-  "packageManager": "pnpm@10.33.0"
+  "packageManager": "pnpm@10.33.0",
+  "dependencies": {
+    "http-proxy-agent": "^9.1.0",
+    "https-proxy-agent": "^9.1.0"
+  }
 }

@@ -1,3 +1,32 @@
+# ⚠️ LANGUAGE RULE — MANDATORY
+
+**ALL responses MUST be in English ONLY. Never respond in Turkish, Chinese, or any other language, regardless of the user's locale or the presence of non-English content in the codebase. This is a hard rule with no exceptions.**
+
+---
+
+## 📚 Zread Wiki — Check First
+
+**Before diving into source code, check if a zread wiki exists for this project:**
+
+```bash
+# Check if wiki exists:
+cat .zread/wiki/current 2>/dev/null && echo "Wiki exists" || echo "No wiki"
+
+# If wiki exists, read the pages directly:
+ls .zread/wiki/versions/$(cat .zread/wiki/current)/
+
+# To regenerate wiki (if stale):
+zread generate --stdio
+```
+
+**Why?** Zread generates comprehensive documentation from code. Reading the wiki is faster than crawling source files manually.
+
+**Rules:**
+1. **ALWAYS** check `.zread/wiki/current` before reading source files
+2. If wiki exists, read the markdown pages directly — they're already indexed
+3. If wiki is missing or stale, run `zread generate --stdio` to create it
+4. Wiki pages live in `.zread/wiki/versions/<id>/` — read `wiki.json` for the TOC
+
 # minidb Agent Guide
 
 The embedded JSON document store (`MiniDb`) behind kap-server's search index — snapshot + WAL persistence with an exclusive write lock (losers open read-only and catch up from the WAL; `OpenOptions.onLockAcquired` reports the held lock token right after acquisition, before recovery work — supervisors hosting MiniDb in a worker thread need it because worker threads share the host process pid, so the pid in the lock line alone cannot drive stale reclamation), plus a larger-than-RAM full-text layer.

@@ -41,6 +41,15 @@ export const FLAG_DEFINITIONS = [
     default: false,
     surface: 'core',
   },
+  {
+    id: 'substitute-model',
+    title: 'Substitute model for rate-limit fallback',
+    description:
+      'When the primary model hits a provider rate limit (e.g. 429 from account quota), automatically switch to a configured substitute model and continue until the primary recovers.',
+    env: 'KIMI_CODE_EXPERIMENTAL_SUBSTITUTE_MODEL',
+    default: false,
+    surface: 'core',
+  },
 ] as const satisfies readonly FlagDefinitionInput[];
 
 /** Literal union of registered flag ids. */

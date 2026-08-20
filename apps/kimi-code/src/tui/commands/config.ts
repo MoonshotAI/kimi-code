@@ -364,6 +364,73 @@ export async function handleVisualModelCommand(host: SlashCommandHost, args: str
   showVisualModelPicker(host, models, current, alias.length > 0 ? alias : undefined);
 }
 
+// ---------------------------------------------------------------------------
+// Substitute model (`/substitute-model`) — persists `[substitute_model] default_model`
+// ---------------------------------------------------------------------------
+
+function showSubstituteModelPicker(
+  host: SlashCommandHost,
+  models: Record<string, ModelAlias>,
+  currentValue: string,
+  selectedValue?: string,
+): void {
+  host.mountEditorReplacement(
+    new TabbedModelSelectorComponent({
+      models,
+      currentValue,
+      selectedValue,
+      currentThinkingEffort: 'off',
+      thinkingControl: false,
+      title: ' Select a substitute model (rate-limit fallback)',
+      onSelect: ({ alias }) => {
+        host.restoreEditor();
+        void performSubstituteModelSave(host, alias);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+async function performSubstituteModelSave(host: SlashCommandHost, alias: string): Promise<void> {
+  const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+  try {
+    const config = await host.harness.getConfig({ reload: true });
+    const patch: { defaultModel: string } = {
+      defaultModel: alias,
+    };
+    await host.harness.setConfig({ substituteModel: patch });
+  } catch (error) {
+    host.showError(`Failed to save substitute model: ${formatErrorMessage(error)}`);
+    return;
+  }
+  host.showStatus(
+    `Substitute model set to ${displayName}. It will be used when the primary model hits a rate limit.`,
+    'success',
+  );
+}
+
+export async function handleSubstituteModelCommand(host: SlashCommandHost, args: string): Promise<void> {
+  const alias = args.trim();
+  await refreshModelsForPicker(host);
+  const models = pickerModelsForHost(host);
+  if (Object.keys(models).length === 0) {
+    host.showNotice(
+      'No models configured',
+      'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
+    );
+    return;
+  }
+  if (alias.length > 0 && models[alias] === undefined) {
+    host.showError(`Unknown model alias: ${alias}`);
+    return;
+  }
+  const substitute = (await host.harness.getConfig()).substituteModel;
+  const current = substitute?.defaultModel ?? '';
+  showSubstituteModelPicker(host, models, current, alias.length > 0 ? alias : undefined);
+}
+
 export async function handleEffortCommand(host: SlashCommandHost, args: string): Promise<void> {
   const alias = host.state.appState.model;
   const model = host.state.appState.availableModels[alias];

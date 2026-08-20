@@ -1,3 +1,32 @@
+# ⚠️ LANGUAGE RULE — MANDATORY
+
+**ALL responses MUST be in English ONLY. Never respond in Turkish, Chinese, or any other language, regardless of the user's locale or the presence of non-English content in the codebase. This is a hard rule with no exceptions.**
+
+---
+
+## 📚 Zread Wiki — Check First
+
+**Before diving into source code, check if a zread wiki exists for this project:**
+
+```bash
+# Check if wiki exists:
+cat .zread/wiki/current 2>/dev/null && echo "Wiki exists" || echo "No wiki"
+
+# If wiki exists, read the pages directly:
+ls .zread/wiki/versions/$(cat .zread/wiki/current)/
+
+# To regenerate wiki (if stale):
+zread generate --stdio
+```
+
+**Why?** Zread generates comprehensive documentation from code. Reading the wiki is faster than crawling source files manually.
+
+**Rules:**
+1. **ALWAYS** check `.zread/wiki/current` before reading source files
+2. If wiki exists, read the markdown pages directly — they're already indexed
+3. If wiki is missing or stale, run `zread generate --stdio` to create it
+4. Wiki pages live in `.zread/wiki/versions/<id>/` — read `wiki.json` for the TOC
+
 # transcript Agent Guide
 
 The isomorphic transcript rendering data layer — agent-granular L1 store, idempotent L2 operations, `off/turn/block/delta` L3 subscription granularity, framework-free L4 view registry, and turn-cursor pagination. Pure TypeScript (browser-safe, no engine imports) and the sole owner of all transcript contract types (`src/contract/`); consumed by `packages/kap-server` (engine events → transcript, REST + WS surface; live stores backfill history from the persisted per-agent wire records — main on first attach, any agent on demand, cold sessions rebuild any agent — with 0-based turn ordinals matching the engine's).

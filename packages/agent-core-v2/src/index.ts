@@ -474,6 +474,8 @@ export * from '#/session/subagent/mirrorAgentRun';
 import '#/session/subagent/configSection';
 import '#/session/visual/flag';
 import '#/session/visual/configSection';
+import '#/session/substitute/flag';
+import '#/session/substitute/configSection';
 export {
   VISUAL_MODEL_FLAG_ID,
   VISUAL_MODEL_FLAG_ENV,
@@ -489,6 +491,22 @@ export {
   VISUAL_MODEL_CHOICE_SCHEMA,
   type VisualModelChoice,
 } from '#/session/visual/configSection';
+export {
+  SUBSTITUTE_MODEL_FLAG_ID,
+  SUBSTITUTE_MODEL_FLAG_ENV,
+  substituteModelFlag,
+} from '#/session/substitute/flag';
+export {
+  resolveSubstituteModel,
+  resolveSubstituteModelAlias,
+  resolveSubstituteCooldownMs,
+  SUBSTITUTE_MODEL_SECTION,
+  SUBSTITUTE_MODEL_ENV,
+  SUBSTITUTE_MODEL_COOLDOWN_ENV,
+  SubstituteModelConfigSchema,
+  substituteModelEnvBindings,
+  type SubstituteModelConfig,
+} from '#/session/substitute/configSection';
 export * from '#/agent/tools/agent/agent';
 import '#/agent/tools/agent/agentTool';
 export * from '#/app/sessionManager/sessionLookup';

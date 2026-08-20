@@ -128,6 +128,28 @@ export function promptApiKey(
   });
 }
 
+export function promptKeyName(
+  host: SlashCommandHost,
+  title: string = 'Enter a name for this API key',
+): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const dialog = new ApiKeyInputDialogComponent(
+      title,
+      ['This name helps you identify the key in the provider manager.'],
+      (result: ApiKeyInputResult) => {
+        host.restoreEditor();
+        resolve(result.kind === 'ok' ? result.value.trim() : undefined);
+      },
+      {
+        title: 'API Key Name',
+        mask: false,
+        emptyHint: 'Name cannot be empty.',
+      },
+    );
+    host.mountEditorReplacement(dialog);
+  });
+}
+
 /**
  * Asks for the provider endpoint the catalog did not declare (or declared
  * only as an env placeholder) — required for catalog imports whose protocol
@@ -222,6 +244,25 @@ export async function promptModelSelectionForCatalog(
   if (selection === undefined) return undefined;
   const model = models.find((m) => `${providerId}/${m.id}` === selection.alias);
   return model ? { model, thinking: selection.thinking } : undefined;
+}
+
+export function promptProxyUrl(host: SlashCommandHost, providerName: string): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const dialog = new ApiKeyInputDialogComponent(
+      providerName,
+      ['Enter proxy URL for this provider (e.g. http://localhost:8080). Leave empty to disable.'],
+      (result: ApiKeyInputResult) => {
+        host.restoreEditor();
+        resolve(result.kind === 'ok' ? (result.value.trim() || undefined) : undefined);
+      },
+      {
+        title: `Enter proxy URL for ${providerName}`,
+        mask: false,
+        emptyHint: 'Proxy URL can be empty to disable.',
+      },
+    );
+    host.mountEditorReplacement(dialog);
+  });
 }
 
 export function runModelSelector(

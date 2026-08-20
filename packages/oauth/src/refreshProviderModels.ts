@@ -76,9 +76,27 @@ interface ProviderView {
   readonly type?: string;
   readonly baseUrl?: string;
   readonly apiKey?: string;
+  readonly apiKeys?: Record<string, { key: string; name: string }>;
+  readonly activeApiKeyId?: string;
   readonly oauth?: ManagedKimiOAuthRef;
   readonly source?: unknown;
   readonly env?: unknown;
+}
+
+function getActiveProviderApiKey(provider: ProviderView): string | undefined {
+  if (!provider) return undefined;
+  // 1. Named keys with active selection
+  if (provider.apiKeys && provider.activeApiKeyId) {
+    const active = provider.apiKeys[provider.activeApiKeyId];
+    if (active && typeof active.key === 'string' && active.key.length > 0) {
+      return active.key;
+    }
+  }
+  // 2. Legacy single key
+  if (typeof provider.apiKey === 'string' && provider.apiKey.length > 0) {
+    return provider.apiKey;
+  }
+  return undefined;
 }
 
 /**
@@ -87,9 +105,8 @@ interface ProviderView {
  * wins, with `env.KIMI_API_KEY` as the documented config-file fallback.
  */
 function resolveProviderApiKey(provider: ProviderView): string | undefined {
-  if (typeof provider.apiKey === 'string' && provider.apiKey.length > 0) {
-    return provider.apiKey;
-  }
+  const activeKey = getActiveProviderApiKey(provider);
+  if (activeKey !== undefined) return activeKey;
   if (isRecord(provider.env)) {
     const fromEnv = provider.env['KIMI_API_KEY'];
     if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;

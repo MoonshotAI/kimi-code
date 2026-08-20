@@ -35,6 +35,7 @@ import {
   handleModelCommand,
   handlePlanCommand,
   handleSecondaryModelCommand,
+  handleSubstituteModelCommand,
   handleVisualModelCommand,
   handleThemeCommand,
   handleYoloCommand,
@@ -89,6 +90,7 @@ export {
   handleModelCommand,
   handlePlanCommand,
   handleSecondaryModelCommand,
+  handleSubstituteModelCommand,
   handleVisualModelCommand,
   handleThemeCommand,
   handleYoloCommand,
@@ -538,6 +540,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'visual-model':
       await handleVisualModelCommand(host, args);
+      return;
+    case 'substitute-model':
+      await handleSubstituteModelCommand(host, args);
       return;
     case 'effort':
       await handleEffortCommand(host, args);
