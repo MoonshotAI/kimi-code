@@ -152,6 +152,17 @@ let nextLocalTurnToken = 0;
  */
 const queueFlushFailures = new Map<string, { key: string; count: number }>();
 const MAX_QUEUE_FLUSH_FAILURES = 3;
+// Per-session count of in-flight steerQueued() calls. While a steer is still
+// being submitted, NOTHING may flush the session's queue: a flushed entry
+// would be submitted ahead of the steered one, breaking FIFO (and the steered
+// prompt could then land in the flushed entry's turn). flushQueueHead is the
+// single chokepoint honoring this (finishPromptLocal drains, sendPrompt's
+// enqueue+flush, and the failure-budget chain all pass through it).
+const steerInFlightCounts = new Map<string, number>();
+// Per-session serialization of steerQueued(): rapid consecutive clicks (or a
+// double-click) start overlapping steers whose submits could reach the daemon
+// out of order and invert FIFO. Each steer runs after the previous settles.
+const steerChainBySession = new Map<string, Promise<void>>();
 
 /**
  * AI auto-title (POST /sessions/{id}/title/generate — managed chat_title).
@@ -239,6 +250,8 @@ export function forgetLocalTurnState(sid: string): void {
   pendingLocalTurnStarts.delete(sid);
   afterLocalTurnsSettled.delete(sid);
   queueFlushFailures.delete(sid);
+  steerInFlightCounts.delete(sid);
+  steerChainBySession.delete(sid);
 }
 
 /** Whether a snapshot request can still be applied without overwriting a
@@ -2404,14 +2417,148 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // enqueue this prompt behind them and flush the head now — the flush
     // re-arms the in-flight flag, and each later turn end drains the next
     // entry. Submitting directly here would jump the queue AND leave the
-    // stuck entries without a flush driver.
-    if ((rawState.queuedBySession[sid]?.length ?? 0) > 0) {
+    // stuck entries without a flush driver. A steer in flight owns the same
+    // head slot even though its entry already left the visible queue: a
+    // direct submit could reach the daemon ahead of the steered prompt, so
+    // this prompt falls in line behind it (flushQueueHead stays shut while
+    // the steer is unsettled; the steer's own turn end drives the drain).
+    if (
+      (rawState.queuedBySession[sid]?.length ?? 0) > 0 ||
+      (steerInFlightCounts.get(sid) ?? 0) > 0
+    ) {
       enqueue(text, attachments);
       flushQueueHead(sid);
       return;
     }
 
     await submitPromptInternal(sid, text, attachments);
+  }
+
+  /**
+   * runSteerIntoTurn() — shared core of steerPrompt/steerQueued: optimistic
+   * echo + submit (parks the prompt behind the active one) then POST
+   * /prompts:steer, injecting the text into the RUNNING turn instead of
+   * waiting for it to finish. Falls back to a normal send when the session is
+   * idle. Returns the same outcome vocabulary as submitPromptInternal:
+   * 'rejected' is a definitive daemon refusal (callers may safely restore
+   * their queue entries); 'uncertain' means the prompt may already be queued
+   * server-side, so callers must NOT restore (that would duplicate it).
+   */
+  async function runSteerIntoTurn(
+    sid: string,
+    text: string,
+    attachments: PromptAttachment[],
+  ): Promise<'ok' | 'rejected' | 'uncertain'> {
+    // Hold the session's queue shut for the whole flight (see the map): any
+    // drain or direct sendPrompt racing this submit would break FIFO. Callers
+    // ride the same per-session chain, so concurrent holds just stack.
+    steerInFlightCounts.set(sid, (steerInFlightCounts.get(sid) ?? 0) + 1);
+    try {
+      // Idle and nothing in flight — there is no turn to steer into; normal send.
+      if (activity.value === 'idle' && !rawState.inFlightBySession[sid]) {
+        return await submitPromptInternal(sid, text, attachments);
+      }
+
+      // Optimistic transcript echo while prompt.submitted round-trips.
+      const content: AppMessageContent[] = [];
+      if (text) content.push({ type: 'text', text });
+      content.push(...attachmentsToContent(attachments));
+      const tempId = nextOptimisticMsgId();
+      const optimisticMsg: AppMessage = {
+        id: tempId,
+        sessionId: sid,
+        role: 'user',
+        content,
+        createdAt: new Date().toISOString(),
+        metadata: { 'kimiWeb.optimisticUserMessage': true },
+      };
+      updateSessionMessages(sid, (msgs) => [...msgs, optimisticMsg]);
+
+      const localTurnToken = beginLocalTurn(sid);
+      let submitSent = false;
+      try {
+        const api = getKimiWebApi();
+        const promptSession = rawState.sessions.find((s) => s.id === sid);
+        const model =
+          (promptSession?.model && promptSession.model.length > 0
+            ? promptSession.model
+            : rawState.defaultModel) ?? undefined;
+        // Resolved against this prompt's own session + model, same as a normal
+        // send (see submitPromptInternal).
+        const thinking = (await modelProvider.resolveThinkingForPrompt(sid, model)) ?? rawState.thinking;
+        const thinkingToken = rawState.pendingThinkingBySession[sid];
+        submitSent = true;
+        const result = await api.submitPrompt(sid, {
+          content,
+          model,
+          thinking,
+          permissionMode: rawState.permission,
+          planMode: rawState.planModeBySession[sid] ?? false,
+          swarmMode: rawState.swarmModeBySession[sid] ?? false,
+        });
+        // Same ack as a normal send: the daemon consumed this prompt's thinking.
+        if (thinking !== undefined) ackThinkingPending(rawState, sid, thinkingToken);
+
+        // Stamp the real prompt_id onto the optimistic echo. Unlike a normal send,
+        // a steered prompt IS echoed back by the daemon as a messageCreated user
+        // event; matching that echo by prompt_id (instead of content) is what keeps
+        // an image steer from rendering two user bubbles.
+        confirmOptimisticUserMessage(sid, tempId, result.promptId, result.userMessageId);
+
+        if (result.status !== 'queued') {
+          // The turn ended while the user was typing — the prompt started a turn
+          // of its own. Wire it up like a regular send so :abort keeps working.
+          rawState.promptIdBySession = { ...rawState.promptIdBySession, [sid]: result.promptId };
+          getEventConn()?.bindNextPromptId(sid, result.promptId);
+          return 'ok';
+        }
+
+        try {
+          await api.steerPrompts(sid, [result.promptId]);
+        } catch {
+          // The active turn finished between submit and steer — the daemon starts
+          // the parked prompt as its own turn. Nothing to roll back.
+        }
+        return 'ok';
+      } catch (err) {
+        // Submit failed: drop the optimistic echo so the transcript doesn't show
+        // a delivered-looking message the daemon never received.
+        updateSessionMessages(sid, (msgs) =>
+          msgs.filter(
+            (m) =>
+              m.id !== tempId ||
+              m.promptId !== undefined ||
+              m.userMessageId !== undefined,
+          ),
+        );
+        pushOperationFailure('steer', err, { sessionId: sid });
+        // A failure BEFORE the submit POST left the client (e.g. resolving the
+        // thinking level) means nothing reached the daemon — restoring is as
+        // safe as a definitive rejection. After it, the response may have been
+        // lost in flight: never restore (the merged prompt may already be
+        // queued server-side, and re-queueing would duplicate it).
+        return isDaemonApiError(err) || !submitSent ? 'rejected' : 'uncertain';
+      } finally {
+        settleLocalTurn(sid, localTurnToken);
+      }
+    } finally {
+      const left = (steerInFlightCounts.get(sid) ?? 1) - 1;
+      if (left <= 0) steerInFlightCounts.delete(sid);
+      else steerInFlightCounts.set(sid, left);
+    }
+  }
+
+  /**
+   * resumeQueueIfIdle() — a steer that produced no running turn (rejected, or
+   * the submit's fate is uncertain) can strand the queue: the turn that would
+   * drive the drain already ended while the steer hold kept it shut. Flushes
+   * the head, but only with the hold fully released and the session idle — a
+   * running (or just-started) turn drains on its own end as usual.
+   */
+  function resumeQueueIfIdle(sid: string): void {
+    if ((steerInFlightCounts.get(sid) ?? 0) > 0) return;
+    if (activity.value !== 'idle' || rawState.inFlightBySession[sid]) return;
+    flushQueueHead(sid);
   }
 
   /**
@@ -2424,7 +2571,15 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   async function steerPrompt(text: string, attachments?: PromptAttachment[]): Promise<void> {
     const sid = rawState.activeSessionId;
     if (!sid) return;
+    // Same per-session chain as steerQueued: a Ctrl+S merge must not overtake
+    // (or be overtaken by) a queued steer still in flight.
+    const prev = steerChainBySession.get(sid) ?? Promise.resolve();
+    const run = prev.catch(() => undefined).then(() => steerPromptNow(sid, text, attachments));
+    steerChainBySession.set(sid, run);
+    return run;
+  }
 
+  async function steerPromptNow(sid: string, text: string, attachments?: PromptAttachment[]): Promise<void> {
     // Merge queued texts (oldest first) + the live text, like the TUI does.
     const queue = rawState.queuedBySession[sid] ?? [];
     const parts: string[] = [];
@@ -2445,102 +2600,74 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
     // Put back every entry that was merged into this steer when its submit
     // fails, so the queued prompts aren't silently lost. Entries enqueued
-    // while the submit was in flight stay behind them.
+    // while the submit was in flight stay behind them. Restore ONLY on a
+    // definitive daemon rejection: on an ambiguous failure the merged prompt
+    // may already be queued server-side, and re-queueing the originals would
+    // duplicate it (the exact ghost-send behavior this rule exists to prevent).
     const restoreQueue = (): void => {
       if (queue.length === 0) return;
       const current = rawState.queuedBySession[sid] ?? [];
       rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: [...queue, ...current] };
     };
 
-    // Idle and nothing in flight — there is no turn to steer into; normal send.
-    if (activity.value === 'idle' && !rawState.inFlightBySession[sid]) {
-      const outcome = await submitPromptInternal(sid, merged, mergedAttachments);
-      // Same never-duplicate rule as the running-path catch below: restore
-      // the merged entries only on a definitive rejection.
-      if (outcome === 'rejected') restoreQueue();
-      return;
-    }
+    const outcome = await runSteerIntoTurn(sid, merged, mergedAttachments);
+    if (outcome === 'rejected') restoreQueue();
+    if (outcome !== 'ok') resumeQueueIfIdle(sid);
+  }
 
-    // Optimistic transcript echo while prompt.submitted round-trips.
-    const content: AppMessageContent[] = [];
-    if (merged) content.push({ type: 'text', text: merged });
-    content.push(...attachmentsToContent(mergedAttachments));
-    const tempId = nextOptimisticMsgId();
-    const optimisticMsg: AppMessage = {
-      id: tempId,
-      sessionId: sid,
-      role: 'user',
-      content,
-      createdAt: new Date().toISOString(),
-      metadata: { 'kimiWeb.optimisticUserMessage': true },
-    };
-    updateSessionMessages(sid, (msgs) => [...msgs, optimisticMsg]);
+  /**
+   * steerQueued(index) — pull ONE queued message out of the active session's
+   * queue and steer it into the running turn (the queue row's send button).
+   * Unlike steerPrompt it does NOT merge the rest of the queue: the remaining
+   * entries keep their FIFO order and still auto-drain. A definitive daemon
+   * rejection puts the entry back at its original index; an ambiguous failure
+   * leaves it out (it may already be queued server-side).
+   */
+  async function steerQueued(index: number): Promise<void> {
+    const sid = rawState.activeSessionId;
+    if (!sid) return;
+    // Lock the clicked entry's identity NOW: by the time a queued steer runs,
+    // earlier restores/removals/reorders may have shifted every index.
+    const clicked = (rawState.queuedBySession[sid] ?? [])[index];
+    if (clicked === undefined) return;
+    const key = clicked.id ?? clicked.text;
+    // Serialize per session: rapid consecutive clicks (or a double-click) must
+    // steer in click order — overlapping submits could reach the daemon out of
+    // order and invert FIFO.
+    const prev = steerChainBySession.get(sid) ?? Promise.resolve();
+    const run = prev.catch(() => undefined).then(() => steerQueuedNow(sid, key));
+    steerChainBySession.set(sid, run);
+    return run;
+  }
 
-    const localTurnToken = beginLocalTurn(sid);
-    try {
-      const api = getKimiWebApi();
-      const promptSession = rawState.sessions.find((s) => s.id === sid);
-      const model =
-        (promptSession?.model && promptSession.model.length > 0
-          ? promptSession.model
-          : rawState.defaultModel) ?? undefined;
-      // Resolved against this prompt's own session + model, same as a normal
-      // send (see submitPromptInternal).
-      const thinking = (await modelProvider.resolveThinkingForPrompt(sid, model)) ?? rawState.thinking;
-      const thinkingToken = rawState.pendingThinkingBySession[sid];
-      const result = await api.submitPrompt(sid, {
-        content,
-        model,
-        thinking,
-        permissionMode: rawState.permission,
-        planMode: rawState.planModeBySession[sid] ?? false,
-        swarmMode: rawState.swarmModeBySession[sid] ?? false,
-      });
-      // Same ack as a normal send: the daemon consumed this prompt's thinking.
-      if (thinking !== undefined) ackThinkingPending(rawState, sid, thinkingToken);
-
-      // Stamp the real prompt_id onto the optimistic echo. Unlike a normal send,
-      // a steered prompt IS echoed back by the daemon as a messageCreated user
-      // event; matching that echo by prompt_id (instead of content) is what keeps
-      // an image steer from rendering two user bubbles.
-      confirmOptimisticUserMessage(sid, tempId, result.promptId, result.userMessageId);
-
-      if (result.status !== 'queued') {
-        // The turn ended while the user was typing — the prompt started a turn
-        // of its own. Wire it up like a regular send so :abort keeps working.
-        rawState.promptIdBySession = { ...rawState.promptIdBySession, [sid]: result.promptId };
-        getEventConn()?.bindNextPromptId(sid, result.promptId);
-        return;
+  async function steerQueuedNow(sid: string, key: string): Promise<void> {
+    const current = rawState.queuedBySession[sid] ?? [];
+    const index = current.findIndex((e) => (e.id ?? e.text) === key);
+    const entry = index >= 0 ? current[index] : undefined;
+    // Gone since the click (removed, edited, or drained): nothing to steer.
+    if (entry === undefined) return;
+    const attachments = entry.attachments ?? [];
+    // Trim only decides emptiness (an empty entry simply stays in the queue);
+    // the text goes out VERBATIM — leading whitespace can be formatting (an
+    // indented code block), and auto-drain sends it untrimmed too.
+    if (entry.text.trim().length === 0 && attachments.length === 0) return;
+    const rest = [...current];
+    rest.splice(index, 1);
+    rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: rest };
+    const outcome = await runSteerIntoTurn(sid, entry.text, attachments);
+    if (outcome === 'rejected') {
+      // A session forgotten mid-steer (e.g. archived) had its queue discarded —
+      // don't resurrect it (same rule as flushQueueHead).
+      if (rawState.sessions.some((s) => s.id === sid)) {
+        const now = rawState.queuedBySession[sid] ?? [];
+        const restored = [...now];
+        restored.splice(Math.min(index, restored.length), 0, entry);
+        rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: restored };
       }
-
-      try {
-        await api.steerPrompts(sid, [result.promptId]);
-      } catch {
-        // The active turn finished between submit and steer — the daemon starts
-        // the parked prompt as its own turn. Nothing to roll back.
-      }
-    } catch (err) {
-      // Submit failed: drop the optimistic echo so the transcript doesn't show
-      // a delivered-looking message the daemon never received.
-      updateSessionMessages(sid, (msgs) =>
-        msgs.filter(
-          (m) =>
-            m.id !== tempId ||
-            m.promptId !== undefined ||
-            m.userMessageId !== undefined,
-        ),
-      );
-      // Restore the merged queue entries ONLY on a definitive daemon rejection
-      // (a structured API error means nothing was accepted). On an ambiguous
-      // failure — dropped response, network error — the merged prompt may
-      // already be queued server-side; re-queueing the originals would
-      // duplicate it (the exact ghost-send behavior this change exists to
-      // prevent). The failure toast below tells the user what happened.
-      if (isDaemonApiError(err)) restoreQueue();
-      pushOperationFailure('steer', err, { sessionId: sid });
-    } finally {
-      settleLocalTurn(sid, localTurnToken);
     }
+    // A failed (or fate-unknown) steer produced no turn to drive the drain —
+    // if the session is idle now, resume the queue instead of stranding it.
+    if (outcome !== 'ok') resumeQueueIfIdle(sid);
   }
 
   /**
@@ -2573,17 +2700,25 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   /**
-   * Submit the head of the session's local prompt queue. On failure the
-   * entry goes back at the head with NO immediate retry — the daemon that
-   * just rejected it is the one we'd race against (e.g. right after an
-   * abort); the next turn end or the next idle sendPrompt drives the next
-   * attempt. After MAX_QUEUE_FLUSH_FAILURES consecutive failures the entry
-   * is dropped instead, so one permanently rejected prompt cannot wedge the
-   * queue. The budget is tracked PER ENTRY (by id), so removing or
+   * Submit the head of the session's local prompt queue. Refuses to run while
+   * a steerQueued() call is unsettled (steerInFlightCounts): the steered entry
+   * already left the visible queue but still owns the head's FIFO slot, so
+   * flushing now would submit the next entry ahead of it. The steer's own
+   * turn end re-drives the drain once it settles.
+   *
+   * On failure the entry goes back at the head with NO immediate retry — the
+   * daemon that just rejected it is the one we'd race against (e.g. right
+   * after an abort); the next turn end or the next idle sendPrompt drives the
+   * next attempt. After MAX_QUEUE_FLUSH_FAILURES consecutive failures the
+   * entry is dropped instead, so one permanently rejected prompt cannot wedge
+   * the queue. The budget is tracked PER ENTRY (by id), so removing or
    * reordering the head resets it for the next entry. Every failure is
    * already surfaced via pushOperationFailure.
    */
   function flushQueueHead(sid: string): void {
+    // A steer in flight has already removed its entry from the queue and owns
+    // the FIFO position ahead of everything still queued.
+    if ((steerInFlightCounts.get(sid) ?? 0) > 0) return;
     const [next, ...rest] = rawState.queuedBySession[sid] ?? [];
     if (next === undefined) return;
     rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: rest };
@@ -3984,6 +4119,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     handleSessionSnapshot,
     sendPrompt,
     steerPrompt,
+    steerQueued,
     uploadImage,
     enqueue,
     unqueue,

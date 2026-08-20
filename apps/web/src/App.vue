@@ -1112,6 +1112,15 @@ function handleReorderQueue(payload: { from: number; to: number }): void {
   client.reorderQueue(payload.from, payload.to);
 }
 
+// The queue head's send button: steer that single message into the running
+// turn; the rest of the queue keeps waiting (client-side FIFO preserved).
+// Counts as a user-initiated send, same as handleSubmit: an in-flight skill
+// activation's failure restore checks this generation before re-filling.
+function handleSteerQueued(index: number): void {
+  sendGeneration++;
+  void client.steerQueued(index);
+}
+
 async function handleSubmit(payload: SubmitPayload): Promise<void> {
   if (!(await passAuthGate(payload.text, payload.attachments))) return;
   // Count every user-initiated send: an in-flight skill activation's failure
@@ -1393,6 +1402,7 @@ function openPr(url: string): void {
       @unqueue="handleUnqueue"
       @edit-queued="handleEditQueued"
       @reorder-queue="handleReorderQueue"
+      @steer-queued="handleSteerQueued"
       @set-permission="client.setPermission($event)"
       @set-thinking="client.setThinking($event)"
       @toggle-plan="client.togglePlanMode()"

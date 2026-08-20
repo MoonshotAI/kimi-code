@@ -336,6 +336,8 @@ const emit = defineEmits<{
   editQueued: [index: number];
   /** Drag-to-reorder a queued message within the active session's queue. */
   reorderQueue: [payload: { from: number; to: number }];
+  /** Steer one queued message into the running turn (the head row's send button). */
+  steerQueued: [index: number];
   /** The failed-turn card's continue action — the parent routes it through the
    *  normal submit path as a short "continue" prompt. */
   resumeTurn: [];
@@ -649,6 +651,8 @@ function copyUserMessage(turn: ChatTurn): void {
 // Overlong user text clamps to a fixed line count with a fade-out tail and an
 // expand/collapse toggle. Overflow is measured, never guessed from text length.
 const USER_TEXT_CLAMP_LINES = 10; // must match the .is-clamped CSS max-height
+// Queued prompts clamp much tighter — the stack is a summary, not a reader.
+const QUEUE_TEXT_CLAMP_LINES = 3; // must match the .is-clamped > .q-body CSS max-height
 
 const clampableUserTurns = reactive(new Set<string>());
 const expandedUserTurns = reactive(new Set<string>());
@@ -673,7 +677,8 @@ function measureUserText(turnId: string, el: HTMLElement): void {
   const text = el.textContent ?? '';
   const trailingBlanks = text.match(/\n+$/)?.[0].length ?? 0;
   const contentHeight = el.scrollHeight - Math.max(0, trailingBlanks - 1) * lineHeight;
-  if (contentHeight > lineHeight * USER_TEXT_CLAMP_LINES + 1) {
+  const maxLines = turnId.startsWith('queue:') ? QUEUE_TEXT_CLAMP_LINES : USER_TEXT_CLAMP_LINES;
+  if (contentHeight > lineHeight * maxLines + 1) {
     clampableUserTurns.add(turnId);
   } else {
     clampableUserTurns.delete(turnId);
@@ -1146,14 +1151,14 @@ function streamingTailIndex(turn: ChatTurn): number | null {
     </div>
 
     <!-- Inline queue — pending user messages shown after the running turn.
-         Click to edit, × to remove, drag the grip to reorder. -->
+         The head row steers into the running turn; click to edit, × to
+         remove, drag the grip to reorder. -->
     <div v-if="queued.length > 0" class="q-stack">
       <div class="q-head">
         <span class="q-title">
           <Icon name="mail" size="sm" />
-          {{ t('composer.queueLabel') }} · <b>{{ queued.length }}</b>
+          {{ t('composer.queueLabel') }} · <b>{{ t('composer.queuePending', { n: queued.length }) }}</b>
         </span>
-        <span class="q-hint">{{ t('composer.queueAutoDrain') }}</span>
       </div>
       <div
         v-for="(item, qi) in queued"
@@ -1167,6 +1172,16 @@ function streamingTailIndex(turn: ChatTurn): number | null {
         @dragover="onQueueDragOver(qi, $event)"
         @drop="onQueueDrop(qi, $event)"
       >
+        <Tooltip v-if="qi === 0" :text="t('composer.queueSteer')">
+          <button
+            type="button"
+            class="q-send"
+            :aria-label="t('composer.queueSteer')"
+            @click.stop="emit('steerQueued', qi)"
+          >
+            <Icon name="send" size="lg" />
+          </button>
+        </Tooltip>
         <div class="u-bub q-bub">
           <span
             class="q-grip"
@@ -1224,8 +1239,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               />
             </template>
           </div>
-          <span v-if="qi === 0" class="q-tag q-tag-next">{{ t('composer.queueNext') }}</span>
-          <span v-else class="q-tag q-tag-idx">#{{ qi + 1 }}</span>
           <Tooltip :text="t('composer.remove')">
           <button
             type="button"
@@ -1395,12 +1408,19 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   min-width: 120px;
 }
 .u-text-wrap.is-clamped > .u-text,
-.u-text-wrap.is-clamped > .skill-act-args,
-.u-text-wrap.is-clamped > .q-body {
+.u-text-wrap.is-clamped > .skill-act-args {
   max-height: calc(10 * 1lh);
   overflow: hidden;
   mask-image: linear-gradient(to bottom, black calc(100% - 5lh), transparent calc(100% - 1lh));
   -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 5lh), transparent calc(100% - 1lh));
+}
+/* Queued prompts clamp to three lines (see QUEUE_TEXT_CLAMP_LINES) — a summary,
+   not a reader — and the fade tail shrinks to fit the shorter window. */
+.u-text-wrap.is-clamped > .q-body {
+  max-height: calc(3 * 1lh);
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, black calc(100% - 1.2lh), transparent calc(100% - 0.2lh));
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 1.2lh), transparent calc(100% - 0.2lh));
 }
 .u-text-toggle {
   display: inline-flex;
@@ -1981,7 +2001,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 /* ---- Inline queue: pending user messages at the tail of the transcript ----
    Reuses .u-turn / .u-bub so the pending bubbles sit in the same right-aligned
    column as real user turns; the .q-bub modifier swaps in a lower-emphasis
-   "not yet sent" treatment (surface fill + dashed border). */
+   "not yet sent" treatment (the user-bubble gray, no border). The head row gets
+   a send button that steers that message into the running turn. */
 .chat > .q-stack {
   margin-top: var(--chat-turn-gap);
 }
@@ -2013,25 +2034,54 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   color: var(--color-accent-hover);
   font-weight: var(--weight-medium);
 }
-.q-hint {
-  color: var(--color-text-faint);
-}
 .q-turn {
   position: relative;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.q-send {
+  flex: none;
+  width: var(--space-6);
+  height: var(--space-6);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+}
+.q-send:hover {
+  background: var(--color-accent-hover);
+}
+.q-send:active {
+  transform: scale(0.92);
+}
+.q-send:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+.q-send svg {
+  display: block;
+  flex: none;
 }
 .q-bub {
   display: flex;
   align-items: center;
   gap: 8px;
   width: fit-content;
-  background: var(--color-surface-raised);
-  border: 0.5px dashed var(--color-accent-bd);
+  background: var(--color-user-bubble-bg);
   padding: 8px 8px 8px 6px;
-  transition: border-color 0.12s ease, background 0.12s ease;
+  transition: background var(--duration-fast) var(--ease-out);
 }
 .q-bub:hover {
-  border-color: var(--color-accent);
-  background: var(--color-accent-soft);
+  background: var(--hover);
 }
 .q-grip {
   flex: none;
@@ -2108,25 +2158,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.q-tag {
-  flex: none;
-  padding: 1px 6px;
-  border-radius: var(--radius-full);
-  font-size: var(--ui-font-size-xs);
-  font-weight: var(--weight-medium);
-  line-height: var(--leading-caption);
-  white-space: nowrap;
-}
-.q-tag-next {
-  color: var(--color-accent-hover);
-  background: var(--color-accent-soft);
-  border: 0.5px solid var(--color-accent-bd);
-}
-.q-tag-idx {
-  color: var(--color-text-faint);
-  background: var(--color-surface-sunken);
-  border: 0.5px solid var(--color-line);
 }
 .q-rm {
   flex: none;

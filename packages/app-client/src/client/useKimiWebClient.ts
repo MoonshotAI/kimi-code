@@ -4081,6 +4081,7 @@ export function useKimiWebClient() {
 
     sendPrompt: workspaceState.sendPrompt,
     steerPrompt: workspaceState.steerPrompt,
+    steerQueued: workspaceState.steerQueued,
     // Side chat (BTW side-channel agent)
     sideChatVisible: sideChat.sideChatVisible,
     sideChatSessionId: sideChat.sideChatSessionId,

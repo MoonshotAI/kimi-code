@@ -19,7 +19,7 @@ import {
   modelThinkingAvailability,
   segmentsFor,
 } from '@moonshot-ai/app-core/lib';
-import { useInputHistory } from '@moonshot-ai/app-client/composables';
+import { useInputHistory, useIsMobile } from '@moonshot-ai/app-client/composables';
 import { useSlashMenu } from '@moonshot-ai/app-client/composables';
 import { useMentionMenu } from '@moonshot-ai/app-client/composables';
 import { useComposerDraft } from '@moonshot-ai/app-client/composables';
@@ -94,11 +94,14 @@ const props = withDefaults(defineProps<{
   skills: () => [],
 });
 
+const isMobile = useIsMobile();
+
 const placeholder = computed(() =>
   props.starting
     ? t('composer.starting')
     : props.running
-      ? t('composer.placeholderRunning')
+      // No keyboard on mobile — drop the Ctrl+S steer hint from the copy.
+      ? t(isMobile.value ? 'composer.placeholderRunningMobile' : 'composer.placeholderRunning')
       : props.goalMode
         ? t('status.goalPlaceholder')
         // The plan hint rides the intent too: armed (not yet sent) shows the

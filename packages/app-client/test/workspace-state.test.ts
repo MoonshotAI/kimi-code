@@ -31,6 +31,7 @@ const apiMock = {
   restoreSession: vi.fn(),
   updateSession: vi.fn(),
   submitPrompt: vi.fn(),
+  steerPrompts: vi.fn(),
   respondQuestion: vi.fn(),
   respondApproval: vi.fn(),
   dismissQuestion: vi.fn(),
@@ -2263,6 +2264,8 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
       promptId: 'prompt_new',
       userMessageId: 'message_new',
     });
+    apiMock.steerPrompts.mockReset();
+    apiMock.steerPrompts.mockResolvedValue({});
     // Module-level flush failure budget must not leak between tests.
     forgetLocalTurnState('sess_1');
   });
@@ -2653,6 +2656,437 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     expect(state.queuedBySession.sess_1).toEqual([
       { text: 'queued', attachments: undefined },
     ]);
+  });
+
+  it('steers one queued message into the running turn and keeps the rest of the queue', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'first queued', attachments: undefined },
+        { text: 'second queued', attachments: undefined },
+      ],
+    };
+    // Parked behind the active turn — the client then POSTs the steer.
+    apiMock.submitPrompt.mockResolvedValue({
+      promptId: 'prompt_steered',
+      userMessageId: 'message_steered',
+      status: 'queued',
+    });
+    const ws = useWorkspaceState(state, promptDeps());
+
+    await ws.steerQueued(0);
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({
+        content: [{ type: 'text', text: 'first queued' }],
+      }),
+    );
+    expect(apiMock.steerPrompts).toHaveBeenCalledWith('sess_1', ['prompt_steered']);
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'second queued', attachments: undefined },
+    ]);
+  });
+
+  it('restores the entry at its original index when a queued steer is definitively rejected', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'first queued', attachments: undefined },
+        { text: 'second queued', attachments: undefined },
+      ],
+    };
+    apiMock.submitPrompt.mockRejectedValue(
+      new DaemonApiError({ code: 50000, msg: 'boom', requestId: 'r' }),
+    );
+    const ws = useWorkspaceState(state, promptDeps());
+
+    await ws.steerQueued(1);
+
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'first queued', attachments: undefined },
+      { text: 'second queued', attachments: undefined },
+    ]);
+  });
+
+  it('does NOT restore the entry when a queued steer failure is network-ambiguous', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'first queued', attachments: undefined },
+        { text: 'second queued', attachments: undefined },
+      ],
+    };
+    // Response lost mid-flight: the prompt may already be queued server-side,
+    // so restoring would duplicate it on a later drain.
+    apiMock.submitPrompt.mockRejectedValue(new TypeError('fetch failed'));
+    const ws = useWorkspaceState(state, promptDeps());
+
+    await ws.steerQueued(0);
+
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'second queued', attachments: undefined },
+    ]);
+  });
+
+  it('falls back to a normal send when steering a queued message with no turn running', async () => {
+    const state = createState();
+    state.queuedBySession = { sess_1: [{ text: 'queued', attachments: undefined }] };
+    const ws = useWorkspaceState(state, promptDeps({ activity: computed(() => 'idle') }));
+
+    await ws.steerQueued(0);
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(apiMock.steerPrompts).not.toHaveBeenCalled();
+    expect(state.queuedBySession.sess_1).toEqual([]);
+  });
+
+  it('sends the queued text verbatim (no trimming)', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [{ text: '    indented code block', attachments: undefined }],
+    };
+    apiMock.submitPrompt.mockResolvedValue({
+      promptId: 'prompt_steered',
+      userMessageId: 'message_steered',
+      status: 'queued',
+    });
+    const ws = useWorkspaceState(state, promptDeps());
+
+    await ws.steerQueued(0);
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({
+        content: [{ type: 'text', text: '    indented code block' }],
+      }),
+    );
+  });
+
+  it('does not drain the queue while a queued steer is still in flight', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'first queued', attachments: undefined },
+        { text: 'second queued', attachments: undefined },
+      ],
+    };
+    // Park the steer's own submit so we control when it settles.
+    let resolveSteer!: (value: unknown) => void;
+    apiMock.submitPrompt.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveSteer = resolve; }),
+    );
+    const ws = useWorkspaceState(state, promptDeps());
+
+    const steer = ws.steerQueued(0);
+    // The first entry leaves the queue immediately; its submit is parked.
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'second queued', attachments: undefined },
+    ]);
+
+    // The running turn ends mid-steer: the drain must NOT fire — it would
+    // submit "second queued" ahead of the steered "first queued", breaking
+    // FIFO (and the steer could then land in the drained entry's turn).
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'second queued', attachments: undefined },
+    ]);
+
+    // The steer settles; its own turn's end drains the next entry as usual.
+    resolveSteer({ promptId: 'prompt_steered', userMessageId: 'message_steered', status: 'queued' });
+    await steer;
+    expect(apiMock.steerPrompts).toHaveBeenCalledWith('sess_1', ['prompt_steered']);
+
+    state.inFlightBySession = { sess_1: true };
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2));
+    expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
+      'sess_1',
+      expect.objectContaining({ content: [{ type: 'text', text: 'second queued' }] }),
+    );
+  });
+
+  it('serializes consecutive queued steers so the daemon sees them in click order', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'first queued', attachments: undefined },
+        { text: 'second queued', attachments: undefined },
+      ],
+    };
+    // First steer's submit parked; the second steer must queue behind it.
+    let resolveFirst!: (value: unknown) => void;
+    apiMock.submitPrompt
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockResolvedValueOnce({ promptId: 'prompt_b', userMessageId: 'message_b', status: 'queued' });
+    const ws = useWorkspaceState(state, promptDeps());
+
+    const s1 = ws.steerQueued(0);
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
+    const s2 = ws.steerQueued(0); // clicked the new head
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    // Still parked behind the first steer — no submit, no queue mutation yet.
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'second queued', attachments: undefined },
+    ]);
+
+    resolveFirst({ promptId: 'prompt_a', userMessageId: 'message_a', status: 'queued' });
+    await Promise.all([s1, s2]);
+    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2);
+    expect(apiMock.submitPrompt).toHaveBeenNthCalledWith(
+      2,
+      'sess_1',
+      expect.objectContaining({ content: [{ type: 'text', text: 'second queued' }] }),
+    );
+    expect(apiMock.steerPrompts).toHaveBeenNthCalledWith(1, 'sess_1', ['prompt_a']);
+    expect(apiMock.steerPrompts).toHaveBeenNthCalledWith(2, 'sess_1', ['prompt_b']);
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+  });
+
+  it('sendPrompt enqueues behind an in-flight steer without flushing early', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'first queued', attachments: undefined },
+        { text: 'second queued', attachments: undefined },
+      ],
+    };
+    let resolveSteer!: (value: unknown) => void;
+    apiMock.submitPrompt.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveSteer = resolve; }),
+    );
+    const ws = useWorkspaceState(state, promptDeps());
+
+    const steer = ws.steerQueued(0);
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
+
+    await ws.sendPrompt('third');
+    // 'third' waits in line; the parked steer holds the drain shut.
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'second queued', attachments: undefined },
+      expect.objectContaining({ text: 'third' }),
+    ]);
+
+    // The steer settles; its turn's end drains the next entry in order.
+    resolveSteer({ promptId: 'prompt_steered', userMessageId: 'message_steered', status: 'queued' });
+    await steer;
+    state.inFlightBySession = { sess_1: true };
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2));
+    expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
+      'sess_1',
+      expect.objectContaining({ content: [{ type: 'text', text: 'second queued' }] }),
+    );
+  });
+
+  it('ignores an empty queued entry without dropping it', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = { sess_1: [{ text: '   ', attachments: undefined }] };
+    const ws = useWorkspaceState(state, promptDeps());
+
+    await ws.steerQueued(0);
+
+    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
+    expect(state.queuedBySession.sess_1).toEqual([{ text: '   ', attachments: undefined }]);
+  });
+
+  it('restores the queued entry when the steer fails before the submit is sent', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = { sess_1: [{ text: 'queued', attachments: undefined }] };
+    // The thinking resolution throws before any POST: nothing reached the
+    // daemon, so the never-restore "ambiguous" rule must NOT apply.
+    const ws = useWorkspaceState(state, promptDeps({
+      modelProvider: {
+        models: ref([]),
+        resolveThinkingForPrompt: async () => {
+          throw new TypeError('fetch failed');
+        },
+      } as unknown as UseWorkspaceStateDeps['modelProvider'],
+    }));
+
+    await ws.steerQueued(0);
+
+    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
+    expect(state.queuedBySession.sess_1).toEqual([{ text: 'queued', attachments: undefined }]);
+  });
+
+  it('resumes the queue after a rejected steer once the hold is released', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = { sess_1: [{ text: 'queued', attachments: undefined }] };
+    let rejectSteer!: (err: unknown) => void;
+    apiMock.submitPrompt.mockImplementationOnce(
+      () => new Promise((_, reject) => { rejectSteer = reject; }),
+    );
+    const activity = ref('working');
+    const ws = useWorkspaceState(state, promptDeps({ activity: computed(() => activity.value) }));
+
+    // The turn ends while the steer is parked; the drain stays shut.
+    const steer = ws.steerQueued(0);
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
+    activity.value = 'idle';
+    state.inFlightBySession = { sess_1: false };
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+
+    // Rejected with the session now idle: the entry is restored AND the queue
+    // is re-driven immediately — no turn end is coming to do it.
+    rejectSteer(new DaemonApiError({ code: 50000, msg: 'boom', requestId: 'r' }));
+    await steer;
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2));
+    expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
+      'sess_1',
+      expect.objectContaining({ content: [{ type: 'text', text: 'queued' }] }),
+    );
+    expect(state.queuedBySession.sess_1).toEqual([]);
+  });
+
+  it('steers the entry locked at click time, not whatever sits at the index later', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'A', attachments: undefined },
+        { text: 'B', attachments: undefined },
+      ],
+    };
+    let rejectFirst!: (err: unknown) => void;
+    apiMock.submitPrompt
+      .mockImplementationOnce(() => new Promise((_, reject) => { rejectFirst = reject; }))
+      .mockResolvedValueOnce({ promptId: 'prompt_b', userMessageId: 'message_b', status: 'queued' });
+    const ws = useWorkspaceState(state, promptDeps());
+
+    const s1 = ws.steerQueued(0); // locks A
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
+    const s2 = ws.steerQueued(0); // locks B (the new head)
+    // A is rejected and comes back at index 0.
+    rejectFirst(new DaemonApiError({ code: 50000, msg: 'boom', requestId: 'r' }));
+    await s1;
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'A', attachments: undefined },
+      { text: 'B', attachments: undefined },
+    ]);
+    // The queued steer must still send B — not the restored A at index 0.
+    await s2;
+    expect(apiMock.submitPrompt).toHaveBeenNthCalledWith(
+      2,
+      'sess_1',
+      expect.objectContaining({ content: [{ type: 'text', text: 'B' }] }),
+    );
+    expect(apiMock.steerPrompts).toHaveBeenCalledWith('sess_1', ['prompt_b']);
+    expect(state.queuedBySession.sess_1).toEqual([{ text: 'A', attachments: undefined }]);
+  });
+
+  it('runs a Ctrl+S merge steer behind an in-flight queued steer', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'A', attachments: undefined },
+        { text: 'B', attachments: undefined },
+      ],
+    };
+    let resolveFirst!: (value: unknown) => void;
+    apiMock.submitPrompt
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockResolvedValueOnce({ promptId: 'prompt_merge', userMessageId: 'message_merge', status: 'queued' });
+    const ws = useWorkspaceState(state, promptDeps());
+
+    const s1 = ws.steerQueued(0); // A in flight
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
+    const s2 = ws.steerPrompt('live');
+    // The merge steer must wait: no submit, and the queue is NOT merged yet.
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(state.queuedBySession.sess_1).toEqual([{ text: 'B', attachments: undefined }]);
+
+    resolveFirst({ promptId: 'prompt_a', userMessageId: 'message_a', status: 'queued' });
+    await Promise.all([s1, s2]);
+    expect(apiMock.submitPrompt).toHaveBeenNthCalledWith(
+      2,
+      'sess_1',
+      expect.objectContaining({ content: [{ type: 'text', text: 'B\n\nlive' }] }),
+    );
+    expect(apiMock.steerPrompts).toHaveBeenNthCalledWith(1, 'sess_1', ['prompt_a']);
+    expect(apiMock.steerPrompts).toHaveBeenNthCalledWith(2, 'sess_1', ['prompt_merge']);
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+  });
+
+  it('sendPrompt falls in line behind an in-flight steer even after the turn ended', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = { sess_1: [{ text: 'steered', attachments: undefined }] };
+    let resolveSteer!: (value: unknown) => void;
+    apiMock.submitPrompt.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveSteer = resolve; }),
+    );
+    // Start "working" so the steer takes the running path, then flip to idle
+    // to model the turn ending while the steer's submit is parked.
+    const activity = ref('working');
+    const ws = useWorkspaceState(state, promptDeps({ activity: computed(() => activity.value) }));
+
+    const steer = ws.steerQueued(0);
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
+    activity.value = 'idle';
+    state.inFlightBySession = { sess_1: false };
+
+    // Idle + empty queue + no in-flight: a naive sendPrompt would submit
+    // directly and could reach the daemon ahead of the parked steer.
+    await ws.sendPrompt('new message');
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(state.queuedBySession.sess_1).toEqual([
+      expect.objectContaining({ text: 'new message' }),
+    ]);
+
+    // The steer settles; its turn's end drains the new message in order.
+    resolveSteer({ promptId: 'prompt_steered', userMessageId: 'message_steered', status: 'queued' });
+    await steer;
+    state.inFlightBySession = { sess_1: true };
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2));
+    expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
+      'sess_1',
+      expect.objectContaining({ content: [{ type: 'text', text: 'new message' }] }),
+    );
+  });
+
+  it('forgetLocalTurnState releases the steer-in-flight hold', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'steered', attachments: undefined },
+        { text: 'second queued', attachments: undefined },
+      ],
+    };
+    apiMock.submitPrompt.mockImplementationOnce(() => new Promise(() => {})); // parked forever
+    const ws = useWorkspaceState(state, promptDeps());
+
+    void ws.steerQueued(0);
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
+
+    // Forgetting the session drops every hold, so a later turn end drains again.
+    forgetLocalTurnState('sess_1');
+    state.inFlightBySession = { sess_1: true };
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2));
+    expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
+      'sess_1',
+      expect.objectContaining({ content: [{ type: 'text', text: 'second queued' }] }),
+    );
   });
 
   // A background session's drained prompt must not inherit the thinking level
