@@ -311,16 +311,6 @@ export class SubagentTool implements ISubagentTool {
       promptText = spawned.promptText;
     }
 
-    const runInBackground = args.run_in_background === true;
-    emitAgentRunSpawned(requester, agentId, {
-      profileName,
-      parentToolCallId: toolCallId,
-      description: args.description,
-      runInBackground,
-      fork: args.fork === true,
-      model: displayModel,
-    });
-
     const target = this.lifecycle.findAgentHandle(agentId);
     if (target === undefined) throw new Error(`Agent "${agentId}" does not exist`);
     const run = await this.subagents.run(
