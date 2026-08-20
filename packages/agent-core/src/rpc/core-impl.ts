@@ -10,7 +10,6 @@ import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search
 import { ImageLimits } from '#/tools/support/image-limits';
 import type { PromisableMethods } from '#/utils/types';
 import { getCoreVersion } from '#/version';
-import { resolveThinkingEffort } from '../agent/config/thinking';
 import { Agent } from '../agent';
 import { limitAgentReplayByTurns } from '../agent/replay/turns';
 import {
@@ -341,16 +340,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const sessionConfig = this.withPrintModeDefaults(config);
     const id = options.id ?? createSessionId();
     const modelAlias = options.model ?? config.defaultModel;
-    const model = modelAlias !== undefined ? config.models?.[modelAlias] : undefined;
-    // Forward only an explicitly requested effort. With no explicit value the
-    // initial effort is left to ConfigState.update(), which resolves it from
-    // the resolved provider — that carries the provider-level protocol context
-    // a raw model alias lacks (e.g. provider type "anthropic" with a custom
-    // model name must default to the inferred profile effort, not "off").
-    const thinkingEffort =
-      options.thinking === undefined
-        ? undefined
-        : resolveThinkingEffort(options.thinking, config.thinking, model);
+    // Forward an explicitly requested effort verbatim: ConfigState.update()
+    // resolves it against the resolved provider — which carries the
+    // provider-level protocol context a raw model alias lacks (e.g. provider
+    // type "anthropic" with a custom model name) — and emits the one-time
+    // fallback warning when the value lands outside the declared effort
+    // list. With no explicit value the initial effort falls through to the
+    // model default on the same path.
+    const thinkingEffort = options.thinking;
     const permissionMode = options.permission ?? config.defaultPermissionMode;
     const baseMcpConfig = await resolveSessionMcpConfig({
       cwd: workDir,
@@ -481,7 +478,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       };
       const mainAgent = await session.createMain();
       mainAgent.config.update({
-        modelAlias: options.model ?? config.defaultModel,
+        modelAlias,
         thinkingEffort,
       });
       if (permissionMode !== undefined) {

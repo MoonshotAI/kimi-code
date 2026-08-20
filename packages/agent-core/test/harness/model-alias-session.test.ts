@@ -176,6 +176,29 @@ max_context_size = 200000
     expect(config.thinkingEffort).toBe('low');
   });
 
+  it('warns once and falls back when createSession requests an unlisted effort', async () => {
+    await writeFile(configPath, compatibleConfig('"xhigh"', 'xhigh'));
+    const events: Array<Parameters<SDKAPI['emitEvent']>[0]> = [];
+    const rpc = await createTestRpc({ emitEvent: (event) => events.push(event) });
+
+    const created = await rpc.createSession({
+      workDir,
+      model: 'compatible/model',
+      thinking: 'high',
+    });
+
+    const config = await rpc.getConfig({ sessionId: created.id, agentId: 'main' });
+    expect(config.thinkingEffort).toBe('xhigh');
+    expect(events).toContainEqual({
+      sessionId: created.id,
+      agentId: 'main',
+      type: 'warning',
+      code: 'thinking-effort-not-listed',
+      message:
+        'Thinking effort "high" is not listed for model "compatible-model" (known: xhigh). Falling back to the model\'s default effort "xhigh".',
+    });
+  });
+
   it('restores the final effort after replaying an earlier unlisted Anthropic effort', async () => {
     const sessionId = await createEffortReplaySession();
 
