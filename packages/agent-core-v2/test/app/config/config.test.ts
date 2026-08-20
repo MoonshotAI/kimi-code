@@ -311,6 +311,7 @@ describe('Agent config', () => {
     });
     expect(await ctx.untilApproval(true)).toMatchInlineSnapshot(`
       [wire] prompt.accepted                 { "agentId": "main", "promptId": "<msg-1>", "time": "<time>" }
+      [emit] prompt.accepted                 { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
       [wire] turn.prompt                     { "agentId": "main", "input": [ { "type": "text", "text": "Look up before config changes" } ], "origin": { "kind": "user" }, "time": "<time>" }
       [emit] turn.started                    { "time": "<time>", "agentId": "main", "turnId": 0, "origin": { "kind": "user" }, "prompt": "Look up before config changes" }
       [emit] agent.activity.updated          { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
@@ -402,6 +403,7 @@ describe('Agent config', () => {
       [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 102 }
       [emit] prompt.completed               { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }
       [wire] prompt.accepted                { "agentId": "main", "promptId": "<msg-2>", "time": "<time>" }
+      [emit] prompt.accepted                { "time": "<time>", "agentId": "main", "promptId": "<msg-2>" }
       [wire] turn.prompt                    { "agentId": "main", "input": [ { "type": "text", "text": "Start a fresh turn" } ], "origin": { "kind": "user" }, "time": "<time>" }
       [emit] turn.started                   { "time": "<time>", "agentId": "main", "turnId": 1, "origin": { "kind": "user" }, "prompt": "Start a fresh turn" }
       [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
