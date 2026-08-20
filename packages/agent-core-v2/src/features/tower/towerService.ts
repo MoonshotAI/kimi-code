@@ -14,6 +14,7 @@ import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import { LifecycleScope } from '#/app/scopes';
 import { IFlagService } from '#/app/flag/flag';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { isWithinDirectory } from '#/tool/path-access';
 import type { ToolFileAccess } from '#/tool/toolContract';
@@ -47,6 +48,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @ISessionContext private readonly sessionCtx: ISessionContext,
     @IFlagService private readonly flags: IFlagService,
+    @ISessionManager private readonly sessions: ISessionManager,
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentContextMemoryService context: IAgentContextMemoryService,
     @IEventBus eventBus: IEventBus,
@@ -132,10 +134,16 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   async enter(): Promise<void> {
     if (this.agentCtx.agentId !== 'main') return;
     if (!this.flags.enabled(TOWER_FLAG_ID)) return;
-    if (!isTowerFeatureAssembled()) return;
+    if (!isTowerFeatureAssembled(this.flags)) return;
     if (this.isActive) return;
     const owner = await this.resolveTowerOwner();
-    if (owner !== undefined && owner !== this.sessionCtx.sessionId) return;
+    if (
+      owner !== undefined &&
+      owner !== this.sessionCtx.sessionId &&
+      this.sessions.get(owner) !== undefined
+    ) {
+      return;
+    }
     for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
     void this.dispatcher.dispatch(
       new TowerModeEnter({ agentId: this.agentCtx.agentId, sessionId: this.sessionCtx.sessionId }),
@@ -151,7 +159,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     return (
       this.agentCtx.agentId === 'main' &&
       this.flags.enabled(TOWER_FLAG_ID) &&
-      isTowerFeatureAssembled() &&
+      isTowerFeatureAssembled(this.flags) &&
       this.agentState.get(towerKey)
     );
   }

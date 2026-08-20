@@ -516,7 +516,7 @@ export class TranscriptService {
     if (
       agentId === MAIN_AGENT_ID &&
       this.deps.core.accessor.get(IFlagService).enabled(TOWER_FLAG_ID) &&
-      isTowerFeatureAssembled()
+      isTowerFeatureAssembled(this.deps.core.accessor.get(IFlagService))
     ) {
       return snapshot;
     }

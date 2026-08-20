@@ -31,6 +31,7 @@ import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IFlagService } from '#/app/flag/flag';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import type { ToolCall } from '#/kosong/contract/message';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -119,6 +120,7 @@ describe('AgentTowerService', () => {
   let addedTools: string[];
   let removedTools: string[];
   let activeTools: string[] | undefined;
+  let liveSessionIds: string[];
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -133,6 +135,10 @@ describe('AgentTowerService', () => {
     ix.stub(IAgentToolApprovalService, { formatDenyMessage });
     towerFlagOn = true;
     ix.stub(IFlagService, stubFlag((id) => towerFlagOn && id === TOWER_FLAG_ID));
+    liveSessionIds = [];
+    ix.stub(ISessionManager, {
+      get: (id: string) => (liveSessionIds.includes(id) ? {} : undefined),
+    } as unknown as ISessionManager);
     addedTools = [];
     removedTools = [];
     activeTools = undefined;
@@ -375,6 +381,7 @@ describe('AgentTowerService', () => {
       await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
       await new TowerStore(repo).init('session-original');
 
+      liveSessionIds = ['session-original'];
       ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-fork' } as unknown as ISessionContext);
       const tower = ix.get(IAgentTowerService);
 
@@ -382,6 +389,27 @@ describe('AgentTowerService', () => {
 
       expect(tower.isActive).toBe(false);
       expect(addedTools).toEqual([]);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('enter() adopts the tower once the owning session is gone — TowerInit stays reachable', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'tower-enter-stale-'));
+    try {
+      await execFileAsync('git', ['init', '-b', 'main'], { cwd: repo });
+      await writeFile(join(repo, 'README.md'), '# fixture\n');
+      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      await new TowerStore(repo).init('session-original');
+
+      ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-fork' } as unknown as ISessionContext);
+      const tower = ix.get(IAgentTowerService);
+
+      await tower.enter();
+
+      expect(tower.isActive).toBe(true);
+      expect(addedTools).toEqual([...TOWER_MODE_TOOLS]);
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
