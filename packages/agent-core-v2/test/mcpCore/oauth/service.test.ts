@@ -4,6 +4,7 @@ import type { AddressInfo as HttpAddress } from 'node:net';
 import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import * as callbackServerModule from '#/mcpCore/oauth/callback-server';
 import {
   META_SUFFIX,
   type McpOAuthClientProvider,
@@ -467,6 +468,42 @@ describe('McpOAuthService single-flight refresh', () => {
 });
 
 describe('McpOAuthService interactive flow serialization', () => {
+  it('closes the callback listener when stale registration cleanup fails', async () => {
+    const memory = createMemoryMcpOAuthStore();
+    const store: McpOAuthStore = {
+      ...memory,
+      async remove(key: string): Promise<void> {
+        if (key.endsWith('-client.json')) throw new Error('disk full');
+        await memory.remove(key);
+      },
+    };
+    const fixture = makeFixture(store);
+    cleanups.push(() => fixture.service.dispose());
+    const provider = await readyProvider(fixture);
+    await provider.saveClientInformation({
+      client_id: 'cached-client',
+      redirect_uris: ['http://127.0.0.1:45678/callback'],
+      token_endpoint_auth_method: 'none',
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+    } satisfies OAuthClientInformationFull);
+
+    const callbackServer: callbackServerModule.CallbackServer = {
+      redirectUri: 'http://127.0.0.1:45679/callback',
+      waitForCode: vi.fn(),
+      close: vi.fn(async () => undefined),
+    };
+    const startSpy = vi
+      .spyOn(callbackServerModule, 'startCallbackServer')
+      .mockResolvedValue(callbackServer);
+    cleanups.push(() => startSpy.mockRestore());
+
+    await expect(
+      fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL),
+    ).rejects.toThrow(/failed to start OAuth flow/);
+    expect(callbackServer.close).toHaveBeenCalledOnce();
+  });
+
   it('joins a concurrent flow for the same credential instead of resetting PKCE state', async () => {
     const fixture = makeFixture();
     cleanups.push(() => fixture.service.dispose());

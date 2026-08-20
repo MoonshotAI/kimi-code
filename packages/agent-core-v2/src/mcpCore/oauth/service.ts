@@ -348,12 +348,11 @@ export class McpOAuthService {
       throw wrapAuthError('failed to start OAuth callback listener', error);
     }
 
-    provider.setRedirectUrl(new URL(callbackServer.redirectUri));
-    await provider.ready;
-    await provider.invalidateStaleRegistration(callbackServer.redirectUri);
-
     let authorizationUrl: URL | undefined;
     try {
+      provider.setRedirectUrl(new URL(callbackServer.redirectUri));
+      await provider.ready;
+      await provider.invalidateStaleRegistration(callbackServer.redirectUri);
       const result = await auth(provider as OAuthClientProvider, {
         serverUrl,
         fetchFn: provider.createOAuthFetch(),
