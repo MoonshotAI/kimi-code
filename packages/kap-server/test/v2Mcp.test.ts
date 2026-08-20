@@ -41,6 +41,9 @@ interface McpStub {
     lastUpdate?: GlobalMcpServerConfig;
     lastTestTarget?: McpServerTestTarget;
     lastResetLocator?: McpServerLocator;
+    lastInspectCwd?: string;
+    lastBeginCwd?: string;
+    lastResetCwd?: string;
     verifySeen?: boolean;
     mutationCwds: Array<string | undefined>;
   };
@@ -119,8 +122,9 @@ function makeMcpStub(): McpStub {
         authStatus: 'not-applicable' as const,
       }));
     },
-    inspectServers: async (targets) => {
+    inspectServers: async (targets, query) => {
       calls.push('inspectServers');
+      state.lastInspectCwd = query?.cwd;
       const selected = [...servers.values()].filter(
         (server) =>
           targets === undefined ||
@@ -142,19 +146,23 @@ function makeMcpStub(): McpStub {
       });
     },
     resolveServerByName: async (name) => ({ source: 'global', name }),
-    beginServerAuth: async () => ({
-      status: 'authorization-required',
-      flowId: 'flow-1',
-      authorizationUrl: 'https://example.com/oauth/authorize?client=x',
-    }),
+    beginServerAuth: async (_locator, query) => {
+      state.lastBeginCwd = query?.cwd;
+      return {
+        status: 'authorization-required',
+        flowId: 'flow-1',
+        authorizationUrl: 'https://example.com/oauth/authorize?client=x',
+      };
+    },
     completeServerAuth: async (handle) => {
       if (handle.flowId !== 'flow-1') {
         throw new Error2(ErrorCodes.REQUEST_INVALID, `Unknown MCP OAuth flow: ${handle.flowId}`);
       }
     },
     cancelServerAuth: async () => {},
-    resetServerAuth: async (locator) => {
+    resetServerAuth: async (locator, query) => {
       state.lastResetLocator = locator;
+      state.lastResetCwd = query?.cwd;
     },
   };
   return { service, calls, state };
@@ -382,6 +390,30 @@ describe('server /api/v2/mcp', () => {
           checkedAt: 1000,
         },
       ]);
+    });
+
+    it('forwards cwd through locator-addressed inspection and OAuth operations', async () => {
+      const stub = makeMcpStub();
+      await boot(stub);
+
+      await call('POST', '/api/v2/mcp/servers:inspect', {
+        targets: [],
+        cwd: '/workspace/project',
+      });
+      await call('POST', '/api/v2/mcp/auth:begin?cwd=%2Fworkspace%2Fproject', {
+        source: 'global',
+        name: 'a',
+      });
+      await call('POST', '/api/v2/mcp/auth:reset?cwd=%2Fworkspace%2Fproject', {
+        source: 'global',
+        name: 'a',
+      });
+
+      expect(stub.state).toMatchObject({
+        lastInspectCwd: '/workspace/project',
+        lastBeginCwd: '/workspace/project',
+        lastResetCwd: '/workspace/project',
+      });
     });
 
     it('maps ?verify= onto the boolean auth-status query flag', async () => {

@@ -2321,10 +2321,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   override async inspectAppMcpServers(
     targets?: readonly McpServerLocator[],
+    options: { readonly cwd?: string } = {},
   ): Promise<readonly AppMcpServerInspection[]> {
     const inspections = await this.engineAccessor
       .get(IMcpManagementService)
-      .inspectServers(targets);
+      .inspectServers(targets, { cwd: options.cwd });
     // Field-identical with the v1 wire shape (the engines' locator /
     // config-view / auth-state declarations match structurally).
     return inspections as readonly AppMcpServerInspection[];
@@ -2365,15 +2366,22 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * enabled entry may own the runtime name, so a global/plugin collision
    * rejects instead of guessing which credential the flow acts on.
    */
-  override async beginGlobalMcpServerAuth(name: string): Promise<BeginGlobalMcpServerAuthResult> {
+  override async beginGlobalMcpServerAuth(
+    name: string,
+    options: { readonly cwd?: string } = {},
+  ): Promise<BeginGlobalMcpServerAuthResult> {
     const management = this.engineAccessor.get(IMcpManagementService);
-    return management.beginServerAuth(await management.resolveServerByName(name));
+    const query = { cwd: options.cwd };
+    return management.beginServerAuth(await management.resolveServerByName(name, query), query);
   }
 
   override async beginMcpServerAuth(
     locator: McpServerLocator,
+    options: { readonly cwd?: string } = {},
   ): Promise<BeginGlobalMcpServerAuthResult> {
-    return this.engineAccessor.get(IMcpManagementService).beginServerAuth(locator);
+    return this.engineAccessor
+      .get(IMcpManagementService)
+      .beginServerAuth(locator, { cwd: options.cwd });
   }
 
   override async completeGlobalMcpServerAuth(
@@ -2406,13 +2414,22 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return this.engineAccessor.get(IMcpManagementService).cancelServerAuth({ flowId });
   }
 
-  override async resetGlobalMcpServerAuth(name: string): Promise<void> {
+  override async resetGlobalMcpServerAuth(
+    name: string,
+    options: { readonly cwd?: string } = {},
+  ): Promise<void> {
     const management = this.engineAccessor.get(IMcpManagementService);
-    return management.resetServerAuth(await management.resolveServerByName(name));
+    const query = { cwd: options.cwd };
+    return management.resetServerAuth(await management.resolveServerByName(name, query), query);
   }
 
-  override async resetMcpServerAuth(locator: McpServerLocator): Promise<void> {
-    return this.engineAccessor.get(IMcpManagementService).resetServerAuth(locator);
+  override async resetMcpServerAuth(
+    locator: McpServerLocator,
+    options: { readonly cwd?: string } = {},
+  ): Promise<void> {
+    return this.engineAccessor
+      .get(IMcpManagementService)
+      .resetServerAuth(locator, { cwd: options.cwd });
   }
 
   override async testGlobalMcpServer(

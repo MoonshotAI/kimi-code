@@ -621,6 +621,38 @@ describe('WorkspaceMcpService', () => {
       });
     });
 
+    it('reconnects when a pending entry settles before the status listener is attached', async () => {
+      const service = createService();
+      manager = service.connectionManager();
+      await service.ready;
+      vi.spyOn(McpConnectionManager.prototype, 'get')
+        .mockReturnValueOnce({
+          name: 'notion',
+          transport: 'http',
+          status: 'pending',
+          toolCount: 0,
+        })
+        .mockReturnValue({
+          name: 'notion',
+          transport: 'http',
+          status: 'needs-auth',
+          toolCount: 0,
+        });
+      vi.spyOn(McpConnectionManager.prototype, 'getRemoteServerUrl').mockReturnValue(SERVER_URL);
+      vi.spyOn(McpConnectionManager.prototype, 'onStatusChange').mockReturnValue(() => undefined);
+      const reconnectAfterCurrent = vi
+        .spyOn(McpConnectionManager.prototype, 'reconnectAfterCurrent')
+        .mockResolvedValue(undefined);
+
+      await oauthService
+        .getProvider('notion', SERVER_URL)
+        .saveTokens({ access_token: 'a', token_type: 'Bearer' });
+
+      await vi.waitFor(() => {
+        expect(reconnectAfterCurrent).toHaveBeenCalledWith('notion');
+      });
+    });
+
     it('ignores a client-scope invalidation as flow-local churn', async () => {
       const service = createService();
       manager = service.connectionManager();

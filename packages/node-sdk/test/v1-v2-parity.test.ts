@@ -3750,7 +3750,7 @@ function expectSameManagedServers(
 }
 
 describe('v1↔v2 global MCP parity', () => {
-  it('keeps v1 implicit detection while v2 classifies persisted credentials offline', async () => {
+  it('detects implicit OAuth requirements identically by default', async () => {
     const statusServer = await startMcpAuthStatusServer();
     const authorizedUrl = 'https://authorized.example.test/mcp';
     const pair = await makeGlobalMcpParityPair({
@@ -3809,17 +3809,7 @@ describe('v1↔v2 global MCP parity', () => {
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
         { name: 'disabled-oauth', authStatus: 'not-applicable' },
       ]);
-      expect(v2Statuses).toEqual([
-        { name: 'stdio', authStatus: 'not-applicable' },
-        { name: 'plain', authStatus: 'not-applicable' },
-        { name: 'detected', authStatus: 'not-applicable' },
-        { name: 'sse', authStatus: 'not-applicable' },
-        { name: 'sse-oauth', authStatus: 'oauth-required' },
-        { name: 'bearer', authStatus: 'bearer-token' },
-        { name: 'oauth-required', authStatus: 'oauth-required' },
-        { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
-        { name: 'disabled-oauth', authStatus: 'not-applicable' },
-      ]);
+      expect(v2Statuses).toEqual(v1Statuses);
     } finally {
       await closeGlobalMcpPair(pair);
       await statusServer.close();
@@ -3910,9 +3900,8 @@ describe('v1↔v2 global MCP parity', () => {
         { name: 'oauth-required', authStatus: 'oauth-required' },
       ]);
 
-      // The v2 name-based list stays fully offline unless verify is requested:
-      // stored grants are classified from disk, and unpinned HTTP servers are
-      // not contacted. V1 retains its implicit no-grant detection for compatibility.
+      // The name-based list preserves implicit no-grant detection when verify
+      // is omitted, while stored grants are classified from disk.
       const [v1LegacyStatuses, v2LegacyStatuses] = await Promise.all([
         pair.v1.listGlobalMcpServerAuthStatuses(),
         pair.v2.listGlobalMcpServerAuthStatuses(),
@@ -3928,17 +3917,7 @@ describe('v1↔v2 global MCP parity', () => {
         { name: 'unavailable-explicit', authStatus: 'oauth-required' },
         { name: 'unavailable-dynamic', authStatus: 'not-applicable' },
       ]);
-      expect(v2LegacyStatuses).toEqual([
-        { name: 'stdio', authStatus: 'not-applicable' },
-        { name: 'plain', authStatus: 'not-applicable' },
-        { name: 'detected', authStatus: 'not-applicable' },
-        { name: 'bearer', authStatus: 'bearer-token' },
-        { name: 'oauth-required', authStatus: 'oauth-required' },
-        { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
-        { name: 'oauth-stale', authStatus: 'oauth-authorized' },
-        { name: 'unavailable-explicit', authStatus: 'oauth-required' },
-        { name: 'unavailable-dynamic', authStatus: 'not-applicable' },
-      ]);
+      expect(v2LegacyStatuses).toEqual(v1LegacyStatuses);
     } finally {
       await closeGlobalMcpPair(pair);
       await statusServer.close();
@@ -4215,6 +4194,56 @@ describe('v1↔v2 global MCP parity', () => {
         (client) => mutate(client, project),
         (client) => mutate(client, project),
       );
+    } finally {
+      await closeGlobalMcpPair(pair);
+    }
+  });
+
+  it('threads cwd through project-layer inspection and authorization on both engines', async () => {
+    const pair = await makeGlobalMcpParityPair();
+    const project = await makeTempDir('kimi-sdk-parity-mcp-auth-project-');
+    await mkdir(join(project, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(project, '.kimi-code', 'mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          'project-stdio': { command: 'project-command' },
+          'project-oauth': {
+            transport: 'http',
+            url: 'https://project.example.test/mcp',
+            auth: 'oauth',
+          },
+        },
+      }),
+      'utf-8',
+    );
+    try {
+      await pair.v2.trustWorkspace(project);
+
+      const [v1Inspections, v2Inspections] = await Promise.all([
+        pair.v1.inspectAppMcpServers([{ source: 'global', name: 'project-stdio' }], {
+          cwd: project,
+        }),
+        pair.v2.inspectAppMcpServers([{ source: 'global', name: 'project-stdio' }], {
+          cwd: project,
+        }),
+      ]);
+      const summarize = (inspections: typeof v1Inspections) =>
+        inspections.map(({ runtimeName, authStatus }) => ({ runtimeName, authStatus }));
+      expect(summarize(v2Inspections)).toEqual(summarize(v1Inspections));
+      expect(summarize(v1Inspections)).toEqual([
+        { runtimeName: 'project-stdio', authStatus: 'not-applicable' },
+      ]);
+
+      await expectSameMcpRejection(
+        pair,
+        (client) => client.beginGlobalMcpServerAuth('project-stdio', { cwd: project }),
+        (client) => client.beginGlobalMcpServerAuth('project-stdio', { cwd: project }),
+      );
+      await Promise.all([
+        pair.v1.resetGlobalMcpServerAuth('project-oauth', { cwd: project }),
+        pair.v2.resetGlobalMcpServerAuth('project-oauth', { cwd: project }),
+      ]);
     } finally {
       await closeGlobalMcpPair(pair);
     }

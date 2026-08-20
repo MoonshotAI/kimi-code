@@ -235,20 +235,20 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
   async listAuthStatuses(query: McpAuthStatusQuery = {}): Promise<readonly McpServerAuthStatus[]> {
     await this.waitForReadiness();
     const entries = await this.registry.list({ cwd: query.cwd });
-    const verify = query.verify === true;
     return Promise.all(
       entries.map(async (entry) => ({
         name: entry.name,
-        authStatus: await this.serverAuthState(entry, query.cwd, verify),
+        authStatus: await this.serverAuthState(entry, query.cwd, query.verify),
       })),
     );
   }
 
   async inspectServers(
     targets?: readonly McpServerLocator[],
+    query: McpRegistryQuery = {},
   ): Promise<readonly McpServerInspection[]> {
     await this.waitForReadiness();
-    const catalog = await this.serverDescriptors();
+    const catalog = await this.serverDescriptors(query);
     const descriptors = selectServerDescriptors(catalog, targets);
     const inspections = await this.inspectServerDescriptors(descriptors, catalog);
     return inspections.map((inspection) => ({
@@ -257,18 +257,21 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     }));
   }
 
-  async resolveServerByName(name: string): Promise<McpServerLocator> {
-    await this.registry.get(name);
-    const catalog = await this.serverDescriptors();
+  async resolveServerByName(name: string, query: McpRegistryQuery = {}): Promise<McpServerLocator> {
+    await this.registry.get(name, query);
+    const catalog = await this.serverDescriptors(query);
     const matches = catalog.filter((candidate) => candidate.runtimeName === name);
     const descriptor = matches.find((candidate) => candidate.enabled) ?? matches[0]!;
     this.requireUnambiguousRuntimeName(catalog, descriptor);
     return descriptor.locator;
   }
 
-  async beginServerAuth(locator: McpServerLocator): Promise<McpServerAuthBeginResult> {
+  async beginServerAuth(
+    locator: McpServerLocator,
+    query: McpRegistryQuery = {},
+  ): Promise<McpServerAuthBeginResult> {
     await this.waitForReadiness();
-    const server = await this.resolveServer(locator);
+    const server = await this.resolveServer(locator, query);
     const config = requireOAuthMcpConfig(server.runtimeName, server.config);
     try {
       const flow = await this.oauth.beginAuthorization(server.runtimeName, config.url);
@@ -329,21 +332,24 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     super.dispose();
   }
 
-  async resetServerAuth(locator: McpServerLocator): Promise<void> {
+  async resetServerAuth(locator: McpServerLocator, query: McpRegistryQuery = {}): Promise<void> {
     await this.waitForReadiness();
-    const server = await this.resolveServer(locator);
+    const server = await this.resolveServer(locator, query);
     const config = requireRemoteMcpConfig(server.runtimeName, server.config);
     await this.oauth.invalidate(server.runtimeName, config.url);
   }
 
-  private async serverDescriptors(): Promise<readonly McpServerRuntimeDescriptor[]> {
-    return (await this.registry.list()).map((entry) => serverDescriptor(entry));
+  private async serverDescriptors(
+    query: McpRegistryQuery = {},
+  ): Promise<readonly McpServerRuntimeDescriptor[]> {
+    return (await this.registry.list(query)).map((entry) => serverDescriptor(entry));
   }
 
   private async resolveServer(
     locator: McpServerLocator,
+    query: McpRegistryQuery,
   ): Promise<McpServerRuntimeDescriptor> {
-    const catalog = await this.serverDescriptors();
+    const catalog = await this.serverDescriptors(query);
     const server = selectServerDescriptors(catalog, [locator])[0]!;
     this.requireUnambiguousRuntimeName(catalog, server);
     return server;
@@ -370,7 +376,7 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
   private async serverAuthState(
     entry: McpRegistryEntry,
     cwd: string | undefined,
-    verify: boolean,
+    verify: boolean | undefined,
   ): Promise<McpServerAuthState> {
     const server = entry.config;
     if (server.enabled === false) return 'not-applicable';
@@ -394,7 +400,9 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
         return offline();
       });
 
-    return verify ? probe() : offline();
+    if (verify === true) return probe();
+    if (verify === false || tokens.hasTokens || server.auth === 'oauth') return offline();
+    return probe();
   }
 
   private async inspectServerDescriptors(

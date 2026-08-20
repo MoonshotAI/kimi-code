@@ -92,6 +92,7 @@ const mcpServerLocatorSchema = z.discriminatedUnion('source', [
 
 const inspectServersBodySchema = z.object({
   targets: z.array(mcpServerLocatorSchema).optional(),
+  cwd: z.string().min(1).optional(),
 });
 
 const authCompleteBodySchema = z.object({
@@ -174,6 +175,16 @@ const baseErrorSchemas = {
 const namedServerErrorSchemas = {
   ...baseErrorSchemas,
   [ErrorCode.MCP_SERVER_NOT_FOUND]: {},
+};
+
+const oauthErrorSchemas = {
+  ...baseErrorSchemas,
+  [ErrorCode.MCP_OAUTH_FAILED]: {},
+};
+
+const namedServerOAuthErrorSchemas = {
+  ...namedServerErrorSchemas,
+  [ErrorCode.MCP_OAUTH_FAILED]: {},
 };
 
 function sendMappedError(
@@ -372,12 +383,14 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       success: { data: z.array(mcpServerInspectionSchema) },
       errors: namedServerErrorSchemas,
       description:
-        'The locator-addressed catalog (redacted configs) plus a batched real-connection probe of every OAuth candidate. `targets` narrows the catalog; omitted inspects all.',
+        'The locator-addressed catalog (redacted configs) plus a batched real-connection probe of every OAuth candidate. `targets` narrows the catalog; omitted inspects all. `cwd` includes trusted project layers.',
       tags: ['v2-mcp'],
     },
     async (req, reply) => {
       try {
-        const inspections = await management().inspectServers(req.body.targets);
+        const inspections = await management().inspectServers(req.body.targets, {
+          cwd: req.body.cwd,
+        });
         reply.send(okEnvelope(inspections, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);
@@ -398,7 +411,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       success: { data: z.array(mcpServerAuthStatusSchema) },
       errors: baseErrorSchemas,
       description:
-        'Per-server OAuth state over the registry catalog. Offline classification by default; `?verify=true` probes a real connection. Never mutates credentials.',
+        'Per-server OAuth state over the registry catalog. Omitted `verify` preserves implicit OAuth detection; `verify=false` is fully offline; `verify=true` verifies every candidate. Probes may refresh or invalidate credentials.',
       tags: ['v2-mcp'],
     },
     async (req, reply) => {
@@ -424,15 +437,16 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       method: 'POST',
       path: '/mcp/auth::begin',
       body: mcpServerLocatorSchema,
+      querystring: serverScopedQuerySchema,
       success: { data: mcpServerAuthBeginResultSchema },
-      errors: namedServerErrorSchemas,
+      errors: namedServerOAuthErrorSchemas,
       description:
         'Begin an interactive OAuth flow for a remote server. Answers `authorization-required` with the flow handle + URL, or `already-authorized` when a grant exists.',
       tags: ['v2-mcp'],
     },
     async (req, reply) => {
       try {
-        const result = await management().beginServerAuth(req.body);
+        const result = await management().beginServerAuth(req.body, { cwd: req.query.cwd });
         reply.send(okEnvelope(result, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);
@@ -451,7 +465,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       path: '/mcp/auth::complete',
       body: authCompleteBodySchema,
       success: { data: z.null() },
-      errors: baseErrorSchemas,
+      errors: oauthErrorSchemas,
       description:
         'Await the browser callback of a begun flow and finish the code exchange (`40001` for an unknown `flowId`).',
       tags: ['v2-mcp'],
@@ -486,7 +500,7 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       path: '/mcp/auth::cancel',
       body: authCancelBodySchema,
       success: { data: z.null() },
-      errors: baseErrorSchemas,
+      errors: oauthErrorSchemas,
       description: 'Tear down a begun OAuth flow without finishing it; unknown flows are ignored.',
       tags: ['v2-mcp'],
     },
@@ -510,15 +524,16 @@ export function registerV2McpRoutes(app: V2McpRouteHost, core: Scope): void {
       method: 'POST',
       path: '/mcp/auth::reset',
       body: mcpServerLocatorSchema,
+      querystring: serverScopedQuerySchema,
       success: { data: z.null() },
-      errors: namedServerErrorSchemas,
+      errors: namedServerOAuthErrorSchemas,
       description:
         'Clear the stored credentials of one server; the invalidation event reaches live sessions.',
       tags: ['v2-mcp'],
     },
     async (req, reply) => {
       try {
-        await management().resetServerAuth(req.body);
+        await management().resetServerAuth(req.body, { cwd: req.query.cwd });
         reply.send(okEnvelope(null, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);

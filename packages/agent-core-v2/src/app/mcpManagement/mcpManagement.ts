@@ -93,7 +93,10 @@ export interface McpServerAuthFlowHandle {
 }
 
 export interface McpAuthStatusQuery extends McpRegistryQuery {
-  /** Online verification: probe a real connection instead of offline classification. */
+  /**
+   * Omitted preserves implicit OAuth detection, `false` stays offline, and
+   * `true` verifies every OAuth candidate through a real connection.
+   */
   readonly verify?: boolean;
 }
 
@@ -123,9 +126,10 @@ export interface IMcpManagementService {
 
   /**
    * Legacy auth-status surface: per-server OAuth state over the registry
-   * catalog. Offline by default (stored-grant classification only, never
-   * mutates credentials); `verify: true` probes a real connection, which may
-   * refresh or invalidate stored credentials and broadcast the events.
+   * catalog. Omitted preserves the legacy implicit-OAuth probe for unpinned
+   * servers without stored credentials; `verify: false` is fully offline;
+   * `verify: true` probes every candidate. Probes may refresh or invalidate
+   * stored credentials and broadcast the events.
    */
   listAuthStatuses(query?: McpAuthStatusQuery): Promise<readonly McpServerAuthStatus[]>;
 
@@ -136,17 +140,23 @@ export interface IMcpManagementService {
    * shared by enabled entries cannot be probed (or credentialed)
    * unambiguously and reports `unavailable`.
    */
-  inspectServers(targets?: readonly McpServerLocator[]): Promise<readonly McpServerInspection[]>;
+  inspectServers(
+    targets?: readonly McpServerLocator[],
+    query?: McpRegistryQuery,
+  ): Promise<readonly McpServerInspection[]>;
 
   /**
    * Resolve a legacy name-only auth target: exactly one enabled entry may
    * own the runtime name — under a collision the caller cannot tell which
    * credential the flow acts on, so it rejects instead of guessing.
    */
-  resolveServerByName(name: string): Promise<McpServerLocator>;
+  resolveServerByName(name: string, query?: McpRegistryQuery): Promise<McpServerLocator>;
 
   /** Begin an interactive OAuth flow for a remote server. */
-  beginServerAuth(locator: McpServerLocator): Promise<McpServerAuthBeginResult>;
+  beginServerAuth(
+    locator: McpServerLocator,
+    query?: McpRegistryQuery,
+  ): Promise<McpServerAuthBeginResult>;
 
   /** Await the browser callback and finish the code exchange. Unknown flow → request.invalid. */
   completeServerAuth(
@@ -158,7 +168,7 @@ export interface IMcpManagementService {
   cancelServerAuth(handle: Pick<McpServerAuthFlowHandle, 'flowId'>): Promise<void>;
 
   /** Clear stored credentials; the invalidation event reaches live sessions. */
-  resetServerAuth(locator: McpServerLocator): Promise<void>;
+  resetServerAuth(locator: McpServerLocator, query?: McpRegistryQuery): Promise<void>;
 }
 
 export const IMcpManagementService: ServiceIdentifier<IMcpManagementService> =

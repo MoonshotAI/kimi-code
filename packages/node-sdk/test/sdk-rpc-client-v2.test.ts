@@ -131,7 +131,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   });
 
-  it('reports global MCP authorization from the persisted v2 credential store without probing', async () => {
+  it('reports global MCP authorization without probing when verify is false', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
     const implicitOAuthUrl = 'https://implicit-oauth.example.test/mcp';
@@ -175,7 +175,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     const harness = createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
 
     try {
-      await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
+      await expect(harness.listMcpServerAuthStatuses({ verify: false })).resolves.toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
         { name: 'detected', authStatus: 'not-applicable' },
@@ -191,7 +191,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
         .saveTokens({ access_token: 'new-test-access-token', token_type: 'Bearer' });
       await externalOAuth.invalidate('oauth-authorized', authorizedUrl, 'tokens');
 
-      await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
+      await expect(harness.listMcpServerAuthStatuses({ verify: false })).resolves.toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
         { name: 'detected', authStatus: 'not-applicable' },

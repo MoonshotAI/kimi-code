@@ -910,7 +910,7 @@ describe('McpManagementService', () => {
       ]);
     });
 
-    it('classifies unpinned servers without a stored grant offline', async () => {
+    it('classifies unpinned servers without a stored grant offline when verify is false', async () => {
       const server = await startCountingServer();
       await management.addServer({ name: 'plain', transport: 'http', url: server.url });
       await management.addServer({
@@ -920,11 +920,20 @@ describe('McpManagementService', () => {
         auth: 'oauth',
       });
 
-      await expect(management.listAuthStatuses()).resolves.toEqual([
+      await expect(management.listAuthStatuses({ verify: false })).resolves.toEqual([
         { name: 'plain', authStatus: 'not-applicable' },
         { name: 'challenged', authStatus: 'oauth-required' },
       ]);
       expect(server.requestCount()).toBe(0);
+    }, 20000);
+
+    it('detects an implicit OAuth challenge when verify is omitted', async () => {
+      const gated = await startGatedServer();
+      await management.addServer({ name: 'detected', transport: 'http', url: gated.url });
+
+      await expect(management.listAuthStatuses()).resolves.toEqual([
+        { name: 'detected', authStatus: 'oauth-required' },
+      ]);
     }, 20000);
 
     it('verify settles a stored-but-rejected grant as oauth-expired through a real probe', async () => {
@@ -949,6 +958,37 @@ describe('McpManagementService', () => {
   });
 
   describe('inspectServers', () => {
+    it('includes trusted project-layer entries when cwd is provided', async () => {
+      const project = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-inspect-project-'));
+      tempDirs.push(project);
+      await mkdir(join(project, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(project, '.kimi-code', 'mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            local: {
+              transport: 'http',
+              url: 'https://project.example.test/mcp',
+              headers: { 'X-Key': 'secret' },
+            },
+          },
+        }),
+        'utf8',
+      );
+
+      const inspections = await management.inspectServers(undefined, { cwd: project });
+
+      expect(inspections).toEqual([
+        expect.objectContaining({
+          serverId: 'global:local',
+          runtimeName: 'local',
+          canonicalUrl: 'https://project.example.test/mcp',
+          editable: false,
+          authStatus: 'not-applicable',
+        }),
+      ]);
+    });
+
     it('lists the locator-addressed catalog with offline classifications and redacted configs', async () => {
       const plain = await startHttpServer();
       await management.addServer({ name: 'plain', transport: 'http', url: plain.url });
@@ -1090,6 +1130,22 @@ describe('McpManagementService', () => {
   });
 
   describe('resolveServerByName', () => {
+    it('resolves a project-layer-only name when cwd is provided', async () => {
+      const project = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-resolve-project-'));
+      tempDirs.push(project);
+      await mkdir(join(project, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(project, '.kimi-code', 'mcp.json'),
+        JSON.stringify({ mcpServers: { local: { command: process.execPath } } }),
+        'utf8',
+      );
+
+      await expect(management.resolveServerByName('local', { cwd: project })).resolves.toEqual({
+        source: 'global',
+        name: 'local',
+      });
+    });
+
     it('resolves a unique global name to its locator', async () => {
       await management.addServer(stdioServer('alpha'));
 
@@ -1153,6 +1209,71 @@ describe('McpManagementService', () => {
   });
 
   describe('OAuth operations', () => {
+    it('begins authorization against the project-layer URL when cwd is provided', async () => {
+      const project = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-begin-project-'));
+      tempDirs.push(project);
+      await mkdir(join(project, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(project, '.kimi-code', 'mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            oauthable: {
+              transport: 'http',
+              url: 'https://project.example.test/mcp',
+              auth: 'oauth',
+            },
+          },
+        }),
+        'utf8',
+      );
+      const cancel = vi.fn(async () => undefined);
+      const begin = vi.spyOn(oauth, 'beginAuthorization').mockResolvedValue({
+        authorizationUrl: new URL('https://project.example.test/authorize'),
+        complete: vi.fn(async () => undefined),
+        cancel,
+      });
+
+      const result = await management.beginServerAuth(
+        { source: 'global', name: 'oauthable' },
+        { cwd: project },
+      );
+
+      expect(begin).toHaveBeenCalledWith('oauthable', 'https://project.example.test/mcp');
+      if (result.status === 'authorization-required') {
+        await management.cancelServerAuth({ flowId: result.flowId });
+      }
+    });
+
+    it('resets credentials for the project-layer URL when cwd is provided', async () => {
+      const project = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-reset-project-'));
+      tempDirs.push(project);
+      await mkdir(join(project, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(project, '.kimi-code', 'mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            oauthable: {
+              transport: 'http',
+              url: 'https://project.example.test/mcp',
+              auth: 'oauth',
+            },
+          },
+        }),
+        'utf8',
+      );
+      const invalidate = vi.spyOn(oauth, 'invalidate').mockResolvedValue(undefined);
+
+      await management.resetServerAuth(
+        { source: 'global', name: 'oauthable' },
+        { cwd: project },
+      );
+
+      expect(invalidate).toHaveBeenCalledWith(
+        'oauthable',
+        'https://project.example.test/mcp',
+      );
+    });
+
     it('rejects begin for entries that cannot run an OAuth flow', async () => {
       await management.addServer(stdioServer('local-tool'));
       await management.addServer({

@@ -258,18 +258,22 @@ export interface GlobalMcpFacade {
   /** The locator-addressed catalog plus a batched real-connection probe of OAuth candidates. */
   inspect(input?: {
     targets?: readonly McpServerLocator[];
+    cwd?: string;
   }): Promise<readonly McpServerInspection[]>;
-  /** Per-server OAuth state; offline by default, `verify: true` probes a real connection. */
+  /** Per-server OAuth state; omitted `verify` detects implicit OAuth, `false` stays offline. */
   authStatuses(input?: {
     cwd?: string;
     verify?: boolean;
   }): Promise<readonly McpServerAuthStatus[]>;
   /** Resolve a legacy name-only auth target to its unambiguous locator. */
-  resolveByName(input: { name: string }): Promise<McpServerLocator>;
-  beginAuth(input: { locator: McpServerLocator }): Promise<McpServerAuthBeginResult>;
+  resolveByName(input: { name: string; cwd?: string }): Promise<McpServerLocator>;
+  beginAuth(input: {
+    locator: McpServerLocator;
+    cwd?: string;
+  }): Promise<McpServerAuthBeginResult>;
   completeAuth(input: { flowId: string; timeoutMs?: number }): Promise<void>;
   cancelAuth(input: { flowId: string }): Promise<void>;
-  resetAuth(input: { locator: McpServerLocator }): Promise<void>;
+  resetAuth(input: { locator: McpServerLocator; cwd?: string }): Promise<void>;
 }
 
 /** One downloaded upload: its metadata plus the buffered bytes. */
@@ -593,23 +597,31 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       test: (target) =>
         call('mcpManagementService', 'testServer', [target]) as Promise<McpServerTestResult>,
       inspect: (input) =>
-        call('mcpManagementService', 'inspectServers', [input?.targets]) as Promise<
+        call('mcpManagementService', 'inspectServers', [
+          input?.targets,
+          input === undefined ? undefined : { cwd: input.cwd },
+        ]) as Promise<
           readonly McpServerInspection[]
         >,
       authStatuses: (input) =>
         call('mcpManagementService', 'listAuthStatuses', [
           input === undefined ? undefined : { cwd: input.cwd, verify: input.verify },
         ]) as Promise<readonly McpServerAuthStatus[]>,
-      resolveByName: ({ name }) =>
-        call('mcpManagementService', 'resolveServerByName', [name]) as Promise<McpServerLocator>,
-      beginAuth: ({ locator }) =>
-        call('mcpManagementService', 'beginServerAuth', [locator]) as Promise<McpServerAuthBeginResult>,
+      resolveByName: ({ name, cwd }) =>
+        call('mcpManagementService', 'resolveServerByName', [name, { cwd }]) as Promise<
+          McpServerLocator
+        >,
+      beginAuth: ({ locator, cwd }) =>
+        call('mcpManagementService', 'beginServerAuth', [
+          locator,
+          { cwd },
+        ]) as Promise<McpServerAuthBeginResult>,
       completeAuth: ({ flowId, timeoutMs }) =>
         call('mcpManagementService', 'completeServerAuth', [{ flowId, timeoutMs }]) as Promise<void>,
       cancelAuth: ({ flowId }) =>
         call('mcpManagementService', 'cancelServerAuth', [{ flowId }]) as Promise<void>,
-      resetAuth: ({ locator }) =>
-        call('mcpManagementService', 'resetServerAuth', [locator]) as Promise<void>,
+      resetAuth: ({ locator, cwd }) =>
+        call('mcpManagementService', 'resetServerAuth', [locator, { cwd }]) as Promise<void>,
     },
 
     env,

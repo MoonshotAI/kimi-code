@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code-sdk": patch
 ---
 
-Add an optional cwd parameter to the global MCP server management methods for project-layer-aware reads and guarded writes. On the v2 engine, MCP auth-status results are classified offline by default; pass verify: true to probe servers for implicit OAuth requirements.
+Add an optional cwd parameter to global MCP management and authorization methods for project-layer-aware operations. MCP auth-status reads preserve implicit OAuth detection by default; pass verify: false for stored-credential-only classification or verify: true to verify every candidate.

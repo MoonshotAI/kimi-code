@@ -6,7 +6,11 @@ import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
-import { McpConnectionManager, type McpConnectionView } from '#/mcpCore/connection-manager';
+import {
+  McpConnectionManager,
+  type McpConnectionView,
+  type McpServerEntry,
+} from '#/mcpCore/connection-manager';
 import type { McpOAuthEvent, McpOAuthService } from '#/mcpCore/oauth/service';
 import { canonicalMcpOAuthResource } from '#/mcpCore/oauth/store';
 import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
@@ -178,15 +182,24 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     if (entry.status === 'disabled' || entry.status === 'removed') return;
     if (entry.status === 'pending') {
       await new Promise<void>((resolve, reject) => {
-        const unsubscribe = manager.onStatusChange((next) => {
-          if (next.name !== event.serverName || next.status === 'pending') return;
+        let unsubscribe = (): void => {};
+        let settled = false;
+        const reconnect = (next: McpServerEntry | undefined): void => {
+          if (settled) return;
+          if (next !== undefined && (next.name !== event.serverName || next.status === 'pending')) {
+            return;
+          }
+          settled = true;
           unsubscribe();
-          if (next.status === 'disabled' || next.status === 'removed') {
+          if (next === undefined || next.status === 'disabled' || next.status === 'removed') {
             resolve();
             return;
           }
           void manager.reconnectAfterCurrent(event.serverName).then(resolve, reject);
-        });
+        };
+        unsubscribe = manager.onStatusChange(reconnect);
+        if (settled) unsubscribe();
+        else reconnect(manager.get(event.serverName));
       });
       return;
     }

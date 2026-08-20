@@ -158,15 +158,18 @@ export const mcpManagementContract = {
     output: z.array(mcpServerAuthStatusSchema),
   },
   inspectServers: {
-    input: z.tuple([z.array(mcpServerLocatorSchema).optional()]),
+    input: z.tuple([
+      z.array(mcpServerLocatorSchema).optional(),
+      mcpRegistryQuerySchema.optional(),
+    ]),
     output: z.array(mcpServerInspectionSchema),
   },
   resolveServerByName: {
-    input: z.tuple([z.string().min(1)]),
+    input: z.tuple([z.string().min(1), mcpRegistryQuerySchema.optional()]),
     output: mcpServerLocatorSchema,
   },
   beginServerAuth: {
-    input: z.tuple([mcpServerLocatorSchema]),
+    input: z.tuple([mcpServerLocatorSchema, mcpRegistryQuerySchema.optional()]),
     output: mcpServerAuthBeginResultSchema,
   },
   completeServerAuth: {
@@ -178,7 +181,7 @@ export const mcpManagementContract = {
     output: noResult,
   },
   resetServerAuth: {
-    input: z.tuple([mcpServerLocatorSchema]),
+    input: z.tuple([mcpServerLocatorSchema, mcpRegistryQuerySchema.optional()]),
     output: noResult,
   },
 } satisfies ServiceContract;
