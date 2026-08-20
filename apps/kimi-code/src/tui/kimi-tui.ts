@@ -665,7 +665,7 @@ export class KimiTUI {
     const provider = new BannerProvider(this.state.appState.version);
     const displayState = await readBannerDisplayState();
     const now = new Date();
-    const banner = await provider.load(fetch, {
+    const banner = await provider.load({
       state: displayState,
       now,
     });
