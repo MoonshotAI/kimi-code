@@ -6,7 +6,7 @@ Monitor types:
 
 - `task_output`: watch the stdout/stderr of a running background task owned by this agent. The monitor fires as soon as a line matches `pattern`, without waiting for the task to finish; output produced before the monitor was created is matched as well. If the task finishes with no match, the monitor ends silently.
 - `command`: run any shell command (for example `tail -f server.log`) as a background task. The monitor fires when a line matches `pattern` (the command is then terminated), or when the command exits on its own, whichever comes first. Omit `pattern` to wait only for the command to exit.
-- `file`: watch a file, directory, or glob pattern. The monitor fires on the first matching change (created and/or modified).
+- `file`: watch a file, directory, or glob pattern. The monitor fires on the first matching change (created and/or modified). Optional `pattern` (regular expression) further filters which changed file paths fire — e.g. path `logs/` + pattern `\.log$`.
 
 Guidelines:
 

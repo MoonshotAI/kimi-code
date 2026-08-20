@@ -86,7 +86,7 @@ export interface MonitorRecord {
   status: MonitorStatus;
   /** task_output: watched background task id. */
   readonly taskId?: string;
-  /** task_output / command: line-match regex source. */
+  /** task_output / command: line-match regex source; file: changed-path filter. */
   readonly pattern?: string;
   /** command: the shell command being run. */
   readonly command?: string;
@@ -119,6 +119,7 @@ export type MonitorCreateSpec =
       readonly type: 'file';
       readonly path: string;
       readonly events?: readonly MonitorFileEvent[];
+      readonly pattern?: string;
       readonly timeoutS: number;
       readonly description?: string;
     };
@@ -340,7 +341,7 @@ export class MonitorManager {
       createdAt: Date.now(),
       status: 'active',
       taskId: spec.type === 'task_output' ? spec.taskId : undefined,
-      pattern: spec.type === 'file' ? undefined : spec.pattern,
+      pattern: spec.pattern,
       command: spec.type === 'command' ? spec.command : undefined,
       path: spec.type === 'file' ? spec.path : undefined,
       events: spec.type === 'file' ? spec.events : undefined,
@@ -533,11 +534,14 @@ export class MonitorManager {
         ? ['created', 'modified']
         : spec.events,
     );
+    const pathPattern =
+      spec.pattern === undefined ? undefined : compileMonitorPattern(spec.pattern);
     const watcher = watch(target.root, { ignoreInitial: true });
     live.fileWatcher = watcher;
     const onEvent = (kind: MonitorFileEvent) => (filePath: string) => {
       if (!events.has(kind)) return;
       if (target.matcher !== undefined && !target.matcher(filePath)) return;
+      if (pathPattern !== undefined && !pathPattern.test(filePath)) return;
       this.fire(live, 'match', { fileEvent: kind, filePath });
     };
     watcher.on('add', onEvent('created'));

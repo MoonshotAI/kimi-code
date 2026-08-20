@@ -579,6 +579,27 @@ describe('AgentMonitorService', () => {
     }
   });
 
+  it('file monitor applies the optional pattern to the changed path', async () => {
+    await monitors().createMonitor({
+      type: 'file',
+      path: 'logs/',
+      events: ['created'],
+      pattern: '\\.log$',
+      timeoutMs: 60_000,
+    });
+    expect(watchCalls).toHaveLength(1);
+    const handle = watchCalls[0]!.handle;
+
+    handle.fire({ path: `${TEST_WATCH_CWD}/logs/ignored.txt`, action: 'created', kind: 'file' });
+    await tick();
+    expect(monitors().listMonitors()[0]?.status).toBe('active');
+
+    handle.fire({ path: `${TEST_WATCH_CWD}/logs/app.log`, action: 'created', kind: 'file' });
+    await waitFor(() => monitors().listMonitors()[0]?.status === 'fired');
+    expect(monitors().listMonitors()[0]?.trigger).toBe('match');
+    expect(monitors().listMonitors()[0]?.pattern).toBe('\\.log$');
+  });
+
   it('rejects invalid input at the schema boundary', () => {
     expect(
       MonitorCreateInputSchema.safeParse({ type: 'task_output', task_id: 'bash-123' }).success,

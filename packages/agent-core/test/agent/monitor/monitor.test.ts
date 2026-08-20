@@ -385,6 +385,28 @@ describe('file monitor', () => {
     expect(fired.fire?.fileEvent).toBe('created');
   });
 
+  it('fires only when the changed path matches the optional pattern', async () => {
+    const dir = await makeTmpDir();
+    const fixture = createFixture({ cwd: dir });
+    const record = await fixture.monitor.create({
+      type: 'file',
+      path: dir,
+      events: ['created'],
+      pattern: '\\.log$',
+      timeoutS: 30,
+    });
+
+    await writeFile(join(dir, 'ignored.txt'), 'x');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(fixture.monitor.get(record.id)?.status).toBe('active');
+
+    await writeFile(join(dir, 'app.log'), 'x');
+    const fired = await waitForStatus(fixture, record.id, 'fired');
+    expect(fired.fire?.trigger).toBe('match');
+    expect(fired.fire?.fileEvent).toBe('created');
+    expect(fired.fire?.filePath).toBe(join(await realpath(dir), 'app.log'));
+  });
+
   it('fires on modification of a watched file, not on the initial state', async () => {
     const dir = await makeTmpDir();
     const target = join(dir, 'watched.log');
@@ -606,6 +628,21 @@ describe('MonitorCreate tool', () => {
     if (result.isError === true) {
       expect(result.output).toContain('Invalid regex pattern');
     }
+
+    const badFilePattern = tool.resolveExecution({
+      type: 'file',
+      path: 'x',
+      pattern: '(',
+      timeout: 60,
+    });
+    expect(badFilePattern.isError).toBe(true);
+  });
+
+  it('accepts an optional pattern on the file branch', () => {
+    expect(
+      MonitorCreateInputSchema.safeParse({ type: 'file', path: 'logs/', pattern: '\\.log$' })
+        .success,
+    ).toBe(true);
   });
 
   it('creates a monitor through the tool and lists it', async () => {

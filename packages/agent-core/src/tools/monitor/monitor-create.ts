@@ -100,6 +100,11 @@ export const MonitorCreateInputSchema = z.discriminatedUnion('type', [
       .array(z.enum(['created', 'modified']))
       .optional()
       .describe('Which events fire the monitor. Default: both created and modified.'),
+    pattern: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('JavaScript regex matched against the changed file path — only matching changes fire the monitor. Omit to fire on every change under path.'),
     ...commonFields,
   }),
 ]);
@@ -118,7 +123,7 @@ export class MonitorCreateTool implements BuiltinTool<MonitorCreateInput> {
   resolveExecution(args: MonitorCreateInput): ToolExecution {
     // Regex validity is a user error — surface the engine's message
     // verbatim, naming the offending pattern.
-    const pattern = args.type === 'file' ? undefined : args.pattern;
+    const pattern = args.pattern;
     if (pattern !== undefined) {
       try {
         compileMonitorPattern(pattern);
@@ -179,7 +184,7 @@ function toSpec(args: MonitorCreateInput): MonitorCreateSpec {
     case 'command':
       return { ...base, type: 'command', command: args.command, pattern: args.pattern };
     case 'file':
-      return { ...base, type: 'file', path: args.path, events: args.events };
+      return { ...base, type: 'file', path: args.path, events: args.events, pattern: args.pattern };
   }
 }
 
@@ -190,7 +195,9 @@ function describeArgs(args: MonitorCreateInput): string {
     case 'command':
       return `Watching command: ${args.command.slice(0, 60)}`;
     case 'file':
-      return `Watching path ${args.path}`;
+      return args.pattern === undefined
+        ? `Watching path ${args.path}`
+        : `Watching path ${args.path} for /${args.pattern}/`;
   }
 }
 

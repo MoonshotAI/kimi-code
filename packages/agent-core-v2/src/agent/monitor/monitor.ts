@@ -38,6 +38,7 @@ export interface FileMonitorSpec extends MonitorSpecBase {
   readonly type: 'file';
   readonly path: string;
   readonly events?: readonly MonitorFileEvent[];
+  readonly pattern?: string;
 }
 
 export type MonitorSpec = TaskOutputMonitorSpec | CommandMonitorSpec | FileMonitorSpec;

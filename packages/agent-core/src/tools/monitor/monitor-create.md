@@ -4,7 +4,7 @@ Three watcher types:
 
 - `task_output` — watch a background task's stdout/stderr. Fires as soon as a line matches `pattern`; does NOT wait for the task to finish. Output the task already produced before the monitor was created is matched too. Use for "tell me when the build prints READY" instead of polling TaskOutput. If the task ends without a match, the monitor ends silently (no notification).
 - `command` — run and watch any shell command, e.g. `tail -f /var/log/app.log` or `kubectl rollout status deploy/x`. Fires on the first line matching `pattern`, or when the command exits (whichever comes first). Omit `pattern` to watch only for exit. After a match the monitor kills the command process.
-- `file` — watch a file, directory (recursive), or glob (e.g. `dist/**/*.js`). Fires on the first matching `created` / `modified` event.
+- `file` — watch a file, directory (recursive), or glob (e.g. `dist/**/*.js`). Fires on the first matching `created` / `modified` event. Optional `pattern` (JavaScript regex) further filters which changed file paths fire — e.g. path `logs/` + pattern `\.log$`.
 
 ## One-shot semantics — read before creating
 

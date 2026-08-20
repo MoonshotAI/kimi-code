@@ -41,7 +41,14 @@ function toSpec(args: MonitorCreateInput): MonitorSpec {
         description,
       };
     case 'file':
-      return { type: 'file', path: args.path, events: args.events, timeoutMs, description };
+      return {
+        type: 'file',
+        path: args.path,
+        events: args.events,
+        pattern: args.pattern,
+        timeoutMs,
+        description,
+      };
   }
 }
 

@@ -60,6 +60,12 @@ export const MonitorCreateInputSchema = z.discriminatedUnion('type', [
       .array(z.enum(['created', 'modified']))
       .optional()
       .describe('Which change kinds fire the monitor. Defaults to both created and modified.'),
+    pattern: z
+      .string()
+      .optional()
+      .describe(
+        'Regular expression matched against the changed file path — only matching changes fire the monitor. Omit to fire on every change under path.',
+      ),
     timeout: timeoutField,
     description: descriptionField,
   }),

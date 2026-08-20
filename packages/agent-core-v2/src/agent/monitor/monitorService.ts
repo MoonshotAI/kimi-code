@@ -358,11 +358,18 @@ export class AgentMonitorService extends Disposable implements IAgentMonitorServ
     const actions = new Set<MonitorFileEvent>(record.events);
     const isGlob = GLOB_MAGIC.test(spec.path);
     const matcher = isGlob ? picomatch(normalizeSlashes(absolute)) : undefined;
+    const pathPattern = spec.pattern === undefined ? undefined : this.compilePattern(spec.pattern);
+    record.pattern = spec.pattern;
     managed.matchesFile = (changedPath: string): boolean => {
       const normalized = normalizeSlashes(changedPath);
-      if (matcher !== undefined) return matcher(normalized);
-      const target = normalizeSlashes(absolute);
-      return normalized === target || normalized.startsWith(`${target}/`);
+      if (matcher !== undefined) {
+        if (!matcher(normalized)) return false;
+      } else {
+        const target = normalizeSlashes(absolute);
+        if (normalized !== target && !normalized.startsWith(`${target}/`)) return false;
+      }
+      if (pathPattern !== undefined && !pathPattern.test(normalized)) return false;
+      return true;
     };
     const watchRoot = isGlob ? staticWatchRoot(absolute) : absolute;
     const handle = this.fsWatch.watch(watchRoot, { recursive: true });
