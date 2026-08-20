@@ -135,7 +135,9 @@ export class ConfigState {
     if (this.hasProvider && (changed.cwd !== undefined || changed.modelAlias)) {
       this.agent.tools.initializeBuiltinTools();
     }
-    if (thinkingFallback !== undefined) {
+    if (thinkingFallback !== undefined && thinkingEffort === unforcedThinkingEffort) {
+      // When the env override decides the final effort, the fallback never
+      // reaches the wire — the override warning below is the accurate one.
       this.agent.warnAboutThinkingEffortFallback(targetAlias, targetModel, thinkingFallback);
     }
     if (thinkingEffort !== undefined && thinkingEffort !== unforcedThinkingEffort) {

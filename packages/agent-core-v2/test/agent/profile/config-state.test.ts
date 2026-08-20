@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { ModelRecord } from '#/kosong/model/model';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import {
@@ -482,6 +483,79 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     await requester.request({}, undefined, new AbortController().signal);
 
     expect(capturedThinking).toMatchObject({ effort: 'max' });
+  });
+
+  it('suppresses the fallback warning when a forced effort decides the final effort', async () => {
+    kimiConfig = {
+      providers: { kimi: { type: 'kimi', apiKey: 'test-key', baseUrl: 'https://api.example.test/v1' } },
+      models: {
+        'kimi-code/custom': {
+          provider: 'kimi',
+          model: 'kimi-custom-coder',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'medium', 'max'],
+          defaultEffort: 'max',
+        },
+      },
+      thinking: { effort: 'high', forcedEffort: 'low' },
+    };
+
+    await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: 'kimi-code/custom' });
+
+    expect(profile.data().thinkingLevel).toBe('max');
+    expect(
+      ctx.allEvents.filter(
+        (event) =>
+          event.event === 'warning' &&
+          String((event.args as { code?: string }).code).startsWith('thinking-effort'),
+      ),
+    ).toEqual([]);
+
+    await requester.request({}, undefined, new AbortController().signal);
+
+    expect(capturedThinking).toMatchObject({ effort: 'low' });
+  });
+
+  it('warns only about an unlisted forced effort sent unchanged', async () => {
+    kimiConfig = {
+      providers: { kimi: { type: 'kimi', apiKey: 'test-key', baseUrl: 'https://api.example.test/v1' } },
+      models: {
+        'kimi-code/custom': {
+          provider: 'kimi',
+          model: 'kimi-custom-coder',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'medium', 'max'],
+          defaultEffort: 'max',
+        },
+      },
+      thinking: { effort: 'high', forcedEffort: 'extreme' },
+    };
+
+    await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: 'kimi-code/custom' });
+
+    expect(profile.data().thinkingLevel).toBe('max');
+    expect(
+      ctx.allEvents.filter(
+        (event) =>
+          event.event === 'warning' &&
+          String((event.args as { code?: string }).code).startsWith('thinking-effort'),
+      ),
+    ).toEqual([]);
+
+    await requester.request({}, undefined, new AbortController().signal);
+
+    expect(capturedThinking).toMatchObject({ effort: 'extreme' });
+    expect(ctx.allEvents).toContainEqual({
+      type: '[rpc]',
+      event: 'warning',
+      args: expect.objectContaining({
+        code: 'thinking-effort-not-listed',
+        message:
+          'Thinking effort "extreme" is not listed for model "kimi-custom-coder" (known: low, medium, max). The value will be sent unchanged to the backend.',
+      }),
+    });
   });
 
   it('clamps off to the model default for always-on models, on any transport', () => {

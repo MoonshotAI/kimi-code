@@ -626,13 +626,20 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     try {
       const model = this.tryResolveRawModel();
       if (model === undefined) return;
-      const { fallback } = resolveThinkingEffortForModelWithFallback(
+      const thinking = this.config.get<ThinkingConfig>(THINKING_SECTION);
+      const { effort, fallback } = resolveThinkingEffortForModelWithFallback(
         requested,
-        this.config.get<ThinkingConfig>(THINKING_SECTION),
+        thinking,
         model,
         this.strictThinkingValidation(model),
       );
       if (fallback === undefined) return;
+      const forced = resolveForcedThinkingEffort(
+        thinking?.forcedEffort,
+        effort,
+        drivesThinkingThroughTraits(model.providerType),
+      );
+      if (forced !== undefined) return;
       const efforts = model.supportEfforts?.filter((value) => value.length > 0) ?? [];
       const knownEfforts = efforts.join(',');
       const code = 'thinking-effort-not-listed';

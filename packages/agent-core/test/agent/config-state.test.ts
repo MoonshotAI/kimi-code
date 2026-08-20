@@ -319,6 +319,102 @@ describe('ConfigState model capabilities', () => {
     }
   });
 
+  it('suppresses the fallback warning when the env override decides the final effort', () => {
+    // The configured "high" is unlisted and would fall back to "xhigh", but
+    // the env pin "low" decides what actually goes on the wire — warning
+    // about a fallback to "xhigh" would be a lie, and "low" is listed, so no
+    // warning fires at all.
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'low');
+    try {
+      const config: KimiConfig = {
+        providers: {
+          compatible: {
+            type: 'kimi',
+            apiKey: 'test-key',
+            baseUrl: 'https://api.example.test',
+          },
+        },
+        models: {
+          compatible: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 128_000,
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'xhigh'],
+            defaultEffort: 'xhigh',
+          },
+        },
+        thinking: { effort: 'high' },
+      };
+      const ctx = testAgent({
+        initialConfig: config,
+        providerManager: new ProviderManager({ config }),
+      });
+
+      ctx.agent.config.update({
+        modelAlias: 'compatible',
+        systemPrompt: 'system',
+      });
+
+      expect(ctx.agent.config.thinkingEffort).toBe('low');
+      expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('warns only about the override when both the configured effort and the override are unlisted', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'extreme');
+    try {
+      const config: KimiConfig = {
+        providers: {
+          compatible: {
+            type: 'kimi',
+            apiKey: 'test-key',
+            baseUrl: 'https://api.example.test',
+          },
+        },
+        models: {
+          compatible: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 128_000,
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'xhigh'],
+            defaultEffort: 'xhigh',
+          },
+        },
+        thinking: { effort: 'high' },
+      };
+      const ctx = testAgent({
+        initialConfig: config,
+        providerManager: new ProviderManager({ config }),
+      });
+
+      ctx.agent.config.update({
+        modelAlias: 'compatible',
+        systemPrompt: 'system',
+      });
+
+      expect(ctx.agent.config.thinkingEffort).toBe('extreme');
+      expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([
+        {
+          type: '[rpc]',
+          event: 'warning',
+          args: {
+            code: 'thinking-effort-override-not-listed',
+            message:
+              'Thinking effort "extreme" is not listed for model "compatible-model" (known: low, xhigh). The value will be sent unchanged to the backend.',
+          },
+        },
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('uses session id as a provider prompt cache hint without storing it on Agent', () => {
     const ctx = testAgent({
       providerManager: new ProviderManager({
