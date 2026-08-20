@@ -36,6 +36,7 @@ export function isAgentReplayUserTurnRecord(record: AgentReplayRecord): boolean 
     case 'compaction_summary':
     case 'cron_job':
     case 'cron_missed':
+    case 'monitor':
     case 'hook_result':
     case 'injection':
     case 'retry':

@@ -259,6 +259,24 @@ export function backgroundOrigin(
   return origin?.kind === 'background_task' || origin?.kind === 'task' ? origin : undefined;
 }
 
+/**
+ * A fired Monitor watcher steers a user-role record whose content is the
+ * rendered `<notification category="monitor">` XML. Read structurally: the
+ * SDK's origin union is typed from the v1 engine, which may lag the wire.
+ */
+export interface MonitorNotificationOrigin {
+  readonly kind: 'monitor';
+  readonly monitorId: string;
+  readonly monitorType: 'task_output' | 'command' | 'file';
+  readonly trigger: 'match' | 'exit' | 'timeout';
+  readonly notificationId: string;
+}
+
+export function monitorOrigin(message: ContextMessage): MonitorNotificationOrigin | undefined {
+  const origin = message.origin as MonitorNotificationOrigin | undefined;
+  return origin?.kind === 'monitor' ? origin : undefined;
+}
+
 export function skillActivationFromOrigin(
   origin: PromptOrigin | undefined,
 ): SkillActivationProjection | undefined {

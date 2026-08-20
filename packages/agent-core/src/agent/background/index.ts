@@ -242,6 +242,14 @@ export interface RegisterBackgroundTaskOptions {
   readonly autoBackgroundOnTimeout?: boolean;
   /** Foreground caller signal. Ignored for tasks created already detached. */
   readonly signal?: AbortSignal;
+  /**
+   * When true, the task's terminal notification is suppressed from the moment
+   * of registration. Used by the monitor subsystem for its command watcher so
+   * the command's terminal notification never duplicates the monitor's own
+   * notification — registering first and suppressing later would race a fast
+   * exit.
+   */
+  readonly terminalNotificationSuppressed?: boolean;
 }
 
 export type ForegroundTaskReleaseReason = 'detached' | 'timeout_detached' | 'terminal';
@@ -269,6 +277,13 @@ export class BackgroundManager {
 
   private readonly scheduledNotificationKeys = new Set<string>();
   private readonly deliveredNotificationKeys = new Set<string>();
+  /**
+   * Live output subscribers keyed by task id, fed from the top of
+   * `appendOutput` before any buffering / cap logic runs. Used by the
+   * monitor subsystem (`task_output` watchers) to pattern-match a task's
+   * stream without waiting for its terminal state.
+   */
+  private readonly outputListeners = new Map<string, Set<(chunk: string) => void>>();
 
   constructor(
     private readonly agent: Agent,
@@ -358,6 +373,8 @@ export class BackgroundManager {
       foregroundRelease: detached ? undefined : createControlledPromise(),
       stop: createControlledPromise(),
       terminal: createControlledPromise(),
+      terminalNotificationSuppressed:
+        options.terminalNotificationSuppressed === true ? true : undefined,
       abortController: new AbortController(),
       persistWriteQueue: Promise.resolve(),
       outputWriteQueue: Promise.resolve(),
@@ -481,6 +498,30 @@ export class BackgroundManager {
     if (entry === undefined || entry.terminalNotificationSuppressed === true) return;
     entry.terminalNotificationSuppressed = true;
     await this.persistLive(entry);
+  }
+
+  /**
+   * Subscribe to a task's live output stream. The listener receives every
+   * chunk appended from now on — replaying already-buffered output is the
+   * caller's job (via `getOutputSnapshot`) when it needs it. Returns the
+   * unsubscribe function; safe to call multiple times.
+   *
+   * Listener exceptions are swallowed so a broken subscriber can never
+   * corrupt the append hot path.
+   */
+  subscribeTaskOutput(taskId: string, listener: (chunk: string) => void): () => void {
+    let listeners = this.outputListeners.get(taskId);
+    if (listeners === undefined) {
+      listeners = new Set();
+      this.outputListeners.set(taskId, listeners);
+    }
+    listeners.add(listener);
+    return () => {
+      const current = this.outputListeners.get(taskId);
+      if (current === undefined) return;
+      current.delete(listener);
+      if (current.size === 0) this.outputListeners.delete(taskId);
+    };
   }
 
   /**
@@ -705,6 +746,16 @@ export class BackgroundManager {
   }
 
   private appendOutput(entry: ManagedTask, chunk: string): void {
+    const listeners = this.outputListeners.get(entry.taskId);
+    if (listeners !== undefined) {
+      for (const listener of listeners) {
+        try {
+          listener(chunk);
+        } catch {
+          /* a broken subscriber must not corrupt the append hot path */
+        }
+      }
+    }
     entry.outputSizeBytes += Buffer.byteLength(chunk, 'utf-8');
     entry.outputChunks.push(chunk);
     entry.outputRingChars += chunk.length;

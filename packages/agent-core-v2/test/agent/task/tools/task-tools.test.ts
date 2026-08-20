@@ -6,6 +6,7 @@ import {
   IAgentTaskService,
   type AgentTask,
   type AgentTaskInfo,
+  type AgentTaskOutputChunk,
   type AgentTaskOutputSnapshot,
   type AgentTaskTrackOptions,
   type AgentTaskWaitDelivery,
@@ -13,6 +14,7 @@ import {
   type IAgentTaskEntry,
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
+import { Event } from '#/_base/event';
 import { type AgentTaskStatus, TERMINAL_STATUSES } from '#/agent/task/types';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TaskListInputSchema } from '#/agent/tools/task/task-list/task-list';
@@ -110,6 +112,8 @@ interface FakeTaskEntry {
 
 class FakeTaskService implements IAgentTaskService {
   declare readonly _serviceBrand: undefined;
+
+  readonly onDidAppendOutput: Event<AgentTaskOutputChunk> = Event.None as Event<AgentTaskOutputChunk>;
 
   readonly stopCalls: Array<{ taskId: string; reason: string | undefined }> = [];
   readonly suppressCalls: string[] = [];

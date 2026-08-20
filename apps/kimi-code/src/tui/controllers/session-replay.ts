@@ -36,6 +36,7 @@ import {
   formatHookResultMessageForTranscript,
   isTerminalBackgroundTask,
   limitReplayRecordsByTurn,
+  monitorOrigin,
   REPLAY_TURN_LIMIT,
   replayBackgroundProjection,
   replayEntry,
@@ -329,6 +330,10 @@ export class SessionReplayRenderer {
     if (origin !== undefined) {
       this.flushAssistant(context);
       this.renderBackgroundTaskNotification(context, origin);
+      return;
+    }
+    if (monitorOrigin(message) !== undefined) {
+      this.renderMonitorNotification(context, message);
       return;
     }
     if (message.origin?.kind === 'hook_result') {
@@ -665,6 +670,19 @@ export class SessionReplayRenderer {
     });
   }
 
+  private renderMonitorNotification(context: ReplayRenderContext, message: ContextMessage): void {
+    if (monitorOrigin(message) === undefined) return;
+    this.flushAssistant(context);
+    this.host.appendTranscriptEntry(
+      replayEntry(
+        context,
+        'status',
+        stripMonitorNotificationEnvelope(contentPartsToText(message.content)),
+        'plain',
+      ),
+    );
+  }
+
   private renderPermissionUpdate(context: ReplayRenderContext, mode: PermissionMode): void {
     if (mode === 'yolo') {
       this.host.appendTranscriptEntry(
@@ -872,6 +890,18 @@ function stripCronEnvelope(text: string): string {
     lines.length >= 2 &&
     lines[0]?.startsWith('<cron-fire ') &&
     lines.at(-1) === '</cron-fire>'
+  ) {
+    return lines.slice(1, -1).join('\n');
+  }
+  return text;
+}
+
+function stripMonitorNotificationEnvelope(text: string): string {
+  const lines = text.split('\n');
+  if (
+    lines.length >= 2 &&
+    lines[0]?.startsWith('<notification ') &&
+    lines.at(-1) === '</notification>'
   ) {
     return lines.slice(1, -1).join('\n');
   }

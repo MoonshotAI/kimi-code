@@ -29,7 +29,20 @@ export function toInputJsonSchema(schema: z.ZodType): Record<string, unknown> {
     io: 'input',
   });
   closeObjectNodes(jsonSchema);
+  rootObjectType(jsonSchema);
   return jsonSchema;
+}
+
+/**
+ * Re-assert `type: 'object'` at the root when a union of object branches
+ * (`anyOf`/`oneOf`) left it unset. Model providers require the top-level
+ * parameter schema to declare `type: "object"`, but zod's serialization of a
+ * discriminated union carries only the branch list.
+ */
+function rootObjectType(jsonSchema: Record<string, unknown>): void {
+  if (jsonSchema['type'] !== undefined) return;
+  if (!Array.isArray(jsonSchema['anyOf']) && !Array.isArray(jsonSchema['oneOf'])) return;
+  jsonSchema['type'] = 'object';
 }
 
 /**

@@ -175,6 +175,7 @@ export function compactionUserMessageDisposition(
     case 'compaction_summary':
     case 'system_trigger':
     case 'task':
+    case 'monitor':
     case 'cron_job':
     case 'cron_missed':
     case 'hook_result':

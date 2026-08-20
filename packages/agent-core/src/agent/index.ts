@@ -33,6 +33,7 @@ import {
   type MicroCompactionConfig,
 } from './compaction';
 import { CronManager } from './cron';
+import { MonitorManager } from './monitor';
 import { ConfigState } from './config';
 import { ContextMemory } from './context';
 import { GoalMode } from './goal';
@@ -161,6 +162,7 @@ export class Agent {
   readonly tools: ToolManager;
   readonly background: BackgroundManager;
   readonly cron: CronManager | null;
+  readonly monitor: MonitorManager | null;
   readonly goal: GoalMode;
   readonly replayBuilder: ReplayBuilder;
 
@@ -246,6 +248,7 @@ export class Agent {
       this.homedir === undefined ? undefined : new BackgroundTaskPersistence(this.homedir),
     );
     this.cron = this.type === 'sub' ? null : new CronManager(this);
+    this.monitor = this.type === 'sub' ? null : new MonitorManager(this);
     this.goal = new GoalMode(this);
     this.replayBuilder = new ReplayBuilder(this, options.replay);
   }
@@ -539,6 +542,7 @@ export class Agent {
       await this.background.loadFromDisk();
       await this.background.reconcile();
       await this.cron?.loadFromDisk();
+      await this.monitor?.loadFromDisk();
       this.context.finishResume();
       this.turn.finishResume();
     } finally {

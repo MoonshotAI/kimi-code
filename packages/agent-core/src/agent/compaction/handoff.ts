@@ -75,6 +75,7 @@ export function compactionUserMessageDisposition(
     case 'background_task':
     case 'cron_job':
     case 'cron_missed':
+    case 'monitor':
     case 'hook_result':
     case 'retry':
       return 'drop';

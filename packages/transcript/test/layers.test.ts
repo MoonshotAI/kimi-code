@@ -807,6 +807,21 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     if (taskTurn?.kind !== 'turn') throw new Error('expected turn');
     expect(taskTurn.origin).toMatchObject({ kind: 'task', taskId: 'b83rhswvs' });
   });
+
+  it('maps monitor origins to monitor turns, preserving the monitorId', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'monitor fired' }],
+        toolCalls: [],
+        origin: { kind: 'monitor', monitorId: 'mon-1' } as { kind: string },
+      },
+    ]);
+    const monitorTurn = snapshot.items[1];
+    if (monitorTurn?.kind !== 'turn') throw new Error('expected turn');
+    expect(monitorTurn.origin).toMatchObject({ kind: 'monitor', taskId: 'mon-1' });
+  });
 });
 
 describe('foldWireRecordFacts (cold facts)', () => {

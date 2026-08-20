@@ -9,6 +9,7 @@ export type TurnOrigin =
   | { kind: 'user'; payload?: unknown }
   | { kind: 'cron'; taskId?: TaskId; payload?: unknown }
   | { kind: 'task'; taskId: TaskId; payload?: unknown }
+  | { kind: 'monitor'; taskId?: TaskId; payload?: unknown }
   | { kind: 'hook'; payload?: unknown }
   | { kind: 'compaction'; payload?: unknown }
   | { kind: 'side'; payload?: unknown }

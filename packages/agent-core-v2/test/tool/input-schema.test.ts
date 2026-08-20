@@ -74,4 +74,17 @@ describe('tool input JSON Schema', () => {
       }),
     ).not.toBeNull();
   });
+
+  it('exposes type "object" at the root of a discriminated-union schema', () => {
+    const schema = toInputJsonSchema(
+      z.discriminatedUnion('type', [
+        z.object({ type: z.literal('a'), value: z.string() }),
+        z.object({ type: z.literal('b') }),
+      ]),
+    );
+
+    expect(schema).toMatchObject({ type: 'object' });
+    const validator = compileToolArgsValidator(schema);
+    expect(validateToolArgs(validator, { type: 'a', value: 'x' })).toBeNull();
+  });
 });

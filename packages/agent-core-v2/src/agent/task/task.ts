@@ -1,4 +1,5 @@
 import { createDecorator } from '#/_base/di/instantiation';
+import type { Event } from '#/_base/event';
 import type { ITaskHandle } from '#/app/task/task';
 import type {
   AgentTask,
@@ -35,6 +36,12 @@ export interface RegisterAgentTaskOptions {
   readonly detachTimeoutMs?: number;
   readonly autoBackgroundOnTimeout?: boolean;
   readonly signal?: AbortSignal;
+  readonly terminalNotificationSuppressed?: boolean;
+}
+
+export interface AgentTaskOutputChunk {
+  readonly taskId: string;
+  readonly chunk: string;
 }
 
 export type ForegroundTaskReleaseReason = 'detached' | 'timeout_detached' | 'terminal';
@@ -72,6 +79,8 @@ export interface AgentTaskWaitDelivery {
 
 export interface IAgentTaskService {
   readonly _serviceBrand: undefined;
+
+  readonly onDidAppendOutput: Event<AgentTaskOutputChunk>;
 
   track(handle: ITaskHandle, options: AgentTaskTrackOptions): IAgentTaskEntry;
   registerTask(task: AgentTask, options?: RegisterAgentTaskOptions): string;

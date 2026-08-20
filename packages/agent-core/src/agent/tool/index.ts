@@ -836,6 +836,15 @@ export class ToolManager {
         this.agent.cron && new b.CronCreateTool(this.agent.cron),
         this.agent.cron && new b.CronListTool(this.agent.cron),
         this.agent.cron && new b.CronDeleteTool(this.agent.cron),
+        this.agent.monitor &&
+          this.agent.experimentalFlags.enabled('monitor') &&
+          new b.MonitorCreateTool(this.agent.monitor),
+        this.agent.monitor &&
+          this.agent.experimentalFlags.enabled('monitor') &&
+          new b.MonitorListTool(this.agent.monitor),
+        this.agent.monitor &&
+          this.agent.experimentalFlags.enabled('monitor') &&
+          new b.MonitorCancelTool(this.agent.monitor),
         this.agent.skills?.registry.listInvocableSkills().length &&
           new b.SkillTool(this.agent),
         this.agent.subagentHost &&

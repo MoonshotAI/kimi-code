@@ -750,6 +750,7 @@ function isUserVisibleTurnRecord(record: AgentRecord): boolean {
     case 'compaction_summary':
     case 'cron_job':
     case 'cron_missed':
+    case 'monitor':
     case 'hook_result':
     case 'injection':
     case 'retry':
@@ -772,6 +773,7 @@ function isUserVisibleTurnInputRecord(record: AgentRecord): boolean {
     case 'compaction_summary':
     case 'cron_job':
     case 'cron_missed':
+    case 'monitor':
     case 'hook_result':
     case 'injection':
     case 'retry':

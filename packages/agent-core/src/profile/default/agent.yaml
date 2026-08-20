@@ -18,6 +18,9 @@ tools:
   - CronCreate
   - CronList
   - CronDelete
+  - MonitorCreate
+  - MonitorList
+  - MonitorCancel
   - ReadMediaFile
   - TodoList
   - Skill

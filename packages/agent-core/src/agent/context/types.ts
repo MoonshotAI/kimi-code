@@ -76,6 +76,18 @@ export interface CronMissedOrigin {
   readonly count: number;
 }
 
+export type MonitorType = 'task_output' | 'command' | 'file';
+
+export type MonitorTrigger = 'match' | 'exit' | 'timeout';
+
+export interface MonitorOrigin {
+  readonly kind: 'monitor';
+  readonly monitorId: string;
+  readonly monitorType: MonitorType;
+  readonly trigger: MonitorTrigger;
+  readonly notificationId: string;
+}
+
 export interface HookResultOrigin {
   readonly kind: 'hook_result';
   readonly event: string;
@@ -98,6 +110,7 @@ export type PromptOrigin =
   | BackgroundTaskOrigin
   | CronJobOrigin
   | CronMissedOrigin
+  | MonitorOrigin
   | HookResultOrigin
   | RetryOrigin;
 

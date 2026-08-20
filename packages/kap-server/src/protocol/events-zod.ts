@@ -9,6 +9,7 @@ import type {
   CronMissedOrigin,
   HookResultOrigin,
   InjectionOrigin,
+  MonitorOrigin,
   PluginCommandOrigin,
   RetryOrigin,
   ShellCommandOrigin,
@@ -202,6 +203,14 @@ export const cronMissedOriginSchema = z.object({
   count: z.number(),
 }) satisfies z.ZodType<CronMissedOrigin>;
 
+export const monitorOriginSchema = z.object({
+  kind: z.literal('monitor'),
+  monitorId: z.string(),
+  monitorType: z.enum(['task_output', 'command', 'file']),
+  trigger: z.enum(['match', 'exit', 'timeout']),
+  notificationId: z.string(),
+}) satisfies z.ZodType<MonitorOrigin>;
+
 export const hookResultOriginSchema = z.object({
   kind: z.literal('hook_result'),
   event: z.string(),
@@ -225,6 +234,7 @@ export const promptOriginSchema = z.discriminatedUnion('kind', [
   backgroundTaskOriginSchema,
   cronJobOriginSchema,
   cronMissedOriginSchema,
+  monitorOriginSchema,
   hookResultOriginSchema,
   retryOriginSchema,
 ]);

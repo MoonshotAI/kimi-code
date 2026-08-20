@@ -26,6 +26,11 @@ export const turnOriginSchema = z.discriminatedUnion('kind', [
     payload: z.unknown().optional(),
   }),
   z.object({ kind: z.literal('task'), taskId: taskIdSchema, payload: z.unknown().optional() }),
+  z.object({
+    kind: z.literal('monitor'),
+    taskId: taskIdSchema.optional(),
+    payload: z.unknown().optional(),
+  }),
   z.object({ kind: z.literal('hook'), payload: z.unknown().optional() }),
   z.object({ kind: z.literal('compaction'), payload: z.unknown().optional() }),
   z.object({ kind: z.literal('side'), payload: z.unknown().optional() }),

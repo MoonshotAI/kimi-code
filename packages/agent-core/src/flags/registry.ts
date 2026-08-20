@@ -33,6 +33,15 @@ export const FLAG_DEFINITIONS = [
     surface: 'core',
   },
   {
+    id: 'monitor',
+    title: 'Monitor (event-driven watchers)',
+    description:
+      'Let the agent register one-shot listeners on background task output, arbitrary shell commands, and file changes; a match pushes a notification back into the main loop instead of polling.',
+    env: 'KIMI_CODE_EXPERIMENTAL_MONITOR',
+    default: false,
+    surface: 'core',
+  },
+  {
     id: 'secondary-model',
     title: 'Secondary model for subagents',
     description:

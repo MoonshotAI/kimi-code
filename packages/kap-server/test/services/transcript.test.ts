@@ -1839,6 +1839,19 @@ describe('AgentTranscriptProjector', () => {
         origin: { kind: 'task', taskId: 'bash-1', status: 'completed', notificationId: 'n1' },
       }),
     );
+    feed(
+      ev({
+        type: 'turn.started',
+        turnId: 3,
+        origin: {
+          kind: 'monitor',
+          monitorId: 'mon-7',
+          monitorType: 'command',
+          trigger: 'match',
+          notificationId: 'monitor:mon-7:match',
+        },
+      }),
+    );
 
     expect(turnOps('t1', tx.getItems()).origin).toEqual({
       kind: 'cron',
@@ -1849,6 +1862,17 @@ describe('AgentTranscriptProjector', () => {
       kind: 'task',
       taskId: 'bash-1',
       payload: { kind: 'task', taskId: 'bash-1', status: 'completed', notificationId: 'n1' },
+    });
+    expect(turnOps('t3', tx.getItems()).origin).toEqual({
+      kind: 'monitor',
+      taskId: 'mon-7',
+      payload: {
+        kind: 'monitor',
+        monitorId: 'mon-7',
+        monitorType: 'command',
+        trigger: 'match',
+        notificationId: 'monitor:mon-7:match',
+      },
     });
   });
 

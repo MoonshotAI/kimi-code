@@ -69,6 +69,18 @@ export interface TaskOrigin {
   readonly notificationId: string;
 }
 
+export type MonitorOriginType = 'task_output' | 'command' | 'file';
+
+export type MonitorOriginTrigger = 'match' | 'exit' | 'timeout';
+
+export interface MonitorOrigin {
+  readonly kind: 'monitor';
+  readonly monitorId: string;
+  readonly monitorType: MonitorOriginType;
+  readonly trigger: MonitorOriginTrigger;
+  readonly notificationId: string;
+}
+
 export interface CronJobOrigin {
   readonly kind: 'cron_job';
   readonly jobId: string;
@@ -103,6 +115,7 @@ export type PromptOrigin =
   | CompactionSummaryOrigin
   | SystemTriggerOrigin
   | TaskOrigin
+  | MonitorOrigin
   | CronJobOrigin
   | CronMissedOrigin
   | HookResultOrigin

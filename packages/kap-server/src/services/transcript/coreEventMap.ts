@@ -1431,6 +1431,14 @@ function mapTurnOrigin(origin: unknown): TurnOrigin {
         ? { kind: 'task', taskId, payload: origin }
         : { kind: 'other', payload: origin };
     }
+    case 'monitor': {
+      const monitorId = (candidate as { monitorId?: unknown }).monitorId;
+      return {
+        kind: 'monitor',
+        taskId: typeof monitorId === 'string' ? monitorId : undefined,
+        payload: origin,
+      };
+    }
     case 'hook_result':
       return { kind: 'hook', payload: origin };
     case 'compaction_summary':

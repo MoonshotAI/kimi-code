@@ -13,11 +13,14 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import { TaskListTool } from '../../src/tools/background/task-list';
 import { compileToolArgsValidator, validateToolArgs } from '../../src/tools/args-validator';
 import { AskUserQuestionTool } from '../../src/tools/builtin/collaboration/ask-user';
+import { MonitorCreateTool } from '../../src/tools/monitor/monitor-create';
+import { toInputJsonSchema } from '../../src/tools/support/input-schema';
 
 /** Collect every `required` array nested anywhere inside a JSON Schema. */
 function collectRequired(schema: unknown, acc: string[] = []): string[] {
@@ -125,5 +128,26 @@ describe('builtin tool input JSON Schema', () => {
       ],
     };
     expect(validateToolArgs(validator, { questions: [question] })).toBeNull();
+  });
+
+  it('exposes type "object" at the root of a discriminated-union schema', () => {
+    // Union roots serialize as a bare `anyOf` branch list without `type`;
+    // model providers reject a parameter schema whose root is not an object.
+    const schema = toInputJsonSchema(
+      z.discriminatedUnion('type', [
+        z.object({ type: z.literal('a'), value: z.string() }),
+        z.object({ type: z.literal('b') }),
+      ]),
+    );
+    expect(schema).toMatchObject({ type: 'object' });
+    const validator = compileToolArgsValidator(schema);
+    expect(validateToolArgs(validator, { type: 'a', value: 'x' })).toBeNull();
+  });
+
+  it('exposes type "object" at the root of the MonitorCreate parameters', () => {
+    const tool = new MonitorCreateTool({} as never);
+    expect(tool.parameters).toMatchObject({ type: 'object' });
+    const validator = compileToolArgsValidator(tool.parameters);
+    expect(validateToolArgs(validator, { type: 'command', command: 'x' })).toBeNull();
   });
 });

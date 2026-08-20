@@ -139,6 +139,17 @@ export class AgentPlanService extends Service implements IAgentPlanService {
       );
       return;
     }
+
+    if (toolName === 'MonitorCreate' || toolName === 'MonitorCancel') {
+      event.veto(
+        denyToolExecution(
+          this.toolApproval.formatDenyMessage(
+            `${toolName} is not available in plan mode because it would register or cancel a monitor that fires after plan exit. Call ExitPlanMode first.`,
+          ),
+        ),
+      );
+      return;
+    }
   }
 
   private get isActive(): boolean {

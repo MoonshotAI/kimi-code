@@ -277,6 +277,10 @@ function mapOrigin(message: HistoryMessage): TurnOrigin {
         ? { kind: 'task', taskId, payload: origin }
         : { kind: 'other', payload: origin };
     }
+    case 'monitor': {
+      const monitorId = (origin as { monitorId?: unknown }).monitorId;
+      return { kind: 'monitor', taskId: typeof monitorId === 'string' ? monitorId : undefined, payload: origin };
+    }
     case 'hook_result':
       return { kind: 'hook', payload: origin };
     case 'shell_command':

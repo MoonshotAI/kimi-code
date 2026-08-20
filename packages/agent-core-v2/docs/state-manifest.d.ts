@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 98 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 101 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -106,6 +106,9 @@
 //     mcp.mcpToolsByServer                            src/agent/mcp/mcpService.ts
 //     media.registeredKey                             src/agent/media/mediaToolsRegistrar.ts
 //     media.resolved                                  src/agent/media/mediaResolverService.ts
+//     monitor.deliveredNotificationKeys               src/agent/monitor/monitor.ts
+//     monitor.notificationDelivery                    src/agent/monitor/monitor.ts
+//     monitor.scheduledNotificationKeys               src/agent/monitor/monitor.ts
 //     permissionMode                                  src/agent/permissionMode/permissionModeOps.ts
 //     permissionMode.configured                       src/agent/permissionMode/permissionModeOps.ts
 //     permissionMode.lastMode                         src/agent/permissionMode/injection/permissionModeInjection.ts
@@ -824,6 +827,12 @@ export interface AgentStateSnapshot {
         readonly taskId: string;
         readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
         readonly notificationId: string;
+      } | /* MonitorOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+        readonly kind: 'monitor';
+        readonly monitorId: string;
+        readonly monitorType: /* MonitorOriginType — packages/agent-core-v2/src/agent/contextMemory/types.ts */ 'task_output' | 'command' | 'file';
+        readonly trigger: /* MonitorOriginTrigger — packages/agent-core-v2/src/agent/contextMemory/types.ts */ 'match' | 'exit' | 'timeout';
+        readonly notificationId: string;
       } | /* CronJobOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'cron_job';
         readonly jobId: string;
@@ -957,6 +966,12 @@ export interface AgentStateSnapshot {
       readonly taskId: string;
       readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
       readonly notificationId: string;
+    } | /* MonitorOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'monitor';
+      readonly monitorId: string;
+      readonly monitorType: /* MonitorOriginType — packages/agent-core-v2/src/agent/contextMemory/types.ts */ 'task_output' | 'command' | 'file';
+      readonly trigger: /* MonitorOriginTrigger — packages/agent-core-v2/src/agent/contextMemory/types.ts */ 'match' | 'exit' | 'timeout';
+      readonly notificationId: string;
     } | /* CronJobOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'cron_job';
       readonly jobId: string;
@@ -1021,6 +1036,12 @@ export interface AgentStateSnapshot {
         readonly kind: 'task';
         readonly taskId: string;
         readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
+        readonly notificationId: string;
+      } | /* MonitorOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+        readonly kind: 'monitor';
+        readonly monitorId: string;
+        readonly monitorType: /* MonitorOriginType — packages/agent-core-v2/src/agent/contextMemory/types.ts */ 'task_output' | 'command' | 'file';
+        readonly trigger: /* MonitorOriginTrigger — packages/agent-core-v2/src/agent/contextMemory/types.ts */ 'match' | 'exit' | 'timeout';
         readonly notificationId: string;
       } | /* CronJobOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'cron_job';
@@ -1164,6 +1185,12 @@ export interface AgentStateSnapshot {
       readonly kind: 'task';
       readonly taskId: string;
       readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
+      readonly notificationId: string;
+    } | /* MonitorOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'monitor';
+      readonly monitorId: string;
+      readonly monitorType: /* MonitorOriginType — packages/agent-core-v2/src/agent/contextMemory/types.ts */ 'task_output' | 'command' | 'file';
+      readonly trigger: /* MonitorOriginTrigger — packages/agent-core-v2/src/agent/contextMemory/types.ts */ 'match' | 'exit' | 'timeout';
       readonly notificationId: string;
     } | /* CronJobOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'cron_job';
@@ -1341,6 +1368,11 @@ export interface AgentStateSnapshot {
   }>;
   // src/agent/media/mediaToolsRegistrar.ts
   'media.registeredKey': string | undefined;
+  // src/agent/monitor/monitor.ts
+  'monitor.deliveredNotificationKeys': Set<string>;
+  // replayable · durable · undoable — folds: ContextAppendMessage
+  'monitor.notificationDelivery': readonly string[];
+  'monitor.scheduledNotificationKeys': Set<string>;
   // src/agent/permissionMode/injection/permissionModeInjection.ts
   'permissionMode.lastMode': 'manual' | 'yolo' | 'auto' | undefined;
   // src/agent/permissionMode/permissionModeOps.ts

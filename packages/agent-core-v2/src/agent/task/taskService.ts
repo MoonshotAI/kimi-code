@@ -6,6 +6,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ContentPart } from '#/kosong/contract/message';
 
 import { Disposable } from '#/_base/di/lifecycle';
+import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import {
@@ -49,6 +50,7 @@ import {
   type AgentTaskLoadOptions,
   type AgentTask,
   type AgentTaskInfo,
+  type AgentTaskOutputChunk,
   type AgentTaskOutputSnapshot,
   type AgentTaskStatus,
   type AgentTaskTrackOptions,
@@ -221,6 +223,9 @@ export const taskActiveTaskReminderPendingKey = defineState<boolean>(
 export class AgentTaskService extends Disposable implements IAgentTaskService {
   declare readonly _serviceBrand: undefined;
 
+  private readonly appendOutputEmitter = new Emitter<AgentTaskOutputChunk>();
+  readonly onDidAppendOutput = this.appendOutputEmitter.event;
+
   private readonly tasks = new Map<string, ManagedTask>();
   private readonly buildingNotificationKeys = new Set<string>();
   private readonly pendingNotificationRequests = new Map<string, TaskNotificationStepRequest>();
@@ -246,6 +251,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this._register(this.appendOutputEmitter);
     this.states.contributeState(taskKey);
     this.states.contributeState(taskNotificationDeliveryKey);
     this.states.contributeState(taskGhostsKey);
@@ -372,6 +378,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       waiters: [],
       terminalFired: false,
       timedOut: false,
+      terminalNotificationSuppressed:
+        options.terminalNotificationSuppressed === true ? true : undefined,
     };
     this.tasks.set(entry.taskId, entry);
     this.ghosts.delete(entry.taskId);
@@ -956,6 +964,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private appendOutput(entry: ManagedTask, chunk: string): void {
+    this.appendOutputEmitter.fire({ taskId: entry.taskId, chunk });
     const chunkBytes = Buffer.byteLength(chunk, 'utf-8');
     entry.outputSizeBytes += chunkBytes;
     this.appendRetainedOutput(entry, chunk, chunkBytes);

@@ -12,6 +12,7 @@ import {
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
 import type { AgentTaskSettlement } from '#/agent/task/types';
+import { Event } from '#/_base/event';
 import { userCancellationReason } from '#/_base/utils/abort';
 import type { IConfigService } from '#/app/config/config';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
@@ -465,6 +466,7 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
 
   const service: IAgentTaskService = {
     _serviceBrand: undefined,
+    onDidAppendOutput: Event.None as IAgentTaskService['onDidAppendOutput'],
     track(): never {
       throw new Error('fake IAgentTaskService.track is not implemented');
     },

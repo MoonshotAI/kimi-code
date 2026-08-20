@@ -243,6 +243,23 @@ export interface WaitForCompletedEvent {
   extra_completed_count: number;
 }
 
+export interface MonitorCreatedEvent {
+  monitor_type: 'task_output' | 'command' | 'file';
+  has_pattern: boolean;
+  timeout_ms: number;
+}
+
+export interface MonitorFiredEvent {
+  monitor_type: 'task_output' | 'command' | 'file';
+  trigger: 'match' | 'exit' | 'timeout';
+  duration_ms: number;
+}
+
+export interface MonitorCancelledEvent {
+  monitor_type: 'task_output' | 'command' | 'file';
+  duration_ms: number;
+}
+
 export interface ModelSwitchEvent {
   model: string;
 }
@@ -700,6 +717,32 @@ export const telemetryEventDefinitions = {
       waited_ms: 'Actual wall-clock wait time in milliseconds',
       has_task_id: 'Whether a specific task id was given',
       extra_completed_count: 'Number of additional tasks that finished within the wait window',
+    },
+  }),
+  monitor_created: defineAgentTelemetryEvent<MonitorCreatedEvent>({
+    owner: 'kimi-code',
+    comment: 'A monitor is registered.',
+    properties: {
+      monitor_type: 'Monitor type: task_output, command, or file',
+      has_pattern: 'Whether the monitor matches output with a regular expression',
+      timeout_ms: 'Monitor timeout in milliseconds',
+    },
+  }),
+  monitor_fired: defineAgentTelemetryEvent<MonitorFiredEvent>({
+    owner: 'kimi-code',
+    comment: 'A monitor fires its one-shot notification.',
+    properties: {
+      monitor_type: 'Monitor type: task_output, command, or file',
+      trigger: 'What fired the monitor: a pattern match, the command exiting, or the timeout',
+      duration_ms: 'Monitor wall-clock time from creation to firing in milliseconds',
+    },
+  }),
+  monitor_cancelled: defineAgentTelemetryEvent<MonitorCancelledEvent>({
+    owner: 'kimi-code',
+    comment: 'A monitor is cancelled before firing.',
+    properties: {
+      monitor_type: 'Monitor type: task_output, command, or file',
+      duration_ms: 'Monitor wall-clock time from creation to cancellation in milliseconds',
     },
   }),
   model_switch: defineAgentTelemetryEvent<ModelSwitchEvent>({

@@ -20,6 +20,7 @@ import { runtimeBindingKey } from '#/agent/runtimeBinding/runtimeBindingOps';
 import { skillKey } from '#/agent/skill/skillOps';
 import { taskKey } from '#/agent/task/taskOps';
 import { taskNotificationDeliveryKey } from '#/agent/task/taskService';
+import { monitorNotificationDeliveryKey } from '#/agent/monitor/monitor';
 import { tokenCountingKey } from '#/agent/tokenCounting/tokenCountingOps';
 import { usageKey } from '#/agent/usage/usageOps';
 import { userToolKey } from '#/agent/userTool/userToolOps';
@@ -50,6 +51,7 @@ export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] =
   skillKey,
   taskKey,
   taskNotificationDeliveryKey,
+  monitorNotificationDeliveryKey,
   tokenCountingKey,
   usageKey,
   userToolKey,

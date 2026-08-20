@@ -562,6 +562,9 @@ export class Session {
       await Promise.allSettled(
         Array.from(this.readyAgents(), async (agent) => agent.cron?.stop()),
       );
+      await Promise.allSettled(
+        Array.from(this.readyAgents(), async (agent) => agent.monitor?.stopAll()),
+      );
       await this.cancelActiveTurnsOnClose();
       await this.stopBackgroundTasksOnExit();
       await this.flushMetadata();
@@ -580,6 +583,9 @@ export class Session {
     try {
       await Promise.allSettled(
         Array.from(this.readyAgents(), async (agent) => agent.cron?.stop()),
+      );
+      await Promise.allSettled(
+        Array.from(this.readyAgents(), async (agent) => agent.monitor?.stopAll()),
       );
       await this.flushMetadata();
     } finally {

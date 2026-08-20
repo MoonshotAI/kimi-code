@@ -794,6 +794,9 @@ export class ContextMemory {
       if (message.origin?.kind === 'background_task') {
         this.agent.background.markDeliveredNotification(message.origin);
       }
+      if (message.origin?.kind === 'monitor') {
+        this.agent.monitor?.markDeliveredNotification(message.origin);
+      }
       this.agent.replayBuilder.push({
         type: 'message',
         message,

@@ -44,6 +44,14 @@ export class PlanModeGuardDenyPermissionPolicy implements PermissionPolicy {
       };
     }
 
+    if (toolName === 'MonitorCreate' || toolName === 'MonitorCancel') {
+      return {
+        kind: 'deny',
+        message:
+          `${toolName} is not available in plan mode because it would register or cancel a monitor that fires after plan exit. Call ExitPlanMode first.`,
+      };
+    }
+
     return;
   }
 }

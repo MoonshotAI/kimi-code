@@ -15,6 +15,7 @@ import { GoalErrors } from '#/agent/goal/errors';
 import { LoopErrors } from '#/agent/loop/errors';
 import { McpErrors } from '#/mcpCore/errors';
 import { ModelCatalogErrors } from '#/kosong/model/errors';
+import { MonitorErrors } from '#/agent/monitor/errors';
 import { OsFsErrors } from '#/os/interface/hostFsErrors';
 import { OsProcessErrors } from '#/os/interface/hostProcess';
 import { PluginErrors } from '#/app/plugin/errors';
@@ -52,6 +53,7 @@ export { GoalErrors } from '#/agent/goal/errors';
 export { LoopErrors } from '#/agent/loop/errors';
 export { McpErrors } from '#/mcpCore/errors';
 export { ModelCatalogErrors } from '#/kosong/model/errors';
+export { MonitorErrors } from '#/agent/monitor/errors';
 export { OsFsErrors } from '#/os/interface/hostFsErrors';
 export { OsProcessErrors } from '#/os/interface/hostProcess';
 export { PluginErrors } from '#/app/plugin/errors';
@@ -87,6 +89,7 @@ export const ErrorCodes = {
   ...LoopErrors.codes,
   ...McpErrors.codes,
   ...ModelCatalogErrors.codes,
+  ...MonitorErrors.codes,
   ...OsFsErrors.codes,
   ...OsProcessErrors.codes,
   ...PluginErrors.codes,

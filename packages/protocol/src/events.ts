@@ -147,6 +147,19 @@ export interface CronMissedOrigin {
   readonly count: number;
 }
 
+/**
+ * Origin of a turn steered by a fired Monitor watcher (task-output pattern
+ * match, watched-command output/exit, or file change). `notificationId` is
+ * spelled `monitor:<monitorId>:<trigger>`.
+ */
+export interface MonitorOrigin {
+  readonly kind: 'monitor';
+  readonly monitorId: string;
+  readonly monitorType: 'task_output' | 'command' | 'file';
+  readonly trigger: 'match' | 'exit' | 'timeout';
+  readonly notificationId: string;
+}
+
 export interface HookResultOrigin {
   readonly kind: 'hook_result';
   readonly event: string;
@@ -170,6 +183,7 @@ export type PromptOrigin =
   | BackgroundTaskOrigin
   | CronJobOrigin
   | CronMissedOrigin
+  | MonitorOrigin
   | HookResultOrigin
   | RetryOrigin;
 
@@ -1173,6 +1187,14 @@ export const cronMissedOriginSchema = z.object({
   count: z.number(),
 }) satisfies z.ZodType<CronMissedOrigin>;
 
+export const monitorOriginSchema = z.object({
+  kind: z.literal('monitor'),
+  monitorId: z.string(),
+  monitorType: z.enum(['task_output', 'command', 'file']),
+  trigger: z.enum(['match', 'exit', 'timeout']),
+  notificationId: z.string(),
+}) satisfies z.ZodType<MonitorOrigin>;
+
 export const hookResultOriginSchema = z.object({
   kind: z.literal('hook_result'),
   event: z.string(),
@@ -1196,6 +1218,7 @@ export const promptOriginSchema = z.discriminatedUnion('kind', [
   backgroundTaskOriginSchema,
   cronJobOriginSchema,
   cronMissedOriginSchema,
+  monitorOriginSchema,
   hookResultOriginSchema,
   retryOriginSchema,
 ]) satisfies z.ZodType<PromptOrigin>;
