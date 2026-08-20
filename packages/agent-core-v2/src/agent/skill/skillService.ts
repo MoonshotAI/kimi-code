@@ -89,6 +89,15 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     });
   }
 
+  private abortIfFlowDisabled(handle: PromptHandle): void {
+    if (this.flags.enabled(FLOW_FLAG_ID)) return;
+    this.prompt.abort(handle.id);
+    throw new Error2(
+      ErrorCodes.REQUEST_INVALID,
+      'The flow feature was disabled while this activation was being queued; the prompt was aborted.',
+    );
+  }
+
   async activate(input: SkillActivationInput): Promise<PromptLaunchResult> {
     await this.skillCatalog.ready;
     const skill = this.skillCatalog.catalog.getSkill(input.name);
@@ -265,6 +274,7 @@ export class AgentSkillService extends Service implements IAgentSkillService {
             this.activationData.take(id);
           }
         });
+        this.abortIfFlowDisabled(handle);
       }
       if (handle.state === 'pending') {
         return { prompt_id: handle.id, created_at: handle.createdAt, state: 'queued' };
@@ -374,7 +384,16 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       return this.prompt.inject(message);
     }
     const handle = await this.prompt.enqueue({ message });
-    if (isProjectedFlowSkill(origin.skillName, origin.skillType)) this.trackQueuedFlowPrompt(handle);
+    if (isProjectedFlowSkill(origin.skillName, origin.skillType)) {
+      this.trackQueuedFlowPrompt(handle);
+      try {
+        this.abortIfFlowDisabled(handle);
+      } catch (error) {
+        this.flow.discardPendingActivation(origin.activationId);
+        this.activationData.take(origin.activationId);
+        throw error;
+      }
+    }
     return handle.launched;
   }
 
