@@ -145,7 +145,7 @@ describe('parseAgentFileText', () => {
   it('treats a lone "*" subagents field as all subagent types', () => {
     const def = parse('---\nname: solo\ndescription: d\nsubagents: "*"\n---\n\nbody\n');
 
-    expect(def.subagents).toBeUndefined();
+    expect(def.subagents).toEqual(['*']);
   });
 
   it('rejects a non-string, non-list subagents field', () => {

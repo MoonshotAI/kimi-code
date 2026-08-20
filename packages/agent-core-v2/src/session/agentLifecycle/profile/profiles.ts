@@ -95,6 +95,7 @@ registerAgentProfile({
   name: 'agent',
   description: 'Default agent',
   tools: AGENT_TOOLS,
+  subagents: ['coder', 'explore', 'plan'],
   renderSystemPrompt: (context) =>
     renderSystemPromptResult('', context, { skillActive: skillActiveFor(AGENT_TOOLS) }),
 });

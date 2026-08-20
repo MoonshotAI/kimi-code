@@ -2,4 +2,4 @@
 "kimi-code": patch
 ---
 
-multi-select question jumps to next after only one answer selected
+Fix multi-select questions jumping to the next question after only one answer is selected.

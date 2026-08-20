@@ -15,6 +15,10 @@ describe('builtin agent profiles', () => {
     expect(agent.tools).toContain('TowerInit');
     expect(agent.tools).toContain('TowerStatus');
     expect(agent.tools).toContain('TowerTeardown');
-    expect(agent.subagents).toBeUndefined();
+  });
+
+  it('caps the default profile delegation at non-spawning profiles', () => {
+    const agent = profile('agent');
+    expect(agent.subagents).toEqual(['coder', 'explore', 'plan']);
   });
 });

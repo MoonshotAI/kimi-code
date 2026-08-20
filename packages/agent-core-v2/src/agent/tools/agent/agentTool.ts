@@ -37,8 +37,10 @@ import { type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import {
+  rootDelegationExtras,
   subagentAllowlistFor,
   subagentTypeNotAllowedMessage,
+  withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
@@ -132,8 +134,9 @@ export class SubagentTool implements ISubagentTool {
       ? AGENT_BACKGROUND_DESCRIPTION
       : AGENT_BACKGROUND_DISABLED_DESCRIPTION;
     let description = `${AGENT_DESCRIPTION_BASE}\n\n${backgroundDescription}`;
-    const allowlist = subagentAllowlistFor(this.catalog, this.profile.data());
+    const own = this.profile.data();
     const catalogProfiles = this.catalogProfiles();
+    const allowlist = this.effectiveAllowlist(own, catalogProfiles);
     const profiles =
       allowlist === undefined
         ? catalogProfiles
@@ -163,6 +166,33 @@ export class SubagentTool implements ISubagentTool {
     const profiles = this.catalog.list();
     if (this.catalogReady) this.frozenCatalogProfiles = profiles;
     return profiles;
+  }
+
+  private delegationExtras(
+    own: {
+      readonly profileName?: string;
+      readonly subagents?: readonly string[];
+    },
+    profiles: readonly AgentProfile[],
+  ): readonly string[] | undefined {
+    if (this.callerAgentId !== 'main') return undefined;
+    return rootDelegationExtras(this.catalog, own, profiles);
+  }
+
+  private effectiveAllowlist(
+    own: {
+      readonly profileName?: string;
+      readonly subagents?: readonly string[];
+    },
+    profiles: readonly AgentProfile[],
+  ): readonly string[] | undefined {
+    const allowlist = subagentAllowlistFor(
+      this.catalog,
+      own,
+      this.delegationExtras(own, profiles),
+    );
+    if (allowlist === undefined || own.subagents !== undefined) return allowlist;
+    return withoutDelegatingTargets(this.catalog, allowlist);
   }
 
   private knownToolReferences(): ToolReference[] {
@@ -257,7 +287,7 @@ export class SubagentTool implements ISubagentTool {
         : DEFAULT_PROFILE_NAME;
       await this.catalog.ready;
       const own = this.profile.data();
-      const allowlist = subagentAllowlistFor(this.catalog, own);
+      const allowlist = this.effectiveAllowlist(own, this.catalog.list());
       if (allowlist !== undefined && !allowlist.includes(requestedProfileName)) {
         throw new Error2(
           ErrorCodes.AGENT_TYPE_NOT_ALLOWED,
