@@ -128,12 +128,12 @@ describe('handleTowerCommand', () => {
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
   });
 
-  it('sends the objective without re-entering tower mode when already on', async () => {
+  it('re-asserts tower mode idempotently for the objective when already on, without a notice', async () => {
     const { host, session } = makeHost({ towerMode: true });
 
     await handleTowerCommand(host, 'Ship feature X');
 
-    expect(session.setTowerMode).not.toHaveBeenCalled();
+    expect(session.setTowerMode).toHaveBeenCalledWith(true);
     expect(host.showNotice).not.toHaveBeenCalled();
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
   });

@@ -33,10 +33,11 @@ export async function handleTowerCommand(host: SlashCommandHost, args: string): 
 }
 
 async function startTowerObjective(host: SlashCommandHost, objective: string): Promise<void> {
-  if (!host.state.appState.towerMode) {
-    if (!(await setTowerMode(host, true))) return;
-    host.showNotice('Tower mode: ON');
-  }
+  const wasActive = host.state.appState.towerMode;
+  // The engine's enter is idempotent, so never let the cached state skip the
+  // mutation: it may be stale (mode changed elsewhere or an unlanded event).
+  if (!(await setTowerMode(host, true))) return;
+  if (!wasActive) host.showNotice('Tower mode: ON');
   host.sendNormalUserInput(objective);
 }
 

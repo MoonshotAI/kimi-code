@@ -128,14 +128,14 @@ describe('AgentTowerService', () => {
     ix.stub(IAgentContextMemoryService, {
       get: () => [],
     } as unknown as IAgentContextMemoryService);
-    ix.stub(IAgentScopeContext, {
-      agentId: 'main',
-      scope: (subKey?: string) => subKey ?? '',
-    });
     ix.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
     registerTestAgentWire(ix, testWireScope('wire', 'tower-test'), {
       log: ix.get(IAppendLogStore),
       eventBus: ix.get(IEventBus),
+    });
+    ix.stub(IAgentScopeContext, {
+      agentId: 'main',
+      scope: (subKey?: string) => subKey ?? '',
     });
     registerTestEventDispatcher(ix);
     ix.set(IAgentTowerService, new SyncDescriptor(AgentTowerService));
@@ -354,14 +354,19 @@ describe('AgentTowerService', () => {
     expect(removedTools).toEqual([]);
   });
 
-  it('enter / exit do not touch the profile tool overlay on a non-main agent', () => {
+  it('enter is inert on a non-main agent', () => {
+    ix.stub(IAgentScopeContext, {
+      agentId: 'test-agent',
+      scope: (subKey?: string) => subKey ?? '',
+    });
     const tower = ix.get(IAgentTowerService);
 
     tower.enter();
-    expect(tower.isActive).toBe(true);
-    tower.exit();
 
+    expect(tower.isActive).toBe(false);
     expect(addedTools).toEqual([]);
+
+    tower.exit();
     expect(removedTools).toEqual([]);
   });
 
