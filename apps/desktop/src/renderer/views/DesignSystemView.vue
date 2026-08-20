@@ -544,7 +544,7 @@ onUnmounted(() => {
 
             <!-- ===== Button ===== -->
             <h3 class="sub">Button</h3>
-            <p>4 semantic variants × 3 sizes. The primary action <code>primary</code> takes its color from the current theme color (§05 can switch between the blue and black families). Radius uses <code>--radius-md</code> uniformly (small size <code>--radius-sm</code>), weight 600, with a visible focus ring.</p>
+            <p>6 semantic variants × 3 sizes. The primary action <code>primary</code> takes its color from the current theme color (§05 can switch between the blue and black families). Radius uses <code>--radius-md</code> uniformly (small size <code>--radius-sm</code>), weight 600, with a visible focus ring. The <code>text</code> variant is the exception to the box: a chromeless inline action — underlined muted text, sized and weighted by its context — for quiet fallbacks such as a copy-link next to a muted label. Use it wherever a native link-styled button would tempt you; never hand-roll one.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Variant matrix <span class="tag spec">light</span></span><span class="sactions"><span class="tab on">preview</span></span></div>
               <div class="stage p col">
@@ -555,6 +555,7 @@ onUnmounted(() => {
                   <button class="p-btn ghost">Ghost button</button>
                   <button class="p-btn danger-soft">Destructive (soft)</button>
                   <button class="p-btn danger">Destructive action</button>
+                  <span class="demo-inline-text">Didn't open? <button class="p-btn text">Copy link</button></span>
                 </div>
                 <span class="stage-label">small</span>
                 <div class="demo-row">
@@ -586,7 +587,7 @@ onUnmounted(() => {
             <div class="code">
               <div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">Button.vue · usage</span></div>
               <pre><span class="k">&lt;Button</span> <span class="p">variant</span>=<span class="s">"primary"</span> <span class="p">size</span>=<span class="s">"md"</span> <span class="p">:loading</span>=<span class="s">"submitting"</span><span class="k">&gt;</span>Save<span class="k">&lt;/Button&gt;</span>
-    <span class="c">// variant: primary | secondary | ghost | danger | danger-soft</span>
+    <span class="c">// variant: primary | secondary | ghost | danger | danger-soft | text</span>
     <span class="c">// size:    sm | md | lg</span></pre>
             </div>
             <div class="stage-wrap">
@@ -828,7 +829,7 @@ onUnmounted(() => {
             </div>
 
             <div class="callout info"><span class="ico">i</span><div>
-              <b>Size &amp; height</b>: Dialog offers three widths — <code>md</code> 440 / <code>lg</code> 640 / <code>xl</code> 760 (<code>--p-content-max</code>) — chosen by content weight. Height comes in two kinds: <code>auto</code> (default, grows with content up to <code>max-height</code>) and <code>fixed</code> (constant height <code>min(680px, 100vh - 64px)</code>, with overflow scrolled inside the body). <b>Content / multi-tab dialogs</b> (settings, model picker, provider manager, folder browser) always use <code>fixed</code> so the frame size stays constant and doesn't jump when switching tabs or content length; short confirmation dialogs keep <code>auto</code>. Selectable controls inside Settings use 0.5px hairlines. Its navigation stays transparent on the grouped canvas — separated from the content region by the 0.5px hairline (horizontal in the stacked mobile layout) — and uses 12px labels at weight 525 with 16px registry icons; the selected tab paints the same neutral <code>--color-hover</code> wash as hover, with the label simply brightening to <code>--color-text</code> — the Kimi app settings nav's recipe (<code>.ss-nav-item--active</code> → <code>Fills-F1</code>, no accent tint, no weight change); section captions use 16px UI text in <code>--color-text</code>. Every setting row has a plain-language description; option labels use <code>--color-text</code> at weight 475 with a 1px gap before that description. Chinese descriptions use “思考” and “计划模式” rather than the English terms; “skills” stays lowercase when it appears within a sentence. Every settings section puts its rows inside one rounded group with 0.5px dividers; the content region paints the flat <code>--color-surface</code> so each group (<code>--color-surface-raised</code>) reads one rung above it — never a sunken pit, which would sink the dialog's content below its chrome in dark. The font-size stepper is a compact 32px UI-font control with 12px values and custom minus and plus buttons. Its 52px desktop row centres the control with equal space above and below. Archived workspace headings reuse the sidebar’s <code>folder-closed</code> registry icon, and Restore actions lead with the <code>undo</code> icon. Archive counts use weight 500; timestamps and workspace paths use the UI font.
+              <b>Size &amp; height</b>: Dialog offers four widths — <code>sm</code> 360 / <code>md</code> 440 / <code>lg</code> 640 / <code>xl</code> 760 (<code>--p-content-max</code>) — chosen by content weight; <code>sm</code> is for quiet single-purpose dialogs (login, confirm). Height comes in two kinds: <code>auto</code> (default, grows with content up to <code>max-height</code>) and <code>fixed</code> (constant height <code>min(680px, 100vh - 64px)</code>, with overflow scrolled inside the body). <b>Content / multi-tab dialogs</b> (settings, model picker, provider manager, folder browser) always use <code>fixed</code> so the frame size stays constant and doesn't jump when switching tabs or content length; short confirmation dialogs keep <code>auto</code>. Selectable controls inside Settings use 0.5px hairlines. Its navigation stays transparent on the grouped canvas — separated from the content region by the 0.5px hairline (horizontal in the stacked mobile layout) — and uses 12px labels at weight 525 with 16px registry icons; the selected tab paints the same neutral <code>--color-hover</code> wash as hover, with the label simply brightening to <code>--color-text</code> — the Kimi app settings nav's recipe (<code>.ss-nav-item--active</code> → <code>Fills-F1</code>, no accent tint, no weight change); section captions use 16px UI text in <code>--color-text</code>. Every setting row has a plain-language description; option labels use <code>--color-text</code> at weight 475 with a 1px gap before that description. Chinese descriptions use “思考” and “计划模式” rather than the English terms; “skills” stays lowercase when it appears within a sentence. Every settings section puts its rows inside one rounded group with 0.5px dividers; the content region paints the flat <code>--color-surface</code> so each group (<code>--color-surface-raised</code>) reads one rung above it — never a sunken pit, which would sink the dialog's content below its chrome in dark. The font-size stepper is a compact 32px UI-font control with 12px values and custom minus and plus buttons. Its 52px desktop row centres the control with equal space above and below. Archived workspace headings reuse the sidebar’s <code>folder-closed</code> registry icon, and Restore actions lead with the <code>undo</code> icon. Archive counts use weight 500; timestamps and workspace paths use the UI font.
             </div></div>
             <p><b>Dialog backdrop</b>: Use a restrained 28% neutral overlay so the workspace remains legible without competing with the modal.</p>
             <p><b>Settings regions</b>: The settings title and close action belong to the right content region. The navigation is a separate full-height region that starts at the dialog's top edge, not content beneath a dialog-wide header.</p>
@@ -1879,7 +1880,7 @@ grid-template-rows: minmax(0, 1fr) auto;
             <h3 class="sub">The frame (recap)</h3>
             <p>
               All dialogs share the §03 primitive: <code>--radius-xl</code> radius, <code>--shadow-xl</code> shadow, a restrained 28% neutral backdrop,
-              a head (title + IconButton close), a body, and a right-aligned foot. Widths <code>md</code> 440 / <code>lg</code> 640 / <code>xl</code> 760 and
+              a head (title + IconButton close), a body, and a right-aligned foot. Widths <code>sm</code> 360 / <code>md</code> 440 / <code>lg</code> 640 / <code>xl</code> 760 and
               <code>auto</code> / <code>fixed</code> height are chosen per §03. One interruptive overlay at a time; <code>Esc</code> closes; focus is trapped and restored.
               A blocking flow that must be resolved rather than dismissed (server token) uses <code>hideClose</code> with <code>closeOnOverlay</code>/<code>closeOnEsc</code> off —
               never a hand-written overlay.
@@ -2412,6 +2413,14 @@ grid-template-rows: minmax(0, 1fr) auto;
   .p-btn.danger:hover { filter: brightness(.96); }
   .p-btn.danger-soft { background: var(--p-danger-soft); color: var(--p-danger); border-color: var(--p-danger-bd); }
   .p-btn.danger-soft:hover { background: var(--p-danger); color: #fff; border-color: var(--p-danger); }
+  .p-btn.text {
+    height: auto; padding: 0; background: transparent; border-color: transparent;
+    border-radius: var(--p-r-xs); color: var(--p-text-muted); font-size: inherit; font-weight: inherit;
+    text-decoration: underline; text-underline-offset: 2px;
+  }
+  .p-btn.text:hover { color: var(--p-text); }
+  .p-btn.text:active { transform: none; }
+  .demo-inline-text { font-size: 12px; color: var(--p-text-faint, var(--p-text-muted)); }
   .p-btn[disabled], .p-btn.disabled { opacity: .5; cursor: not-allowed; box-shadow: none; transform: none; }
 
   .p-icon-btn {

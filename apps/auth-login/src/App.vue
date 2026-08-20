@@ -1,61 +1,78 @@
 <!-- apps/auth-login/src/App.vue -->
 <!-- Remote Control auth interstitial: a single mobile-first page that runs the
-     Kimi Code OAuth device flow directly against the OAuth host and stores the
-     access token in the `kimi-auth` cookie. With `?redirect_uri=` (the tunnel
-     entry case) it redirects back after sign-in; without one it simply lands
-     on a "signed in" state. `?force_relogin=1` drops any existing cookie and
-     starts over (the tunnel uses it after rejecting a token). Desktop widths
-     get a centered card. -->
+     Kimi Code OAuth device flow directly against the OAuth host, then trades
+     the token for a server-side session via the relay's exchange endpoint
+     (which plants an HttpOnly session cookie — the token never touches
+     document.cookie). With `?redirect_uri=` it redirects back after sign-in;
+     without one it simply lands on a "signed in" state. Desktop widths get a
+     centered card. -->
 <script setup lang="ts">
-import { computed, onMounted, ref, useId } from 'vue';
+import { computed, onMounted, ref, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { useOAuthLoginFlow } from '@moonshot-ai/app-client/composables';
-import { AuthStateIcon, Button, Icon, Spinner } from '@moonshot-ai/app-ui';
-import {
-  buildTokenCookie,
-  clearTokenCookie,
-  parseRedirectUri,
-  readTokenCookie,
-} from './auth-token';
+import { AuthStateIcon, Button, Spinner } from '@moonshot-ai/app-ui';
+import { parseRedirectUri } from './helpers';
 import { createAuthLoginFlow } from './flow';
+import { exchangeSession, probeSession, ExchangeError } from './session';
 
 const { t } = useI18n();
 
 // Per-instance mask id so the logo's eye cutouts can't collide.
 const maskId = `bl-eyes-${useId()}`;
 
-// The page's own steps precede the OAuth flow's: an existing token cookie
-// short-circuits the flow entirely (redirect when a target is known, a plain
-// "signed in" state otherwise).
-type PageStep = 'checking' | 'signed-in' | 'flow';
+// The page's own steps precede the OAuth flow's: an existing server-side
+// session short-circuits the flow entirely (redirect when a target is known,
+// a plain "signed in" state otherwise); 'entry' explains the RC session and
+// waits for the user to kick off the device flow with the login button.
+type PageStep = 'checking' | 'entry' | 'signed-in' | 'flow';
 const pageStep = ref<PageStep>('checking');
 // Optional redirect target. Missing or invalid values both degrade to "no
 // redirect" — a malformed param must not strand the user off the sign-in flow.
 const redirectUri = ref<string | null>(null);
+// Set when the relay rejected the token exchange: the OAuth flow succeeded
+// but no session exists, so navigating away would just bounce back here.
+// exchangeStatus keeps the failure's HTTP status (null = transient network
+// failure): a permanent 4xx won't heal with the same credentials, so the
+// retry path branches on it (see retryExchange).
+const exchangeFailed = ref(false);
+const exchangeStatus = ref<number | null>(null);
 
-function writeTokenCookie(accessToken: string, expiresAt: number): void {
-  document.cookie = buildTokenCookie(accessToken, {
-    expiresAt,
-    secure: location.protocol === 'https:',
-  });
+// Fired by onToken the instant the poll returns the token — before the state
+// machine's success dwell — so the exchange is usually done (and the cookie
+// planted) even if the user closes the tab while the success state shows.
+let pendingExchange: Promise<void> | null = null;
+
+function runExchange(): void {
+  const token = authFlow.authenticatedToken();
+  if (!token) {
+    exchangeFailed.value = true;
+    return;
+  }
+  pendingExchange = exchangeSession(token);
 }
 
-const authFlow = createAuthLoginFlow({
-  // Persist the cookie the instant the token arrives — the success state (and
-  // its "you can close" hint) shows during the state machine's dwell, so
-  // waiting for onSuccess would let an early tab-close lose the sign-in.
-  onToken: (token) => writeTokenCookie(token.accessToken, token.expiresAt),
-});
+const authFlow = createAuthLoginFlow({ onToken: runExchange });
 const { step, pollError, flow, secondsLeft, startFlow } = useOAuthLoginFlow({
   ...authFlow.callbacks,
   onSuccess: finishSignIn,
 });
 
-const displayStep = computed(() => (pageStep.value === 'flow' ? step.value : pageStep.value));
+const displayStep = computed(() => {
+  if (exchangeFailed.value) return 'exchange-error';
+  return pageStep.value === 'flow' ? step.value : pageStep.value;
+});
 
-function finishSignIn(): void {
-  // The cookie is already persisted (onToken); here we only navigate.
+async function finishSignIn(): Promise<void> {
+  // The exchange started at onToken; only navigate once the cookie is
+  // actually planted, otherwise the target bounces straight back here.
+  try {
+    await pendingExchange;
+  } catch (err) {
+    exchangeStatus.value = err instanceof ExchangeError ? err.status : null;
+    exchangeFailed.value = true;
+    return;
+  }
   const target = redirectUri.value;
   if (target) {
     // replace(): the interstitial should not stay in browser history.
@@ -63,18 +80,29 @@ function finishSignIn(): void {
   }
 }
 
+async function retryExchange(): Promise<void> {
+  const status = exchangeStatus.value;
+  exchangeFailed.value = false;
+  exchangeStatus.value = null;
+  // A permanent 4xx rejection (expired / revoked / invalid token) fails the
+  // same way every time with the same credentials — restart the device flow
+  // for a fresh token. Only transient failures (network, 5xx) re-post.
+  if (status !== null && status >= 400 && status < 500) {
+    await beginFlow();
+    return;
+  }
+  runExchange();
+  await finishSignIn();
+}
+
 onMounted(async () => {
   document.title = t('login.title');
   redirectUri.value = parseRedirectUri(location.search);
-  // The tunnel bounces users back with force_relogin=1 when the presented
-  // cookie was rejected (revoked, wrong environment): drop it and start over
-  // instead of ping-ponging between this page and the target.
-  const forceRelogin = new URLSearchParams(location.search).get('force_relogin') === '1';
-  if (forceRelogin) {
-    document.cookie = clearTokenCookie();
-  } else if (readTokenCookie(document.cookie)) {
-    // A readable cookie is unexpired by definition (Expires handles eviction),
-    // so its presence means "already signed in".
+  // The session cookie is HttpOnly, so the probe endpoint is the only way to
+  // detect an existing session. (The relay may still append force_relogin=1
+  // to its login redirect; it needs no handling — JS can neither see nor
+  // clear the cookie, and the probe is authoritative either way.)
+  if (await probeSession()) {
     if (redirectUri.value) {
       location.replace(redirectUri.value);
     } else {
@@ -82,8 +110,41 @@ onMounted(async () => {
     }
     return;
   }
+  pageStep.value = 'entry';
+});
+
+// The login button on the entry step: only a click starts the device flow.
+// The verification page auto-opens in a new tab — the placeholder must be
+// opened synchronously inside the click (popup blockers demand a gesture),
+// then navigated once the flow yields its URL. When the tab can't open
+// (blocked), the quiet copy-link line on the waiting page is the fallback.
+let authTab: Window | null = null;
+
+async function beginFlow(): Promise<void> {
+  authTab = window.open('', '_blank');
+  if (authTab) authTab.opener = null;
   pageStep.value = 'flow';
   await startFlow();
+}
+
+watch(flow, (f) => {
+  if (!f) return;
+  const url = f.verificationUriComplete;
+  if (authTab && !authTab.closed) {
+    authTab.location.href = url;
+  } else {
+    // Retry paths stay inside a click gesture (the retry buttons call
+    // beginFlow too), so a fresh open can still succeed here.
+    authTab = window.open(url, '_blank', 'noopener,noreferrer');
+  }
+});
+
+// A failed start never yields a flow, so the placeholder opened in beginFlow
+// would just sit blank — close it instead of littering one tab per retry.
+watch(step, (s) => {
+  if (s !== 'error' || flow.value) return;
+  if (authTab && !authTab.closed) authTab.close();
+  authTab = null;
 });
 
 const copied = ref(false);
@@ -142,48 +203,27 @@ function formatSeconds(s: number): string {
           <span class="center-text">{{ displayStep === 'checking' ? t('login.rcChecking') : t('login.starting') }}</span>
         </div>
 
-        <!-- Device-code step -->
-        <div v-else-if="displayStep === 'device-code' && flow" key="device-code" class="flow-body">
+        <!-- Entry: why sign-in is needed + the login button (a click starts
+             the device flow) -->
+        <div v-else-if="displayStep === 'entry'" key="entry" class="center-body">
           <p class="lead">{{ t('login.rcLead') }}</p>
+          <Button variant="primary" class="entry-btn" @click="beginFlow">{{ t('login.action') }}</Button>
+        </div>
 
-          <!-- Primary path: open the complete URI (device code embedded). An
-               anchor, not a Button — it must keep href/target (same pattern as
-               the client's LoginDialog). -->
-          <a
-            class="primary-link"
-            :href="flow.verificationUriComplete"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {{ t('login.rcAuthorize') }}
-            <Icon name="external-link" size="sm" />
-          </a>
+        <!-- Device-code step: hero hint (countdown inline) → quiet copy
+             fallback. The verification page auto-opened in a new tab (see
+             beginFlow); same visual language as the client LoginDialog's
+             waiting page. -->
+        <div v-else-if="displayStep === 'device-code' && flow" key="device-code" class="flow-body">
+          <p class="lead">{{ t('login.openedHint', { time: formatSeconds(secondsLeft) }) }}</p>
 
-          <!-- Verification code + copyable link for the "open it elsewhere"
-               path -->
-          <div class="code-row">
-            <div class="code-meta">
-              <span class="code-label">{{ t('login.rcUserCodeLabel') }}</span>
-              <span class="code">{{ flow.userCode }}</span>
-            </div>
-            <Button class="copy-btn" :class="{ 'is-copied': copied }" variant="secondary" size="sm" @click="copyLink">
-              <template v-if="copied">
-                <Icon name="check" size="sm" />
-                {{ t('login.copied') }}
-              </template>
-              <template v-else>
-                <Icon name="copy" size="sm" />
-                {{ t('login.copyLink') }}
-              </template>
+          <!-- Quiet fallback: copy the complete link via an inline text button. -->
+          <span class="manual-label">
+            {{ t('login.notOpened') }}
+            <Button variant="text" class="copy-text" :class="{ 'is-copied': copied }" @click="copyLink">
+              {{ copied ? t('login.copied') : t('login.copyLink') }}
             </Button>
-          </div>
-
-          <!-- Status -->
-          <div class="status">
-            <Spinner size="sm" :label="t('login.waitingApproval')" />
-            <span class="status-text">{{ t('login.rcWaitingHint') }}</span>
-            <span class="countdown">{{ formatSeconds(secondsLeft) }}</span>
-          </div>
+          </span>
         </div>
 
         <!-- Success (just authorized) -->
@@ -193,7 +233,7 @@ function formatSeconds(s: number): string {
           <span class="center-hint">{{ redirectUri ? t('login.rcSuccessHint') : t('login.rcSuccessNoRedirect') }}</span>
         </div>
 
-        <!-- Already signed in (valid cookie, no redirect target) -->
+        <!-- Already signed in (live session, no redirect target) -->
         <div v-else-if="displayStep === 'signed-in'" key="signed-in" class="center-body">
           <AuthStateIcon kind="success" />
           <span class="center-text success-text">{{ t('login.success') }}</span>
@@ -205,7 +245,7 @@ function formatSeconds(s: number): string {
           <AuthStateIcon kind="expired" />
           <span class="center-text err-text">{{ t('login.rcExpiredTitle') }}</span>
           <span class="center-hint">{{ t('login.expiredHint') }}</span>
-          <Button variant="primary" class="retry-btn" @click="startFlow">{{ t('login.retry') }}</Button>
+          <Button variant="primary" class="retry-btn" @click="beginFlow">{{ t('login.retry') }}</Button>
         </div>
 
         <!-- Error (start failure or repeated poll failures) -->
@@ -215,7 +255,15 @@ function formatSeconds(s: number): string {
             {{ pollError ? t('login.pollErrorTitle') : t('login.rcStartErrorTitle') }}
           </span>
           <span class="center-hint">{{ t('login.rcConnectionErrorHint') }}</span>
-          <Button variant="primary" class="retry-btn" @click="startFlow">{{ t('login.retry') }}</Button>
+          <Button variant="primary" class="retry-btn" @click="beginFlow">{{ t('login.retry') }}</Button>
+        </div>
+
+        <!-- Exchange failure (OAuth succeeded, the relay rejected the token) -->
+        <div v-else-if="displayStep === 'exchange-error'" key="exchange-error" class="center-body">
+          <AuthStateIcon kind="error" />
+          <span class="center-text warn-text">{{ t('login.rcSessionErrorTitle') }}</span>
+          <span class="center-hint">{{ t('login.rcConnectionErrorHint') }}</span>
+          <Button variant="primary" class="retry-btn" @click="retryExchange">{{ t('login.retry') }}</Button>
         </div>
       </Transition>
     </div>
@@ -303,6 +351,10 @@ function formatSeconds(s: number): string {
   width: 100%;
   margin-top: var(--space-2);
 }
+.entry-btn {
+  align-self: center;
+  padding: 0 var(--space-6);
+}
 
 /* Device-code body */
 .flow-body {
@@ -316,102 +368,18 @@ function formatSeconds(s: number): string {
   color: var(--color-text-muted);
   line-height: var(--leading-normal);
   text-align: center;
-}
-
-/* Primary action: open the complete verification URI. */
-.primary-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  width: 100%;
-  min-height: var(--touch-target-min);
-  padding: 0 var(--space-4);
-  box-sizing: border-box;
-  background: var(--color-accent);
-  color: var(--color-text-on-accent);
-  border: var(--p-hairline) solid var(--color-accent);
-  border-radius: var(--radius-md);
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-  cursor: pointer;
-  text-decoration: none;
-  user-select: none;
-  -webkit-tap-highlight-color: transparent;
-  transition: background var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-}
-/* Hover only where hover exists (touch taps would flash it). */
-@media (hover: hover) and (pointer: fine) {
-  .primary-link:hover { background: var(--color-accent-hover); border-color: var(--color-accent-hover); }
-}
-.primary-link:active { transform: scale(0.98); }
-.primary-link:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
-
-/* Code + copy row */
-.code-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  background: var(--color-surface-sunken);
-  border: var(--p-hairline) solid var(--color-line);
-  border-radius: var(--radius-md);
-  padding: var(--space-3);
-}
-.code-meta {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-.code-label {
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-}
-.code {
-  font-family: var(--font-mono);
-  font-size: var(--text-xl);
-  font-weight: var(--weight-medium);
-  color: var(--color-text);
-  letter-spacing: 0.14em;
-  user-select: text;
-}
-.copy-btn { flex: none; }
-.copy-btn.is-copied { color: var(--color-success); border-color: var(--color-success-bd); }
-
-/* Mobile: the copy action drops to a full-width second row under the code. */
-@media (max-width: 639px) {
-  .code-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .copy-btn {
-    min-height: 34px;
-  }
-}
-
-/* Status */
-.status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding-top: var(--space-3);
-  border-top: var(--p-hairline) solid var(--color-line);
-}
-.status-text {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-}
-.countdown {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* Quiet fallback: muted label; the copy action is the Button primitive's
+   text variant — only the label spacing and the "copied" state stay here. */
+.manual-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  text-align: center;
+}
+.copy-text { margin-left: var(--space-2); }
+.copy-text.is-copied { color: var(--color-success); text-decoration: none; }
 
 /* State transitions: short fade + slight rise (reduced-motion friendly). */
 .step-enter-active,

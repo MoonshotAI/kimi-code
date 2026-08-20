@@ -7,7 +7,7 @@ const port = Number(process.env.AUTH_LOGIN_PORT) || 5176;
 
 // Shared renderer preset (Vue plugin, unplugin-icons `kimi` collection sourced
 // from app-client's icon dir, ES2022 target). This page talks directly to the
-// OAuth host (CORS is open), so there is no dev proxy to layer on.
+// OAuth host (CORS is open), so the OAuth flow needs no dev proxy.
 const preset = kimiRendererViteConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
   iconsDir: fileURLToPath(
@@ -19,6 +19,14 @@ const preset = kimiRendererViteConfig({
     __KIMI_WEB_DESKTOP__: JSON.stringify(false),
   },
 });
+
+// Optional session-API proxy for local development: the page's /auth/* calls
+// are same-origin relatives, so a standalone dev/preview server has no
+// backend for them (and the SPA fallback would answer 200 HTML for /auth/me,
+// faking a session). Set AUTH_LOGIN_RELAY_URL to a running relay (e.g.
+// http://127.0.0.1:8080) to proxy /auth to it; kept in sync for dev+preview.
+const relayUrl = process.env.AUTH_LOGIN_RELAY_URL;
+const authProxy = relayUrl ? { '/auth': { target: relayUrl, changeOrigin: true } } : undefined;
 
 export default defineConfig({
   ...preset,
@@ -33,8 +41,10 @@ export default defineConfig({
   server: {
     port,
     strictPort: false,
+    proxy: authProxy,
   },
   preview: {
     port: Number(process.env.AUTH_LOGIN_PREVIEW_PORT) || 4176,
+    proxy: authProxy,
   },
 });

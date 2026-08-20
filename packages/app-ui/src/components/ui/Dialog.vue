@@ -17,8 +17,8 @@ const props = withDefaults(defineProps<{
   description?: string;
   closeOnOverlay?: boolean;
   closeOnEsc?: boolean;
-  /** md 440 (default) · lg 640 · xl 760 (var(--p-content-max)). */
-  size?: 'md' | 'lg' | 'xl';
+  /** sm 360 · md 440 (default) · lg 640 · xl 760 (var(--p-content-max)). */
+  size?: 'sm' | 'md' | 'lg' | 'xl';
   /** auto (default) = height tracks content up to max-height; fixed = constant
    *  height so the frame never resizes between tabs/content (body scrolls). */
   height?: 'auto' | 'fixed';
@@ -211,6 +211,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   animation: kimi-card-in var(--duration-slow) var(--ease-out);
 }
+.ui-dialog--sm { width: min(360px, 100%); }
 .ui-dialog--md { width: min(440px, 100%); }
 .ui-dialog--lg { width: min(640px, 100%); }
 .ui-dialog--xl { width: min(var(--p-content-max), 100%); }

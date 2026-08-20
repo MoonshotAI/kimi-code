@@ -1,5 +1,5 @@
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
-import { readLocaleCookie } from './auth-token';
+import { readLocaleCookie } from './helpers';
 
 // Locale resolution for this page: the shared `KIMI_LOCALE` cookie (a
 // root-domain cookie, so the main site's language choice carries over) →

@@ -183,8 +183,8 @@ function formatSeconds(s: number): string {
     <div v-else-if="step === 'device-code' && flow" class="ls-device">
       <div class="ls-hero">
         <span class="ls-hero-icon"><BrandLogo :size="48" /></span>
-        <div class="ls-hero-title">{{ autoOpenBlocked ? t('login.blockedTitle') : t('login.openedTitle') }}</div>
-        <div class="ls-hero-hint">{{ autoOpenBlocked ? t('login.blockedHint') : t('login.openedHint') }}</div>
+        <div v-if="autoOpenBlocked" class="ls-hero-title">{{ t('login.blockedTitle') }}</div>
+        <div class="ls-hero-hint">{{ autoOpenBlocked ? t('login.blockedHint') : t('login.openedHint', { time: formatSeconds(secondsLeft) }) }}</div>
       </div>
 
       <!-- The automatic open failed (popup blocked / tab closed): surface a
@@ -194,27 +194,14 @@ function formatSeconds(s: number): string {
         <Icon name="external-link" size="sm" />
       </Button>
 
-      <!-- Quiet manual fallback: reopen / copy, plus the truncated link. -->
+      <!-- Quiet manual fallback: copy the link via an inline text button. -->
       <div class="ls-manual">
-        <span class="ls-manual-label">{{ t('login.notOpened') }}</span>
-        <div class="ls-manual-actions">
-          <Button variant="secondary" size="sm" @click="reopenVerification">
-            {{ t('login.reopenLink') }}
+        <span class="ls-manual-label">
+          {{ t('login.notOpened') }}
+          <Button variant="text" class="ls-copy-text" :class="{ 'is-copied': copied }" @click="copyLink">
+            {{ copied ? t('login.copied') : t('login.copyLink') }}
           </Button>
-          <Button class="ls-copy" :class="{ 'is-copied': copied }" variant="secondary" size="sm" @click="copyLink">
-            <template v-if="copied">
-              <Icon name="check" size="sm" />
-              {{ t('login.copied') }}
-            </template>
-            <template v-else>
-              <Icon name="copy" size="sm" />
-              {{ t('login.copyLink') }}
-            </template>
-          </Button>
-        </div>
-        <div class="ls-code-row">
-          <span class="ls-link" :title="verificationUriComplete">{{ verificationUriComplete }}</span>
-        </div>
+        </span>
       </div>
 
       <!-- TODO: the manual fallback (copy the link + type the device code) has
@@ -245,12 +232,6 @@ function formatSeconds(s: number): string {
         </Button>
       </div>
       -->
-
-      <div class="ls-status">
-        <Spinner size="sm" :label="t('login.waitingApproval')" />
-        <span class="ls-status-text">{{ t('login.waitingApproval') }}</span>
-        <span class="ls-countdown">{{ formatSeconds(secondsLeft) }}</span>
-      </div>
     </div>
 
     <!-- Success -->
@@ -408,9 +389,10 @@ function formatSeconds(s: number): string {
   font-size: var(--text-sm);
   color: var(--color-text-muted);
   line-height: var(--leading-normal);
+  font-variant-numeric: tabular-nums;
 }
 
-/* Quiet manual fallback: muted label, two secondary actions, the link row */
+/* Quiet manual fallback: muted label with an inline text button */
 .ls-manual {
   display: flex;
   flex-direction: column;
@@ -421,14 +403,10 @@ function formatSeconds(s: number): string {
   font-size: var(--text-xs);
   color: var(--color-text-faint);
 }
-.ls-manual-actions {
-  display: flex;
-  gap: var(--space-2);
-}
-.ls-manual .ls-code-row {
-  align-self: stretch;
-  margin-top: var(--space-1);
-}
+/* The copy action is the Button primitive's text variant; only the label
+   spacing and the "copied" state stay here. */
+.ls-copy-text { margin-left: var(--space-2); }
+.ls-copy-text.is-copied { color: var(--color-success); text-decoration: none; }
 .ls-or {
   display: flex;
   align-items: center;
@@ -472,38 +450,8 @@ function formatSeconds(s: number): string {
   color: var(--color-text);
   letter-spacing: 0.14em;
 }
-/* Copyable complete verification link (single-line, truncated). */
-.ls-link {
-  flex: 1;
-  min-width: 0;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  user-select: text;
-}
+/* Inline copy control: Button secondary + a success "copied" state. */
 .ls-copy.is-copied { color: var(--color-success); border-color: var(--color-success-bd); }
-.ls-status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding-top: var(--space-3);
-  border-top: var(--p-hairline) solid var(--color-line);
-}
-.ls-status-text {
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
-  flex: 1;
-}
-.ls-countdown {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  font-variant-numeric: tabular-nums;
-}
 .ls-actions {
   display: flex;
   justify-content: flex-end;
@@ -513,19 +461,13 @@ function formatSeconds(s: number): string {
 /* var() is not allowed in @media — 640px mirrors the --p-bp-sm token. */
 @media (max-width: 640px) {
   .ls-code-row,
-  .ls-status,
-  .ls-manual-actions,
   .ls-actions {
     flex-wrap: wrap;
-  }
-  .ls-manual-actions {
-    justify-content: center;
   }
   .ls-code {
     min-width: 0;
     overflow-wrap: anywhere;
     letter-spacing: 0.08em;
   }
-  .ls-status-text { min-width: 0; }
 }
 </style>

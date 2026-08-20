@@ -1,12 +1,12 @@
 <!-- apps/kimi-web/src/components/ui/Button.vue -->
-<!-- Design-system §03 Button: 5 semantic variants × 3 sizes.
-     variant: primary | secondary | ghost | danger | danger-soft
+<!-- Design-system §03 Button: 6 semantic variants × 3 sizes.
+     variant: primary | secondary | ghost | danger | danger-soft | text
      size:    sm | md | lg -->
 <script setup lang="ts">
 import Spinner from './Spinner.vue';
 
 withDefaults(defineProps<{
-  variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'danger-soft';
+  variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'danger-soft' | 'text';
   size?: 'sm' | 'md' | 'lg';
   disabled?: boolean;
   loading?: boolean;
@@ -117,6 +117,25 @@ withDefaults(defineProps<{
   border-color: var(--color-danger-bd);
 }
 .ui-button--danger-soft:not(:disabled):hover { background: var(--color-danger); color: var(--color-text-on-accent); border-color: var(--color-danger); }
+
+/* text: a chromeless inline action for quiet fallbacks ("copy link" next to
+   a muted label) — underlined muted text, no box, sized by its context
+   (font-size/weight inherit, the fixed size heights don't apply). Declared
+   after the size rules so they lose to it at equal specificity. */
+.ui-button--text {
+  height: auto;
+  padding: 0;
+  background: transparent;
+  border-color: transparent;
+  border-radius: var(--radius-xs);
+  color: var(--color-text-muted);
+  font-size: inherit;
+  font-weight: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ui-button--text:not(:disabled):hover { color: var(--color-text); }
+.ui-button--text:not(:disabled):active { transform: none; }
 
 .ui-button.is-loading .ui-button__content { opacity: 0.7; }
 .ui-button .ui-button__spinner { flex: none; color: inherit; }
