@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue';
 import { ICON_GROUPS } from '@moonshot-ai/app-client/icons';
-import { Icon, Spinner, StatusDot } from '@moonshot-ai/app-ui';
+import { ActionCard, Icon, Spinner, StatusDot } from '@moonshot-ai/app-ui';
 import WorkingIndicator from '../components/chat/WorkingIndicator.vue';
 import TurnFilesSummary from '../components/chat/TurnFilesSummary.vue';
 import type { TurnFileChange } from '../components/chatTurnRendering';
@@ -663,6 +663,7 @@ onUnmounted(() => {
             <ul class="clean">
               <li><b>Operation card</b> —— composite "process" content such as the Swarm overview. (Individual tool calls are NOT cards anymore: they render as quiet borderless lines, see §04.) Flat shell: <code>0.5px</code> hairline, <code>--radius-md</code>, no shadow. The head is compact mono with no fill, low weight by default, not competing with the conversation.</li>
               <li><b>Attention card</b> —— content that needs a user decision, such as Question / Approval. A floating neutral card: white raised surface, <code>--radius-lg</code>, a faint popover shadow (<code>--shadow-menu</code>), a plain dark title head, and a hairline footer whose actions read in number-key order (chips on the buttons) leading to one solid primary action. No semantic color band.</li>
+              <li><b>Action card</b> —— the only interactive card pattern (<code>ActionCard.vue</code> in app-ui): one clickable row for pick-one choices (the OAuth login entries, the custom-provider entry). Leading visual slot, title with an optional trailing status <code>Badge</code>, second-line hint, fixed chevron; hover and the focus ring share the site language, and <code>disabled</code> dims + disarms it (the login entries use it while the daemon-support probe is in flight). Consumers never hand-roll a card-shaped <code>&lt;button&gt;</code>.</li>
             </ul>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Operation card · compact mono head (no fill)</span></div>
@@ -694,6 +695,21 @@ onUnmounted(() => {
                   <div class="p-tool-row"><span class="tr-name">Read</span><span class="tr-file">session.ts</span><span class="tr-faint">src/auth</span><span class="tr-chip">34 lines</span><span class="tr-ok">✓</span></div>
                   <div class="p-tool-row"><span class="tr-name">Read</span><span class="tr-file">middleware.ts</span><span class="tr-faint">src/auth</span><span class="tr-chip">58 lines</span><span class="tr-ok">✓</span></div>
                 </div>
+              </div>
+            </div>
+            <div class="stage-wrap">
+              <div class="stage-bar"><span class="st">ActionCard · clickable choice row (normal / disabled)</span></div>
+              <div class="stage p col">
+                <ActionCard style="max-width:460px">
+                  <template #leading><Icon name="globe" size="lg" /></template>
+                  Kimi Code (kimi.com/code)
+                  <template #hint>Sign in with your kimi.com account</template>
+                </ActionCard>
+                <ActionCard style="max-width:460px" disabled>
+                  <template #leading><Icon name="bolt" size="lg" /></template>
+                  Add a custom provider
+                  <template #hint>Bring your own API key for OpenAI-compatible and other services</template>
+                </ActionCard>
               </div>
             </div>
             <ul class="clean check">

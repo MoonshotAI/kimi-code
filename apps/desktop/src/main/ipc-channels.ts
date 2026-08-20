@@ -5,6 +5,7 @@
 export const IPC = {
   theme: 'kimi:theme',
   openExternal: 'kimi:open-external',
+  serverCredential: 'kimi:server-credential',
   dialogOpen: 'kimi:dialog-open',
   dialogSave: 'kimi:dialog-save',
   openInList: 'kimi:open-in-list',
@@ -37,6 +38,7 @@ export const IPC = {
   rendererLog: 'kimi:renderer-log',
   jumpList: 'kimi:jump-list',
   launchAction: 'kimi:launch-action',
+  deepLinkAuth: 'kimi:deep-link-auth',
   track: 'kimi:track',
   terminalCreate: 'kimi:terminal-create',
   terminalInput: 'kimi:terminal-input',
@@ -68,5 +70,6 @@ export type RendererEventChannel =
   | typeof IPC.updateStatus
   | typeof IPC.traySelectSession
   | typeof IPC.launchAction
+  | typeof IPC.deepLinkAuth
   | typeof IPC.terminalOutput
   | typeof IPC.terminalExit;

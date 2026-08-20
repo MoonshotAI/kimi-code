@@ -120,6 +120,17 @@ describe('defaultShellEnv', () => {
     const env = defaultShellEnv('darwin', 'en', { A: '1', B: undefined });
     expect(env).toEqual({ A: '1', LANG: 'en_US.UTF-8' });
   });
+
+  it('keeps the embedded-server region marker out of the shell env', () => {
+    // server.ts pins KIMI_CODE_REGION_MARKER=off on the Electron process for
+    // kap-server; interactive shells must not inherit it.
+    const env = defaultShellEnv('darwin', 'en', {
+      HOME: '/u',
+      KIMI_CODE_REGION_MARKER: 'off',
+    });
+    expect(env['KIMI_CODE_REGION_MARKER']).toBeUndefined();
+    expect(env['HOME']).toBe('/u');
+  });
 });
 
 describe('createTerminalManager', () => {

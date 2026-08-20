@@ -548,6 +548,106 @@ describe('DaemonKimiWebApi.connectEvents', () => {
   });
 });
 
+describe('DaemonKimiWebApi.startOAuthLogin', () => {
+  beforeEach(() => {
+    vi.stubGlobal('location', { search: '?debug=1' });
+    vi.stubGlobal('fetch', vi.fn());
+    tracedRequests.length = 0;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const PENDING_FLOW = {
+    flow_id: 'oauth_1',
+    provider: 'kimi-code',
+    status: 'pending',
+    verification_uri: 'https://example.com/device',
+    verification_uri_complete: 'https://example.com/device?code=ABCD',
+    user_code: 'ABCD-EFGH',
+    expires_in: 900,
+    interval: 5,
+    expires_at: '2026-01-01T00:15:00.000Z',
+  };
+
+  it('posts the picked region and maps the pending flow', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(envelope(PENDING_FLOW));
+
+    const result = await createApi().startOAuthLogin('global');
+
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({ region: 'global' }),
+    });
+    expect(result).toMatchObject({
+      flowId: 'oauth_1',
+      status: 'pending',
+      verificationUriComplete: 'https://example.com/device?code=ABCD',
+    });
+  });
+
+  it('sends an empty body when no region is picked', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(envelope(PENDING_FLOW));
+
+    await createApi().startOAuthLogin();
+
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
+      body: JSON.stringify({}),
+    });
+  });
+
+  it('retries once without the region when the server rejects it with 40001', async () => {
+    // Pre-region daemons actually strip the unknown field silently (zod
+    // default, no additionalProperties in the fastify schema) — this covers
+    // any stricter server that does reject it.
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ code: 40001, msg: 'unrecognized key: region', request_id: 'req_old' }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(envelope(PENDING_FLOW));
+
+    const result = await createApi().startOAuthLogin('mainland-cn');
+
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
+      body: JSON.stringify({ region: 'mainland-cn' }),
+    });
+    expect(vi.mocked(fetch).mock.calls[1]?.[1]).toMatchObject({
+      body: JSON.stringify({}),
+    });
+    expect(result).toMatchObject({ flowId: 'oauth_1', status: 'pending' });
+  });
+
+  it('does not retry on a non-validation error', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ code: 50001, msg: 'boom', request_id: 'req_x' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    await expect(createApi().startOAuthLogin('mainland-cn')).rejects.toThrowError(DaemonApiError);
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a 40001 when no region was sent (nothing to drop)', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ code: 40001, msg: 'bad body', request_id: 'req_y' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    await expect(createApi().startOAuthLogin()).rejects.toThrowError(DaemonApiError);
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('DaemonKimiWebApi session media', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());

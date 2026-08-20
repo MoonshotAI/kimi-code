@@ -28,6 +28,9 @@ vi.mock('electron', () => ({
   // connect.ts → log.ts imports `dialog` for the crash guard; vitest throws
   // on access to a mocked module's missing export, so keep it defined.
   dialog: { showErrorBox: vi.fn() },
+  // connect.ts → region.ts imports `net` for the region refresh; a pending-
+  // forever fetch keeps the refresh inert without touching module state.
+  net: { fetch: vi.fn(() => new Promise(() => {})) },
 }));
 vi.mock('@moonshot-ai/kap-server', () => ({
   serverTokenPath: () => '/tmp/kimi-test/server.token',

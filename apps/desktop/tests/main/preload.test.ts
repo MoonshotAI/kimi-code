@@ -34,6 +34,7 @@ const WHITELIST = [
   'log',
   'nativeTerminalInput',
   'nativeTerminalResize',
+  'onDeepLinkAuth',
   'onFullscreenChanged',
   'onLaunchAction',
   'onMenu',
@@ -63,6 +64,7 @@ const WHITELIST = [
   'showSaveDialog',
   'showWindow',
   'track',
+  'updateServerCredential',
 ];
 
 beforeEach(() => {
@@ -221,6 +223,11 @@ describe('kimiDesktop preload bridge', () => {
     offLaunchAction();
     expect(removeListener).toHaveBeenCalledWith('kimi:launch-action', expect.any(Function));
 
+    const offDeepLinkAuth = exposed.onDeepLinkAuth(() => {});
+    expect(on).toHaveBeenCalledWith('kimi:deep-link-auth', expect.any(Function));
+    offDeepLinkAuth();
+    expect(removeListener).toHaveBeenCalledWith('kimi:deep-link-auth', expect.any(Function));
+
     await exposed.openExternal('https://example.com');
     expect(invoke).toHaveBeenCalledWith('kimi:open-external', 'https://example.com');
 
@@ -369,6 +376,12 @@ describe('kimiDesktop preload bridge', () => {
     listeners.get('kimi:launch-action')?.({}, { action: 'bogus' });
     listeners.get('kimi:launch-action')?.({}, 'new-chat');
     expect(launchCb).toHaveBeenCalledTimes(2);
+
+    // The deep-link auth wake is payload-free — every event fires the callback.
+    const deepLinkAuthCb = vi.fn();
+    exposed.onDeepLinkAuth(deepLinkAuthCb);
+    listeners.get('kimi:deep-link-auth')?.({});
+    expect(deepLinkAuthCb).toHaveBeenCalledTimes(1);
   });
 
   it('passes release notes through field-wise validation, dropping junk note fields only', async () => {

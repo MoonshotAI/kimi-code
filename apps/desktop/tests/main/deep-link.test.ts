@@ -98,7 +98,8 @@ describe('registerDeepLinkScheme', () => {
     expect(mocks.app.setAsDefaultProtocolClient).not.toHaveBeenCalled();
   });
 
-  it('registers the scheme for unpackaged dev launches', () => {
+  it('registers the scheme for unpackaged dev launches on Windows/Linux', () => {
+    asWindows(); // the macOS dev case below never registers
     mocks.app.isPackaged = false;
     registerDeepLinkScheme();
     expect(mocks.app.setAsDefaultProtocolClient).toHaveBeenCalledWith(
@@ -106,6 +107,13 @@ describe('registerDeepLinkScheme', () => {
       process.execPath,
       [process.argv[1] ?? '.'],
     );
+  });
+
+  it('no-ops on macOS dev — registration would claim the bare Electron.app runtime', () => {
+    asMac();
+    mocks.app.isPackaged = false;
+    registerDeepLinkScheme();
+    expect(mocks.app.setAsDefaultProtocolClient).not.toHaveBeenCalled();
   });
 
   it('self-registers on Windows even when packaged (NSIS writes no registry entry)', () => {
@@ -129,6 +137,25 @@ describe('handleDeepLink', () => {
     const showMainWindow = vi.fn();
     handleDeepLink('kimi-code://auth/success', showMainWindow);
     expect(showMainWindow).toHaveBeenCalledOnce();
+  });
+
+  it('wakes the renderer after showing the window for a whitelisted URL', () => {
+    const showMainWindow = vi.fn();
+    const notifyAuth = vi.fn();
+    handleDeepLink('kimi-code://auth/success', showMainWindow, notifyAuth);
+    expect(notifyAuth).toHaveBeenCalledOnce();
+    // The window surfaces first; the login-poll wake follows it.
+    expect(showMainWindow.mock.invocationCallOrder[0]).toBeLessThan(
+      notifyAuth.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('does not wake the renderer for an unknown URL', () => {
+    const showMainWindow = vi.fn();
+    const notifyAuth = vi.fn();
+    handleDeepLink('kimi-code://unknown/path', showMainWindow, notifyAuth);
+    expect(showMainWindow).not.toHaveBeenCalled();
+    expect(notifyAuth).not.toHaveBeenCalled();
   });
 
   it('shows the main window for a case-variant of the whitelisted URL', () => {

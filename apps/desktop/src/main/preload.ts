@@ -231,6 +231,10 @@ export type KimiDesktopApi = {
   onMenuAction: (cb: (id: string) => void) => () => void;
   onShortcut: (cb: (accel: string) => void) => () => void;
   openExternal: (url: string) => Promise<void>;
+  /** Forward a renderer-collected server token to the main process so the
+   *  region probe (update feed / Help links) authenticates the same way the
+   *  renderer's API client does. Fire-and-forget. */
+  updateServerCredential: (token: string) => Promise<void>;
   showOpenDialog: (opts: DialogOptions) => Promise<{ canceled: boolean; filePaths: string[] }>;
   showSaveDialog: (opts: DialogOptions) => Promise<{ canceled: boolean; filePath?: string }>;
   /** Absolute filesystem path of a File the user dragged into the window.
@@ -306,6 +310,11 @@ export type KimiDesktopApi = {
   /** Main → renderer push of a launch intent (Jump List item click or
    *  second-instance argv: open a draft / open a workspace by root). */
   onLaunchAction: (cb: (payload: LaunchActionPayload) => void) => () => void;
+  /** Main → renderer push when a whitelisted auth deep link arrives (the
+   *  OAuth completion page re-opened the app): the waiting login flow polls
+   *  the daemon immediately instead of finishing out the current interval.
+   *  Payload-free wake signal. */
+  onDeepLinkAuth: (cb: () => void) => () => void;
   /** macOS frosted-sidebar material toggle (settings → appearance). Persisted
    *  main-side so window creation applies it before the renderer boots. */
   setVibrancy: (enabled: boolean) => void;
@@ -359,6 +368,7 @@ export const api: KimiDesktopApi = {
     return () => ipcRenderer.removeListener('kimi:shortcut', listener);
   },
   openExternal: (url) => ipcRenderer.invoke('kimi:open-external', url),
+  updateServerCredential: (token) => ipcRenderer.invoke('kimi:server-credential', token),
   showOpenDialog: (opts) => ipcRenderer.invoke('kimi:dialog-open', opts),
   showSaveDialog: (opts) => ipcRenderer.invoke('kimi:dialog-save', opts),
   getPathForFile: (file) => {
@@ -474,6 +484,11 @@ export const api: KimiDesktopApi = {
     };
     ipcRenderer.on('kimi:launch-action', listener);
     return () => ipcRenderer.removeListener('kimi:launch-action', listener);
+  },
+  onDeepLinkAuth: (cb) => {
+    const listener = () => cb();
+    ipcRenderer.on('kimi:deep-link-auth', listener);
+    return () => ipcRenderer.removeListener('kimi:deep-link-auth', listener);
   },
   setVibrancy: (enabled) => {
     if (typeof enabled === 'boolean') {

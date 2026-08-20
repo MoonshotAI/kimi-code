@@ -18,17 +18,20 @@ vi.mock('electron-updater', () => ({ autoUpdater: {} }));
 vi.mock('../../src/main/window', () => ({ sendToRenderer: vi.fn(), markQuitting: vi.fn() }));
 vi.mock('../../src/main/track', () => ({ trackDesktopEvent: trackMock }));
 
-import { fetchReleaseNotes, startAutoUpdater, UPDATE_CHECK_TIMED_OUT, type ReleaseNotes, type UpdateStatus } from '../../src/main/updater';
+import { fetchReleaseNotes, startAutoUpdater, UPDATE_CHECK_TIMED_OUT, type ReleaseNotes, type UpdateController, type UpdateStatus } from '../../src/main/updater';
 import { log } from '../../src/main/log';
+import { setServerRegionSource } from '../../src/main/region';
 import { markQuitting } from '../../src/main/window';
 
 const markQuittingMock = vi.mocked(markQuitting);
 
-// Two microtask flushes: the notes-fetch .then merge runs after the injected
-// promise resolves, so a single await can race depending on the mock's path.
+// Microtask flushes: the notes-fetch .then merge and the feed-ready chain
+// (source wait → apply feed → check) take several hops, so a single await
+// can race depending on the mock's path.
 async function flush(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let i = 0; i < 6; i++) {
+    await Promise.resolve();
+  }
 }
 
 class FakeUpdater extends EventEmitter {
@@ -37,6 +40,10 @@ class FakeUpdater extends EventEmitter {
   checkForUpdates = vi.fn().mockResolvedValue(undefined);
   downloadUpdate = vi.fn().mockResolvedValue(undefined);
   quitAndInstall = vi.fn();
+}
+
+class FakeUpdaterWithFeed extends FakeUpdater {
+  setFeedURL = vi.fn();
 }
 
 function setup(overrides: { initialDelayMs?: number; intervalMs?: number; autoDownload?: boolean; fetchNotes?: (version: string) => Promise<ReleaseNotes> } = {}) {
@@ -77,15 +84,17 @@ describe('startAutoUpdater', () => {
     expect(updater.checkForUpdates).not.toHaveBeenCalled();
   });
 
-  it('keeps downloads user-initiated by default and keeps install-on-quit, then checks on the initial delay and cadence', () => {
+  it('keeps downloads user-initiated by default and keeps install-on-quit, then checks on the initial delay and cadence', async () => {
     const { updater, controller } = setup({ initialDelayMs: 1_000, intervalMs: 2_000 });
     expect(updater.autoDownload).toBe(false);
     expect(updater.autoInstallOnAppQuit).toBe(true);
     expect(updater.checkForUpdates).not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(1_000);
+    await flush(); // the serialized check chain runs one microtask behind
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(2_000);
+    await flush();
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
 
     controller.stop();
@@ -320,9 +329,11 @@ describe('manual check (controller.check)', () => {
     const { updater, sent, controller } = setup();
 
     const promise = controller.check();
-    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
+    await flush(); // the one-shot listeners attach when the chain link runs
     updater.emit('update-available', { version: '1.2.3' });
     await expect(promise).resolves.toEqual({ outcome: 'available', version: '1.2.3' });
+    // The serialized check chain ran by the time the waiter settled.
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
 
     // The persistent listener ran too: the sidebar indicator flow is untouched.
     expect(sent.at(-1)).toEqual({ state: 'available', version: '1.2.3' });
@@ -336,6 +347,7 @@ describe('manual check (controller.check)', () => {
   it('resolves available (not a timeout) when the version is already downloaded', async () => {
     const { updater, controller } = setup();
     const promise = controller.check();
+    await flush();
     // electron-updater re-fires 'update-downloaded' for an already-landed
     // version instead of 'update-available'.
     updater.emit('update-downloaded', { version: '1.2.3' });
@@ -346,6 +358,7 @@ describe('manual check (controller.check)', () => {
   it('resolves latest on update-not-available', async () => {
     const { updater, controller } = setup();
     const promise = controller.check();
+    await flush();
     updater.emit('update-not-available');
     await expect(promise).resolves.toEqual({ outcome: 'latest' });
   });
@@ -355,6 +368,7 @@ describe('manual check (controller.check)', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
 
     const promise = controller.check();
+    await flush();
     updater.emit('error', new Error('feed unreachable'));
     await expect(promise).resolves.toEqual({ outcome: 'error', message: 'feed unreachable' });
     // The background-swallow path logged the event as usual.
@@ -506,5 +520,252 @@ describe('fetchReleaseNotes (production fetch)', () => {
   it('never rejects on network errors', async () => {
     netFetchMock.mockRejectedValue(new Error('network down'));
     await expect(fetchReleaseNotes('1.2.3')).resolves.toEqual({});
+  });
+});
+
+describe('serialized check chain', () => {
+  it('a hung check does not park the chain — later rounds skip instead of overlapping', async () => {
+    // A long initial delay keeps the scheduled check out of the manual window.
+    const { updater, controller } = setup({ initialDelayMs: 120_000 });
+    updater.checkForUpdates.mockImplementationOnce(() => new Promise<void>(() => {}));
+
+    const first = controller.check();
+    await vi.advanceTimersByTimeAsync(31_000); // the manual UI timeout settles first
+    await expect(first).resolves.toEqual({ outcome: 'error', message: UPDATE_CHECK_TIMED_OUT });
+
+    // The chain link releases at its 60s bound, but the wedged attempt is
+    // still alive underneath — the next round waits it out (bounded) instead
+    // of starting a second, overlapping checkForUpdates.
+    const second = controller.check();
+    await vi.advanceTimersByTimeAsync(30_000); // t+61 — the second waiter times out
+    await expect(second).resolves.toEqual({ outcome: 'error', message: UPDATE_CHECK_TIMED_OUT });
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
+
+    // The round's own gate bound expires: it skips, the queue advances, and
+    // still no second checkForUpdates has gone out.
+    await vi.advanceTimersByTimeAsync(60_000); // t+121
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
+    controller.stop();
+  });
+
+  it('a late-settling check cannot feed its outcome to the next check', async () => {
+    const { updater, controller } = setup({ initialDelayMs: 120_000 });
+    let settleFirst!: () => void;
+    updater.checkForUpdates
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            settleFirst = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(undefined);
+
+    const first = controller.check();
+    await vi.advanceTimersByTimeAsync(31_000); // the first waiter times out
+    await expect(first).resolves.toEqual({ outcome: 'error', message: UPDATE_CHECK_TIMED_OUT });
+
+    let secondResult: Awaited<ReturnType<typeof controller.check>> | undefined;
+    const second = controller.check().then((result) => {
+      secondResult = result;
+      return result;
+    });
+    await vi.advanceTimersByTimeAsync(29_000); // t+60 — the chain link releases
+
+    // The first attempt settles late and its event fires while the second
+    // round is still waiting it out — before any of its listeners exist.
+    settleFirst();
+    updater.emit('update-not-available');
+    await vi.advanceTimersByTimeAsync(0); // the gate's macrotask drain
+    await Promise.resolve();
+    expect(secondResult).toBeUndefined();
+
+    // The second round then starts its own check and reports ITS outcome.
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
+    updater.emit('update-available', { version: '1.2.3' });
+    await expect(second).resolves.toEqual({ outcome: 'available', version: '1.2.3' });
+    controller.stop();
+  });
+});
+
+describe('late region source follow-up', () => {
+  // region.ts module state is shared file-wide and this describe runs BEFORE
+  // the feed describe's beforeEach records a source, so the source is still
+  // null here and every round below exhausts its source-wait bound.
+  it('re-checks once when the source lands late, and not at all after stop()', async () => {
+    const makeController = (): { updater: FakeUpdaterWithFeed; controller: UpdateController } => {
+      const updater = new FakeUpdaterWithFeed();
+      const controller = startAutoUpdater({
+        updater,
+        send: () => {},
+        isPackaged: true,
+        initialDelayMs: 600_000, // keep scheduled checks out of the manual timeline
+        intervalMs: 600_000,
+        resolveFeedUrl: vi.fn().mockResolvedValue('https://code.kimi.ai/kimi-code/desktop/'),
+      });
+      if (controller === null) {
+        throw new Error('expected a controller for a packaged app');
+      }
+      return { updater, controller };
+    };
+
+    // A: one expired round arms its follow-up; stop() must suppress it.
+    const a = makeController();
+    void a.controller.check();
+    await vi.advanceTimersByTimeAsync(15_000); // the source-wait bound expires → armed
+    expect(a.updater.checkForUpdates).toHaveBeenCalledTimes(1);
+    a.controller.stop();
+
+    // B: two expired rounds still arm only ONE follow-up.
+    const b = makeController();
+    void b.controller.check();
+    await vi.advanceTimersByTimeAsync(15_000); // round 1 expires → armed
+    void b.controller.check();
+    await vi.advanceTimersByTimeAsync(15_000); // round 2 expires → no re-arm
+    expect(b.updater.checkForUpdates).toHaveBeenCalledTimes(2);
+
+    // The source finally lands: B gets exactly one follow-up check, A none.
+    setServerRegionSource('http://127.0.0.1:12345');
+    await flush();
+    expect(a.updater.checkForUpdates).toHaveBeenCalledTimes(1);
+    expect(b.updater.checkForUpdates).toHaveBeenCalledTimes(3);
+    b.controller.stop();
+  });
+});
+
+describe('feed switching (resolveFeedUrl)', () => {
+  beforeEach(() => {
+    // The feed path waits for the region source before any check — record
+    // one up front (the refresh it kicks off fails harmlessly: netFetchMock
+    // answers undefined, the previous cache keeps holding).
+    setServerRegionSource('http://127.0.0.1:12345');
+  });
+
+  function setupFeed(
+    resolveFeedUrl: () => Promise<string>,
+    opts: { initialDelayMs?: number } = {},
+  ) {
+    const updater = new FakeUpdaterWithFeed();
+    const sent: UpdateStatus[] = [];
+    const controller = startAutoUpdater({
+      updater,
+      send: (status) => sent.push(status),
+      isPackaged: true,
+      initialDelayMs: opts.initialDelayMs ?? 1_000,
+      intervalMs: 60_000,
+      resolveFeedUrl,
+    });
+    if (controller === null) {
+      throw new Error('expected a controller for a packaged app');
+    }
+    return { updater, sent, controller };
+  }
+
+  it('applies the resolved feed before the scheduled check, re-applying only on change', async () => {
+    const resolveFeedUrl = vi.fn().mockResolvedValue('https://code.kimi.ai/kimi-code/desktop/');
+    const { updater, controller } = setupFeed(resolveFeedUrl);
+
+    vi.advanceTimersByTime(1_000);
+    await flush();
+    expect(updater.setFeedURL).toHaveBeenCalledTimes(1);
+    expect(updater.setFeedURL).toHaveBeenCalledWith({
+      provider: 'generic',
+      url: 'https://code.kimi.ai/kimi-code/desktop/',
+    });
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
+    // The feed is repointed BEFORE the check goes out.
+    expect(updater.setFeedURL.mock.invocationCallOrder[0]).toBeLessThan(
+      updater.checkForUpdates.mock.invocationCallOrder[0]!,
+    );
+
+    // An unchanged resolution is not re-applied on the next check.
+    vi.advanceTimersByTime(60_000);
+    await flush();
+    expect(updater.setFeedURL).toHaveBeenCalledTimes(1);
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
+
+    // A changed region re-points the feed.
+    resolveFeedUrl.mockResolvedValue('https://code.kimi.com/kimi-code/desktop/');
+    vi.advanceTimersByTime(60_000);
+    await flush();
+    expect(updater.setFeedURL).toHaveBeenCalledTimes(2);
+    expect(updater.setFeedURL).toHaveBeenLastCalledWith({
+      provider: 'generic',
+      url: 'https://code.kimi.com/kimi-code/desktop/',
+    });
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(3);
+    controller.stop();
+  });
+
+  it('keeps the baked-in feed and still checks when resolution fails', async () => {
+    const resolveFeedUrl = vi.fn().mockRejectedValue(new Error('server down'));
+    const { updater, controller } = setupFeed(resolveFeedUrl);
+
+    vi.advanceTimersByTime(1_000);
+    await flush();
+    expect(updater.setFeedURL).not.toHaveBeenCalled();
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
+    controller.stop();
+  });
+
+  it('serializes a manual check behind a scheduled one, with no event cross-talk', async () => {
+    const resolveFeedUrl = vi.fn().mockResolvedValue('https://code.kimi.ai/kimi-code/desktop/');
+    const { updater, controller } = setupFeed(resolveFeedUrl, { initialDelayMs: 1_000 });
+    let releaseScheduled!: () => void;
+    updater.checkForUpdates
+      .mockImplementationOnce(
+        () => new Promise<void>((resolve) => { releaseScheduled = () => resolve(); }),
+      )
+      .mockResolvedValue(undefined);
+
+    vi.advanceTimersByTime(1_000); // the scheduled check starts (hangs)
+    await flush();
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
+
+    const manual = controller.check();
+    // The scheduled check's outcome fires before the manual listeners exist.
+    updater.emit('update-not-available');
+    releaseScheduled();
+    await flush();
+    // The manual check starts only now, behind the scheduled one.
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
+    updater.emit('update-not-available');
+    await expect(manual).resolves.toEqual({ outcome: 'latest' });
+    controller.stop();
+  });
+
+  it('does not start the check when the feed wait outlasts the manual timeout', async () => {
+    let releaseFeed!: (url: string) => void;
+    const resolveFeedUrl = vi.fn(
+      () => new Promise<string>((resolve) => { releaseFeed = resolve; }),
+    );
+    // A long initial delay keeps the scheduled check out of the manual window.
+    const { updater, controller } = setupFeed(resolveFeedUrl, { initialDelayMs: 120_000 });
+
+    const promise = controller.check();
+    vi.advanceTimersByTime(30_000); // the manual timeout settles first
+    await expect(promise).resolves.toEqual({ outcome: 'error', message: UPDATE_CHECK_TIMED_OUT });
+
+    // When the feed finally resolves, the stale continuation must not start
+    // a check or attach listeners nobody is waiting for.
+    releaseFeed('https://code.kimi.ai/kimi-code/desktop/');
+    await flush();
+    expect(updater.checkForUpdates).not.toHaveBeenCalled();
+    expect(updater.listenerCount('update-available')).toBe(1); // persistent only
+    controller.stop();
+  });
+
+  it('resolves the feed before a manual check too', async () => {
+    const resolveFeedUrl = vi.fn().mockResolvedValue('https://code.kimi.ai/kimi-code/desktop/');
+    const { updater, controller } = setupFeed(resolveFeedUrl);
+
+    const pending = controller.check();
+    await flush();
+    updater.emit('update-not-available');
+    await expect(pending).resolves.toEqual({ outcome: 'latest' });
+    expect(updater.setFeedURL).toHaveBeenCalledTimes(1);
+    expect(updater.setFeedURL.mock.invocationCallOrder[0]).toBeLessThan(
+      updater.checkForUpdates.mock.invocationCallOrder[0]!,
+    );
+    controller.stop();
   });
 });

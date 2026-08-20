@@ -5,8 +5,10 @@ import { log, redactUrlForLog } from './log';
 // OS-level deep link (`kimi-code://...`): the OAuth device-flow completion
 // page links here so a successful browser authorization can surface the
 // desktop window. No credentials ride the URL — the daemon's device-flow
-// poll completes the login on its own and the renderer picks it up, so the
-// only deep-link action today is "show the window".
+// poll completes the login on its own and the renderer picks it up. Handling
+// is therefore just "show the window" plus a wake nudge to the renderer, so
+// its login poll runs immediately instead of waiting out the current
+// server-suggested interval.
 export const DEEP_LINK_SCHEME = 'kimi-code';
 
 /** Whitelist check for incoming deep links. Any webpage can fire the scheme,
@@ -41,9 +43,12 @@ export function extractDeepLink(argv: readonly string[]): string | undefined {
     macOS Info.plist, the Linux desktop file, and AppX manifests — NSIS
     installers get no registry entry at all, so the app must write
     HKCU\Software\Classes itself. Packaged macOS uses the Info.plist and the
-    Linux deb uses the desktop file, so there the call is dev-only (`electron
-    .` writes nothing otherwise). */
+    Linux deb uses the desktop file. macOS dev never registers: the call would
+    claim the scheme for the bare Electron.app runtime in node_modules, which
+    cannot route the URL to the actual app and only pollutes LaunchServices
+    (every dev checkout would fight over the handler). */
 export function registerDeepLinkScheme(): void {
+  if (process.platform === 'darwin') return;
   const isWindows = process.platform === 'win32';
   if (!isWindows && app.isPackaged) return;
   try {
@@ -63,8 +68,15 @@ export function registerDeepLinkScheme(): void {
 }
 
 /** Handle a validated deep link. Today every whitelisted URL means the same
-    thing (auth finished in the browser): surface the main window. */
-export function handleDeepLink(url: string, showMainWindow: () => void): void {
+    thing (auth finished in the browser): surface the main window, then notify
+    the renderer so a waiting OAuth login flow polls the daemon right away.
+    `notifyAuth` is optional only so tests and future call sites without a
+    live renderer can opt out. */
+export function handleDeepLink(
+  url: string,
+  showMainWindow: () => void,
+  notifyAuth?: () => void,
+): void {
   if (!isKnownDeepLink(url)) {
     // Redact before logging: the URL is attacker-controlled and a malformed
     // auth link could carry codes/tokens in its query or fragment.
@@ -72,4 +84,5 @@ export function handleDeepLink(url: string, showMainWindow: () => void): void {
     return;
   }
   showMainWindow();
+  notifyAuth?.();
 }

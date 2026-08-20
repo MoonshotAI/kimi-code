@@ -48,13 +48,13 @@ import { openDialogCount } from '@moonshot-ai/app-ui';
 import type { SwarmMember } from '@moonshot-ai/app-core/client';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
-import { initServerAuth, onAuthRequired } from '@moonshot-ai/app-core/lib';
+import { getCredential, initServerAuth, onAuthRequired } from '@moonshot-ai/app-core/lib';
 import {
   canPickWorkspaceDirectory,
   createAddWorkspaceEntry,
   pickWorkspaceDirectory,
 } from './lib/nativeWorkspacePicker';
-import type { AppConfig, ThinkingLevel } from './api/types';
+import type { AppConfig, OAuthRegion, ThinkingLevel } from './api/types';
 import { commitLevel, effectiveThinkingLevel, segmentsFor } from '@moonshot-ai/app-core/lib';
 import { modelDisplayName, subagentEffortSuffix } from '@moonshot-ai/app-core/lib';
 import { stripSkillPrefix, SKILL_COMMAND_PREFIX } from '@moonshot-ai/app-core/lib';
@@ -79,7 +79,7 @@ import {
   useDefaultOpenInTarget,
 } from './lib/nativeOpenIn';
 import { track } from './lib/track';
-import { openUpgrade } from '@moonshot-ai/app-core/lib';
+import { openUpgrade, resolveUpgradeRegion, setUpgradeRegionProbe } from '@moonshot-ai/app-core/lib';
 import { setSessionIntent } from './lib/session-intent';
 import type { SessionCreatedSource } from '../shared/track-events';
 import { isAppActionId, type AppActionId } from '../shared/action-ids';
@@ -87,6 +87,19 @@ import { isAppActionId, type AppActionId } from '../shared/action-ids';
 // Hydrate the server-transport credential (fragment token or localStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
 initServerAuth();
+// A credential hydrated above must also reach the main process's region
+// probe (update feed / Help links) — it otherwise keeps whatever
+// server.token had at connect time and 401s on credential-protected external
+// servers until the user re-submits the auth dialog.
+{
+  const startupCredential = getCredential();
+  if (startupCredential !== undefined) {
+    const bridge = (
+      window as { kimiDesktop?: { updateServerCredential?: (token: string) => Promise<void> } }
+    ).kimiDesktop;
+    void bridge?.updateServerCredential?.(startupCredential);
+  }
+}
 // Stays false until the server actually rejects us with 401/40101. Starting
 // from "no credential ⇒ prompt" flashed the token dialog for a frame in
 // `--dangerous-bypass-auth` mode, before /meta had advertised the bypass.
@@ -302,6 +315,16 @@ function syncAppHeight(): void {
   });
 }
 
+// Resolve the server region for the region-dependent upgrade link (null on
+// older daemons keeps the .com default). The region follows the account, so
+// re-resolve it on every login/logout, not just at mount — resolveUpgradeRegion
+// drops stale probe responses when triggers overlap. The registered probe
+// also lets every upgrade entry refresh right before opening.
+setUpgradeRegionProbe(() => client.getOAuthRegion());
+function refreshUpgradeRegion(): void {
+  void resolveUpgradeRegion(() => client.getOAuthRegion());
+}
+
 onMounted(() => {
   // Register the 401 listener before the first requests go out, so a token
   // rejection during the initial load() can never be missed.
@@ -312,6 +335,7 @@ onMounted(() => {
     client.clearDangerousBypassAuth();
   });
   void client.load();
+  refreshUpgradeRegion();
   loadSidebarCollapsed();
   setAppHeight();
   window.visualViewport?.addEventListener('resize', syncAppHeight);
@@ -858,7 +882,10 @@ async function confirmLogout(): Promise<void> {
     title: t('sidebar.logoutConfirmTitle'),
     message: t('sidebar.logoutConfirmMessage'),
     variant: 'danger',
-    action: () => client.logout(),
+    action: async () => {
+      await client.logout();
+      refreshUpgradeRegion();
+    },
   });
 }
 
@@ -1121,8 +1148,8 @@ async function handleUpdateConfig(patch: Partial<AppConfig>): Promise<void> {
 }
 
 // LoginDialog callbacks — delegates to composable
-async function handleStartOAuthLogin() {
-  return client.startOAuthLogin();
+async function handleStartOAuthLogin(region?: OAuthRegion) {
+  return client.startOAuthLogin(region);
 }
 
 async function handlePollOAuthLogin() {
@@ -1133,11 +1160,19 @@ async function handleCancelOAuthLogin() {
   return client.cancelOAuthLogin();
 }
 
+// The region probe is wired only as the daemon's region-support gate (a
+// pre-region daemon degrades the login cards to one neutral entry).
+// The api client degrades, never throws.
+async function handleGetOAuthRegion() {
+  return client.getOAuthRegion();
+}
+
 async function handleLoginSuccess(): Promise<void> {
   showLogin.value = false;
   // Re-check auth state and reload sessions now that we're authenticated
   await client.checkAuth();
   await client.load();
+  refreshUpgradeRegion();
 }
 
 // The wizard's embedded login flow succeeded: mark onboarding done in the same
@@ -1146,6 +1181,7 @@ async function handleWizardLoginSuccess(): Promise<void> {
   completeOnboarding();
   await client.checkAuth();
   await client.load();
+  refreshUpgradeRegion();
 }
 
 // Edit + resend the last user message: undo the latest exchange on the daemon,
@@ -2249,6 +2285,7 @@ function openPr(url: string): void {
       :on-start-o-auth-login="handleStartOAuthLogin"
       :on-poll-o-auth-login="handlePollOAuthLogin"
       :on-cancel-o-auth-login="handleCancelOAuthLogin"
+      :on-get-o-auth-region="handleGetOAuthRegion"
       @complete="completeOnboarding"
       @login-success="handleWizardLoginSuccess"
       @add-provider="handleWizardAddProvider"
@@ -2259,6 +2296,7 @@ function openPr(url: string): void {
       :on-start-o-auth-login="handleStartOAuthLogin"
       :on-poll-o-auth-login="handlePollOAuthLogin"
       :on-cancel-o-auth-login="handleCancelOAuthLogin"
+      :on-get-o-auth-region="handleGetOAuthRegion"
       @success="handleLoginSuccess"
       @close="showLogin = false"
     />

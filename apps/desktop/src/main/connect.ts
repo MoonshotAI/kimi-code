@@ -8,6 +8,7 @@ import { serverTokenPath } from '@moonshot-ai/kap-server';
 
 import { startDesktopServer, type DesktopServerHandle } from './server';
 import { startShellEnvProbe } from './shell-env';
+import { setServerRegionSource } from './region';
 import { rendererUrl, rendererDevBase } from './protocol';
 import { isOnboarded, isVibrancyEnabled } from './ui-state';
 import { resolveConnectTarget } from './connect-target';
@@ -172,6 +173,9 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
       ({ origin } = activeHandle);
     }
     if (!win.isDestroyed()) {
+      // Region-dependent surfaces (update feed, release notes, Help links)
+      // resolve against this server from now on.
+      setServerRegionSource(origin, token);
       const url = rendererUrl(origin, token, devBase, isOnboarded(), isVibrancyEnabled());
       if (target.external) {
         await win.loadURL(url);

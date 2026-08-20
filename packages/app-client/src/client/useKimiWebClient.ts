@@ -4172,6 +4172,7 @@ export function useKimiWebClient() {
     startOAuthLogin: modelProvider.startOAuthLogin,
     pollOAuthLogin: modelProvider.pollOAuthLogin,
     cancelOAuthLogin: modelProvider.cancelOAuthLogin,
+    getOAuthRegion: modelProvider.getOAuthRegion,
     getUsage: modelProvider.getUsage,
     logout: workspaceState.logout,
   };

@@ -66,6 +66,12 @@ export async function startDesktopServer(
   const homeDir = resolveKimiHome();
   const host = resolveDesktopHostIdentity(homeDir);
 
+  // The desktop is never distributed through the install script, so the
+  // server's region resolution must not read an install-channel marker left
+  // by a CLI install on the same machine — pin it off before kap-server
+  // (same process) can consult it.
+  process.env['KIMI_CODE_REGION_MARKER'] = 'off';
+
   const handle = await startServer({
     host: '127.0.0.1',
     port: 0,

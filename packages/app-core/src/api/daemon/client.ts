@@ -44,6 +44,7 @@ import type {
   ManagedUsageResult,
   ManagedUserInfoResult,
   OAuthLoginStartResult,
+  OAuthRegion,
   UsageRow,
   Page,
   PageRequest,
@@ -68,6 +69,11 @@ import type { AgentProjector } from './projector';
 // in full (text or base64) in the renderer, so match the image-attachment
 // limit of 10 MiB instead of letting a huge log / image hang or OOM the app.
 const HOST_READ_MAX_BYTES = 10_485_760;
+
+// Interaction-level bound for the region probe (getOAuthRegion) — a half-dead
+// daemon route degrades to null instead of holding the login cards or the
+// upgrade probe until the generic request timeout.
+const OAUTH_REGION_PROBE_TIMEOUT_MS = 5_000;
 
 // Envelope code for request-schema validation failures (kap-server
 // error-codes.ts); used to detect servers that predate a request field.
@@ -115,6 +121,7 @@ import type {
   WireOAuthCancelResult,
   WireOAuthLoginPollResult,
   WireOAuthLoginStartResult,
+  WireOAuthRegionResult,
   WirePage,
   WirePromptSubmitResult,
   WirePromptSteerResult,
@@ -1759,8 +1766,26 @@ export class DaemonKimiWebApi implements KimiWebApi {
     };
   }
 
-  async startOAuthLogin(): Promise<OAuthLoginStartResult> {
-    const data = await this.http.post<WireOAuthLoginStartResult>('/oauth/login', {});
+  async startOAuthLogin(region?: OAuthRegion): Promise<OAuthLoginStartResult> {
+    // `region` pins the OAuth host region for this flow; omitted = the server
+    // falls back to its own config/env resolution. Pre-region daemons accept
+    // the field silently (their zod schema strips unknown keys, and the
+    // generated fastify JSON schema sets no additionalProperties — verified
+    // against kap-server's defineRoute/validate middleware), but retry once
+    // without it anyway if a stricter server does reject it with 40001.
+    let data: WireOAuthLoginStartResult;
+    try {
+      data = await this.http.post<WireOAuthLoginStartResult>(
+        '/oauth/login',
+        region === undefined ? {} : { region },
+      );
+    } catch (error) {
+      if (region !== undefined && isDaemonApiError(error) && error.code === VALIDATION_FAILED_CODE) {
+        data = await this.http.post<WireOAuthLoginStartResult>('/oauth/login', {});
+      } else {
+        throw error;
+      }
+    }
     if (data.status === 'authenticated') {
       return {
         flowId: data.flow_id,
@@ -1838,6 +1863,30 @@ export class DaemonKimiWebApi implements KimiWebApi {
 
   async getUserInfo(): Promise<ManagedUserInfoResult> {
     return this.http.get<ManagedUserInfoResult>('/oauth/userinfo');
+  }
+
+  /** Server-resolved account region. Returns `null` (never throws) when the
+      endpoint is missing on an older daemon, the request fails, or the
+      payload is not a known region — callers degrade to their own default. */
+  async getOAuthRegion(): Promise<OAuthRegion | null> {
+    try {
+      // An interaction-level bound: a half-dead daemon route (or a stuck
+      // proxy) must not hold the login cards or the upgrade probe hostage
+      // until the generic request timeout — degrade to null like any other
+      // failure.
+      const data = await Promise.race([
+        this.http.get<WireOAuthRegionResult>('/oauth/region'),
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(
+            () => reject(new Error('oauth region probe timed out')),
+            OAUTH_REGION_PROBE_TIMEOUT_MS,
+          );
+        }),
+      ]);
+      return data.region === 'mainland-cn' || data.region === 'global' ? data.region : null;
+    } catch {
+      return null;
+    }
   }
 
   // -------------------------------------------------------------------------

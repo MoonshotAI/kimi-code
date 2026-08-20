@@ -22,6 +22,13 @@ function submit(): void {
   if (!value || submitting.value) return;
   submitting.value = true;
   setCredential(value);
+  // Keep the main process's region probe (update feed / Help links) on the
+  // same credential — it only saw whatever server.token had at connect time.
+  // No-op on hosts without the desktop bridge.
+  const bridge = (
+    window as { kimiDesktop?: { updateServerCredential?: (token: string) => Promise<void> } }
+  ).kimiDesktop;
+  void bridge?.updateServerCredential?.(value);
   // Reload so the HTTP client and WebSocket reconnect with the new credential.
   window.location.reload();
 }

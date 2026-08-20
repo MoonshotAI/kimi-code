@@ -4,6 +4,7 @@ import type { MenuItemConstructorOptions } from 'electron';
 import { getMainWindow, createWindow, sendToRenderer, showMainWindow } from './window';
 import { connect } from './connect';
 import { getTraceRecorder } from './trace';
+import { refreshServerRegion, serverRegionProfile, whenServerRegionSource } from './region';
 import { getUpdateAutoDownload, getUpdateStatus, requestUpdateCheck, requestUpdateDownload, requestUpdateInstall, UPDATE_CHECK_TIMED_OUT } from './updater';
 import { trackDesktopEvent } from './track';
 import { IPC } from './ipc-channels';
@@ -139,11 +140,23 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
 };
 
 // Help-menu links (opened in the system browser). The console URL carries the
-// desktop attribution param.
-const HELP_LINKS = {
-  docs: 'https://www.kimi.com/code/docs/',
-  console: 'https://www.kimi.com/code/console?from=kimi_code_desktop',
-} as const;
+// desktop attribution param. The site root follows the server-resolved
+// region (region.ts), read at click time so a region change needs no menu
+// rebuild; until a refresh lands it stays on the historical .com host.
+function helpLinks(): { docs: string; console: string } {
+  const { siteBase } = serverRegionProfile();
+  return {
+    docs: `${siteBase}/code/docs/`,
+    console: `${siteBase}/code/console?from=kimi_code_desktop`,
+  };
+}
+
+// Interaction budget for the click-time region refresh: the browser must
+// open promptly even when the server is unreachable. The source wait and the
+// probe each get this bound (the defaults — 15s + 3s — are tuned for the
+// background updater, and would hold a menu click for up to 18s); on expiry
+// the cached region opens.
+const HELP_MENU_REGION_BUDGET_MS = 2_000;
 
 /** Renderer-pushed locale; null = follow the OS language until a push lands. */
 let menuLocale: TrayLocale | null = null;
@@ -620,7 +633,16 @@ export function menuTemplate(
         label: strings.documentation,
         click: () => {
           trackDesktopEvent('menu_action', { action: 'help-docs' });
-          void shell.openExternal(HELP_LINKS.docs);
+          // Refresh first: the region may have changed since the last update
+          // check (login/logout), and the probe is a cheap loopback GET that
+          // keeps the previous cache on failure. Wait for the region source
+          // the way the updater does — on a slow connect the menu exists (and
+          // is clickable) before connect.ts records it, and refreshing
+          // without a source would answer the default region — but both waits
+          // take the interaction budget, not the updater's background bounds.
+          void whenServerRegionSource(HELP_MENU_REGION_BUDGET_MS)
+            .then(() => refreshServerRegion(HELP_MENU_REGION_BUDGET_MS))
+            .then(() => shell.openExternal(helpLinks().docs));
         },
       },
       {
@@ -628,7 +650,9 @@ export function menuTemplate(
         label: strings.console,
         click: () => {
           trackDesktopEvent('menu_action', { action: 'help-console' });
-          void shell.openExternal(HELP_LINKS.console);
+          void whenServerRegionSource(HELP_MENU_REGION_BUDGET_MS)
+            .then(() => refreshServerRegion(HELP_MENU_REGION_BUDGET_MS))
+            .then(() => shell.openExternal(helpLinks().console));
         },
       },
       { type: 'separator' },

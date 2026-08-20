@@ -180,8 +180,8 @@ function formatSeconds(s: number): string {
 
           <!-- Status -->
           <div class="status">
-            <Spinner size="sm" :label="t('login.waitingAuth')" />
-            <span class="status-text">{{ t('login.waitingAutoClose') }}</span>
+            <Spinner size="sm" :label="t('login.waitingApproval')" />
+            <span class="status-text">{{ t('login.rcWaitingHint') }}</span>
             <span class="countdown">{{ formatSeconds(secondsLeft) }}</span>
           </div>
         </div>

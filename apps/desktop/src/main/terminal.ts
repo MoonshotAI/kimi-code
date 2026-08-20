@@ -90,6 +90,12 @@ export function defaultShellEnv(
 ): Record<string, string> {
   const clean: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
+    // server.ts pins KIMI_CODE_REGION_MARKER=off on the Electron process so
+    // the embedded kap-server ignores a CLI install-channel marker — but the
+    // server re-reads it on every call, so it must stay on our process; here
+    // we only keep it from leaking into every interactive shell (a user-run
+    // CLI inside the terminal must do its own region resolution).
+    if (key === 'KIMI_CODE_REGION_MARKER') continue;
     if (typeof value === 'string') clean[key] = value;
   }
   if (platform !== 'win32' && clean['LANG'] === undefined && clean['LC_ALL'] === undefined) {

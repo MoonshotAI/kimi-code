@@ -118,6 +118,9 @@ module.exports = {
   // subdirs — see kimi-cli-cdn-sync/publish-desktop.sh). Setting `publish`
   // also makes electron-builder emit latest-mac.yml / latest.yml /
   // latest-linux.yml + *.blockmap into dist-app on every build.
+  // This bakes in the cn root as the DEFAULT: at runtime main/updater.ts
+  // re-points the feed to the server-resolved region's CDN root via
+  // autoUpdater.setFeedURL before every check.
   publish: [{ provider: 'generic', url: 'https://code.kimi.com/kimi-code/desktop/' }],
 
   // The desktop renderer is built independently via `vite.renderer.config.ts`

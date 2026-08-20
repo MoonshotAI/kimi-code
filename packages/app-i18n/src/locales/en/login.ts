@@ -1,8 +1,23 @@
 export default {
   title: 'Sign in to Kimi Code',
   close: 'Close (Esc)',
+  // Region choice cards (China / International entries before the device flow)
+  regionCnTitle: 'Kimi Code (kimi.com/code)',
+  regionCnHint: 'Sign in with your kimi.com account',
+  regionOverseasTitle: 'Kimi Code (kimi.ai/code)',
+  regionOverseasHint: 'Sign in with your kimi.ai account',
+  // Single-card fallback (shown when the daemon predates region support;
+  // starts the flow without a region)
+  oauthTitle: 'Sign in with Kimi',
+  oauthHint: 'Finish authorizing in your browser to sign in',
   starting: 'Starting sign-in flow…',
-  lead: 'Click the button below to sign in from a new browser tab.',
+  // Authorization wait page (the verification page auto-opens in the browser)
+  openedTitle: 'Login page opened in your browser',
+  openedHint: 'Finish authorizing in your browser — this window continues automatically.',
+  blockedTitle: 'Could not open the login page',
+  blockedHint: 'The browser blocked the automatic opening — use the button below to continue authorizing.',
+  notOpened: "Didn't open automatically?",
+  reopenLink: 'Reopen link',
   authorizeInBrowser: 'Sign in via browser',
   orDivider: 'or',
   fallbackPrefix: 'On another device? Open ',
@@ -10,8 +25,7 @@ export default {
   copy: 'Copy',
   copied: 'Copied',
   copyLink: 'Copy link',
-  waitingAuth: 'Waiting for sign-in',
-  waitingAutoClose: 'Waiting for sign-in, closes automatically…',
+  waitingApproval: 'Waiting for authorization…',
   success: 'Signed in',
   successHint: 'Loading, will close automatically…',
   expiredTitle: 'Device code expired',
@@ -34,6 +48,7 @@ export default {
   rcSubtitle: 'Remote Control session',
   rcChecking: 'Checking sign-in status…',
   rcLead: 'This Remote Control session requires authorization. Sign in with your Kimi account to continue.',
+  rcWaitingHint: 'Waiting for sign-in — this page closes automatically…',
   rcAuthorize: 'Open authorization page',
   rcUserCodeLabel: 'Authorization code',
   rcSuccessHint: 'Redirecting…',

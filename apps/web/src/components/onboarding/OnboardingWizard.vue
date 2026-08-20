@@ -13,7 +13,7 @@ import { useI18n } from 'vue-i18n';
 import { useAppearance, type ColorScheme } from '@moonshot-ai/app-core';
 import { Button } from '@moonshot-ai/app-ui';
 import { availableLocales, setLocale, type LocaleCode } from '../../i18n';
-import { type OAuthLoginStartResult } from '@moonshot-ai/app-client/composables';
+import { type OAuthLoginStartResult, type OAuthRegion } from '@moonshot-ai/app-client/composables';
 import BrandLogo from './BrandLogo.vue';
 import OnboardingLoginStep from './OnboardingLoginStep.vue';
 
@@ -21,13 +21,17 @@ const { t, locale } = useI18n();
 
 const props = defineProps<{
   authReady: boolean;
-  onStartOAuthLogin: () => Promise<OAuthLoginStartResult | null>;
+  onStartOAuthLogin: (region?: OAuthRegion) => Promise<OAuthLoginStartResult | null>;
   onPollOAuthLogin: () => Promise<{
     flowId: string;
     status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
     resolvedAt?: string;
   } | null>;
   onCancelOAuthLogin: () => Promise<void>;
+  /** Region probe: both hosts pass it; the result doubles as the daemon's
+      region-support gate (null = a pre-region daemon → one neutral card).
+      Cards stay flat on both ends. */
+  onGetOAuthRegion?: () => Promise<OAuthRegion | null>;
 }>();
 
 // `complete` — onboarding finished OR the login step was skipped (parent marks
@@ -151,6 +155,7 @@ function onLoginSuccess(): void {
             :on-start-o-auth-login="props.onStartOAuthLogin"
             :on-poll-o-auth-login="props.onPollOAuthLogin"
             :on-cancel-o-auth-login="props.onCancelOAuthLogin"
+            :on-get-o-auth-region="props.onGetOAuthRegion"
             @success="onLoginSuccess"
             @add-provider="onAddProvider"
           />

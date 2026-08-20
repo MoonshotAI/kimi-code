@@ -24,6 +24,7 @@ import { setGlobalShortcut, setGlobalShortcutSuspended, setGlobalShortcutTermina
 import { isVibrancyEnabled, markOnboarded, setVibrancyEnabled } from './ui-state';
 import { isDockIconChoice, setDockIconChoice } from './dock-icon';
 import { log, redactUrlForLog } from './log';
+import { updateServerRegionToken } from './region';
 import { createRendererLogWriter } from './renderer-log';
 import {
   rendererTrackEventSchema,
@@ -81,6 +82,13 @@ export function registerIpcHandlers(): void {
       throw error;
     }),
   );
+  // Renderer-collected server credentials (ServerAuthDialog on a credential-
+  // protected external server): keep the region probe's bearer in sync.
+  ipcMain.handle(IPC.serverCredential, (_event, token: unknown) => {
+    if (typeof token === 'string' && token.length > 0) {
+      updateServerRegionToken(token);
+    }
+  });
   // File dialogs: the renderer asks (whitelisted `showOpenDialog`/`showSaveDialog`),
   // the main process opens the native dialog and returns the user's selection.
   ipcMain.handle(IPC.dialogOpen, async (_event, opts: OpenDialogOptions = {}) => {

@@ -691,6 +691,12 @@ export type WireUsageResult = WireUsageOk | WireUsageError;
 // camelCase, identical to ManagedUserInfoResult in ../types — the client
 // returns it unmapped.
 
+// `GET /oauth/region` — the daemon's resolved account region. Absent on older
+// daemons (bare 404), so the client treats any failure as `null`.
+export interface WireOAuthRegionResult {
+  region: 'mainland-cn' | 'global';
+}
+
 // ---------------------------------------------------------------------------
 // File upload wire DTOs
 // ---------------------------------------------------------------------------

@@ -1,15 +1,23 @@
 <!-- apps/kimi-web/src/components/dialogs/LoginDialog.vue -->
-<!-- Managed Kimi OAuth device-code login dialog. Built on the design-system -->
-<!-- Dialog primitive; the device code + countdown stay monospace. -->
+<!-- Managed Kimi OAuth device-code login dialog. Opens on a login-entry
+     choice (one ActionCard per OAuth endpoint), then runs the device-code
+     flow for the picked entry — the verification page auto-opens in the
+     browser while the dialog waits (useOAuthLoginFlow's autoOpen driver).
+     Built on the design-system Dialog primitive; the link + countdown stay
+     monospace. -->
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { copyTextToClipboard, resolveOAuthLoginCards } from '@moonshot-ai/app-core/lib';
+import type { OAuthRegionSupport } from '@moonshot-ai/app-core/lib';
 import {
   useOAuthLoginFlow,
   type OAuthLoginStartResult,
+  type OAuthRegion,
 } from '@moonshot-ai/app-client/composables';
-import { AuthStateIcon, Button, Dialog, Icon, Spinner } from '@moonshot-ai/app-ui';
+import { createWebAuthWake, createWebOAuthAutoOpen, isHttpUrl } from '@moonshot-ai/app-client/lib';
+import { ActionCard, AuthStateIcon, Button, Dialog, Icon, Spinner } from '@moonshot-ai/app-ui';
+import BrandLogo from '../onboarding/BrandLogo.vue';
 
 const { t } = useI18n();
 
@@ -33,20 +41,23 @@ const emit = defineEmits<{
 // -------------------------------------------------------------------------
 
 const props = defineProps<{
-  onStartOAuthLogin: () => Promise<OAuthLoginStartResult | null>;
+  onStartOAuthLogin: (region?: OAuthRegion) => Promise<OAuthLoginStartResult | null>;
   onPollOAuthLogin: () => Promise<{
     flowId: string;
     status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
     resolvedAt?: string;
   } | null>;
   onCancelOAuthLogin: () => Promise<void>;
+  /** Region probe in one: the result doubles as the daemon's region-support
+      gate (null = a pre-region daemon → one neutral card). */
+  onGetOAuthRegion?: () => Promise<OAuthRegion | null>;
 }>();
 
 // -------------------------------------------------------------------------
 // Flow state machine (shared with the onboarding wizard's login step)
 // -------------------------------------------------------------------------
 
-const { step, pollError, flow, secondsLeft, startFlow, cancelFlow } = useOAuthLoginFlow({
+const { step, pollError, flow, secondsLeft, autoOpenBlocked, startFlow, cancelFlow } = useOAuthLoginFlow({
   onStartOAuthLogin: props.onStartOAuthLogin,
   onPollOAuthLogin: props.onPollOAuthLogin,
   onCancelOAuthLogin: props.onCancelOAuthLogin,
@@ -54,22 +65,64 @@ const { step, pollError, flow, secondsLeft, startFlow, cancelFlow } = useOAuthLo
     emit('success');
     emit('close');
   },
+  autoOpen: createWebOAuthAutoOpen(),
+  authWake: createWebAuthWake(),
 });
 
 const copied = ref(false);
 
-onMounted(async () => {
-  await startFlow();
+// 'choice' → picking a region card; 'flow' → device-code authorization UI.
+const phase = ref<'choice' | 'flow'>('choice');
+
+// One card per OAuth endpoint, in the declared order.
+const REGION_CARDS: ReadonlyArray<{ region: OAuthRegion; titleKey: string; hintKey: string }> = [
+  { region: 'mainland-cn', titleKey: 'login.regionCnTitle', hintKey: 'login.regionCnHint' },
+  { region: 'global', titleKey: 'login.regionOverseasTitle', hintKey: 'login.regionOverseasHint' },
+];
+
+// Older daemon without region support (the probe answers null): one neutral
+// card starts the flow with no region — the pre-region behavior.
+const FALLBACK_CARD = { titleKey: 'login.oauthTitle', hintKey: 'login.oauthHint' } as const;
+
+// The probe is a loopback round-trip; until it lands, show the region cards
+// (the common case is a region-aware daemon), so nothing visibly swaps.
+const regionSupport = ref<OAuthRegionSupport>('pending');
+const loginCards = computed(() =>
+  resolveOAuthLoginCards(regionSupport.value, REGION_CARDS, FALLBACK_CARD),
+);
+
+// The verification URL shown / opened / copied from this dialog.
+const verificationUriComplete = computed(() => flow.value?.verificationUriComplete ?? '');
+
+onMounted(() => {
+  void props.onGetOAuthRegion?.().then((region) => {
+    regionSupport.value = region === null ? 'unsupported' : 'supported';
+  });
 });
+
+function startLogin(region?: OAuthRegion): void {
+  phase.value = 'flow';
+  void startFlow(region);
+}
 
 // Copies the complete verification URI (device code embedded) — the manual
 // code-entry fallback is parked, but the link itself stays available.
 async function copyLink(): Promise<void> {
   if (!flow.value) return;
-  const ok = await copyTextToClipboard(flow.value.verificationUriComplete);
+  const ok = await copyTextToClipboard(verificationUriComplete.value);
   if (!ok) return;
   copied.value = true;
   setTimeout(() => { copied.value = false; }, 2000);
+}
+
+// Manual (re)open from the waiting page — always inside a click gesture, so
+// the browser allows it (desktop routes it to the system browser via the
+// external-link guard).
+function reopenVerification(): void {
+  // The URL comes from the daemon over the wire — never hand a non-http(s)
+  // payload to the browser (the auto-open driver applies the same rule).
+  if (!isHttpUrl(verificationUriComplete.value)) return;
+  window.open(verificationUriComplete.value, '_blank', 'noopener,noreferrer');
 }
 
 // TODO: parked with the manual device-code fallback (copy link + type the
@@ -98,41 +151,66 @@ function formatSeconds(s: number): string {
 <template>
   <Dialog v-model:open="open" :title="t('login.title')" :close-on-overlay="false" @close="close">
 
+    <!-- Login-entry choice: one ActionCard per OAuth endpoint — or a single
+         neutral card when the daemon predates endpoint support. Cards are
+         disabled while the support probe is in flight. -->
+    <div v-if="phase === 'choice'" class="nb-cards">
+      <ActionCard
+        v-for="card in loginCards"
+        :key="card.region ?? 'oauth'"
+        :disabled="card.disabled"
+        @select="startLogin(card.region)"
+      >
+        <template #leading><BrandLogo :size="40" /></template>
+        {{ t(card.titleKey) }}
+        <template #hint>{{ t(card.hintKey) }}</template>
+      </ActionCard>
+    </div>
+
     <!-- Starting (brief spinner) -->
-    <div v-if="step === 'starting'" class="center-body">
+    <div v-else-if="step === 'starting'" class="center-body">
       <Spinner size="md" />
       <span class="center-text">{{ t('login.starting') }}</span>
     </div>
 
-    <!-- Device-code step -->
+    <!-- Authorization wait: the verification page auto-opened in the browser
+         (one placeholder tab per flow); this dialog just waits for the daemon
+         to confirm. -->
     <div v-else-if="step === 'device-code' && flow" class="nb">
-      <div class="nb-lead">{{ t('login.lead') }}</div>
+      <div class="nb-hero">
+        <span class="nb-hero-icon"><BrandLogo :size="48" /></span>
+        <div class="nb-hero-title">{{ autoOpenBlocked ? t('login.blockedTitle') : t('login.openedTitle') }}</div>
+        <div class="nb-hero-hint">{{ autoOpenBlocked ? t('login.blockedHint') : t('login.openedHint') }}</div>
+      </div>
 
-      <!-- Primary path: open the complete URI (device code already embedded) -->
-      <a
-        class="nb-primary"
-        :href="flow.verificationUriComplete"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
+      <!-- The automatic open failed (popup blocked / tab closed): surface a
+           prominent manual button. -->
+      <Button v-if="autoOpenBlocked" variant="primary" @click="reopenVerification">
         {{ t('login.authorizeInBrowser') }}
         <Icon name="external-link" size="sm" />
-      </a>
+      </Button>
 
-      <!-- Copyable complete link (device code embedded) for "open it elsewhere"
-           — the manual code-entry block below stays parked. -->
-      <div class="nb-code-row">
-        <span class="nb-link" :title="flow.verificationUriComplete">{{ flow.verificationUriComplete }}</span>
-        <Button class="nb-copy" :class="{ 'is-copied': copied }" variant="secondary" size="sm" @click="copyLink">
-          <template v-if="copied">
-            <Icon name="check" size="sm" />
-            {{ t('login.copied') }}
-          </template>
-          <template v-else>
-            <Icon name="copy" size="sm" />
-            {{ t('login.copyLink') }}
-          </template>
-        </Button>
+      <!-- Quiet manual fallback: reopen / copy, plus the truncated link. -->
+      <div class="nb-manual">
+        <span class="nb-manual-label">{{ t('login.notOpened') }}</span>
+        <div class="nb-manual-actions">
+          <Button variant="secondary" size="sm" @click="reopenVerification">
+            {{ t('login.reopenLink') }}
+          </Button>
+          <Button class="nb-copy" :class="{ 'is-copied': copied }" variant="secondary" size="sm" @click="copyLink">
+            <template v-if="copied">
+              <Icon name="check" size="sm" />
+              {{ t('login.copied') }}
+            </template>
+            <template v-else>
+              <Icon name="copy" size="sm" />
+              {{ t('login.copyLink') }}
+            </template>
+          </Button>
+        </div>
+        <div class="nb-code-row">
+          <span class="nb-link" :title="verificationUriComplete">{{ verificationUriComplete }}</span>
+        </div>
       </div>
 
       <!-- TODO: the manual fallback (copy the link + type the device code) has
@@ -168,8 +246,8 @@ function formatSeconds(s: number): string {
 
       <!-- Status -->
       <div class="nb-status">
-        <Spinner size="sm" :label="t('login.waitingAuth')" />
-        <span class="nb-status-text">{{ t('login.waitingAutoClose') }}</span>
+        <Spinner size="sm" :label="t('login.waitingApproval')" />
+        <span class="nb-status-text">{{ t('login.waitingApproval') }}</span>
         <span class="nb-countdown">{{ formatSeconds(secondsLeft) }}</span>
       </div>
     </div>
@@ -189,7 +267,7 @@ function formatSeconds(s: number): string {
         <span class="center-hint">{{ t('login.expiredHint') }}</span>
       </div>
       <div class="actions">
-        <Button variant="primary" @click="startFlow">{{ t('login.retry') }}</Button>
+        <Button variant="primary" @click="startFlow()">{{ t('login.retry') }}</Button>
         <Button variant="secondary" @click="close">{{ t('login.closeBtn') }}</Button>
       </div>
     </template>
@@ -206,7 +284,7 @@ function formatSeconds(s: number): string {
         </span>
       </div>
       <div class="actions">
-        <Button variant="primary" @click="startFlow">{{ t('login.retry') }}</Button>
+        <Button variant="primary" @click="startFlow()">{{ t('login.retry') }}</Button>
         <Button variant="secondary" @click="close">{{ t('login.closeBtn') }}</Button>
       </div>
     </template>
@@ -215,6 +293,15 @@ function formatSeconds(s: number): string {
 </template>
 
 <style scoped>
+/* Login-entry choice cards (the ActionCard primitive carries the chrome;
+   same visual language as the onboarding login step) */
+.nb-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-2) 0 var(--space-4);
+}
+
 /* Centered single-state bodies */
 .center-body {
   display: flex;
@@ -237,43 +324,56 @@ function formatSeconds(s: number): string {
   color: var(--color-text-muted);
 }
 
-/* Device-code body */
+/* Device-code body: the authorization wait page */
 .nb {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
   padding: var(--space-2) 0 var(--space-4);
 }
-.nb-lead {
-  font-size: var(--text-base);
+
+/* Hero: soft accent badge over the centered title + hint */
+.nb-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: center;
+}
+.nb-hero-icon {
+  display: inline-flex;
+  margin-bottom: var(--space-1);
+}
+.nb-hero-title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
   color: var(--color-text);
+}
+.nb-hero-hint {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
   line-height: var(--leading-normal);
 }
 
-/* Primary path: open the complete URI (device code embedded).
-   Kept as an anchor (it opens a URL in a new tab) and styled to match the
-   primary Button — converting it to <Button> would drop the href/target. */
-.nb-primary {
-  display: inline-flex;
+/* Quiet manual fallback: muted label, two secondary actions, the link row */
+.nb-manual {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
   gap: var(--space-2);
-  width: 100%;
-  min-height: 40px;
-  padding: 0 var(--space-4);
-  background: var(--color-accent);
-  color: var(--color-text-on-accent);
-  border: 0.5px solid var(--color-accent);
-  border-radius: var(--radius-md);
-  font-family: var(--font-ui);
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-  cursor: pointer;
-  text-decoration: none;
-  transition: background var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out);
 }
-.nb-primary:hover { background: var(--color-accent-hover); border-color: var(--color-accent-hover); }
+.nb-manual-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+}
+.nb-manual-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+.nb-manual .nb-code-row {
+  align-self: stretch;
+  margin-top: var(--space-1);
+}
 
 /* "or" divider */
 .nb-or {
@@ -306,7 +406,7 @@ function formatSeconds(s: number): string {
 .nb-fb-link {
   color: var(--color-accent);
   text-decoration: none;
-  border-bottom: 0.5px solid var(--color-accent-bd);
+  border-bottom: var(--p-hairline) solid var(--color-accent-bd);
 }
 .nb-fb-link:hover { border-bottom-color: var(--color-accent); }
 .nb-code-row {
@@ -314,7 +414,7 @@ function formatSeconds(s: number): string {
   align-items: center;
   gap: var(--space-3);
   background: var(--color-surface-sunken);
-  border: 0.5px solid var(--color-line);
+  border: var(--p-hairline) solid var(--color-line);
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);
 }
@@ -347,7 +447,7 @@ function formatSeconds(s: number): string {
   align-items: center;
   gap: var(--space-2);
   padding-top: var(--space-3);
-  border-top: 0.5px solid var(--color-line);
+  border-top: var(--p-hairline) solid var(--color-line);
 }
 .nb-status-text { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--color-text-muted); flex: 1; }
 .nb-countdown {
@@ -365,6 +465,7 @@ function formatSeconds(s: number): string {
   padding-top: var(--space-4);
 }
 
+/* var() is not allowed in @media — 640px mirrors the --p-bp-sm token. */
 @media (max-width: 640px) {
   .center-body,
   .nb {
@@ -373,8 +474,12 @@ function formatSeconds(s: number): string {
   }
   .nb-code-row,
   .nb-status,
+  .nb-manual-actions,
   .actions {
     flex-wrap: wrap;
+  }
+  .nb-manual-actions {
+    justify-content: center;
   }
   .nb-code {
     min-width: 0;
@@ -383,9 +488,6 @@ function formatSeconds(s: number): string {
   }
   .nb-copy {
     min-height: 34px;
-  }
-  .nb-primary {
-    min-height: 44px;
   }
   .nb-status-text {
     min-width: 0;

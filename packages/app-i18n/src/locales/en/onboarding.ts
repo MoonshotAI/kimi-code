@@ -11,9 +11,14 @@ export default {
   login: {
     title: 'Configure Model',
     subtitle: 'Choose the model service that powers Kimi Code. You can change it later in Settings',
+    // Single-card fallback (shown when the daemon predates region support;
+    // starts the flow without a region)
     kimiTitle: 'Sign in with Kimi',
     kimiHint: 'Ready out of the box with Kimi membership benefits',
-    recommended: 'Recommended',
+    kimiCnTitle: 'Kimi Code (kimi.com/code)',
+    kimiCnHint: 'Sign in with your kimi.com account',
+    kimiOverseasTitle: 'Kimi Code (kimi.ai/code)',
+    kimiOverseasHint: 'Sign in with your kimi.ai account',
     customProviderTitle: 'Add a custom provider',
     customProviderHint: 'Bring your own API key for OpenAI-compatible and other services',
     loggedInTitle: 'Logged in with Kimi',

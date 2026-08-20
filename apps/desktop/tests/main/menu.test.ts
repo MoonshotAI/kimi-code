@@ -34,6 +34,9 @@ vi.mock('electron', () => ({
   app: { getLocale: () => 'en-US', isPackaged: true },
   dialog: { showMessageBox: vi.fn(async () => ({ response: 0, checkboxChecked: false })) },
   Menu: { buildFromTemplate: vi.fn((template: unknown) => template), setApplicationMenu: vi.fn() },
+  // menu.ts → region.ts imports `net` for the region refresh (never fired in
+  // these tests; the unrefreshed cache keeps the .com links).
+  net: { fetch: vi.fn() },
   shell: { openExternal: mocks.openExternal },
 }));
 vi.mock('../../src/main/track', () => ({ trackDesktopEvent: mocks.trackDesktopEvent }));
@@ -527,13 +530,20 @@ describe('menu telemetry', () => {
     await new Promise((resolve) => setImmediate(resolve));
   });
 
-  it('tracks the Help menu Documentation / Console links', () => {
+  it('tracks the Help menu Documentation / Console links', async () => {
+    // The handlers now wait for the region source before refreshing — record
+    // one up front (its refresh fails harmlessly, keeping the cached default).
+    const { setServerRegionSource } = await import('../../src/main/region');
+    setServerRegionSource('http://127.0.0.1:12345');
     const template = menuTemplate(true, 'en');
     const helpItems = submenuItems(template[template.length - 1] as MenuItemConstructorOptions);
     clickItem(helpItems.find((item) => item.id === 'help-docs'));
     expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('menu_action', { action: 'help-docs' });
     clickItem(helpItems.find((item) => item.id === 'help-console'));
     expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('menu_action', { action: 'help-console' });
+    // The links open after the region refresh settles (its fetch mock resolves
+    // to undefined, which the probe treats as a failed refresh keeping the cache).
+    await new Promise((resolve) => setImmediate(resolve));
     expect(mocks.openExternal).toHaveBeenCalledTimes(2);
   });
 

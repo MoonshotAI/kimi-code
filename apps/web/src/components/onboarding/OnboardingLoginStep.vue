@@ -1,30 +1,37 @@
 <!-- apps/kimi-web/src/components/onboarding/OnboardingLoginStep.vue -->
-<!-- Onboarding wizard step 4 — model-service choice. The "Log in with Kimi"
-     card starts the embedded device-code flow (useOAuthLoginFlow, shared with
-     the standalone LoginDialog); an already-authenticated user sees the done
-     state instead. Copy for the flow itself reuses the `login.*` keys. -->
+<!-- Onboarding wizard step 4 — model-service choice. The two OAuth login
+     entries start the embedded device-code flow against the matching OAuth
+     endpoint (useOAuthLoginFlow, shared with the standalone LoginDialog); an
+     already-authenticated user sees the done state instead.
+     Copy for the flow itself reuses the `login.*` keys. -->
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { copyTextToClipboard, resolveOAuthLoginCards } from '@moonshot-ai/app-core/lib';
+import type { OAuthRegionSupport } from '@moonshot-ai/app-core/lib';
 import {
   useOAuthLoginFlow,
   type OAuthLoginStartResult,
+  type OAuthRegion,
 } from '@moonshot-ai/app-client/composables';
-import { AuthStateIcon, Button, Icon, Spinner } from '@moonshot-ai/app-ui';
+import { createWebAuthWake, createWebOAuthAutoOpen, isHttpUrl } from '@moonshot-ai/app-client/lib';
+import { ActionCard, AuthStateIcon, Button, Icon, Spinner } from '@moonshot-ai/app-ui';
 import BrandLogo from './BrandLogo.vue';
 
 const { t } = useI18n();
 
 const props = defineProps<{
   authReady: boolean;
-  onStartOAuthLogin: () => Promise<OAuthLoginStartResult | null>;
+  onStartOAuthLogin: (region?: OAuthRegion) => Promise<OAuthLoginStartResult | null>;
   onPollOAuthLogin: () => Promise<{
     flowId: string;
     status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
     resolvedAt?: string;
   } | null>;
   onCancelOAuthLogin: () => Promise<void>;
+  /** Region probe in one: the result doubles as the daemon's region-support
+      gate (null = a pre-region daemon → one neutral card). */
+  onGetOAuthRegion?: () => Promise<OAuthRegion | null>;
 }>();
 
 const emit = defineEmits<{ success: []; addProvider: [] }>();
@@ -32,18 +39,46 @@ const emit = defineEmits<{ success: []; addProvider: [] }>();
 // 'choice' → picking a service card; 'flow' → device-code authorization UI.
 const phase = ref<'choice' | 'flow'>('choice');
 
-const { step, pollError, flow, secondsLeft, startFlow, cancelFlow } = useOAuthLoginFlow({
+const { step, pollError, flow, secondsLeft, autoOpenBlocked, startFlow, cancelFlow } = useOAuthLoginFlow({
   onStartOAuthLogin: props.onStartOAuthLogin,
   onPollOAuthLogin: props.onPollOAuthLogin,
   onCancelOAuthLogin: props.onCancelOAuthLogin,
   onSuccess: () => emit('success'),
+  autoOpen: createWebOAuthAutoOpen(),
+  authWake: createWebAuthWake(),
 });
 
 const copied = ref(false);
 
-function startLogin(): void {
+// One card per OAuth endpoint, in the declared order.
+const REGION_CARDS: ReadonlyArray<{ region: OAuthRegion; titleKey: string; hintKey: string }> = [
+  { region: 'mainland-cn', titleKey: 'onboarding.login.kimiCnTitle', hintKey: 'onboarding.login.kimiCnHint' },
+  { region: 'global', titleKey: 'onboarding.login.kimiOverseasTitle', hintKey: 'onboarding.login.kimiOverseasHint' },
+];
+
+// Older daemon without region support (the probe answers null): one neutral
+// card starts the flow with no region — the pre-region behavior.
+const FALLBACK_CARD = { titleKey: 'onboarding.login.kimiTitle', hintKey: 'onboarding.login.kimiHint' } as const;
+
+// The probe is a loopback round-trip; until it lands, show the region cards
+// (the common case is a region-aware daemon), so nothing visibly swaps.
+const regionSupport = ref<OAuthRegionSupport>('pending');
+const loginCards = computed(() =>
+  resolveOAuthLoginCards(regionSupport.value, REGION_CARDS, FALLBACK_CARD),
+);
+
+onMounted(() => {
+  void props.onGetOAuthRegion?.().then((region) => {
+    regionSupport.value = region === null ? 'unsupported' : 'supported';
+  });
+});
+
+// The verification URL shown / opened / copied from this step.
+const verificationUriComplete = computed(() => flow.value?.verificationUriComplete ?? '');
+
+function startLogin(region?: OAuthRegion): void {
   phase.value = 'flow';
-  void startFlow();
+  void startFlow(region);
 }
 
 function backToChoice(): void {
@@ -55,10 +90,20 @@ function backToChoice(): void {
 // code-entry fallback is parked, but the link itself stays available.
 async function copyLink(): Promise<void> {
   if (!flow.value) return;
-  const ok = await copyTextToClipboard(flow.value.verificationUriComplete);
+  const ok = await copyTextToClipboard(verificationUriComplete.value);
   if (!ok) return;
   copied.value = true;
   setTimeout(() => { copied.value = false; }, 2000);
+}
+
+// Manual (re)open from the waiting page — always inside a click gesture, so
+// the browser allows it (desktop routes it to the system browser via the
+// external-link guard).
+function reopenVerification(): void {
+  // The URL comes from the daemon over the wire — never hand a non-http(s)
+  // payload to the browser (the auto-open driver applies the same rule).
+  if (!isHttpUrl(verificationUriComplete.value)) return;
+  window.open(verificationUriComplete.value, '_blank', 'noopener,noreferrer');
 }
 
 // TODO: parked with the manual device-code fallback (copy link + type the
@@ -91,27 +136,26 @@ function formatSeconds(s: number): string {
 
   <!-- Service choice -->
   <div v-else-if="phase === 'choice'" class="ls-cards">
-    <button class="ls-card" type="button" @click="startLogin">
-      <BrandLogo :size="40" class="ls-card-logo" />
-      <div class="ls-card-text">
-        <div class="ls-card-title">
-          {{ t('onboarding.login.kimiTitle') }}
-          <span class="ls-reco">{{ t('onboarding.login.recommended') }}</span>
-        </div>
-        <div class="ls-card-hint">{{ t('onboarding.login.kimiHint') }}</div>
-      </div>
-      <Icon name="chevron-right" size="lg" class="ls-card-chevron" />
-    </button>
+    <!-- One ActionCard per OAuth endpoint — or a single neutral card when the
+         daemon predates endpoint support. Cards are disabled while the
+         support probe is in flight. -->
+    <ActionCard
+      v-for="card in loginCards"
+      :key="card.region ?? 'oauth'"
+      :disabled="card.disabled"
+      @select="startLogin(card.region)"
+    >
+      <template #leading><BrandLogo :size="40" /></template>
+      {{ t(card.titleKey) }}
+      <template #hint>{{ t(card.hintKey) }}</template>
+    </ActionCard>
     <!-- Third-party entry: lands on Settings → Providers (the parent completes
          onboarding first, same as skipping the login step). -->
-    <button class="ls-card" type="button" @click="emit('addProvider')">
-      <span class="ls-card-logo ls-card-icon"><Icon name="bolt" size="lg" /></span>
-      <div class="ls-card-text">
-        <div class="ls-card-title">{{ t('onboarding.login.customProviderTitle') }}</div>
-        <div class="ls-card-hint">{{ t('onboarding.login.customProviderHint') }}</div>
-      </div>
-      <Icon name="chevron-right" size="lg" class="ls-card-chevron" />
-    </button>
+    <ActionCard @select="emit('addProvider')">
+      <template #leading><span class="ls-card-icon"><Icon name="bolt" size="lg" /></span></template>
+      {{ t('onboarding.login.customProviderTitle') }}
+      <template #hint>{{ t('onboarding.login.customProviderHint') }}</template>
+    </ActionCard>
   </div>
 
   <!-- Device-code flow -->
@@ -122,35 +166,44 @@ function formatSeconds(s: number): string {
       <span class="ls-center-text">{{ t('login.starting') }}</span>
     </div>
 
-    <!-- Device-code step -->
+    <!-- Authorization wait: the verification page auto-opened in the browser
+         (one placeholder tab per flow); the wizard just waits for the daemon
+         to confirm. -->
     <div v-else-if="step === 'device-code' && flow" class="ls-device">
-      <div class="ls-lead">{{ t('login.lead') }}</div>
+      <div class="ls-hero">
+        <span class="ls-hero-icon"><BrandLogo :size="48" /></span>
+        <div class="ls-hero-title">{{ autoOpenBlocked ? t('login.blockedTitle') : t('login.openedTitle') }}</div>
+        <div class="ls-hero-hint">{{ autoOpenBlocked ? t('login.blockedHint') : t('login.openedHint') }}</div>
+      </div>
 
-      <!-- Primary path: open the complete URI (device code already embedded) -->
-      <a
-        class="ls-primary"
-        :href="flow.verificationUriComplete"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
+      <!-- The automatic open failed (popup blocked / tab closed): surface a
+           prominent manual button. -->
+      <Button v-if="autoOpenBlocked" variant="primary" @click="reopenVerification">
         {{ t('login.authorizeInBrowser') }}
         <Icon name="external-link" size="sm" />
-      </a>
+      </Button>
 
-      <!-- Copyable complete link (device code embedded) for "open it elsewhere"
-           — the manual code-entry block below stays parked. -->
-      <div class="ls-code-row">
-        <span class="ls-link" :title="flow.verificationUriComplete">{{ flow.verificationUriComplete }}</span>
-        <Button class="ls-copy" :class="{ 'is-copied': copied }" variant="secondary" size="sm" @click="copyLink">
-          <template v-if="copied">
-            <Icon name="check" size="sm" />
-            {{ t('login.copied') }}
-          </template>
-          <template v-else>
-            <Icon name="copy" size="sm" />
-            {{ t('login.copyLink') }}
-          </template>
-        </Button>
+      <!-- Quiet manual fallback: reopen / copy, plus the truncated link. -->
+      <div class="ls-manual">
+        <span class="ls-manual-label">{{ t('login.notOpened') }}</span>
+        <div class="ls-manual-actions">
+          <Button variant="secondary" size="sm" @click="reopenVerification">
+            {{ t('login.reopenLink') }}
+          </Button>
+          <Button class="ls-copy" :class="{ 'is-copied': copied }" variant="secondary" size="sm" @click="copyLink">
+            <template v-if="copied">
+              <Icon name="check" size="sm" />
+              {{ t('login.copied') }}
+            </template>
+            <template v-else>
+              <Icon name="copy" size="sm" />
+              {{ t('login.copyLink') }}
+            </template>
+          </Button>
+        </div>
+        <div class="ls-code-row">
+          <span class="ls-link" :title="verificationUriComplete">{{ verificationUriComplete }}</span>
+        </div>
       </div>
 
       <!-- TODO: the manual fallback (copy the link + type the device code) has
@@ -183,8 +236,8 @@ function formatSeconds(s: number): string {
       -->
 
       <div class="ls-status">
-        <Spinner size="sm" :label="t('login.waitingAuth')" />
-        <span class="ls-status-text">{{ t('login.waitingAutoClose') }}</span>
+        <Spinner size="sm" :label="t('login.waitingApproval')" />
+        <span class="ls-status-text">{{ t('login.waitingApproval') }}</span>
         <span class="ls-countdown">{{ formatSeconds(secondsLeft) }}</span>
       </div>
     </div>
@@ -205,7 +258,7 @@ function formatSeconds(s: number): string {
       </div>
       <div class="ls-actions">
         <Button variant="secondary" @click="backToChoice">{{ t('onboarding.back') }}</Button>
-        <Button variant="primary" @click="startFlow">{{ t('login.retry') }}</Button>
+        <Button variant="primary" @click="startFlow()">{{ t('login.retry') }}</Button>
       </div>
     </template>
 
@@ -222,43 +275,20 @@ function formatSeconds(s: number): string {
       </div>
       <div class="ls-actions">
         <Button variant="secondary" @click="backToChoice">{{ t('onboarding.back') }}</Button>
-        <Button variant="primary" @click="startFlow">{{ t('login.retry') }}</Button>
+        <Button variant="primary" @click="startFlow()">{{ t('login.retry') }}</Button>
       </div>
     </template>
   </div>
 </template>
 
 <style scoped>
-/* Choice cards */
+/* Choice cards: the ActionCard primitive carries the chrome; only the
+   layout stack and content-specific pieces stay here. */
 .ls-cards {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
 }
-.ls-card {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-  padding: var(--space-4);
-  background: var(--color-surface-raised);
-  border: 0.5px solid var(--color-line);
-  border-radius: var(--radius-lg);
-  font-family: var(--font-ui);
-  text-align: left;
-  cursor: pointer;
-  transition: border-color var(--duration-fast) var(--ease-out),
-    background var(--duration-fast) var(--ease-out);
-}
-.ls-card:hover {
-  border-color: var(--color-line-strong);
-  background: var(--color-surface);
-}
-.ls-card:focus-visible {
-  outline: none;
-  box-shadow: var(--p-focus-ring-strong);
-}
-.ls-card-logo { align-self: flex-start; }
 /* Icon stand-in matching the 40px brand-logo slot on the Kimi card. */
 .ls-card-icon {
   display: inline-flex;
@@ -283,22 +313,10 @@ function formatSeconds(s: number): string {
   font-weight: var(--weight-medium);
   color: var(--color-text);
 }
-.ls-reco {
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-full);
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
-}
 .ls-card-hint {
   font-size: var(--text-sm);
   color: var(--color-text-muted);
   line-height: var(--leading-normal);
-}
-.ls-card-chevron {
-  color: var(--color-text-faint);
-  flex: none;
 }
 
 /* Logged-in done card */
@@ -308,7 +326,7 @@ function formatSeconds(s: number): string {
   gap: var(--space-3);
   padding: var(--space-4);
   background: var(--color-surface-raised);
-  border: 0.5px solid var(--color-success-bd);
+  border: var(--p-hairline) solid var(--color-success-bd);
   border-radius: var(--radius-lg);
 }
 .ls-done-badge {
@@ -350,38 +368,56 @@ function formatSeconds(s: number): string {
   color: var(--color-text-muted);
 }
 
-/* Device-code body (same visual language as the standalone LoginDialog) */
+/* Device-code body: the authorization wait page (same visual language as the
+   standalone LoginDialog) */
 .ls-device {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
 }
-.ls-lead {
-  font-size: var(--text-base);
+
+/* Hero: soft accent badge over the centered title + hint */
+.ls-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: center;
+}
+.ls-hero-icon {
+  display: inline-flex;
+  margin-bottom: var(--space-1);
+}
+.ls-hero-title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
   color: var(--color-text);
+}
+.ls-hero-hint {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
   line-height: var(--leading-normal);
 }
-.ls-primary {
-  display: inline-flex;
+
+/* Quiet manual fallback: muted label, two secondary actions, the link row */
+.ls-manual {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
   gap: var(--space-2);
-  width: 100%;
-  min-height: 40px;
-  padding: 0 var(--space-4);
-  background: var(--color-accent);
-  color: var(--color-text-on-accent);
-  border: 0.5px solid var(--color-accent);
-  border-radius: var(--radius-md);
-  font-family: var(--font-ui);
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-  cursor: pointer;
-  text-decoration: none;
-  transition: background var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out);
 }
-.ls-primary:hover { background: var(--color-accent-hover); border-color: var(--color-accent-hover); }
+.ls-manual-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+}
+.ls-manual-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+.ls-manual .ls-code-row {
+  align-self: stretch;
+  margin-top: var(--space-1);
+}
 .ls-or {
   display: flex;
   align-items: center;
@@ -405,7 +441,7 @@ function formatSeconds(s: number): string {
 .ls-fb-link {
   color: var(--color-accent);
   text-decoration: none;
-  border-bottom: 0.5px solid var(--color-accent-bd);
+  border-bottom: var(--p-hairline) solid var(--color-accent-bd);
 }
 .ls-fb-link:hover { border-bottom-color: var(--color-accent); }
 .ls-code-row {
@@ -413,7 +449,7 @@ function formatSeconds(s: number): string {
   align-items: center;
   gap: var(--space-3);
   background: var(--color-surface-sunken);
-  border: 0.5px solid var(--color-line);
+  border: var(--p-hairline) solid var(--color-line);
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);
 }
@@ -443,7 +479,7 @@ function formatSeconds(s: number): string {
   align-items: center;
   gap: var(--space-2);
   padding-top: var(--space-3);
-  border-top: 0.5px solid var(--color-line);
+  border-top: var(--p-hairline) solid var(--color-line);
 }
 .ls-status-text {
   font-family: var(--font-mono);
@@ -463,11 +499,16 @@ function formatSeconds(s: number): string {
   gap: var(--space-3);
 }
 
+/* var() is not allowed in @media — 640px mirrors the --p-bp-sm token. */
 @media (max-width: 640px) {
   .ls-code-row,
   .ls-status,
+  .ls-manual-actions,
   .ls-actions {
     flex-wrap: wrap;
+  }
+  .ls-manual-actions {
+    justify-content: center;
   }
   .ls-code {
     min-width: 0;

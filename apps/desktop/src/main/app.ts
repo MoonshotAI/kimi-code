@@ -2,10 +2,11 @@ import { app } from 'electron';
 
 import { DESKTOP_WINDOWS_APP_ID, DESKTOP_WINDOWS_DEV_APP_ID } from '../shared/identity';
 import { log } from './log';
+import { IPC } from './ipc-channels';
 import { registerRendererProtocol } from './protocol';
 import { rendererDistRoot, closeServerHandle, shutdownServerTelemetry } from './connect';
 import { stopShellEnvProbe } from './shell-env';
-import { createWindow, selectSessionInRenderer, sendLaunchAction, showMainWindow } from './window';
+import { createWindow, selectSessionInRenderer, sendLaunchAction, sendToRenderer, showMainWindow } from './window';
 import { createTray, destroyTray } from './tray';
 import { initDockIcon } from './dock-icon';
 import { buildMenu } from './menu';
@@ -32,6 +33,16 @@ function forwardLaunchArgs(argv: readonly string[]): void {
   }
 }
 
+/** Wake the renderer's OAuth login poll after a validated auth deep link: the
+    authorization completion page re-opened the app, so the flow snapshot is
+    very likely ready — poll now instead of waiting out the current interval.
+    No payload; the event is a pure wake signal. A lost send is harmless: it
+    only happens while no renderer exists (cold start), where no login flow
+    can be waiting anyway. */
+function notifyDeepLinkAuth(): void {
+  sendToRenderer(IPC.deepLinkAuth, undefined);
+}
+
 /** Route a second-instance argv (Windows/Linux): a plain relaunch (taskbar
     icon, Jump List) always surfaces the window, but a deep-link launch only
     surfaces it when the URL passes the whitelist — any webpage can fire the
@@ -39,7 +50,7 @@ function forwardLaunchArgs(argv: readonly string[]): void {
 function handleSecondInstanceArgv(argv: readonly string[]): void {
   const deepLink = extractDeepLink(argv);
   if (deepLink !== undefined) {
-    handleDeepLink(deepLink, showMainWindow);
+    handleDeepLink(deepLink, showMainWindow, notifyDeepLinkAuth);
     return;
   }
   showMainWindow();
@@ -91,7 +102,7 @@ export function main(): void {
       pendingDeepLinks.push(url);
       return;
     }
-    handleDeepLink(url, showMainWindow);
+    handleDeepLink(url, showMainWindow, notifyDeepLinkAuth);
   });
 
   registerIpcHandlers();
@@ -195,7 +206,7 @@ export function main(): void {
     const deepLinks = pendingDeepLinks.splice(0);
     launchRoutingReady = true;
     for (const url of deepLinks) {
-      handleDeepLink(url, showMainWindow);
+      handleDeepLink(url, showMainWindow, notifyDeepLinkAuth);
     }
     app.on('activate', () => {
       // macOS Dock click: un-hide the window (hide-on-close leaves it alive

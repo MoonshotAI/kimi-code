@@ -14,6 +14,28 @@ import {
   type TokenInfo,
 } from '@moonshot-ai/kimi-code-oauth/device';
 
+// The page is deployed per site (www.kimi.com / www.kimi.ai) with no backend
+// to ask, so the OAuth host follows the page's own hostname. The mapping is
+// deliberately local to this app: the auth-login page ships independently of
+// the engine packages, and the two hosts it may talk to are part of its own
+// deployment contract. Anything that is not a .kimi.ai host (kimi.com,
+// localhost, LAN/IP tunnels) lands on the mainland-China host.
+const GLOBAL_OAUTH_HOST = 'https://auth.kimi.ai';
+const MAINLAND_CN_OAUTH_HOST = 'https://auth.kimi.com';
+
+/** OAuth host for this deployment, picked by the page hostname. */
+export function oauthHostForHostname(hostname: string): string {
+  return hostname === 'kimi.ai' || hostname.endsWith('.kimi.ai')
+    ? GLOBAL_OAUTH_HOST
+    : MAINLAND_CN_OAUTH_HOST;
+}
+
+/** Flow config for this deployment: the shared client id/name, the OAuth host
+    picked by the page hostname. */
+function flowConfig(): typeof KIMI_CODE_FLOW_CONFIG {
+  return { ...KIMI_CODE_FLOW_CONFIG, oauthHost: oauthHostForHostname(location.hostname) };
+}
+
 const DEVICE_ID_STORAGE_KEY = 'kimi-code-auth-login.device-id';
 const APP_VERSION = '0.0.0';
 /** Fallback when the OAuth host omits expires_in (it currently sends 1800). */
@@ -93,7 +115,7 @@ export function createAuthLoginFlow(options?: AuthLoginFlowOptions): AuthLoginFl
   async function onStartOAuthLogin(): Promise<OAuthLoginStartResult | null> {
     let auth;
     try {
-      auth = await requestDeviceAuthorization(KIMI_CODE_FLOW_CONFIG, {
+      auth = await requestDeviceAuthorization(flowConfig(), {
         deviceHeaders: deviceHeaders(),
       });
     } catch {
@@ -124,7 +146,7 @@ export function createAuthLoginFlow(options?: AuthLoginFlowOptions): AuthLoginFl
     if (!deviceCode) return null;
     let result;
     try {
-      result = await pollDeviceToken(KIMI_CODE_FLOW_CONFIG, deviceCode, {
+      result = await pollDeviceToken(flowConfig(), deviceCode, {
         deviceHeaders: deviceHeaders(),
       });
     } catch {

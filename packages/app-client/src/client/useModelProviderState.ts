@@ -8,7 +8,7 @@
 
 import { computed, watch, type ComputedRef } from 'vue';
 import { DaemonApiError } from '@moonshot-ai/app-core/api';
-import type { AddProviderInput, AppCatalogProvider, AppMessage, AppModel, AppProvider, AppProviderDetail, AppSession, DeleteProviderResult, ImportCatalogProviderInput, ImportCustomRegistryInput, KimiWebApi, ManagedUsageResult, OAuthLoginStartResult, ThinkingLevel, UpdateProviderInput } from '@moonshot-ai/app-core/api';
+import type { AddProviderInput, AppCatalogProvider, AppMessage, AppModel, AppProvider, AppProviderDetail, AppSession, DeleteProviderResult, ImportCatalogProviderInput, ImportCustomRegistryInput, KimiWebApi, ManagedUsageResult, OAuthLoginStartResult, OAuthRegion, ThinkingLevel, UpdateProviderInput } from '@moonshot-ai/app-core/api';
 import { logError, logWarn } from '@moonshot-ai/app-core/lib';
 import { attachmentsToContent } from './attachmentsToContent';
 import {
@@ -623,13 +623,20 @@ export function useModelProviderState(
     }
   }
 
-  /** Start managed Kimi OAuth device flow. Returns flow data or null on error. */
-  async function startOAuthLogin(): Promise<OAuthLoginStartResult | null> {
+  /** Start managed Kimi OAuth device flow. Returns flow data or null on error.
+   *  `region` pins the OAuth host region for the flow (login UI region cards). */
+  async function startOAuthLogin(region?: OAuthRegion): Promise<OAuthLoginStartResult | null> {
     try {
-      return await api.startOAuthLogin();
+      return await api.startOAuthLogin(region);
     } catch {
       return null;
     }
+  }
+
+  /** Server-resolved account region (null on older daemons / failures — the
+   *  api client already degrades; this stays a thin pass-through). */
+  async function getOAuthRegion(): Promise<OAuthRegion | null> {
+    return api.getOAuthRegion();
   }
 
   /** Poll the singleton OAuth flow. Returns null on error or no active flow. */
@@ -709,6 +716,7 @@ export function useModelProviderState(
     startOAuthLogin,
     pollOAuthLogin,
     cancelOAuthLogin,
+    getOAuthRegion,
     getUsage,
     setThinking,
   };

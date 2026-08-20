@@ -49,14 +49,14 @@ import type { SwarmMember } from '@moonshot-ai/app-core/client';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from '@moonshot-ai/app-core/lib';
-import type { AppConfig, ThinkingLevel } from './api/types';
+import type { AppConfig, OAuthRegion, ThinkingLevel } from './api/types';
 import { commitLevel, effectiveThinkingLevel, segmentsFor } from '@moonshot-ai/app-core/lib';
 import { modelDisplayName, subagentEffortSuffix } from '@moonshot-ai/app-core/lib';
 import { stripSkillPrefix } from '@moonshot-ai/app-core/lib';
 import { ActionToast, Icon, IconButton } from '@moonshot-ai/app-ui';
 import InternalBuildBanner from './components/InternalBuildBanner.vue';
 import { isDesktop, isMacosDesktop } from '@moonshot-ai/app-core/lib';
-import { openUpgrade } from '@moonshot-ai/app-core/lib';
+import { openUpgrade, resolveUpgradeRegion, setUpgradeRegionProbe } from '@moonshot-ai/app-core/lib';
 
 // Hydrate the server-transport credential (fragment token or localStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
@@ -205,6 +205,16 @@ function syncAppHeight(): void {
   });
 }
 
+// Resolve the server region for the region-dependent upgrade link (null on
+// older daemons keeps the .com default). The region follows the account, so
+// re-resolve it on every login/logout, not just at mount — resolveUpgradeRegion
+// drops stale probe responses when triggers overlap. The registered probe
+// also lets every upgrade entry refresh right before opening.
+setUpgradeRegionProbe(() => client.getOAuthRegion());
+function refreshUpgradeRegion(): void {
+  void resolveUpgradeRegion(() => client.getOAuthRegion());
+}
+
 onMounted(() => {
   // Register the 401 listener before the first requests go out, so a token
   // rejection during the initial load() can never be missed.
@@ -215,6 +225,7 @@ onMounted(() => {
     client.clearDangerousBypassAuth();
   });
   void client.load();
+  refreshUpgradeRegion();
   loadSidebarCollapsed();
   setAppHeight();
   window.visualViewport?.addEventListener('resize', syncAppHeight);
@@ -502,7 +513,10 @@ async function confirmLogout(): Promise<void> {
     title: t('sidebar.logoutConfirmTitle'),
     message: t('sidebar.logoutConfirmMessage'),
     variant: 'danger',
-    action: () => client.logout(),
+    action: async () => {
+      await client.logout();
+      refreshUpgradeRegion();
+    },
   });
 }
 
@@ -750,8 +764,8 @@ async function handleUpdateConfig(patch: Partial<AppConfig>): Promise<void> {
 }
 
 // LoginDialog callbacks — delegates to composable
-async function handleStartOAuthLogin() {
-  return client.startOAuthLogin();
+async function handleStartOAuthLogin(region?: OAuthRegion) {
+  return client.startOAuthLogin(region);
 }
 
 async function handlePollOAuthLogin() {
@@ -762,11 +776,19 @@ async function handleCancelOAuthLogin() {
   return client.cancelOAuthLogin();
 }
 
+// Region probe for the login cards: null = a pre-region daemon → the cards
+// degrade to one neutral entry (the api client degrades, never throws); a
+// resolved region also leads its card with the Recommended pill.
+async function handleGetOAuthRegion() {
+  return client.getOAuthRegion();
+}
+
 async function handleLoginSuccess(): Promise<void> {
   showLogin.value = false;
   // Re-check auth state and reload sessions now that we're authenticated
   await client.checkAuth();
   await client.load();
+  refreshUpgradeRegion();
 }
 
 // The wizard's embedded login flow succeeded: mark onboarding done in the same
@@ -775,6 +797,7 @@ async function handleWizardLoginSuccess(): Promise<void> {
   completeOnboarding();
   await client.checkAuth();
   await client.load();
+  refreshUpgradeRegion();
 }
 
 // Edit + resend the last user message: undo the latest exchange on the daemon,
@@ -1710,6 +1733,7 @@ function openPr(url: string): void {
       :on-start-o-auth-login="handleStartOAuthLogin"
       :on-poll-o-auth-login="handlePollOAuthLogin"
       :on-cancel-o-auth-login="handleCancelOAuthLogin"
+      :on-get-o-auth-region="handleGetOAuthRegion"
       @complete="completeOnboarding"
       @login-success="handleWizardLoginSuccess"
       @add-provider="handleWizardAddProvider"
@@ -1720,6 +1744,7 @@ function openPr(url: string): void {
       :on-start-o-auth-login="handleStartOAuthLogin"
       :on-poll-o-auth-login="handlePollOAuthLogin"
       :on-cancel-o-auth-login="handleCancelOAuthLogin"
+      :on-get-o-auth-region="handleGetOAuthRegion"
       @success="handleLoginSuccess"
       @close="showLogin = false"
     />

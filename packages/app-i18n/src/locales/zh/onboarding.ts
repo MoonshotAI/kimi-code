@@ -11,9 +11,13 @@ export default {
   login: {
     title: '选择配置模型',
     subtitle: '选择驱动 Kimi Code 的模型服务，之后可在「设置」中更改。',
+    // 单卡兜底（老 daemon 不支持 region 时展示，不带 region 启动流程）
     kimiTitle: '登录 Kimi 账号',
     kimiHint: '使用 Kimi 会员权益，开箱即用',
-    recommended: '推荐',
+    kimiCnTitle: 'Kimi Code（kimi.com/code）',
+    kimiCnHint: '使用 kimi.com 账号登录',
+    kimiOverseasTitle: 'Kimi Code（kimi.ai/code）',
+    kimiOverseasHint: '使用 kimi.ai 账号登录',
     customProviderTitle: '添加自定义供应商',
     customProviderHint: '使用自己的 API Key，接入 OpenAI 兼容等模型服务',
     loggedInTitle: '已登录 Kimi 账号',

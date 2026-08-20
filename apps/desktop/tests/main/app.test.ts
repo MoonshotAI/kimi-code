@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => {
     createWindow: vi.fn(),
     showMainWindow: vi.fn(),
     sendLaunchAction: vi.fn(),
+    sendToRenderer: vi.fn(),
     closeServerHandle: vi.fn(() => new Promise<void>(() => {})),
     shutdownServerTelemetry: vi.fn((): Promise<void> | null => null),
     stopShellEnvProbe: vi.fn(),
@@ -52,6 +53,7 @@ vi.mock('../../src/main/window', () => ({
   createWindow: mocks.createWindow,
   selectSessionInRenderer: vi.fn(),
   sendLaunchAction: mocks.sendLaunchAction,
+  sendToRenderer: mocks.sendToRenderer,
   showMainWindow: mocks.showMainWindow,
 }));
 vi.mock('../../src/main/tray', () => ({
@@ -140,6 +142,26 @@ describe('app second-instance routing', () => {
 
     onOpenUrl?.(event, 'kimi-code://auth/success');
     expect(mocks.showMainWindow).toHaveBeenCalledOnce();
+  });
+
+  it('pushes the deep-link-auth wake to the renderer for whitelisted URLs only', async () => {
+    main();
+    mocks.ready();
+    await vi.waitFor(() => expect(mocks.createWindow).toHaveBeenCalledOnce());
+
+    const onOpenUrl = mocks.listeners.get('open-url');
+    const event = { preventDefault: vi.fn() };
+    onOpenUrl?.(event, 'kimi-code://unknown/path');
+    expect(mocks.sendToRenderer).not.toHaveBeenCalled();
+
+    onOpenUrl?.(event, 'kimi-code://auth/success');
+    expect(mocks.sendToRenderer).toHaveBeenCalledWith('kimi:deep-link-auth', undefined);
+
+    // Second-instance argv (Windows/Linux) wakes the renderer the same way.
+    mocks.sendToRenderer.mockClear();
+    const onSecondInstance = mocks.listeners.get('second-instance');
+    onSecondInstance?.({}, ['electron.exe', 'kimi-code://auth/success']);
+    expect(mocks.sendToRenderer).toHaveBeenCalledWith('kimi:deep-link-auth', undefined);
   });
 
   it('gates deep-link second instances through the whitelist (Windows/Linux argv)', async () => {

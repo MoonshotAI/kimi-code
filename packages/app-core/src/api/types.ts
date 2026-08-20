@@ -1388,7 +1388,9 @@ export interface KimiWebApi {
     defaultModel: string | null;
     managedProvider: { status: string } | null;
   }>;
-  startOAuthLogin(): Promise<OAuthLoginStartResult>;
+  /** `region` pins the OAuth host region for this flow; omitted = the server
+      falls back to its own config/env resolution. */
+  startOAuthLogin(region?: OAuthRegion): Promise<OAuthLoginStartResult>;
   pollOAuthLogin(): Promise<{
     flowId: string;
     status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
@@ -1398,7 +1400,15 @@ export interface KimiWebApi {
   logout(): Promise<{ loggedOut: boolean }>;
   getUsage(): Promise<ManagedUsageResult>;
   getUserInfo(): Promise<ManagedUserInfoResult>;
+  /** Server-resolved region (GET /oauth/region). `null` when the endpoint is
+      absent (older daemon), unreachable, or returns an unexpected payload —
+      callers degrade to their own default. */
+  getOAuthRegion(): Promise<OAuthRegion | null>;
 }
+
+/** Server-side account region, resolved by the daemon (env override →
+    persisted login host → install-channel marker → default 'mainland-cn'). */
+export type OAuthRegion = 'mainland-cn' | 'global';
 
 /** Result of `startOAuthLogin()`, mirroring the wire discriminated union. */
 export type OAuthLoginStartResult =

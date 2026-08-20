@@ -1550,7 +1550,7 @@ describe('useWorkspaceState — managed account profile', () => {
     userId: 'u_1',
     nickname: 'Kimi User',
     status: 'active',
-    region: 'cn',
+    region: 'mainland-cn',
     userLevel: 3,
     userLevelName: 'Vivace',
     domain: 1,
