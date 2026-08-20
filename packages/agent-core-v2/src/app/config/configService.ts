@@ -3,7 +3,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
-import { BugIndicatingError, onUnexpectedError } from '#/errors';
+import { BugIndicatingError, Error2, ErrorCodes, onUnexpectedError } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ILogService } from '#/_base/log/log';
 import {
@@ -309,6 +309,7 @@ export class ConfigService extends Disposable implements IConfigService {
   private readonly diagnosticsList: ConfigDiagnostic[] = [];
   private lastDiagnosticsSnapshot = '[]';
   private readonly configKey: string;
+  private tainted = false;
 
   constructor(
     @IConfigRegistry private readonly registry: IConfigRegistry,
@@ -402,6 +403,7 @@ export class ConfigService extends Disposable implements IConfigService {
       return;
     }
     await this.enqueueStateTransition(async () => {
+      this.assertPersistable();
       const base = this.raw[domain];
       const next = this.registry.merge(domain, base, patch);
       const validated = this.registry.validate(domain, next);
@@ -434,6 +436,7 @@ export class ConfigService extends Disposable implements IConfigService {
       return;
     }
     await this.enqueueStateTransition(async () => {
+      this.assertPersistable();
       const stripped = this.stripEnv(domain, effectiveValue);
       if (stripped === undefined) {
         delete this.raw[domain];
@@ -467,6 +470,7 @@ export class ConfigService extends Disposable implements IConfigService {
       return;
     }
     await this.enqueueStateTransition(async () => {
+      this.assertPersistable();
       const staged: ResolvedConfig = { ...this.raw };
       for (const domain of domains) {
         const value = sections[domain] === null ? undefined : sections[domain];
@@ -526,7 +530,11 @@ export class ConfigService extends Disposable implements IConfigService {
           : describeUnknownError(error);
       this.pushDiagnostic({ severity: 'error', message });
       this.log.warn('config load failed', { error: describeUnknownError(error) });
+      this.tainted = true;
+      this.emitDiagnosticsIfChanged();
+      return;
     }
+    this.tainted = false;
     const nextRawSnake = cloneRecord(fileData);
     for (const diagnostic of collectKeyDeprecations(nextRawSnake, this.registry.listSections())) {
       this.pushDiagnostic(diagnostic);
@@ -732,15 +740,52 @@ export class ConfigService extends Disposable implements IConfigService {
     this.commit('reload', [domain]);
   }
 
+  private assertPersistable(): void {
+    if (!this.tainted) return;
+    throw new Error2(
+      ErrorCodes.CONFIG_PERSIST_BLOCKED,
+      `Refusing to persist config: ${this.bootstrap.configPath} could not be read; fix the file and reload before writing.`,
+    );
+  }
+
   private async persist(domain: string): Promise<void> {
     await this.persistDomains([domain]);
   }
 
   private async persistDomains(domains: readonly string[]): Promise<void> {
-    for (const domain of domains) {
-      applySectionToToml(this.rawSnake, domain, this.raw[domain], this.registry);
+    this.assertPersistable();
+    let onDisk: ResolvedConfig = {};
+    try {
+      const data = await this.documentStore.get<ResolvedConfig>(CONFIG_SCOPE, this.configKey);
+      onDisk = data !== undefined && isPlainObject(data) ? data : {};
+    } catch (error) {
+      const message =
+        error instanceof TomlError
+          ? `Failed to parse ${this.bootstrap.configPath}: ${describeTomlSyntaxError(error)}`
+          : describeUnknownError(error);
+      this.pushDiagnostic({ severity: 'error', message });
+      this.emitDiagnosticsIfChanged();
+      this.log.warn('config persist aborted: re-read failed', {
+        error: describeUnknownError(error),
+      });
+      this.tainted = true;
+      throw new Error2(
+        ErrorCodes.CONFIG_PERSIST_BLOCKED,
+        `Refusing to persist config: ${this.bootstrap.configPath} could not be read; fix the file and reload before writing.`,
+        { cause: error },
+      );
     }
-    await this.documentStore.set(CONFIG_SCOPE, this.configKey, this.rawSnake);
+    const absorbedExternal = JSON.stringify(onDisk) !== JSON.stringify(this.rawSnake);
+    const nextRawSnake = cloneRecord(onDisk);
+    for (const domain of domains) {
+      applySectionToToml(nextRawSnake, domain, this.raw[domain], this.registry);
+    }
+    await this.documentStore.set(CONFIG_SCOPE, this.configKey, nextRawSnake);
+    if (absorbedExternal) {
+      await this.load('reload');
+      return;
+    }
+    this.rawSnake = nextRawSnake;
   }
 }
 

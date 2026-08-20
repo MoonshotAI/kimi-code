@@ -24,6 +24,7 @@ import { createDecorator, type ProvideHandle } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { TestInstantiationService } from '#/_base/di/test';
+import { Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
   type ConfigSchema,
@@ -2592,6 +2593,140 @@ describe('ConfigService replaceSections', () => {
       acme: { type: 'openai', apiKey: 'sk-acme' },
     });
     expect(config.inspect<ThinkingConfig>(THINKING_SECTION).userValue).toEqual({ enabled: true });
+
+    disposables.dispose();
+  });
+});
+
+describe('ConfigService persistence guards', () => {
+  class SilentStorage extends InMemoryStorageService {
+    override watch(): Event<void> {
+      return Event.None as Event<void>;
+    }
+  }
+
+  async function createGuardedConfig(toml: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new SilentStorage();
+    await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg-guards'));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables, storage };
+  }
+
+  async function overwrite(storage: InMemoryStorageService, toml: string): Promise<void> {
+    await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+  }
+
+  async function stored(storage: InMemoryStorageService): Promise<string> {
+    const bytes = await storage.read('', 'config.toml');
+    return new TextDecoder().decode(bytes);
+  }
+
+  async function expectPersistBlocked(promise: Promise<unknown>): Promise<void> {
+    const error = await promise.then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(isError2(error)).toBe(true);
+    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_PERSIST_BLOCKED);
+  }
+
+  it('refuses to persist when the initial load fails and keeps the file untouched', async () => {
+    const broken = '[providers\nbroken';
+    const { config, disposables, storage } = await createGuardedConfig(broken);
+
+    expect(config.diagnostics().some((d) => d.severity === 'error')).toBe(true);
+
+    await expectPersistBlocked(config.set(THINKING_SECTION, { enabled: true }));
+    await expectPersistBlocked(config.replace(THINKING_SECTION, { enabled: true }));
+    await expectPersistBlocked(config.replaceSections({ [THINKING_SECTION]: { enabled: true } }));
+
+    expect(await stored(storage)).toBe(broken);
+
+    await config.set(THINKING_SECTION, { enabled: true }, ConfigTarget.Memory);
+    expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({ enabled: true });
+
+    disposables.dispose();
+  });
+
+  it('keeps last-known-good values when a reload hits a broken file, and recovers after the file is fixed', async () => {
+    const { config, disposables, storage } = await createGuardedConfig(
+      '[providers.acme]\ntype = "openai"\napi_key = "sk-acme"\n',
+    );
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme' },
+    });
+
+    await overwrite(storage, '= broken =');
+    await config.reload();
+
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme' },
+    });
+    await expectPersistBlocked(config.set(THINKING_SECTION, { enabled: true }));
+    expect(await stored(storage)).toBe('= broken =');
+
+    await overwrite(storage, '[providers.beta]\ntype = "openai"\napi_key = "sk-beta"\n');
+    await config.reload();
+
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      beta: { type: 'openai', apiKey: 'sk-beta' },
+    });
+    await config.set(THINKING_SECTION, { enabled: true });
+    expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({ enabled: true });
+
+    disposables.dispose();
+  });
+
+  it('merges external edits observed at persist time instead of clobbering them', async () => {
+    const { config, disposables, storage } = await createGuardedConfig(
+      'default_model = "acme/m1"\n\n[providers.acme]\ntype = "openai"\napi_key = "sk-acme"\n',
+    );
+
+    await overwrite(
+      storage,
+      'default_model = "acme/m1"\n\n[providers.acme]\ntype = "openai"\napi_key = "sk-acme-2"\n\n[providers.beta]\ntype = "openai"\napi_key = "sk-beta"\n',
+    );
+
+    const changed: string[] = [];
+    config.onDidSectionChange((e) => changed.push(e.domain));
+    await config.set(THINKING_SECTION, { enabled: true });
+
+    const doc = await stored(storage);
+    expect(doc).toContain('sk-acme-2');
+    expect(doc).toContain('[providers.beta]');
+    expect(doc).toContain('[thinking]');
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme-2' },
+      beta: { type: 'openai', apiKey: 'sk-beta' },
+    });
+    expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({ enabled: true });
+    expect(changed).toContain(PROVIDERS_SECTION);
+    expect(changed).toContain(THINKING_SECTION);
+
+    disposables.dispose();
+  });
+
+  it('honors an external delete instead of resurrecting the in-memory copy', async () => {
+    const { config, disposables, storage } = await createGuardedConfig(
+      '[providers.acme]\ntype = "openai"\napi_key = "sk-acme"\n',
+    );
+
+    await storage.delete('', 'config.toml');
+    await config.set(THINKING_SECTION, { enabled: true });
+
+    const doc = await stored(storage);
+    expect(doc).toContain('[thinking]');
+    expect(doc).not.toContain('[providers.acme]');
+    expect(config.inspect(PROVIDERS_SECTION).userValue).toBeUndefined();
 
     disposables.dispose();
   });
