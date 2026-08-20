@@ -125,7 +125,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     );
     this._register(
       toolExecutor.onBeforeExecuteTool(async (event) => {
-        if (!this.flags.enabled(TOWER_FLAG_ID)) return;
         if (this.profile.data().profileName !== TOWER_WORKER_PROFILE) return;
         const toolName = event.toolCall.name;
         if (toolName !== 'Write' && toolName !== 'Edit') return;

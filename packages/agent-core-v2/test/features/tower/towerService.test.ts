@@ -1291,15 +1291,18 @@ describe('AgentTowerService', () => {
       expect(formatDenyMessage).not.toHaveBeenCalled();
     });
 
-    it('does not guard worker writes while the tower flag is off', async () => {
+    it('guards worker writes even while the tower flag is off — isolation is identity-scoped', async () => {
       towerFlagOn = false;
       ix.get(IAgentTowerService);
 
       const decision = await fire(writeHookContext('Write', [`${repo}/src/gemm.cpp`]));
 
-      expect(decision).toBeUndefined();
-      expect(permissionGateRan).toBe(true);
-      expect(formatDenyMessage).not.toHaveBeenCalled();
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain(
+        'tower workers may only write inside their own worktree',
+      );
+      expect(permissionGateRan).toBe(false);
+      expect(formatDenyMessage).toHaveBeenCalledTimes(1);
     });
 
     it('abstains when the agent is not a tower worker', async () => {
