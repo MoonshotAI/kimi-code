@@ -1,10 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { AgentCacheProbeService } from '#/agent/usage/cacheProbeService';
 import {
   IAgentUsageService,
   type UsageRecordedContext,
@@ -15,6 +17,8 @@ import { usageKey } from '#/agent/usage/usageOps';
 import type { Event2 } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -70,6 +74,7 @@ function createFreshHost(logKey: string): {
   readonly dispatcher: IEventDispatcher;
   readonly agentState: IAgentStateService;
   readonly freshLog: IAppendLogStore;
+  readonly usage: IAgentUsageService;
 } {
   const freshIx = disposables.add(new TestInstantiationService());
   freshIx.stub(IFileSystemStorageService, new InMemoryStorageService());
@@ -79,11 +84,12 @@ function createFreshHost(logKey: string): {
     log: freshLog,
   });
   const freshDispatcher = registerTestEventDispatcher(freshIx);
-  freshIx.get(IAgentStateService).contributeState(usageKey);
+  freshIx.set(IAgentUsageService, new SyncDescriptor(AgentUsageService));
   return {
     dispatcher: freshDispatcher,
     agentState: freshIx.get(IAgentStateService),
     freshLog,
+    usage: freshIx.get(IAgentUsageService),
   };
 }
 
@@ -176,8 +182,40 @@ describe('AgentUsageService (wire-backed)', () => {
         model: 'model-a',
         usage: a1,
         source: { type: 'turn', turnId: 7, step: 2 },
+        firstRecord: true,
       },
     ]);
+  });
+
+  it('marks firstRecord on the first live record only', () => {
+    const contexts: UsageRecordedContext[] = [];
+    disposables.add(svc.onDidRecord((ctx) => contexts.push(ctx)));
+
+    svc.record('model-a', a1);
+    svc.record('model-b', b1);
+    svc.record('model-a', a2);
+
+    expect(contexts.map((ctx) => ctx.firstRecord)).toEqual([true, false, false]);
+  });
+
+  it('does not mark firstRecord when usage was restored from persisted records', async () => {
+    svc.record('model-a', a1);
+    const records = await readRecords();
+
+    const fresh = createFreshHost('usage-first-record-replay');
+    await restoreTestEventDispatcher(
+      fresh.dispatcher,
+      fresh.freshLog,
+      testWireScope(SCOPE, 'usage-first-record-replay'),
+      records,
+    );
+
+    const contexts: UsageRecordedContext[] = [];
+    disposables.add(fresh.usage.onDidRecord((ctx) => contexts.push(ctx)));
+    fresh.usage.record('model-a', a2);
+
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0]!.firstRecord).toBe(false);
   });
 
   it('dispatch persists flat { type, model, usage, usageScope } records (no payload key)', async () => {
@@ -256,6 +294,94 @@ describe('AgentUsageService (wire-backed)', () => {
 
     expect(fresh.agentState.get(usageKey)).toEqual({
       byModel: { 'model-a': a1 },
+    });
+  });
+});
+
+describe('AgentCacheProbeService', () => {
+  function stubProbeDeps(forkedFrom: string | undefined): ReturnType<typeof vi.fn> {
+    const track2 = vi.fn();
+    ix.stub(ITelemetryService, {
+      _serviceBrand: undefined,
+      track2,
+    } as unknown as ITelemetryService);
+    ix.stub(IModelCatalog, {
+      _serviceBrand: undefined,
+      get: (alias: string) => {
+        if (alias !== 'model-a') throw new Error(`unknown model "${alias}"`);
+        return { id: alias, protocol: 'anthropic', providerType: 'kimi' } as unknown as Model;
+      },
+    } as unknown as IModelCatalog);
+    ix.stub(
+      IAgentScopeContext,
+      makeAgentScopeContext({ agentId: 'agent-1', agentScope: '', forkedFrom }),
+    );
+    return track2;
+  }
+
+  it('probes the first turn request of a forked agent', () => {
+    const track2 = stubProbeDeps('main');
+    disposables.add(ix.createInstance(AgentCacheProbeService));
+
+    svc.record('model-a', a1, { type: 'turn', turnId: 1 });
+
+    expect(track2).toHaveBeenCalledTimes(1);
+    expect(track2).toHaveBeenCalledWith('prompt_cache_probe', {
+      source: 'fork',
+      turn_id: 1,
+      provider_type: 'kimi',
+      protocol: 'anthropic',
+      input_tokens: 8,
+      input_cache_read: 3,
+      input_cache_creation: 4,
+      output_tokens: 2,
+    });
+  });
+
+  it('probes only once', () => {
+    const track2 = stubProbeDeps('main');
+    disposables.add(ix.createInstance(AgentCacheProbeService));
+
+    svc.record('model-a', a1, { type: 'turn', turnId: 1 });
+    svc.record('model-a', a2, { type: 'turn', turnId: 2 });
+
+    expect(track2).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays silent for a non-forked agent', () => {
+    const track2 = stubProbeDeps(undefined);
+    disposables.add(ix.createInstance(AgentCacheProbeService));
+
+    svc.record('model-a', a1, { type: 'turn', turnId: 1 });
+
+    expect(track2).not.toHaveBeenCalled();
+  });
+
+  it('stays silent when the first record is not a turn request', () => {
+    const track2 = stubProbeDeps('main');
+    disposables.add(ix.createInstance(AgentCacheProbeService));
+
+    svc.record('model-a', a1);
+    svc.record('model-a', a2, { type: 'turn', turnId: 1 });
+
+    expect(track2).not.toHaveBeenCalled();
+  });
+
+  it('probes without provider fields when the model alias is unknown', () => {
+    const track2 = stubProbeDeps('main');
+    disposables.add(ix.createInstance(AgentCacheProbeService));
+
+    svc.record('model-b', b1, { type: 'turn', turnId: 1 });
+
+    expect(track2).toHaveBeenCalledWith('prompt_cache_probe', {
+      source: 'fork',
+      turn_id: 1,
+      provider_type: undefined,
+      protocol: undefined,
+      input_tokens: 800,
+      input_cache_read: 300,
+      input_cache_creation: 400,
+      output_tokens: 200,
     });
   });
 });

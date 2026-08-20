@@ -76,6 +76,17 @@ export interface TurnEndedEvent {
   trace_id?: string;
 }
 
+export interface PromptCacheProbeEvent {
+  source: 'fork';
+  turn_id: number;
+  provider_type?: string;
+  protocol?: string;
+  input_tokens: number;
+  input_cache_read: number;
+  input_cache_creation: number;
+  output_tokens: number;
+}
+
 export type ToolCallOutcome = 'success' | 'error' | 'cancelled';
 
 export interface ToolCallEvent {
@@ -485,6 +496,21 @@ export const telemetryEventDefinitions = {
       thinking_effort: 'Effective thinking effort the turn ran with',
       trace_id:
         'Trace id of the most recent LLM request in this turn; absent for non-Kimi protocols',
+    },
+  }),
+  prompt_cache_probe: defineAgentTelemetryEvent<PromptCacheProbeEvent>({
+    owner: 'kimi-code',
+    comment:
+      'An agent whose first request is expected to hit the prompt cache reports that request\'s cache usage.',
+    properties: {
+      source: 'Why a cache hit was expected for this request',
+      turn_id: 'Per-agent turn index of the probed request',
+      provider_type: 'Provider protocol type',
+      protocol: 'Request protocol',
+      input_tokens: 'Total input tokens of the probed request (other + cache read + cache creation)',
+      input_cache_read: 'Cache-read input tokens of the probed request',
+      input_cache_creation: 'Cache-creation input tokens of the probed request',
+      output_tokens: 'Output tokens of the probed request',
     },
   }),
   tool_call: defineAgentTelemetryEvent<ToolCallEvent>({

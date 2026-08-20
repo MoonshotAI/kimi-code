@@ -373,6 +373,8 @@ export * from '#/features/tower/skill/skill';
 import '#/features/tower/towerFeature';
 export * from '#/agent/usage/usage';
 export * from '#/agent/usage/usageService';
+export * from '#/agent/usage/cacheProbe';
+export * from '#/agent/usage/cacheProbeService';
 export * from '#/agent/toolDedupe/toolDedupe';
 export * from '#/agent/toolDedupe/toolDedupeService';
 export * from '#/agent/agentsMdReminder/agentsMdReminder';

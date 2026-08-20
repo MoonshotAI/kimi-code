@@ -61,7 +61,12 @@ export class AgentUsageService extends Service implements IAgentUsageService {
     this.states.set(usageCurrentTurnKey, value);
   }
 
+  private hasRecorded = false;
+
   record(model: string, usage: TokenUsage, source?: AgentLLMRequestSource): void {
+    const firstRecord =
+      !this.hasRecorded && Object.keys(this.states.get(usageKey).byModel).length === 0;
+    this.hasRecorded = true;
     const usageScope: UsageRecordScope = source?.type === 'turn' ? 'turn' : 'session';
     void this.dispatcher.dispatch(new UsageRecord({ model, usage, usageScope }));
 
@@ -77,7 +82,7 @@ export class AgentUsageService extends Service implements IAgentUsageService {
     }
 
     void this.dispatcher.dispatch(new AgentStatusUpdated({ usage: this.status() }));
-    this._onDidRecord.fire({ model, usage: copyUsage(usage), source });
+    this._onDidRecord.fire({ model, usage: copyUsage(usage), source, firstRecord });
   }
 
   status(): UsageStatus {

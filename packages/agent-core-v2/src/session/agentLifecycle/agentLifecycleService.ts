@@ -145,7 +145,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       agentId,
       {
         seeds: [
-          [IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope })],
+          [IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope, forkedFrom: opts.forkedFrom })],
           [ITelemetryService, this.telemetry.withContext({ agent_id: agentId })],
           [IAgentRuntimeBindingSeed, {
             _serviceBrand: undefined,
