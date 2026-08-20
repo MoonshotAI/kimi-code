@@ -2775,4 +2775,18 @@ describe('ConfigService persistence guards', () => {
 
     disposables.dispose();
   });
+
+  it('keeps the in-memory snapshots untouched when a write fails validation', async () => {
+    const { config, disposables, storage } = await createGuardedConfig(
+      '[thinking]\nenabled = true\n',
+    );
+
+    await overwrite(storage, '[thinking]\nenabled = false\n');
+    await expect(config.set(THINKING_SECTION, { enabled: 'yes' })).rejects.toThrow();
+
+    expect(config.inspect(THINKING_SECTION).userValue).toEqual({ enabled: true });
+    expect(await stored(storage)).toBe('[thinking]\nenabled = false\n');
+
+    disposables.dispose();
+  });
 });

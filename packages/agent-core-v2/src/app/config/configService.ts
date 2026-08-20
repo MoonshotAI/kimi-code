@@ -404,15 +404,15 @@ export class ConfigService extends Disposable implements IConfigService {
     }
     await this.enqueueStateTransition(async () => {
       this.assertPersistable();
-      await this.persist(domain, () => {
-        const next = this.registry.merge(domain, this.raw[domain], patch);
+      await this.persist(domain, (stagedRaw, stagedRawSnake) => {
+        const next = this.registry.merge(domain, stagedRaw[domain], patch);
         const validated = this.registry.validate(domain, next);
-        const stripped = this.stripEnv(domain, validated);
+        const stripped = this.stripEnv(domain, validated, stagedRaw, stagedRawSnake);
         if (stripped === undefined) {
-          delete this.raw[domain];
+          delete stagedRaw[domain];
         } else {
           this.registry.validate(domain, stripped);
-          this.raw[domain] = stripped;
+          stagedRaw[domain] = stripped;
         }
       });
       this.rebuildEffective('set', [domain]);
@@ -437,12 +437,12 @@ export class ConfigService extends Disposable implements IConfigService {
     }
     await this.enqueueStateTransition(async () => {
       this.assertPersistable();
-      await this.persist(domain, () => {
-        const stripped = this.stripEnv(domain, effectiveValue);
+      await this.persist(domain, (stagedRaw, stagedRawSnake) => {
+        const stripped = this.stripEnv(domain, effectiveValue, stagedRaw, stagedRawSnake);
         if (stripped === undefined) {
-          delete this.raw[domain];
+          delete stagedRaw[domain];
         } else {
-          this.raw[domain] = this.registry.validate(domain, stripped);
+          stagedRaw[domain] = this.registry.validate(domain, stripped);
         }
       });
       this.rebuildEffective('set', [domain]);
@@ -472,34 +472,37 @@ export class ConfigService extends Disposable implements IConfigService {
     }
     await this.enqueueStateTransition(async () => {
       this.assertPersistable();
-      await this.persistDomains(domains, () => {
-        const staged: ResolvedConfig = { ...this.raw };
+      await this.persistDomains(domains, (stagedRaw, stagedRawSnake) => {
         for (const domain of domains) {
           const value = sections[domain] === null ? undefined : sections[domain];
-          const stripped = this.stripEnv(domain, value);
+          const stripped = this.stripEnv(domain, value, stagedRaw, stagedRawSnake);
           if (stripped === undefined) {
-            delete staged[domain];
+            delete stagedRaw[domain];
           } else {
-            staged[domain] = this.registry.validate(domain, stripped);
+            stagedRaw[domain] = this.registry.validate(domain, stripped);
           }
         }
-        this.raw = staged;
       });
       this.rebuildEffective('set', domains);
     });
   }
 
-  private stripEnv(domain: string, value: unknown): unknown {
+  private stripEnv(
+    domain: string,
+    value: unknown,
+    raw: ResolvedConfig,
+    rawSnake: ResolvedConfig,
+  ): unknown {
     let result = value;
     const section = this.registry.getSection(domain);
     if (section?.stripEnv !== undefined) {
       const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
-      result = section.stripEnv(result, this.raw[domain], getEnv);
+      result = section.stripEnv(result, raw[domain], getEnv);
     }
     if (result === undefined) return result;
     for (const overlay of this.registry.listEffectiveOverlays()) {
       if (overlay.strip === undefined) continue;
-      result = overlay.strip(domain, result, this.rawSnake);
+      result = overlay.strip(domain, result, rawSnake);
       if (result === undefined) return result;
     }
     return result;
@@ -754,11 +757,17 @@ export class ConfigService extends Disposable implements IConfigService {
     );
   }
 
-  private async persist(domain: string, rebase: () => void): Promise<void> {
+  private async persist(
+    domain: string,
+    rebase: (stagedRaw: ResolvedConfig, stagedRawSnake: ResolvedConfig) => void,
+  ): Promise<void> {
     await this.persistDomains([domain], rebase);
   }
 
-  private async persistDomains(domains: readonly string[], rebase: () => void): Promise<void> {
+  private async persistDomains(
+    domains: readonly string[],
+    rebase: (stagedRaw: ResolvedConfig, stagedRawSnake: ResolvedConfig) => void,
+  ): Promise<void> {
     this.assertPersistable();
     let onDisk: ResolvedConfig = {};
     try {
@@ -781,13 +790,15 @@ export class ConfigService extends Disposable implements IConfigService {
         { cause: error },
       );
     }
-    this.rawSnake = cloneRecord(onDisk);
-    this.raw = transformTomlData(onDisk, this.registry);
-    rebase();
+    const stagedRawSnake = cloneRecord(onDisk);
+    const stagedRaw = transformTomlData(onDisk, this.registry);
+    rebase(stagedRaw, stagedRawSnake);
     for (const domain of domains) {
-      applySectionToToml(this.rawSnake, domain, this.raw[domain], this.registry);
+      applySectionToToml(stagedRawSnake, domain, stagedRaw[domain], this.registry);
     }
-    await this.documentStore.set(CONFIG_SCOPE, this.configKey, this.rawSnake);
+    await this.documentStore.set(CONFIG_SCOPE, this.configKey, stagedRawSnake);
+    this.rawSnake = stagedRawSnake;
+    this.raw = stagedRaw;
   }
 }
 
