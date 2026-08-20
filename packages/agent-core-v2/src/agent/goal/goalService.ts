@@ -34,16 +34,12 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
-import { IAgentUsageService, type UsageRecordedContext } from '#/agent/usage/usage';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
+import { type UsageRecordedContext } from '#/agent/usage/usage';
 import type { GoalBudgetProperties } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
-import { IAgentProfileService } from '#/agent/profile/profile';
-import {
-  resolveSubstituteModelAlias,
-  resolveSubstituteCooldownMs,
-} from '#/session/substitute/configSection';
 import {
   ErrorCodes,
   Error2,
@@ -258,24 +254,10 @@ export const goalResumeContinuationKey = defineState<ResumeContinuation | undefi
   () => undefined as ResumeContinuation | undefined,
 );
 
-export const goalSubstituteModelActiveKey = defineState<boolean>(
-  'goal.substituteModelActive',
-  () => false,
-);
-export const goalSubstituteModelOriginalKey = defineState<string | undefined>(
-  'goal.substituteModelOriginal',
-  () => undefined as string | undefined,
-);
-export const goalSubstituteModelActivatedAtKey = defineState<number | undefined>(
-  'goal.substituteModelActivatedAt',
-  () => undefined as number | undefined,
-);
-
 export class AgentGoalService extends Disposable implements IAgentGoalService {
   declare readonly _serviceBrand: undefined;
 
   private readonly wallClockDeadline = this._register(new MutableDisposable<IDisposable>());
-  private readonly substituteRecoveryTimer = this._register(new MutableDisposable<IDisposable>());
   private pendingContinuation?: PendingContinuation;
 
   constructor(
@@ -290,10 +272,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
-    @IAgentUsageService usageService: IAgentUsageService,
+    @ISessionUsageService usageService: ISessionUsageService,
     @IConfigService private readonly config: IConfigService,
     @IFlagService private readonly flags: IFlagService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
     @IGoalDeadlineScheduler private readonly deadlineScheduler: IGoalDeadlineScheduler,
     @IAgentScopeContext private readonly agentContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -313,9 +294,6 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.states.contributeState(goalExhaustedTurnBudgetGoalsKey);
     this.states.contributeState(goalLiveWallClockStartedAtKey);
     this.states.contributeState(goalResumeContinuationKey);
-    this.states.contributeState(goalSubstituteModelActiveKey);
-    this.states.contributeState(goalSubstituteModelOriginalKey);
-    this.states.contributeState(goalSubstituteModelActivatedAtKey);
     if (!this.isSupportedAgent) return;
     this._register(
       new GoalInjection(
@@ -338,7 +316,10 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       }),
     );
     this._register(
-      usageService.onDidRecord((ctx) => this.handleUsageRecorded(ctx)),
+      usageService.onDidRecord((ctx) => {
+        if (ctx.agent !== this.agentContext.agentContext) return;
+        this.handleUsageRecorded(ctx);
+      }),
     );
     this._register(
       loopService.hooks.onWillBeginStep.register('goal-count-turn', async (ctx, next) => {
@@ -473,30 +454,6 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.states.set(goalResumeContinuationKey, value);
   }
 
-  private get substituteModelActive(): boolean {
-    return this.states.get(goalSubstituteModelActiveKey);
-  }
-
-  private set substituteModelActive(value: boolean) {
-    this.states.set(goalSubstituteModelActiveKey, value);
-  }
-
-  private get substituteModelOriginal(): string | undefined {
-    return this.states.get(goalSubstituteModelOriginalKey);
-  }
-
-  private set substituteModelOriginal(value: string | undefined) {
-    this.states.set(goalSubstituteModelOriginalKey, value);
-  }
-
-  private get substituteModelActivatedAt(): number | undefined {
-    return this.states.get(goalSubstituteModelActivatedAtKey);
-  }
-
-  private set substituteModelActivatedAt(value: number | undefined) {
-    this.states.set(goalSubstituteModelActivatedAtKey, value);
-  }
-
   private get isSupportedAgent(): boolean {
     return this.agentContext.agentId === 'main';
   }
@@ -532,6 +489,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const wallClockResumedAt = Date.now();
     void this.dispatcher.dispatch(
       new GoalCreate({
+        agentId: this.agentContext.agentId,
         goalId: randomUUID(),
         objective,
         completionCriterion: normalizeCompletionCriterion(input.completionCriterion),
@@ -634,7 +592,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.assertSupportedAgent();
     const state = this.requireState();
     const budgetLimits = { ...state.budgetLimits, ...input.budgetLimits };
-    void this.dispatcher.dispatch(new GoalUpdate({ budgetLimits }));
+    void this.dispatcher.dispatch(new GoalUpdate({ agentId: this.agentContext.agentId, budgetLimits }));
     const next = this.requireState();
     this.emitGoalUpdated(this.toSnapshot(next));
     this.telemetry.track2('goal_budget_set', {
@@ -695,7 +653,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   private dispatchCompletion(state: GoalState, reason: string | undefined, actor: GoalActor): void {
     const wallClockMs = this.settleWallClock(state);
-    void this.dispatcher.dispatch(new GoalUpdate({ status: 'complete', reason, wallClockMs, actor }));
+    void this.dispatcher.dispatch(
+      new GoalUpdate({ agentId: this.agentContext.agentId, status: 'complete', reason, wallClockMs, actor }),
+    );
   }
 
   private emitCompletion(
@@ -727,7 +687,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const state = this.goalState;
     if (state === null || state.status !== 'active' || !matchesGoal(state, goalId)) return null;
     const tokensUsed = state.tokensUsed + Math.max(0, tokenDelta);
-    void this.dispatcher.dispatch(new GoalUpdate({ tokensUsed }));
+    void this.dispatcher.dispatch(new GoalUpdate({ agentId: this.agentContext.agentId, tokensUsed }));
     const next = this.requireState();
     return this.blockIfBudgetReached(next) ?? this.toSnapshot(next);
   }
@@ -741,7 +701,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const state = this.goalState;
     if (state === null || state.status !== 'active' || !matchesGoal(state, goalId)) return null;
     const turnsUsed = state.turnsUsed + 1;
-    void this.dispatcher.dispatch(new GoalUpdate({ turnsUsed }));
+    void this.dispatcher.dispatch(new GoalUpdate({ agentId: this.agentContext.agentId, turnsUsed }));
     const next = this.requireState();
     this.emitGoalUpdated(this.toSnapshot(next));
     this.telemetry.track2('goal_continued', { turns_used: next.turnsUsed });
@@ -930,83 +890,10 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       return true;
     }
     if (result.reason === 'failed') {
-      if (isRateLimitError(result.error) && this.canSwitchToSubstituteModel()) {
-        await this.switchToSubstituteModel(goalId);
-        return false;
-      }
       await this.pauseActiveGoal({ reason: goalFailurePauseReason(result.error) });
       return true;
     }
     return false;
-  }
-
-  private canSwitchToSubstituteModel(): boolean {
-    if (this.substituteModelActive) return false;
-    const substituteAlias = resolveSubstituteModelAlias(this.config, this.flags);
-    return substituteAlias !== undefined;
-  }
-
-  private async switchToSubstituteModel(goalId: string): Promise<void> {
-    const substituteAlias = resolveSubstituteModelAlias(this.config, this.flags);
-    if (substituteAlias === undefined) return;
-    const originalModel = this.profile.getModel();
-    this.substituteModelOriginal = originalModel;
-    this.substituteModelActive = true;
-    this.substituteModelActivatedAt = Date.now();
-    try {
-      await this.profile.setModel(substituteAlias);
-    } catch {
-      this.substituteModelActive = false;
-      this.substituteModelOriginal = undefined;
-      this.substituteModelActivatedAt = undefined;
-      await this.pauseActiveGoal({
-        reason: `Paused after provider rate limit (substitute model "${substituteAlias}" could not be applied)`,
-      });
-      return;
-    }
-    const cooldownMs = resolveSubstituteCooldownMs(this.config, this.flags);
-    this.reminders.appendSystemReminder(
-      `Primary model hit a rate limit. Switched to substitute model "${substituteAlias}" for ~${Math.round(cooldownMs / 60_000)} minutes until the primary recovers.`,
-      { kind: 'injection', variant: 'substitute_model_activated' },
-    );
-    this.telemetry.track2('substitute_model_activated', {
-      original_model: originalModel,
-      substitute_model: substituteAlias,
-    });
-    this.scheduleSubstituteRecovery(goalId, cooldownMs);
-  }
-
-  private scheduleSubstituteRecovery(goalId: string, cooldownMs: number): void {
-    this.substituteRecoveryTimer.value = this.deadlineScheduler.schedule(cooldownMs, () => {
-      void this.switchBackToOriginalModel(goalId);
-    });
-  }
-
-  private async switchBackToOriginalModel(goalId: string): Promise<void> {
-    if (!this.substituteModelActive) return;
-    if (!this.isActiveGoal(goalId)) {
-      this.clearSubstituteState();
-      return;
-    }
-    const originalModel = this.substituteModelOriginal;
-    this.clearSubstituteState();
-    if (originalModel === undefined) return;
-    try {
-      await this.profile.setModel(originalModel);
-      this.reminders.appendSystemReminder(
-        `Primary model recovered. Switched back from substitute model to "${originalModel}".`,
-        { kind: 'injection', variant: 'substitute_model_deactivated' },
-      );
-      this.telemetry.track2('substitute_model_deactivated', {
-        original_model: originalModel,
-      });
-    } catch {}
-  }
-
-  private clearSubstituteState(): void {
-    this.substituteModelActive = false;
-    this.substituteModelOriginal = undefined;
-    this.substituteModelActivatedAt = undefined;
   }
 
   private async settleGoalAfterContinuationFailure(
@@ -1110,8 +997,6 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.appendForkClearedReminder();
     this.wallClockDeadline.clear();
     this.liveWallClockStartedAt = undefined;
-    this.substituteRecoveryTimer.clear();
-    this.clearSubstituteState();
     const state = this.goalState;
     if (state === null) return;
     if (state.status === 'complete') {
@@ -1123,6 +1008,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const reason = 'Paused after agent resume';
     void this.dispatcher.dispatch(
       new GoalUpdate({
+        agentId: this.agentContext.agentId,
         status: 'paused',
         reason,
         wallClockMs: this.settleWallClock(state),
@@ -1149,11 +1035,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.cancelPendingContinuation(opts.preserveLiveContinuation === true);
     this.wallClockDeadline.clear();
     this.liveWallClockStartedAt = undefined;
-    this.substituteRecoveryTimer.clear();
-    if (this.substituteModelActive) {
-      void this.switchBackToOriginalModel(this.goalState.goalId);
-    }
-    void this.dispatcher.dispatch(new GoalClear({}));
+    void this.dispatcher.dispatch(new GoalClear({ agentId: this.agentContext.agentId }));
     if (opts.emit !== false) this.emitGoalUpdated(null);
     if (opts.track !== false) this.telemetry.track2('goal_cleared', { actor });
   }
@@ -1182,7 +1064,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       this.liveWallClockStartedAt = undefined;
     }
     void this.dispatcher.dispatch(
-      new GoalUpdate({ status, reason, wallClockMs, wallClockResumedAt, actor }),
+      new GoalUpdate({ agentId: this.agentContext.agentId, status, reason, wallClockMs, wallClockResumedAt, actor }),
     );
     const next = this.requireState();
     if (status === 'active') this.adoptStarterTurn(actor);
@@ -1212,7 +1094,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   private emitGoalUpdated(snapshot: GoalSnapshot | null, change?: GoalChange): void {
-    void this.dispatcher.dispatch(new GoalUpdated({ snapshot, change }));
+    void this.dispatcher.dispatch(
+      new GoalUpdated({ agentId: this.agentContext.agentId, snapshot, change }),
+    );
   }
 
   private settleWallClock(state: GoalState): number {
@@ -1402,11 +1286,6 @@ function isMaxStepsTurnFailure(result: Pick<TurnEnded, 'reason' | 'error'>): boo
     result.reason === 'failed' &&
     normalizeGoalErrorPayload(result.error).code === LoopErrors.codes.LOOP_MAX_STEPS_EXCEEDED
   );
-}
-
-function isRateLimitError(error: unknown): boolean {
-  const payload = normalizeGoalErrorPayload(error);
-  return payload.code === ErrorCodes.PROVIDER_RATE_LIMIT;
 }
 
 function goalFailurePauseReason(error: unknown): string {

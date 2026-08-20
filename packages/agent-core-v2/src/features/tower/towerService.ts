@@ -94,12 +94,12 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   enter(): void {
     if (!this.flags.enabled(TOWER_FLAG_ID)) return;
     if (this.isActive) return;
-    void this.dispatcher.dispatch(new TowerModeEnter({}));
+    void this.dispatcher.dispatch(new TowerModeEnter({ agentId: this.agentCtx.agentId }));
   }
 
   exit(): void {
     if (!this.isActive) return;
-    void this.dispatcher.dispatch(new TowerModeExit({}));
+    void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
   }
 
   get isActive(): boolean {

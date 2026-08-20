@@ -1,4 +1,5 @@
 import { Service } from '#/_base/di/service';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { Error2, ErrorCodes } from '#/errors';
 import { LifecycleScope } from '#/app/scopes';
 import {
@@ -42,11 +43,11 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     super();
   }
 
-  run(agentId: string, request: AgentRunRequest, opts: RunAgentOptions): Promise<AgentRunHandle> {
-    const handle = this.agentLifecycle.get(agentId);
+  run(agent: AgentContext, request: AgentRunRequest, opts: RunAgentOptions): Promise<AgentRunHandle> {
+    const handle = this.agentLifecycle.get(agent);
     if (handle === undefined) {
-      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agentId}" does not exist`, {
-        details: { agentId },
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agent.agentId}" does not exist`, {
+        details: { agentId: agent.agentId },
       });
     }
     return runAgentTurn(handle, request, {

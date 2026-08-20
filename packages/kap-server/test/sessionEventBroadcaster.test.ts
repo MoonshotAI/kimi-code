@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import type {
   AgentActivityState,
+  AgentContext,
   IScopeHandle,
   ISessionStateService,
   Scope,
@@ -16,8 +17,7 @@ import {
   LifecycleScope,
   IAgentLifecycleService,
   IAgentProfileService,
-  IAgentTokenCountingService,
-  IAgentUsageService,
+  IAgentScopeContext,
   IEventBus,
   IEventService,
   IModelCatalog,
@@ -27,9 +27,12 @@ import {
   ISessionMetadata,
   ISessionLifecycleService,
   ISessionManager,
+  ISessionTokenCountingService,
+  ISessionUsageService,
   IWorkspaceInstanceManager,
   IWorkspaceSessions,
   MAIN_AGENT_ID,
+  makeAgentScopeContext,
   SessionInteractionService,
   StateRegistry,
 } from '@moonshot-ai/agent-core-v2';
@@ -102,8 +105,16 @@ class FakeAgentHandle {
   readonly kind = LifecycleScope.Agent;
   readonly bus = new FakeAgentBus();
   readonly accessor;
+  readonly context: AgentContext;
   private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
+    const scope = makeAgentScopeContext({
+      agentId: id,
+      agentScope: `agents/${id}`,
+      generation: 1,
+    });
+    this.context = scope.agentContext;
+    this.services.set(IAgentScopeContext, scope);
     this.services.set(IEventBus, this.bus);
     this.accessor = {
       get: (token: unknown) => this.services.get(token),
@@ -119,22 +130,25 @@ class FakeLifecycle {
   readonly handles: FakeAgentHandle[] = [];
   readonly interactions = new SessionInteractionService(new TestSessionStateService());
   private readonly turnCounters = new Map<string, { dispose(): void }>();
-  private createHandlers: Array<(h: IScopeHandle) => void> = [];
-  private disposeHandlers: Array<(id: string) => void> = [];
+  private createHandlers: Array<(context: AgentContext) => void> = [];
+  private disposeHandlers: Array<(context: AgentContext) => void> = [];
   list(): readonly FakeAgentHandle[] {
     return this.handles;
   }
-  get(id: string): FakeAgentHandle | undefined {
-    return this.getHandle(id);
+  get(context: AgentContext): FakeAgentHandle | undefined {
+    return this.handles.find((h) => h.id === context.agentId);
   }
   getHandle(id: string): FakeAgentHandle | undefined {
     return this.handles.find((h) => h.id === id);
   }
-  onDidCreate(h: (h: IScopeHandle) => void) {
+  findAgentHandle(agentId: string): FakeAgentHandle | undefined {
+    return this.handles.find((h) => h.id === agentId);
+  }
+  onDidCreate(h: (context: AgentContext) => void) {
     this.createHandlers.push(h);
     return { dispose: () => {} };
   }
-  onDidDispose(h: (id: string) => void) {
+  onDidDispose(h: (context: AgentContext) => void) {
     this.disposeHandlers.push(h);
     return { dispose: () => {} };
   }
@@ -177,15 +191,17 @@ class FakeLifecycle {
       },
     });
     this.handles.push(handle);
-    for (const cb of this.createHandlers) cb(handle as unknown as IScopeHandle);
+    for (const cb of this.createHandlers) cb(handle.context);
     return handle;
   }
   removeAgent(id: string): void {
     const idx = this.handles.findIndex((h) => h.id === id);
-    if (idx >= 0) this.handles.splice(idx, 1);
+    const [removed] = idx >= 0 ? this.handles.splice(idx, 1) : [];
     this.turnCounters.get(id)?.dispose();
     this.turnCounters.delete(id);
-    for (const cb of this.disposeHandlers) cb(id);
+    if (removed !== undefined) {
+      for (const cb of this.disposeHandlers) cb(removed.context);
+    }
   }
   readonly workView = new FakeSessionActivityView(this);
 }
@@ -203,11 +219,13 @@ class FakeSessionActivityView {
   constructor(lifecycle: FakeLifecycle) {
     this.interactions = lifecycle.interactions;
     for (const handle of lifecycle.list()) this.attach(handle as unknown as FakeAgentHandle);
-    lifecycle.onDidCreate((handle) => {
-      this.attach(handle as unknown as FakeAgentHandle);
+    lifecycle.onDidCreate((context) => {
+      const handle = lifecycle.get(context);
+      if (handle !== undefined) this.attach(handle as unknown as FakeAgentHandle);
       this.recompute('agent_lifecycle');
     });
-    lifecycle.onDidDispose((agentId) => {
+    lifecycle.onDidDispose((context) => {
+      const agentId = context.agentId;
       this.busSubscriptions.get(agentId)?.dispose();
       this.busSubscriptions.delete(agentId);
       if (this.folds.delete(agentId)) this.recompute('agent_lifecycle');
@@ -422,7 +440,10 @@ describe('SessionEventBroadcaster', () => {
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
-    const event = new TurnStarted({ turnId: 1, origin: { kind: 'user' } }, 1_700_000_000_123);
+    const event = new TurnStarted(
+      { agentId: 'main', turnId: 1, origin: { kind: 'user' } },
+      1_700_000_000_123,
+    );
 
     main.bus.emit(event);
     await bc.getCursor('s1');
@@ -502,14 +523,14 @@ describe('SessionEventBroadcaster', () => {
     const usage = {
       total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     };
-    main.set(IAgentTokenCountingService, {
+    main.set(ISessionTokenCountingService, {
       statusSize: () => contextSize,
     });
     main.set(IAgentProfileService, {
       getModel: () => 'example-model',
       getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
     });
-    main.set(IAgentUsageService, { status: () => usage });
+    main.set(ISessionUsageService, { status: () => usage });
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
@@ -547,12 +568,12 @@ describe('SessionEventBroadcaster', () => {
     const usage = {
       total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     };
-    sub.set(IAgentTokenCountingService, { statusSize: () => 10 });
+    sub.set(ISessionTokenCountingService, { statusSize: () => 10 });
     sub.set(IAgentProfileService, {
       getModel: () => 'sub-model',
       getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
     });
-    sub.set(IAgentUsageService, { status: () => usage });
+    sub.set(ISessionUsageService, { status: () => usage });
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
@@ -581,12 +602,12 @@ describe('SessionEventBroadcaster', () => {
       },
       total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     };
-    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
+    main.set(ISessionTokenCountingService, { statusSize: () => 10 });
     main.set(IAgentProfileService, {
       getModel: () => 'example-model',
       getModelCapabilities: () => ({ max_context_tokens: 128_000, max_input_tokens: 64_000 }),
     });
-    main.set(IAgentUsageService, { status: () => usage });
+    main.set(ISessionUsageService, { status: () => usage });
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
@@ -603,12 +624,12 @@ describe('SessionEventBroadcaster', () => {
   it('omits maxContextTokens instead of pushing 0 when the context limit is unknown', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
-    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
+    main.set(ISessionTokenCountingService, { statusSize: () => 10 });
     main.set(IAgentProfileService, {
       getModel: () => 'ghost-model',
       getModelCapabilities: () => ({ max_context_tokens: 0 }),
     });
-    main.set(IAgentUsageService, { status: () => ({}) });
+    main.set(ISessionUsageService, { status: () => ({}) });
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
@@ -626,12 +647,12 @@ describe('SessionEventBroadcaster', () => {
   it('falls back to the default model limit when no model is bound', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
-    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
+    main.set(ISessionTokenCountingService, { statusSize: () => 10 });
     main.set(IAgentProfileService, {
       getModel: () => '',
       getModelCapabilities: () => ({ max_context_tokens: 0 }),
     });
-    main.set(IAgentUsageService, { status: () => ({}) });
+    main.set(ISessionUsageService, { status: () => ({}) });
     main.set(IModelService, { getDefaultModel: () => 'default-model' });
     main.set(IModelCatalog, {
       get: (id: string) => {
@@ -654,12 +675,12 @@ describe('SessionEventBroadcaster', () => {
   it('omits maxContextTokens when no model is bound and no default model resolves', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
-    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
+    main.set(ISessionTokenCountingService, { statusSize: () => 10 });
     main.set(IAgentProfileService, {
       getModel: () => '',
       getModelCapabilities: () => ({ max_context_tokens: 0 }),
     });
-    main.set(IAgentUsageService, { status: () => ({}) });
+    main.set(ISessionUsageService, { status: () => ({}) });
     main.set(IModelService, { getDefaultModel: () => 'removed-model' });
     main.set(IModelCatalog, {
       get: () => {

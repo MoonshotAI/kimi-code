@@ -1,155 +1,144 @@
-import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import type { CollectionView } from '#/_base/di/collection';
+import { toDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
-import { LifecycleScope } from '#/app/scopes';
-import {
-  type IAgentScopeHandle,
-  ScopeActivation,
-  registerScopedService,
-} from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
-
+import { onUnexpectedError } from '#/_base/errors/unexpectedError';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { agentSpaceOf } from '#/agent/agentContext/agentSpace';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { ContextUndone } from '#/agent/undo/undoService';
-import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IEventDispatcher } from '#/state/eventDispatcher';
+import {
+  AgentEffectContribution,
+  type AgentEffectDefinition,
+} from '#/state/agentEffect';
+import {
+  AgentModelContribution,
+  type AgentModelDefinition,
+  type DomainResourceRuntime,
+} from '#/state/agentModel';
 
-import { ISessionTodoService } from './sessionTodo';
-import { todoKey, ToolsUpdateStore } from './todoOps';
+import { ISessionTodoService, type TodoChange } from './sessionTodo';
+import { TodoAgentEffectDefinition } from './todoAgentEffect';
+import { TodoAgentModelDefinition } from './todoAgentModel';
 import { TODO_LIST_TOOL_NAME, type TodoItem } from './todoItem';
-import { TODO_LIST_REMINDER_VARIANT, todoListStaleReminder } from './todoListReminder';
-
-const MAIN_AGENT_ID = 'main';
+import { TODO_LIST_REMINDER_VARIANT } from './todoListReminder';
 
 export class SessionTodoService extends Service implements ISessionTodoService {
   declare readonly _serviceBrand: undefined;
 
-  private readonly onDidChangeEmitter = this._register(new Emitter<readonly TodoItem[]>());
+  private readonly onDidChangeEmitter = this._register(new Emitter<TodoChange>());
   readonly onDidChange = this.onDidChangeEmitter.event;
-
-  private readonly agentBindings = new Map<string, IDisposable[]>();
-  private lastKnownTodos: readonly TodoItem[] = [];
+  private readonly effects = new Map<string, DomainResourceRuntime>();
 
   constructor(
+    @AgentModelContribution
+    private readonly models: CollectionView<AgentModelDefinition<any, any>>,
+    @AgentEffectContribution
+    private readonly effectDefinitions: CollectionView<AgentEffectDefinition<any, any>>,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {
     super();
-
     this._register(
-      this.agentLifecycle.onDidCreate((handle) => {
-        this.bindAgent(handle);
+      this.effectDefinitions.onDidChange(({ removed }) => {
+        if (!removed.includes(TodoAgentEffectDefinition as AgentEffectDefinition<any, any>)) return;
+        for (const agentId of this.effects.keys()) this.disposeEffect(agentId);
       }),
     );
     this._register(
-      this.agentLifecycle.onDidDispose((agentId) => this.disposeAgentBindings(agentId)),
+      this.agentLifecycle.onDidDispose((agent) => {
+        this.disposeEffect(agent.agentId);
+      }),
     );
-
-    for (const handle of this.agentLifecycle.list()) {
-      this.bindAgent(handle);
-    }
-
     this._register(
       toDisposable(() => {
-        for (const agentId of Array.from(this.agentBindings.keys())) {
-          this.disposeAgentBindings(agentId);
-        }
+        for (const agentId of this.effects.keys()) this.disposeEffect(agentId);
       }),
     );
   }
 
-  getTodos(): readonly TodoItem[] {
-    const main = this.agentLifecycle.get(MAIN_AGENT_ID);
-    if (main === undefined) return [];
-    return main.accessor.get(IAgentStateService).get(todoKey);
+  async getTodos(agent: AgentContext): Promise<readonly TodoItem[]> {
+    this.requireDefinitions();
+    const space = agentSpaceOf(agent);
+    this.ensureEffect(agent);
+    return space.use(TodoAgentModelDefinition, (model) => model.items());
   }
 
-  setTodos(todos: readonly TodoItem[]): void {
+  async setTodos(agent: AgentContext, todos: readonly TodoItem[]): Promise<void> {
+    this.requireDefinitions();
     const next: readonly TodoItem[] = todos.map((todo) => ({
       title: todo.title,
       status: todo.status,
     }));
-    this.dispatchTodoSet(next);
+    const space = agentSpaceOf(agent);
+    this.ensureEffect(agent);
+    await space.use(TodoAgentModelDefinition, (model) => model.replaceAll(next));
+    this.fireChange(agent, space.use(TodoAgentModelDefinition, (model) => model.items()));
   }
 
-  clear(): void {
-    this.setTodos([]);
+  clear(agent: AgentContext): Promise<void> {
+    return this.setTodos(agent, []);
   }
 
-  private dispatchTodoSet(todos: readonly TodoItem[]): void {
-    const main = this.agentLifecycle.get(MAIN_AGENT_ID);
-    if (main === undefined) return;
-    const dispatcher = main.accessor.get(IEventDispatcher);
-    void dispatcher.dispatch(new ToolsUpdateStore({ key: 'todo', value: todos }));
-    const current = main.accessor.get(IAgentStateService).get(todoKey);
-    this.lastKnownTodos = current;
-    this.onDidChangeEmitter.fire(current);
+  private requireDefinitions(): void {
+    if (!this.models.items.includes(TodoAgentModelDefinition as AgentModelDefinition<any, any>)) {
+      throw new Error('resource definition is unavailable');
+    }
+    if (
+      !this.effectDefinitions.items.includes(
+        TodoAgentEffectDefinition as AgentEffectDefinition<any, any>,
+      )
+    ) {
+      throw new Error('resource definition is unavailable');
+    }
   }
 
-  private bindAgent(handle: IAgentScopeHandle): void {
-    handle.accessor.get(IAgentStateService).contributeState(todoKey);
+  private ensureEffect(agent: AgentContext): void {
+    if (this.effects.has(agent.agentId)) return;
+    const handle = this.agentLifecycle.get(agent);
+    if (handle === undefined) {
+      throw new Error(`Agent ${agent.agentId}:${String(agent.generation)} is stale`);
+    }
+    const eventBus = handle.accessor.get(IEventBus);
     const injector = handle.accessor.get(IAgentContextInjectorService);
-    this.trackAgentBinding(
-      handle.id,
-      injector.register(TODO_LIST_REMINDER_VARIANT, () => this.staleReminder(handle)),
-    );
-    if (handle.id !== MAIN_AGENT_ID) return;
-
-    this.lastKnownTodos = handle.accessor.get(IAgentStateService).get(todoKey);
-    this.trackAgentBinding(
-      handle.id,
-      handle.accessor.get(IEventBus).subscribe(ContextUndone, () => {
-        const current = handle.accessor.get(IAgentStateService).get(todoKey);
-        if (todoItemsEqual(current, this.lastKnownTodos)) return;
-        this.lastKnownTodos = current;
-        this.onDidChangeEmitter.fire(current);
-      }),
-    );
-  }
-
-  private staleReminder(handle: IAgentScopeHandle): string | undefined {
     const memory = handle.accessor.get(IAgentContextMemoryService);
     const toolPolicy = handle.accessor.get(IAgentToolPolicyService);
-    return todoListStaleReminder({
-      active: toolPolicy.isToolActive(TODO_LIST_TOOL_NAME, 'builtin'),
-      history: memory.get(),
-      todos: this.getTodos(),
+    const runtime = TodoAgentEffectDefinition.create({
+      agent,
+      getTodos: () => agentSpaceOf(agent).use(TodoAgentModelDefinition, (model) => model.items()),
+      getHistory: () => memory.get(),
+      isToolActive: () => toolPolicy.isToolActive(TODO_LIST_TOOL_NAME, 'builtin'),
+      registerReminder: (provider) => injector.register(TODO_LIST_REMINDER_VARIANT, provider),
+      subscribeChange: (listener) =>
+        this.onDidChange((change) => {
+          if (change.agent === agent) listener(change.todos);
+        }),
+      subscribeUndo: (listener) => eventBus.subscribe(ContextUndone, listener),
+      onChange: (todos) => {
+        this.fireChange(agent, todos);
+      },
     });
+    this.effects.set(agent.agentId, runtime);
   }
 
-  private trackAgentBinding(agentId: string, disposable: IDisposable): void {
-    const list = this.agentBindings.get(agentId);
-    if (list === undefined) {
-      this.agentBindings.set(agentId, [disposable]);
-    } else {
-      list.push(disposable);
+  private disposeEffect(agentId: string): void {
+    const effect = this.effects.get(agentId);
+    if (effect === undefined) return;
+    this.effects.delete(agentId);
+    try {
+      const result = effect.dispose();
+      if (result instanceof Promise) {
+        result.catch((error: unknown) => onUnexpectedError(error));
+      }
+    } catch (error) {
+      onUnexpectedError(error);
     }
   }
 
-  private disposeAgentBindings(agentId: string): void {
-    const bindings = this.agentBindings.get(agentId);
-    if (bindings === undefined) return;
-    for (const disposable of bindings) {
-      disposable.dispose();
-    }
-    this.agentBindings.delete(agentId);
-    if (agentId === MAIN_AGENT_ID) this.lastKnownTodos = [];
+  private fireChange(agent: AgentContext, todos: readonly TodoItem[]): void {
+    this.onDidChangeEmitter.fire({ agent, todos });
   }
 }
-
-function todoItemsEqual(a: readonly TodoItem[], b: readonly TodoItem[]): boolean {
-  return (
-    a.length === b.length &&
-    a.every((item, index) => item.title === b[index]?.title && item.status === b[index]?.status)
-  );
-}
-
-registerScopedService(
-  LifecycleScope.Session,
-  ISessionTodoService,
-  SessionTodoService,
-  ScopeActivation.OnScopeCreated,
-  'todo',
-);

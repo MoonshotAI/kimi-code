@@ -4208,6 +4208,83 @@ command = "vim"
     expect(transcript).not.toContain('! ls');
   });
 
+  it('collapses long ! output to its first 10 rows and expands it with ctrl+o', async () => {
+    const stdout = Array.from({ length: 30 }, (_, i) => `row-${String(i + 1).padStart(2, '0')}`).join(
+      '\n',
+    );
+    const runShellCommand = vi.fn(async () => ({ stdout, stderr: '', isError: false }));
+    const session = makeSession({ runShellCommand });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.inputMode = 'bash';
+    driver.state.editor.inputMode = 'bash';
+
+    driver.handleUserInput('seq 30');
+    await vi.waitFor(() => {
+      const transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+      expect(transcript).toContain('... (20 more lines, ctrl+o to expand)');
+    });
+
+    let transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('row-01');
+    expect(transcript).not.toContain('row-11');
+
+    driver.state.editor.onToggleToolExpand?.();
+    transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('row-30');
+    expect(transcript).not.toContain('more lines');
+
+    driver.state.editor.onToggleToolExpand?.();
+    transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('... (20 more lines, ctrl+o to expand)');
+    expect(transcript).not.toContain('row-11');
+  });
+
+  it('a new ! card inherits an already-on ctrl+o expand state', async () => {
+    const stdout = Array.from({ length: 30 }, (_, i) => `row-${String(i + 1).padStart(2, '0')}`).join(
+      '\n',
+    );
+    let resolveCmd!: (value: { stdout: string; stderr: string; isError: boolean }) => void;
+    const runShellCommand = vi.fn(
+      () =>
+        new Promise<{ stdout: string; stderr: string; isError: boolean }>((resolve) => {
+          resolveCmd = resolve;
+        }),
+    );
+    const session = makeSession({ runShellCommand });
+    const { driver } = await makeDriver(session);
+    driver.state.toolOutputExpanded = true;
+    driver.state.appState.inputMode = 'bash';
+    driver.state.editor.inputMode = 'bash';
+
+    driver.handleUserInput('seq 30');
+    await Promise.resolve();
+    const outputEntry = driver.state.transcriptEntries.at(-1);
+    expect(outputEntry).toBeDefined();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'shell.output',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        commandId: outputEntry!.id,
+        update: { kind: 'stdout', text: stdout },
+      } as Event,
+      vi.fn(),
+    );
+    let transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('row-01');
+    expect(transcript).not.toContain('+25 lines');
+
+    resolveCmd({ stdout, stderr: '', isError: false });
+    await vi.waitFor(() => {
+      const finished = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+      expect(finished).toContain('row-30');
+    });
+    transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('row-01');
+    expect(transcript).not.toContain('more lines');
+  });
+
   it('renders cron fired events as distinct transcript entries', async () => {
     const { driver } = await makeDriver();
 

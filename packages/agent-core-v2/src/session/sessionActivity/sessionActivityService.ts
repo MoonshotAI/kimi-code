@@ -63,16 +63,16 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
     for (const handle of this.agents.list()) this.attachAgent(handle);
     this.current = this.aggregate();
     this._register(
-      this.agents.onDidCreate((handle) => {
+      this.agents.onDidCreateScope(({ handle }) => {
         this.attachAgent(handle);
         this.recompute('agent_lifecycle');
       }),
     );
     this._register(
-      this.agents.onDidDispose((agentId) => {
-        this.agentSubscriptions.get(agentId)?.dispose();
-        this.agentSubscriptions.delete(agentId);
-        if (this.folds.delete(agentId)) this.recompute('agent_lifecycle');
+      this.agents.onDidDispose((agent) => {
+        this.agentSubscriptions.get(agent.agentId)?.dispose();
+        this.agentSubscriptions.delete(agent.agentId);
+        if (this.folds.delete(agent.agentId)) this.recompute('agent_lifecycle');
       }),
     );
     this._register(this.interactions.onDidChangePending(() => this.recompute('interaction')));

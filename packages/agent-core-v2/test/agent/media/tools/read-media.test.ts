@@ -44,6 +44,7 @@ import type { ModelRequester } from '#/kosong/model/modelRequester';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { WorkspaceConfig } from '#/tool/path-access';
 import { sniffImageDimensions } from '#/agent/media/file-type';
+import { stubAgentContext } from '../../agentContext/stubs';
 
 const WORKSPACE: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: [] };
 
@@ -860,6 +861,8 @@ describe('AgentMediaToolsRegistrar', () => {
   function createRegistrarHarness() {
     const registry = new AgentToolRegistryService();
     const eventBus = new EventBusService();
+    const agentContext = stubAgentContext('main', 1);
+    eventBus.activateAgent(agentContext);
     const state: ProfileState = {
       alias: '',
       capabilities: capabilities({ image_in: false, video_in: false }),
@@ -906,9 +909,11 @@ describe('AgentMediaToolsRegistrar', () => {
       state.capabilities = caps;
       eventBus.publish(
         new AgentStatusUpdated({
+          agentId: 'main',
           model: alias,
           maxContextTokens: caps.max_context_tokens,
         }),
+        agentContext,
       );
     };
     const setRuntimeAvailable = (available: boolean): void => {

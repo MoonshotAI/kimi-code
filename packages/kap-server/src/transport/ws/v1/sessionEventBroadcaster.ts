@@ -946,15 +946,17 @@ export class SessionEventBroadcaster {
     };
     for (const handle of agents.list()) subscribeAgent(handle);
     state.lifecycleDisposables.push(
-      agents.onDidCreate((handle) => {
-        subscribeAgent(handle);
+      agents.onDidCreate((context) => {
+        const handle = agents.get(context);
+        if (handle !== undefined) subscribeAgent(handle);
         this.enqueueDurable(state, {
           type: 'agent.created',
-          agentId: handle.id,
+          agentId: context.agentId,
           sessionId,
         });
       }),
-      agents.onDidDispose((agentId) => {
+      agents.onDidDispose((context) => {
+        const agentId = context.agentId;
         const d = state.agentDisposables.get(agentId);
         if (d !== undefined) {
           d.dispose();

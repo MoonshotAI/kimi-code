@@ -57,6 +57,7 @@ export interface IAgentTaskEntry {
 }
 
 export interface AgentTaskNotificationContext {
+  readonly agentId: string;
   readonly notificationType: string;
   readonly title: string;
   readonly body: string;

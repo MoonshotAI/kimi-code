@@ -14,7 +14,6 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IWireService } from '#/wire/wire';
 import {
   IAgentContextMemoryService,
-  IAgentTokenCountingService,
   IAgentProfileService,
 } from '#/index';
 
@@ -23,14 +22,14 @@ import { createTestAgent, type TestAgentContext } from '../../harness';
 describe('Agent context', () => {
   let ctx: TestAgentContext;
   let context: IAgentContextMemoryService;
-  let tokenCounting: IAgentTokenCountingService;
+  let tokenCounting: TestAgentContext['tokenCounting'];
   let profile: IAgentProfileService;
   let wire: IWireService;
 
   beforeEach(() => {
     ctx = createTestAgent();
     context = ctx.get(IAgentContextMemoryService);
-    tokenCounting = ctx.get(IAgentTokenCountingService);
+    tokenCounting = ctx.tokenCounting;
     profile = ctx.get(IAgentProfileService);
     wire = ctx.get(IWireService);
   });

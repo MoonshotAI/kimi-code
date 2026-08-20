@@ -7,6 +7,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IRestGateway } from '#/app/gateway/gateway';
 import { RestGateway } from '#/app/gateway/gatewayService';
@@ -77,10 +78,12 @@ describe('RestGateway', () => {
     const agents: IAgentLifecycleService = {
       _serviceBrand: undefined,
       onDidCreate: () => ({ dispose: () => {} }),
+      onDidCreateScope: () => ({ dispose: () => {} }),
       onDidDispose: () => ({ dispose: () => {} }),
       create: () => Promise.resolve(agentHandle),
       fork: () => Promise.resolve(agentHandle),
-      get: (id) => (id === 'main' ? agentHandle : undefined),
+      get: (context: AgentContext) => (context.agentId === 'main' ? agentHandle : undefined),
+      findAgentHandle: (agentId: string) => (agentId === 'main' ? agentHandle : undefined),
       list: () => [agentHandle],
       remove: () => Promise.resolve(),
       broadcastPermissionMode: () => {},
