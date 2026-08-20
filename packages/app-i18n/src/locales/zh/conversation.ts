@@ -89,6 +89,7 @@ export default {
     copyPath: '复制路径',
     copied: '已复制',
     rawPayload: '原始 payload',
+    outputTruncated: '输出已截断，仅显示末尾',
     fields: {
       type: '类型',
       source: '来源',

@@ -70,13 +70,20 @@ export function rendersToolCard(block: Extract<TurnBlock, { kind: 'tool' }>): bo
 // delegation, todos, goals, swarm) stay visible exactly while active. Text
 // never folds. Successful media tools render inline media (no card) and
 // stay standalone — the media IS the turn's output.
+//
+// Notifications take no part in the folding and NEVER break a run: one that
+// lands mid-run (e.g. a background task settling while the agent keeps
+// working) is held back and rendered right AFTER the run block it landed
+// inside, so the turn's tools stay in one group. With no run open,
+// consecutive notifications merge into ONE render block in place (a lone
+// notification renders as a single notice).
 export function assistantRenderBlocks(turn: ChatTurn): AssistantRenderBlock[] {
   const blocks = turnBlocks(turn);
   const rendered: AssistantRenderBlock[] = [];
   let run: ActivityItem[] = [];
-  // Consecutive notification blocks merge into ONE render block (a single
-  // notification renders as a lone card; ≥2 as a group card). Anything that
-  // is not a notification — text included — breaks the grouping.
+  // Notifications waiting to render. Consecutive ones merge into ONE render
+  // block; the accumulator only flushes when no run is open (in place) or
+  // when a run closes (right after the run block).
   let pending: { items: TaskNotification[]; sourceIndex: number } | null = null;
 
   // A run of one item carries no summary value over the plain quiet line —
@@ -97,12 +104,13 @@ export function assistantRenderBlocks(turn: ChatTurn): AssistantRenderBlock[] {
 
   blocks.forEach((block, sourceIndex) => {
     if (block.kind === 'notification') {
-      flushRun();
+      // Never breaks the run — just queues; see the rule above.
       if (pending) pending.items.push(block.notification);
       else pending = { items: [block.notification], sourceIndex };
       return;
     }
-    flushNotifications();
+    // No run open: a queued notification renders in place, before this block.
+    if (run.length === 0) flushNotifications();
     if (block.kind === 'thinking') {
       run.push({
         kind: 'thinking',
@@ -118,7 +126,10 @@ export function assistantRenderBlocks(turn: ChatTurn): AssistantRenderBlock[] {
       return;
     }
 
+    // Text (or a standalone media tool) closes the run; a notification
+    // deferred from inside the run follows immediately after the run block.
     flushRun();
+    flushNotifications();
     if (block.kind === 'text') {
       rendered.push({ kind: 'text', text: block.text, sourceIndex });
     } else if (block.kind === 'tool') {
@@ -300,7 +311,14 @@ export function turnToMarkdown(turn: ChatTurn): string {
       // treatment (a naive join would let later body lines escape the quote).
       const n = blk.notification;
       const lines = [n.title, n.type, ...n.body.split('\n')].filter((s) => s !== '');
-      if (lines.length > 0) parts.push(`> **Notification**\n> ${lines.join('\n> ')}`);
+      const quoted = lines.length > 0 ? `> **Notification**\n> ${lines.join('\n> ')}` : '';
+      // The output preview is the task's only visible result when no output
+      // file persisted — keep it in the copy as a fenced block, exactly like
+      // a tool call's output.
+      const preview = n.outputPreview?.text ?? '';
+      const fenced = preview !== '' ? `\`\`\`\n[output-preview]\n${preview}\n\`\`\`` : '';
+      const md = [quoted, fenced].filter((s) => s !== '').join('\n\n');
+      if (md !== '') parts.push(md);
     }
   }
   return parts.join('\n\n');

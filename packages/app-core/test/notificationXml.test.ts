@@ -20,6 +20,18 @@ Severity: error
 Background process failed with exit code 1.
 </notification>`;
 
+// The `<output-preview>` shape renderOutputPreviewBlock emits when no
+// persisted full output file exists (agent-core taskService).
+const PREVIEW = `<notification id="task:bash-x9:failed" category="task" type="task.failed" source_kind="background_task" source_id="bash-x9">
+Title: Background process failed
+Severity: warning
+pnpm build failed. Reason: exit code 1
+<output-preview bytes="46" total_bytes="4096" truncated="true">
+Showing the last 46 bytes. No persisted full output is available.
+src/index.ts(1,7): error TS2304: Cannot find name 'foo'.
+</output-preview>
+</notification>`;
+
 describe('parseTaskNotifications', () => {
   it('parses a full block with output file', () => {
     const [n] = parseTaskNotifications(COMPLETED);
@@ -49,6 +61,36 @@ describe('parseTaskNotifications', () => {
   it('parses merged blocks from one message', () => {
     const list = parseTaskNotifications(`${COMPLETED}\n\n${FAILED}`);
     expect(list.map((n) => n.type)).toEqual(['task.completed', 'task.failed']);
+  });
+
+  it('parses an output-preview block, dropping its explanation line', () => {
+    const [n] = parseTaskNotifications(PREVIEW);
+    expect(n?.outputFile).toBeUndefined();
+    expect(n?.outputPreview).toEqual({
+      text: "src/index.ts(1,7): error TS2304: Cannot find name 'foo'.",
+      bytes: 46,
+      totalBytes: 4096,
+      truncated: true,
+    });
+    // The preview markup stays out of the prose body.
+    expect(n?.body).toBe('pnpm build failed. Reason: exit code 1');
+  });
+
+  it('unescapes XML entities in the output-preview text', () => {
+    const text = PREVIEW.replace(
+      "src/index.ts(1,7): error TS2304: Cannot find name 'foo'.",
+      'pnpm lint &amp;&amp; pnpm build &gt; out.log',
+    );
+    const [n] = parseTaskNotifications(text);
+    expect(n?.outputPreview?.text).toBe('pnpm lint && pnpm build > out.log');
+  });
+
+  it('reads truncated="false" as false and tolerates a missing total_bytes', () => {
+    const text = PREVIEW.replace('total_bytes="4096" truncated="true"', 'truncated="false"');
+    const [n] = parseTaskNotifications(text);
+    expect(n?.outputPreview?.truncated).toBe(false);
+    expect(n?.outputPreview?.totalBytes).toBeUndefined();
+    expect(n?.outputPreview?.bytes).toBe(46);
   });
 
   it('keeps the agent_id attr for subagent sources', () => {

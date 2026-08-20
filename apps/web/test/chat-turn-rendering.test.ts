@@ -249,6 +249,43 @@ describe('assistantRenderBlocks', () => {
       { kind: 'text', text: 'answer', sourceIndex: 1 },
     ]);
   });
+
+  it('defers a mid-run notification until after the run — it never breaks the group', () => {
+    const rendered = assistantRenderBlocks(
+      assistantTurn([toolBlock('a'), toolBlock('b'), ntfBlock('n1'), toolBlock('c')]),
+    );
+    // The three calls stay in ONE fold group; the notification follows it.
+    expect(rendered.map((b) => b.kind)).toEqual(['activity-run', 'notification']);
+    if (rendered[0]?.kind === 'activity-run') {
+      expect(rendered[0].items.map((it) => it.sourceIndex)).toEqual([0, 1, 3]);
+    }
+    expect(rendered[1]).toMatchObject({ sourceIndex: 2 });
+  });
+
+  it('renders a notification in place when no run is open', () => {
+    const rendered = assistantRenderBlocks(
+      assistantTurn([ntfBlock('n1'), toolBlock('a'), toolBlock('b')]),
+    );
+    expect(rendered.map((b) => b.kind)).toEqual(['notification', 'activity-run']);
+  });
+
+  it('still merges consecutive notifications into one render block', () => {
+    const rendered = assistantRenderBlocks(
+      assistantTurn([toolBlock('a'), ntfBlock('n1'), ntfBlock('n2'), toolBlock('b')]),
+    );
+    expect(rendered.map((b) => b.kind)).toEqual(['activity-run', 'notification']);
+    expect(rendered[1]).toMatchObject({ items: [{ id: 'n1' }, { id: 'n2' }] });
+  });
+
+  it('text still closes the run, with a deferred notification between run and text', () => {
+    const rendered = assistantRenderBlocks(
+      assistantTurn([toolBlock('a'), ntfBlock('n1'), toolBlock('b'), { kind: 'text', text: 'done' }]),
+    );
+    expect(rendered.map((b) => b.kind)).toEqual(['activity-run', 'notification', 'text']);
+    if (rendered[0]?.kind === 'activity-run') {
+      expect(rendered[0].items.map((it) => it.sourceIndex)).toEqual([0, 2]);
+    }
+  });
 });
 
 describe('turnFinalText', () => {
@@ -272,6 +309,34 @@ describe('turnToMarkdown', () => {
     ]);
     expect(turnToMarkdown(turn)).toBe(
       ['> **Thinking**\n> line1\n> line2', 'hello', '```\n[bash]\nout1\nout2\n```'].join('\n\n'),
+    );
+  });
+
+  it('keeps the notification output preview in the copy as a fenced block', () => {
+    const turn = assistantTurn([ntfBlock('n1')]);
+    const block = turn.blocks?.[0];
+    if (block?.kind === 'notification')
+      block.notification = {
+        ...block.notification,
+        outputPreview: { text: 'line a\nline b', bytes: 13, totalBytes: 100, truncated: true },
+      };
+    expect(turnToMarkdown(turn)).toBe(
+      '> **Notification**\n> task\n> task.completed\n> task n1\n\n```\n[output-preview]\nline a\nline b\n```',
+    );
+  });
+
+  it('serializes a preview-only notification — the preview is its whole visible result', () => {
+    const turn = assistantTurn([ntfBlock('n1')]);
+    const block = turn.blocks?.[0];
+    if (block?.kind === 'notification')
+      block.notification = {
+        ...block.notification,
+        title: '',
+        body: '',
+        outputPreview: { text: 'tail of the task output' },
+      };
+    expect(turnToMarkdown(turn)).toBe(
+      '> **Notification**\n> task.completed\n\n```\n[output-preview]\ntail of the task output\n```',
     );
   });
 });
@@ -639,21 +704,21 @@ describe('turnFileChanges', () => {
 
 describe('flattenAssistantFold', () => {
   it('restores source order for notifications punched out of the folded prefix', () => {
-    // A notification BETWEEN two tool runs is punched out of the folded
-    // prefix into the visible tail by the split — a plain concat would move
-    // it after the second run.
+    // A notification INSIDE a tool run defers to just after the run block and
+    // is then punched out of the folded prefix into the visible tail — a
+    // plain concat would move it after the run's whole group.
     const fold = splitAssistantFold(assistantTurn([
       toolBlock('a'),
       ntfBlock('n1'),
       toolBlock('b'),
       { kind: 'text', text: 'done' },
     ]));
-    expect(fold.folded.map((b) => b.kind)).toEqual(['tool', 'tool']);
+    expect(fold.folded.map((b) => b.kind)).toEqual(['activity-run']);
     expect(fold.visible[0]?.kind).toBe('notification');
     const flat = flattenAssistantFold(fold);
-    expect(flat.map((b) => b.kind)).toEqual(['tool', 'notification', 'tool', 'text']);
+    expect(flat.map((b) => b.kind)).toEqual(['activity-run', 'notification', 'text']);
     expect(
       flat.map((b) => (b.kind === 'activity-run' ? (b.items[0]?.sourceIndex ?? -1) : b.sourceIndex)),
-    ).toEqual([0, 1, 2, 3]);
+    ).toEqual([0, 1, 3]);
   });
 });

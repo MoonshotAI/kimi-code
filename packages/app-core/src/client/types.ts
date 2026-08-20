@@ -258,6 +258,12 @@ export interface TaskNotification {
   severity: string;
   body: string;
   outputFile?: { path: string; bytes?: number };
+  /** `<output-preview>` child: buffered task output shown when no persisted
+      full output file exists. `text` is the unescaped preview (the block's
+      leading explanation line is dropped); `bytes` is the preview length,
+      `totalBytes` the full output length, `truncated` whether the preview is
+      only the tail of the output. */
+  outputPreview?: { text: string; bytes?: number; totalBytes?: number; truncated?: boolean };
   /** The verbatim XML block, shown in the raw-payload disclosure. */
   raw: string;
   /** Server `created_at` of the carrying message. */

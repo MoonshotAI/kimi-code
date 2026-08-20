@@ -592,6 +592,9 @@ html[data-color-scheme="dark"] {
   --p-table-max: 1040px;
   --p-table-cell-max: 700px;
   --p-findbar-w: 340px;
+  /* Right-aligned chat column cap — the user bubble, the cron notice and the
+     task-notification notice all snap to this width. */
+  --p-bubble-max: 78%;
   /* Pinned height of the dock's filtered work panels (bash/subagent) — two
      card rows / a dozen rows plus a sliver, so the panel never resizes with
      the filter. */

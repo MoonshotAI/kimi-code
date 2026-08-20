@@ -12,6 +12,7 @@ export const TASK_NOTIFICATION_METADATA_KEY = 'kimiWeb.taskNotification';
 const NOTIFICATION_RE = /<notification\b([^>]*)>([\s\S]*?)<\/notification>/g;
 const ATTR_RE = /([\w-]+)="([^"]*)"/g;
 const OUTPUT_FILE_RE = /<output-file\b([^>]*)>[\s\S]*?<\/output-file>/;
+const OUTPUT_PREVIEW_RE = /<output-preview\b([^>]*)>([\s\S]*?)<\/output-preview>/;
 const TITLE_RE = /^Title: (.*)$/m;
 const SEVERITY_RE = /^Severity: (.*)$/m;
 
@@ -57,6 +58,30 @@ function parseBlock(attrRaw: string, bodyRaw: string, raw: string): TaskNotifica
       })()
     : undefined;
 
+  // `<output-preview>` carries the buffered task output when no persisted
+  // full output file exists. Its content is a one-line explanation ("Showing
+  // the last N bytes…") followed by the XML-escaped output text — only the
+  // text is kept, the explanation is redisplayed from the parsed attrs.
+  const prev = OUTPUT_PREVIEW_RE.exec(bodyRaw);
+  const outputPreview = prev
+    ? (() => {
+        const pa = attrs(prev[1] ?? '');
+        // The rendered block puts a newline right after the opening tag.
+        const content = (prev[2] ?? '').replace(/^\n/, '');
+        const nl = content.indexOf('\n');
+        const text = unescapeAttr(nl === -1 ? '' : content.slice(nl + 1)).replace(/\n$/, '');
+        const bytes = Number(pa['bytes']);
+        const totalBytes = Number(pa['total_bytes']);
+        return {
+          text,
+          bytes: Number.isFinite(bytes) ? bytes : undefined,
+          totalBytes: Number.isFinite(totalBytes) ? totalBytes : undefined,
+          truncated:
+            pa['truncated'] === 'true' ? true : pa['truncated'] === 'false' ? false : undefined,
+        };
+      })()
+    : undefined;
+
   return {
     id: a['id'] ?? '',
     category: a['category'] ?? '',
@@ -70,6 +95,7 @@ function parseBlock(attrRaw: string, bodyRaw: string, raw: string): TaskNotifica
     severity,
     body: unescapeAttr(body),
     outputFile,
+    outputPreview,
     raw,
   };
 }

@@ -89,6 +89,7 @@ export default {
     copyPath: 'Copy path',
     copied: 'Copied',
     rawPayload: 'Raw payload',
+    outputTruncated: 'Output truncated — showing the tail',
     fields: {
       type: 'Type',
       source: 'Source',
