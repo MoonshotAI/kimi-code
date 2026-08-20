@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   IAgentLifecycleService,
+  IAgentPromptService,
   ISessionIndex,
   ISessionMetadata,
   IAgentLoopService,
@@ -210,7 +211,8 @@ export class TranscriptService {
         (op) => op.op !== 'attachment.upsert' || !superseded.has(op.attachment.attachmentId),
       );
       const overlay = this.liveTurnOverlay(sessionId, agentId, transcript, snapshot);
-      if (overlay !== undefined) ops.push(overlay);
+      if (overlay !== undefined) ops.push(overlay, { op: 'meta.merge', meta: { activity: 'turn' } });
+      ops.push(...this.livePromptBackfill(sessionId, agentId));
       const result = transcript.apply(ops);
       if (result.gap !== undefined) {
         this.deps.logger?.warn({ sessionId, agentId, gap: result.gap }, 'transcript: backfill append gap');
@@ -400,6 +402,41 @@ export class TranscriptService {
     };
   }
 
+  private livePromptBackfill(sessionId: string, agentId: string): TranscriptOperation[] {
+    const queue = getLiveSessionById(this.deps.core.accessor, sessionId)
+      ?.accessor.get(IAgentLifecycleService)
+      .get(agentId)
+      ?.accessor.get(IAgentPromptService)
+      .list();
+    if (queue === undefined) return [];
+    const ops: TranscriptOperation[] = [];
+    if (queue.active !== undefined) {
+      ops.push({
+        op: 'prompt.upsert',
+        prompt: {
+          promptId: queue.active.id,
+          status: 'running',
+          userMessageId: queue.active.userMessageId,
+          content: queue.active.message.content,
+          createdAt: queue.active.createdAt,
+        },
+      });
+    }
+    for (const pending of queue.pending) {
+      ops.push({
+        op: 'prompt.upsert',
+        prompt: {
+          promptId: pending.id,
+          status: 'queued',
+          userMessageId: pending.userMessageId,
+          content: pending.message.content,
+          createdAt: pending.createdAt,
+        },
+      });
+    }
+    return ops;
+  }
+
   /**
    * Re-read the agent's persisted history and merge the ended turn(s) back
    * into the live store. The projector attaches to the bus at bind time, so
@@ -524,13 +561,20 @@ export class TranscriptService {
       messages,
       sawTurnPrompt ? { taskOriginTurnTaskIds } : undefined,
     );
-    const lastTurn = base.items.findLast((item) => item.kind === 'turn');
+    const folded = foldWireRecordFacts(records, base);
+    const status = getLiveSessionById(this.deps.core.accessor, sessionId)
+      ?.accessor.get(IAgentLifecycleService)
+      .get(agentId)
+      ?.accessor.get(IAgentLoopService)
+      .status();
+    const lastTurn = folded.items.findLast((item) => item.kind === 'turn');
     const activity =
-      lastTurn?.kind === 'turn' && lastTurn.state === 'running' ? 'unknown' : 'idle';
-    return foldWireRecordFacts(records, {
-      ...base,
-      meta: { ...base.meta, activity },
-    });
+      status?.state === 'running'
+        ? 'turn'
+        : lastTurn?.kind === 'turn' && lastTurn.state === 'running'
+          ? 'unknown'
+          : 'idle';
+    return { ...folded, meta: { ...folded.meta, activity } };
   }
 
   /** Dispose the live store + binding for a session (session closed / server shutdown). */
