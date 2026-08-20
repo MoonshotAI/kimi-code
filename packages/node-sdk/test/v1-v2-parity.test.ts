@@ -4711,6 +4711,44 @@ describe('v1↔v2 session MCP parity', () => {
       restoreEnv();
     }
   }, 20_000);
+
+  it('rejects a persisted session add when an enabled plugin owns the runtime name', async () => {
+    const restoreEnv = scrubConfigEnv();
+    const pair = await makeSessionMcpPair();
+    const pluginSource = await makeTempDir('kimi-sdk-parity-mcp-plugin-src-');
+    await writeFixturePlugin(pluginSource);
+    try {
+      await Promise.all([
+        pair.v1.installPlugin(pluginSource),
+        pair.v2.installPlugin(pluginSource),
+      ]);
+      await createOnBoth(pair, { id: 'session_parity_mcp_plugin_shadow' });
+      const input = { sessionId: 'session_parity_mcp_plugin_shadow' } as const;
+      const server: McpServerConfig = {
+        name: 'plugin-parity-plugin:parity-stdio',
+        transport: 'stdio',
+        command: process.execPath,
+        args: [MCP_STDIO_FIXTURE],
+      };
+
+      await expect(
+        pair.v1.addSessionMcpServer({ ...input, server, persist: true }),
+      ).rejects.toMatchObject({ code: 'request.invalid' });
+      await expect(
+        pair.v2.addSessionMcpServer({ ...input, server, persist: true }),
+      ).rejects.toMatchObject({ code: 'request.invalid' });
+
+      const [v1File, v2File] = await Promise.all([
+        readFile(join(pair.v1Home.raw, 'mcp.json'), 'utf-8').catch(() => ''),
+        readFile(join(pair.v2Home.raw, 'mcp.json'), 'utf-8').catch(() => ''),
+      ]);
+      expect(v1File).not.toContain('plugin-parity-plugin:parity-stdio');
+      expect(v2File).not.toContain('plugin-parity-plugin:parity-stdio');
+    } finally {
+      await closeSessionPair(pair);
+      restoreEnv();
+    }
+  }, 20_000);
 });
 
 // ---------------------------------------------------------------------------

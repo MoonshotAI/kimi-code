@@ -178,7 +178,6 @@ import {
   IEventService,
   IHostEnvironment,
   IHostFileSystem,
-  IMcpConfigStore,
   IMcpManagementService,
   IModelService,
   IProviderService,
@@ -909,29 +908,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return handle;
   }
 
-  /** The live session's workspace cwd, resolved like `listSessions` maps it. */
-  private async sessionWorkDir(sessionId: string): Promise<string | undefined> {
-    const page = await this.klient.global.sessions.list({ sessionId, limit: 1 });
-    const item = page.items[0];
-    if (item === undefined) return undefined;
-    if (item.cwd !== undefined) return item.cwd;
-    const workspaces = await this.klient.global.workspaces.list();
-    return workspaces.find((workspace) => workspace.id === item.workspaceId)?.root;
-  }
-
   /**
-   * v1's persist-add guard ported to the workspace loader: a same-named
-   * project-layer entry wins over the user file, so persisting would write a
-   * shadow that never takes effect — and the direct workspace-manager upsert
-   * would displace the project config every live session runs. Reject like
-   * v1's read-only rule instead.
+   * v1's persist-add project guard ported to the workspace loader. This read
+   * deliberately includes the project layer even while the workspace is
+   * untrusted: a user-level write must not create a shadow that springs into
+   * conflict when the workspace is trusted later.
    */
   private async rejectProjectLayerPersistedMcpAdd(
-    sessionId: string,
+    cwd: string,
     name: string,
   ): Promise<void> {
-    const cwd = await this.sessionWorkDir(sessionId);
-    if (cwd === undefined) return;
     const fs = this.engineAccessor.get(IHostFileSystem);
     const [withProject, userOnly] = await Promise.all([
       loadMcpServers({ fs, cwd, homeDir: this.homeDir, includeProject: true }),
@@ -2529,7 +2515,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     readonly server: McpServerConfig;
     readonly persist?: boolean;
   }): Promise<McpServerInfo> {
-    const mcp = this.requireLiveSession(input.sessionId).accessor.get(ISessionMcpHandle);
+    const session = this.requireLiveSession(input.sessionId);
+    const mcp = session.accessor.get(ISessionMcpHandle);
     const manager = mcp.connectionManager;
     if (!(manager instanceof McpConnectionManager)) {
       throw new KimiError(
@@ -2542,8 +2529,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // the same normalized identity, like v1's addSessionMcpServer does.
     const target = { ...parsed, name: normalizeServerName(parsed.name) };
     if (input.persist === true) {
-      await this.rejectProjectLayerPersistedMcpAdd(input.sessionId, target.name);
-      await this.engineAccessor.get(IMcpConfigStore).add(target);
+      const cwd = session.accessor.get(ISessionWorkspaceContext).workDir;
+      await this.rejectProjectLayerPersistedMcpAdd(cwd, target.name);
+      await this.engineAccessor
+        .get(IMcpManagementService)
+        .addServer(target, { cwd });
     }
     await manager.connect(target.name, mcpConfigWithoutName(target));
     const entry = manager.get(target.name);
