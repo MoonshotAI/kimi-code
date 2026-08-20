@@ -12,7 +12,7 @@ import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/share
 import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
-import { Emitter } from '#/_base/event';
+import { AsyncEmitter, Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
@@ -40,7 +40,7 @@ import {
 import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpService';
 import {
   IWorkspaceMcpConfigService,
-  type McpServersChange,
+  type McpServersChangeEvent,
   type McpTunables,
 } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 
@@ -68,7 +68,7 @@ describe('WorkspaceMcpService', () => {
   let current: Record<string, McpServerConfig>;
   let tunablesValue: McpTunables;
   let tunablesFn: Mock<() => McpTunables>;
-  let configChanges: Emitter<McpServersChange>;
+  let configChanges: AsyncEmitter<McpServersChangeEvent>;
   let assemblyEvents: Emitter<SessionWillCreateEvent>;
   let oauthService: McpOAuthService;
   let oauthScheduler: ManualMcpOAuthScheduler;
@@ -80,7 +80,7 @@ describe('WorkspaceMcpService', () => {
     current = {};
     tunablesValue = {};
     tunablesFn = vi.fn(() => tunablesValue);
-    configChanges = new Emitter<McpServersChange>();
+    configChanges = disposables.add(new AsyncEmitter<McpServersChangeEvent>());
     assemblyEvents = disposables.add(new Emitter<SessionWillCreateEvent>());
     oauthScheduler = new ManualMcpOAuthScheduler();
     oauthService = new McpOAuthService({
@@ -172,15 +172,13 @@ describe('WorkspaceMcpService', () => {
     await service.ready;
     expect(manager.get('alpha')?.status).toBe('connected');
 
-    configChanges.fire({ upsert: { beta: stdioServer() }, remove: ['alpha'] });
-
-    await vi.waitFor(
-      () => {
-        expect(manager?.get('alpha')?.status).toBe('removed');
-        expect(manager?.get('beta')?.status).toBe('connected');
-      },
-      { timeout: 10000, interval: 50 },
+    await configChanges.fireAsync(
+      { upsert: { beta: stdioServer() }, remove: ['alpha'] },
+      new AbortController().signal,
     );
+
+    expect(manager.get('alpha')?.status).toBe('removed');
+    expect(manager.get('beta')?.status).toBe('connected');
   }, 20000);
 
   it('queues change events until the initial connect settles', async () => {
@@ -207,7 +205,10 @@ describe('WorkspaceMcpService', () => {
     const service = createService();
     manager = service.connectionManager();
 
-    configChanges.fire({ upsert: { beta: stdioServer() }, remove: ['alpha'] });
+    void configChanges.fireAsync(
+      { upsert: { beta: stdioServer() }, remove: ['alpha'] },
+      new AbortController().signal,
+    );
     await connectAllStarted;
     expect(connect).not.toHaveBeenCalled();
     expect(markRemoved).not.toHaveBeenCalled();

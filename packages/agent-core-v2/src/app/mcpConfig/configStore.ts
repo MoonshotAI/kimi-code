@@ -3,7 +3,7 @@ import { join } from 'pathe';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { Emitter, type Event } from '#/_base/event';
+import { AsyncEmitter, type Event, type IWaitUntil } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { LifecycleScope } from '#/app/scopes';
 import { ErrorCodes, Error2 } from '#/errors';
@@ -12,10 +12,12 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 export type GlobalMcpServerConfig = McpServerConfig & { readonly name: string };
 
+export type McpConfigWriteEvent = IWaitUntil;
+
 export interface IMcpConfigStore {
   readonly _serviceBrand: undefined;
   readonly path: string;
-  readonly onDidWrite: Event<void>;
+  readonly onDidWrite: Event<McpConfigWriteEvent>;
   list(): Promise<readonly GlobalMcpServerConfig[]>;
   get(name: string): Promise<GlobalMcpServerConfig>;
   add(server: GlobalMcpServerConfig): Promise<readonly GlobalMcpServerConfig[]>;
@@ -43,8 +45,8 @@ export class McpConfigStore extends Disposable implements IMcpConfigStore {
 
   readonly path: string;
 
-  private readonly writeEmitter = this._register(new Emitter<void>());
-  readonly onDidWrite: Event<void> = this.writeEmitter.event;
+  private readonly writeEmitter = this._register(new AsyncEmitter<McpConfigWriteEvent>());
+  readonly onDidWrite: Event<McpConfigWriteEvent> = this.writeEmitter.event;
   private mutationTail: Promise<void> = Promise.resolve();
 
   constructor(
@@ -160,9 +162,11 @@ export class McpConfigStore extends Disposable implements IMcpConfigStore {
     await this.storage.write(CONFIG_SCOPE, MCP_CONFIG_KEY, textEncoder.encode(text), {
       atomic: true,
     });
-    this.writeEmitter.fire();
+    await this.writeEmitter.fireAsync({}, NO_ABORT);
   }
 }
+
+const NO_ABORT = new AbortController().signal;
 
 function parseServerInput(server: GlobalMcpServerConfig): GlobalMcpServerConfig {
   return parseServer(normalizeServerName(server.name), server);

@@ -7,12 +7,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
-import { Emitter } from '#/_base/event';
+import { AsyncEmitter, Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
-import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
+import {
+  IMcpConfigStore,
+  type McpConfigWriteEvent,
+} from '#/app/mcpConfig/configStore';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { ReloadSummary } from '#/app/plugin/types';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
@@ -47,7 +50,7 @@ describe('WorkspaceMcpConfigService', () => {
   let watchFires: Map<string, Emitter<HostFsChange>>;
   let pluginServers: Record<string, McpServerConfig>;
   let pluginReloads: Emitter<ReloadSummary>;
-  let storeWrites: Emitter<void>;
+  let storeWrites: AsyncEmitter<McpConfigWriteEvent>;
   let trusted: boolean;
   let trustFlips: Emitter<WorkspaceTrustChange>;
   let changes: McpServersChange[];
@@ -59,7 +62,7 @@ describe('WorkspaceMcpConfigService', () => {
     watchFires = new Map();
     pluginServers = {};
     pluginReloads = new Emitter<ReloadSummary>();
-    storeWrites = new Emitter<void>();
+    storeWrites = disposables.add(new AsyncEmitter<McpConfigWriteEvent>());
     trusted = true;
     trustFlips = new Emitter<WorkspaceTrustChange>();
     changes = [];
@@ -116,7 +119,7 @@ describe('WorkspaceMcpConfigService', () => {
       },
     });
     const service = ix.get(IWorkspaceMcpConfigService);
-    service.onDidChange((change) => changes.push(change));
+    service.onDidChange(({ upsert, remove }) => changes.push({ upsert, remove }));
     return service;
   }
 
@@ -231,7 +234,7 @@ describe('WorkspaceMcpConfigService', () => {
     expect(service.servers()).toEqual({ shared: stdioConfig('plugin-version') });
 
     await writeProjectConfig({});
-    storeWrites.fire();
+    await storeWrites.fireAsync({}, new AbortController().signal);
     pluginServers = {
       shared: stdioConfig('plugin-version'),
       pluginOnly: stdioConfig('plugin'),
@@ -313,7 +316,7 @@ describe('WorkspaceMcpConfigService', () => {
       JSON.stringify({ mcpServers: { added: stdioConfig('added') } }),
       'utf8',
     );
-    storeWrites.fire();
+    await storeWrites.fireAsync({}, new AbortController().signal);
 
     await vi.waitFor(
       () => {

@@ -290,5 +290,32 @@ describe('McpConfigStore', () => {
       await store.remove('ghost');
       expect(fired).toBe(0);
     });
+
+    it('waits for asynchronous listeners before resolving a mutation', async () => {
+      let resolveStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        resolveStarted = resolve;
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      store.onDidWrite((event) => {
+        resolveStarted();
+        event.waitUntil(gate);
+      });
+
+      let completed = false;
+      const mutation = store.add(stdioServer('alpha')).then(() => {
+        completed = true;
+      });
+      await started;
+      await Promise.resolve();
+      expect(completed).toBe(false);
+
+      release();
+      await mutation;
+      expect(completed).toBe(true);
+    });
   });
 });

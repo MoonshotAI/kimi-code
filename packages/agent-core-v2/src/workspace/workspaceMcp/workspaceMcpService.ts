@@ -67,7 +67,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     this._register({ dispose: () => void this.manager.shutdown() });
     this._register(
       this.mcpConfig.onDidChange((change) => {
-        this.scheduleApply(change);
+        change.waitUntil(this.scheduleApply(change));
       }),
     );
     this._register({ dispose: this.oauthEventSubscription(this.manager) });
@@ -252,8 +252,8 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     this.trackMcpInitialLoad();
   }
 
-  private scheduleApply(change: McpServersChange): void {
-    void this.ready
+  private scheduleApply(change: McpServersChange): Promise<void> {
+    return this.ready
       .then(() => this.mutate(() => this.apply(change)))
       .catch((error) => {
         this.log.warn(`mcp server change apply failed: ${String(error)}`);

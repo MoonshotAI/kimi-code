@@ -344,6 +344,33 @@ describe('McpManagementService', () => {
       await expect(store.list()).resolves.toEqual([]);
     });
 
+    it('waits for live config reconciliation listeners before returning', async () => {
+      let resolveStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        resolveStarted = resolve;
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      store.onDidWrite((event) => {
+        resolveStarted();
+        event.waitUntil(gate);
+      });
+
+      let completed = false;
+      const mutation = management.addServer(stdioServer('alpha')).then(() => {
+        completed = true;
+      });
+      await started;
+      await Promise.resolve();
+      expect(completed).toBe(false);
+
+      release();
+      await mutation;
+      expect(completed).toBe(true);
+    });
+
     it('normalizes server names so the guard, the persisted key, and the list agree', async () => {
       const added = await management.addServer(stdioServer('  alpha  '));
 
