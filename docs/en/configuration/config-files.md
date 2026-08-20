@@ -334,6 +334,17 @@ In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent
 
 `timeout_ms` can be overridden by the `KIMI_SUBAGENT_TIMEOUT_MS` environment variable, which takes higher priority than `config.toml`.
 
+## `swarm`
+
+`swarm` controls the launch ramp of the `AgentSwarm` tool: when a swarm batch starts, a number of subagents launch immediately and the rest follow one at a time at a fixed interval.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `initial_launch_limit` | `integer` | `5` | Number of subagents launched immediately when a swarm batch starts |
+| `launch_interval_ms` | `integer` | `700` | Delay in milliseconds between subsequent launches once `initial_launch_limit` subagents have started; `0` launches all remaining subagents without delay |
+
+These settings only shape the initial launch ramp; the rate-limit backoff that applies when the provider throttles requests is unchanged.
+
 ## `mcp`
 
 | Field | Type | Default | Description |

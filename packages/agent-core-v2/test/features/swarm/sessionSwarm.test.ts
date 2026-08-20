@@ -141,6 +141,79 @@ describe('AgentRunBatch scheduling contract', () => {
     }
   });
 
+  it('normal phase launches every queued task immediately when the limit covers the batch and the interval is zero', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({
+        initialLaunchLimit: 24,
+        launchIntervalMs: 0,
+      });
+      const running = runBatch(
+        Array.from({ length: 9 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: new AbortController().signal },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(9);
+
+      attempts.forEach((attempt, index) => {
+        attempt.outcome.resolve({
+          task: attempt.task,
+          agentId: `agent-${String(index + 1)}`,
+          status: 'completed',
+          result: `result ${String(index + 1)}`,
+        });
+      });
+      const results = await running;
+
+      expect(results).toHaveLength(9);
+      expect(results.every((result) => result.status === 'completed')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('normal phase honors a configured launch limit and interval', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({
+        initialLaunchLimit: 2,
+        launchIntervalMs: 100,
+      });
+      const running = runBatch(
+        Array.from({ length: 4 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: new AbortController().signal },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(2);
+
+      await vi.advanceTimersByTimeAsync(99);
+      expect(attempts).toHaveLength(2);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(attempts).toHaveLength(3);
+
+      await vi.advanceTimersByTimeAsync(100);
+      expect(attempts).toHaveLength(4);
+
+      attempts.forEach((attempt, index) => {
+        attempt.outcome.resolve({
+          task: attempt.task,
+          agentId: `agent-${String(index + 1)}`,
+          status: 'completed',
+          result: `result ${String(index + 1)}`,
+        });
+      });
+      const results = await running;
+
+      expect(results).toHaveLength(4);
+      expect(results.every((result) => result.status === 'completed')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('user cancellation returns completed, started, and not-started task results', async () => {
     vi.useFakeTimers();
     try {
@@ -1543,6 +1616,8 @@ type MockAgentRunBatchRunnerOptions = {
   readonly onSuspended?: (event: AgentRunSuspendedEvent) => void;
   readonly readyDelay?: (attemptIndex: number) => number | undefined;
   readonly maxConcurrency?: number;
+  readonly initialLaunchLimit?: number;
+  readonly launchIntervalMs?: number;
 };
 
 function createMockAgentRunBatchRunner(
@@ -1613,6 +1688,8 @@ function createMockAgentRunBatchRunner(
       }));
       return new AgentRunBatch(launcher, activeTasks as readonly QueuedAgentRunTask<T>[], {
         maxConcurrency: options.maxConcurrency,
+        initialLaunchLimit: options.initialLaunchLimit,
+        launchIntervalMs: options.launchIntervalMs,
       }).run();
     },
     attempts,
