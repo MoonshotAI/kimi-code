@@ -1,3 +1,6 @@
+import { realpathSync } from 'node:fs';
+import { mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { PassThrough, type Writable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -58,6 +61,7 @@ import { stubContextMemory, type StubContextMemory } from '../contextMemory/stub
 import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 
 const TEST_CWD = '/tmp/monitor-test-session';
+const TEST_WATCH_CWD = `${realpathSync('/tmp')}/monitor-test-session`;
 
 function stubWireService(): IWireService {
   return {
@@ -435,6 +439,30 @@ describe('AgentMonitorService', () => {
     expect(drainMonitorNotifications()).toHaveLength(0);
   });
 
+  it('task_output monitor matches output emitted before the monitor was created', async () => {
+    const ctl = controllableProcessTask();
+    const taskId = tasks().registerTask(ctl.task);
+    await tick();
+    ctl.appendOutput('BUILD_DONE\n');
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if ((await tasks().readOutput(taskId)).includes('BUILD_DONE')) break;
+      await tick();
+    }
+
+    const info = await monitors().createMonitor({
+      type: 'task_output',
+      taskId,
+      pattern: 'BUILD_DONE',
+      timeoutMs: 60_000,
+    });
+
+    await waitFor(() => monitors().listMonitors()[0]?.status === 'fired');
+    expect(monitors().listMonitors()[0]?.trigger).toBe('match');
+    const origins = drainMonitorNotifications();
+    expect(origins).toHaveLength(1);
+    expect(origins[0]).toMatchObject({ monitorId: info.monitorId, trigger: 'match' });
+  });
+
   it('command monitor fires an exit notification when the command exits first', async () => {
     await monitors().createMonitor({
       type: 'command',
@@ -490,14 +518,14 @@ describe('AgentMonitorService', () => {
       timeoutMs: 60_000,
     });
     expect(watchCalls).toHaveLength(1);
-    expect(watchCalls[0]?.path).toBe(`${TEST_CWD}/logs/app.log`);
+    expect(watchCalls[0]?.path).toBe(`${TEST_WATCH_CWD}/logs/app.log`);
     const handle = watchCalls[0]!.handle;
 
-    handle.fire({ path: `${TEST_CWD}/logs/app.log`, action: 'deleted', kind: 'file' });
+    handle.fire({ path: `${TEST_WATCH_CWD}/logs/app.log`, action: 'deleted', kind: 'file' });
     await tick();
     expect(monitors().listMonitors()[0]?.status).toBe('active');
 
-    handle.fire({ path: `${TEST_CWD}/logs/app.log`, action: 'modified', kind: 'file' });
+    handle.fire({ path: `${TEST_WATCH_CWD}/logs/app.log`, action: 'modified', kind: 'file' });
     await waitFor(() => monitors().listMonitors()[0]?.status === 'fired');
     expect(monitors().listMonitors()[0]?.trigger).toBe('match');
 
@@ -519,18 +547,36 @@ describe('AgentMonitorService', () => {
       timeoutMs: 60_000,
     });
     expect(watchCalls).toHaveLength(1);
-    expect(watchCalls[0]?.path).toBe(`${TEST_CWD}/reports`);
+    expect(watchCalls[0]?.path).toBe(`${TEST_WATCH_CWD}/reports`);
     expect(watchCalls[0]?.options?.recursive).toBe(true);
     const handle = watchCalls[0]!.handle;
 
-    handle.fire({ path: `${TEST_CWD}/reports/summary.txt`, action: 'created', kind: 'file' });
-    handle.fire({ path: `${TEST_CWD}/reports/deep/run.log`, action: 'modified', kind: 'file' });
+    handle.fire({ path: `${TEST_WATCH_CWD}/reports/summary.txt`, action: 'created', kind: 'file' });
+    handle.fire({ path: `${TEST_WATCH_CWD}/reports/deep/run.log`, action: 'modified', kind: 'file' });
     await tick();
     expect(monitors().listMonitors()[0]?.status).toBe('active');
 
-    handle.fire({ path: `${TEST_CWD}/reports/deep/run.log`, action: 'created', kind: 'file' });
+    handle.fire({ path: `${TEST_WATCH_CWD}/reports/deep/run.log`, action: 'created', kind: 'file' });
     await waitFor(() => monitors().listMonitors()[0]?.status === 'fired');
     expect(monitors().listMonitors()[0]?.trigger).toBe('match');
+  });
+
+  it('file monitor canonicalizes a watch path that passes through a symlink', async () => {
+    const realDir = await mkdtemp(`${tmpdir()}/monitor-real-`);
+    const link = `${realDir}-link`;
+    await symlink(realDir, link, 'dir');
+    try {
+      await monitors().createMonitor({
+        type: 'file',
+        path: `${link}/done.txt`,
+        timeoutMs: 60_000,
+      });
+      expect(watchCalls).toHaveLength(1);
+      expect(watchCalls[0]?.path).toBe(`${await realpath(link)}/done.txt`);
+    } finally {
+      await rm(link, { force: true, recursive: true });
+      await rm(realDir, { force: true, recursive: true });
+    }
   });
 
   it('rejects invalid input at the schema boundary', () => {

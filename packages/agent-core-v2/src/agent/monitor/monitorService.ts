@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
+import { existsSync, realpathSync } from 'node:fs';
 
 import picomatch from 'picomatch';
-import { resolve } from 'pathe';
+import { basename, dirname, join, resolve } from 'pathe';
 
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -290,6 +291,12 @@ export class AgentMonitorService extends Disposable implements IAgentMonitorServ
     }
     this.addWatcher(this.outputWatchers, spec.taskId, managed);
     this.addWatcher(this.terminalWatchers, spec.taskId, managed);
+    void this.tasks.readOutput(spec.taskId).then(
+      (backlog) => {
+        this.feedChunk(managed, backlog);
+      },
+      () => {},
+    );
   }
 
   private async setupCommandMonitor(managed: ManagedMonitor, spec: CommandMonitorSpec): Promise<void> {
@@ -345,7 +352,7 @@ export class AgentMonitorService extends Disposable implements IAgentMonitorServ
 
   private async setupFileMonitor(managed: ManagedMonitor, spec: FileMonitorSpec): Promise<void> {
     const record = managed.record;
-    const absolute = resolve(this.session.cwd, spec.path);
+    const absolute = canonicalizeForWatch(resolve(this.session.cwd, spec.path));
     record.path = spec.path;
     record.events = spec.events ?? ['created', 'modified'];
     const actions = new Set<MonitorFileEvent>(record.events);
@@ -812,6 +819,25 @@ function generateMonitorId(): string {
 
 function normalizeSlashes(path: string): string {
   return path.replaceAll('\\', '/');
+}
+
+function canonicalizeForWatch(target: string): string {
+  const missing: string[] = [];
+  let current = target;
+  for (;;) {
+    if (existsSync(current)) {
+      try {
+        const real = realpathSync(current);
+        return missing.length === 0 ? real : join(real, ...missing);
+      } catch {
+        return target;
+      }
+    }
+    const parent = dirname(current);
+    if (parent === current) return target;
+    missing.unshift(basename(current));
+    current = parent;
+  }
 }
 
 function staticWatchRoot(absoluteGlob: string): string {

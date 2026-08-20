@@ -8,7 +8,7 @@
  * file monitors exercise genuine chokidar events against tmp dirs.
  */
 
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { createControlledPromise } from '@antfu/utils';
@@ -122,11 +122,19 @@ class FakeOutputTask implements BackgroundTask {
   readonly idPrefix = 'bash';
   readonly description = 'fake output task';
   private readonly gate = createControlledPromise<void>();
+  private readonly endGate = createControlledPromise<void>();
 
-  constructor(private readonly chunks: readonly string[]) {}
+  constructor(
+    private readonly chunks: readonly string[],
+    private readonly holdOpen = false,
+  ) {}
 
   release(): void {
     this.gate.resolve();
+  }
+
+  finish(): void {
+    this.endGate.resolve();
   }
 
   async start(sink: BackgroundTaskSink): Promise<void> {
@@ -134,6 +142,10 @@ class FakeOutputTask implements BackgroundTask {
     for (const chunk of this.chunks) {
       if (sink.signal.aborted) return;
       sink.appendOutput(chunk);
+    }
+    if (this.holdOpen) {
+      await this.endGate;
+      if (sink.signal.aborted) return;
     }
     await sink.settle({ status: 'completed' });
   }
@@ -219,6 +231,29 @@ describe('task_output monitor', () => {
     const ended = await waitForStatus(fixture, record.id, 'ended');
     expect(ended.fire).toBeUndefined();
     expect(fixture.steerCalls).toHaveLength(0);
+  });
+
+  it('fires on creation when the pattern already appeared in the task backlog', async () => {
+    const fixture = createFixture();
+    const task = new FakeOutputTask(['BUILD_DONE\n'], true);
+    const taskId = registerFake(fixture, task);
+    task.release();
+    await vi.waitFor(async () => {
+      expect(await fixture.background.readOutput(taskId)).toContain('BUILD_DONE');
+    });
+
+    const record = await fixture.monitor.create({
+      type: 'task_output',
+      taskId,
+      pattern: 'BUILD_DONE',
+      timeoutS: 60,
+    });
+
+    const fired = await waitForStatus(fixture, record.id, 'fired');
+    expect(fired.fire?.trigger).toBe('match');
+    expect(fired.fire?.matchedLine).toBe('BUILD_DONE');
+    expect(fixture.steerCalls).toHaveLength(1);
+    task.finish();
   });
 
   it('rejects watching an unknown or terminal task', async () => {
@@ -327,7 +362,27 @@ describe('file monitor', () => {
     const fired = await waitForStatus(fixture, record.id, 'fired');
     expect(fired.fire?.trigger).toBe('match');
     expect(fired.fire?.fileEvent).toBe('created');
-    expect(fired.fire?.filePath).toBe(join(dir, 'new-file.txt'));
+    expect(fired.fire?.filePath).toBe(join(await realpath(dir), 'new-file.txt'));
+  });
+
+  it('fires for a watch path that passes through a symlinked directory', async () => {
+    const realDir = await makeTmpDir();
+    const link = `${realDir}-link`;
+    tempDirs.push(link);
+    await symlink(realDir, link);
+    const fixture = createFixture({ cwd: realDir });
+    const record = await fixture.monitor.create({
+      type: 'file',
+      path: join(link, 'done.txt'),
+      events: ['created'],
+      timeoutS: 30,
+    });
+
+    await writeFile(join(realDir, 'done.txt'), 'x');
+
+    const fired = await waitForStatus(fixture, record.id, 'fired');
+    expect(fired.fire?.trigger).toBe('match');
+    expect(fired.fire?.fileEvent).toBe('created');
   });
 
   it('fires on modification of a watched file, not on the initial state', async () => {
@@ -350,7 +405,7 @@ describe('file monitor', () => {
 
     const fired = await waitForStatus(fixture, record.id, 'fired');
     expect(fired.fire?.fileEvent).toBe('modified');
-    expect(fired.fire?.filePath).toBe(target);
+    expect(fired.fire?.filePath).toBe(await realpath(target));
   });
 
   it('matches globs via the static-prefix directory and picomatch filter', async () => {
@@ -373,7 +428,7 @@ describe('file monitor', () => {
 
     const fired = await waitForStatus(fixture, record.id, 'fired');
     expect(fired.fire?.fileEvent).toBe('created');
-    expect(fired.fire?.filePath).toBe(join(dir, 'logs', 'app.log'));
+    expect(fired.fire?.filePath).toBe(join(await realpath(dir), 'logs', 'app.log'));
   });
 });
 

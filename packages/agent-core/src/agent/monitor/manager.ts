@@ -40,14 +40,14 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 
 import { createControlledPromise, type ControlledPromise } from '@antfu/utils';
 import type { KaosProcess } from '@moonshot-ai/kaos';
 import type { ContentPart } from '@moonshot-ai/kosong';
 import { watch, type FSWatcher } from 'chokidar';
 import picomatch from 'picomatch';
-import { resolve } from 'pathe';
+import { basename, dirname, join, resolve } from 'pathe';
 
 import type { Agent } from '../index';
 import { isBackgroundTaskTerminal, ProcessBackgroundTask } from '../background';
@@ -270,6 +270,34 @@ function shellQuote(s: string): string {
   return `'${s.replaceAll("'", "'\\''")}'`;
 }
 
+/**
+ * Resolve symlinks along the watch target before handing it to chokidar.
+ * With `followSymlinks: false` semantics (and on macOS generally, e.g.
+ * `/tmp` → `/private/tmp`), watching a path that passes through a symlink
+ * reports the change on the symlink node itself instead of the file, so
+ * both the exact-path comparison and glob filtering would never match.
+ * The file itself may not exist yet (creation watch), so canonicalize the
+ * nearest existing ancestor and re-append the missing tail.
+ */
+function canonicalizeForWatch(target: string): string {
+  const missing: string[] = [];
+  let current = target;
+  for (;;) {
+    if (existsSync(current)) {
+      try {
+        const real = realpathSync(current);
+        return missing.length === 0 ? real : join(real, ...missing);
+      } catch {
+        return target;
+      }
+    }
+    const parent = dirname(current);
+    if (parent === current) return target;
+    missing.unshift(basename(current));
+    current = parent;
+  }
+}
+
 // ── Manager ──────────────────────────────────────────────────────────
 
 export class MonitorManager {
@@ -452,6 +480,16 @@ export class MonitorManager {
     live.unsubscribeOutput = this.agent.background.subscribeTaskOutput(spec.taskId, (chunk) => {
       matcher.feed(chunk);
     });
+    // Replay the existing backlog through the matcher: the task may have
+    // emitted the pattern between its own start and this subscription
+    // (e.g. the model registers the monitor a few seconds late). The
+    // matcher fires at most once, so bytes seen twice are harmless.
+    void this.agent.background.readOutput(spec.taskId).then(
+      (backlog) => {
+        matcher.feed(backlog);
+      },
+      () => {},
+    );
     void this.watchTargetTerminal(live, spec.taskId);
   }
 
@@ -485,7 +523,7 @@ export class MonitorManager {
     live: LiveMonitor,
     spec: Extract<MonitorCreateSpec, { type: 'file' }>,
   ): Promise<void> {
-    const absolute = resolve(this.agent.config.cwd, spec.path);
+    const absolute = canonicalizeForWatch(resolve(this.agent.config.cwd, spec.path));
     const target = resolveFileWatchTarget(absolute);
     if (target.rootIsPrefix && !existsSync(target.root)) {
       throw new Error(`Watch root ${target.root} does not exist.`);
