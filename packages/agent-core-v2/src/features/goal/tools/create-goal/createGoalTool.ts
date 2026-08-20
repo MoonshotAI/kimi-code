@@ -2,14 +2,13 @@ import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { type ToolExecution } from '#/tool/toolContract';
-import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
+import { type ToolExecution } from '#/tool/toolContract';
 
-import { IAgentGoalService } from '#/agent/goal/goal';
-import { goalForModel } from '#/agent/goal/tools/serialize';
+import { IAgentGoalService } from '#/features/goal/goal';
+import { goalForModel } from '#/features/goal/tools/serialize';
 
-import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '../../mainAgentOnly';
 import DESCRIPTION from './create-goal.md?raw';
 import {
   CreateGoalToolInputSchema,
@@ -69,8 +68,3 @@ export class CreateGoalTool implements ICreateGoalTool {
     };
   }
 }
-
-registerAgentToolService(ICreateGoalTool, CreateGoalTool, {
-  name: 'CreateGoal',
-  domain: 'goal',
-});

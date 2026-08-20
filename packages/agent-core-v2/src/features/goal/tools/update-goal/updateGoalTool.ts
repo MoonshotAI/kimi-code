@@ -1,15 +1,14 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { type ToolExecution } from '#/tool/toolContract';
-import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
+import { type ToolExecution } from '#/tool/toolContract';
 
-import { IAgentGoalService } from '#/agent/goal/goal';
+import { IAgentGoalService } from '#/features/goal/goal';
 import {
   buildGoalBlockedReasonPrompt,
   buildGoalCompletionSummaryPrompt,
-} from '#/agent/goal/tools/outcome-prompts';
+} from '#/features/goal/tools/outcome-prompts';
 
-import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '../../mainAgentOnly';
 import DESCRIPTION from './update-goal.md?raw';
 import {
   UpdateGoalToolInputSchema,
@@ -100,7 +99,3 @@ function changedGoalOutput(status: UpdateGoalToolInput['status']): string {
   return 'Goal not blocked: the current goal changed.';
 }
 
-registerAgentToolService(IUpdateGoalTool, UpdateGoalTool, {
-  name: 'UpdateGoal',
-  domain: 'goal',
-});

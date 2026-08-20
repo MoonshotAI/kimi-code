@@ -3,8 +3,8 @@ import type { ToolCall } from '#/kosong/contract/message';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentGoalService } from '#/agent/goal/goal';
-import { type AgentGoalService } from '#/agent/goal/goalService';
+import { IAgentGoalService } from '#/features/goal/goal';
+import { type AgentGoalService } from '#/features/goal/goalService';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import {

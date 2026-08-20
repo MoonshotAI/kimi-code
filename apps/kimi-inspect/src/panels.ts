@@ -17,7 +17,7 @@
  */
 
 import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
-import { IAgentGoalService } from '@moonshot-ai/agent-core-v2/agent/goal/goal';
+import { IAgentGoalService } from '@moonshot-ai/agent-core-v2/features/goal/goal';
 import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
 import { IAgentPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/permissionRules';

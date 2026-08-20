@@ -1546,6 +1546,43 @@ describe('Agent tool execution contract', () => {
     expect(lifecycle.run).not.toHaveBeenCalled();
   });
 
+  it('marks fork consistently in every subagent_created telemetry emission', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => ({ summary: 'child result' }),
+    });
+    const telemetryRecords: { event: string; properties: unknown }[] = [];
+    const context = createAgentToolContext(lifecycle, forkFlags());
+    lifecycle.addHandle(
+      'main',
+      'agent',
+      new Map<unknown, unknown>([
+        [
+          ITelemetryService,
+          {
+            ...noopTelemetryService,
+            track2: (event: string, properties: unknown) => {
+              telemetryRecords.push({ event, properties });
+            },
+          },
+        ],
+      ]),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue the analysis',
+      description: 'Fork context',
+      fork: true,
+    });
+
+    expect(result.isError).not.toBe(true);
+    const created = telemetryRecords.filter((record) => record.event === 'subagent_created');
+    expect(created.length).toBeGreaterThan(0);
+    for (const record of created) {
+      expect(record.properties).toMatchObject({ fork: true });
+    }
+  });
+
   it('spawns a foreground subagent and returns its summary', async () => {
     const lifecycle = createAgentLifecycleStub({
       createAgentIds: ['agent-child'],

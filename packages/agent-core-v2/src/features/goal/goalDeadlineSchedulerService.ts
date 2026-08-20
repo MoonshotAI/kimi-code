@@ -1,6 +1,4 @@
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { IGoalDeadlineScheduler } from './goalDeadlineScheduler';
 
@@ -23,11 +21,3 @@ export class GoalDeadlineSchedulerService implements IGoalDeadlineScheduler {
     });
   }
 }
-
-registerScopedService(
-  LifecycleScope.App,
-  IGoalDeadlineScheduler,
-  GoalDeadlineSchedulerService,
-  ScopeActivation.OnDemand,
-  'goal',
-);

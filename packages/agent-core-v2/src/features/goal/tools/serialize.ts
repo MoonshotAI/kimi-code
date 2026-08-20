@@ -1,4 +1,4 @@
-import type { GoalSnapshot, GoalToolResult } from '#/agent/goal/types';
+import type { GoalSnapshot, GoalToolResult } from '#/features/goal/types';
 
 export function goalForModel(goal: GoalSnapshot): Omit<GoalSnapshot, 'goalId'> {
   const { goalId: _goalId, ...rest } = goal;

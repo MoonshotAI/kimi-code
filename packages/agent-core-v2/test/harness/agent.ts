@@ -28,8 +28,8 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { SessionCronServiceImpl } from '#/session/cron/sessionCronServiceImpl';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
-import { IAgentGoalService } from '#/agent/goal/goal';
-import { AgentGoalService } from '#/agent/goal/goalService';
+import { IAgentGoalService } from '#/features/goal/goal';
+import { AgentGoalService } from '#/features/goal/goalService';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
@@ -52,7 +52,7 @@ import type {
 import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
 import type { AgentContextData } from '#/agent/contextMemory/types';
-import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/agent/goal/types';
+import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/features/goal/types';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { RunShellCommandInput, RunShellCommandResult } from '#/agent/shellCommand/shellCommand';
@@ -1218,6 +1218,7 @@ export class AgentTestContext {
       'app',
     );
     this.root = createAppScope({ seeds: appSeeds });
+    reassertServiceOverrides(this.serviceOverrides, 'app', this.root.instantiation);
     const hookRunnerSeed = appSeeds.find(([id]) => id === IExternalHooksRunnerService);
     if (hookRunnerSeed !== undefined) {
       this.root.instantiation.provide(

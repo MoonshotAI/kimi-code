@@ -1,4 +1,4 @@
-import type { GoalSnapshot } from '#/agent/goal/types';
+import type { GoalSnapshot } from '#/features/goal/types';
 
 export function buildGoalCompletionSummaryPrompt(goal: GoalSnapshot): string {
   return [

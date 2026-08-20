@@ -1,12 +1,11 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { type ToolExecution } from '#/tool/toolContract';
-import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
+import { type ToolExecution } from '#/tool/toolContract';
 
-import { IAgentGoalService } from '#/agent/goal/goal';
-import type { GoalBudgetLimits, GoalSnapshot } from '#/agent/goal/types';
+import { IAgentGoalService } from '#/features/goal/goal';
+import type { GoalBudgetLimits, GoalSnapshot } from '#/features/goal/types';
 
-import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '../../mainAgentOnly';
 import DESCRIPTION from './set-goal-budget.md?raw';
 import {
   SetGoalBudgetToolInputSchema,
@@ -91,11 +90,6 @@ export class SetGoalBudgetTool implements ISetGoalBudgetTool {
     );
   }
 }
-
-registerAgentToolService(ISetGoalBudgetTool, SetGoalBudgetTool, {
-  name: 'SetGoalBudget',
-  domain: 'goal',
-});
 
 function normalizeBudgetInput(input: SetGoalBudgetToolInput): SetGoalBudgetToolInput {
   switch (input.unit) {

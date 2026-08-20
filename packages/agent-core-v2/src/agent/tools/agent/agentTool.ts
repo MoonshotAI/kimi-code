@@ -317,6 +317,7 @@ export class SubagentTool implements ISubagentTool {
       parentToolCallId: toolCallId,
       description: args.description,
       runInBackground,
+      fork: args.fork === true,
       model: displayModel,
     });
 
