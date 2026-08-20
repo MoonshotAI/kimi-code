@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Sub-agents no longer spawn their own sub-agents by default; custom agent profiles can still allow it explicitly.
+A sub-agent can no longer spawn an agent that would itself delegate further, unless a custom agent profile explicitly allows it.
