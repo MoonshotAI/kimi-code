@@ -1984,8 +1984,22 @@ describe('AgentTranscriptProjector', () => {
     expect(turnOps('t0', tx.getItems()).state).toBe('failed');
   });
 
-  it('mirrors turn liveness into meta.activity', () => {
+  it('tracks the prompt queue from accepted/queued through terminal', () => {
     const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'prompt.accepted', promptId: 'p1' }));
+    expect(tx.getPrompt('p1')).toMatchObject({ status: 'running' });
+    feed(ev({ type: 'prompt.queued', promptId: 'p2', content: [{ type: 'text', text: 'later' }], queueLength: 1 }));
+    expect(tx.getPrompt('p2')).toMatchObject({ status: 'queued' });
+    feed(ev({ type: 'prompt.completed', promptId: 'p2', finishedAt: '2026-08-20T00:00:01.000Z', reason: 'completed' }));
+    expect(tx.getPrompt('p2')).toMatchObject({ status: 'completed' });
+    feed(ev({ type: 'prompt.aborted', promptId: 'p1', abortedAt: '2026-08-20T00:00:02.000Z' }));
+    expect(tx.getPrompt('p1')).toMatchObject({ status: 'aborted' });
+  });
+
+  it('mirrors turn liveness into meta.activity', () => {    const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
