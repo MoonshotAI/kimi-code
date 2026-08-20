@@ -276,8 +276,12 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       compaction.abortController.abort(reason);
     }
     await Promise.all([loop.settled(), compactionSettled, prompt.drain(reason)]);
-    handle.dispose();
-    this.onDidDisposeEmitter.fire(agentId);
+    try {
+      await handle.accessor.get(IEventDispatcher).flush();
+    } finally {
+      handle.dispose();
+      this.onDidDisposeEmitter.fire(agentId);
+    }
   }
 }
 

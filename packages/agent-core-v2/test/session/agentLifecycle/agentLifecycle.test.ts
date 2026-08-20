@@ -491,6 +491,50 @@ describe('AgentLifecycleService', () => {
     expect(disposed).toEqual(['main']);
   });
 
+  it('remove waits for pending agent state to flush before disposing the agent scope', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const handle = await svc.create({ agentId: 'main' });
+    let releaseFlush!: () => void;
+    let markFlushStarted!: () => void;
+    const flushStarted = new Promise<void>((resolve) => {
+      markFlushStarted = resolve;
+    });
+    const flush = vi.spyOn(handle.accessor.get(IEventDispatcher), 'flush').mockImplementation(() => {
+      markFlushStarted();
+      return new Promise<void>((resolve) => {
+        releaseFlush = resolve;
+      });
+    });
+    const disposed: string[] = [];
+    disposables.add(svc.onDidDispose((agentId) => disposed.push(agentId)));
+
+    const removal = svc.remove('main');
+    await flushStarted;
+    await Promise.resolve();
+
+    expect(disposed).toEqual([]);
+
+    releaseFlush();
+    await removal;
+    expect(flush).toHaveBeenCalledOnce();
+    expect(disposed).toEqual(['main']);
+  });
+
+  it('remove still disposes the agent when the state flush rejects', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const handle = await svc.create({ agentId: 'main' });
+    const flushError = new Error('state flush failed');
+    vi.spyOn(handle.accessor.get(IEventDispatcher), 'flush').mockRejectedValueOnce(flushError);
+    const disposed: string[] = [];
+    disposables.add(svc.onDidDispose((agentId) => disposed.push(agentId)));
+
+    await expect(svc.remove('main')).rejects.toBe(flushError);
+
+    expect(svc.get('main')).toBeUndefined();
+    expect(disposed).toEqual(['main']);
+    expect(() => handle.accessor.get(IEventDispatcher)).toThrow();
+  });
+
   it('remove cancels queued turns before waiting for the active turn to settle', async () => {
     loopActiveTurnId = 1;
     loopPendingTurnIds = [2, 3];
