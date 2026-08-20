@@ -1,8 +1,9 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { userCancellationReason } from '#/_base/utils/abort';
-import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { tryAgentContextOf } from '#/agent/scopeContext/scopeContext';
 import { isProviderRateLimitError } from '#/kosong/contract/errors';
 import { type TokenUsage } from '#/kosong/contract/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -76,6 +77,7 @@ export interface AgentRunSpawnedMeta {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground?: boolean;
+  readonly fork?: boolean;
   readonly model?: string;
   readonly taskId?: string;
 }
@@ -96,7 +98,7 @@ export function emitAgentRunSpawned(
 ): void {
   const childProfile = requester.accessor
     .get(IAgentLifecycleService)
-    ?.get(targetAgentId)
+    .findAgentHandle(targetAgentId)
     ?.accessor.get(IAgentProfileService);
   void requester.accessor.get(IEventDispatcher)?.dispatch(
     new SubagentSpawned({
@@ -118,6 +120,7 @@ export function emitAgentRunSpawned(
   const telemetryEvent: SubagentCreatedEvent = {
     subagent_name: meta.profileName,
     run_in_background: meta.runInBackground ?? false,
+    fork: meta.fork ?? false,
     agent_id: targetAgentId,
     parent_agent_id: requester.id,
     parent_tool_call_id: meta.parentToolCallId ?? '',
@@ -199,6 +202,9 @@ function childContextTokens(
   agentLifecycle: IAgentLifecycleService,
   agentId: string,
 ): number | undefined {
-  const child = agentLifecycle.get(agentId);
-  return child?.accessor.get(IAgentTokenCountingService)?.statusSize();
+  const child = agentLifecycle.findAgentHandle(agentId);
+  if (child === undefined) return undefined;
+  const context = tryAgentContextOf(child);
+  if (context === undefined) return undefined;
+  return child.accessor.get(ISessionTokenCountingService)?.statusSize(context);
 }

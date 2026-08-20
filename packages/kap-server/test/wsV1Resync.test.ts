@@ -138,7 +138,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
-    if (agents.get('main') === undefined) {
+    if (agents.findAgentHandle('main') === undefined) {
       await agents.create({ agentId: 'main' });
     }
   }
@@ -151,7 +151,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
-    const main = agents.get('main');
+    const main = agents.findAgentHandle('main');
     expect(main).toBeDefined();
     main!.accessor.get(IEventBus).publish(event);
   }
@@ -266,8 +266,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     });
     await c.next((f) => f.type === 'ack' && f.id === 'h1');
 
-    agents
-      .get('main')!
+    agents.findAgentHandle('main')!
       .accessor.get(IEventBus)
       .publish({ type: 'turn.ended', turnId: 1 } as unknown as Event2<any>);
     sub.accessor

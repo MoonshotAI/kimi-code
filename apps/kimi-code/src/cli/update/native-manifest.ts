@@ -10,7 +10,7 @@
 import { valid } from 'semver';
 import { z } from 'zod';
 
-import { KIMI_CODE_CDN_BINARIES_BASE } from '#/constant/app';
+import { kimiCodeCdnBinariesBase } from '#/constant/app';
 
 const MANIFEST_FETCH_TIMEOUT_MS = 10_000;
 
@@ -33,11 +33,11 @@ export type NativeReleaseManifest = z.infer<typeof NativeReleaseManifestSchema>;
 export type NativePlatformEntry = z.infer<typeof PlatformEntrySchema>;
 
 export function nativeManifestUrl(version: string): string {
-  return `${KIMI_CODE_CDN_BINARIES_BASE}/${version}/manifest.json`;
+  return `${kimiCodeCdnBinariesBase()}/${version}/manifest.json`;
 }
 
 export function nativeBinaryUrl(version: string, filename: string): string {
-  return `${KIMI_CODE_CDN_BINARIES_BASE}/${version}/${filename}`;
+  return `${kimiCodeCdnBinariesBase()}/${version}/${filename}`;
 }
 
 /**

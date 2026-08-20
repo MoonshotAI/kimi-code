@@ -260,14 +260,41 @@ A next-generation session query for list views — filtering, sorting, and field
 | `meta.updated_after` | Only sessions updated after this time (epoch milliseconds) |
 | `meta.updated_before` | Only sessions updated before this time (epoch milliseconds) |
 | `meta.archived` | `true` / `false` (default) / `all` |
+| `meta.has_prompt` | `true` keeps only sessions that carry a user prompt, `false` keeps only empty ones (the `exclude_empty` equivalent of `GET /api/v1/sessions`) |
+| `view` | `flat` (default) / `by_workspace`, see below |
+| `group.page_size` | Sessions returned per workspace under `view=by_workspace`: 1–100, default 5 (up to 10000 with the `id,archived` projection); rejected without the grouped view (`40001`) |
 | `sort` | `meta.updated_at_desc` (default) / `meta.updated_at_asc` / `meta.created_at_desc` |
 | `include` | Comma-separated extra field groups; currently only `git` (branch and PR info, deduplicated per directory and cached for 60 seconds) |
 | `fields` | Comma-separated item projection; currently only `id,archived`, trimming each item to `{ id, archived }` (select-all-matching flows). Not combinable with `include=git` (`40001`) |
-| `page_size` | 1–100, default 50; up to 10000 with the `id,archived` projection |
+| `page_size` | 1–100, default 50; up to 10000 with the `id,archived` projection. Under `view=by_workspace` it counts groups per page |
 | `page_token` | Pagination token from the previous page |
 | `page` | Stateless 1-based page number; mutually exclusive with `page_token` (`40001` when combined) |
 
 Every response item carries the `workspace`, `meta`, and `activity` groups, plus `git` when `include=git` — or just `{ id, archived }` under `fields=id,archived`. Every page additionally carries `total`, the size of the filtered set. The page token binds the first page's query conditions (including the projection); changing them mid-pagination returns `40922`. `page` mode is a stateless alternative for jumping to arbitrary pages: every request is an independent snapshot, no token is minted, and `next_page_token` is always `null`.
+
+With `view=by_workspace` the same filtered, sorted set is re-projected into per-workspace groups, so an overview client replaces one polling loop per workspace with a single request:
+
+```json
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "groups": [
+      {
+        "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" },
+        "sessions": [ { "id": "session_...", "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "meta": { "title": "Fix the login page", "last_prompt": "adjust the button spacing", "created_at": 1787000000000, "updated_at": 1787000100000, "archived": false, "archived_at": null }, "activity": { "status": "idle" } } ],
+        "total": 42
+      }
+    ],
+    "total": 7,
+    "has_more": true,
+    "next_page_token": "eyJ2IjoxLCJmIjoi..."
+  },
+  "request_id": "req_..."
+}
+```
+
+Each group carries the workspace's first `group.page_size` sessions under the requested `sort` plus `total`, the workspace's full matching-session count (for a "view all" entry). Only workspaces with at least one matching session appear; groups order by their first session's sort key, ties broken by workspace id. `page` and `page_token` paginate over groups (the outer `total` is the group count), with the same fingerprint binding: the token also covers `view` and the grouping parameters, so flipping them mid-pagination returns `40922`.
 
 ### `POST /api/v2/sessions:archive` and `POST /api/v2/sessions:restore`
 
@@ -329,7 +356,7 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 
 Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself. Two delivery scopes:
 
-- **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`.
+- **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`.
 - **Session events**: sent only to connections subscribed to that session, subject to `agent_filter`. Main families:
 
 | Family | Main events |
@@ -341,6 +368,8 @@ Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "sess
 | Subagents | `subagent.spawned` / `started` / `suspended` / `completed` / `failed` |
 | Background | `task.started` / `terminated`, `shell.started` / `output` / `completed` |
 | Misc | `compaction.*`, `skill.activated`, `goal.updated`, `prompt.*`, `error`, `warning` |
+
+Three global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
 
 Events also split into durable and volatile: durable events carry a strictly increasing `seq`, are journaled, and can be replayed; volatile events (the `*.delta` family, `tool.progress`, `shell.*`, and similar) are marked `volatile: true` and never replayed. When consuming a volatile text stream, compare `offset` (the cumulative character offset within the turn) against your locally accumulated text: below the local length means a duplicate frame; above means a gap that needs snapshot recovery.
 

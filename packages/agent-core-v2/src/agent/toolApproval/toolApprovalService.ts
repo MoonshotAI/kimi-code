@@ -19,7 +19,7 @@ import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
-import { Event2 } from '#/app/event/event2';
+import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionApprovalService } from '#/session/approval/approval';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -31,7 +31,7 @@ import { IAgentToolApprovalService } from './toolApproval';
 export interface PermissionApprovalRequestedPayload {
   readonly id?: string;
   readonly sessionId?: string;
-  readonly agentId?: string;
+  readonly agentId: string;
   readonly turnId: number;
   readonly toolCallId: string;
   readonly toolName: string;
@@ -40,7 +40,7 @@ export interface PermissionApprovalRequestedPayload {
   readonly toolInput: unknown;
 }
 
-export class PermissionApprovalRequested extends Event2<PermissionApprovalRequestedPayload> {
+export class PermissionApprovalRequested extends AgentEvent2<PermissionApprovalRequestedPayload> {
   static override readonly type = 'permission.approval.requested';
   static override readonly observable = true;
 }
@@ -54,7 +54,7 @@ export interface PermissionApprovalResolvedPayload extends PermissionApprovalReq
   readonly error?: string;
 }
 
-export class PermissionApprovalResolved extends Event2<PermissionApprovalResolvedPayload> {
+export class PermissionApprovalResolved extends AgentEvent2<PermissionApprovalResolvedPayload> {
   static override readonly type = 'permission.approval.resolved';
   static override readonly observable = true;
 }

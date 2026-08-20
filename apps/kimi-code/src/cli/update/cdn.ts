@@ -1,7 +1,7 @@
 import { valid } from 'semver';
 import { z } from 'zod';
 
-import { KIMI_CODE_CDN_LATEST_JSON_URL, KIMI_CODE_CDN_LATEST_URL } from '#/constant/app';
+import { kimiCodeCdnLatestJsonUrl, kimiCodeCdnLatestUrl } from '#/constant/app';
 
 import type { UpdateManifest } from './types';
 
@@ -58,7 +58,7 @@ async function fetchWithTimeout(fetchImpl: typeof fetch, input: string): Promise
 export async function fetchLatestVersionFromCdn(
   fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
-  const response = await fetchWithTimeout(fetchImpl, KIMI_CODE_CDN_LATEST_URL);
+  const response = await fetchWithTimeout(fetchImpl, kimiCodeCdnLatestUrl());
   if (!response.ok) {
     throw new Error(`CDN /latest returned HTTP ${response.status}`);
   }
@@ -70,7 +70,7 @@ export async function fetchLatestVersionFromCdn(
 }
 
 async function fetchUpdateManifestFromCdn(fetchImpl: typeof fetch): Promise<UpdateManifest> {
-  const response = await fetchWithTimeout(fetchImpl, KIMI_CODE_CDN_LATEST_JSON_URL);
+  const response = await fetchWithTimeout(fetchImpl, kimiCodeCdnLatestJsonUrl());
   if (!response.ok) {
     throw new Error(`CDN /latest.json returned HTTP ${response.status}`);
   }

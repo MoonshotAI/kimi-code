@@ -28,10 +28,39 @@ import {
   type AgentToolCtor,
   type AnyAgentTool,
 } from '#/agent/toolRegistry/toolContribution';
+import type {
+  AgentEffectDefinition,
+  SessionEffectDefinition,
+} from '#/state/agentEffect';
+import { AgentEffectContribution, SessionEffectContribution } from '#/state/agentEffect';
+import type {
+  AgentModel,
+  AgentModelDefinition,
+  SessionModelDefinition,
+} from '#/state/agentModel';
+import { AgentModelContribution, SessionModelContribution } from '#/state/agentModel';
 
 export abstract class Feature extends Service {
   contribute<T>(token: CollectionToken<T>, value: T): FiberHandle {
     return this.provide(token, value);
+  }
+
+  contributeSessionModel<State>(definition: SessionModelDefinition<State>): FiberHandle {
+    return this.provide(SessionModelContribution, definition as SessionModelDefinition);
+  }
+
+  contributeAgentModel<S, M extends AgentModel<S>>(
+    definition: AgentModelDefinition<S, M>,
+  ): FiberHandle {
+    return this.provide(AgentModelContribution, definition as AgentModelDefinition<any, any>);
+  }
+
+  contributeSessionEffect(definition: SessionEffectDefinition): FiberHandle {
+    return this.provide(SessionEffectContribution, definition);
+  }
+
+  contributeAgentEffect(definition: AgentEffectDefinition<any, any>): FiberHandle {
+    return this.provide(AgentEffectContribution, definition);
   }
 
   contributeConfig<T>(

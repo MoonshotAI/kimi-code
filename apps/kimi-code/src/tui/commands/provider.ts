@@ -18,6 +18,7 @@ import {
 
 import { createKimiCodeUserAgent } from '#/cli/version';
 import { fetchCatalogOrBuiltIn } from '#/utils/catalog-fetch';
+import { refreshKimiRegion } from '#/utils/region';
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import {
   CustomRegistryImportDialogComponent,
@@ -89,6 +90,10 @@ async function handleProviderManagerDeleteSource(
 async function handleProviderDelete(host: SlashCommandHost, providerId: string): Promise<void> {
   if (providerId === DEFAULT_OAUTH_PROVIDER_NAME) {
     await host.harness.auth.logout(DEFAULT_OAUTH_PROVIDER_NAME);
+    // Drop the process-wide region cache with the credential: derived
+    // endpoints (updates, marketplace, site links, telemetry) must fall back
+    // to the marker/default profile, not the logged-out region.
+    refreshKimiRegion();
     await host.authFlow.refreshConfigAfterLogout();
     await host.authFlow.clearActiveSessionAfterLogout();
     return;

@@ -39,10 +39,6 @@ import '#/agent/tools/agent/agentTool';
 import '#/agent/tools/ask-user-question/askUserQuestionTool';
 import '#/agent/tools/edit/editTool';
 import '#/agent/tools/fetch-url/fetchUrlTool';
-import '#/agent/tools/goal/create-goal/createGoalTool';
-import '#/agent/tools/goal/get-goal/getGoalTool';
-import '#/agent/tools/goal/set-goal-budget/setGoalBudgetTool';
-import '#/agent/tools/goal/update-goal/updateGoalTool';
 import '#/agent/tools/os/bash/bashTool';
 import '#/agent/tools/os/glob/globTool';
 import '#/agent/tools/os/grep/grepTool';
@@ -538,7 +534,7 @@ describe('AgentToolActivationService', () => {
     });
 
     it('feeds every built-in contribution through the App-scope assembly unchanged', async () => {
-      expect(savedContributions).toHaveLength(20);
+      expect(savedContributions).toHaveLength(15);
       for (const contribution of savedContributions) {
         registerAgentToolService(contribution.id, contribution.ctor, contribution.options);
       }

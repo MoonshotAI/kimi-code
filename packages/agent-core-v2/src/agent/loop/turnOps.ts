@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
 import { ContextAppendLoopEvent } from '#/agent/contextMemory/contextEvents';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
-import { Event2, type SerializedEvent2 } from '#/app/event/event2';
+import { AgentEvent2, type SerializedEvent2 } from '#/app/event/event2';
 import type { ContentPart } from '#/kosong/contract/message';
 import { defineState } from '#/state/state';
 
@@ -21,42 +21,58 @@ export interface TurnModelState {
 }
 
 const turnInputShape = {
+  agentId: z.string(),
   input: z.custom<readonly ContentPart[]>(),
   origin: z.custom<PromptOrigin>(),
 };
 
 const turnPromptSchema = z.object(turnInputShape);
 
-export class TurnPrompt extends Event2<z.infer<typeof turnPromptSchema>> {
+export class TurnPrompt extends AgentEvent2<z.infer<typeof turnPromptSchema>> {
   static override readonly type = 'turn.prompt';
   static override readonly durable = true;
   static override readonly schema = turnPromptSchema;
 }
-export interface TurnPrompt extends z.infer<typeof turnPromptSchema> {}
+export interface TurnPrompt {
+  readonly agentId: string;
+  readonly input: readonly ContentPart[];
+  readonly origin: PromptOrigin;
+}
 
 const turnSteerSchema = z.object(turnInputShape);
 
-export class TurnSteer extends Event2<z.infer<typeof turnSteerSchema>> {
+export class TurnSteer extends AgentEvent2<z.infer<typeof turnSteerSchema>> {
   static override readonly type = 'turn.steer';
   static override readonly durable = true;
   static override readonly schema = turnSteerSchema;
 }
-export interface TurnSteer extends z.infer<typeof turnSteerSchema> {}
+export interface TurnSteer {
+  readonly agentId: string;
+  readonly input: readonly ContentPart[];
+  readonly origin: PromptOrigin;
+}
 
 const turnCancelSchema = z.object({
+  agentId: z.string(),
   turnId: z.number().optional(),
   target: z.enum(['active', 'queued']).optional(),
   reason: z.enum(['user_cancelled', 'aborted']).optional(),
 });
 
-export class TurnCancel extends Event2<z.infer<typeof turnCancelSchema>> {
+export class TurnCancel extends AgentEvent2<z.infer<typeof turnCancelSchema>> {
   static override readonly type = 'turn.cancel';
   static override readonly durable = true;
   static override readonly schema = turnCancelSchema;
 }
-export interface TurnCancel extends z.infer<typeof turnCancelSchema> {}
+export interface TurnCancel {
+  readonly agentId: string;
+  readonly turnId?: number;
+  readonly target?: 'active' | 'queued';
+  readonly reason?: 'user_cancelled' | 'aborted';
+}
 
 const turnEndedSchema = z.object({
+  agentId: z.string(),
   turnId: z.number(),
   reason: z.enum(['completed', 'cancelled', 'failed', 'blocked']),
   error: z.custom<KimiErrorPayload>().optional(),
@@ -64,6 +80,7 @@ const turnEndedSchema = z.object({
 });
 
 export interface TurnEndedPayload {
+  readonly agentId: string;
   readonly turnId: number;
   readonly reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
   readonly error?: KimiErrorPayload;
@@ -71,7 +88,7 @@ export interface TurnEndedPayload {
   readonly interruptReason?: TurnInterruptReason;
 }
 
-export class TurnEnded extends Event2<TurnEndedPayload> {
+export class TurnEnded extends AgentEvent2<TurnEndedPayload> {
   static override readonly type = 'turn.ended';
   static override readonly durable = true;
   static override readonly observable = true;
@@ -80,6 +97,7 @@ export class TurnEnded extends Event2<TurnEndedPayload> {
   override serialize(): SerializedEvent2 {
     const record: Record<string, unknown> = {
       type: this.type,
+      agentId: this.agentId,
       turnId: this.turnId,
       reason: this.reason,
     };

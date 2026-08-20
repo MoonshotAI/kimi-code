@@ -16,6 +16,23 @@ import {
 import { createFileLogWriter, type FileLogWriter } from './fileLog';
 import { ILogOptions } from './logConfig';
 
+const pendingLogCloses = new Set<Promise<void>>();
+
+export function trackLogClose(close: Promise<void>): void {
+  const tracked = close.then(
+    () => undefined,
+    () => undefined,
+  );
+  pendingLogCloses.add(tracked);
+  void tracked.finally(() => pendingLogCloses.delete(tracked));
+}
+
+export async function drainLogCloses(): Promise<void> {
+  while (pendingLogCloses.size > 0) {
+    await Promise.all(pendingLogCloses);
+  }
+}
+
 interface ExtractedPayload {
   readonly ctx?: LogContext;
   readonly error?: LogEntryError;
@@ -150,7 +167,7 @@ export class AppLogService extends BoundLogger implements ILogService {
 
   override dispose(): void {
     this.sink.flushSync();
-    void this.sink.close();
+    trackLogClose(this.sink.close());
     super.dispose();
   }
 }

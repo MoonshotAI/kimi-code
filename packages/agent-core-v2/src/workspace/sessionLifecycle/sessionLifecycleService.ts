@@ -10,6 +10,7 @@ import {
 } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { AsyncEmitter, Emitter, type Event, type IWaitUntil } from '#/_base/event';
+import { drainLogCloses } from '#/_base/log/logService';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/features/plan/configSection';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { LifecycleScope } from '#/app/scopes';
@@ -28,7 +29,11 @@ import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import {
+  IAgentLifecycleService,
+  MAIN_AGENT_ID,
+} from '#/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
@@ -349,7 +354,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     });
     try {
       const agents = handle.accessor.get(IAgentLifecycleService);
-      if (agents.get(MAIN_AGENT_ID) === undefined) {
+      if (agents.findAgentHandle(MAIN_AGENT_ID) === undefined) {
         await agents.create({ agentId: MAIN_AGENT_ID });
       }
       await this.announceCreated({ sessionId, handle, source: 'resume' });
@@ -375,9 +380,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.announceWillClose({ sessionId, handle, reason: 'exit' });
     this.sessions.delete(sessionId);
     await this.drainAgents(handle);
+    await this.appendLogStore.drainRetirements();
     await drainSessionMetadataWrites();
     await this.indexMirror.drain();
     handle.dispose();
+    await drainLogCloses();
     this._onDidCloseSession.fire({ sessionId });
   }
 
@@ -387,12 +394,18 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const meta = handle.accessor.get(ISessionMetadata);
     await meta.setArchived(true);
     await this.drainAgents(handle);
-    this.event.publish(new SessionArchived({ payload: { sessionId } }));
+    await this.appendLogStore.drainRetirements();
+    this.event.publish(
+      new SessionArchived({
+        payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
+      }),
+    );
     await this.announceWillClose({ sessionId, handle, reason: 'archive' });
     this.sessions.delete(sessionId);
     await drainSessionMetadataWrites();
     await this.indexMirror.drain();
     handle.dispose();
+    await drainLogCloses();
     this._onDidArchiveSession.fire({ sessionId });
   }
 
@@ -433,7 +446,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private async drainAgents(handle: ISessionScopeHandle): Promise<void> {
     const agentLifecycle = handle.accessor.get(IAgentLifecycleService);
     for (const agent of agentLifecycle.list()) {
-      await agentLifecycle.remove(agent.id);
+      await agentLifecycle.remove(agentContextOf(agent));
     }
   }
 
@@ -621,7 +634,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     } else if (records[0]?.type !== 'metadata') {
       records.unshift(createWireMetadataRecord());
     }
-    records.push(forkedRecord());
+    records.push(forkedRecord(args.agentId));
 
     await this.appendLogStore.rewrite(
       agentScopeOf(sessionScopeOf(this.handlerScope, args.targetSessionId), args.agentId),
@@ -636,7 +649,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     agentId: string,
   ): Promise<WireRecord[]> {
     if (sourceHandle !== undefined) {
-      const agentHandle = sourceHandle.accessor.get(IAgentLifecycleService).get(agentId);
+      const agentHandle = sourceHandle.accessor
+        .get(IAgentLifecycleService)
+        .findAgentHandle(agentId);
       if (agentHandle !== undefined) {
         await agentHandle.accessor.get(IEventDispatcher).flush();
       }
@@ -733,8 +748,8 @@ function createSessionId(): string {
   return `session_${randomUUID()}`;
 }
 
-function forkedRecord(): WireRecord {
-  return { type: 'forked', time: Date.now() };
+function forkedRecord(agentId: string): WireRecord {
+  return { type: 'forked', agentId, time: Date.now() };
 }
 
 function forkCustomMetadata(

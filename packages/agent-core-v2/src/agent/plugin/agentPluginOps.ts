@@ -1,7 +1,7 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
-import { Event2 } from '#/app/event/event2';
+import { AgentEvent2 } from '#/app/event/event2';
 import { defineState } from '#/state/state';
 
 export interface PluginSessionStartSnapshotState {
@@ -9,14 +9,22 @@ export interface PluginSessionStartSnapshotState {
   readonly content?: string;
 }
 
-const pluginSessionStartSchema = z.object({ content: z.string().nullable() });
+const pluginSessionStartSchema = z.object({
+  agentId: z.string(),
+  content: z.string().nullable(),
+});
 
-export class PluginSessionStartEvent extends Event2<z.infer<typeof pluginSessionStartSchema>> {
+export class PluginSessionStartEvent extends AgentEvent2<
+  z.infer<typeof pluginSessionStartSchema>
+> {
   static override readonly type = 'plugin.session_start';
   static override readonly durable = true;
   static override readonly schema = pluginSessionStartSchema;
 }
-export interface PluginSessionStartEvent extends z.infer<typeof pluginSessionStartSchema> {}
+export interface PluginSessionStartEvent {
+  readonly agentId: string;
+  readonly content: string | null;
+}
 
 export const pluginSessionStartSnapshotKey = defineState(
   'pluginSessionStartSnapshot',

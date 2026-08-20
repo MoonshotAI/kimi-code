@@ -58,7 +58,9 @@ export async function setColdSessionArchived(
     }),
   );
   if (archived) {
-    accessor.get(IEventService).publish(new SessionArchived({ payload: { sessionId } }));
+    accessor
+      .get(IEventService)
+      .publish(new SessionArchived({ payload: { sessionId, workspaceId: summary.workspaceId } }));
   }
   return 'updated';
 }
@@ -70,7 +72,7 @@ export async function setSessionArchived(
 ): Promise<ColdSessionArchiveOutcome> {
   const manager = accessor.get(ISessionManager);
   return manager.withLifecycleSerialization(sessionId, async (unguarded) => {
-    await manager.whenResumeSettled(sessionId);
+    await manager.whenResumeSettled(sessionId).catch(() => undefined);
     const live = getLiveSessionById(accessor, sessionId);
     if (live !== undefined) {
       if (archived) await unguarded.archive();

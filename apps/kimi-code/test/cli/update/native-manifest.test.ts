@@ -6,7 +6,7 @@ import {
   nativeManifestUrl,
   selectPlatformEntry,
 } from '#/cli/update/native-manifest';
-import { KIMI_CODE_CDN_BINARIES_BASE } from '#/constant/app';
+import { kimiCodeCdnBinariesBase } from '#/constant/app';
 
 const VERSION = '0.7.0';
 
@@ -144,9 +144,9 @@ describe('selectPlatformEntry', () => {
 
 describe('url helpers', () => {
   it('builds the manifest and binary URLs from the binaries base', () => {
-    expect(nativeManifestUrl(VERSION)).toBe(`${KIMI_CODE_CDN_BINARIES_BASE}/${VERSION}/manifest.json`);
+    expect(nativeManifestUrl(VERSION)).toBe(`${kimiCodeCdnBinariesBase()}/${VERSION}/manifest.json`);
     expect(nativeBinaryUrl(VERSION, 'kimi-code-win32-x64.zip')).toBe(
-      `${KIMI_CODE_CDN_BINARIES_BASE}/${VERSION}/kimi-code-win32-x64.zip`,
+      `${kimiCodeCdnBinariesBase()}/${VERSION}/kimi-code-win32-x64.zip`,
     );
   });
 });

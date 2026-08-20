@@ -7,9 +7,11 @@ import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
+import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { AnyAgentTool } from '#/agent/toolRegistry/toolContribution';
 import { TOWER_TOOL_CONTRIBUTIONS } from '#/features/tower/towerFeature';
 import { IAgentTowerService, TOWER_TOOL_NAMES } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
@@ -39,6 +41,8 @@ import { ITowerStatusTool } from '#/features/tower/tools/status/status';
 import { TowerStatusTool } from '#/features/tower/tools/status/statusTool';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
+import { stubAgentContext } from '../../../agent/agentContext/stubs';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 
 const execFileAsync = promisify(execFile);
 const signal = new AbortController().signal;
@@ -68,6 +72,7 @@ let towerActive: boolean;
 let currentAgentId: string;
 let currentSessionId: string;
 let addedTools: string[];
+const agentContexts = new Map<string, AgentContext>();
 
 beforeEach(async () => {
   repo = await mkdtemp(join(tmpdir(), 'tower-tools-test-'));
@@ -80,6 +85,7 @@ beforeEach(async () => {
   currentAgentId = 'main';
   currentSessionId = 'session-test';
   addedTools = [];
+  agentContexts.clear();
 
   disposables = new DisposableStore();
   ix = createServices(disposables, {
@@ -100,6 +106,14 @@ beforeEach(async () => {
         _serviceBrand: undefined,
         get agentId() {
           return currentAgentId;
+        },
+        get agentContext() {
+          let context = agentContexts.get(currentAgentId);
+          if (context === undefined) {
+            context = stubAgentContext(currentAgentId, 0);
+            agentContexts.set(currentAgentId, context);
+          }
+          return context;
         },
         scope: (subKey?: string) => subKey ?? '',
       });
@@ -309,24 +323,27 @@ describe('TowerStatusTool', () => {
 });
 
 describe('tool registration', () => {
-  const MAIN_ONLY = ['TowerInit', 'TowerPlan', 'TowerSpawn', 'TowerMerge', 'TowerTeardown'];
-  const SHARED = ['TowerSend', 'TowerInbox', 'TowerFinding', 'TowerReview', 'TowerMission', 'TowerStatus'];
+  it('declares no when gate on any tower tool contribution', () => {
+    for (const contribution of TOWER_TOOL_CONTRIBUTIONS) {
+      expect('when' in contribution, contribution.name).toBe(false);
+    }
+  });
 
-  it('gates init/plan/spawn/merge/teardown to the main agent and shares the rest', () => {
-    for (const name of MAIN_ONLY) {
-      const contribution = TOWER_TOOL_CONTRIBUTIONS.find((c) => c.name === name);
-      expect(contribution, name).toBeDefined();
-      expect(contribution?.when, name).toBeDefined();
-      currentAgentId = 'main';
-      expect(contribution?.when?.(ix), name).toBe(true);
-      currentAgentId = 'agent-w1';
-      expect(contribution?.when?.(ix), name).toBe(false);
+  it('rejects orchestration tools at execution time for non-main agents', async () => {
+    currentAgentId = 'agent-w1';
+    const cases: readonly (readonly [ServiceIdentifier<AnyAgentTool>, unknown])[] = [
+      [ITowerInitTool, {}],
+      [ITowerPlanTool, { missions: [] }],
+      [ITowerMergeTool, { branch: 'tower/x' }],
+      [ITowerTeardownTool, {}],
+    ];
+    for (const [id, args] of cases) {
+      const result = await run(ix.get(id), args as never);
+      expect(result.isError).toBe(true);
+      expect(result.output).toBe('Tower orchestration tools are only supported by the main agent.');
     }
-    currentAgentId = 'main';
-    for (const name of SHARED) {
-      const contribution = TOWER_TOOL_CONTRIBUTIONS.find((c) => c.name === name);
-      expect(contribution, name).toBeDefined();
-      expect(contribution?.when, name).toBeUndefined();
-    }
+    expect(towerActive).toBe(false);
+    expect(addedTools).toEqual([]);
+    expect((await stat(join(repo, '.tower')).catch(() => undefined))).toBeUndefined();
   });
 });

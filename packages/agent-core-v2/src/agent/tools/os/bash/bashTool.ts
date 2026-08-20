@@ -8,6 +8,7 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 import type { ExecutableToolResult, ToolExecution, ToolUpdate } from '#/tool/toolContract';
 import {
   type ExecutableToolResultBuilderResult,
@@ -150,7 +151,7 @@ export class BashTool implements IBashTool {
     effectiveCwd: string,
     command: string,
   ): Promise<IHostProcess> {
-    const shellCwd = env.osKind === 'Windows' ? windowsPathToPosixPath(effectiveCwd) : effectiveCwd;
+    const shellCwd = getShellPathBridge(env).toShellPath(effectiveCwd);
     const shellCommand = `cd ${shellQuote(shellCwd)} && ${command}`;
     const noninteractiveEnv: Record<string, string> = {
       NO_COLOR: '1',
@@ -446,21 +447,6 @@ async function killSpawnedProcess(proc: IHostProcess): Promise<void> {
 
 function shellQuote(s: string): string {
   return `'${s.replaceAll("'", "'\\''")}'`;
-}
-
-function windowsPathToPosixPath(path: string): string {
-  if (path.startsWith('\\\\')) {
-    return path.replaceAll('\\', '/');
-  }
-
-  const driveMatch = /^([A-Za-z]):(?:[\\/]|$)/.exec(path);
-  if (driveMatch !== null) {
-    const drive = driveMatch[1]!.toLowerCase();
-    const rest = path.slice(2).replaceAll('\\', '/');
-    return `/${drive}${rest.startsWith('/') ? rest : `/${rest}`}`;
-  }
-
-  return path.replaceAll('\\', '/');
 }
 
 const WINDOWS_NUL_REDIRECT = /(\d?&?>+\s*)[Nn][Uu][Ll](?=\s|$|[|&;)\n])/g;

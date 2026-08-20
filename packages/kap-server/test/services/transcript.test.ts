@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   IAgentLifecycleService,
   IAgentLoopService,
+  IAgentScopeContext,
   IAgentTaskService,
   IEventBus,
   ISessionIndex,
@@ -14,8 +15,10 @@ import {
   ISessionManager,
   IWorkspaceInstanceManager,
   LifecycleScope,
+  makeAgentScopeContext,
   SessionInteractionService,
   StateRegistry,
+  type AgentContext,
   type Event2,
   type ISessionScopeHandle,
   type ISessionStateService,
@@ -1910,35 +1913,49 @@ describe('bindSessionTranscript', () => {
 
   interface FakeAgentHandle {
     readonly id: string;
+    readonly context: AgentContext;
     readonly bus: FakeBus;
     readonly accessor: { get: (token: unknown) => unknown };
   }
 
   class FakeAgents {
     private readonly handles = new Map<string, FakeAgentHandle>();
-    private readonly createHandlers = new Set<(handle: FakeAgentHandle) => void>();
-    private readonly disposeHandlers = new Set<(agentId: string) => void>();
+    private readonly createHandlers = new Set<(context: AgentContext) => void>();
+    private readonly disposeHandlers = new Set<(context: AgentContext) => void>();
     list(): FakeAgentHandle[] {
       return [...this.handles.values()];
     }
-    get(id: string): FakeAgentHandle | undefined {
+    get(context: AgentContext): FakeAgentHandle | undefined {
+      return this.handles.get(context.agentId);
+    }
+    findAgentHandle(agentId: string): FakeAgentHandle | undefined {
+      return this.handles.get(agentId);
+    }
+    byId(id: string): FakeAgentHandle | undefined {
       return this.handles.get(id);
     }
-    onDidCreate(cb: (handle: FakeAgentHandle) => void): { dispose: () => void } {
+    onDidCreate(cb: (context: AgentContext) => void): { dispose: () => void } {
       this.createHandlers.add(cb);
       return { dispose: () => this.createHandlers.delete(cb) };
     }
-    onDidDispose(cb: (agentId: string) => void): { dispose: () => void } {
+    onDidDispose(cb: (context: AgentContext) => void): { dispose: () => void } {
       this.disposeHandlers.add(cb);
       return { dispose: () => this.disposeHandlers.delete(cb) };
     }
     add(id: string, opts?: { loopStatus?: unknown; tasks?: readonly unknown[] }): FakeAgentHandle {
       const bus = new FakeBus();
+      const scope = makeAgentScopeContext({
+        agentId: id,
+        agentScope: `agents/${id}`,
+        generation: 1,
+      });
       const handle: FakeAgentHandle = {
         id,
+        context: scope.agentContext,
         bus,
         accessor: {
           get: (token: unknown) => {
+            if (token === IAgentScopeContext) return scope;
             if (token === IEventBus) return bus;
             if (token === IAgentLoopService) {
               return { status: () => opts?.loopStatus ?? { state: 'idle' } };
@@ -1951,12 +1968,15 @@ describe('bindSessionTranscript', () => {
         },
       };
       this.handles.set(id, handle);
-      for (const cb of this.createHandlers) cb(handle);
+      for (const cb of this.createHandlers) cb(handle.context);
       return handle;
     }
     remove(id: string): void {
+      const removed = this.handles.get(id);
       this.handles.delete(id);
-      for (const cb of this.disposeHandlers) cb(id);
+      if (removed !== undefined) {
+        for (const cb of this.disposeHandlers) cb(removed.context);
+      }
     }
   }
 
@@ -1971,6 +1991,7 @@ describe('bindSessionTranscript', () => {
             return (
               agents ?? {
                 list: () => [],
+                findAgentHandle: () => undefined,
                 onDidCreate: () => ({ dispose: () => undefined }),
                 onDidDispose: () => ({ dispose: () => undefined }),
               }
@@ -2064,7 +2085,7 @@ describe('bindSessionTranscript', () => {
       agentId: 'agent-1',
     });
 
-    agents.get('main')!.bus.emit(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
+    agents.byId('main')!.bus.emit(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
 
     expect(store.getAgent('main')?.getTask('task-9')).toMatchObject({
       state: 'completed',
@@ -2478,7 +2499,7 @@ describe('bindSessionTranscript', () => {
         core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
       });
       const store = service.forSessionLive('s1');
-      const bus = agents.get('main')!.bus;
+      const bus = agents.byId('main')!.bus;
       bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'hi' }));
       bus.emit(ev({ type: 'turn.step.started', turnId: 0, step: 1 }));
       bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: 'Hello world' }));
@@ -2521,7 +2542,7 @@ describe('bindSessionTranscript', () => {
       });
       const store = service.forSessionLive('s1');
       agents
-        .get('main')!
+        .byId('main')!
         .bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'live hi' }));
       await service.whenReady('s1');
       expect(store?.getAgent('main')?.getTurn('t0')).toMatchObject({
@@ -2544,7 +2565,7 @@ describe('bindSessionTranscript', () => {
         core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
       });
       const store = service.forSessionLive('s1');
-      agents.get('main')!.bus.emit(
+      agents.byId('main')!.bus.emit(
         ev({
           type: 'turn.started',
           turnId: 0,
@@ -2583,7 +2604,7 @@ describe('bindSessionTranscript', () => {
       service.onSessionOps('s1', (event) => {
         if (event.agentId === 'main') batches.push([...event.ops]);
       });
-      const bus = agents.get('main')!.bus;
+      const bus = agents.byId('main')!.bus;
       bus.emit(
         ev({
           type: 'turn.started',

@@ -6,6 +6,26 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.38.0 (2026-08-20)
+
+### Features
+
+- Support two OAuth login methods — kimi.ai and kimi.com.
+- Add the WaitFor tool: the agent can now wait for a background task to finish within the current turn instead of ending the turn and being re-invoked.
+- Add 13 data sources to the official Kimi Datasource plugin — Chinese government data (NDA/NBS) and standards (GB/HB/DB/TT), eight international organization datasets (WHO, FAO, UNSD, ECB, Eurostat, UNICEF, OECD, FRED), Xinhua Finance, and Caixin. Update the plugin from the Official tab in /plugins.
+- web: Add a Pin action to the chat header more-menu.
+
+### Polish
+
+- Edit and Write now require reading an existing file before modifying it.
+<!-- - Sub-agents no longer spawn their own sub-agents by default; custom agent profiles can still allow it explicitly. -->
+- Collapse long `!` shell command output instead of flooding the transcript. Press ctrl+o to expand or collapse it together with tool output.
+
+### Bug Fixes
+
+- Fix config.toml entries being lost when the file had a syntax error or was edited outside the app.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 0.37.2 (2026-08-19)
 
 ### Polish

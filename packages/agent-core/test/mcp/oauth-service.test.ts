@@ -316,6 +316,10 @@ describe('McpOAuthService single-flight refresh', () => {
       hasTokens: true,
       expired: false,
     });
+    await waitFor(
+      () => fixture.events.filter((event) => event.type === 'tokens-saved').length === 2,
+      'the refreshed tokens to be saved',
+    );
     expect(fixture.events.filter((event) => event.type === 'tokens-saved')).toHaveLength(2);
   }, 15000);
 
@@ -642,7 +646,47 @@ describe('McpOAuthService proactive refresh scheduling', () => {
     });
 
     await waitFor(() => authServer.counts.refresh === 1, 'an immediate proactive refresh');
+    await waitFor(
+      () => fixture.events.filter((event) => event.type === 'tokens-saved').length === 2,
+      'the refreshed tokens to be saved',
+    );
     expect(fixture.events.filter((event) => event.type === 'tokens-saved')).toHaveLength(2);
+  }, 15000);
+
+  it('does not arm new proactive timers after shutdown', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => rm(fixture.storeDir, { recursive: true, force: true }));
+    const authServer = await startFakeAuthServer();
+
+    const provider = fixture.service.getProvider(SERVER_NAME, SERVER_URL);
+    const state = authServerState(authServer.url);
+    provider.saveDiscoveryState(state.discovery);
+    provider.saveClientInformation(state.client);
+    await provider.saveTokens({
+      access_token: 'stale-access-token',
+      refresh_token: 'stale-refresh-token',
+      token_type: 'Bearer',
+      expires_in: 60,
+    });
+    await waitFor(() => authServer.counts.refresh === 1, 'an immediate proactive refresh');
+    await waitFor(
+      () => fixture.events.filter((event) => event.type === 'tokens-saved').length === 2,
+      'the refreshed tokens to be saved',
+    );
+
+    await fixture.service.shutdown();
+    const timers = (
+      fixture.service as unknown as { refreshTimers: ReadonlyMap<string, unknown> }
+    ).refreshTimers;
+    expect(timers.size).toBe(0);
+
+    await provider.saveTokens({
+      access_token: 'post-shutdown-token',
+      refresh_token: 'post-shutdown-refresh-token',
+      token_type: 'Bearer',
+      expires_in: 60,
+    });
+    expect(timers.size).toBe(0);
   }, 15000);
 
   it('re-arms scheduling for expiries beyond the setTimeout limit', async () => {

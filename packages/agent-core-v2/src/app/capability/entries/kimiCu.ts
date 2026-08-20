@@ -3,6 +3,8 @@ import { access, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { kimiCdnContentUrl } from '@moonshot-ai/kimi-code-oauth';
+
 import { downloadToFile, runCommand } from '../host';
 import type {
   CapabilityDetectResult,
@@ -12,18 +14,8 @@ import type {
 } from '../types';
 import type { CapabilityEntryContext } from './context';
 
-const MAC_PLUGIN = {
-  id: 'kimi-cu',
-  zipUrl: 'https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip',
-} as const;
-const WINDOWS_PLUGIN = {
-  id: 'kimi-cu-win',
-  zipUrl:
-    'https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip',
-} as const;
-const APP_ZIP_URL = 'https://cdn.kimi.com/kimi-computer-use/latest/KimiCU.app.zip';
-const WINDOWS_SETUP_URL =
-  'https://cdn.kimi.com/kimi-computer-use-windows/latest/setup_windows.ps1';
+const MAC_PLUGIN_ID = 'kimi-cu';
+const WINDOWS_PLUGIN_ID = 'kimi-cu-win';
 const APP_BUNDLE = 'KimiCU.app';
 const LAUNCHD_LABEL = 'ai.kimi.cu.service';
 const COMMAND_TIMEOUT_MS = 30_000;
@@ -52,6 +44,20 @@ const WINDOWS_DOCTOR_SCRIPT =
 interface PluginLayerConfig {
   readonly id: string;
   readonly zipUrl: string;
+}
+
+function macPlugin(): PluginLayerConfig {
+  return {
+    id: MAC_PLUGIN_ID,
+    zipUrl: kimiCdnContentUrl('kimi-computer-use/latest/kimi-cu-plugin.zip'),
+  };
+}
+
+function windowsPlugin(): PluginLayerConfig {
+  return {
+    id: WINDOWS_PLUGIN_ID,
+    zipUrl: kimiCdnContentUrl('kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip'),
+  };
 }
 
 interface PermissionStatus {
@@ -302,7 +308,7 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
   async function detect(): Promise<CapabilityDetectResult> {
     const steps: CapabilityStep[] = [];
 
-    const plugin = await detectPluginLayer(ctx, MAC_PLUGIN);
+    const plugin = await detectPluginLayer(ctx, macPlugin());
     steps.push(plugin.step);
 
     if ((await legacyMcpFile()) !== undefined) {
@@ -417,7 +423,7 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
       .every((step) => step.state === 'ok');
 
     report('plugin');
-    await installPluginLayer(ctx, MAC_PLUGIN);
+    await installPluginLayer(ctx, macPlugin());
 
     if (await removeLegacyMcpRegistration(legacyMcpBefore).catch(() => false)) {
       report('mcp-config');
@@ -430,7 +436,7 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
         report('download', 0);
         const zipPath = path.join(workDir, 'KimiCU.app.zip');
         await downloadToFile(
-          APP_ZIP_URL,
+          kimiCdnContentUrl('kimi-computer-use/latest/KimiCU.app.zip'),
           zipPath,
           (percent) => {
             report('download', percent);
@@ -487,7 +493,7 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
 
   return {
     id: 'kimi-cu',
-    pluginId: MAC_PLUGIN.id,
+    pluginId: MAC_PLUGIN_ID,
     displayName: 'Kimi Computer Use',
     description:
       'macOS GUI automation in the background — read app UIs and click, type, scroll, and drag without taking over your mouse or foregrounding apps.',
@@ -590,7 +596,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
 
   async function detect(): Promise<CapabilityDetectResult> {
     const [plugin, runtime] = await Promise.all([
-      detectPluginLayer(ctx, WINDOWS_PLUGIN),
+      detectPluginLayer(ctx, windowsPlugin()),
       detectRuntimeStep(),
     ]);
     return {
@@ -616,7 +622,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     if (installPlugin) {
       report('plugin');
       try {
-        await installPluginLayer(ctx, WINDOWS_PLUGIN);
+        await installPluginLayer(ctx, windowsPlugin());
       } catch (error) {
         if (
           typeof error !== 'object' ||
@@ -639,7 +645,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
         const setupPath = path.join(workDir, 'setup_windows.ps1');
         report('download', 0);
         await downloadToFile(
-          WINDOWS_SETUP_URL,
+          kimiCdnContentUrl('kimi-computer-use-windows/latest/setup_windows.ps1'),
           setupPath,
           (percent) => {
             report('download', percent);
@@ -684,7 +690,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
 
   return {
     id: 'kimi-cu',
-    pluginId: WINDOWS_PLUGIN.id,
+    pluginId: WINDOWS_PLUGIN_ID,
     displayName: 'Kimi Computer Use for Windows',
     description:
       'Windows GUI automation — read app UIs and click, type, scroll, and drag in desktop apps.',

@@ -13,6 +13,7 @@ import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/
 import { Emitter } from '#/_base/event';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import {
   AgentActivityUpdated,
   IAgentActivityView,
@@ -32,6 +33,7 @@ import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 class FakeBus implements IEventBus {
   declare readonly _serviceBrand: undefined;
@@ -61,9 +63,11 @@ class FakeAgentHandle {
   readonly state = new AgentStateService();
   activity: AgentActivityState = { lifecycle: 'ready', background: [] };
   private readonly view = { state: () => this.activity };
+  readonly context: AgentContext;
   readonly accessor;
 
   constructor(readonly id: string) {
+    this.context = stubAgentContext(id, 1);
     this.accessor = {
       get: (token: unknown) => {
         if (token === IEventBus) return this.bus;
@@ -75,7 +79,7 @@ class FakeAgentHandle {
   }
 
   emitActivity(): void {
-    this.bus.publish(new AgentActivityUpdated(this.activity));
+    this.bus.publish(new AgentActivityUpdated({ ...this.activity, agentId: this.id }));
   }
 
   dispose(): void {}
@@ -83,9 +87,14 @@ class FakeAgentHandle {
 
 class FakeAgentLifecycle implements IAgentLifecycleService {
   declare readonly _serviceBrand: undefined;
-  private readonly createEmitter = new Emitter<IAgentScopeHandle>();
-  private readonly disposeEmitter = new Emitter<string>();
+  private readonly createEmitter = new Emitter<AgentContext>();
+  private readonly createScopeEmitter = new Emitter<{
+    readonly context: AgentContext;
+    readonly handle: IAgentScopeHandle;
+  }>();
+  private readonly disposeEmitter = new Emitter<AgentContext>();
   readonly onDidCreate = this.createEmitter.event;
+  readonly onDidCreateScope = this.createScopeEmitter.event;
   readonly onDidDispose = this.disposeEmitter.event;
   readonly handles: FakeAgentHandle[] = [];
 
@@ -93,21 +102,30 @@ class FakeAgentLifecycle implements IAgentLifecycleService {
     return this.handles as unknown as IAgentScopeHandle[];
   }
 
-  get(agentId: string): IAgentScopeHandle | undefined {
-    return this.handles.find((h) => h.id === agentId) as unknown as IAgentScopeHandle | undefined;
+  get(context: AgentContext): IAgentScopeHandle | undefined {
+    return this.handles.find((h) => h.id === context.agentId && h.context === context) as
+      | IAgentScopeHandle
+      | undefined;
+  }
+
+  findAgentHandle(agentId: string): IAgentScopeHandle | undefined {
+    return this.handles.find((h) => h.id === agentId) as IAgentScopeHandle | undefined;
   }
 
   addAgent(id: string): FakeAgentHandle {
     const handle = new FakeAgentHandle(id);
     this.handles.push(handle);
-    this.createEmitter.fire(handle as unknown as IAgentScopeHandle);
+    const scopeHandle = handle as unknown as IAgentScopeHandle;
+    this.createEmitter.fire(handle.context);
+    this.createScopeEmitter.fire({ context: handle.context, handle: scopeHandle });
     return handle;
   }
 
   removeAgent(id: string): void {
     const index = this.handles.findIndex((h) => h.id === id);
-    if (index >= 0) this.handles.splice(index, 1);
-    this.disposeEmitter.fire(id);
+    if (index < 0) return;
+    const [handle] = this.handles.splice(index, 1);
+    this.disposeEmitter.fire(handle!.context);
   }
 
   create(): Promise<IAgentScopeHandle> {

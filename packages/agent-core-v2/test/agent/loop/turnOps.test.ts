@@ -27,37 +27,37 @@ function fold(s: TurnModelState, event: Event2): TurnModelState {
 }
 
 function foldLoopEvent(s: TurnModelState, turnId: string): TurnModelState {
-  return fold(s, new ContextAppendLoopEvent({ event: { type: 'step.begin', uuid: 'step-0', turnId } }));
+  return fold(s, new ContextAppendLoopEvent({ agentId: 'main', event: { type: 'step.begin', uuid: 'step-0', turnId } }));
 }
 
 describe('turnKey lastEnded', () => {
   it('keeps the stored outcome across prompts and queued cancels', () => {
     let s = turnKey.initial();
-    s = fold(s, new TurnPrompt({ input: [], origin: { kind: 'user' } }));
-    s = fold(s, new TurnEnded({ turnId: 0, reason: 'failed', durationMs: 10 }));
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
+    s = fold(s, new TurnEnded({ agentId: 'main', turnId: 0, reason: 'failed', durationMs: 10 }));
     expect(s.lastEnded).toMatchObject({ turnId: 0, reason: 'failed' });
-    s = fold(s, new TurnPrompt({ input: [], origin: { kind: 'user' } }));
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
     expect(s.lastEnded?.reason).toBe('failed');
-    s = fold(s, new TurnCancel({ turnId: 1, target: 'queued' }));
+    s = fold(s, new TurnCancel({ agentId: 'main', turnId: 1, target: 'queued' }));
     expect(s.lastEnded?.reason).toBe('failed');
-    s = fold(s, new TurnEnded({ turnId: 1, reason: 'completed' }));
+    s = fold(s, new TurnEnded({ agentId: 'main', turnId: 1, reason: 'completed' }));
     expect(s.lastEnded).toMatchObject({ turnId: 1, reason: 'completed' });
   });
 
   it('clears the stored outcome once a newer turn starts producing', () => {
     let s = turnKey.initial();
-    s = fold(s, new TurnPrompt({ input: [], origin: { kind: 'user' } }));
-    s = fold(s, new TurnEnded({ turnId: 0, reason: 'failed' }));
-    s = fold(s, new TurnPrompt({ input: [], origin: { kind: 'user' } }));
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
+    s = fold(s, new TurnEnded({ agentId: 'main', turnId: 0, reason: 'failed' }));
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
     s = foldLoopEvent(s, '1');
     expect(s.lastEnded).toBeUndefined();
   });
 
   it('keeps the stored outcome on the same turn’s own events', () => {
     let s = turnKey.initial();
-    s = fold(s, new TurnPrompt({ input: [], origin: { kind: 'user' } }));
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
     s = foldLoopEvent(s, '0');
-    s = fold(s, new TurnEnded({ turnId: 0, reason: 'completed' }));
+    s = fold(s, new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed' }));
     s = foldLoopEvent(s, '0');
     expect(s.lastEnded?.reason).toBe('completed');
   });
@@ -70,11 +70,18 @@ describe('turnKey lastEnded', () => {
 describe('TurnEnded serialization', () => {
   it('emits the op record shape without the bus-only interruptReason', () => {
     const event = new TurnEnded(
-      { turnId: 3, reason: 'cancelled', durationMs: 12, interruptReason: 'user_cancelled' },
+      {
+        agentId: 'main',
+        turnId: 3,
+        reason: 'cancelled',
+        durationMs: 12,
+        interruptReason: 'user_cancelled',
+      },
       42,
     );
     expect(event.serialize()).toEqual({
       type: 'turn.ended',
+      agentId: 'main',
       turnId: 3,
       reason: 'cancelled',
       durationMs: 12,
@@ -83,9 +90,10 @@ describe('TurnEnded serialization', () => {
   });
 
   it('omits absent optional fields from the record', () => {
-    const event = new TurnEnded({ turnId: 0, reason: 'completed' }, 7);
+    const event = new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed' }, 7);
     expect(event.serialize()).toEqual({
       type: 'turn.ended',
+      agentId: 'main',
       turnId: 0,
       reason: 'completed',
       time: 7,
