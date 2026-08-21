@@ -21,6 +21,7 @@ import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
+import { generateRemoteControlQr } from '#/utils/remote-control-qr';
 
 import { initializeServerTelemetry } from '../../telemetry';
 import {
@@ -212,12 +213,14 @@ export async function handleWebCommand(
       const token = parsed.dangerousBypassAuth ? undefined : deps.resolveToken?.();
       if (opts.remoteControl === true) {
         if (token === undefined) throw new Error('Unable to read the local server token.');
+        const dataDir = getDataDir();
         remoteControl = await (deps.startRemoteControl ?? startRemoteControl)({
-          homeDir: getDataDir(),
+          homeDir: dataDir,
           localOrigin: origin,
           localServerToken: token,
           stderr: deps.stderr,
         });
+        const qrCode = await generateRemoteControlQr(remoteControl.url, dataDir);
         deps.stdout.write(
           parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
             ? formatReadyBanner(origin, parsed.host, {
@@ -226,6 +229,8 @@ export async function handleWebCommand(
             : formatReadyLine(origin, undefined),
         );
         deps.stdout.write(`Kimi Remote Control (experimental): ${remoteControl.url}\n`);
+        deps.stdout.write(qrCode.terminal);
+        deps.stdout.write(`QR code PNG: ${qrCode.pngPath}\n`);
         if (opts.open === true) deps.openUrl(remoteControl.url);
         return;
       }

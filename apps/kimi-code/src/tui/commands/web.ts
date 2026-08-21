@@ -6,6 +6,7 @@ import { formatReadyBanner, startServerForeground } from '#/cli/sub/web/run';
 import { parseServerOptions, tryResolveServerToken } from '#/cli/sub/web/shared';
 import { openUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
+import { generateRemoteControlQr } from '#/utils/remote-control-qr';
 
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { darkColors } from '../theme/colors';
@@ -44,16 +45,20 @@ export async function handleRemoteControlCommand(host: SlashCommandHost): Promis
     try {
       await startServerForeground(options, {
         onReady: async (origin) => {
-          const token = tryResolveServerToken(getDataDir());
+          const dataDir = getDataDir();
+          const token = tryResolveServerToken(dataDir);
           if (token === undefined) throw new Error('Unable to read the local server token.');
           remoteControl = await startRemoteControl({
-            homeDir: getDataDir(),
+            homeDir: dataDir,
             localOrigin: origin,
             localServerToken: token,
           });
           const url = buildRemoteControlUrl(remoteControl.deviceId, session.id);
+          const qrCode = await generateRemoteControlQr(url, dataDir);
           process.stdout.write(formatReadyBanner(origin, options.host));
           process.stdout.write(`\n  ${sessionLine(url, 'Remote Control (experimental): ')}\n`);
+          process.stdout.write(qrCode.terminal);
+          process.stdout.write(`QR code PNG: ${qrCode.pngPath}\n`);
           openUrl(url);
         },
         onShutdown: async () => {
