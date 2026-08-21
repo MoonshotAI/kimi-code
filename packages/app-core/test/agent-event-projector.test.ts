@@ -2409,3 +2409,146 @@ describe('agentEventProjector subagent model', () => {
     expect(usage).toMatchObject({ model: 'provider/main' });
   });
 });
+
+describe('session transcript retention (memory)', () => {
+  const mainUserPrompt = {
+    agentId: 'main',
+    promptId: 'pr_1',
+    userMessageId: 'msg_u1',
+    content: [{ type: 'text', text: 'hello' }],
+    createdAt: '2026-01-01T00:00:00Z',
+  };
+
+  function driveStepWithTool(projector: ReturnType<typeof createAgentProjector>, turnId: number, step: number): void {
+    projector.project('turn.step.started', { agentId: 'main', turnId, step }, 's1');
+    projector.project('assistant.delta', { agentId: 'main', turnId, delta: 'x'.repeat(500) }, 's1');
+    projector.project('tool.use', { agentId: 'main', turnId, toolCallId: `tc_${step}`, name: 'bash', args: { command: 'ls' } }, 's1');
+    projector.project('tool.result', { agentId: 'main', turnId, toolCallId: `tc_${step}`, output: 'y'.repeat(500), isError: false }, 's1');
+  }
+
+  it('pins only the live bubble mid-turn and releases everything at turn end', () => {
+    const projector = createAgentProjector({ t });
+    projector.project('prompt.submitted', mainUserPrompt, 's1');
+    projector.project('turn.started', { agentId: 'main', turnId: 1 }, 's1');
+
+    // Step 1: only the in-flight assistant bubble is referenced.
+    projector.project('turn.step.started', { agentId: 'main', turnId: 1, step: 1 }, 's1');
+    projector.project('assistant.delta', { agentId: 'main', turnId: 1, delta: 'z'.repeat(2000) }, 's1');
+    expect(projector.retainedMessageCount('s1')).toBe(1);
+
+    // The tool result ends the step: its clone went to the reducer, so the
+    // projector's own copies (user prompt, finished bubble, result) release.
+    projector.project('tool.use', { agentId: 'main', turnId: 1, toolCallId: 'tc_1', name: 'bash', args: {} }, 's1');
+    projector.project('tool.result', { agentId: 'main', turnId: 1, toolCallId: 'tc_1', output: 'q'.repeat(2000), isError: false }, 's1');
+    expect(projector.retainedMessageCount('s1')).toBe(0);
+
+    // Final step, then the turn ends — nothing stays behind.
+    projector.project('turn.step.started', { agentId: 'main', turnId: 1, step: 2 }, 's1');
+    projector.project('assistant.delta', { agentId: 'main', turnId: 1, delta: 'done' }, 's1');
+    expect(projector.retainedMessageCount('s1')).toBe(1);
+    projector.project('turn.step.completed', { agentId: 'main', turnId: 1, step: 2, usage: {} }, 's1');
+    projector.project('turn.ended', { agentId: 'main', turnId: 1, reason: 'completed' }, 's1');
+    expect(projector.retainedMessageCount('s1')).toBe(0);
+  });
+
+  it('stays bounded across turns instead of growing with the transcript', () => {
+    const projector = createAgentProjector({ t });
+    for (let turnId = 1; turnId <= 5; turnId += 1) {
+      projector.project('prompt.submitted', { ...mainUserPrompt, promptId: `pr_${turnId}`, userMessageId: `msg_u${turnId}` }, 's1');
+      projector.project('turn.started', { agentId: 'main', turnId }, 's1');
+      driveStepWithTool(projector, turnId, 1);
+      driveStepWithTool(projector, turnId, 2);
+      projector.project('turn.step.started', { agentId: 'main', turnId, step: 3 }, 's1');
+      projector.project('assistant.delta', { agentId: 'main', turnId, delta: 'final' }, 's1');
+      projector.project('turn.ended', { agentId: 'main', turnId, reason: 'completed' }, 's1');
+      expect(projector.retainedMessageCount('s1')).toBe(0);
+    }
+    // 5 full turns (5 user prompts + 15 bubbles/results) would otherwise pin
+    // dozens of full message bodies for the renderer's lifetime.
+  });
+
+  it('keeps the retry-reuse bubble across trimming so a retried step refills it', () => {
+    const projector = createAgentProjector({ t });
+    projector.project('turn.started', { agentId: 'main', turnId: 1 }, 's1');
+    projector.project('turn.step.started', { agentId: 'main', turnId: 1, step: 1 }, 's1');
+    projector.project('assistant.delta', { agentId: 'main', turnId: 1, delta: 'partial' }, 's1');
+
+    projector.project('turn.step.retrying', { agentId: 'main', turnId: 1, step: 1, failedAttempt: 1, nextAttempt: 2 }, 's1');
+    // The cleared bubble survives for reuse — the retry must not stack a second one.
+    expect(projector.retainedMessageCount('s1')).toBe(1);
+
+    const events = projector.project('turn.step.started', { agentId: 'main', turnId: 1, step: 1 }, 's1');
+    // Reuse emits no fresh messageCreated…
+    expect(events.some((e) => e.type === 'messageCreated')).toBe(false);
+    // …and the retried stream refills the same bubble from content index 0.
+    const deltaEvents = projector.project('assistant.delta', { agentId: 'main', turnId: 1, delta: 'retry text' }, 's1');
+    expect(deltaEvents).toContainEqual(
+      expect.objectContaining({ type: 'assistantDelta', contentIndex: 0 }),
+    );
+    projector.project('turn.ended', { agentId: 'main', turnId: 1, reason: 'completed' }, 's1');
+    expect(projector.retainedMessageCount('s1')).toBe(0);
+  });
+
+  it('forgetSession removes the sessions-map entry (not just its contents)', () => {
+    const projector = createAgentProjector({ t });
+    projector.project('turn.started', { agentId: 'main', turnId: 1 }, 's1');
+    projector.project('turn.step.started', { agentId: 'main', turnId: 1, step: 1 }, 's1');
+    projector.project('turn.started', { agentId: 'main', turnId: 1 }, 's2');
+    expect(projector.retainedMessageCount('s1')).toBe(1);
+    expect(projector.retainedMessageCount('s2')).toBe(0);
+
+    projector.forgetSession('s1');
+    // Entry gone — reported as undefined, not as an empty state.
+    expect(projector.retainedMessageCount('s1')).toBeUndefined();
+    // Other sessions are untouched.
+    expect(projector.retainedMessageCount('s2')).toBe(0);
+
+    // A later event for the forgotten session starts from a fresh state.
+    projector.project('turn.started', { agentId: 'main', turnId: 2 }, 's1');
+    expect(projector.retainedMessageCount('s1')).toBe(0);
+  });
+});
+
+describe('stateless global frames (sessions-map hygiene)', () => {
+  it('projects session.meta.updated without materializing session state', () => {
+    const projector = createAgentProjector({ t });
+    const events = projector.project(
+      'session.meta.updated',
+      { patch: { title: 'New title' } },
+      'never-seen',
+    );
+    // The payload still projects — the sidebar relies on global meta updates.
+    expect(events).toContainEqual({
+      type: 'sessionMetaUpdated',
+      sessionId: 'never-seen',
+      title: 'New title',
+    });
+    // …but no SessionState was materialized for the unseen session.
+    expect(projector.retainedMessageCount('never-seen')).toBeUndefined();
+  });
+
+  it('forgetSession sticks: later global broadcasts do not recreate the entry', () => {
+    const projector = createAgentProjector({ t });
+    projector.project('turn.started', { agentId: 'main', turnId: 1 }, 's1');
+    expect(projector.retainedMessageCount('s1')).toBe(0);
+    projector.forgetSession('s1');
+
+    // The daemon broadcasts these to every connection regardless of
+    // subscription — none may resurrect the dropped entry.
+    projector.project('session.meta.updated', { patch: { title: 'T' } }, 's1');
+    projector.project('goal.updated', { snapshot: null }, 's1');
+    projector.project('compaction.started', { trigger: 'auto' }, 's1');
+    projector.project('compaction.completed', { result: {} }, 's1');
+    projector.project('hook.result', {}, 's1');
+
+    expect(projector.retainedMessageCount('s1')).toBeUndefined();
+  });
+
+  it('still creates state on demand for stateful frames of a new session', () => {
+    const projector = createAgentProjector({ t });
+    projector.project('session.meta.updated', { patch: { title: 'T' } }, 's1');
+    expect(projector.retainedMessageCount('s1')).toBeUndefined();
+    projector.project('turn.started', { agentId: 'main', turnId: 1 }, 's1');
+    expect(projector.retainedMessageCount('s1')).toBe(0);
+  });
+});

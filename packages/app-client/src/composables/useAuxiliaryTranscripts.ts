@@ -97,10 +97,21 @@ export function createAuxiliaryTranscriptPool(deps: {
   }
 
   async function refreshAndResumeOnce(entry: AuxiliaryTranscriptEntry): Promise<void> {
+    // The entry must still be the live one for its (session, agent) pair
+    // before re-subscribing: deactivate() evicts entries, and a fast
+    // close→reopen of the same agent replaces this entry with a fresh one
+    // whose own refresh establishes the current subscription. Letting this
+    // stale chain subscribe with its old channel's seq would shadow the
+    // fresh channel and could drop ops between the two watermarks.
+    const isCurrentEntry = (): boolean =>
+      entries.get(keyOf(entry.channel.sessionId, entry.channel.agentId)) === entry;
     try {
       await entry.channel.refresh();
       entry.baselineLoaded = true;
-      if (desiredAgentBySession.get(entry.channel.sessionId) === entry.channel.agentId) {
+      if (
+        isCurrentEntry() &&
+        desiredAgentBySession.get(entry.channel.sessionId) === entry.channel.agentId
+      ) {
         subscribeCurrent(
           entry.channel.sessionId,
           entry.channel.agentId,
@@ -108,7 +119,10 @@ export function createAuxiliaryTranscriptPool(deps: {
         );
       }
     } catch {
-      if (desiredAgentBySession.get(entry.channel.sessionId) === entry.channel.agentId) {
+      if (
+        isCurrentEntry() &&
+        desiredAgentBySession.get(entry.channel.sessionId) === entry.channel.agentId
+      ) {
         subscribeCurrent(entry.channel.sessionId, entry.channel.agentId);
       }
     }
@@ -133,6 +147,16 @@ export function createAuxiliaryTranscriptPool(deps: {
     if (subscribedAgent !== undefined) {
       deps.getEventConnection()?.unsubscribeTranscript(sessionId, [subscribedAgent]);
       subscribedAgentBySession.delete(sessionId);
+    }
+    // Evict the transcript entry: with the panel closed (or moved to another
+    // agent/session) nothing reads this agent's transcript, and keeping it
+    // pins the full op log for the app's lifetime. Re-activation rebuilds the
+    // entry from a fresh baseline fetch.
+    const key = keyOf(sessionId, agentId);
+    const entry = entries.get(key);
+    if (entry !== undefined) {
+      entries.delete(key);
+      dirtyEntries.delete(entry);
     }
   }
 

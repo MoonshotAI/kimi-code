@@ -3470,12 +3470,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         ];
       }
       for (const id of ids) {
+        // forgetSession owns every per-session sidecar (side chat included).
         forgetSession(id);
         titleGenBySession.delete(id);
-        sideChat.clearSideChatForSession(id);
-        const { [id]: _removedIds, ...restIds } = rawState.sideChatUserMessageIdsBySession;
-        void _removedIds;
-        rawState.sideChatUserMessageIdsBySession = restIds;
       }
       // If an archived session was active, pick another. 'replace' so the
       // address bar doesn't keep pointing at (and back doesn't return to) a

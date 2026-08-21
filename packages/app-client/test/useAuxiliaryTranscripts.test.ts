@@ -219,3 +219,89 @@ function page(agentId: string) {
     seq: 3,
   };
 }
+
+describe('createAuxiliaryTranscriptPool — deactivate eviction (memory)', () => {
+  it('drops the transcript entry on deactivate; re-activation refetches a fresh baseline', async () => {
+    const getSessionTranscript = vi.fn(
+      async (_sessionId: string, query: { agentId: string }) => page(query.agentId),
+    );
+    const pool = createAuxiliaryTranscriptPool({
+      api: { getSessionTranscript } as unknown as KimiWebApi,
+      connectEventsIfNeeded: vi.fn(),
+      getEventConnection: () =>
+        ({
+          subscribeTranscript: vi.fn(),
+          unsubscribeTranscript: vi.fn(),
+        }) as unknown as KimiEventConnection,
+    });
+
+    pool.activate('s1', 'agent-a');
+    await vi.waitFor(() => expect(pool.getEntry('s1', 'agent-a')?.baselineLoaded).toBe(true));
+    expect(getSessionTranscript).toHaveBeenCalledTimes(1);
+
+    // Panel closed / session switched: the full transcript entry must go.
+    pool.deactivate('s1', 'agent-a');
+    expect(pool.getEntry('s1', 'agent-a')).toBeUndefined();
+
+    // Re-opening rebuilds from a fresh baseline fetch, not a cached copy.
+    const reactivated = pool.activate('s1', 'agent-a');
+    expect(reactivated.baselineLoaded).toBe(false);
+    expect(getSessionTranscript).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(reactivated.baselineLoaded).toBe(true));
+  });
+
+  it('evicting one agent leaves another session entry intact', async () => {
+    const getSessionTranscript = vi.fn(
+      async (_sessionId: string, query: { agentId: string }) => page(query.agentId),
+    );
+    const pool = createAuxiliaryTranscriptPool({
+      api: { getSessionTranscript } as unknown as KimiWebApi,
+      connectEventsIfNeeded: vi.fn(),
+      getEventConnection: () => null,
+    });
+
+    pool.activate('s1', 'agent-a');
+    pool.activate('s2', 'agent-b');
+    await vi.waitFor(() => expect(pool.getEntry('s1', 'agent-a')?.baselineLoaded).toBe(true));
+    await vi.waitFor(() => expect(pool.getEntry('s2', 'agent-b')?.baselineLoaded).toBe(true));
+
+    pool.deactivate('s1', 'agent-a');
+    expect(pool.getEntry('s1', 'agent-a')).toBeUndefined();
+    expect(pool.getEntry('s2', 'agent-b')).toBeDefined();
+  });
+});
+
+describe('createAuxiliaryTranscriptPool — stale entry resubscribe race', () => {
+  it('does not re-subscribe from an evicted entry after a close→reopen during cold load', async () => {
+    let finishFirstLoad: ((value: ReturnType<typeof page>) => void) | undefined;
+    const firstLoad = new Promise<ReturnType<typeof page>>((resolve) => {
+      finishFirstLoad = resolve;
+    });
+    const subscribeTranscript = vi.fn();
+    const getSessionTranscript = vi
+      .fn()
+      .mockReturnValueOnce(firstLoad)
+      .mockResolvedValue(page('agent-a'));
+    const pool = createAuxiliaryTranscriptPool({
+      api: { getSessionTranscript } as unknown as KimiWebApi,
+      connectEventsIfNeeded: vi.fn(),
+      getEventConnection: () =>
+        ({ subscribeTranscript, unsubscribeTranscript: vi.fn() }) as unknown as KimiEventConnection,
+    });
+
+    pool.activate('s1', 'agent-a'); // cold load starts (slow)
+    pool.deactivate('s1', 'agent-a'); // evicts the entry mid-flight
+    const fresh = pool.activate('s1', 'agent-a'); // replacement entry, fast load
+    await vi.waitFor(() => expect(fresh.baselineLoaded).toBe(true));
+    await vi.waitFor(() => expect(subscribeTranscript).toHaveBeenCalledWith('s1', 'agent-a', 3));
+    subscribeTranscript.mockClear();
+
+    // The stale load finally resolves: its entry is evicted, so it must not
+    // shadow the fresh channel's subscription with its old watermark.
+    finishFirstLoad?.(page('agent-a'));
+    await firstLoad;
+    await Promise.resolve();
+
+    expect(subscribeTranscript).not.toHaveBeenCalled();
+  });
+});

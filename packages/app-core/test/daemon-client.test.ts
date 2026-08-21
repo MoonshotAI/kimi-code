@@ -546,6 +546,54 @@ describe('DaemonKimiWebApi.connectEvents', () => {
       lastTurnReason: undefined,
     });
   });
+
+  it('unsubscribe drops the session projection state (transcript copies included)', () => {
+    FakeWebSocket.instances = [];
+    vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+    // Hold the projector instance so the test can observe its per-session map.
+    const projector = createAgentProjector({ t });
+    const api = new DaemonKimiWebApi({
+      origin: 'http://daemon.test',
+      identity: {
+        clientId: 'web_test',
+        clientName: 'test',
+        clientVersion: '0.0.0',
+        clientUiMode: 'test',
+      },
+      tracer: {
+        restRequest: (info) => tracedRequests.push(info),
+      },
+      projectorFactory: () => projector,
+    });
+    connection = api.connectEvents({
+      onEvent() {},
+      onResync() {},
+      onError() {},
+      onConnectionChange() {},
+    });
+    const socket = FakeWebSocket.instances[0]!;
+
+    socket.emit({ type: 'server_hello', payload: { protocol_version: 2 } });
+    socket.emit({
+      type: 'turn.started',
+      seq: 1,
+      session_id: 'session-1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      payload: { agentId: 'main', turnId: 7 },
+    });
+    socket.emit({
+      type: 'turn.step.started',
+      seq: 2,
+      session_id: 'session-1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      payload: { agentId: 'main', turnId: 7, step: 1 },
+    });
+    expect(projector.retainedMessageCount('session-1')).toBe(1);
+
+    connection.unsubscribe('session-1');
+    // The sessions-map entry itself is gone — not just reset to empty.
+    expect(projector.retainedMessageCount('session-1')).toBeUndefined();
+  });
 });
 
 describe('DaemonKimiWebApi.startOAuthLogin', () => {

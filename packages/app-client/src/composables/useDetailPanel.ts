@@ -323,6 +323,12 @@ function resolveAgentTarget(target: string): string {
         (tk) => tk.backgroundTaskId === target.subagentId && tk.agentId !== undefined,
       );
       if (!folded || folded.agentId === target.subagentId) return;
+      // Retire the provisional target first (same pattern as openAgentPanel's
+      // previous-target retirement): when the transcript was activated under
+      // the raw id (the task row wasn't in the store yet), this evicts that
+      // entry — otherwise the close path only ever learns the folded agent id
+      // and the provisional entry leaks in the pool for good.
+      client.auxiliaryTranscripts.deactivate(target.sessionId, target.subagentId);
       agentTarget.value = { sessionId: target.sessionId, subagentId: folded.agentId! };
       // Only activate while the agent panel is actually showing: after the
       // user moved on to another detail, an invisible panel must not keep

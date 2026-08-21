@@ -507,6 +507,26 @@ function getMsgById(state: SessionState, messageId: string): AppMessage | undefi
   return state.messages.find((m) => m.id === messageId);
 }
 
+/**
+ * Drop every log message the projector can no longer touch. Reads of the
+ * internal log are always by id of a still-live message — the current
+ * assistant bubble (`currentAssistantMsgId`) or the retry-reuse target
+ * (`retryReuseMsgId`). Everything else (user prompts, finished assistant
+ * bubbles, tool results, synthesized notices) was already emitted to the
+ * reducer as a decoupled clone; keeping it here only pins the full transcript
+ * a second time for the renderer's lifetime. Called whenever the live-id set
+ * shrinks (step/turn boundaries), so the log holds at most the in-flight
+ * bubble between turns instead of the whole session history.
+ */
+function trimSessionLog(state: SessionState): void {
+  const keep = new Set<string>();
+  if (state.currentAssistantMsgId !== undefined) keep.add(state.currentAssistantMsgId);
+  if (state.retryReuseMsgId !== undefined) keep.add(state.retryReuseMsgId);
+  if (state.messages.length > keep.size) {
+    state.messages = state.messages.filter((m) => keep.has(m.id));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Usage snapshot builder
 // ---------------------------------------------------------------------------
@@ -525,13 +545,102 @@ function buildUsageSnapshot(state: SessionState): AppSessionUsage {
 }
 
 // ---------------------------------------------------------------------------
+// Stateless raw frames
+//
+// These frame types only re-broadcast their payload — projecting them needs
+// no per-session state, and the daemon broadcasts some of them (e.g.
+// session.meta.updated) to every connection regardless of subscription.
+// Routing them through a stateless path keeps getOrCreate from materializing
+// a SessionState for sessions the client never subscribed to (or just
+// forgot), which would let the sessions map regrow behind the LRU/forget
+// cleanup.
+// ---------------------------------------------------------------------------
+
+const STATELESS_RAW_FRAMES = new Set<string>([
+  'session.meta.updated',
+  'goal.updated',
+  'compaction.completed',
+  'compaction.started',
+  'compaction.cancelled',
+  // Explicitly known but not projected.
+  'compaction.blocked',
+  'hook.result',
+  'mcp.server.status',
+  'skill.activated',
+  'tool.list.updated',
+]);
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function projectStatelessFrame(rawType: string, p: any, sessionId: string): AppEvent[] {
+  switch (rawType) {
+    case 'session.meta.updated': {
+      // The daemon auto-generates a title from the first prompt (and other
+      // clients can rename a session); it also reports the latest user prompt
+      // via patch.lastPrompt. Patch only the changed meta fields.
+      const title: string | undefined = p?.patch?.title ?? p?.title;
+      const lastPrompt: string | undefined = p?.patch?.lastPrompt;
+      const patch: { title?: string; lastPrompt?: string } = {};
+      if (typeof title === 'string' && title.length > 0) patch.title = title;
+      if (typeof lastPrompt === 'string') patch.lastPrompt = lastPrompt;
+      return patch.title !== undefined || patch.lastPrompt !== undefined
+        ? [{ type: 'sessionMetaUpdated', sessionId, ...patch }]
+        : [];
+    }
+    case 'goal.updated': {
+      const goal = mapGoalSnapshot(p?.snapshot ?? null);
+      return [
+        { type: 'goalUpdated', sessionId, goal: goal?.status === 'complete' ? null : goal },
+      ];
+    }
+    case 'compaction.completed': {
+      // Compaction replaced old messages with a summary daemon-side. The
+      // visible transcript is NOT reloaded; historyCompacted still fires so
+      // seq bookkeeping and non-compaction consumers stay correct.
+      const result = (p?.result ?? {}) as Record<string, unknown>;
+      return [
+        {
+          type: 'compactionCompleted',
+          sessionId,
+          tokensBefore: typeof result.tokensBefore === 'number' ? result.tokensBefore : undefined,
+          tokensAfter: typeof result.tokensAfter === 'number' ? result.tokensAfter : undefined,
+          summary: typeof result.summary === 'string' ? result.summary : undefined,
+        },
+        { type: 'historyCompacted', sessionId, beforeSeq: 0, reason: 'auto_compact' },
+      ];
+    }
+    case 'compaction.started':
+      return [
+        {
+          type: 'compactionStarted',
+          sessionId,
+          trigger: p?.trigger === 'manual' ? 'manual' : 'auto',
+          instruction: typeof p?.instruction === 'string' ? p.instruction : undefined,
+        },
+      ];
+    case 'compaction.cancelled':
+      return [{ type: 'compactionCancelled', sessionId }];
+    default:
+      return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
 // AgentProjector
 // ---------------------------------------------------------------------------
 
 // The translator is injected (`deps.t`) so projected text — task descriptions,
 // progress labels — is localized without importing the consumer's i18n runtime.
 
-export function createAgentProjector(deps: { t: Translator }): AgentProjector {
+/** Concrete projector instance: the AgentProjector contract plus test/debug
+ *  introspection (kept off the interface so api consumers see only the
+ *  contract). */
+export interface AgentProjectorInstance extends AgentProjector {
+  /** Number of transcript messages the projector still pins for a session —
+   *  undefined when no state exists for it (never seen, or forgotten). */
+  retainedMessageCount(sessionId: string): number | undefined;
+}
+
+export function createAgentProjector(deps: { t: Translator }): AgentProjectorInstance {
   const { t } = deps;
   const sessions = new Map<string, SessionState>();
   const sideChannelAgents = new Set<string>();
@@ -547,6 +656,14 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
 
   function reset(sessionId: string): void {
     sessions.set(sessionId, createSessionState());
+  }
+
+  function forgetSession(sessionId: string): void {
+    sessions.delete(sessionId);
+  }
+
+  function retainedMessageCount(sessionId: string): number | undefined {
+    return sessions.get(sessionId)?.messages.length;
   }
 
   function markSideChannelAgent(agentId: string): void {
@@ -629,6 +746,15 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
     sessionId: string,
     meta?: ProjectMeta,
   ): AppEvent[] {
+    // Frames that only re-broadcast their payload must not materialize a
+    // SessionState for sessions we have never seen (or just forgot): the
+    // daemon broadcasts them to every connection regardless of subscription,
+    // so an entry dropped by unsubscribe / LRU eviction / forgetSession would
+    // immediately regrow otherwise.
+    if (STATELESS_RAW_FRAMES.has(rawType)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return projectStatelessFrame(rawType, payload as any, sessionId);
+    }
     const s = getOrCreate(sessionId);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const p = payload as any;
@@ -689,24 +815,6 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
     }
 
     switch (rawType) {
-      // -----------------------------------------------------------------------
-      case 'session.meta.updated': {
-        // The daemon auto-generates a title from the first prompt (and other
-        // clients can rename a session); it also reports the latest user prompt
-        // via patch.lastPrompt. It announces all of these via this event. We
-        // don't have the full AppSession here, so emit a lightweight
-        // sessionMetaUpdated that patches only the changed meta fields.
-        const title: string | undefined = p?.patch?.title ?? p?.title;
-        const lastPrompt: string | undefined = p?.patch?.lastPrompt;
-        const patch: { title?: string; lastPrompt?: string } = {};
-        if (typeof title === 'string' && title.length > 0) patch.title = title;
-        if (typeof lastPrompt === 'string') patch.lastPrompt = lastPrompt;
-        if (patch.title !== undefined || patch.lastPrompt !== undefined) {
-          out.push({ type: 'sessionMetaUpdated', sessionId, ...patch });
-        }
-        break;
-      }
-
       // -----------------------------------------------------------------------
       case 'prompt.submitted': {
         const promptId: string | undefined = p?.promptId;
@@ -815,6 +923,7 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
           s.retryReuseMsgId = undefined;
           if (getMsgById(s, reuseId) !== undefined) {
             s.currentAssistantMsgId = reuseId;
+            trimSessionLog(s);
             break;
           }
         }
@@ -822,6 +931,7 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
         // Create a new pending assistant message
         const msg = startAssistantMessage(s, sessionId, promptId);
         s.currentAssistantMsgId = msg.id;
+        trimSessionLog(s);
 
         out.push({ type: 'messageCreated', message: cloneMessage(msg) });
         break;
@@ -982,6 +1092,7 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
 
         // Reset assistant message tracking — next step.started will create a fresh one
         s.currentAssistantMsgId = undefined;
+        trimSessionLog(s);
         break;
       }
 
@@ -1133,6 +1244,9 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
         s.turnTextLen = 0;
         s.turnThinkLen = 0;
         s.retryReuseMsgId = undefined;
+        // The turn's transcript now lives only in the reducer — release the
+        // projector's copies (empties the log: no live ids remain).
+        trimSessionLog(s);
         break;
       }
 
@@ -1218,6 +1332,7 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
         // new one. Drop any pending retry reuse target for the same reason.
         s.currentAssistantMsgId = undefined;
         s.retryReuseMsgId = undefined;
+        trimSessionLog(s);
         break;
       }
 
@@ -1763,55 +1878,6 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
       }
 
       // -----------------------------------------------------------------------
-      case 'compaction.completed': {
-        // Compaction replaced a batch of old messages with a summary on the
-        // daemon side. The visible transcript is NOT reloaded (the client keeps
-        // the scrollback and the reducer appends a divider marker); the
-        // historyCompacted signal still fires so seq bookkeeping and any
-        // non-compaction consumers stay correct.
-        const result = (p?.result ?? {}) as Record<string, unknown>;
-        out.push({
-          type: 'compactionCompleted',
-          sessionId,
-          tokensBefore: typeof result.tokensBefore === 'number' ? result.tokensBefore : undefined,
-          tokensAfter: typeof result.tokensAfter === 'number' ? result.tokensAfter : undefined,
-          summary: typeof result.summary === 'string' ? result.summary : undefined,
-        });
-        out.push({
-          type: 'historyCompacted',
-          sessionId,
-          beforeSeq: 0,
-          reason: 'auto_compact',
-        });
-        break;
-      }
-
-      case 'compaction.started': {
-        out.push({
-          type: 'compactionStarted',
-          sessionId,
-          trigger: p?.trigger === 'manual' ? 'manual' : 'auto',
-          instruction: typeof p?.instruction === 'string' ? p.instruction : undefined,
-        });
-        break;
-      }
-
-      case 'compaction.cancelled': {
-        out.push({ type: 'compactionCancelled', sessionId });
-        break;
-      }
-
-      case 'goal.updated': {
-        const goal = mapGoalSnapshot(p?.snapshot ?? null);
-        out.push({
-          type: 'goalUpdated',
-          sessionId,
-          goal: goal?.status === 'complete' ? null : goal,
-        });
-        break;
-      }
-
-      // -----------------------------------------------------------------------
       case 'cron.fired': {
         // A scheduled reminder fired into the session. agent-core persists the
         // injected user message (so a refresh renders it via messagesToTurns),
@@ -1847,15 +1913,6 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
       }
 
       // -----------------------------------------------------------------------
-      // Explicitly known but not projected
-      case 'compaction.blocked':
-      case 'hook.result':
-      case 'mcp.server.status':
-      case 'skill.activated':
-      case 'tool.list.updated':
-        break;
-
-      // -----------------------------------------------------------------------
       default:
         // Unknown future events — safe no-op
         break;
@@ -1864,5 +1921,5 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
     return out;
   }
 
-  return { project, bindNextPromptId, seedInFlight, reset, markSideChannelAgent };
+  return { project, bindNextPromptId, seedInFlight, reset, forgetSession, retainedMessageCount, markSideChannelAgent };
 }

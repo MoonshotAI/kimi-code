@@ -318,21 +318,31 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
       });
       // Same ack as a main-thread send: the daemon consumed the thinking.
       if (thinking !== undefined) ackThinkingPending(rawState, sid, thinkingToken);
-      confirmSideChatUserMessage(
-        agentId,
-        tempId,
-        result.promptId,
-        result.userMessageId,
-      );
-      rememberSideChatUserMessageId(sid, result.userMessageId);
+      // The session may have died (archive/delete) while the submit was in
+      // flight: clearSideChatForSession already dropped its buckets, and
+      // writing back here would resurrect them for a dead session. Gate on
+      // the target still binding this session to this agent.
+      if (sideChatTargetBySession.value[sid]?.agentId === agentId) {
+        confirmSideChatUserMessage(
+          agentId,
+          tempId,
+          result.promptId,
+          result.userMessageId,
+        );
+        rememberSideChatUserMessageId(sid, result.userMessageId);
+      }
       return true;
     } catch (err) {
       // A failed submit may never have reached the daemon: stop shielding the
       // pick this prompt carried and re-fold the daemon's actual level.
       if (ackThinkingPending(rawState, sid, thinkingToken)) void refreshSessionStatus(sid);
       pushOperationFailure('sendSideChatPrompt', err, { sessionId: sid });
-      removeSideChatUserMessage(agentId, tempId);
-      rawState.sideChatSendingByAgent = { ...rawState.sideChatSendingByAgent, [agentId]: false };
+      // Same dead-session guard as the success path: do not resurrect buckets
+      // clearSideChatForSession dropped while the submit was in flight.
+      if (sideChatTargetBySession.value[sid]?.agentId === agentId) {
+        removeSideChatUserMessage(agentId, tempId);
+        rawState.sideChatSendingByAgent = { ...rawState.sideChatSendingByAgent, [agentId]: false };
+      }
       // Only a provably-unsent failure — or a definitive daemon refusal,
       // which provably accepted nothing — lets the panel restore the draft.
       return !submitAttempted || err instanceof DaemonApiError ? false : true;
@@ -357,12 +367,38 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
   }
 
   // When a session is deleted, drop its side-chat target so it cannot leak into a
-  // later session that happens to reuse the same id.
+  // later session that happens to reuse the same id. The target is the ONLY
+  // reference to the side-chat agent, so its per-agent buckets go too —
+  // otherwise sideChatMessagesByAgent / sideChatSendingByAgent grow
+  // monotonically for the app's lifetime (one dead entry per archived/deleted
+  // session that ever opened a BTW).
   function clearSideChatForSession(sessionId: string): void {
-    if (!sideChatTargetBySession.value[sessionId]) return;
+    // Session-keyed, so always cleanable — even when the target is already
+    // gone (the user closed the BTW tab before the session died). The
+    // agent-keyed buckets below can only be resolved while a target exists.
+    if (rawState.sideChatUserMessageIdsBySession[sessionId] !== undefined) {
+      const { [sessionId]: _ids, ...restIds } = rawState.sideChatUserMessageIdsBySession;
+      void _ids;
+      rawState.sideChatUserMessageIdsBySession = restIds;
+    }
+
+    const target = sideChatTargetBySession.value[sessionId];
+    if (!target) return;
     const { [sessionId]: _removed, ...rest } = sideChatTargetBySession.value;
     void _removed;
     sideChatTargetBySession.value = rest;
+
+    const agentId = target.agentId;
+    if (Object.prototype.hasOwnProperty.call(rawState.sideChatMessagesByAgent, agentId)) {
+      const { [agentId]: _messages, ...restMessages } = rawState.sideChatMessagesByAgent;
+      void _messages;
+      rawState.sideChatMessagesByAgent = restMessages;
+    }
+    if (Object.prototype.hasOwnProperty.call(rawState.sideChatSendingByAgent, agentId)) {
+      const { [agentId]: _sending, ...restSending } = rawState.sideChatSendingByAgent;
+      void _sending;
+      rawState.sideChatSendingByAgent = restSending;
+    }
   }
 
   return {

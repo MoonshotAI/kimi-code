@@ -677,6 +677,9 @@ function forgetSession(sessionId: string): void {
   // per-session maps we are about to delete.
   eventConn?.unsubscribe(sessionId);
   auxiliaryTranscripts.forgetSession(sessionId);
+  // Side-chat buckets keyed by this session (and its BTW agent): target,
+  // messages, sending flags, and the user-message id set.
+  sideChat.clearSideChatForSession(sessionId);
   subagentCardSerials.delete(sessionId);
   dropWsSubscription(sessionId);
   // Drop this session's queued render AND control events. Flushing them here is
@@ -1029,11 +1032,14 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     }
   }
 
-  // A session deleted anywhere (e.g. from another client) also loses its pin:
-  // the WS-driven deletion path bypasses forgetSession, so the pinned-id
-  // cleanup lives here too.
+  // A session deleted anywhere (e.g. from another client) gets the same full
+  // teardown as a local removal: the reducer above already dropped the session
+  // row and its messages, but the sidecar state (projector session state, aux
+  // transcripts, side-chat maps, turn/mode buckets) would otherwise pin the
+  // deleted session's data for the app's lifetime. forgetSession re-issues the
+  // unpin and the WS unsubscribe — both idempotent for an already-gone session.
   if (event.type === 'sessionDeleted') {
-    unpinSession(event.sessionId);
+    forgetSession(event.sessionId);
     // Same teardown for its terminal bucket (bypasses the App.vue callbacks).
     // Injected by desktop; a no-op on web.
     notifySessionDestroyed(event.sessionId);

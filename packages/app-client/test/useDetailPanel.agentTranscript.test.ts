@@ -170,3 +170,80 @@ const renderer = createRenderer<HostNode, HostNode>({
     return [node, node];
   },
 });
+
+describe('useDetailPanel provisional-id fold', () => {
+  it('retires the provisional transcript entry when the task row folds to an agent id', async () => {
+    const channel = {
+      loading: false,
+      refreshError: false,
+      loadingOlder: false,
+      loadOlderError: false,
+      agents: [] as Array<{ agentId: string; type?: 'sub'; label?: string }>,
+      snapshot: {
+        items: [],
+        tasks: [],
+        interactions: [],
+        attachments: [],
+        todos: [],
+        prompts: [],
+        meta: {},
+        hasMoreOlder: false,
+      },
+      loadOlder: vi.fn(),
+    };
+    const entry = { channel, version: ref(0) };
+    const client = {
+      activeSessionId: ref('session-1'),
+      findBashCommandForTask: () => undefined,
+      // The task store has not folded the row yet: the panel opens under the
+      // provisional background-task id and (unknown target) activates its
+      // transcript under that id.
+      activeAppTasks: ref([] as unknown[]),
+      turns: ref([]),
+      sideChatVisible: ref(false),
+      auxiliaryTranscripts: {
+        getEntry: vi.fn(() => entry),
+        activate: vi.fn(),
+        deactivate: vi.fn(),
+      },
+    };
+    let panel: ReturnType<typeof useDetailPanel> | undefined;
+    const detailTarget = ref<DetailTarget | null>(null);
+    const app = renderer.createApp(defineComponent(() => {
+      panel = useDetailPanel({
+        client: client as never,
+        sideWidth: ref(280),
+        detailTarget,
+        closeFilePreview: vi.fn(),
+      });
+      return () => h('div');
+    }));
+    app.mount({ children: [] });
+
+    panel!.openAgentPanel('task-30');
+    expect(client.auxiliaryTranscripts.activate).toHaveBeenCalledWith('session-1', 'task-30');
+
+    // The WS fold lands: the row now carries the stable agent id.
+    client.activeAppTasks.value = [{
+      id: 'agent-30',
+      agentId: 'agent-30',
+      backgroundTaskId: 'task-30',
+      kind: 'subagent',
+      description: 'Inspect files',
+      status: 'running',
+      sessionId: 'session-1',
+      createdAt: '2026-07-28T00:00:00.000Z',
+    }];
+    await nextTick();
+
+    // The provisional entry is retired before the folded one activates —
+    // otherwise the close path only knows the folded id and 'task-30' leaks.
+    expect(client.auxiliaryTranscripts.deactivate).toHaveBeenCalledWith('session-1', 'task-30');
+    expect(client.auxiliaryTranscripts.activate).toHaveBeenCalledWith('session-1', 'agent-30');
+    const deactivateOrder = client.auxiliaryTranscripts.deactivate.mock.invocationCallOrder[0]!;
+    const activateCalls = client.auxiliaryTranscripts.activate.mock.invocationCallOrder;
+    const foldedActivateOrder = activateCalls[activateCalls.length - 1]!;
+    expect(deactivateOrder).toBeLessThan(foldedActivateOrder);
+    app.unmount();
+  });
+});

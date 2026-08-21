@@ -2114,6 +2114,11 @@ export class DaemonKimiWebApi implements KimiWebApi {
       },
       unsubscribe(sessionId: string): void {
         socket.unsubscribe(sessionId);
+        // The session's projection state (incl. its transcript copies) is only
+        // meaningful while events flow for it; drop it so unsubscribing (session
+        // forgotten, deleted, or WS-LRU-evicted) actually releases the memory.
+        // A later re-subscribe rebuilds via resync/seedSnapshot as usual.
+        projector.forgetSession(sessionId);
       },
       subscribeTranscript(sessionId: string, agentId: string, sinceSeq?: number): void {
         socket.subscribeTranscript(sessionId, agentId, sinceSeq);

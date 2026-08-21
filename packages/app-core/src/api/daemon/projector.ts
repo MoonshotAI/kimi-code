@@ -33,6 +33,12 @@ export interface AgentProjector {
   /** Reset all per-session state (call on re-subscribe / resync). */
   reset(sessionId: string): void;
   /**
+   * Drop all per-session state (call when the session is gone for good:
+   * unsubscribed, forgotten, or deleted). Unlike reset(), this removes the
+   * sessions-map entry so no transcript copies stay pinned.
+   */
+  forgetSession(sessionId: string): void;
+  /**
    * Mark an agent id as a side-channel (e.g. BTW side chat) rather than a
    * background subagent.
    */
