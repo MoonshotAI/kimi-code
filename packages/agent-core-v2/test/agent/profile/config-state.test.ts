@@ -491,8 +491,6 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
       expect(fallbackWarnings()).toHaveLength(1);
     });
 
-    // Same list, new default_effort: the stored effort now falls back to a
-    // different value, so a materially changed fallback must warn again.
     kimiConfig = withUltraDefault('low');
     await revalidate();
     expect(profile.data().thinkingLevel).toBe('low');
