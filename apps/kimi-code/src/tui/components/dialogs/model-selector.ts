@@ -146,7 +146,7 @@ export function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
   const efforts = effortsOf(model);
   if (efforts.length > 0) {
     const declared = model.defaultEffort?.trim();
-    return declared !== undefined && declared.length > 0
+    return declared !== undefined && declared.length > 0 && efforts.includes(declared)
       ? declared
       : efforts[Math.floor(efforts.length / 2)]!;
   }

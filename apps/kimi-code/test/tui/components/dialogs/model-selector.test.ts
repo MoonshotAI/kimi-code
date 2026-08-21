@@ -531,6 +531,13 @@ describe('ModelSelectorComponent', () => {
     );
   });
 
+  it('falls back to the middle entry when the declared default is not listed', () => {
+    // Matches the engine resolvers: an unlisted default_effort is rejected.
+    expect(defaultThinkingEffortFor(effortModel('Kimi Other', ['low', 'high'], 'max', []))).toBe(
+      'high',
+    );
+  });
+
   it('renders the warning line directly below the key-hint line when provided', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2') },
