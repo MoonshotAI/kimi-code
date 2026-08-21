@@ -287,6 +287,16 @@ describe('resolveThinkingEffort', () => {
     expect(resolveThinkingEffort('high', undefined, declared, false)).toBe('xhigh');
   });
 
+  it('resolves the inherited default when a padded override list covers it', () => {
+    const declared = model({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'high', 'max'],
+      defaultEffort: 'max',
+      overrides: { supportEfforts: [' max ', 'high'] },
+    });
+    expect(resolveThinkingEffort(undefined, undefined, declared)).toBe('max');
+  });
+
   it('matches declared efforts case-insensitively and resolves the declared casing', () => {
     const declared = model({
       capabilities: ['thinking'],

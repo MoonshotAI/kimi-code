@@ -12,7 +12,7 @@ import { explainProviderEndpoint } from '../provider/providerDefinition';
 
 import type { ModelRecord } from './model';
 import type { ResolvedModelAuthMaterial } from './model.types';
-import { drivesThinkingThroughTraits } from './thinking';
+import { drivesThinkingThroughTraits, isDeclaredThinkingEffort } from './thinking';
 
 export function resolveModelAuthMaterial(
   args: {
@@ -87,7 +87,7 @@ export function effectiveModelConfig(
     overrides?.supportEfforts !== undefined &&
     overrides.defaultEffort === undefined &&
     effective.defaultEffort !== undefined &&
-    !overrides.supportEfforts.includes(effective.defaultEffort)
+    !isDeclaredThinkingEffort(overrides.supportEfforts, effective.defaultEffort)
   ) {
     delete effective.defaultEffort;
   }

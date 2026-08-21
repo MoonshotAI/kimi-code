@@ -112,6 +112,17 @@ export function declaredThinkingEfforts(
   return effortsFor(model);
 }
 
+/**
+ * Whether a raw declared `support_efforts` list covers `effort`, using the
+ * resolvers' normalization: trimmed, case-insensitive comparison.
+ */
+export function isDeclaredThinkingEffort(
+  supportEfforts: readonly string[] | undefined,
+  effort: string,
+): boolean {
+  return matchDeclaredEffort(effortsFor({ supportEfforts }), effort) !== undefined;
+}
+
 function declaredDefaultEffortFor(
   model: ModelThinkingMetadata | undefined,
   efforts: readonly string[],

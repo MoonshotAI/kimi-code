@@ -16,10 +16,15 @@ export function effectiveModelAlias(
   if (
     overrides?.supportEfforts !== undefined &&
     overrides.defaultEffort === undefined &&
-    effective.defaultEffort !== undefined &&
-    !overrides.supportEfforts.includes(effective.defaultEffort)
+    effective.defaultEffort !== undefined
   ) {
-    delete effective.defaultEffort;
+    // The inherited default survives when the override list still covers it;
+    // compare normalized (trimmed, case-insensitive) like the resolvers do.
+    const declared = effective.defaultEffort.trim().toLowerCase();
+    const covered = overrides.supportEfforts.some(
+      (candidate) => candidate.trim().toLowerCase() === declared,
+    );
+    if (!covered) delete effective.defaultEffort;
   }
 
   // The input cap can never exceed the effective total window (an override
