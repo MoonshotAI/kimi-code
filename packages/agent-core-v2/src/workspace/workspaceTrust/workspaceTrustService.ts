@@ -1,3 +1,5 @@
+import { dirname, normalize } from 'pathe';
+
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
 import { defineState } from '#/state/state';
@@ -12,7 +14,9 @@ const TRUST_SCOPE = 'workspace-trust';
 
 interface TrustRecord {
   readonly root: string;
-  readonly trustedAt: number;
+  readonly trusted?: boolean;
+  readonly trustedAt?: number;
+  readonly untrustedAt?: number;
 }
 
 export const workspaceTrustTrustedKey = defineState<boolean>(
@@ -38,6 +42,7 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     this.states.contributeState(workspaceTrustTrustedKey);
     this.root = workspace.cwd;
     this.storeKey = encodeWorkDirKey(workspace.cwd);
+    this.watchTrustRecords();
     this.ready = this.initialize();
   }
 
@@ -62,25 +67,71 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     if (this.trusted) return;
     await this.docs.set(TRUST_SCOPE, this.storeKey, {
       root: this.root,
+      trusted: true,
       trustedAt: Date.now(),
     });
-    this.trusted = true;
-    this.changeEmitter.fire({ trusted: true });
+    this.updateTrusted(true);
   }
 
   async untrust(): Promise<void> {
     if (!this.trusted) return;
-    await this.docs.delete(TRUST_SCOPE, this.storeKey);
-    this.trusted = false;
-    this.changeEmitter.fire({ trusted: false });
+    await this.docs.set(TRUST_SCOPE, this.storeKey, {
+      root: this.root,
+      trusted: false,
+      untrustedAt: Date.now(),
+    });
+    this.updateTrusted(false);
   }
 
   private async initialize(): Promise<void> {
     try {
-      this.trusted = (await this.docs.get<TrustRecord>(TRUST_SCOPE, this.storeKey)) !== undefined;
+      this.trusted = await this.readTrusted();
     } catch {
       this.trusted = false;
     }
+  }
+
+  private async refresh(): Promise<void> {
+    try {
+      this.updateTrusted(await this.readTrusted());
+    } catch {
+      this.updateTrusted(false);
+    }
+  }
+
+  private async readTrusted(): Promise<boolean> {
+    for (const key of this.trustRecordKeys()) {
+      const record = await this.docs.get<TrustRecord>(TRUST_SCOPE, key);
+      if (record !== undefined) return record.trusted !== false;
+    }
+    return false;
+  }
+
+  private watchTrustRecords(): void {
+    for (const key of this.trustRecordKeys()) {
+      this._register(
+        this.docs.watch(TRUST_SCOPE, key)(() => {
+          void this.refresh();
+        }),
+      );
+    }
+  }
+
+  private trustRecordKeys(): readonly string[] {
+    const keys = [this.storeKey];
+    let current = dirname(normalize(this.root));
+    while (true) {
+      keys.push(encodeWorkDirKey(current));
+      const parent = dirname(current);
+      if (parent === current) return keys;
+      current = parent;
+    }
+  }
+
+  private updateTrusted(value: boolean): void {
+    if (this.trusted === value) return;
+    this.trusted = value;
+    this.changeEmitter.fire({ trusted: value });
   }
 }
 

@@ -1,9 +1,9 @@
 import { mkdtempSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
@@ -109,6 +109,66 @@ describe('WorkspaceTrustService', () => {
     await second.ready;
 
     expect(second.isTrusted()).toBe(true);
+  });
+
+  it('inherits trust from an ancestor workspace', async () => {
+    const nested = join(cwd, 'test', 'workspace');
+    const prefixSibling = `${cwd}-other`;
+    const siblingNested = join(prefixSibling, 'test', 'workspace');
+    await mkdir(nested, { recursive: true });
+    await mkdir(siblingNested, { recursive: true });
+
+    try {
+      const { service: parent } = createService(cwd);
+      await parent.ready;
+      await parent.trust();
+
+      const { service: child } = createService(nested);
+      await child.ready;
+
+      const { service: sibling } = createService(siblingNested);
+      await sibling.ready;
+
+      expect(child.isTrusted()).toBe(true);
+      expect(sibling.isTrusted()).toBe(false);
+    } finally {
+      await rm(prefixSibling, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a child handler in sync with ancestor trust changes', async () => {
+    const nested = join(cwd, 'test', 'workspace');
+    await mkdir(nested, { recursive: true });
+
+    const { service: parent } = createService(cwd);
+    const { service: child } = createService(nested);
+    await Promise.all([parent.ready, child.ready]);
+
+    expect(child.isTrusted()).toBe(false);
+
+    await parent.trust();
+    await vi.waitFor(() => expect(child.isTrusted()).toBe(true));
+
+    await parent.untrust();
+    await vi.waitFor(() => expect(child.isTrusted()).toBe(false));
+  });
+
+  it('keeps an inherited child untrusted after rematerialization', async () => {
+    const nested = join(cwd, 'test', 'workspace');
+    await mkdir(nested, { recursive: true });
+
+    const { service: parent } = createService(cwd);
+    await parent.ready;
+    await parent.trust();
+
+    const { service: child } = createService(nested);
+    await child.ready;
+    await child.untrust();
+
+    const { service: rematerialized } = createService(nested);
+    await rematerialized.ready;
+
+    expect(rematerialized.isTrusted()).toBe(false);
   });
 
   it('tracks different roots independently', async () => {
