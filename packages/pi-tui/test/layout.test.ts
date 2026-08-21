@@ -190,6 +190,25 @@ describe("viewport layout", () => {
 		assert.strictEqual(scrollView.isFollowingEnd, true);
 	});
 
+	it("keeps the viewport anchored when content shrinks while scrolled up", () => {
+		const content = new Text("1\n2\n3\n4\n5\n6\n7\n8\n9\n10", 0, 0);
+		const scrollView = new ScrollView(content, { follow: "end", primary: true });
+		renderLayoutFrame(scrollView, 10, 3, () => {});
+		assert.strictEqual(scrollView.scrollTop, 7);
+
+		// Scroll up to read earlier content, detaching from follow-end.
+		scrollView.scrollBy(-4);
+		assert.strictEqual(scrollView.scrollTop, 3);
+		assert.strictEqual(scrollView.isFollowingEnd, false);
+
+		// Content above the viewport is removed (fold/trim). The same lines the
+		// user was reading must stay in view instead of snapping to the bottom.
+		content.setText("5\n6\n7\n8\n9\n10");
+		renderLayoutFrame(scrollView, 10, 3, () => {});
+		assert.strictEqual(scrollView.scrollTop, 0);
+		assert.strictEqual(scrollView.isFollowingEnd, false);
+	});
+
 	it("renders a transient proportional scrollbar without replacing cell content", async () => {
 		const sourceLines = ["abcd界", "abcde2", "abcde3", "abcde4", "abcde5", "abcde6", "abcde7", "abcde8"];
 		const contentBackground = "\x1b[42m";
