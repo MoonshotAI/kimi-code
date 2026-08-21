@@ -15,6 +15,7 @@ import {
   findUsageByWindow,
   formatResetAt,
   formatUsageLabel,
+  resolveSubmenuPlacement,
   shouldShowUpgrade,
   usagePercent,
   usageSeverity,
@@ -234,20 +235,19 @@ function positionSubmenu(): void {
   const margin = 8;
   const menuR = menu.getBoundingClientRect();
   const rowR = row.getBoundingClientRect();
+  // Measure free of the previous inline cap: switching targets reuses this
+  // element, and a stale maxWidth would shrink the natural-width read.
+  submenu.style.maxWidth = 'none';
   const subH = submenu.offsetHeight;
-  // The panel never outgrows the parent menu (usage hints ellipsize); flip uses the capped width.
-  const subW = Math.min(submenu.offsetWidth, menuR.width);
-  let left = menuR.right + gap;
-  let flipped = false;
-  if (left + subW > window.innerWidth - margin) {
-    left = Math.max(margin, menuR.left - subW - gap);
-    flipped = true;
-  }
+  const subW = submenu.offsetWidth;
+  // Content-sized up to the open side's viewport room — usage hints only
+  // ellipsize when the window itself is too narrow.
+  const { left, maxWidth, flipped } = resolveSubmenuPlacement(subW, menuR, window.innerWidth, gap, margin);
   const top = Math.max(margin, Math.min(rowR.top, window.innerHeight - subH - margin));
   submenuStyle.value = {
     top: `${Math.round(top)}px`,
     left: `${Math.round(left)}px`,
-    maxWidth: `${Math.round(menuR.width)}px`,
+    maxWidth: `${Math.round(maxWidth)}px`,
     transformOrigin: flipped ? 'top right' : 'top left',
     '--menu-pop-shift': '-2px',
   };
@@ -271,6 +271,15 @@ async function loadUsage(): Promise<void> {
     if (generation === usageFetchGeneration) usageLoading.value = false;
   }
 }
+
+// The usage fetch can land while the flyout is already open on the narrow
+// loading state (same on retry) — re-measure once the new content renders,
+// or the stale inline cap keeps truncating the real rows.
+watch([usageLoading, usageResult], async () => {
+  if (openSubmenu.value !== 'usage') return;
+  await nextTick();
+  positionSubmenu();
+});
 
 const usageRows = computed<UsageRow[]>(() => {
   if (usageResult.value?.kind !== 'ok') return [];
@@ -446,13 +455,11 @@ async function onLogout(): Promise<void> {
               {{ t('settings.planUsage.empty') }}
             </span>
             <div v-for="(row, index) in usageRows" v-else :key="index" class="user-menu-usage-row">
-              <span class="user-menu-usage-main">
-                <span class="user-menu-usage-label">{{ formatUsageLabel(row, t) }}</span>
-                <span v-if="resetHint(row)" class="user-menu-usage-hint">{{ resetHint(row) }}</span>
-              </span>
+              <span class="user-menu-usage-label">{{ formatUsageLabel(row, t) }}</span>
               <span class="user-menu-usage-value" :class="`sev-${usageSeverity(row.used, row.limit)}`">
                 {{ t('settings.planUsage.usedPct', { pct: usagePercent(row.used, row.limit) }) }}
               </span>
+              <span v-if="resetHint(row)" class="user-menu-usage-hint">{{ resetHint(row) }}</span>
             </div>
           </div>
         </template>
@@ -548,7 +555,7 @@ html.macos-desktop .user-menu-trigger {
   /* Menu labels are chrome, not content — drag-selecting must not highlight them. */
   user-select: none;
 }
-/* Flyout — content-adaptive width; positionSubmenu caps it at the parent menu width via maxWidth. */
+/* Flyout — content-adaptive width; positionSubmenu caps it at the open side's viewport room via maxWidth. */
 .user-submenu {
   position: fixed;
   top: 0;
@@ -580,11 +587,14 @@ html.macos-desktop .user-menu-trigger {
 /* Rows ride the §03 MenuItem md density verbatim (7px icon gap, --text-sm
    labels on --leading-tight) — no local override. The usage flyout is custom
    content rather than MenuItems, so it reads the primitive's shared inset
-   tokens and mirrors its line box, with the reset hint one rung down. */
+   tokens and mirrors its line box, with the reset hint one rung down. Each row
+   is a two-column grid — label + end-justified percent on the first line, the
+   reset hint spanning both columns on the second — and stacked rows sit one
+   menu-item rhythm apart (two adjacent items' block paddings add up). */
 .user-menu-usage {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: calc(var(--menu-item-padding-block) * 2);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
 }
 .user-menu-usage-state {
@@ -604,18 +614,16 @@ html.macos-desktop .user-menu-trigger {
   color: var(--color-text-faint);
 }
 .user-menu-usage-row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-}
-.user-menu-usage-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-05);
+  display: grid;
+  /* label | percent (end-justified) on line 1; the reset hint spans both
+     columns on line 2, free to run under the percent, so the top line's
+     column split never squeezes it. */
+  grid-template-columns: auto 1fr;
+  column-gap: var(--space-3);
+  row-gap: var(--space-05);
 }
 .user-menu-usage-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -624,6 +632,8 @@ html.macos-desktop .user-menu-trigger {
   color: var(--color-text);
 }
 .user-menu-usage-hint {
+  grid-column: 1 / -1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -632,7 +642,7 @@ html.macos-desktop .user-menu-trigger {
   color: var(--color-text-faint);
 }
 .user-menu-usage-value {
-  flex: none;
+  justify-self: end;
   font-size: var(--text-sm);
   line-height: var(--leading-tight);
   font-weight: var(--weight-medium);

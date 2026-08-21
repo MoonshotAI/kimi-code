@@ -41,6 +41,7 @@ export * from './slashCommands';
 export * from './snapshotMessages';
 export * from './snapshotSync';
 export * from './storage';
+export * from './submenuPlacement';
 export * from './taskMerge';
 export * from './toolText';
 export * from './transcriptSearch';
