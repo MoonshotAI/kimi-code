@@ -43,6 +43,7 @@ import { useSidebarLayout } from '@moonshot-ai/app-client/composables';
 import { useFilePreview, type DetailTarget } from '@moonshot-ai/app-client/composables';
 import { useDetailPanel } from '@moonshot-ai/app-client/composables';
 import { useIsMobile } from '@moonshot-ai/app-client/composables';
+import { installImeCompositionLatch, isImeKeyEvent } from '@moonshot-ai/app-client/lib';
 import { startMentionTooltip } from '@moonshot-ai/app-composer';
 import { openDialogCount } from '@moonshot-ai/app-ui';
 import type { SwarmMember } from '@moonshot-ai/app-core/client';
@@ -268,6 +269,9 @@ onMounted(() => {
   // Capture-phase so Escape closes the side detail layer BEFORE the
   // conversation pane's bubble-phase handler interrupts a running prompt.
   document.addEventListener('keydown', onGlobalKeydown, true);
+  // Document-level IME composition tracking for the Escape guard in
+  // onGlobalKeydown (idempotent — ChatDock installs the same latch).
+  installImeCompositionLatch();
 });
 
 onUnmounted(() => {
@@ -289,6 +293,10 @@ onUnmounted(() => {
 
 function onGlobalKeydown(e: KeyboardEvent): void {
   if (e.key !== 'Escape') return;
+  // An Escape that only dismisses an IME candidate (composition active, or
+  // the trailing keydown right after compositionend) belongs to the input —
+  // the panel must stay open. Same shared latch the dock work panel uses.
+  if (isImeKeyEvent(e)) return;
   // A modal dialog open on top of the side panel owns Escape — leave the event
   // alone so the dialog can close itself instead of the panel behind it.
   if (anyOverlayOpen.value) return;
