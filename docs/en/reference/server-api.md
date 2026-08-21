@@ -280,7 +280,7 @@ On success, `data` is the full updated config in the same shape as `GET /api/v1/
 
 ### Models and providers
 
-These endpoints manage the two halves of model configuration — the [providers](../configuration/providers.md) table and the model-alias table of `config.toml` — plus a server-proxied models.dev directory for one-shot imports. A model alias id has the form `provider_id/model` (for example `my-provider/kimi-for-coding`); anywhere the API takes a `model_id`, including the global `default_model`, it means this alias id. An unsupported action on a `:{action}` route returns `40001`.
+These endpoints manage the two halves of model configuration — the [providers](../configuration/providers.md) table and the model-alias table of `config.toml` — plus a server-proxied models.dev directory for one-shot imports. A model alias id is the exact configured alias key: aliases created through the provider-management endpoints take the form `provider_id/model` (for example `my-provider/kimi-for-coding`), while a bare model-table key such as `turbo` is used as-is; anywhere the API takes a `model_id`, including the global `default_model`, it means this alias id. An unsupported action on a `:{action}` route returns `40001`.
 
 | Method and path | Description |
 | --- | --- |
@@ -300,15 +300,15 @@ These endpoints manage the two halves of model configuration — the [providers]
 
 Lists every configured model alias across all providers.
 
-On success, `data.items` is an array of `{ provider, model, display_name?, max_context_size, capabilities?, support_efforts?, default_effort? }`: `model` is the alias id (`provider_id/model`), `provider` the owning provider id, `max_context_size` the context window in tokens, and `capabilities` / `support_efforts` / `default_effort` describe capability flags and Thinking-mode effort support.
+On success, `data.items` is an array of `{ provider, model, display_name?, max_context_size, capabilities?, support_efforts?, default_effort? }`: `model` is the alias id (`provider_id/model` for provider-managed aliases, otherwise the bare key), `provider` the owning provider id, `max_context_size` the context window in tokens, and `capabilities` / `support_efforts` / `default_effort` describe capability flags and Thinking-mode effort support.
 
 #### `POST /api/v1/models/{model_id}:set_default`
 
-Sets the global `default_model` to an existing alias. An alias id contains `/`, so URL-encode it in the path — for example `POST /api/v1/models/my-provider%2Fkimi-for-coding:set_default`.
+Sets the global `default_model` to an existing alias. `model_id` is the exact configured alias key — for a bare key like `turbo` the call is `POST /api/v1/models/turbo:set_default`; URL-encode the id when it contains `/`, as in `POST /api/v1/models/my-provider%2Fkimi-for-coding:set_default`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `model_id` | path | string | **Required.** Model alias id (`provider_id/model`); URL-encode the `/` |
+| `model_id` | path | string | **Required.** The exact configured model alias key; URL-encode it when it contains `/` |
 
 On success, `data` is `{ default_model, model }` — the alias now in effect and its catalog item (same shape as a `GET /api/v1/models` item).
 
@@ -1251,7 +1251,7 @@ Activates a skill in the session — the REST analogue of the `/<skill>` slash c
 | `session_id` | path | string | **Required.** Session id |
 | `skill_name` | path | string | **Required.** Name of the skill to activate |
 | `args` | body | string | Free-form arguments handed to the skill, like the text after a slash command |
-| `attachments` | body | array | Media parts attached to the activation: image, video, or file objects whose `source.kind` is `url` / `base64` / `file` / `session_media` |
+| `attachments` | body | array | Media parts attached to the activation. Image and video parts carry a `source` object whose `kind` is `url` / `base64` / `file` / `session_media` (same shapes as the prompt content parts); file parts carry the top-level `file_id`, `name`, `media_type`, and `size` |
 
 On success, `data` is `{ activated: true, skill_name }`.
 

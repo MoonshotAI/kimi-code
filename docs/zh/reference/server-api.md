@@ -280,7 +280,7 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 
 ### 模型与供应商
 
-这组端点管理模型配置的两半——`config.toml` 的 [供应商](../configuration/providers.md) 表与模型别名表——外加一个由服务端代理的 models.dev 目录，用于一次性导入。模型别名 id 形如 `provider_id/model`（例如 `my-provider/kimi-for-coding`）；API 中任何接收 `model_id` 的地方（包括全局 `default_model`）指的都是这个别名 id。`:{action}` 路由上不支持的动作返回 `40001`。
+这组端点管理模型配置的两半——`config.toml` 的 [供应商](../configuration/providers.md) 表与模型别名表——外加一个由服务端代理的 models.dev 目录，用于一次性导入。模型别名 id 就是配置中的别名键：通过供应商管理端点创建的别名形如 `provider_id/model`（例如 `my-provider/kimi-for-coding`），而模型别名表中的裸键（如 `turbo`）原样使用；API 中任何接收 `model_id` 的地方（包括全局 `default_model`）指的都是这个别名 id。`:{action}` 路由上不支持的动作返回 `40001`。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -300,15 +300,15 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 
 列出所有供应商下已配置的模型别名。
 
-成功时 `data.items` 为 `{ provider, model, display_name?, max_context_size, capabilities?, support_efforts?, default_effort? }` 数组：`model` 是别名 id（`provider_id/model`），`provider` 是所属供应商 id，`max_context_size` 是以 token 计的上下文窗口，`capabilities` / `support_efforts` / `default_effort` 描述能力标志与 Thinking 模式的 effort 支持。
+成功时 `data.items` 为 `{ provider, model, display_name?, max_context_size, capabilities?, support_efforts?, default_effort? }` 数组：`model` 是别名 id（供应商管理的别名为 `provider_id/model`，否则为裸键），`provider` 是所属供应商 id，`max_context_size` 是以 token 计的上下文窗口，`capabilities` / `support_efforts` / `default_effort` 描述能力标志与 Thinking 模式的 effort 支持。
 
 #### `POST /api/v1/models/{model_id}:set_default`
 
-把全局 `default_model` 设为一个已存在的别名。别名 id 含 `/`，需在路径中做 URL 编码——例如 `POST /api/v1/models/my-provider%2Fkimi-for-coding:set_default`。
+把全局 `default_model` 设为一个已存在的别名。`model_id` 是配置中的别名键原样——裸键如 `POST /api/v1/models/turbo:set_default`；当 id 含 `/` 时需做 URL 编码，如 `POST /api/v1/models/my-provider%2Fkimi-for-coding:set_default`。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `model_id` | path | string | **必填。** 模型别名 id（`provider_id/model`）；`/` 需 URL 编码 |
+| `model_id` | path | string | **必填。** 配置中的模型别名键原样；含 `/` 时需 URL 编码 |
 
 成功时 `data` 为 `{ default_model, model }`——当前生效的别名及其目录项（形态与 `GET /api/v1/models` 的单项相同）。
 
@@ -1251,7 +1251,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `session_id` | path | string | **必填。** 会话 id |
 | `skill_name` | path | string | **必填。** 要激活的技能名 |
 | `args` | body | string | 传给技能的自由文本参数，相当于斜杠命令后的文本 |
-| `attachments` | body | array | 随激活携带的媒体块：`image`、`video` 或 `file` 对象，其 `source.kind` 为 `url` / `base64` / `file` / `session_media` |
+| `attachments` | body | array | 随激活携带的媒体块。`image` / `video` 块带 `source` 对象（`kind` 为 `url` / `base64` / `file` / `session_media`，与提示词内容块同形）；`file` 块带顶层 `file_id`、`name`、`media_type`、`size` |
 
 成功时 `data` 为 `{ activated: true, skill_name }`。
 
