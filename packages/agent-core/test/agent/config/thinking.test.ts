@@ -234,6 +234,25 @@ describe('resolveThinkingEffort', () => {
     ).toBe('medium');
   });
 
+  it('treats a declared effort list as thinking support on the Kimi wire', () => {
+    // support_efforts without the thinking capability: list membership takes
+    // precedence over the capability gate on the strict path too.
+    const declared = model({
+      supportEfforts: ['low', 'medium', 'xhigh'],
+      defaultEffort: 'xhigh',
+    });
+    expect(resolveThinkingEffort(undefined, { effort: 'high' }, declared, true)).toBe('xhigh');
+    expect(resolveThinkingEffort('high', undefined, declared, true)).toBe('xhigh');
+    expect(resolveThinkingEffort('on', undefined, declared, true)).toBe('xhigh');
+    expect(resolveThinkingEffort('medium', undefined, declared, true)).toBe('medium');
+    expect(supportsThinkingEffort('low', declared, true)).toBe(true);
+    expect(supportsThinkingEffort('bogus', declared, true)).toBe(false);
+    expect(resolveThinkingEffortWithFallback('high', undefined, declared, true)).toEqual({
+      effort: 'xhigh',
+      fallback: { configured: 'high', resolved: 'xhigh' },
+    });
+  });
+
   it('projects a concrete effort to on for a boolean-only Kimi model', () => {
     expect(resolveThinkingEffort('ultra', undefined, booleanModel, true)).toBe('on');
   });

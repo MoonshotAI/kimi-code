@@ -136,9 +136,9 @@ export function modelSupportsThinkingEffort(
   strictValidation: boolean,
 ): boolean {
   if (!strictValidation || effort === 'off') return true;
-  if (!modelSupportsThinking(model)) return false;
   const efforts = effortsFor(model);
-  return efforts.length === 0 || effort === 'on' || efforts.includes(effort);
+  if (efforts.length > 0) return effort === 'on' || efforts.includes(effort);
+  return modelSupportsThinking(model);
 }
 
 function normalizeThinkingEffortForModel(
@@ -155,12 +155,14 @@ function normalizeThinkingEffortForModel(
     }
     return effort;
   }
-  if (!modelSupportsThinking(model)) return 'off';
-  if (efforts.length === 0) return 'on';
-  if (effort === 'on' || !efforts.includes(effort)) {
-    return defaultThinkingEffortForModel(model);
+  if (efforts.length > 0) {
+    if (effort === 'on' || !efforts.includes(effort)) {
+      return declaredDefaultEffortFor(model, efforts);
+    }
+    return effort;
   }
-  return effort;
+  if (!modelSupportsThinking(model)) return 'off';
+  return 'on';
 }
 
 export interface ThinkingEffortFallback {

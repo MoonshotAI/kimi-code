@@ -66,9 +66,11 @@ export function supportsThinkingEffort(
 ): boolean {
   if (!kimiProtocol || effort === 'off') return true;
   const effective = model === undefined ? undefined : effectiveModelAlias(model);
-  if (!supportsThinking(effective)) return false;
   const efforts = effortsFor(effective);
-  return efforts.length === 0 || effort === 'on' || efforts.includes(effort);
+  // A declared effort list is itself a declaration of thinking support: list
+  // membership decides, even when the thinking capability was omitted.
+  if (efforts.length > 0) return effort === 'on' || efforts.includes(effort);
+  return supportsThinking(effective);
 }
 
 function normalizeThinkingEffortForModel(
@@ -92,12 +94,14 @@ function normalizeThinkingEffortForModel(
     }
     return effort;
   }
-  if (!supportsThinking(effective)) return 'off';
-  if (efforts.length === 0) return 'on';
-  if (effort === 'on' || !efforts.includes(effort)) {
-    return defaultThinkingEffortFor(effective);
+  if (efforts.length > 0) {
+    if (effort === 'on' || !efforts.includes(effort)) {
+      return declaredDefaultEffortFor(effective, efforts);
+    }
+    return effort;
   }
-  return effort;
+  if (!supportsThinking(effective)) return 'off';
+  return 'on';
 }
 
 /**

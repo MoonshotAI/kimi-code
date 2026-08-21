@@ -127,6 +127,25 @@ describe('resolveThinkingEffortForModel', () => {
     ).toBe('medium');
   });
 
+  it('treats a declared effort list as thinking support under strict validation', () => {
+    const declared = {
+      supportEfforts: ['low', 'medium', 'xhigh'],
+      defaultEffort: 'xhigh',
+    };
+    expect(resolveThinkingEffortForModel(undefined, { effort: 'high' }, declared, true)).toBe(
+      'xhigh',
+    );
+    expect(resolveThinkingEffortForModel('high', undefined, declared, true)).toBe('xhigh');
+    expect(resolveThinkingEffortForModel('on', undefined, declared, true)).toBe('xhigh');
+    expect(resolveThinkingEffortForModel('medium', undefined, declared, true)).toBe('medium');
+    expect(modelSupportsThinkingEffort('low', declared, true)).toBe(true);
+    expect(modelSupportsThinkingEffort('bogus', declared, true)).toBe(false);
+    expect(resolveThinkingEffortForModelWithFallback('high', undefined, declared, true)).toEqual({
+      effort: 'xhigh',
+      fallback: { configured: 'high', resolved: 'xhigh' },
+    });
+  });
+
   it('keeps always-thinking models on under kimi semantics', () => {
     const always = {
       capabilities: ['always_thinking'],
