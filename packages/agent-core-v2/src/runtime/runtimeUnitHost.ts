@@ -295,7 +295,7 @@ class SharedRuntimeUnitHost implements RuntimeUnitHost {
       },
       registerRuntime: (runtime) => {
         if (!active) throw new Error('runtime unit transaction is disposed');
-        if (runtimes.some((entry) => entry.runtime.identity.runtimeId === runtime.identity.runtimeId)) {
+        if (runtimes.some((entry) => entry.active && entry.runtime.identity.runtimeId === runtime.identity.runtimeId)) {
           throw new Error(`runtime ${runtime.identity.runtimeId} is registered twice in one transaction`);
         }
         const staged: StagedRuntime = { runtime, active: true };
