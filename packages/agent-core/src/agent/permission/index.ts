@@ -1,5 +1,6 @@
 import type { Agent } from '..';
 import type { PrepareToolExecutionResult } from '../../loop';
+import type { RenderedHookResult } from '../../session/hooks';
 import { createPermissionDecisionPolicies } from './policies';
 import type {
   ApprovalResponse,
@@ -28,6 +29,7 @@ interface PolicyEvaluation {
 export class PermissionManager {
   readonly policies: PermissionPolicy[];
   readonly rules: PermissionRule[] = [];
+  private readonly allowedPreToolHookResults = new Map<string, RenderedHookResult>();
   private modeOverride: PermissionMode | undefined;
   private readonly parent: PermissionManager | undefined;
   private readonly localSessionApprovalRulePatterns = new Set<string>();
@@ -38,7 +40,9 @@ export class PermissionManager {
   ) {
     this.rules = [...(options.initialRules ?? [])];
     this.parent = options.parent;
-    this.policies = createPermissionDecisionPolicies(this.agent);
+    this.policies = createPermissionDecisionPolicies(this.agent, (toolCallId, result) => {
+      this.allowedPreToolHookResults.set(toolCallId, result);
+    });
   }
 
   get mode(): PermissionMode {
@@ -91,6 +95,12 @@ export class PermissionManager {
       ...this.localSessionApprovalRulePatterns,
       ...(this.parent?.sessionApprovalRulePatterns ?? []),
     ];
+  }
+
+  takeAllowedPreToolHookResult(toolCallId: string): RenderedHookResult | undefined {
+    const result = this.allowedPreToolHookResults.get(toolCallId);
+    this.allowedPreToolHookResults.delete(toolCallId);
+    return result;
   }
 
   async beforeToolCall(

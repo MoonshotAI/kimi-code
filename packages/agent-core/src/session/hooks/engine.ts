@@ -45,7 +45,7 @@ export class HookEngine {
     event: string,
     args: HookEngineTriggerArgs = {},
   ): Promise<HookBlockDecision | undefined> {
-    return blockDecision(event, await this.trigger(event, args));
+    return resolveHookBlockDecision(event, await this.trigger(event, args));
   }
 
   fireAndForgetTrigger(
@@ -155,14 +155,14 @@ function aggregateResults(
   readonly action: 'allow' | 'block';
   readonly reason?: string;
 } {
-  const block = blockDecision(event, results);
+  const block = resolveHookBlockDecision(event, results);
   if (block !== undefined) {
     return { action: 'block', reason: block.reason };
   }
   return { action: 'allow' };
 }
 
-function blockDecision(
+export function resolveHookBlockDecision(
   event: string,
   results: readonly HookResult[],
 ): HookBlockDecision | undefined {
