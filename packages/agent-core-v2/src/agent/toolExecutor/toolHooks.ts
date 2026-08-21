@@ -7,6 +7,7 @@ import type {
   ExecutableToolResult,
   RunnableToolExecution,
   ToolAccesses,
+  ToolResult,
 } from '#/tool/toolContract';
 
 export interface ToolExecutionHookContext {
@@ -50,6 +51,23 @@ export type ToolExecutionOutcome =
   | 'aborted'
   | 'synthetic'
   | 'skipped';
+
+export interface ToolExecutionRunResult {
+  readonly result: ToolResult;
+  readonly outcome: ToolExecutionOutcome;
+}
+
+export interface ToolExecuteContext {
+  readonly turnId: number;
+  readonly signal: AbortSignal;
+  readonly trace?: LLMRequestTrace;
+  readonly toolCall: ToolCall;
+  readonly tool: ExecutableTool;
+  readonly args: unknown;
+  readonly execution: RunnableToolExecution;
+  readonly metadata: unknown;
+  result?: ToolExecutionRunResult;
+}
 
 export interface ToolDidExecuteContext extends ToolExecutionHookContext {
   readonly outcome: ToolExecutionOutcome;
