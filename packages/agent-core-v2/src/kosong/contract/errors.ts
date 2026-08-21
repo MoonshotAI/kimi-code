@@ -316,7 +316,7 @@ function appendThinkingEffortConfigHint(statusCode: number, message: string): st
   if (message.includes(THINKING_EFFORT_CONFIG_DOCS_URL)) return message;
   return `${message}
 
-The provider rejected the configured thinking effort. Efforts outside a model's declared support_efforts fall back to the model default, except a forced effort (forced_effort or KIMI_MODEL_THINKING_EFFORT), which is always sent unchanged; models without a declared list pass efforts to non-Kimi providers unchanged. Choose an effort supported by the selected model. See ${THINKING_EFFORT_CONFIG_DOCS_URL}`;
+The provider rejected the configured thinking effort. Efforts outside a model's declared support_efforts fall back to the model default, except a forced effort (forced_effort or KIMI_MODEL_THINKING_EFFORT) or an effort a running session locked in before a config reload, which are always sent unchanged; models without a declared list pass efforts to non-Kimi providers unchanged. Choose an effort supported by the selected model. See ${THINKING_EFFORT_CONFIG_DOCS_URL}`;
 }
 
 export function isContextOverflowErrorCode(code: string | null | undefined): boolean {

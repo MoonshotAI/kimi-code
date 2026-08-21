@@ -504,6 +504,25 @@ describe('ModelSelectorComponent', () => {
     expect(text(picker)).toContain('[ Medium ]');
   });
 
+  it('falls back to the middle effort when the declared defaultEffort is unlisted', () => {
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: {
+        other: effortModel('Kimi Other', ['low', 'high'], 'max'),
+      },
+      currentValue: 'current',
+      currentThinkingEffort: 'off',
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    // An unlisted default_effort is not selectable: the middle entry wins,
+    // matching the engine resolvers.
+    expect(text(picker)).toContain('[ High ]');
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({ alias: 'other', thinking: 'high' });
+  });
+
   it('trims a padded defaultEffort before matching the declared efforts', () => {
     const onSelect = vi.fn();
     const picker = new ModelSelectorComponent({

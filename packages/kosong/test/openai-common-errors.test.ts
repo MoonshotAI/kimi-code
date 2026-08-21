@@ -408,6 +408,7 @@ describe('normalizeAPIStatusError thinking effort guidance', () => {
     expect(error.message).toContain(
       "Efforts outside a model's declared support_efforts fall back to the model default",
     );
+    expect(error.message).toContain('locked in before a config reload');
     expect(error.message).toContain(
       'https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#thinking',
     );
