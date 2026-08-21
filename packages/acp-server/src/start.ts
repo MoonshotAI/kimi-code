@@ -21,6 +21,7 @@ import {
   drainSessionMetadataWrites,
   ensureMainAgent,
   getLiveSessionById,
+  IAgentManager,
   IAgentRuntimeBindingService,
   IAppendLogStore,
   IHostEnvironment,
@@ -155,8 +156,12 @@ export async function runAcpServerWithStream(
       const context = handle.accessor.get(ISessionContext);
       const runtimeId = acpRuntimeProvider.bindSession(context.workspaceId, sessionId, context.cwd);
       sessionWorkspaces.set(sessionId, context.workspaceId);
-      const agent = await ensureMainAgent(handle, { runtimeId });
-      agent.accessor.get(IAgentRuntimeBindingService).switch(runtimeId);
+      const agentContext = await ensureMainAgent(handle, { runtimeId });
+      handle.accessor
+        .get(IAgentManager)
+        .handleOf(agentContext.agentId)!
+        .accessor.get(IAgentRuntimeBindingService)
+        .switch(runtimeId);
     },
     unbindSessionRuntime: async (sessionId) => {
       const workspaceId = sessionWorkspaces.get(sessionId);

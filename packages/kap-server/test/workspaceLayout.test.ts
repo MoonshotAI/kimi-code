@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
-  IAgentLifecycleService,
+  IAgentManager,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -95,7 +95,7 @@ describe('local/local on-disk layout (byte compatibility)', () => {
 
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     expect(session).toBeDefined();
-    await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+    await session!.accessor.get(IAgentManager).create({ agentId: 'main' });
     const wirePath = join(sessionDir, 'agents', 'main', 'wire.jsonl');
     await expect(stat(wirePath)).resolves.toBeDefined();
     const firstWireLine = (await readFile(wirePath, 'utf8')).split('\n')[0]!;

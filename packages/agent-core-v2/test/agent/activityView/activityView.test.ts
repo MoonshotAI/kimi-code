@@ -5,6 +5,7 @@ import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
+import { IAgentExecutionContext, makeAgentExecutionContext } from '#/agent/agentContext/agentExecutionContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded, turnKey, type TurnModelState } from '#/agent/loop/turnOps';

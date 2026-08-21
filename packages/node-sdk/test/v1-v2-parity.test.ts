@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  IAgentLifecycleService,
+  IAgentManager,
   ISessionApprovalService,
   ISessionQuestionService,
   getLiveSessionById,

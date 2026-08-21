@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import {
   IAgentActivityView,
   IAgentGoalService,
-  IAgentLifecycleService,
+  IAgentManager,
   IAgentPluginCommandService,
   IAgentPromptService,
   IAgentRuntimeBindingService,
@@ -139,13 +139,13 @@ describe('server-v2 /api/v1/debug RPC', () => {
   async function createMainAgent(sessionId: string): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
-    await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+    await session.accessor.get(IAgentManager).create({ agentId: 'main' });
   }
 
   async function createSubagent(sessionId: string, agentId: string): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
-    await session.accessor.get(IAgentLifecycleService).create({ agentId });
+    await session.accessor.get(IAgentManager).create({ agentId });
   }
 
   it('describes all channels via GET /api/v1/debug/channels', async () => {

@@ -12,7 +12,8 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentManager } from '#/session/agentManager/agentManager';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 import {
   interactionKey,
@@ -78,14 +79,14 @@ describe('SessionInteractionService', () => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     agents = new Map();
-    ix.stub(IAgentLifecycleService, {
+    ix.stub(IAgentManager, {
       _serviceBrand: undefined,
       onDidCreate: Event.None,
-      onDidDispose: Event.None,
-      list: () => [...agents.values()].map((agent) => agent.handle),
-      get: (context: AgentContext) => agents.get(context.agentId)?.handle,
-      findAgentHandle: (agentId: string) => agents.get(agentId)?.handle,
-    } as unknown as IAgentLifecycleService);
+      onDidClose: Event.None,
+      list: () => [...agents.keys()].map((agentId) => stubAgentContext(agentId, 1)),
+      get: (agentId: string) => (agents.has(agentId) ? stubAgentContext(agentId, 1) : undefined),
+      handleOf: (agentId: string) => agents.get(agentId)?.handle,
+    } as unknown as IAgentManager);
     ix.set(ISessionStateService, new SessionStateService());
     ix.set(ISessionInteractionService, new SyncDescriptor(SessionInteractionService));
   });

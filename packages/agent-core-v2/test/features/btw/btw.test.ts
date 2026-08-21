@@ -14,7 +14,7 @@ import {
 } from '#/features/btw/btw';
 import { SessionBtwService } from '#/features/btw/btwService';
 import type { ToolCall } from '#/kosong/contract/message';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentManager } from '#/session/agentManager/agentManager';
 
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -61,12 +61,16 @@ describe('SessionBtwService', () => {
         },
       },
     };
-    fork = vi.fn(async () => child);
-    ix.stub(IAgentLifecycleService, {
+    fork = vi.fn(async () => stubAgentContext('agent-btw-1', 2));
+    ix.stub(IAgentManager, {
       _serviceBrand: undefined,
       fork,
-      findAgentHandle: (id: string) => (id === 'main' ? main : undefined),
-    } as unknown as IAgentLifecycleService);
+      handleOf: (id: string) => {
+        if (id === 'main') return main;
+        if (id === 'agent-btw-1') return child;
+        return undefined;
+      },
+    } as unknown as IAgentManager);
     ix.set(ISessionBtwService, new SyncDescriptor(SessionBtwService));
   });
   afterEach(() => disposables.dispose());

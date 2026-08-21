@@ -5,7 +5,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentManager } from '#/session/agentManager/agentManager';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
@@ -179,8 +179,8 @@ export class SessionInteractionService extends Service implements ISessionIntera
     const agentId = origin.agentId ?? MAIN_AGENT_ID;
     try {
       return this.instantiation.invokeFunction((accessor) => {
-        const lifecycle = accessor.get(IAgentLifecycleService);
-        const handle = lifecycle.findAgentHandle(agentId);
+        const manager = accessor.get(IAgentManager);
+        const handle = manager.handleOf(agentId);
         return handle?.accessor.get(IEventDispatcher);
       });
     } catch {

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  IAgentLifecycleService,
+  IAgentManager,
   IAgentTaskService,
   getLiveSessionById,
   IModelCatalog,
@@ -126,9 +126,11 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
   async function mainAgentTasks(sessionId: string): Promise<IAgentTaskService> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
-    const agent =
-      session.accessor.get(IAgentLifecycleService).findAgentHandle('main') ??
-      (await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' }));
+    let agent = session.accessor.get(IAgentManager).handleOf('main');
+    if (agent === undefined) {
+      await session.accessor.get(IAgentManager).create({ agentId: 'main' });
+      agent = session.accessor.get(IAgentManager).handleOf('main')!;
+    }
     return agent.accessor.get(IAgentTaskService);
   }
 

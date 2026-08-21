@@ -24,10 +24,10 @@ import { APIProviderRateLimitError } from '#/kosong/contract/errors';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
-  IAgentLifecycleService,
+  IAgentManager,
   type CreateAgentOptions,
-} from '#/session/agentLifecycle/agentLifecycle';
-import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
+} from '#/session/agentManager/agentManager';
+import { labelsFromAgentMeta } from '#/session/agentManager/subagentMetadata';
 import { createHooks } from '#/hooks';
 import {
   type AgentTaskHooks,
@@ -880,7 +880,7 @@ describe('SessionSwarmService metadata compatibility', () => {
   let ix: TestInstantiationService;
   let agents: Record<string, AgentMeta>;
   let handles: Map<string, IAgentScopeHandle>;
-  let lifecycle: IAgentLifecycleService;
+  let lifecycle: IAgentManager;
   let subagents: ISessionSubagentService;
   let createAgent: ReturnType<typeof vi.fn>;
   let runAgent: ReturnType<typeof vi.fn>;
@@ -899,7 +899,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     runAgent = subagents.run as ReturnType<typeof vi.fn>;
     handles.set('main', agentHandle('main', lifecycle, eventBus));
 
-    ix.stub(IAgentLifecycleService, lifecycle);
+    ix.stub(IAgentManager, lifecycle);
     ix.stub(ISessionSubagentService, subagents);
     ix.stub(ISessionAgentProfileCatalog, {
       _serviceBrand: undefined,
@@ -1122,7 +1122,7 @@ describe('SessionSwarmService metadata compatibility', () => {
         new Map([[IAgentUserToolService, childUserTools]]),
       );
       handles.set(id, handle);
-      return handle;
+      return stubAgentContext(id, 1);
     });
     const service = ix.get(ISessionSwarmService);
 
@@ -1377,36 +1377,45 @@ function resumeSessionTask(agentId: string): SessionSwarmTask {
 function lifecycleStub(
   handles: Map<string, IAgentScopeHandle>,
   eventBus: IEventBus,
-): IAgentLifecycleService {
+): IAgentManager {
   const lifecycle = {
     _serviceBrand: undefined,
     onDidCreate: Event.None,
     onDidCreateScope: Event.None,
-    onDidDispose: Event.None,
+    onWillClose: Event.None,
+    onDidClose: Event.None,
     create: vi.fn(async (opts: CreateAgentOptions = {}) => {
       if (opts.agentId !== undefined) {
         const existing = handles.get(opts.agentId);
-        if (existing !== undefined) return existing;
+        if (existing !== undefined) return stubAgentContext(opts.agentId, 1);
       }
       const id = opts.agentId ?? 'agent-new';
-      const handle = agentHandle(id, lifecycle as IAgentLifecycleService, eventBus, {
+      const handle = agentHandle(id, lifecycle as IAgentManager, eventBus, {
         profileName: opts.binding?.profile ?? 'coder',
         modelAlias: opts.binding?.model ?? 'kimi-test',
         thinkingLevel: opts.binding?.thinking ?? 'medium',
       });
       handles.set(id, handle);
-      return handle;
+      return stubAgentContext(id, 1);
     }),
     fork: vi.fn(),
-    get: (context: AgentContext) => handles.get(context.agentId),
-    findAgentHandle: (agentId: string) => handles.get(agentId),
-    list: () => [...handles.values()],
+    get: (agentId: string) => (handles.has(agentId) ? stubAgentContext(agentId, 1) : undefined),
+    handleOf: (agentId: string) => handles.get(agentId),
+    list: () => [...handles.keys()].map((agentId) => stubAgentContext(agentId, 1)),
+    resolve: () => {
+      throw new Error('unexpected resolve');
+    },
+    inspect: () => {
+      throw new Error('unexpected inspect');
+    },
     remove: async (context: AgentContext) => {
       handles.delete(context.agentId);
     },
     broadcastPermissionMode: () => {},
+    adopt: (handle: IAgentScopeHandle) => stubAgentContext(handle.id, 1),
+    attachRuntimes: () => {},
   };
-  return lifecycle as IAgentLifecycleService;
+  return lifecycle as IAgentManager;
 }
 
 function subagentStub(): ISessionSubagentService {
@@ -1425,7 +1434,7 @@ function subagentStub(): ISessionSubagentService {
 
 function agentHandle(
   id: string,
-  lifecycle: IAgentLifecycleService,
+  lifecycle: IAgentManager,
   eventBus: IEventBus,
   data: Partial<ProfileData> = {},
   services: ReadonlyMap<unknown, unknown> = new Map(),
@@ -1486,7 +1495,7 @@ function agentHandle(
         if (serviceId === IEventBus) return eventBus;
         if (serviceId === IEventDispatcher) return dispatcher;
         if (serviceId === ITelemetryService) return noopTelemetryService;
-        if (serviceId === IAgentLifecycleService) return lifecycle;
+        if (serviceId === IAgentManager) return lifecycle;
         return undefined;
       }) as IAgentScopeHandle['accessor']['get'],
     },

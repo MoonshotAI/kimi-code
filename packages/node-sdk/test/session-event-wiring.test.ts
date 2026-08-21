@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Event } from '@moonshot-ai/agent-core';
 import {
-  IAgentLifecycleService,
+  IAgentManager,
   IAgentProfileService,
   IAgentScopeContext,
   IEventBus,
@@ -50,12 +50,12 @@ class FakeAgentHandle {
   readonly kind = 2;
   readonly bus = new FakeAgentBus();
   readonly accessor;
+  readonly context;
   private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
-    this.services.set(
-      IAgentScopeContext,
-      makeAgentScopeContext({ agentId: id, agentScope: `agents/${id}` }),
-    );
+    const scopeContext = makeAgentScopeContext({ agentId: id, agentScope: `agents/${id}` });
+    this.context = scopeContext.agentContext;
+    this.services.set(IAgentScopeContext, scopeContext);
     this.services.set(IEventBus, this.bus);
     this.accessor = {
       get: (token: unknown) => this.services.get(token),
@@ -69,9 +69,10 @@ class FakeAgentHandle {
 
 function makeSession(agents: FakeAgentHandle[]): ISessionScopeHandle {
   const lifecycle = {
-    list: () => agents,
+    list: () => agents.map((agent) => agent.context),
+    handleOf: (agentId: string) => agents.find((agent) => agent.id === agentId),
     onDidCreate: () => ({ dispose: () => {} }),
-    onDidDispose: () => ({ dispose: () => {} }),
+    onDidClose: () => ({ dispose: () => {} }),
   };
   const interactions = {
     onDidChangePending: () => ({ dispose: () => {} }),
@@ -79,7 +80,7 @@ function makeSession(agents: FakeAgentHandle[]): ISessionScopeHandle {
   };
   const accessor = {
     get: (token: unknown): unknown => {
-      if (token === IAgentLifecycleService) return lifecycle;
+      if (token === IAgentManager) return lifecycle;
       if (token === ISessionInteractionService) return interactions;
       return undefined;
     },

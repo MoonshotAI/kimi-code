@@ -2,7 +2,7 @@ import {
   ErrorCodes,
   Error2,
   IAgentGoalService,
-  IAgentLifecycleService,
+  IAgentManager,
   IAgentPlanService,
   IAgentProfileService,
   IAgentSwarmService,
@@ -34,7 +34,7 @@ export async function applySessionAgentConfig(
   }
   if (agentConfig.permission_mode !== undefined) {
     agent.accessor
-      .get(IAgentLifecycleService)
+      .get(IAgentManager)
       .broadcastPermissionMode(agentConfig.permission_mode as PermissionMode);
   }
   if (agentConfig.plan_mode !== undefined) {

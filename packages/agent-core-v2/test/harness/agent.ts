@@ -10,11 +10,11 @@ import type { IInstantiationService } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IFeatureManager } from '#/app/feature/featureManager';
+import { getConfigSectionContributions } from '#/app/config/configSectionContributions';
 import { Emitter, Event, type IWaitUntil } from '#/_base/event';
 import {
-  IAgentLifecycleService,
-  type AgentScopeCreatedEvent,
-} from '#/session/agentLifecycle/agentLifecycle';
+  IAgentManager,
+} from '#/session/agentManager/agentManager';
 import type { Promisable, PromisifyMethods } from '#/_base/utils/types';
 import type { AgentTaskInfo } from '#/agent/task/task';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
@@ -155,7 +155,9 @@ import {
   IHostProcessService,
   ISessionBtwService,
   ISessionContext,
+  IAgentExecutionContext,
   IAgentScopeContext,
+  makeAgentExecutionContext,
   makeAgentScopeContext,
   IAgentShellCommandService,
   IAgentStepRetryService,
@@ -1221,16 +1223,6 @@ export class AgentTestContext {
       .get(ITelemetryService)
       .withContext({ agent_id: agentId });
     const sessionScope = `${bootstrap.scope('sessions')}/${workspaceId}/${sessionId}`;
-    const lifecycleHandle = (): IAgentScopeHandle | undefined => {
-      const agent = this.agentLifecycleScope;
-      if (agent === undefined) return undefined;
-      return {
-        id: agentId,
-        kind: LifecycleScope.Agent,
-        accessor: agent.accessor,
-        dispose: () => agent.dispose(),
-      };
-    };
     this.session = this.root.createChild(LifecycleScope.Session, sessionId, {
       seeds: collectScopeSeed(
         [
@@ -1279,30 +1271,6 @@ export class AgentTestContext {
               IWorkspaceStateService,
               new WorkspaceStateService(this.root.accessor.get(IAppStateService)),
             );
-            reg.defineInstance(IAgentLifecycleService, {
-              _serviceBrand: undefined,
-              onDidCreate: Event.None as Event<AgentContext>,
-              onDidCreateScope: Event.None as Event<AgentScopeCreatedEvent>,
-              onDidDispose: Event.None as Event<AgentContext>,
-              create: () =>
-                Promise.reject(
-                  new Error('IAgentLifecycleService.create is not supported in the test harness'),
-                ),
-              fork: () =>
-                Promise.reject(
-                  new Error('IAgentLifecycleService.fork is not supported in the test harness'),
-                ),
-              get: () => lifecycleHandle(),
-              findAgentHandle: () => lifecycleHandle(),
-              list: () => {
-                const handle = lifecycleHandle();
-                return handle === undefined ? [] : [handle];
-              },
-              remove: () => Promise.resolve(),
-              broadcastPermissionMode: (mode: PermissionMode) => {
-                this.agent.accessor.get(IAgentPermissionModeService).setMode(mode);
-              },
-            } satisfies IAgentLifecycleService);
             reg.defineDescriptor(
               ISessionWorkspaceContext,
               new SyncDescriptor(SessionWorkspaceContextService),
@@ -1328,6 +1296,16 @@ export class AgentTestContext {
     this.session.accessor.get(ISessionEventBus).activateAgent(agentScopeContext.agentContext);
 
     this.agent = this.session.createChild(LifecycleScope.Agent, agentId, {
+      configureContainer: (container) => {
+        this.session.accessor.get(IAgentManager).adopt({
+          id: agentId,
+          kind: LifecycleScope.Agent,
+          accessor: {
+            get: (id) => container.invokeFunction((accessor) => accessor.get(id)),
+          },
+          dispose: () => { container.dispose(); },
+        }, agentScopeContext.agentContext);
+      },
       seeds: collectScopeSeed(
         [
           (reg) => {
@@ -1401,6 +1379,15 @@ export class AgentTestContext {
             }
             reg.defineInstance(IAgentStateService, agentStateService);
             reg.defineInstance(IAgentScopeContext, agentScopeContext);
+            reg.defineInstance(
+              IAgentExecutionContext,
+              makeAgentExecutionContext(
+                agentScopeContext.agentContext,
+                (capability) => this.session.accessor
+                  .get(IAgentManager)
+                  .resolve(agentScopeContext.agentContext, capability),
+              ),
+            );
             reg.defineInstance(ITelemetryService, agentTelemetry);
           },
         ],
@@ -1409,9 +1396,11 @@ export class AgentTestContext {
       ),
     });
     this.agentLifecycleScope = this.agent;
+    const harnessAgentContext = this.agent.accessor.get(IAgentScopeContext).agentContext;
     this.session.accessor
       .get(ISessionEventBus)
-      .activateAgent(this.agent.accessor.get(IAgentScopeContext).agentContext);
+      .activateAgent(harnessAgentContext);
+    this.session.accessor.get(IAgentManager).attachRuntimes(harnessAgentContext);
     reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);
 
     this.initializeRestorableServices();
@@ -2584,10 +2573,13 @@ function configService(readConfig: () => KimiConfig): IConfigService {
     readonly value: unknown;
     readonly previousValue: unknown;
   }>();
+  const sectionDefault = (domain: string): unknown =>
+    getConfigSectionContributions().find((section) => section.domain === domain)?.options
+      .defaultValue;
   const valueFor = (domain: string): unknown =>
     memory.has(domain)
       ? memory.get(domain)
-      : (effectiveConfig() as Record<string, unknown>)[domain];
+      : ((effectiveConfig() as Record<string, unknown>)[domain] ?? sectionDefault(domain));
   const replace = (domain: string, value: unknown): Promise<void> => {
     const previousValue = valueFor(domain);
     memory.set(domain, value);

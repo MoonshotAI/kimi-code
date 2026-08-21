@@ -34,7 +34,7 @@ import type {
 } from '@moonshot-ai/agent-core';
 import {
   agentContextOf,
-  IAgentLifecycleService,
+  IAgentManager,
   IAgentProfileService,
   IEventBus,
   ISessionApprovalService,
@@ -117,18 +117,19 @@ export class SessionEventWiring {
         this.bridgeNewPendingInteractions();
       }),
     );
-    const lifecycle = session.accessor.get(IAgentLifecycleService);
+    const manager = session.accessor.get(IAgentManager);
     this.disposables.push(
-      lifecycle.onDidCreate((context) => {
-        const handle = lifecycle.get(context);
+      manager.onDidCreate((context) => {
+        const handle = manager.handleOf(context.agentId);
         if (handle !== undefined) this.attachAgent(handle);
       }),
-      lifecycle.onDidDispose((context) => {
+      manager.onDidClose((context) => {
         this.detachAgent(context.agentId);
       }),
     );
-    for (const agent of lifecycle.list()) {
-      this.attachAgent(agent);
+    for (const agent of manager.list()) {
+      const handle = manager.handleOf(agent.agentId);
+      if (handle !== undefined) this.attachAgent(handle);
     }
   }
 

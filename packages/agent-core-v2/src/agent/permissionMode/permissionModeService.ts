@@ -5,12 +5,12 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { PermissionModeInjection } from '#/agent/permissionMode/injection/permissionModeInjection';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentExecutionContext } from '#/agent/agentContext/agentExecutionContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
-  IAgentLifecycleService,
+  IAgentManager,
   MAIN_AGENT_ID,
-} from '#/session/agentLifecycle/agentLifecycle';
+} from '#/session/agentManager/agentManager';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentPermissionModeService, type PermissionModeChangedContext } from './permissionMode';
@@ -29,8 +29,8 @@ export class AgentPermissionModeService extends Service implements IAgentPermiss
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IInstantiationService instantiation: IInstantiationService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentExecutionContext private readonly scopeContext: IAgentExecutionContext,
+    @IAgentManager private readonly agentManager: IAgentManager,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
@@ -59,7 +59,7 @@ export class AgentPermissionModeService extends Service implements IAgentPermiss
     const wasAuto = this.mode === 'auto';
     this.setMode(mode);
     if (this.scopeContext.agentId === MAIN_AGENT_ID) {
-      this.agentLifecycle.broadcastPermissionMode(mode);
+      this.agentManager.broadcastPermissionMode(mode);
     }
     const yoloEnabled = this.mode === 'yolo';
     if (yoloEnabled !== wasYolo) {

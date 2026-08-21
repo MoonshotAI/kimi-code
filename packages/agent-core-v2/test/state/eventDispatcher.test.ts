@@ -1,5 +1,5 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -10,7 +10,10 @@ import {
   setUnexpectedErrorHandler,
 } from '#/_base/errors/unexpectedError';
 import { BugIndicatingError } from '#/_base/errors/errors';
+import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
+import '#/agent/contextMemory/conversationTime';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IEventBus } from '#/app/event/eventBus';
@@ -437,6 +440,76 @@ describe('EventDispatcherService', () => {
     expect(agentState.replayableKeys()).not.toContain(lateKey);
     await restore;
     await expect(dispatcher.dispatch(new CounterAdd({ by: 2 }))).resolves.toBeUndefined();
+  });
+
+  it('rejects a duplicate durable participant id without replacing the first attachment', () => {
+    const participant = {
+      id: 'runtime.test.duplicate',
+      events: [],
+      undoable: false,
+      transition: () => {},
+      getState: () => 0,
+      commit: () => {},
+    };
+    const attachment = dispatcher.attach(participant);
+
+    expect(() => dispatcher.attach({ ...participant })).toThrow(
+      "Durable participant 'runtime.test.duplicate' is already attached",
+    );
+    attachment.dispose();
+    expect(() => dispatcher.attach({ ...participant })).not.toThrow();
+  });
+
+  it('runs runtime attachments through the shared checkpoint and undo pipeline', async () => {
+    let state: CheckpointedState = { items: [] };
+    dispatcher.attach({
+      id: 'runtime.test.checkpointed',
+      events: [ItemAdd, AnchorEvent, UndoEvent],
+      undoable: true,
+      transition: (draft, event, ctx) => {
+        if (event instanceof ItemAdd) draft.items.push(event.item);
+        if (event instanceof AnchorEvent) ctx.checkpoint();
+        if (event instanceof UndoEvent) ctx.undoToCheckpoint(event.count);
+      },
+      getState: () => state,
+      commit: (next) => { state = next; },
+    });
+
+    await dispatcher.dispatch(new ItemAdd({ item: 'a' }));
+    await dispatcher.dispatch(new AnchorEvent({}));
+    await dispatcher.dispatch(new ItemAdd({ item: 'b' }));
+
+    expect(state.items).toEqual(['a', 'b']);
+    expect(dispatcher.modelCheckpointDepths()).toContainEqual({
+      id: 'runtime.test.checkpointed',
+      depth: 1,
+    });
+
+    await dispatcher.dispatch(new UndoEvent({ count: 1 }));
+
+    expect(state.items).toEqual(['a']);
+    expect(dispatcher.modelCheckpointDepths()).toContainEqual({
+      id: 'runtime.test.checkpointed',
+      depth: 0,
+    });
+  });
+
+  it('does not own AgentSpace teardown', () => {
+    const isolated = new TestInstantiationService();
+    const scope = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' });
+    const space = scope.agentContext.space as AgentSpaceImpl;
+    const kill = vi.spyOn(space, '_kill');
+    isolated.set(IEventBus, new SyncDescriptor(EventBusService));
+    isolated.set(IAgentBlobService, noopBlob);
+    isolated.set(IWireService, stubWireJournal([]));
+    isolated.set(IAgentScopeContext, scope);
+    isolated.set(IAgentStateService, new AgentStateService());
+    isolated.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
+    isolated.get(IEventDispatcher);
+
+    isolated.dispose();
+
+    expect(kill).not.toHaveBeenCalled();
   });
 
   it('withdraws a disposed replayable contribution from dispatcher folds and history', async () => {

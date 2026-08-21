@@ -12,7 +12,7 @@ import type {
   Workspace,
 } from '@moonshot-ai/agent-core-v2';
 import {
-  IAgentLifecycleService,
+  IAgentManager,
   IEventBus,
   IEventService,
   ISessionActivityView,
@@ -939,15 +939,18 @@ export class SessionEventBroadcaster {
   }
 
   private attachAgents(sessionId: string, session: ISessionScopeHandle, state: SessionState): void {
-    const agents = session.accessor.get(IAgentLifecycleService);
+    const agents = session.accessor.get(IAgentManager);
     const subscribeAgent = (handle: IAgentScopeHandle): void => {
       if (state.agentDisposables.has(handle.id)) return;
       state.agentDisposables.set(handle.id, this.attachAgent(sessionId, handle));
     };
-    for (const handle of agents.list()) subscribeAgent(handle);
+    for (const agent of agents.list()) {
+      const handle = agents.handleOf(agent.agentId);
+      if (handle !== undefined) subscribeAgent(handle);
+    }
     state.lifecycleDisposables.push(
       agents.onDidCreate((context) => {
-        const handle = agents.get(context);
+        const handle = agents.handleOf(context.agentId);
         if (handle !== undefined) subscribeAgent(handle);
         this.enqueueDurable(state, {
           type: 'agent.created',
@@ -955,7 +958,7 @@ export class SessionEventBroadcaster {
           sessionId,
         });
       }),
-      agents.onDidDispose((context) => {
+      agents.onDidClose((context) => {
         const agentId = context.agentId;
         const d = state.agentDisposables.get(agentId);
         if (d !== undefined) {

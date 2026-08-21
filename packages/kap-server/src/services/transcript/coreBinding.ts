@@ -1,5 +1,5 @@
 import {
-  IAgentLifecycleService,
+  IAgentManager,
   IAgentActivityView,
   IAgentTaskService,
   IEventBus,
@@ -47,7 +47,7 @@ export function bindSessionTranscript(
   logger?: TranscriptBindingLogger,
   onOps?: (event: TranscriptChangeEvent) => void,
 ): TranscriptBinding {
-  const agents = session.accessor.get(IAgentLifecycleService);
+  const agents = session.accessor.get(IAgentManager);
   const interactions = session.accessor.get(ISessionInteractionService);
   const disposables: IDisposable[] = [];
   const agentDisposables = new Map<string, IDisposable[]>();
@@ -96,7 +96,7 @@ export function bindSessionTranscript(
           return undefined;
         },
         stepOrdinal: (turnId) => {
-          const agentHandle = agents.findAgentHandle(agentId);
+          const agentHandle = agents.handleOf(agentId);
           if (agentHandle === undefined) return undefined;
           const view: IAgentActivityView | undefined = agentHandle.accessor.get(IAgentActivityView);
           const turn = view?.state().turn;
@@ -104,9 +104,9 @@ export function bindSessionTranscript(
         },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
       });
-      for (const agent of agents.list()) {
-        if (agent.id !== agentId) continue;
-        const tasks = agent.accessor.get(IAgentTaskService)?.list() ?? [];
+      const agentHandle = agents.handleOf(agentId);
+      if (agentHandle !== undefined) {
+        const tasks = agentHandle.accessor.get(IAgentTaskService)?.list() ?? [];
         for (const info of tasks) {
           if (info.kind === 'agent' && typeof info.agentId === 'string' && info.agentId.length > 0) {
             applyOps(
@@ -177,15 +177,18 @@ export function bindSessionTranscript(
       });
   };
 
-  for (const handle of agents.list()) subscribeAgent(handle);
+  for (const agent of agents.list()) {
+    const handle = agents.handleOf(agent.agentId);
+    if (handle !== undefined) subscribeAgent(handle);
+  }
   disposables.push(
     agents.onDidCreate((context) => {
-      const handle = agents.get(context);
+      const handle = agents.handleOf(context.agentId);
       if (handle !== undefined) subscribeAgent(handle);
       seededAgents.add(context.agentId);
       refreshDescriptors();
     }),
-    agents.onDidDispose((context) => {
+    agents.onDidClose((context) => {
       const agentId = context.agentId;
       for (const d of agentDisposables.get(agentId) ?? []) d.dispose();
       agentDisposables.delete(agentId);

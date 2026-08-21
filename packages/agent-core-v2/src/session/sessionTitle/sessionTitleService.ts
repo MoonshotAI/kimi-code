@@ -13,7 +13,7 @@ import { IFlagService } from '#/app/flag/flag';
 import { ILogService } from '#/_base/log/log';
 import { IOAuthService } from '#/app/auth/auth';
 import { IEventService } from '#/app/event/event';
-import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentManager, MAIN_AGENT_ID } from '#/session/agentManager/agentManager';
 import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
 import { IProviderService } from '#/kosong/provider/provider';
 import { isOAuthCatalogVendor } from '#/kosong/provider/providerDefinition';
@@ -49,7 +49,7 @@ export class SessionTitleService implements ISessionTitleService {
   constructor(
     @ISessionContext private readonly ctx: ISessionContext,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
-    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentManager private readonly agentManager: IAgentManager,
     @IEventService private readonly eventService: IEventService,
     @IProviderService private readonly providers: IProviderService,
     @IOAuthService private readonly oauth: IOAuthService,
@@ -83,7 +83,7 @@ export class SessionTitleService implements ISessionTitleService {
       if (current.titleKind === 'custom') return undefined;
       if (current.titleKind === 'generated') return undefined;
     }
-    const main = this.agentLifecycle.findAgentHandle(MAIN_AGENT_ID);
+    const main = this.agentManager.handleOf(MAIN_AGENT_ID);
     if (main === undefined) return undefined;
     const promptSource = main.accessor.get(IAgentTitlePromptSource);
     const input = await composeTitleInput(promptSource, source);

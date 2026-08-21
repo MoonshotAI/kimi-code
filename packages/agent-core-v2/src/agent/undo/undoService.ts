@@ -19,13 +19,13 @@ import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompacti
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentExecutionContext } from '#/agent/agentContext/agentExecutionContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventService } from '#/app/event/event';
 import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { MAIN_AGENT_ID } from '#/session/agentManager/agentManager';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
@@ -58,7 +58,7 @@ export class AgentConversationUndoService
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentConversationUndoParticipantRegistry
     private readonly participants: IAgentConversationUndoParticipantRegistry,
-    @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
+    @IAgentExecutionContext private readonly agentCtx: IAgentExecutionContext,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @IEventService private readonly eventService: IEventService,

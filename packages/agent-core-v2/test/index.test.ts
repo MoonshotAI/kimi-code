@@ -29,16 +29,10 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
 import { ToolsUpdateStore } from '#/session/todo/todoOps';
-import {
-  AgentRuntimeHost,
-  IAgentRuntimeHostService,
-} from '#/agent/runtime/agentRuntime';
-import { TodoAgentRuntimeDefinition } from '#/session/todo/todoAgentRuntime';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { Event2Class } from '#/app/event/event2';
 import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
-import { registerTestAgentWire, registerTestEventDispatcher, restoreTestEventDispatcher } from './wire/stubs';
+import { attachTodoRuntime, registerTestAgentWire, registerTestEventDispatcher, restoreTestEventDispatcher } from './wire/stubs';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from './state/builtinReplayableKeys';
 
 const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
@@ -181,23 +175,13 @@ describe('v1 wire vocabulary', () => {
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     const log2 = ix2.get(IAppendLogStore);
     registerTestAgentWire(ix2, SCOPE, { log: log2 });
-    const runtimeHost = new AgentRuntimeHost();
-    runtimeHost.register(TodoAgentRuntimeDefinition);
-    ix2.set(IAgentRuntimeHostService, {
-      _serviceBrand: undefined,
-      resolve: (agent, definition) => runtimeHost.resolve(agent, definition),
-      participants: (agent) => runtimeHost.participants(agent),
-      snapshot: (agent) => runtimeHost.snapshot(agent),
-      inspect: (agent) => runtimeHost.snapshot(agent),
-      disposeAgent: (agent) => { runtimeHost.disposeAgent(agent); },
-    });
-    store.add({ dispose: () => { runtimeHost.dispose(); } });
     const fresh = registerTestEventDispatcher(ix2);
+    const runtimes = attachTodoRuntime(ix2, fresh);
+    store.add({ dispose: () => { void runtimes.close(); } });
 
     await restoreTestEventDispatcher(fresh, log2, SCOPE, records);
 
-    const freshAgent = ix2.get(IAgentScopeContext).agentContext;
-    expect(runtimeHost.snapshot(freshAgent).contributions[0]?.state).toEqual([
+    expect(runtimes.inspect()[0]?.state).toEqual([
       { title: 'restore me', status: 'in_progress' },
     ]);
   });

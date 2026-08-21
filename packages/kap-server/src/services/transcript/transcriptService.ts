@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 
 import {
-  IAgentLifecycleService,
+  IAgentManager,
   ISessionIndex,
   ISessionMetadata,
   IAgentLoopService,
@@ -376,7 +376,7 @@ export class TranscriptService {
     const agent =
       session === undefined
         ? undefined
-        : session.accessor.get(IAgentLifecycleService).findAgentHandle(agentId);
+        : session.accessor.get(IAgentManager).handleOf(agentId);
     const status = agent?.accessor.get(IAgentLoopService).status();
     if (status?.state !== 'running' || status.activeTurnId === undefined) return undefined;
     const ordinal = status.activeTurnId;

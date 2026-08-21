@@ -1,7 +1,7 @@
 import {
   Error2,
   ErrorCodes,
-  IAgentLifecycleService,
+  IAgentManager,
   IAgentRuntimeBindingService,
   IAgentRuntimeService,
   ISessionContext,
@@ -51,7 +51,7 @@ export async function agentRuntimeBindingSnapshot(
   }
   const agent = agentId === MAIN_AGENT_ID
     ? await ensureMainAgent(session)
-    : session.accessor.get(IAgentLifecycleService).findAgentHandle(agentId);
+    : session.accessor.get(IAgentManager).handleOf(agentId);
   if (agent === undefined) {
     throw new Error2(
       ErrorCodes.AGENT_NOT_FOUND,

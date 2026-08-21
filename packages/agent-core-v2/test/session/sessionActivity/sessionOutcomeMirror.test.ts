@@ -20,10 +20,10 @@ import { TurnEnded } from '#/agent/loop/turnOps';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
-  IAgentLifecycleService,
+  IAgentManager,
   MAIN_AGENT_ID,
   type AgentScopeCreatedEvent,
-} from '#/session/agentLifecycle/agentLifecycle';
+} from '#/session/agentManager/agentManager';
 import { ISessionOutcomeMirror } from '#/session/sessionActivity/sessionOutcomeMirror';
 import { SessionOutcomeMirror } from '#/session/sessionActivity/sessionOutcomeMirrorService';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -46,15 +46,17 @@ class FakeBus {
   }
 }
 
-class FakeAgentLifecycle implements IAgentLifecycleService {
+class FakeAgentManager implements IAgentManager {
   declare readonly _serviceBrand: undefined;
   readonly bus = new FakeBus();
   private readonly context: AgentContext = stubAgentContext(MAIN_AGENT_ID, 1);
   private readonly createEmitter = new Emitter<AgentContext>();
-  private readonly disposeEmitter = new Emitter<AgentContext>();
+  private readonly willCloseEmitter = new Emitter<AgentContext>();
+  private readonly didCloseEmitter = new Emitter<AgentContext>();
   readonly onDidCreate = this.createEmitter.event;
   readonly onDidCreateScope = Event.None as Event<AgentScopeCreatedEvent>;
-  readonly onDidDispose = this.disposeEmitter.event;
+  readonly onWillClose = this.willCloseEmitter.event;
+  readonly onDidClose = this.didCloseEmitter.event;
   private mainPresent = false;
 
   private readonly mainHandle = {
@@ -62,16 +64,16 @@ class FakeAgentLifecycle implements IAgentLifecycleService {
     accessor: { get: (token: unknown) => (token === IEventBus ? this.bus : undefined) },
   } as unknown as IAgentScopeHandle;
 
-  get(context: AgentContext): IAgentScopeHandle | undefined {
-    return context.agentId === MAIN_AGENT_ID && this.mainPresent ? this.mainHandle : undefined;
+  get(agentId: string): AgentContext | undefined {
+    return agentId === MAIN_AGENT_ID && this.mainPresent ? this.context : undefined;
   }
 
-  findAgentHandle(agentId: string): IAgentScopeHandle | undefined {
+  handleOf(agentId: string): IAgentScopeHandle | undefined {
     return agentId === MAIN_AGENT_ID && this.mainPresent ? this.mainHandle : undefined;
   }
 
-  list(): readonly IAgentScopeHandle[] {
-    return this.mainPresent ? [this.mainHandle] : [];
+  list(): readonly AgentContext[] {
+    return this.mainPresent ? [this.context] : [];
   }
 
   addMain(): void {
@@ -81,19 +83,32 @@ class FakeAgentLifecycle implements IAgentLifecycleService {
 
   removeMain(): void {
     this.mainPresent = false;
-    this.disposeEmitter.fire(this.context);
+    this.willCloseEmitter.fire(this.context);
+    this.didCloseEmitter.fire(this.context);
   }
 
-  create(): Promise<IAgentScopeHandle> {
+  create(): Promise<AgentContext> {
     throw new Error('not implemented');
   }
-  fork(): Promise<IAgentScopeHandle> {
+  fork(): Promise<AgentContext> {
+    throw new Error('not implemented');
+  }
+  resolve(): never {
+    throw new Error('not implemented');
+  }
+  inspect(): never {
     throw new Error('not implemented');
   }
   remove(): Promise<void> {
     throw new Error('not implemented');
   }
   broadcastPermissionMode(): void {
+    throw new Error('not implemented');
+  }
+  adopt(): AgentContext {
+    throw new Error('not implemented');
+  }
+  attachRuntimes(): void {
     throw new Error('not implemented');
   }
 }
@@ -104,14 +119,14 @@ describe('SessionOutcomeMirror (Session scope)', () => {
   let disposables: DisposableStore;
   let host: ScopedTestHost;
   let session: Scope;
-  let lifecycle: FakeAgentLifecycle;
+  let lifecycle: FakeAgentManager;
   let writes: (SessionMeta['lastTurnReason'])[];
   let touches: boolean[];
   let failNextWrite: boolean;
 
   beforeEach(() => {
     _clearScopedRegistryForTests();
-    registerScopedService(LifecycleScope.Session, IAgentLifecycleService, FakeAgentLifecycle, ScopeActivation.OnDemand, 'agentLifecycle');
+    registerScopedService(LifecycleScope.Session, IAgentManager, FakeAgentManager, ScopeActivation.OnDemand, 'agentManager');
     registerScopedService(LifecycleScope.Session, ISessionOutcomeMirror, SessionOutcomeMirror, ScopeActivation.OnScopeCreated, 'sessionActivity');
 
     writes = [];
@@ -137,7 +152,7 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     session = host.child(LifecycleScope.Session, 'session-a', [
       stubPair(ISessionMetadata, metadata as unknown as ISessionMetadata),
     ]);
-    lifecycle = session.accessor.get(IAgentLifecycleService) as unknown as FakeAgentLifecycle;
+    lifecycle = session.accessor.get(IAgentManager) as unknown as FakeAgentManager;
     session.accessor.get(ISessionOutcomeMirror);
   });
 
@@ -204,7 +219,7 @@ describe('SessionOutcomeMirror (Session scope)', () => {
         },
       } as unknown as ISessionMetadata),
     ]);
-    const secondLifecycle = second.accessor.get(IAgentLifecycleService) as unknown as FakeAgentLifecycle;
+    const secondLifecycle = second.accessor.get(IAgentManager) as unknown as FakeAgentManager;
     second.accessor.get(ISessionOutcomeMirror);
     secondLifecycle.addMain();
     await tick();

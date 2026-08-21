@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import {
   type Event2,
   IEventBus,
-  IAgentLifecycleService,
+  IAgentManager,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -137,8 +137,8 @@ describe('server-v2 /api/v1/ws resync', () => {
   async function ensureMainAgent(sessionId: string): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     expect(session).toBeDefined();
-    const agents = session!.accessor.get(IAgentLifecycleService);
-    if (agents.findAgentHandle('main') === undefined) {
+    const agents = session!.accessor.get(IAgentManager);
+    if (agents.handleOf('main') === undefined) {
       await agents.create({ agentId: 'main' });
     }
   }
@@ -150,8 +150,8 @@ describe('server-v2 /api/v1/ws resync', () => {
   function emitAgentEvent(sessionId: string, event: Event2<any>): void {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     expect(session).toBeDefined();
-    const agents = session!.accessor.get(IAgentLifecycleService);
-    const main = agents.findAgentHandle('main');
+    const agents = session!.accessor.get(IAgentManager);
+    const main = agents.handleOf('main');
     expect(main).toBeDefined();
     main!.accessor.get(IEventBus).publish(event);
   }
@@ -250,8 +250,9 @@ describe('server-v2 /api/v1/ws resync', () => {
 
     const session = getLiveSessionById(server!.core.accessor, sid);
     expect(session).toBeDefined();
-    const agents = session!.accessor.get(IAgentLifecycleService);
-    const sub = await agents.create({ agentId: 'agent-0' });
+    const agents = session!.accessor.get(IAgentManager);
+    await agents.create({ agentId: 'agent-0' });
+    const sub = agents.handleOf('agent-0')!;
 
     const c = await openConn(wsUrl, server!.authTokenService.getToken());
     await c.next((f) => f.type === 'server_hello');
@@ -266,7 +267,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     });
     await c.next((f) => f.type === 'ack' && f.id === 'h1');
 
-    agents.findAgentHandle('main')!
+    agents.handleOf('main')!
       .accessor.get(IEventBus)
       .publish({ type: 'turn.ended', turnId: 1 } as unknown as Event2<any>);
     sub.accessor

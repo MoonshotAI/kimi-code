@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  IAgentLifecycleService,
+  IAgentManager,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import {
@@ -84,8 +84,8 @@ describe('server-v2 /api/v1 skills', () => {
   async function createMainAgent(sessionId: string): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
-    const agents = session.accessor.get(IAgentLifecycleService);
-    if (agents.findAgentHandle('main') === undefined) await agents.create({ agentId: 'main' });
+    const agents = session.accessor.get(IAgentManager);
+    if (agents.handleOf('main') === undefined) await agents.create({ agentId: 'main' });
   }
 
   async function registerWorkspace(root: string): Promise<string> {

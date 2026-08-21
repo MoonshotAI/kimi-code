@@ -20,7 +20,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   IAgentGoalService,
-  IAgentLifecycleService,
+  IAgentManager,
   IAgentPermissionModeService,
   IAgentProfileService,
   IAgentPromptService,
@@ -356,7 +356,8 @@ async function resolveNativeSession(
       throw new Error(`Session "${opts.session}" was created under a different directory.`);
     }
     const session = await resumeById(opts.session);
-    const agent = await ensureMainAgent(session);
+    const agentContext = await ensureMainAgent(session);
+    const agent = session.accessor.get(IAgentManager).handleOf(agentContext.agentId)!;
     const profile = agent.accessor.get(IAgentProfileService);
     await applyModelOverride(profile, opts.model);
     const currentModel = profile.getModel();
@@ -375,7 +376,8 @@ async function resolveNativeSession(
     const previous = page.items.find((summary) => summary.cwd === workDir);
     if (previous !== undefined) {
       const session = await resumeById(previous.id);
-      const agent = await ensureMainAgent(session);
+      const agentContext = await ensureMainAgent(session);
+      const agent = session.accessor.get(IAgentManager).handleOf(agentContext.agentId)!;
       const profile = agent.accessor.get(IAgentProfileService);
       await applyModelOverride(profile, opts.model);
       const currentModel = profile.getModel();
@@ -400,7 +402,8 @@ async function resolveNativeSession(
       model,
     },
   });
-  const agent = await ensureMainAgent(session);
+  const agentContext = await ensureMainAgent(session);
+  const agent = session.accessor.get(IAgentManager).handleOf(agentContext.agentId)!;
   agent.accessor.get(IAgentPermissionModeService).setMode('auto');
   return {
     session,
@@ -821,7 +824,10 @@ function formatTurnEndingFailure(ending: PrintTurnEnding): string {
 
 function countPendingBackgroundTasks(session: ISessionScopeHandle): number {
   let count = 0;
-  for (const handle of session.accessor.get(IAgentLifecycleService).list()) {
+  const agentManager = session.accessor.get(IAgentManager);
+  for (const agent of agentManager.list()) {
+    const handle = agentManager.handleOf(agent.agentId);
+    if (handle === undefined) continue;
     count += handle.accessor.get(IAgentTaskService).list(true).length;
   }
   return count;
@@ -843,7 +849,10 @@ async function drainBackgroundTasks(
     const batch: Promise<unknown>[] = [];
     const suppressions: Promise<void>[] = [];
     let activeCount = 0;
-    for (const handle of session.accessor.get(IAgentLifecycleService).list()) {
+    const agentManager = session.accessor.get(IAgentManager);
+    for (const agent of agentManager.list()) {
+      const handle = agentManager.handleOf(agent.agentId);
+      if (handle === undefined) continue;
       const taskService = handle.accessor.get(IAgentTaskService);
       for (const task of taskService.list(true)) {
         activeCount++;

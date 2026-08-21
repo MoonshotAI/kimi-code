@@ -1,6 +1,6 @@
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 
-export const AgentLifecycleErrors = {
+export const AgentManagerErrors = {
   codes: {
     AGENT_NOT_FOUND: 'agent.not_found',
     AGENT_ALREADY_EXISTS: 'agent.already_exists',
@@ -12,4 +12,4 @@ export const AgentLifecycleErrors = {
   },
 } as const satisfies ErrorDomain;
 
-registerErrorDomain(AgentLifecycleErrors);
+registerErrorDomain(AgentManagerErrors);

@@ -19,9 +19,9 @@ import {
 } from '#/kosong/provider/provider';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import {
-  IAgentLifecycleService,
+  IAgentManager,
   MAIN_AGENT_ID,
-} from '#/session/agentLifecycle/agentLifecycle';
+} from '#/session/agentManager/agentManager';
 import {
   IAgentTitlePromptSource,
   type TitleDigestExcerpt,
@@ -197,10 +197,8 @@ describe('SessionTitleService', () => {
           accessor: { get: <T>() => promptSource as T },
           dispose: () => undefined,
         };
-        reg.definePartialInstance(IAgentLifecycleService, {
-          get: () => mainAgent,
-          findAgentHandle: () => mainAgent,
-          list: () => [mainAgent],
+        reg.definePartialInstance(IAgentManager, {
+          handleOf: () => mainAgent,
         });
         reg.defineInstance(IEventService, events);
         reg.defineInstance(IProviderService, stubProviderService(providers));

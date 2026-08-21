@@ -13,7 +13,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS } from '#/session/subagent/configSection';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentManager } from '#/session/agentManager/agentManager';
 import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -212,7 +212,7 @@ describe('AgentSwarmService', () => {
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IAgentContextInjectorService, new SyncDescriptor(AgentContextInjectorService));
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
-    ix.stub(IAgentLifecycleService, {});
+    ix.stub(IAgentManager, {});
     ix.stub(ISessionSwarmService, {
       getSwarmItem: async () => undefined,
       run: async () => [],

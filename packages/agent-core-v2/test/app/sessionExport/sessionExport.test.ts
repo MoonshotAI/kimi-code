@@ -29,7 +29,6 @@ import {
 } from '#/_base/di/test';
 import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
-import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { ILogService, type ILogService as LogService } from '#/_base/log/log';
 import { IWireService } from '#/wire/wire';
@@ -49,12 +48,13 @@ import { ISessionManager, type UnguardedSessionLifecycle } from '#/app/sessionMa
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import { Error2 } from '#/errors';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentManager } from '#/session/agentManager/agentManager';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLog } from '../../_base/log/stubs';
 import { stubAgentWire } from '../../wire/stubs';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 const fsOpenHook = vi.hoisted(() => ({
   afterOpen: undefined as ((path: string, handle: FileHandle) => Promise<void>) | undefined,
@@ -938,14 +938,14 @@ function liveSessionHandle(options: {
   readonly agentWire: Pick<ReturnType<typeof stubAgentWire>, 'flush'>;
 }): ISessionScopeHandle {
   const agentHandle = testAgentHandle(options.agentWire);
-  const lifecycle = stubAgentLifecycle([agentHandle]);
+  const lifecycle = stubAgentManager([agentHandle]);
   return {
     id: options.meta.id,
     kind: LifecycleScope.Session,
     accessor: accessorFrom([
       [ISessionMetadata, stubSessionMetadata(options.meta)],
       [ILogService, options.sessionLog],
-      [IAgentLifecycleService, lifecycle],
+      [IAgentManager, lifecycle],
     ]),
     dispose: () => {},
   };
@@ -988,19 +988,29 @@ function stubSessionMetadata(meta: SessionMeta): ISessionMetadata {
   };
 }
 
-function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecycleService {
+function stubAgentManager(agents: readonly IAgentScopeHandle[]): IAgentManager {
   return {
     _serviceBrand: undefined,
     onDidCreate: noopEvent,
     onDidCreateScope: noopEvent,
-    onDidDispose: noopEvent,
-    create: async () => agents[0]!,
-    fork: async () => agents[0]!,
-    get: (context: AgentContext) => agents.find((agent) => agent.id === context.agentId),
-    findAgentHandle: (agentId: string) => agents.find((agent) => agent.id === agentId),
-    list: () => agents,
+    onWillClose: noopEvent,
+    onDidClose: noopEvent,
+    create: async () => stubAgentContext(agents[0]!.id, 1),
+    fork: async () => stubAgentContext(agents[0]!.id, 1),
+    get: (agentId: string) =>
+      agents.some((agent) => agent.id === agentId) ? stubAgentContext(agentId, 1) : undefined,
+    list: () => agents.map((agent) => stubAgentContext(agent.id, 1)),
+    resolve: () => {
+      throw new Error('unexpected resolve');
+    },
+    inspect: () => {
+      throw new Error('unexpected inspect');
+    },
     remove: async () => {},
     broadcastPermissionMode: () => {},
+    handleOf: (agentId: string) => agents.find((agent) => agent.id === agentId),
+    adopt: (handle: IAgentScopeHandle) => stubAgentContext(handle.id, 1),
+    attachRuntimes: () => {},
   };
 }
 function testManifest(sessionId: string): ExportSessionManifest {

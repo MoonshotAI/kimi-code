@@ -17,7 +17,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentManager } from '#/session/agentManager/agentManager';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInitService } from '#/features/sessionInit/sessionInit';
 import { SessionInitService } from '#/features/sessionInit/sessionInitService';
@@ -60,10 +60,8 @@ describe('SessionInitService', () => {
         onWillStartAgentTask: { run: vi.fn(async () => {}) },
       },
       notifyAgentTaskStopped: vi.fn(),
-      get: vi.fn((context: AgentContext) => handles[context.agentId]),
-      findAgentHandle: vi.fn((agentId: string) => handles[agentId]),
-      list: vi.fn(() => Object.values(handles)),
-      create: vi.fn(async () => handles['agent-0']),
+      handleOf: vi.fn((agentId: string) => handles[agentId]),
+      create: vi.fn(async () => stubAgentContext('agent-0', 1)),
       run: vi.fn(async (agent: AgentContext) => ({
         agentId: agent.agentId,
         turn: {},
@@ -84,7 +82,7 @@ describe('SessionInitService', () => {
       id: 'main',
       accessor: {
         get: (id: unknown) => {
-          if (id === IAgentLifecycleService) return lifecycle;
+          if (id === IAgentManager) return lifecycle;
           if (id === ISessionSubagentService) return lifecycle;
           if (id === IAgentProfileService) return profile;
           if (id === IAgentPermissionModeService) return permissionMode;
@@ -122,7 +120,7 @@ describe('SessionInitService', () => {
       },
     };
 
-    ix.stub(IAgentLifecycleService, lifecycle as unknown as IAgentLifecycleService);
+    ix.stub(IAgentManager, lifecycle as unknown as IAgentManager);
     ix.stub(ISessionSubagentService, lifecycle as unknown as ISessionSubagentService);
     ix.stub(IHostFileSystem, {
       _serviceBrand: undefined,
@@ -218,10 +216,10 @@ describe('SessionInitService', () => {
   });
 
   it('throws AGENT_NOT_FOUND when the main agent is missing', async () => {
-    const lifecycle = ix.get(IAgentLifecycleService) as unknown as {
-      list: ReturnType<typeof vi.fn>;
+    const lifecycle = ix.get(IAgentManager) as unknown as {
+      handleOf: ReturnType<typeof vi.fn>;
     };
-    lifecycle.list.mockReturnValue([]);
+    lifecycle.handleOf.mockReturnValue(undefined);
     const svc = ix.get(ISessionInitService);
 
     const error = await svc.generateAgentsMd().catch((e) => e);

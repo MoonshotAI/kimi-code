@@ -19,7 +19,7 @@ import {
   IAgentActivityView,
   type AgentActivityState,
 } from '#/agent/activityView/activityView';
-import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentManager, MAIN_AGENT_ID } from '#/session/agentManager/agentManager';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
@@ -85,30 +85,30 @@ class FakeAgentHandle {
   dispose(): void {}
 }
 
-class FakeAgentLifecycle implements IAgentLifecycleService {
+class FakeAgentManager implements IAgentManager {
   declare readonly _serviceBrand: undefined;
   private readonly createEmitter = new Emitter<AgentContext>();
   private readonly createScopeEmitter = new Emitter<{
     readonly context: AgentContext;
     readonly handle: IAgentScopeHandle;
   }>();
-  private readonly disposeEmitter = new Emitter<AgentContext>();
+  private readonly willCloseEmitter = new Emitter<AgentContext>();
+  private readonly didCloseEmitter = new Emitter<AgentContext>();
   readonly onDidCreate = this.createEmitter.event;
   readonly onDidCreateScope = this.createScopeEmitter.event;
-  readonly onDidDispose = this.disposeEmitter.event;
+  readonly onWillClose = this.willCloseEmitter.event;
+  readonly onDidClose = this.didCloseEmitter.event;
   readonly handles: FakeAgentHandle[] = [];
 
-  list(): readonly IAgentScopeHandle[] {
-    return this.handles as unknown as IAgentScopeHandle[];
+  list(): readonly AgentContext[] {
+    return this.handles.map((handle) => handle.context);
   }
 
-  get(context: AgentContext): IAgentScopeHandle | undefined {
-    return this.handles.find((h) => h.id === context.agentId && h.context === context) as
-      | IAgentScopeHandle
-      | undefined;
+  get(agentId: string): AgentContext | undefined {
+    return this.handles.find((h) => h.id === agentId)?.context;
   }
 
-  findAgentHandle(agentId: string): IAgentScopeHandle | undefined {
+  handleOf(agentId: string): IAgentScopeHandle | undefined {
     return this.handles.find((h) => h.id === agentId) as IAgentScopeHandle | undefined;
   }
 
@@ -125,19 +125,32 @@ class FakeAgentLifecycle implements IAgentLifecycleService {
     const index = this.handles.findIndex((h) => h.id === id);
     if (index < 0) return;
     const [handle] = this.handles.splice(index, 1);
-    this.disposeEmitter.fire(handle!.context);
+    this.willCloseEmitter.fire(handle!.context);
+    this.didCloseEmitter.fire(handle!.context);
   }
 
-  create(): Promise<IAgentScopeHandle> {
+  create(): Promise<AgentContext> {
     throw new Error('not implemented');
   }
-  fork(): Promise<IAgentScopeHandle> {
+  fork(): Promise<AgentContext> {
+    throw new Error('not implemented');
+  }
+  resolve(): never {
+    throw new Error('not implemented');
+  }
+  inspect(): never {
     throw new Error('not implemented');
   }
   remove(): Promise<void> {
     throw new Error('not implemented');
   }
   broadcastPermissionMode(): void {
+    throw new Error('not implemented');
+  }
+  adopt(): AgentContext {
+    throw new Error('not implemented');
+  }
+  attachRuntimes(): void {
     throw new Error('not implemented');
   }
 }
@@ -171,13 +184,13 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
   let disposables: DisposableStore;
   let host: ScopedTestHost;
   let session: Scope;
-  let lifecycle: FakeAgentLifecycle;
+  let lifecycle: FakeAgentManager;
 
   beforeEach(() => {
     _clearScopedRegistryForTests();
     registerScopedService(LifecycleScope.Session, ISessionStateService, SessionStateService, ScopeActivation.OnScopeCreated, 'state');
     registerScopedService(LifecycleScope.Session, ISessionInteractionService, SessionInteractionService, ScopeActivation.OnDemand, 'interaction');
-    registerScopedService(LifecycleScope.Session, IAgentLifecycleService, FakeAgentLifecycle, ScopeActivation.OnDemand, 'agentLifecycle');
+    registerScopedService(LifecycleScope.Session, IAgentManager, FakeAgentManager, ScopeActivation.OnDemand, 'agentManager');
     registerScopedService(LifecycleScope.Session, ISessionActivityView, SessionActivityView, ScopeActivation.OnScopeCreated, 'sessionActivity');
 
     disposables = new DisposableStore();
@@ -185,7 +198,7 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
     session = host.child(LifecycleScope.Session, 'session-a', [
       stubPair(IWorkspaceStateService, new WorkspaceStateService()),
     ]);
-    lifecycle = session.accessor.get(IAgentLifecycleService) as unknown as FakeAgentLifecycle;
+    lifecycle = session.accessor.get(IAgentManager) as unknown as FakeAgentManager;
   });
 
   afterEach(() => {
@@ -215,11 +228,11 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
   });
 
   it('seeds the aggregate from agents already active at construction', () => {
-    const seededLifecycle = new FakeAgentLifecycle();
+    const seededLifecycle = new FakeAgentManager();
     const main = seededLifecycle.addAgent(MAIN_AGENT_ID);
     main.activity = turnActive(1);
     const seededSession = host.child(LifecycleScope.Session, 'session-seeded', [
-      stubPair(IAgentLifecycleService, seededLifecycle),
+      stubPair(IAgentManager, seededLifecycle),
       stubPair(IWorkspaceStateService, new WorkspaceStateService()),
     ]);
     const view = seededSession.accessor.get(ISessionActivityView);

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentRuntimeHostService } from '#/agent/runtime/agentRuntime';
+import { IAgentManager } from '#/session/agentManager/agentManager';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { ContextApplyCompaction } from '#/agent/contextMemory/contextEvents';
@@ -241,9 +241,9 @@ describe('AgentConversationUndoService', () => {
   it('restores todos to their pre-turn value', async () => {
     setup();
     const undo = ctx.get(IAgentConversationUndoService);
-    const runtime = ctx.get(IAgentRuntimeHostService);
+    const manager = ctx.get(IAgentManager);
     const agent = ctx.get(IAgentScopeContext).agentContext;
-    expect(runtime.inspect(agent).contributions[0]).toMatchObject({
+    expect(manager.inspect(agent).contributions[0]).toMatchObject({
       id: 'todo',
       status: 'materialized',
       state: [],

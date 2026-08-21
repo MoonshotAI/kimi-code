@@ -26,7 +26,7 @@ import { OrderedHookSlot } from '#/hooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { MAIN_AGENT_ID } from '#/session/agentManager/agentManager';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';

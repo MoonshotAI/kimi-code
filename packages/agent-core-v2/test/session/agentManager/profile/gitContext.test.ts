@@ -6,7 +6,7 @@ import {
   collectGitContext,
   parseProjectName,
   sanitizeRemoteUrl,
-} from '#/session/agentLifecycle/profile/gitContext';
+} from '#/session/agentManager/profile/gitContext';
 import type { ILogger } from '#/_base/log/log';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 

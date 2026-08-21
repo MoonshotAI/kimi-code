@@ -30,6 +30,7 @@ import {
 } from '#/features/externalHooks/configSection';
 import { IAgentExternalHooksService } from '#/features/externalHooks/agent/agentExternalHooks';
 import { AgentExternalHooksService } from '#/features/externalHooks/agent/agentExternalHooksService';
+import { IAgentExecutionContext, makeAgentExecutionContext } from '#/agent/agentContext/agentExecutionContext';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import {
   IAgentScopeContext,

@@ -15,7 +15,7 @@ import { Service } from '@moonshot-ai/agent-core-v2/_base/di/service';
 import { CommandContribution } from '@moonshot-ai/agent-core-v2/agent/command/commandContribution';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
 import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
-import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
+import { IAgentManager } from '@moonshot-ai/agent-core-v2/session/agentManager/agentManager';
 import { IAgentPromptService, reservePrompt } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
 
 import type { Klient } from '../../src/index.js';
@@ -402,7 +402,8 @@ export function defineKlientConformance(
       });
       const session = getLiveSessionById(target.app.accessor, created.id);
       if (session === undefined) throw new Error('conformance session was not materialized');
-      const main = await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+      await session.accessor.get(IAgentManager).create({ agentId: 'main' });
+      const main = session.accessor.get(IAgentManager).handleOf('main')!;
       const reservation = reservePrompt(main.accessor.get(IAgentPromptService), 'submission-1');
       try {
         await expect(

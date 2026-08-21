@@ -15,7 +15,7 @@ import type {
 import {
   IAgentActivityView,
   LifecycleScope,
-  IAgentLifecycleService,
+  IAgentManager,
   IAgentProfileService,
   IAgentScopeContext,
   IEventBus,
@@ -132,8 +132,8 @@ class FakeLifecycle {
   private readonly turnCounters = new Map<string, { dispose(): void }>();
   private createHandlers: Array<(context: AgentContext) => void> = [];
   private disposeHandlers: Array<(context: AgentContext) => void> = [];
-  list(): readonly FakeAgentHandle[] {
-    return this.handles;
+  list(): readonly AgentContext[] {
+    return this.handles.map((handle) => handle.context);
   }
   get(context: AgentContext): FakeAgentHandle | undefined {
     return this.handles.find((h) => h.id === context.agentId);
@@ -141,14 +141,14 @@ class FakeLifecycle {
   getHandle(id: string): FakeAgentHandle | undefined {
     return this.handles.find((h) => h.id === id);
   }
-  findAgentHandle(agentId: string): FakeAgentHandle | undefined {
+  handleOf(agentId: string): FakeAgentHandle | undefined {
     return this.handles.find((h) => h.id === agentId);
   }
   onDidCreate(h: (context: AgentContext) => void) {
     this.createHandlers.push(h);
     return { dispose: () => {} };
   }
-  onDidDispose(h: (context: AgentContext) => void) {
+  onDidClose(h: (context: AgentContext) => void) {
     this.disposeHandlers.push(h);
     return { dispose: () => {} };
   }
@@ -224,7 +224,7 @@ class FakeSessionActivityView {
       if (handle !== undefined) this.attach(handle as unknown as FakeAgentHandle);
       this.recompute('agent_lifecycle');
     });
-    lifecycle.onDidDispose((context) => {
+    lifecycle.onDidClose((context) => {
       const agentId = context.agentId;
       this.busSubscriptions.get(agentId)?.dispose();
       this.busSubscriptions.delete(agentId);
@@ -343,7 +343,7 @@ function makeCore(
     if (lifecycle === undefined) return undefined;
     const sessionAccessor = {
       get: (t: unknown) => {
-        if (t === IAgentLifecycleService) return lifecycle;
+        if (t === IAgentManager) return lifecycle;
         if (t === ISessionInteractionService) return lifecycle.interactions;
         if (t === ISessionActivityView) return lifecycle.workView;
         if (t === ISessionMetadata) return { read: async () => ({ agents: metaAgents }) };

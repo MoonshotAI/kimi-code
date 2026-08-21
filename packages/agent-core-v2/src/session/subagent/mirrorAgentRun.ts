@@ -10,7 +10,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { SubagentCreatedEvent } from '#/app/telemetry/events';
 import { Event2 } from '#/app/event/event2';
 import { isAbortError } from '#/_base/utils/abort';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentManager } from '#/session/agentManager/agentManager';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { type AgentRunHandle, ISessionSubagentService } from './subagent';
@@ -96,8 +96,8 @@ export function emitAgentRunSpawned(
   meta: AgentRunSpawnedMeta,
 ): void {
   const childProfile = requester.accessor
-    .get(IAgentLifecycleService)
-    .findAgentHandle(targetAgentId)
+    .get(IAgentManager)
+    .handleOf(targetAgentId)
     ?.accessor.get(IAgentProfileService);
   void requester.accessor.get(IEventDispatcher)?.dispatch(
     new SubagentSpawned({
@@ -134,7 +134,7 @@ export async function mirrorAgentRun(
 ): Promise<{ summary: string; usage?: TokenUsage }> {
   const dispatcher = requester.accessor.get(IEventDispatcher);
   const subagents = requester.accessor.get(ISessionSubagentService);
-  const agentLifecycle = requester.accessor.get(IAgentLifecycleService);
+  const agentManager = requester.accessor.get(IAgentManager);
   if (options.deferStarted !== true) {
     void dispatcher?.dispatch(new SubagentStarted({ subagentId: run.agentId }));
   }
@@ -159,7 +159,7 @@ export async function mirrorAgentRun(
   }
   try {
     const result = await run.completion;
-    const contextTokens = childContextTokens(agentLifecycle, run.agentId);
+    const contextTokens = childContextTokens(agentManager, run.agentId);
     void dispatcher?.dispatch(
       new SubagentCompleted({
         subagentId: run.agentId,
@@ -197,10 +197,10 @@ function errorMessage(error: unknown): string {
 }
 
 function childContextTokens(
-  agentLifecycle: IAgentLifecycleService,
+  agentManager: IAgentManager,
   agentId: string,
 ): number | undefined {
-  const child = agentLifecycle.findAgentHandle(agentId);
+  const child = agentManager.handleOf(agentId);
   if (child === undefined) return undefined;
   const context = tryAgentContextOf(child);
   if (context === undefined) return undefined;

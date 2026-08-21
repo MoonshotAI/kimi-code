@@ -4,8 +4,8 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IEventService } from '#/app/event/event';
 import { ErrorCodes, Error2 } from '#/errors';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentExecutionContext } from '#/agent/agentContext/agentExecutionContext';
+import { MAIN_AGENT_ID } from '#/session/agentManager/agentManager';
 import { expandCommandArguments } from '#/app/plugin/commands';
 import { IPluginService } from '#/app/plugin/plugin';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
@@ -31,7 +31,7 @@ export class AgentPluginCommandService implements IAgentPluginCommandService {
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @IEventService private readonly eventService: IEventService,
     @ISessionContext private readonly sessionContext: ISessionContext,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IAgentExecutionContext private readonly scopeContext: IAgentExecutionContext,
   ) { }
 
   async activate(payload: ActivatePluginCommandPayload): Promise<void> {

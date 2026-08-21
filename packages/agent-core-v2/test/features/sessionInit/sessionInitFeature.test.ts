@@ -20,7 +20,7 @@ import {
   _clearFeatureRecipesForTests,
   registerFeature,
 } from '#/features/featureRegistry';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentManager } from '#/session/agentManager/agentManager';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 
@@ -48,7 +48,7 @@ describe('SessionInitFeature', () => {
   it('withdraws and restores the Session service with the Feature', async () => {
     const host = createScopedTestHost();
     const session = host.child(LifecycleScope.Session, 'session-1', [
-      stubPair(IAgentLifecycleService, {} as IAgentLifecycleService),
+      stubPair(IAgentManager, {} as IAgentManager),
       stubPair(ISessionSubagentService, {} as ISessionSubagentService),
       stubPair(IHostFileSystem, {} as IHostFileSystem),
       stubPair(IHostEnvironment, {} as IHostEnvironment),

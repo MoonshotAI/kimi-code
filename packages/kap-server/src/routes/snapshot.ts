@@ -1,5 +1,4 @@
 import {
-  ensureMainAgent,
   IAgentPromptService,
   ISessionContext,
   ISessionInteractionService,
@@ -12,6 +11,7 @@ import {
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { ensureMainAgent } from '../transport/mainAgent';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {

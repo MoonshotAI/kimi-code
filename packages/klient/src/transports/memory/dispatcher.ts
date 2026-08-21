@@ -19,8 +19,8 @@ import type { IAgentScopeHandle } from '@moonshot-ai/agent-core-v2/_base/di/scop
 import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2/workspace/workspaceInstance/workspaceInstanceManager';
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
-import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
-import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
+import { IAgentManager } from '@moonshot-ai/agent-core-v2/session/agentManager/agentManager';
+import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentManager/mainAgent';
 import { agentContextOf } from '@moonshot-ai/agent-core-v2/agent/scopeContext/scopeContext';
 import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 import { IEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
@@ -121,9 +121,14 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     }
     if (scope.agentId === undefined) return { kind: 'session', like: session };
     if (scope.agentId === 'main') {
-      return { kind: 'agent', like: await ensureMainAgent(session) };
+      const context = await ensureMainAgent(session);
+      const handle = session.accessor.get(IAgentManager).handleOf(context.agentId);
+      if (handle === undefined) {
+        throw new RPCError(NOT_FOUND, 'main agent was not found');
+      }
+      return { kind: 'agent', like: handle };
     }
-    const agent = session.accessor.get(IAgentLifecycleService).findAgentHandle(scope.agentId);
+    const agent = session.accessor.get(IAgentManager).handleOf(scope.agentId);
     if (agent === undefined) {
       throw new RPCError(NOT_FOUND, `agent not found: ${scope.agentId}`);
     }

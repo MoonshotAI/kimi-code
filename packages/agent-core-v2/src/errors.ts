@@ -1,5 +1,5 @@
 import { CoreErrors } from '#/_base/errors/codes';
-import { AgentLifecycleErrors } from '#/session/agentLifecycle/errors';
+import { AgentManagerErrors } from '#/session/agentManager/errors';
 import { AuthErrors } from '#/app/auth/errors';
 import { TaskErrors } from '#/agent/task/errors';
 import { ProtocolErrors } from '#/kosong/protocol/errors';
@@ -37,7 +37,7 @@ export * from '#/_base/errors/errorMessage';
 export * from '#/_base/errors/errors';
 export * from '#/_base/errors/serialize';
 export * from '#/_base/errors/unexpectedError';
-export { AgentLifecycleErrors } from '#/session/agentLifecycle/errors';
+export { AgentManagerErrors } from '#/session/agentManager/errors';
 export { AuthErrors } from '#/app/auth/errors';
 export { TaskErrors } from '#/agent/task/errors';
 export { ProtocolErrors } from '#/kosong/protocol/errors';
@@ -72,7 +72,7 @@ export { StateErrors } from '#/state/errors';
 
 export const ErrorCodes = {
   ...CoreErrors.codes,
-  ...AgentLifecycleErrors.codes,
+  ...AgentManagerErrors.codes,
   ...AuthErrors.codes,
   ...TaskErrors.codes,
   ...ProtocolErrors.codes,

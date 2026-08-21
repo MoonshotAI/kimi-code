@@ -2,7 +2,11 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { toDisposable } from '#/_base/di/lifecycle';
 import type { ServiceRegistration, TestInstantiationService } from '#/_base/di/test';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import { IAgentRuntimeHostService } from '#/agent/runtime/agentRuntime';
+import {
+  IAgentExecutionContext,
+  makeAgentExecutionContext,
+} from '#/agent/agentContext/agentExecutionContext';
+import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentScopeContext, makeAgentScopeContext, type IAgentScopeContext as AgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -10,6 +14,8 @@ import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
+import { AgentTodo } from '#/session/todo/sessionTodo';
+import { TodoAgentRuntimeDefinition } from '#/session/todo/todoAgentRuntime';
 import {
   IWireService,
   type IWireService as AgentWire,
@@ -46,21 +52,6 @@ const noopEventBus: IEventBus = {
   subscribe: () => toDisposable(() => {}),
 };
 
-const noopRuntimeHost: IAgentRuntimeHostService = {
-  _serviceBrand: undefined,
-  resolve: () => { throw new Error('runtime unavailable'); },
-  participants: () => [],
-  snapshot: (agent) => ({
-    identity: { agentId: agent.agentId, generation: agent.generation },
-    contributions: [],
-  }),
-  inspect: (agent) => ({
-    identity: { agentId: agent.agentId, generation: agent.generation },
-    contributions: [],
-  }),
-  disposeAgent: () => {},
-};
-
 export function testWireScope(scope: string, journal: string): string {
   return `${scope}/${journal}`;
 }
@@ -76,6 +67,10 @@ export function registerTestAgentWire(
 ): AgentWire {
   const agentScope = stubAgentScopeContext(scope);
   ix.stub(IAgentScopeContext, agentScope);
+  ix.stub(IAgentExecutionContext, makeAgentExecutionContext(
+    agentScope.agentContext,
+    (capability) => { throw new Error(`Agent runtime '${capability.id}' is unavailable`); },
+  ));
   ix.set(IAppendLogStore, dependencies.log ?? noopLog);
   ix.set(IAgentBlobService, dependencies.blob ?? noopBlob);
   ix.set(IEventBus, dependencies.eventBus ?? noopEventBus);
@@ -91,12 +86,16 @@ export function registerTestAgentWireServices(
   registration: ServiceRegistration,
   scope = 'wire/test-agent',
 ): void {
-  registration.defineInstance(IAgentScopeContext, stubAgentScopeContext(scope));
+  const agentScope = stubAgentScopeContext(scope);
+  registration.defineInstance(IAgentScopeContext, agentScope);
+  registration.defineInstance(IAgentExecutionContext, makeAgentExecutionContext(
+    agentScope.agentContext,
+    (capability) => { throw new Error(`Agent runtime '${capability.id}' is unavailable`); },
+  ));
   registration.defineInstance(IAppendLogStore, noopLog);
   registration.defineInstance(IAgentBlobService, noopBlob);
   registration.defineInstance(IEventBus, noopEventBus);
   registration.defineInstance(IAgentStateService, new AgentStateService());
-  registration.defineInstance(IAgentRuntimeHostService, noopRuntimeHost);
   registration.define(IWireService, WireService);
   registration.define(IEventDispatcher, EventDispatcherService);
 }
@@ -106,10 +105,24 @@ export function registerTestEventDispatcher(ix: TestInstantiationService): IEven
   if (previous !== undefined) {
     ix.set(IAgentStateService, previous as IAgentStateService);
   }
-  const runtimeHost = ix.set(IAgentRuntimeHostService, noopRuntimeHost);
-  if (runtimeHost !== undefined) ix.set(IAgentRuntimeHostService, runtimeHost as IAgentRuntimeHostService);
   ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
   return ix.get(IEventDispatcher);
+}
+
+export function attachTodoRuntime(
+  ix: TestInstantiationService,
+  dispatcher: IEventDispatcher,
+): AgentRuntimeSet {
+  const agent = ix.get(IAgentScopeContext).agentContext;
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  runtimes.apply({
+    capability: AgentTodo,
+    definition: TodoAgentRuntimeDefinition,
+    generation: 1,
+    active: true,
+  });
+  runtimes.attachDurable(dispatcher);
+  return runtimes;
 }
 
 export async function restoreTestEventDispatcher(

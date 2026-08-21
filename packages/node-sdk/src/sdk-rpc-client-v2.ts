@@ -181,7 +181,7 @@ import {
   IAgentFullCompactionService,
   IAgentGoalService,
   IAgentPluginService,
-  IAgentLifecycleService,
+  IAgentManager,
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
@@ -211,7 +211,7 @@ import {
   ISessionMcpHandle,
   ISessionMetadata,
   ISessionSkillCatalog,
-  IAgentTodo,
+  AgentTodo,
   ISessionWorkspaceContext,
   ITelemetryService,
   IWorkspaceAliases,
@@ -1082,10 +1082,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       for (const agentId of subagentIds) {
         try {
           // `create` is create-or-get and cold-restores the persisted wire.
-          const agent = await handle.accessor.get(IAgentLifecycleService).create({ agentId });
+          await handle.accessor.get(IAgentManager).create({ agentId });
           agents[agentId] = await this.resumedAgentState(
             handle,
-            agent,
+            handle.accessor.get(IAgentManager).handleOf(agentId)!,
             'sub',
             replay.replayTurnLimit,
           );
@@ -1478,8 +1478,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return this.runSessionAccess(sessionId, async () => {
       const live = this.liveSession(sessionId);
       if (live !== undefined) {
-        for (const agent of live.accessor.get(IAgentLifecycleService).list()) {
-          if (agent.accessor.get(IAgentActivityView).state().turn !== undefined) {
+        const agentManager = live.accessor.get(IAgentManager);
+        for (const agent of agentManager.list()) {
+          const agentHandle = agentManager.handleOf(agent.agentId);
+          if (agentHandle === undefined) continue;
+          if (agentHandle.accessor.get(IAgentActivityView).state().turn !== undefined) {
             throw new KimiError(
               ErrorCodes.TURN_AGENT_BUSY,
               `Session "${sessionId}" cannot be reloaded while a turn is running`,
@@ -1499,7 +1502,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       }
       const handle = await resumeSessionById(this.engineAccessor, sessionId);
       if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
-      const main = handle.accessor.get(IAgentLifecycleService).findAgentHandle(MAIN_AGENT_ID);
+      const main = handle.accessor.get(IAgentManager).handleOf(MAIN_AGENT_ID);
       await main?.accessor.get(IAgentPluginService).refreshSessionStart();
       this.wireSession(handle);
       return this.resumedSessionSummary(handle);
@@ -1521,8 +1524,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           sessions.map(async (session) => {
             if (session.id === excludedSessionId) return;
             const main = session.accessor
-              .get(IAgentLifecycleService)
-              .findAgentHandle(MAIN_AGENT_ID);
+              .get(IAgentManager)
+              .handleOf(MAIN_AGENT_ID);
             if (main === undefined) return;
             await main.accessor.get(IAgentPluginService).refreshSessionStart();
           }),
@@ -1632,7 +1635,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     binding?: { readonly model?: string; readonly thinking?: string },
   ): Promise<IAgentScopeHandle> {
     await this.modelReady;
-    const agent = await ensureMainAgent(session);
+    const context = await ensureMainAgent(session);
+    const agent = session.accessor.get(IAgentManager).handleOf(context.agentId);
+    if (agent === undefined) {
+      throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
+    }
     const profile = agent.accessor.get(IAgentProfileService);
     if (binding !== undefined || profile.data().profileName === undefined) {
       try {
@@ -1660,7 +1667,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const session = this.requireLiveSession(sessionId);
     const agentId = this.interactiveAgentId;
     if (agentId === MAIN_AGENT_ID) return this.materializeMainAgent(session);
-    const agent = session.accessor.get(IAgentLifecycleService).findAgentHandle(agentId);
+    const agent = session.accessor.get(IAgentManager).handleOf(agentId);
     if (agent === undefined) {
       throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agentId}" was not found`);
     }
@@ -1851,9 +1858,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async getTodos(input: SessionIdRpcInput): Promise<readonly SessionTodoItem[]> {
     const session = this.requireLiveSession(input.sessionId);
-    const main = session.accessor.get(IAgentLifecycleService).findAgentHandle(MAIN_AGENT_ID);
+    const agents = session.accessor.get(IAgentManager);
+    const main = agents.get(MAIN_AGENT_ID);
     if (main === undefined) return [];
-    const todos = main.accessor.get(IAgentTodo).get();
+    const todos = agents.resolve(main, AgentTodo).get();
     return todos.map((todo) => ({ title: todo.title, status: todo.status }));
   }
 
@@ -2313,8 +2321,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       const batch: Promise<unknown>[] = [];
       const suppressions: Promise<void>[] = [];
       let activeCount = 0;
-      for (const agent of session.accessor.get(IAgentLifecycleService).list()) {
-        const tasks = agent.accessor.get(IAgentTaskService);
+      const agentManager = session.accessor.get(IAgentManager);
+      for (const agent of agentManager.list()) {
+        const agentHandle = agentManager.handleOf(agent.agentId);
+        if (agentHandle === undefined) continue;
+        const tasks = agentHandle.accessor.get(IAgentTaskService);
         for (const task of tasks.list(true)) {
           activeCount++;
           if (seen.has(task.taskId)) continue;
@@ -2341,8 +2352,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /** v1's `countActiveBackgroundTasks`: active tasks across every live agent. */
   private countActiveBackgroundTasks(session: ISessionScopeHandle): number {
     let count = 0;
-    for (const agent of session.accessor.get(IAgentLifecycleService).list()) {
-      count += agent.accessor.get(IAgentTaskService).list(true).length;
+    const agentManager = session.accessor.get(IAgentManager);
+    for (const agent of agentManager.list()) {
+      const agentHandle = agentManager.handleOf(agent.agentId);
+      if (agentHandle === undefined) continue;
+      count += agentHandle.accessor.get(IAgentTaskService).list(true).length;
     }
     return count;
   }

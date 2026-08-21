@@ -61,9 +61,9 @@ function setup() {
   const binding = new AgentRuntimeBindingService(
     {
       _serviceBrand: undefined,
+      agent: stubAgentContext('main', 1),
       agentId: 'main',
-      agentContext: stubAgentContext('main', 1),
-      scope: (subKey?: string) => subKey ?? '',
+      resolve: () => { throw new Error('Unexpected runtime capability resolve'); },
     },
     state,
     { _serviceBrand: undefined, binding: { workspaceId: 'workspace', runtimeId: 'local' } },

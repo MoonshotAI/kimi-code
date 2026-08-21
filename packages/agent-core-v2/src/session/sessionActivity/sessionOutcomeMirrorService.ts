@@ -6,9 +6,9 @@ import { AgentActivityUpdated } from '#/agent/activityView/activityView';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import {
-  IAgentLifecycleService,
+  IAgentManager,
   MAIN_AGENT_ID,
-} from '#/session/agentLifecycle/agentLifecycle';
+} from '#/session/agentManager/agentManager';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import type { SessionTurnOutcome } from './sessionActivity';
@@ -23,7 +23,7 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
   private mainSubscription: DisposableStore | undefined;
 
   constructor(
-    @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
+    @IAgentManager private readonly agents: IAgentManager,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
   ) {
     super();
@@ -37,7 +37,7 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
     this._register(this.agents.onDidCreate((agent) => {
       if (agent.agentId === MAIN_AGENT_ID) this.attachMain();
     }));
-    this._register(this.agents.onDidDispose((agent) => {
+    this._register(this.agents.onDidClose((agent) => {
       if (agent.agentId !== MAIN_AGENT_ID) return;
       this.mainSubscription?.dispose();
       this.mainSubscription = undefined;
@@ -52,7 +52,7 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
 
   private attachMain(): void {
     if (this.mainSubscription !== undefined) return;
-    const bus = this.agents.findAgentHandle(MAIN_AGENT_ID)?.accessor.get(IEventBus) as
+    const bus = this.agents.handleOf(MAIN_AGENT_ID)?.accessor.get(IEventBus) as
       | IEventBus
       | undefined;
     if (bus === undefined) return;

@@ -15,7 +15,7 @@ import {
   type IOAuthService as IOAuthServiceType,
   IAgentConversationUndoService,
   IAgentGoalService,
-  IAgentLifecycleService,
+  IAgentManager,
   IEventBus,
   IEventService,
   ISessionCronService,
@@ -290,7 +290,7 @@ describe('server-v2 /api/v1/sessions', () => {
     });
     const session = getLiveSessionById((server as RunningServer).core.accessor, id);
     if (session === undefined) throw new Error('expected a live session');
-    const agent = session.accessor.get(IAgentLifecycleService).findAgentHandle(MAIN_AGENT_ID);
+    const agent = session.accessor.get(IAgentManager).handleOf(MAIN_AGENT_ID);
     if (agent === undefined) throw new Error('expected a live main agent');
 
     const eventBus = agent.accessor.get(IEventBus);
@@ -823,9 +823,10 @@ describe('server-v2 /api/v1/sessions', () => {
     });
     const session = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id);
     if (session === undefined) throw new Error('expected live session');
-    const agent = await session.accessor
-      .get(IAgentLifecycleService)
+    await session.accessor
+      .get(IAgentManager)
       .create({ agentId: MAIN_AGENT_ID });
+    const agent = session.accessor.get(IAgentManager).handleOf(MAIN_AGENT_ID)!;
     const undo = vi
       .spyOn(agent.accessor.get(IAgentConversationUndoService), 'undo')
       .mockRejectedValue(new Error2(ErrorCodes.SESSION_BUSY, 'session is busy'));
@@ -924,7 +925,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const parentId = parent.body.data.id;
     const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
     expect(session).toBeDefined();
-    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    await session!.accessor.get(IAgentManager).create({ agentId: MAIN_AGENT_ID });
     const cron = session!.accessor.get(ISessionCronService);
     const task = cron.addTask({ cron: '0 9 * * *', prompt: 'fork me', recurring: true });
 
@@ -948,7 +949,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const parentId = parent.body.data.id;
     const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
     expect(session).toBeDefined();
-    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    await session!.accessor.get(IAgentManager).create({ agentId: MAIN_AGENT_ID });
     const task = session!.accessor
       .get(ISessionCronService)
       .addTask({ cron: '0 9 * * *', prompt: 'restart me', recurring: true });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { getAgentProfileContributions } from '#/app/agentProfileCatalog/contribution';
-import '#/session/agentLifecycle/profile/profiles';
+import '#/session/agentManager/profile/profiles';
 
 function profile(name: string) {
   const found = getAgentProfileContributions().find((p) => p.name === name);

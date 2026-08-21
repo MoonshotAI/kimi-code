@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  IAgentLifecycleService,
+  IAgentManager,
   IAgentLoopService,
   IAgentScopeContext,
   IAgentTaskService,
@@ -1921,14 +1921,11 @@ describe('bindSessionTranscript', () => {
   class FakeAgents {
     private readonly handles = new Map<string, FakeAgentHandle>();
     private readonly createHandlers = new Set<(context: AgentContext) => void>();
-    private readonly disposeHandlers = new Set<(context: AgentContext) => void>();
-    list(): FakeAgentHandle[] {
-      return [...this.handles.values()];
+    private readonly closeHandlers = new Set<(context: AgentContext) => void>();
+    list(): AgentContext[] {
+      return [...this.handles.values()].map((handle) => handle.context);
     }
-    get(context: AgentContext): FakeAgentHandle | undefined {
-      return this.handles.get(context.agentId);
-    }
-    findAgentHandle(agentId: string): FakeAgentHandle | undefined {
+    handleOf(agentId: string): FakeAgentHandle | undefined {
       return this.handles.get(agentId);
     }
     byId(id: string): FakeAgentHandle | undefined {
@@ -1938,9 +1935,9 @@ describe('bindSessionTranscript', () => {
       this.createHandlers.add(cb);
       return { dispose: () => this.createHandlers.delete(cb) };
     }
-    onDidDispose(cb: (context: AgentContext) => void): { dispose: () => void } {
-      this.disposeHandlers.add(cb);
-      return { dispose: () => this.disposeHandlers.delete(cb) };
+    onDidClose(cb: (context: AgentContext) => void): { dispose: () => void } {
+      this.closeHandlers.add(cb);
+      return { dispose: () => this.closeHandlers.delete(cb) };
     }
     add(id: string, opts?: { loopStatus?: unknown; tasks?: readonly unknown[] }): FakeAgentHandle {
       const bus = new FakeBus();
@@ -1975,7 +1972,7 @@ describe('bindSessionTranscript', () => {
       const removed = this.handles.get(id);
       this.handles.delete(id);
       if (removed !== undefined) {
-        for (const cb of this.disposeHandlers) cb(removed.context);
+        for (const cb of this.closeHandlers) cb(removed.context);
       }
     }
   }
@@ -1987,13 +1984,13 @@ describe('bindSessionTranscript', () => {
     return {
       accessor: {
         get: (token: unknown) => {
-          if (token === IAgentLifecycleService) {
+          if (token === IAgentManager) {
             return (
               agents ?? {
                 list: () => [],
-                findAgentHandle: () => undefined,
+                handleOf: () => undefined,
                 onDidCreate: () => ({ dispose: () => undefined }),
-                onDidDispose: () => ({ dispose: () => undefined }),
+                onDidClose: () => ({ dispose: () => undefined }),
               }
             );
           }

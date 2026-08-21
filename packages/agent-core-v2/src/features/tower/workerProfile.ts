@@ -7,7 +7,7 @@ import {
   skillActiveFor,
   TASK_AGENT_ROLE_PREFIX,
 } from '#/app/agentProfileCatalog/profile-shared';
-import SUMMARY_CONTINUATION_PROMPT from '../../session/agentLifecycle/profile/summary-continuation.md?raw';
+import SUMMARY_CONTINUATION_PROMPT from '../../session/agentManager/profile/summary-continuation.md?raw';
 
 import { TOWER_WORKER_PROFILE } from './tower';
 import TOWER_WORKER_ROLE_OVERLAY from './tower-worker-overlay.md?raw';
