@@ -33,6 +33,7 @@ import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { IModelCatalog } from '#/kosong/model/catalog';
 import { IModelService } from '#/kosong/model/model';
+import { IProviderService } from '#/kosong/provider/provider';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
 import { IHostClock } from '#/os/interface/hostClock';
@@ -373,6 +374,10 @@ describe('AgentLifecycleService', () => {
       onDidChangeModels: Event.None,
       onDidChangeDefaultModel: Event.None,
     } as unknown as IModelService);
+    ix.stub(IProviderService, {
+      _serviceBrand: undefined,
+      onDidChangeProviders: Event.None,
+    } as unknown as IProviderService);
     ix.stub(IFlagService, stubFlag());
     ix.stub(IProtocolAdapterRegistry, {
       _serviceBrand: undefined,

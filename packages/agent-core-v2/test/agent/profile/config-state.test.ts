@@ -431,6 +431,89 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
         }),
       });
     });
+    await vi.waitFor(() => {
+      const statuses = ctx.allEvents.filter((event) => event.event === 'agent.status.updated');
+      expect(statuses.at(-1)?.args).toMatchObject({ thinkingEffort: 'ultra' });
+    });
+  });
+
+  it('warns once when a provider-only reload changes the inferred effort list', async () => {
+    kimiConfig = {
+      providers: {
+        compat: { type: 'openai', apiKey: 'test-key', baseUrl: 'https://api.example.test/v1' },
+      },
+      models: {
+        'compat/claude': {
+          provider: 'compat',
+          model: 'joint-claude-custom',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+        },
+      },
+    };
+    profile.update({ modelAlias: 'compat/claude', thinkingLevel: 'ultra' });
+    expect(profile.data().thinkingLevel).toBe('ultra');
+    expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+
+    kimiConfig = {
+      ...kimiConfig,
+      providers: {
+        compat: { type: 'anthropic', apiKey: 'test-key', baseUrl: 'https://api.example.test/v1' },
+      },
+    };
+
+    await vi.waitFor(() => {
+      expect(profile.data().thinkingLevel).toBe('high');
+    });
+    await vi.waitFor(() => {
+      expect(ctx.allEvents).toContainEqual({
+        type: '[rpc]',
+        event: 'warning',
+        args: expect.objectContaining({
+          code: 'thinking-effort-not-listed',
+          message:
+            'Thinking effort "ultra" is not listed for model "joint-claude-custom" (known: low, medium, high, xhigh, max). Falling back to the model\'s default effort "high".',
+        }),
+      });
+    });
+
+    kimiConfig = {
+      providers: {
+        compat: { type: 'anthropic', apiKey: 'test-key', baseUrl: 'https://api.example.test/v2' },
+      },
+      models: {
+        'compat/claude': {
+          provider: 'compat',
+          model: 'joint-claude-custom',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high'],
+        },
+      },
+    };
+
+    await vi.waitFor(() => {
+      expect(profile.data().thinkingLevel).toBe('high');
+    });
+    await vi.waitFor(() => {
+      expect(ctx.allEvents).toContainEqual({
+        type: '[rpc]',
+        event: 'warning',
+        args: expect.objectContaining({
+          code: 'thinking-effort-not-listed',
+          message:
+            'Thinking effort "ultra" is not listed for model "joint-claude-custom" (known: low, high). Falling back to the model\'s default effort "high".',
+        }),
+      });
+    });
+    for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
+    expect(
+      ctx.allEvents.filter(
+        (event) =>
+          event.event === 'warning' &&
+          (event.args as { code?: string }).code === 'thinking-effort-not-listed',
+      ),
+    ).toHaveLength(2);
   });
 
   it('projects an inherited concrete effort to on when switching to a boolean model', () => {

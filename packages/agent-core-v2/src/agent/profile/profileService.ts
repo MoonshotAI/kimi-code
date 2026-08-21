@@ -6,6 +6,7 @@ import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/kosong/contract/capa
 import { type SamplingOptions, type ThinkingEffort } from '#/kosong/contract/provider';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { IModelService } from '#/kosong/model/model';
+import { IProviderService } from '#/kosong/provider/provider';
 import { type ModelOverrides } from '#/kosong/model/model.types';
 import { type ModelRequestParams } from '#/kosong/model/modelRequester';
 import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
@@ -153,6 +154,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IConfigService private readonly config: IConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IModelService private readonly models: IModelService,
+    @IProviderService private readonly providers: IProviderService,
     @IProtocolAdapterRegistry private readonly protocolAdapters: IProtocolAdapterRegistry,
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @IHostClock private readonly clock: IHostClock,
@@ -201,7 +203,12 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     );
     this._register(
       this.models.onDidChangeModels(() => {
-        this.warnAboutThinkingEffortFallback(this.profileState.thinkingLevel);
+        this.revalidateStoredThinkingEffort();
+      }),
+    );
+    this._register(
+      this.providers.onDidChangeProviders(() => {
+        this.revalidateStoredThinkingEffort();
       }),
     );
     this._register(
@@ -630,10 +637,16 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     );
   }
 
-  private warnAboutThinkingEffortFallback(requested: string | undefined): void {
+  private revalidateStoredThinkingEffort(): void {
+    if (this.warnAboutThinkingEffortFallback(this.profileState.thinkingLevel)) {
+      this.emitStatusUpdated(true);
+    }
+  }
+
+  private warnAboutThinkingEffortFallback(requested: string | undefined): boolean {
     try {
       const model = this.tryResolveRawModel();
-      if (model === undefined) return;
+      if (model === undefined) return false;
       const thinking = this.config.get<ThinkingConfig>(THINKING_SECTION);
       const { effort, fallback } = resolveThinkingEffortForModelWithFallback(
         requested,
@@ -641,22 +654,24 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         model,
         this.strictThinkingValidation(model),
       );
-      if (fallback === undefined) return;
+      if (fallback === undefined) return false;
       const forced = resolveForcedThinkingEffort(
         thinking?.forcedEffort,
         effort,
         drivesThinkingThroughTraits(model.providerType),
       );
-      if (forced !== undefined) return;
+      if (forced !== undefined) return false;
       const efforts = declaredThinkingEfforts(model);
       const knownEfforts = efforts.join(',');
       const code = 'thinking-effort-not-listed';
       const message = `Thinking effort "${fallback.configured}" is not listed for model "${model.name}" (known: ${efforts.join(', ')}). Falling back to the model's default effort "${fallback.resolved}".`;
       const key = [code, model.id, model.name, fallback.configured, knownEfforts].join('\u0000');
-      if (this.emittedThinkingEffortWarnings.has(key)) return;
+      if (this.emittedThinkingEffortWarnings.has(key)) return false;
       this.emittedThinkingEffortWarnings.add(key);
       void this.dispatcher.dispatch(new WarningIssued({ agentId: this.scopeContext.agentId, code, message }));
+      return true;
     } catch {
+      return false;
     }
   }
 
