@@ -1581,10 +1581,15 @@ let wmResizeObserver: ResizeObserver | null = null;
 
 function syncWmIndent(): void {
   const el = wmPillRef.value;
+  // On touch devices the pill gets its own lane above the text instead of
+  // floating over the first line (the hover:none rules reserve the ring's
+  // footprint on top of the input row), so no indent reserve is needed —
+  // the pill never overlaps a line box there.
+  const touchLane = typeof window.matchMedia === 'function' && window.matchMedia('(hover: none)').matches;
   // Indent = pill width + the --space-1-5 gap − the --space-05 the pill is
   // pulled left (.wm-pill's margin-left) — calc keeps the tokens in the
   // geometry, so a scale change moves the first line's room with it.
-  wmIndent.value = el ? `calc(${el.offsetWidth}px + var(--space-1-5) - var(--space-05))` : '';
+  wmIndent.value = el && !touchLane ? `calc(${el.offsetWidth}px + var(--space-1-5) - var(--space-05))` : '';
 }
 
 watch(
@@ -1735,20 +1740,33 @@ const permIcon = computed<IconName>(() => permInfo.value?.icon ?? 'hand');
 // row where the model name is the ONLY yielding element: the left cluster
 // (attach / permission / swarm) never crushes — under pressure its pills flip
 // straight from full text to icon circles. A single computed verdict drives
-// every stage change: the valve (model name) measured crushed below the
-// readability floor. Stage 0→1 flips the label pills to icons; the freed room
-// lets the name recover on its own (pure CSS). If it still lands below the
-// floor, stage 1→2 flips the model pill to its bare model icon. The way back
-// is hysteresis: a stage only re-opens once the row has grown past its
-// collapse point plus the margin, so the boundary can never flap.
+// the first two stage changes: the valve (model name) measured crushed below
+// the readability floor. Stage 0→1 flips the label pills to icons; the freed
+// room lets the name recover on its own (pure CSS). If it still lands below
+// the floor, stage 1→2 flips the model pill to its bare model icon. Once even
+// the icon row cannot fit (phone-narrow with every optional control aboard),
+// stage 2→3 drops the /compact chip — the one control that merely duplicates
+// a slash command; with the valve element gone by then, that verdict is the
+// right cluster physically overflowing its own box, and with no chip aboard
+// the machine skips straight to stage 4. If it STILL overflows (a working
+// turn adds Stop next to Send), stage 3→4 drops the model pill itself — a
+// bare launcher by then, whose identity and picker both live in the
+// settings sheet. The way back is hysteresis: a stage only re-opens once
+// the row has grown past its collapse point plus the margin, so the boundary
+// can never flap.
 // ---------------------------------------------------------------------------
 const toolbarLabelsCollapsed = ref(false);
 const modelPillCollapsed = ref(false);
+const compactChipGone = ref(false);
+const modelPillGone = ref(false);
 const mpNameRef = ref<HTMLElement | null>(null);
+const toolbarRightRef = ref<HTMLElement | null>(null);
 /* Thresholds live on the card as em-based CSS tokens (see .composer-card) so
    they track the UI font scale and stay out of the script. */
 let labelsCollapsedAt = 0;
 let modelCollapsedAt = 0;
+let compactGoneAt = 0;
+let modelGoneAt = 0;
 
 function toolbarCollapseTokens(): { valveFloor: number; expandMargin: number } {
   const style = toolbarRef.value ? getComputedStyle(toolbarRef.value) : null;
@@ -1756,6 +1774,19 @@ function toolbarCollapseTokens(): { valveFloor: number; expandMargin: number } {
     valveFloor: style ? lengthToken(style, '--composer-valve-floor', 56) : 56,
     expandMargin: style ? lengthToken(style, '--composer-valve-expand-margin', 48) : 48,
   };
+}
+
+/* The stage 3/4 verdict: the right cluster is justify-end, so when its rigid
+   children no longer fit, its rendered content spills past the box's left
+   edge. Probe the leaf controls directly — box-less wrappers (display:
+   contents tooltips) and display:none children have no rect of their own. */
+function rightClusterOverflows(right: HTMLElement): boolean {
+  const boxLeft = right.getBoundingClientRect().left;
+  for (const el of right.querySelectorAll('.compact-chip, .ctx-group, .model-pill, .stop, .send')) {
+    const rect = el.getBoundingClientRect();
+    if (rect.width > 0 && rect.left < boxLeft - 1) return true;
+  }
+  return false;
 }
 
 /* Reads a CSS length token that may be written in em: getComputedStyle
@@ -1785,11 +1816,54 @@ function measureToolbarCollapse(): void {
   if (!toolbar) return;
   const { valveFloor, expandMargin } = toolbarCollapseTokens();
   const width = toolbar.getBoundingClientRect().width;
+  const right = toolbarRightRef.value;
 
   // The way back, one stage at a time, re-measured on the settled layout.
+  if (modelPillGone.value) {
+    if (width > modelGoneAt + expandMargin) {
+      modelPillGone.value = false;
+      void nextTick(measureToolbarCollapse);
+    }
+    return;
+  }
+  if (compactChipGone.value) {
+    if (width > compactGoneAt + expandMargin) {
+      compactChipGone.value = false;
+      void nextTick(measureToolbarCollapse);
+      return;
+    }
+    // Stage 3→4: even without the chip the row can still overflow (a working
+    // turn renders Stop next to Send). The model pill is the last yield —
+    // already a bare icon, and its identity and picker both live in the
+    // settings sheet.
+    if (right && rightClusterOverflows(right)) {
+      modelGoneAt = width;
+      modelPillGone.value = true;
+      void nextTick(measureToolbarCollapse);
+    }
+    return;
+  }
   if (modelPillCollapsed.value) {
     if (width > modelCollapsedAt + expandMargin) {
       modelPillCollapsed.value = false;
+      void nextTick(measureToolbarCollapse);
+      return;
+    }
+    // Stage 2→3(→4): every pill is already icon-only, so the valve element
+    // is gone and cannot speak — the verdict is the right cluster
+    // physically overflowing its own box (justify-end pushes its children
+    // past the box's left edge). The /compact chip duplicates a slash
+    // command, so it yields next; with no chip aboard (context under 80%)
+    // the machine skips straight to the model pill (stage 4) instead of
+    // stalling on a control that isn't there.
+    if (right && rightClusterOverflows(right)) {
+      if (showCompact.value) {
+        compactGoneAt = width;
+        compactChipGone.value = true;
+      } else {
+        modelGoneAt = width;
+        modelPillGone.value = true;
+      }
       void nextTick(measureToolbarCollapse);
     }
     return;
@@ -1857,6 +1931,8 @@ watch(
   () => {
     if (toolbarLabelsCollapsed.value) toolbarLabelsCollapsed.value = false;
     if (modelPillCollapsed.value) modelPillCollapsed.value = false;
+    if (compactChipGone.value) compactChipGone.value = false;
+    if (modelPillGone.value) modelPillGone.value = false;
     void nextTick(measureToolbarCollapse);
   },
 );
@@ -2130,7 +2206,7 @@ function selectModel(modelId: string): void {
           </div>
         </Transition>
 
-        <div class="input-row">
+        <div class="input-row" :class="{ 'wm-armed': workMode }">
           <!-- The primary work mode (plan XOR goal-armed) as a leading pill —
                × disarms it; an active goal lives on the dock pill instead.
                One text-line tall, floating over the editor's first line (the
@@ -2267,9 +2343,10 @@ function selectModel(modelId: string): void {
         </div>
 
         <!-- Right: ctx + model -->
-        <div class="toolbar-right">
-          <!-- Compact chip when context is high -->
-          <button v-if="showCompact" class="compact-chip" @click.stop="emit('compact')">/compact</button>
+        <div ref="toolbarRightRef" class="toolbar-right">
+          <!-- Compact chip when context is high; the toolbar collapse's final
+               stage hides it first (it only duplicates the /compact command). -->
+          <button v-if="showCompact" class="compact-chip" :class="{ gone: compactChipGone }" @click.stop="emit('compact')">/compact</button>
 
           <!-- Context meter — circular ring only; the full usage (used/max/pct)
                lives in the tooltip. The ring is aria-hidden, so the trigger
@@ -2297,7 +2374,7 @@ function selectModel(modelId: string): void {
             ref="modelPillRef"
             type="button"
             class="model-pill"
-            :class="{ open: dropdownOpen, 'icon-only': modelPillCollapsed }"
+            :class="{ open: dropdownOpen, 'icon-only': modelPillCollapsed, 'model-gone': modelPillGone }"
             aria-haspopup="menu"
             :aria-expanded="dropdownOpen"
             :aria-label="modelPillCollapsed ? modelIconLabel : undefined"
@@ -2312,26 +2389,40 @@ function selectModel(modelId: string): void {
           </button>
           </Tooltip>
           <!-- Signed-in free managed account / no usable models — the pill slot
-               becomes the upgrade entry (external link). -->
+               becomes the upgrade entry (external link). It plays the model
+               pill's role in the collapse: its name is the same valve, and it
+               sheds to its bare icon (then yields entirely) on the same stages. -->
           <button
             v-else-if="status && showUpgrade"
             type="button"
             class="model-pill login-pill"
+            :class="{ 'icon-only': modelPillCollapsed, 'model-gone': modelPillGone }"
+            :aria-label="modelPillCollapsed ? t('sidebar.upgrade') : undefined"
             @click.stop="openUpgrade()"
           >
-            <Icon name="music" size="sm" />
-            <span class="mp-name">{{ t('sidebar.upgrade') }}</span>
+            <Icon v-if="modelPillCollapsed" name="music" size="md" />
+            <template v-else>
+              <Icon name="music" size="sm" />
+              <span ref="mpNameRef" class="mp-name">{{ t('sidebar.upgrade') }}</span>
+            </template>
           </button>
           <!-- Signed out / no models — the pill slot becomes the sign-in entry
-               (deep-links into the settings account tab). -->
+               (deep-links into the settings account tab). It plays the model
+               pill's role in the collapse: its name is the same valve, and it
+               sheds to its bare icon (then yields entirely) on the same stages. -->
           <button
             v-else-if="status && showSignIn"
             type="button"
             class="model-pill login-pill"
+            :class="{ 'icon-only': modelPillCollapsed, 'model-gone': modelPillGone }"
+            :aria-label="modelPillCollapsed ? t('login.action') : undefined"
             @click.stop="emit('login')"
           >
-            <Icon name="log-in" size="sm" />
-            <span class="mp-name">{{ t('login.action') }}</span>
+            <Icon v-if="modelPillCollapsed" name="log-in" size="md" />
+            <template v-else>
+              <Icon name="log-in" size="sm" />
+              <span ref="mpNameRef" class="mp-name">{{ t('login.action') }}</span>
+            </template>
           </button>
           <Tooltip v-if="working" :text="t('composer.interruptTitle')">
             <button
@@ -2870,6 +2961,14 @@ function selectModel(modelId: string): void {
   transition: background var(--duration-base) var(--ease-out);
 }
 .compact-chip:hover { background: var(--color-hover); }
+/* Stage 3 of the toolbar collapse (see measureToolbarCollapse): when even
+   the icon-only row cannot fit, the chip — a convenience duplicate of the
+   /compact command — is the next control to yield. */
+.compact-chip.gone { display: none; }
+/* Stage 4: the row can STILL overflow without the chip (a working turn adds
+   Stop next to Send) — the model pill, already a bare icon whose identity
+   and picker live one settings-sheet tap away, yields last. */
+.model-pill.model-gone { display: none; }
 
 /* Keep the shared attachment icon and behavior; only its Composer-local
    geometry joins the full-round 32px control family. */
@@ -3446,9 +3545,10 @@ function selectModel(modelId: string): void {
 }
 
 /* Sign-in entry (no models) — same pill shape, accent text to read as an
-   action rather than a disabled placeholder. */
+   action rather than a disabled placeholder. It yields exactly like the
+   model pill it stands in for: the name crushes under pressure (the
+   collapse machine's valve), then the pill sheds to its bare icon. */
 .model-pill.login-pill {
-  flex: none;
   color: var(--color-accent);
 }
 .model-pill.login-pill .mp-name {
@@ -3765,10 +3865,13 @@ function selectModel(modelId: string): void {
 }
 /* The IconButton's own chrome handles hover/focus; the clickable area grows
    past its box via a transparent ring — on desktop only, where the ring's
-   7px reach stays inside the textarea's indent reserve. On touch the ring
-   would protrude past the pill into the text column (the indent reserves
-   only pill + 4px), so the button itself takes the shared IconButton touch
-   size and the pill's measured width includes the full hit area. */
+   7px reach stays inside the textarea's indent reserve. On touch (the
+   hover:none rule below) the armed pill moves into its own lane above the
+   text and the ring meets the full 44×44 floor: horizontally the pill's
+   right padding grows to the ring's reach (its right edge lands exactly on
+   the pill's edge), vertically the ring spans a fixed footprint around the
+   pill that the lane reserves in full — so the hit area can never cover a
+   line of input text. */
 .wm-x {
   position: relative;
   /* Sized to the pill's right-end reserve (--wm-x-size) — below the sm
@@ -3783,10 +3886,28 @@ function selectModel(modelId: string): void {
   inset: calc(-1 * var(--wm-x-ring));
 }
 @media (hover: none) {
-  /* The pill's fixed height can't absorb a 44px box — keep the layout box at
-     --wm-x-size and let the transparent hit ring reach the touch floor
-     instead (nothing outside the pill intercepts taps). */
-  .wm-x::before { inset: calc((var(--wm-x-size) - var(--touch-target-min)) / 2); }
+  /* The armed pill's touch lane: the input row reserves the ring's whole
+     44px footprint on top — --space-2 + --space-1-5 of it above the pill
+     (landing in .cin-wrap's top padding, which holds no text and sits below
+     the attachment strip), the rest below the pill — plus --space-1
+     clearance, so no line box ever intersects the hit area. syncWmIndent
+     returns no first-line indent on touch to match. The pill's layout box
+     stays --wm-x-size; its right padding takes the ring's horizontal reach,
+     so the 44px-wide ring never extends past the pill either. (At ≤640px
+     the pill height pins to --composer-mobile-input-size — the mobile touch
+     block at the end re-expresses these insets with that token.) */
+  .input-row.wm-armed {
+    padding-top: calc(var(--touch-target-min) - var(--space-2) - var(--space-1-5) + var(--space-1));
+  }
+  .wm-pill {
+    padding-right: calc((var(--touch-target-min) - var(--wm-x-size)) / 2);
+  }
+  .wm-x::before {
+    inset:
+      calc(-1 * (var(--space-2) + var(--space-1-5)) - (var(--content-font-size) * 1.5 - var(--wm-x-size)) / 2)
+      calc((var(--wm-x-size) - var(--touch-target-min)) / 2)
+      calc((var(--content-font-size) * 1.5 + var(--wm-x-size)) / 2 - var(--touch-target-min) + var(--space-2) + var(--space-1-5));
+  }
 }
 
 /* ---- Narrow composer toolbar ----------------------------------------------
@@ -3795,8 +3916,9 @@ function selectModel(modelId: string): void {
    is handled by the toolbar collapse stage machine (see
    measureToolbarCollapse): the model name is the only yielding element and
    the permission/swarm pills flip to icon circles under real pressure, so the
-   row never clips its own content. Mobile (≤640px) additionally hides perm /
-   modes via the rules below (those live in MobileSettingsSheet there). */
+   row never clips its own content. Mobile (≤640px) runs the same machine —
+   the rules below only restyle the composer chrome and pin the work-mode
+   pill to the pinned 16px input line. */
 
 /* ---- Mobile composer (prototype): round attach + rounded panel input +
        round blue send with a soft shadow. The .cin container loses its border
@@ -3811,6 +3933,11 @@ function selectModel(modelId: string): void {
   }
   .composer-card {
     --composer-control-size: 36px;
+    /* The mobile input font size, pinned off the UI font scale so iOS doesn't
+       auto-zoom on focus. The .ph font and the work-mode pill's one-line
+       geometry both derive from it, so the pill can never drift out of sync
+       with the pinned first line. */
+    --composer-mobile-input-size: 16px;
     max-width: 100%;
   }
   .input-row {
@@ -3843,15 +3970,26 @@ function selectModel(modelId: string): void {
     position: relative;
   }
 
-  /* Mobile toolbar: hide secondary controls; attach / context ring / model /
-     send stay visible. Permission + plan move into the MobileSettingsSheet.
-     The context ring stays at every width by design — it is the live
-     context-pressure signal on a phone (the exact numbers live in the ring's
-     tooltip). The /compact chip also stays so compaction is one tap away at
-     ≥80% usage. */
-  .perm-pill,
+  /* Mobile toolbar: every control stays visible — attach / permission /
+     context ring / model / send. Under pressure the stage machine above
+     flips the permission pill to its icon circle, exactly like a narrow
+     desktop window (the MobileSettingsSheet keeps its own permission and
+     mode rows as the roomier control surface). The context ring stays at
+     every width by design — it is the live context-pressure signal on a
+     phone (the exact numbers live in the ring's tooltip). The /compact chip
+     stays so compaction is one tap away at ≥80% usage — until the very
+     narrowest rows, where the stage machine drops it first (it merely
+     duplicates the slash command), then the model pill (its identity and
+     picker live in the sheet too). */
+  /* The armed work-mode pill floats in the input row on mobile too — hiding
+     it left goal/plan arming with zero composer feedback. Its height pins to
+     the mobile input line box (see --composer-mobile-input-size) instead of
+     --content-font-size, which tracks the font scale and would outgrow the
+     pinned first line. */
   .wm-pill {
-    display: none;
+    height: calc(var(--composer-mobile-input-size) * 1.5);
+    line-height: calc(var(--composer-mobile-input-size) * 1.5);
+    padding-right: calc((var(--composer-mobile-input-size) * 1.5 - var(--wm-x-size)) / 2);
   }
 
   /* Model dropdown on mobile → anchored right with padding */
@@ -3862,12 +4000,12 @@ function selectModel(modelId: string): void {
     max-width: calc(100vw - 24px);
   }
 
-  /* Bump mobile font sizes +2px and pin input at 16px to prevent iOS zoom.
-     Height (min 36px / max one quarter of the viewport) is inherited from the
-     base .ph rule so the box auto-grows the same way on touch and desktop. */
+  /* Bump mobile font sizes +2px; the input pins to the anti-zoom mobile size
+     (--composer-mobile-input-size on .composer-card). Height (min 36px / max
+     one quarter of the viewport) is inherited from the base .ph rule so the
+     box auto-grows the same way on touch and desktop. */
   .ph {
-    /* Pinned at 16px to prevent iOS auto-zoom on focus (not part of UI font scale). */
-    font-size: 16px;
+    font-size: var(--composer-mobile-input-size);
   }
   .model-pill,
   .attach-btn {
@@ -3930,6 +4068,34 @@ function selectModel(modelId: string): void {
   /* 22px glyph needs the wider ring. */
   .expand-btn::before {
     inset: -11px;
+  }
+  /* The permission entry meets the 44px touch floor by growing its own box
+     (an outreaching ring would be clipped by toolbar-left's overflow, and
+     the ::after hover wash simply covers the grown box — touch has no
+     hover): 44px tall with its label on, 44×44 as the collapsed icon
+     circle. */
+  .perm-pill {
+    height: var(--touch-target-min);
+  }
+  .labels-collapsed .perm-pill {
+    width: var(--touch-target-min);
+    height: var(--touch-target-min);
+  }
+  /* The work-mode pill's touch geometry at ≤640px: the pill height pins to
+     --composer-mobile-input-size (not --content-font-size), so the ring's
+     vertical insets are re-expressed with that token — the footprint itself
+     (up reach into .cin-wrap's padding, bottom at the rest of the 44px) is
+     identical to the base hover:none rule's, and so are the lane reserve
+     and the horizontal reach; the padding-right repeat only outranks the
+     ≤640px block's unpadded rule above. */
+  .wm-pill {
+    padding-right: calc((var(--touch-target-min) - var(--wm-x-size)) / 2);
+  }
+  .wm-x::before {
+    inset:
+      calc(-1 * (var(--space-2) + var(--space-1-5)) - (var(--composer-mobile-input-size) * 1.5 - var(--wm-x-size)) / 2)
+      calc((var(--wm-x-size) - var(--touch-target-min)) / 2)
+      calc((var(--composer-mobile-input-size) * 1.5 + var(--wm-x-size)) / 2 - var(--touch-target-min) + var(--space-2) + var(--space-1-5));
   }
 }
 
