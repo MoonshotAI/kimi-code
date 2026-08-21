@@ -1,6 +1,8 @@
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IAgentTowerService } from '#/features/tower/tower';
+import { TowerProtocolError } from '#/features/tower/protocol/index';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
@@ -22,6 +24,7 @@ export class TowerTeardownTool implements ITowerTeardownTool {
   constructor(
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentTowerService private readonly tower: IAgentTowerService,
+    @ISessionManager private readonly sessions: ISessionManager,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {}
 
@@ -38,6 +41,19 @@ export class TowerTeardownTool implements ITowerTeardownTool {
       execute: () =>
         runTowerTool(async () => {
           const store = newTowerStore(this.sessionContext);
+          const priorOwner = await store.load().then(
+            (state) => state.sessionId,
+            () => undefined,
+          );
+          if (
+            priorOwner !== undefined &&
+            priorOwner !== this.sessionContext.sessionId &&
+            this.sessions.get(priorOwner) !== undefined
+          ) {
+            throw new TowerProtocolError(
+              `tower workspace is owned by a live session (${priorOwner}) — tearing it down would dismantle that session's fleet. Use TowerTeardown from that session, or close it first.`,
+            );
+          }
           const report = await store.teardown({ force: args.force });
           this.tower.exit();
           return {
@@ -52,4 +68,3 @@ export class TowerTeardownTool implements ITowerTeardownTool {
     };
   }
 }
-
