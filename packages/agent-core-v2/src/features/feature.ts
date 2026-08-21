@@ -30,7 +30,6 @@ import {
 } from '#/agent/toolRegistry/toolContribution';
 import {
   AgentRuntimeContributionPoint,
-  type AgentCapability,
   type AgentRuntimeDefinition,
 } from '#/agent/runtime/agentRuntime';
 import type {
@@ -55,14 +54,13 @@ export abstract class Feature extends Service {
     return this.provide(AgentModelContribution, definition as AgentModelDefinition<any, any>);
   }
 
-  contributeAgentRuntime<State, Facade>(
-    capability: AgentCapability<Facade>,
-    definition: AgentRuntimeDefinition<State, Facade>,
+  contributeAgentRuntime<State, Runtime>(
+    definition: AgentRuntimeDefinition<State, Runtime>,
   ): FiberHandle {
-    return this.provide(AgentRuntimeContributionPoint, {
-      capability: capability as AgentCapability<any>,
-      definition: definition as AgentRuntimeDefinition<any, any>,
-    });
+    return this.provide(
+      AgentRuntimeContributionPoint,
+      definition as AgentRuntimeDefinition<any, any>,
+    );
   }
 
   contributeConfig<T>(

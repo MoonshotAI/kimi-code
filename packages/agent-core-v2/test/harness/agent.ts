@@ -9,6 +9,10 @@ import { toDisposable } from '#/_base/di/lifecycle';
 import type { IInstantiationService } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
+import type {
+  AgentRuntimeDefinition,
+  RuntimeOf,
+} from '#/agent/runtime/agentRuntime';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { getConfigSectionContributions } from '#/app/config/configSectionContributions';
 import { Emitter, Event, type IWaitUntil } from '#/_base/event';
@@ -25,9 +29,9 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import '#/agent/contextInjector/contextInjectorService';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from '../state/builtinReplayableKeys';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentCron } from '#/session/cron/agentCron';
+import { AgentCron } from '#/session/cron/cronAgentRuntime';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
-import { IAgentGoal } from '#/agent/goal/goal';
+import { AgentGoal } from '#/agent/goal/goalAgentRuntime';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
@@ -115,7 +119,7 @@ import { type TokenUsage } from '#/kosong/contract/usage';
 import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import { type AgentModelDefinition } from '#/state/agentModel';
 import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';
-import { IAgentTodo } from '#/session/todo/sessionTodo';
+import { AgentTodo } from '#/session/todo/todoAgentRuntime';
 import { type TodoItem } from '#/session/todo/todoItem';
 import type { generate as kosongGenerate } from '#/kosong/contract/generate';
 import type { ChatProvider, GenerateOptions, StreamedMessage } from '#/kosong/contract/provider';
@@ -215,13 +219,11 @@ import {
   type ProvidersSection,
 } from '#/kosong/provider/provider';
 import type { ApprovalResponse } from '#/session/approval/approval';
+import type { InteractionRequest } from '#/session/interaction/interaction';
 import {
-  IAgentInteraction,
-  type Interaction,
-  type InteractionRequest,
-  type InteractionPendingChangedEvent,
-  type InteractionResolution,
-} from '#/session/interaction/interaction';
+  AgentInteraction,
+  type InteractionRuntime,
+} from '#/session/interaction/interactionAgentRuntime';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { ISessionQuestionService, type QuestionResult } from '#/session/question/question';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
@@ -1355,7 +1357,6 @@ export class AgentTestContext {
               IAgentTaskService,
               new SyncDescriptor(AgentTaskService),
             );
-            reg.defineInstance(IAgentInteraction, this.createInteractionService());
             reg.defineDescriptor(IAgentSkillService, new SyncDescriptor(AgentSkillService));
             reg.defineDescriptor(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
             const agentStateService = new TestAgentStateService(
@@ -1379,6 +1380,7 @@ export class AgentTestContext {
       .get(ISessionEventBus)
       .activateAgent(harnessAgentContext);
     this.session.accessor.get(IAgentManager).attachRuntimes(harnessAgentContext);
+    this.installInteractionBridge(harnessAgentContext);
     reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);
 
     this.initializeRestorableServices();
@@ -1404,6 +1406,12 @@ export class AgentTestContext {
       throw new Error('AgentTestContext.get called with undefined service id');
     }
     return this.agent.accessor.get(id);
+  }
+
+  resolve<Definition extends AgentRuntimeDefinition<any, any>>(
+    definition: Definition,
+  ): RuntimeOf<Definition> {
+    return this.session.accessor.get(IAgentManager).resolve(this.agentContext, definition);
   }
 
   get modelResolver(): IModelCatalog {
@@ -1507,13 +1515,39 @@ export class AgentTestContext {
     await this.wire.flush();
   }
 
+  private installInteractionBridge(agent: AgentContext): void {
+    const interaction = this.session.accessor.get(IAgentManager).resolve(agent, AgentInteraction);
+    const request = interaction.request.bind(interaction);
+    interaction.request = (<TPayload, TResponse>(req: InteractionRequest<TPayload>) => {
+      if (req.kind !== 'user_tool') return request<TPayload, TResponse>(req);
+      const pending = request<TPayload, TResponse>(req);
+      const parked = interaction.listPending('user_tool').at(-1)!;
+      const payload = req.payload as UserToolInteractionPayload;
+      const response = this.createRpcPromise<ExecutableToolResult>();
+      void response.then(
+        (result) => { interaction.respond(parked.id, result); },
+        () => { interaction.respond(parked.id, { cancelled: true }); },
+      );
+      this.recordRpc(
+        'toolCall',
+        {
+          turnId: payload.turnId,
+          toolCallId: payload.toolCallId,
+          args: payload.args,
+        },
+        response,
+      );
+      return pending;
+    }) as InteractionRuntime['request'];
+  }
+
   private initializeRestorableServices(): void {
     const context = this.get(IAgentContextMemoryService);
     const tokenCounting = this.tokenCounting;
     const usage = this.usage;
     const permissionMode = this.get(IAgentPermissionModeService);
     const permissionRules = this.get(IAgentPermissionRulesService);
-    const cron = this.get(IAgentCron);
+    const cron = this.resolve(AgentCron);
     const plan = this.get(IAgentPlanService);
     void this.get(IAgentToolActivationService).activate();
     this.get(IAgentToolDedupeService);
@@ -1535,7 +1569,7 @@ export class AgentTestContext {
     cron.list();
     void plan.status();
 
-    this.get(IAgentGoal);
+    this.resolve(AgentGoal);
     this.get(IAgentSkillService);
     this.get(IAgentUserToolService);
     this.get(IAgentLLMRequesterService);
@@ -2045,79 +2079,6 @@ export class AgentTestContext {
     };
   }
 
-  private createInteractionService(): IAgentInteraction {
-    const pending = new Map<string, Interaction>();
-    function createTestInteraction<TPayload>(
-      request: InteractionRequest<TPayload>,
-    ): Interaction<TPayload> {
-      return {
-        id: request.id ?? 'interaction:test',
-        kind: request.kind,
-        payload: request.payload,
-        origin: request.origin ?? {},
-        createdAt: Date.now(),
-      };
-    }
-    return {
-      _serviceBrand: undefined,
-      request: <TPayload, TResponse>(request: InteractionRequest<TPayload>) => {
-        if (request.kind !== 'user_tool') {
-          throw new Error(`Unsupported test interaction kind: ${request.kind}`);
-        }
-        const interaction = createTestInteraction(request);
-        pending.set(interaction.id, interaction);
-        const payload = request.payload as UserToolInteractionPayload;
-        const promise = this.createRpcPromise<ExecutableToolResult>();
-        promise.then(
-          () => pending.delete(interaction.id),
-          () => pending.delete(interaction.id),
-        );
-        this.recordRpc(
-          'toolCall',
-          {
-            turnId: payload.turnId,
-            toolCallId: payload.toolCallId,
-            args: payload.args,
-          },
-          promise,
-        );
-        return promise as unknown as Promise<TResponse>;
-      },
-      enqueue: <TPayload>(request: InteractionRequest<TPayload>): Interaction<TPayload> => {
-        const interaction = createTestInteraction(request);
-        pending.set(interaction.id, interaction);
-        if (request.kind === 'user_tool') {
-          const payload = request.payload as UserToolInteractionPayload;
-          this.recordRpc('toolCall', {
-            turnId: payload.turnId,
-            toolCallId: payload.toolCallId,
-            args: payload.args,
-          });
-        }
-        return interaction;
-      },
-      respond: (id, response) => {
-        const had = pending.delete(id);
-        this.resolvePendingRpc('toolCall', id, response);
-        return had;
-      },
-      listPending: (kind) => {
-        const interactions = [...pending.values()];
-        return kind === undefined
-          ? interactions
-          : interactions.filter((interaction) => interaction.kind === kind);
-      },
-      isRecentlyResolved: () => false,
-      cancelPendingForTurn: (turnId: number) => {
-        for (const [id, interaction] of pending) {
-          if (interaction.origin?.turnId === turnId) pending.delete(id);
-        }
-      },
-      onDidChangePending: Event.None as Event<InteractionPendingChangedEvent>,
-      onDidResolve: Event.None as Event<InteractionResolution>,
-    };
-  }
-
   private createApprovalService(): ISessionApprovalService {
     return {
       _serviceBrand: undefined,
@@ -2240,11 +2201,11 @@ export class AgentTestContext {
       },
       detachTask: (payload) => this.get(IAgentTaskService).detach(payload.taskId),
       clearContext: () => this.get(IAgentPromptService).clear(),
-      createGoal: (payload) => this.get(IAgentGoal).createGoal(payload),
-      getGoal: () => this.get(IAgentGoal).getGoal(),
-      pauseGoal: () => this.get(IAgentGoal).pauseGoal(),
-      resumeGoal: () => this.get(IAgentGoal).resumeGoal(),
-      cancelGoal: () => this.get(IAgentGoal).cancelGoal(),
+      createGoal: (payload) => this.resolve(AgentGoal).createGoal(payload),
+      getGoal: () => this.resolve(AgentGoal).getGoal(),
+      pauseGoal: () => this.resolve(AgentGoal).pauseGoal(),
+      resumeGoal: () => this.resolve(AgentGoal).resumeGoal(),
+      cancelGoal: () => this.resolve(AgentGoal).cancelGoal(),
       getTaskOutput: (payload) =>
         this.get(IAgentTaskService).readOutput(payload.taskId, payload.tail),
       getConfig: () => this.get(IAgentProfileService).data(),
@@ -2405,7 +2366,7 @@ function resumeStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot {
         .filter((key) => key.replayable.undoable !== undefined)
         .map((key) => [key.name, ctx.get(IAgentStateService).get(key)]),
     ),
-    todos: ctx.get(IAgentTodo).get(),
+    todos: ctx.resolve(AgentTodo).get(),
     permission: permissionData,
     usage: usageStatus,
   };

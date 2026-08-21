@@ -2,7 +2,11 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { Event } from '#/_base/event';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type { AgentCapability, AgentRuntimeSnapshot } from '#/agent/runtime/agentRuntime';
+import type {
+  AgentRuntimeDefinition,
+  AgentRuntimeSnapshot,
+  RuntimeOf,
+} from '#/agent/runtime/agentRuntime';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { BindAgentInput } from '#/agent/profile/profile';
 
@@ -44,7 +48,10 @@ export interface IAgentManager {
 
   get(agentId: string): AgentContext | undefined;
   list(filter?: AgentListFilter): readonly AgentContext[];
-  resolve<T>(agent: AgentContext, capability: AgentCapability<T>): T;
+  resolve<Definition extends AgentRuntimeDefinition<any, any>>(
+    agent: AgentContext,
+    definition: Definition,
+  ): RuntimeOf<Definition>;
   inspect(agent: AgentContext): AgentRuntimeSnapshot;
   broadcastPermissionMode(mode: PermissionMode): void;
   remove(agent: AgentContext): Promise<void>;

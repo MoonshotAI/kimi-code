@@ -31,7 +31,6 @@ import {
   IModelOAuthTokens,
   IAgentProfileService,
   IAgentToolRegistryService,
-  IAgentTodo,
   DYNAMIC_TOOL_SCHEMA_VARIANT,
   normalizeAgentProfile,
   type ExecutableTool,
@@ -39,7 +38,8 @@ import {
   type ToolExecution,
 } from '#/index';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentGoal } from '#/agent/goal/goal';
+import { AgentGoal } from '#/agent/goal/goalAgentRuntime';
+import { AgentTodo } from '#/session/todo/todoAgentRuntime';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 
@@ -2932,19 +2932,12 @@ describe('FullCompaction', () => {
       { title: 'Fix the auth bug', status: 'in_progress' },
       { title: 'Add tests', status: 'pending' },
     ] as const;
-    const ctx = testAgent(
-      agentService(IAgentTodo, {
-        _serviceBrand: undefined,
-        get: () => todos,
-        replace: async () => {},
-        clear: async () => {},
-        onDidChange: () => ({ dispose: () => {} }),
-      }),
-    );
+    const ctx = testAgent();
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
+    await ctx.resolve(AgentTodo).replace(todos);
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
 
@@ -3344,7 +3337,7 @@ describe('goal reminder re-injection after full compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    await ctx.get(IAgentGoal).createGoal({ objective: GOAL_OBJECTIVE });
+    await ctx.resolve(AgentGoal).createGoal({ objective: GOAL_OBJECTIVE });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 100);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 950_000);
 
@@ -3365,7 +3358,7 @@ describe('goal reminder re-injection after full compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    await ctx.get(IAgentGoal).createGoal({ objective: GOAL_OBJECTIVE });
+    await ctx.resolve(AgentGoal).createGoal({ objective: GOAL_OBJECTIVE });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
     const completed = ctx.once('compaction.completed');
@@ -3419,7 +3412,7 @@ describe('goal reminder re-injection after full compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    await ctx.get(IAgentGoal).createGoal({ objective: GOAL_OBJECTIVE });
+    await ctx.resolve(AgentGoal).createGoal({ objective: GOAL_OBJECTIVE });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
     const completed = ctx.once('compaction.completed');

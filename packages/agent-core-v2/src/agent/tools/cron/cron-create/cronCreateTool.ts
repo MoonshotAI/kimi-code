@@ -5,7 +5,8 @@ import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern } from '#/tool/rule-match';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentCron } from '#/session/cron/agentCron';
+import { IAgentManager } from '#/session/agentManager/agentManager';
+import { AgentCron, type CronRuntime } from '#/session/cron/cronAgentRuntime';
 import { computeNextCronRun, cronToHuman, hasFireWithinYears, parseCronExpression, type ParsedCronExpression } from '#/app/cron/cron-expr';
 import { formatLocalIsoWithOffset } from '#/app/cron/format';
 
@@ -31,9 +32,13 @@ export class CronCreateTool implements ICronCreateTool {
   );
 
   constructor(
-    @IAgentCron private readonly cron: IAgentCron,
+    @IAgentManager private readonly manager: IAgentManager,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {}
+
+  private get cron(): CronRuntime {
+    return this.manager.resolve(this.scopeContext.agentContext, AgentCron);
+  }
 
   resolveExecution(args: CronCreateInput): ToolExecution {
     if (this.cron.isDisabled()) {

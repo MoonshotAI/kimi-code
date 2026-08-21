@@ -46,20 +46,17 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import '#/wire/wireService';
 import '#/state/eventDispatcherService';
 import { IAgentTaskService } from '#/agent/task/task';
-import { AgentCron } from '#/session/cron/agentCron';
-import { CronAgentRuntimeDefinition } from '#/session/cron/cronAgentRuntime';
+import { AgentCron } from '#/session/cron/cronAgentRuntime';
 import { ICronCreateTool } from '#/agent/tools/cron/cron-create/cron-create';
 import { ICronDeleteTool } from '#/agent/tools/cron/cron-delete/cron-delete';
 import { ICronListTool } from '#/agent/tools/cron/cron-list/cron-list';
 import { CRON_SECTION } from '#/app/cron/configSection';
-import { AgentInteraction } from '#/session/interaction/interaction';
-import { InteractionAgentRuntimeDefinition } from '#/session/interaction/interactionAgentRuntime';
+import { AgentInteraction } from '#/session/interaction/interactionAgentRuntime';
 import { Ledger } from '#/_base/lifecycle/ledger';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { AgentRuntimeContributionPoint } from '#/agent/runtime/agentRuntime';
-import { AgentTodo } from '#/session/todo/sessionTodo';
 import { TODO_LIST_REMINDER_VARIANT } from '#/session/todo/todoListReminder';
-import { TodoAgentRuntimeDefinition } from '#/session/todo/todoAgentRuntime';
+import { AgentTodo } from '#/session/todo/todoAgentRuntime';
 import '#/agent/toolDedupe/toolDedupeService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -455,7 +452,7 @@ describe('AgentManagerService', () => {
       AgentRuntimeContributionPoint,
       'test',
       new Ledger('test'),
-      { capability: AgentTodo, definition: TodoAgentRuntimeDefinition },
+      AgentTodo,
     );
   }
 
@@ -464,7 +461,7 @@ describe('AgentManagerService', () => {
       AgentRuntimeContributionPoint,
       'test',
       new Ledger('test'),
-      { capability: AgentCron, definition: CronAgentRuntimeDefinition },
+      AgentCron,
     );
   }
 
@@ -473,7 +470,7 @@ describe('AgentManagerService', () => {
       AgentRuntimeContributionPoint,
       'test',
       new Ledger('test'),
-      { capability: AgentInteraction, definition: InteractionAgentRuntimeDefinition },
+      AgentInteraction,
     );
   }
 

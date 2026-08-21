@@ -11,7 +11,7 @@ import { IConfigService } from '#/app/config/config';
 import type { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { AgentGoal, type IAgentGoal } from '#/agent/goal/goal';
+import { AgentGoal, type GoalRuntime } from '#/agent/goal/goalAgentRuntime';
 import { IGoalDeadlineScheduler } from '#/agent/goal/goalDeadlineScheduler';
 import { GoalDeadlineSchedulerService } from '#/agent/goal/goalDeadlineSchedulerService';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -103,7 +103,7 @@ function createConfigStub(): IConfigService {
 interface GoalHost {
   readonly dispatcher: IEventDispatcher;
   readonly runtimes: AgentRuntimeSet;
-  readonly svc: IAgentGoal;
+  readonly svc: GoalRuntime;
   readonly log: IAppendLogStore;
   readonly eventBus: IEventBus;
 }
@@ -116,7 +116,7 @@ function inspectGoal(runtimes: AgentRuntimeSet): Record<string, unknown> | null 
 let disposables: DisposableStore;
 let dispatcher: IEventDispatcher;
 let runtimes: AgentRuntimeSet;
-let svc: IAgentGoal;
+let svc: GoalRuntime;
 let log: IAppendLogStore;
 let eventBus: IEventBus;
 

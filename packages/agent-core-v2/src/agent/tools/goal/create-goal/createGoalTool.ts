@@ -6,7 +6,8 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
-import { IAgentGoal } from '#/agent/goal/goal';
+import { AgentGoal, type GoalRuntime } from '#/agent/goal/goalAgentRuntime';
+import { IAgentManager } from '#/session/agentManager/agentManager';
 import { goalForModel } from '#/agent/goal/tools/serialize';
 
 import DESCRIPTION from './create-goal.md?raw';
@@ -22,10 +23,15 @@ export class CreateGoalTool implements ICreateGoalTool {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(CreateGoalToolInputSchema);
 
+  private readonly goal: GoalRuntime;
+
   constructor(
-    @IAgentGoal private readonly goal: IAgentGoal,
+    @IAgentManager manager: IAgentManager,
+    @IAgentScopeContext scope: IAgentScopeContext,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
-  ) {}
+  ) {
+    this.goal = manager.resolve(scope.agentContext, AgentGoal);
+  }
 
   resolveExecution(args: CreateGoalToolInput): ToolExecution {
     const goalAtResolution = this.goal.getGoal().goal;

@@ -1,21 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
-import type { IAgentTodo } from '#/session/todo/sessionTodo';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentManager } from '#/session/agentManager/agentManager';
+import type { TodoRuntime } from '#/session/todo/todoAgentRuntime';
 import { TODO_LIST_TOOL_NAME, type TodoItem } from '#/session/todo/todoItem';
 import { TodoListInputSchema } from '#/agent/tools/todo-list/todo-list';
 import { TodoListTool } from '#/agent/tools/todo-list/todoListTool';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 
 const signal = new AbortController().signal;
+const scope = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' });
+type TodoApi = Pick<TodoRuntime, 'get' | 'replace' | 'clear' | 'onDidChange'>;
 
 function makeTodo(initial: readonly TodoItem[] = []): {
-  readonly facade: IAgentTodo;
+  readonly runtime: TodoApi;
   readonly getTodos: () => readonly TodoItem[];
 } {
   let todos = [...initial];
   return {
-    facade: {
-      _serviceBrand: undefined,
+    runtime: {
       get: () => todos,
       replace: async (next) => {
         todos = next.map((todo) => ({ title: todo.title, status: todo.status }));
@@ -31,8 +34,9 @@ function makeTool(initial: readonly TodoItem[] = []): {
   readonly tool: TodoListTool;
   readonly getTodos: () => readonly TodoItem[];
 } {
-  const { facade, getTodos } = makeTodo(initial);
-  return { tool: new TodoListTool(facade), getTodos };
+  const { runtime, getTodos } = makeTodo(initial);
+  const manager = { resolve: () => runtime } as unknown as IAgentManager;
+  return { tool: new TodoListTool(manager, scope), getTodos };
 }
 
 describe('TodoListTool', () => {
@@ -71,7 +75,7 @@ describe('TodoListTool', () => {
     expect(getTodos()).toEqual([{ title: 'existing', status: 'in_progress' }]);
   });
 
-  it('write mode replaces the list and defensively copies todos into the facade', async () => {
+  it('write mode replaces the list and defensively copies todos into the runtime', async () => {
     const { tool, getTodos } = makeTool();
     const todos: TodoItem[] = [
       { title: 'first', status: 'pending' },

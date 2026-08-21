@@ -3,9 +3,8 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { Error2, ErrorCodes } from '#/errors';
 import { IAgentManager, MAIN_AGENT_ID } from '#/session/agentManager/agentManager';
 
+import { AgentInteraction, type InteractionRuntime } from './interactionAgentRuntime';
 import {
-  AgentInteraction,
-  type IAgentInteraction,
   type Interaction,
   type InteractionKind,
   type InteractionOrigin,
@@ -14,7 +13,7 @@ import {
   type InteractionResolution,
 } from './interaction';
 
-function facadeFor(manager: IAgentManager, origin: InteractionOrigin | undefined): IAgentInteraction {
+function runtimeFor(manager: IAgentManager, origin: InteractionOrigin | undefined): InteractionRuntime {
   const agentId = origin?.agentId ?? MAIN_AGENT_ID;
   const context = manager.get(agentId);
   if (context === undefined) {
@@ -29,14 +28,14 @@ export function requestSessionInteraction<TPayload, TResponse>(
   manager: IAgentManager,
   req: InteractionRequest<TPayload>,
 ): Promise<TResponse> {
-  return facadeFor(manager, req.origin).request(req);
+  return runtimeFor(manager, req.origin).request(req);
 }
 
 export function enqueueSessionInteraction<TPayload>(
   manager: IAgentManager,
   req: InteractionRequest<TPayload>,
 ): Interaction {
-  return facadeFor(manager, req.origin).enqueue(req);
+  return runtimeFor(manager, req.origin).enqueue(req);
 }
 
 export function respondSessionInteraction(

@@ -23,7 +23,7 @@ import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryCon
 import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ToolsUpdateStore } from '#/session/todo/todoOps';
-import { IAgentTodo } from '#/session/todo/sessionTodo';
+import { AgentTodo } from '#/session/todo/todoAgentRuntime';
 import { type ReplayableStateKey } from '#/state/state';
 import { IWireService } from '#/wire/wire';
 
@@ -243,7 +243,7 @@ describe('AgentConversationUndoService', () => {
     const undo = ctx.get(IAgentConversationUndoService);
     const manager = ctx.get(IAgentManager);
     const agent = ctx.get(IAgentScopeContext).agentContext;
-    expect(manager.inspect(agent).contributions[0]).toMatchObject({
+    expect(manager.inspect(agent).contributions.find((entry) => entry.id === 'todo')).toMatchObject({
       id: 'todo',
       status: 'materialized',
       state: [],
@@ -260,7 +260,7 @@ describe('AgentConversationUndoService', () => {
 
     await undo.undo(1);
 
-    expect(ctx.get(IAgentTodo).get()).toEqual([{ title: 'kept', status: 'pending' }]);
+    expect(ctx.resolve(AgentTodo).get()).toEqual([{ title: 'kept', status: 'pending' }]);
   });
 
   it('restores plan mode and its telemetry mirror to their pre-turn value', async () => {

@@ -26,7 +26,7 @@ import type {
   InteractionKind,
   InteractionRequest,
 } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
-import { AgentInteraction } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
+import { AgentInteraction } from '@moonshot-ai/agent-core-v2/session/interaction/interactionAgentRuntime';
 import {
   enqueueSessionInteraction,
   isSessionInteractionRecentlyResolved,

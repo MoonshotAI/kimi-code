@@ -45,10 +45,10 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   AgentRuntimeContributionPoint,
-  type AgentCapability,
-  type AgentRuntimeContribution,
+  type AgentRuntimeDefinition,
   type AgentRuntimeDefinitionRecord,
   type AgentRuntimeSnapshot,
+  type RuntimeOf,
 } from '#/agent/runtime/agentRuntime';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 
@@ -70,7 +70,10 @@ export class AgentManagerService extends Disposable implements IAgentManager {
   private nextLifecycleGeneration = 0;
   private readonly records = new Map<string, AgentRuntimeDefinitionRecord>();
   private readonly recordGenerations = new Map<string, number>();
-  private readonly contributions = new Map<AgentRuntimeContribution, AgentRuntimeDefinitionRecord>();
+  private readonly contributions = new Map<
+    AgentRuntimeDefinition<any, any>,
+    AgentRuntimeDefinitionRecord
+  >();
   private readonly onDidCreateEmitter = this._register(new Emitter<AgentContext>());
   private readonly onDidCreateScopeEmitter = this._register(new Emitter<AgentScopeCreatedEvent>());
   private readonly onWillCloseEmitter = this._register(new Emitter<AgentContext>());
@@ -96,7 +99,7 @@ export class AgentManagerService extends Disposable implements IAgentManager {
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @AgentRuntimeContributionPoint contributionView: CollectionView<AgentRuntimeContribution>,
+    @AgentRuntimeContributionPoint contributionView: CollectionView<AgentRuntimeDefinition<any, any>>,
   ) {
     super();
     for (const contribution of contributionView.items) this.registerContribution(contribution);
@@ -116,30 +119,29 @@ export class AgentManagerService extends Disposable implements IAgentManager {
     );
   }
 
-  private registerContribution(contribution: AgentRuntimeContribution): void {
-    if (this.contributions.has(contribution)) return;
-    const generation = (this.recordGenerations.get(contribution.capability.id) ?? 0) + 1;
-    this.recordGenerations.set(contribution.capability.id, generation);
+  private registerContribution(definition: AgentRuntimeDefinition<any, any>): void {
+    if (this.contributions.has(definition)) return;
+    const generation = (this.recordGenerations.get(definition.id) ?? 0) + 1;
+    this.recordGenerations.set(definition.id, generation);
     const record: AgentRuntimeDefinitionRecord = {
-      capability: contribution.capability,
-      definition: contribution.definition,
+      definition,
       generation,
       active: true,
     };
-    this.contributions.set(contribution, record);
-    this.records.set(contribution.capability.id, record);
+    this.contributions.set(definition, record);
+    this.records.set(definition.id, record);
     for (const managed of this.roster.values()) {
       if (!managed.closing) managed.runtimeSet.apply(record);
     }
   }
 
-  private withdrawContribution(contribution: AgentRuntimeContribution): void {
-    const record = this.contributions.get(contribution);
+  private withdrawContribution(definition: AgentRuntimeDefinition<any, any>): void {
+    const record = this.contributions.get(definition);
     if (record === undefined) return;
-    this.contributions.delete(contribution);
+    this.contributions.delete(definition);
     record.active = false;
-    if (this.records.get(record.capability.id) === record) {
-      this.records.delete(record.capability.id);
+    if (this.records.get(definition.id) === record) {
+      this.records.delete(definition.id);
     }
     for (const managed of this.roster.values()) {
       managed.runtimeSet.retireDefinition(record);
@@ -326,8 +328,11 @@ export class AgentManagerService extends Disposable implements IAgentManager {
     return all.filter((context) => context.agentId.startsWith(prefix));
   }
 
-  resolve<T>(agent: AgentContext, capability: AgentCapability<T>): T {
-    return this.requireManaged(agent).runtimeSet.resolve(capability);
+  resolve<Definition extends AgentRuntimeDefinition<any, any>>(
+    agent: AgentContext,
+    definition: Definition,
+  ): RuntimeOf<Definition> {
+    return this.requireManaged(agent).runtimeSet.resolve(definition);
   }
 
   inspect(agent: AgentContext): AgentRuntimeSnapshot {

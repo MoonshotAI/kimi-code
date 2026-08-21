@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { CronConfig } from '#/app/cron/configSection';
-import { IAgentCron } from '#/session/cron/agentCron';
+import { AgentCron } from '#/session/cron/cronAgentRuntime';
 
 import { createTestAgent, type TestAgentContext } from '../../harness';
 
@@ -63,7 +63,7 @@ describe('cron-fired steer turn context', () => {
 
     ctx.mockNextResponse({ type: 'text', text: 'cron turn done' });
     writeFileSync(clockFile, String(Date.now() + 120_000));
-    await ctx.get(IAgentCron).tick();
+    await ctx.resolve(AgentCron).tick();
     await ctx.get(IAgentLoopService).settled();
 
     expect(ctx.llmCalls.length).toBe(3);

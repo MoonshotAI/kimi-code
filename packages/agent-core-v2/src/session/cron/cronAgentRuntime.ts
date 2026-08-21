@@ -1,13 +1,11 @@
 import { ulid } from 'ulid';
-import { assign, fromCallback, setup, type AnyActorRef, type EventObject, type Snapshot } from 'xstate';
+import { assign, setup, type Snapshot } from 'xstate';
 
-import { DisposableStore } from '#/_base/di/lifecycle';
 import { IntervalTimer } from '#/_base/utils/timer';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { CronJobOrigin, CronMissedOrigin, ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { type AgentRuntimeContext, defineAgentRuntime } from '#/agent/runtime/agentRuntime';
+import { defineAgentRuntime, type AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ICronCreateTool } from '#/agent/tools/cron/cron-create/cron-create';
 import { ICronDeleteTool } from '#/agent/tools/cron/cron-delete/cron-delete';
@@ -23,10 +21,9 @@ import type { CronDeletedEvent, CronScheduledEvent } from '#/app/telemetry/event
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { BugIndicatingError } from '#/errors';
 import type { ContentPart } from '#/kosong/contract/message';
-import { IAgentManager, MAIN_AGENT_ID } from '#/session/agentManager/agentManager';
+import { MAIN_AGENT_ID } from '#/session/agentManager/agentManager';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
-import { AgentCron, IAgentCron } from './agentCron';
 import { CronAdd, CronCursor, CronDelete, CronFired, type CronModelState } from './cronOps';
 
 const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
@@ -40,14 +37,8 @@ export const CRON_FIRED = 'cron_fired' as const;
 export const CRON_MISSED = 'cron_missed' as const;
 export const CRON_DELETED = 'cron_deleted' as const;
 
-interface CronActivation {
-  readonly runtime: AgentRuntimeContext<CronModelState>;
-  readonly scheduler: CronScheduler;
-}
-
 interface CronActorContext {
   readonly tasks: CronModelState;
-  readonly activation?: CronActivation;
 }
 
 interface CronCommitEvent {
@@ -55,16 +46,10 @@ interface CronCommitEvent {
   readonly tasks: CronModelState;
 }
 
-interface CronActivateEvent {
-  readonly type: 'cron.activate';
-  readonly activation: CronActivation;
-}
-
-type CronActorEvent = CronCommitEvent | CronActivateEvent;
-
 type CronActorSnapshot = Snapshot<unknown> & { readonly context: CronActorContext };
 
-class CronScheduler {
+export class CronRuntime {
+  readonly isEnabled = true;
   private clocks: ClockSources = SYSTEM_CLOCKS;
   private timer: IntervalTimer | undefined;
   private sigusr1Handler: NodeJS.SignalsListener | null = null;
@@ -74,14 +59,16 @@ class CronScheduler {
   private readonly inFlight = new Set<string>();
   private started = false;
 
-  constructor(private readonly runtime: AgentRuntimeContext<CronModelState>) {}
+  constructor(private readonly runtime: AgentRuntimeContext<CronModelState>) {
+    this.attach();
+  }
 
-  attach(): () => void {
-    if (this.runtime.agent.agentId !== MAIN_AGENT_ID) return () => {};
-    const store = new DisposableStore();
-    this.timer = store.add(new IntervalTimer({ unref: true }));
+  private attach(): void {
+    if (this.runtime.agent.agentId !== MAIN_AGENT_ID) return;
+    this.timer = new IntervalTimer({ unref: true });
+    this.runtime.own(this.timer);
     const dispatcher = this.runtime.get(IEventDispatcher);
-    store.add(
+    this.runtime.own(
       dispatcher.hooks.onDidRestore.register('cron', async (_ctx, next) => {
         await this.config().ready;
         this.resolveClocks();
@@ -96,12 +83,9 @@ class CronScheduler {
       this.runtime.get(ICronDeleteTool),
     ];
     for (const tool of tools) {
-      store.add(registry.register(tool, { source: 'builtin' }));
+      this.runtime.own(registry.register(tool, { source: 'builtin' }));
     }
-    return () => {
-      void this.stop();
-      store.dispose();
-    };
+    this.runtime.own(() => this.stop());
   }
 
   private get tasks(): ReadonlyMap<string, CronTask> {
@@ -536,47 +520,21 @@ class CronScheduler {
   }
 }
 
-const cronSchedulerLogic = fromCallback<EventObject, CronActivation>(({ input }) =>
-  input.scheduler.attach(),
-);
-
 const cronActorLogic = setup({
   types: {} as {
     context: CronActorContext;
-    events: CronActorEvent;
-  },
-  actors: {
-    scheduler: cronSchedulerLogic,
+    events: CronCommitEvent;
   },
 }).createMachine({
   context: { tasks: new Map() },
-  initial: 'inactive',
   on: {
     'cron.commit': {
       actions: assign({ tasks: ({ event }) => event.tasks }),
     },
   },
-  states: {
-    inactive: {
-      on: {
-        'cron.activate': {
-          target: 'active',
-          actions: assign({ activation: ({ event }) => event.activation }),
-        },
-      },
-    },
-    active: {
-      invoke: {
-        src: 'scheduler',
-        input: ({ context }) => context.activation!,
-      },
-    },
-  },
 });
 
-const schedulers = new WeakMap<AnyActorRef, CronScheduler>();
-
-export const CronAgentRuntimeDefinition = defineAgentRuntime<CronModelState, IAgentCron>({
+export const AgentCron = defineAgentRuntime<CronModelState, CronRuntime>({
   id: 'cron',
   logic: cronActorLogic,
   eager: true,
@@ -601,38 +559,7 @@ export const CronAgentRuntimeDefinition = defineAgentRuntime<CronModelState, IAg
     read: (snapshot) => (snapshot as CronActorSnapshot).context.tasks,
     commit: (actor, tasks) => { actor.send({ type: 'cron.commit', tasks }); },
   },
-  createFacade: (actor, context) => {
-    const scheduler = new CronScheduler(context);
-    schedulers.set(actor, scheduler);
-    return {
-      _serviceBrand: undefined,
-      isEnabled: true,
-      isDisabled: () => scheduler.isDisabled(),
-      addTask: (init) => scheduler.addTask(init),
-      removeTasks: (ids) => scheduler.removeTasks(ids),
-      getTask: (id) => scheduler.getTask(id),
-      list: () => scheduler.list(),
-      now: () => scheduler.now(),
-      isStale: (task) => scheduler.isStale(task),
-      getNextFireTime: () => scheduler.getNextFireTime(),
-      getNextFireForTask: (taskId) => scheduler.getNextFireForTask(taskId),
-      computeDisplayNextFire: (task, parsed, idealMs) =>
-        scheduler.computeDisplayNextFire(task, parsed, idealMs),
-      start: () => scheduler.start(),
-      stop: () => scheduler.stop(),
-      tick: () => scheduler.tick(),
-      handleMissed: (tasks, renderMissedNotification) =>
-        scheduler.handleMissed(tasks, renderMissedNotification),
-      emitScheduled: (task, agentId) => scheduler.emitScheduled(task, agentId),
-      emitDeleted: (taskId, agentId) => scheduler.emitDeleted(taskId, agentId),
-    };
-  },
-  activate: (actor, context) => {
-    actor.send({
-      type: 'cron.activate',
-      activation: { runtime: context, scheduler: schedulers.get(actor)! },
-    });
-  },
+  create: (context) => new CronRuntime(context),
   inspect: (snapshot) =>
     [...(snapshot as CronActorSnapshot).context.tasks.values()].map((task) => ({
       id: task.id,
@@ -643,90 +570,3 @@ export const CronAgentRuntimeDefinition = defineAgentRuntime<CronModelState, IAg
     })),
 });
 
-export class AgentCronBinding implements IAgentCron {
-  declare readonly _serviceBrand: undefined;
-
-  private readonly cron: IAgentCron;
-
-  constructor(
-    @IAgentManager manager: IAgentManager,
-    @IAgentScopeContext scope: IAgentScopeContext,
-  ) {
-    this.cron = manager.resolve(scope.agentContext, AgentCron);
-  }
-
-  get isEnabled() {
-    return this.cron.isEnabled;
-  }
-
-  isDisabled(): boolean {
-    return this.cron.isDisabled();
-  }
-
-  addTask(init: CronTaskInit): CronTask {
-    return this.cron.addTask(init);
-  }
-
-  removeTasks(ids: readonly string[]): readonly string[] {
-    return this.cron.removeTasks(ids);
-  }
-
-  getTask(id: string): CronTask | undefined {
-    return this.cron.getTask(id);
-  }
-
-  list(): readonly CronTask[] {
-    return this.cron.list();
-  }
-
-  now(): number {
-    return this.cron.now();
-  }
-
-  isStale(task: CronTask): boolean {
-    return this.cron.isStale(task);
-  }
-
-  getNextFireTime(): number | null {
-    return this.cron.getNextFireTime();
-  }
-
-  getNextFireForTask(taskId: string): number | null {
-    return this.cron.getNextFireForTask(taskId);
-  }
-
-  computeDisplayNextFire(
-    task: CronTask,
-    parsed: ParsedCronExpression,
-    idealMs: number,
-  ): number | null {
-    return this.cron.computeDisplayNextFire(task, parsed, idealMs);
-  }
-
-  start(): Promise<void> {
-    return this.cron.start();
-  }
-
-  stop(): Promise<void> {
-    return this.cron.stop();
-  }
-
-  tick(): Promise<void> {
-    return this.cron.tick();
-  }
-
-  handleMissed(
-    tasks: readonly CronTask[],
-    renderMissedNotification: (tasks: readonly CronTask[]) => readonly ContentPart[],
-  ): Turn | undefined {
-    return this.cron.handleMissed(tasks, renderMissedNotification);
-  }
-
-  emitScheduled(task: CronTask, agentId?: string): void {
-    this.cron.emitScheduled(task, agentId);
-  }
-
-  emitDeleted(taskId: string, agentId?: string): void {
-    this.cron.emitDeleted(taskId, agentId);
-  }
-}

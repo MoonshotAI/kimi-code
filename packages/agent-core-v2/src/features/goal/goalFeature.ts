@@ -1,6 +1,4 @@
-import { ScopeActivation } from '#/_base/di/instantiation';
-import { AgentGoal, IAgentGoal } from '#/agent/goal/goal';
-import { AgentGoalBinding, GoalAgentRuntimeDefinition } from '#/agent/goal/goalAgentRuntime';
+import { AgentGoal } from '#/agent/goal/goalAgentRuntime';
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
 
@@ -9,10 +7,7 @@ export class GoalFeature extends Feature {
 
   constructor() {
     super();
-    this.contributeAgentRuntime(AgentGoal, GoalAgentRuntimeDefinition);
-    this.contributeAgentService(IAgentGoal, AgentGoalBinding, {
-      activation: ScopeActivation.OnDemand,
-    });
+    this.contributeAgentRuntime(AgentGoal);
   }
 }
 

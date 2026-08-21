@@ -7,7 +7,8 @@ import {
   validateToolArgs,
 } from '#/tool/args-validator';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
-import { IAgentGoal } from '#/agent/goal/goal';
+import { AgentGoal, type GoalRuntime } from '#/agent/goal/goalAgentRuntime';
+import { IAgentManager } from '#/session/agentManager/agentManager';
 import { CreateGoalTool } from '#/agent/tools/goal/create-goal/createGoalTool';
 import { GetGoalTool } from '#/agent/tools/goal/get-goal/getGoalTool';
 import { SetGoalBudgetTool } from '#/agent/tools/goal/set-goal-budget/setGoalBudgetTool';
@@ -39,7 +40,7 @@ const signal = new AbortController().signal;
 
 describe('goal tools', () => {
   let ctx: TestAgentContext;
-  let goals: IAgentGoal;
+  let goals: GoalRuntime;
   let loopService: IAgentLoopService;
   let eventBus: IEventBus;
   let toolExecutor: IAgentToolExecutorService;
@@ -53,11 +54,13 @@ describe('goal tools', () => {
       agentService(IAgentSwarmService, stubAgentSwarm()),
       permissionModeServices('auto'),
     );
-    goals = ctx.get(IAgentGoal);
+    goals = ctx.resolve(AgentGoal);
     eventBus = ctx.get(IEventBus);
     toolExecutor = ctx.get(IAgentToolExecutorService);
-    setGoalBudgetTool = new SetGoalBudgetTool(goals);
-    updateGoalTool = new UpdateGoalTool(goals);
+    const manager = { resolve: () => goals } as unknown as IAgentManager;
+    const scope = ctx.get(IAgentScopeContext);
+    setGoalBudgetTool = new SetGoalBudgetTool(manager, scope);
+    updateGoalTool = new UpdateGoalTool(manager, scope);
   });
 
   afterEach(async () => {

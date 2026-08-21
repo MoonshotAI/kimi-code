@@ -14,7 +14,10 @@ import { Emitter } from '#/_base/event';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type { AgentCapability } from '#/agent/runtime/agentRuntime';
+import type {
+  AgentRuntimeDefinition,
+  RuntimeOf,
+} from '#/agent/runtime/agentRuntime';
 import {
   AgentActivityUpdated,
   IAgentActivityView,
@@ -23,9 +26,8 @@ import {
 import { IAgentManager, MAIN_AGENT_ID } from '#/session/agentManager/agentManager';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { AgentInteraction } from '#/session/interaction/interactionAgentRuntime';
 import {
-  AgentInteraction,
-  type IAgentInteraction,
   type Interaction,
   type InteractionKind,
   type InteractionPendingChangedEvent,
@@ -65,8 +67,7 @@ class FakeBus implements IEventBus {
   }
 }
 
-class FakeInteractionKernel implements IAgentInteraction {
-  declare readonly _serviceBrand: undefined;
+class FakeInteractionKernel {
   private readonly pending = new Map<string, Interaction>();
   private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
   private readonly resolveEmitter = new Emitter<InteractionResolution>();
@@ -198,13 +199,14 @@ class FakeAgentManager implements IAgentManager {
   fork(): Promise<AgentContext> {
     throw new Error('not implemented');
   }
-  resolve<T>(agent: AgentContext, capability: AgentCapability<T>): T {
-    if (capability !== (AgentInteraction as AgentCapability<unknown>)) {
-      throw new Error('not implemented');
-    }
+  resolve<Definition extends AgentRuntimeDefinition<any, any>>(
+    agent: AgentContext,
+    definition: Definition,
+  ): RuntimeOf<Definition> {
+    if (definition !== AgentInteraction) throw new Error('not implemented');
     const handle = this.handles.find((h) => h.context === agent);
     if (handle === undefined) throw new Error(`unknown agent ${agent.agentId}`);
-    return handle.interactions as T;
+    return handle.interactions as RuntimeOf<Definition>;
   }
   inspect(): never {
     throw new Error('not implemented');

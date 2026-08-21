@@ -58,7 +58,6 @@ import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { normalizeAgentProfile, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentCron } from '#/session/cron/agentCron';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import type {
@@ -94,8 +93,7 @@ import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { ManagedAgent } from '#/session/agentManager/managedAgent';
-import { AgentTodo } from '#/session/todo/sessionTodo';
-import { TodoAgentRuntimeDefinition } from '#/session/todo/todoAgentRuntime';
+import { AgentTodo } from '#/session/todo/todoAgentRuntime';
 
 const signal = new AbortController().signal;
 
@@ -401,12 +399,12 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
     get: vi.fn((agentId: string) => contextsByAgentId.get(agentId)),
     handleOf: vi.fn((agentId: string) => handles.get(agentId)),
     list: vi.fn(() => [...handles.keys()].map((agentId) => contextFor(agentId))),
-    resolve: vi.fn((agent, capability) => {
+    resolve: vi.fn(((agent, definition) => {
       if (adoptedManaged !== undefined && adoptedManaged.context === agent) {
-        return adoptedManaged.runtimeSet.resolve(capability);
+        return adoptedManaged.runtimeSet.resolve(definition);
       }
       throw new Error('unexpected resolve');
-    }),
+    }) as IAgentManager['resolve']),
     inspect: vi.fn((agent) => {
       if (adoptedManaged !== undefined && adoptedManaged.context === agent) {
         return {
@@ -421,8 +419,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
       handles.set(adoptedHandle.id, adoptedHandle);
       adoptedManaged = new ManagedAgent(agentContextOf(adoptedHandle), adoptedHandle, [
         {
-          capability: AgentTodo,
-          definition: TodoAgentRuntimeDefinition,
+          definition: AgentTodo,
           generation: 1,
           active: true,
         },
@@ -483,11 +480,6 @@ function currentAgentHandle(ctx: TestAgentContext, agentId: string): IAgentScope
     dispose: () => {},
   };
 }
-
-const cronStub = {
-  _serviceBrand: undefined,
-  list: () => [],
-} as unknown as IAgentCron;
 
 function sessionMetadataStub(agents: Readonly<Record<string, AgentMeta>>): ISessionMetadata {
   return {
@@ -1093,7 +1085,6 @@ describe('Agent tool execution contract', () => {
     ctx = createTestAgent(
       sessionService(IAgentManager, lifecycle),
       sessionService(ISessionSubagentService, lifecycle),
-      agentService(IAgentCron, cronStub),
       modelProviderServices(
         modelCatalogResolving('mock-model', 'provider/fast', 'provider/smart'),
       ),
@@ -3324,8 +3315,7 @@ describe('Agent tools', () => {
       ctx = createTestAgent(
         sessionService(IAgentManager, lifecycle),
         sessionService(ISessionSubagentService, lifecycle),
-        agentService(IAgentCron, cronStub),
-      );
+        );
       lifecycle.addHandle('main', 'agent', undefined, ctx.get(IAgentScopeContext).agentContext);
     });
 

@@ -3,7 +3,7 @@ import type { ToolCall } from '#/kosong/contract/message';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentGoal } from '#/agent/goal/goal';
+import { AgentGoal, type GoalRuntime } from '#/agent/goal/goalAgentRuntime';
 
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
@@ -16,7 +16,7 @@ import {
 } from '../../../harness';
 import { stubAgentSwarm } from '../stubs';
 
-type GoalServiceTestManager = IAgentGoal;
+type GoalServiceTestManager = GoalRuntime;
 type InjectableContextInjector = IAgentContextInjectorService & {
   inject(isNewTurn: boolean): Promise<void>;
 };
@@ -64,7 +64,7 @@ describe('GoalInjection content', () => {
 
   beforeEach(() => {
     ctx = createTestAgent(agentService(IAgentSwarmService, stubAgentSwarm()));
-    goals = ctx.get(IAgentGoal) as GoalServiceTestManager;
+    goals = ctx.resolve(AgentGoal) as GoalServiceTestManager;
     context = ctx.get(IAgentContextMemoryService);
     injector = ctx.get(IAgentContextInjectorService) as InjectableContextInjector;
   });
@@ -251,7 +251,7 @@ describe('GoalInjection integration', () => {
         wireRecordPersistenceServices(persistence),
         agentService(IAgentSwarmService, stubAgentSwarm()),
       );
-      goals = ctx.get(IAgentGoal) as GoalServiceTestManager;
+      goals = ctx.resolve(AgentGoal) as GoalServiceTestManager;
       profile = ctx.get(IAgentProfileService);
       injector = ctx.get(IAgentContextInjectorService) as InjectableContextInjector;
     });

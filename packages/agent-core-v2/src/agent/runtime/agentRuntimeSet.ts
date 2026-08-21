@@ -7,21 +7,55 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IEventDispatcher, type DurableRuntimeParticipantHost } from '#/state/eventDispatcher';
 
 import {
-  type AgentCapability,
+  AgentRuntimeLifecycle,
   type AgentRuntimeContext,
   type AgentRuntimeContributionSnapshot,
   type AgentRuntimeDefinition,
   type AgentRuntimeDefinitionRecord,
+  type AgentRuntimeLifecycle as AgentRuntimeLifecycleProtocol,
   type AgentRuntimeStatus,
   type DurableAgentRuntimeParticipant,
+  type RuntimeOf,
 } from './agentRuntime';
+
+class RuntimeScope {
+  private readonly cleanups: Array<() => void | Promise<void>> = [];
+  private readonly tracked = new Set<Promise<unknown>>();
+  private disposed = false;
+
+  register(cleanup: IDisposable | (() => void | Promise<void>)): void {
+    const dispose = typeof cleanup === 'function' ? cleanup : () => cleanup.dispose();
+    if (this.disposed) {
+      void dispose();
+      return;
+    }
+    this.cleanups.push(dispose);
+  }
+
+  track<T>(work: Promise<T>): Promise<T> {
+    if (this.disposed) throw new Error('Runtime scope is disposed');
+    const tracked = work.finally(() => { this.tracked.delete(tracked); });
+    this.tracked.add(tracked);
+    return tracked;
+  }
+
+  async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
+    await Promise.allSettled(this.tracked);
+    for (let index = this.cleanups.length - 1; index >= 0; index -= 1) {
+      try {
+        await this.cleanups[index]!();
+      } catch {}
+    }
+  }
+}
 
 interface RuntimeEntry {
   record: AgentRuntimeDefinitionRecord;
   status: AgentRuntimeStatus;
   actor?: AnyActorRef;
-  facade?: unknown;
-  activated: boolean;
+  runtime?: unknown;
   listeners?: Set<(state: any) => void>;
   subscription?: { unsubscribe(): void };
   attachment?: IDisposable;
@@ -30,6 +64,7 @@ interface RuntimeEntry {
   retired: boolean;
   drain?: Promise<void>;
   error?: unknown;
+  scope?: RuntimeScope;
 }
 
 export class AgentRuntimeSet {
@@ -46,46 +81,49 @@ export class AgentRuntimeSet {
 
   apply(record: AgentRuntimeDefinitionRecord): void {
     if (this.closed) return;
-    const existing = this.entries.get(record.capability.id);
+    const id = record.definition.id;
+    const existing = this.entries.get(id);
     if (existing !== undefined) {
       if (existing.record === record) return;
-      this.entries.delete(record.capability.id);
+      this.entries.delete(id);
       this.graveyard.add(existing);
       this.retireEntry(existing);
     }
     const entry: RuntimeEntry = {
       record,
       status: 'registered',
-      activated: false,
       leases: new Set(),
       retiring: false,
       retired: false,
     };
-    this.entries.set(record.capability.id, entry);
+    this.entries.set(id, entry);
     if (record.definition.durable !== undefined && this.durableHost !== undefined) {
       this.attachDurableEntry(entry, this.durableHost);
     }
   }
 
   retireDefinition(record: AgentRuntimeDefinitionRecord): void {
-    const entry = this.entries.get(record.capability.id);
+    const id = record.definition.id;
+    const entry = this.entries.get(id);
     if (entry === undefined || entry.record !== record) return;
-    this.entries.delete(record.capability.id);
+    this.entries.delete(id);
     this.graveyard.add(entry);
     this.retireEntry(entry);
   }
 
-  resolve<T>(capability: AgentCapability<T>): T {
+  resolve<Definition extends AgentRuntimeDefinition<any, any>>(
+    definition: Definition,
+  ): RuntimeOf<Definition> {
     if (this.closed) {
       throw new Error(
         `Agent ${this.agent.agentId}:${String(this.agent.generation)} runtime set is closed`,
       );
     }
-    const entry = this.entries.get(capability.id);
-    if (entry === undefined || !entry.record.active) {
-      throw new Error(`Agent runtime '${capability.id}' is unavailable`);
+    const entry = this.entries.get(definition.id);
+    if (entry === undefined || entry.record.definition !== definition || !entry.record.active) {
+      throw new Error(`Agent runtime '${definition.id}' is unavailable`);
     }
-    return this.facade(entry) as T;
+    return this.runtime(entry) as RuntimeOf<Definition>;
   }
 
   attachDurable(host: DurableRuntimeParticipantHost): void {
@@ -101,7 +139,7 @@ export class AgentRuntimeSet {
     const out: AgentRuntimeContributionSnapshot[] = [];
     for (const entry of this.entries.values()) out.push(this.line(entry));
     for (const entry of this.graveyard) {
-      if (this.entries.has(entry.record.capability.id)) continue;
+      if (this.entries.has(entry.record.definition.id)) continue;
       out.push(this.line(entry));
     }
     return out;
@@ -122,12 +160,14 @@ export class AgentRuntimeSet {
     return this.closeDrain;
   }
 
-  private facade(entry: RuntimeEntry): unknown {
-    if (entry.facade !== undefined) return entry.facade;
+  private runtime(entry: RuntimeEntry): unknown {
+    if (entry.runtime !== undefined) return entry.runtime;
     this.materialize(entry);
     const definition = entry.record.definition;
     const actor = entry.actor!;
     const listeners = entry.listeners!;
+    const scope = new RuntimeScope();
+    entry.scope = scope;
     const context: AgentRuntimeContext<any> = {
       agent: this.agent,
       get: (id) => this.accessor.get(id),
@@ -138,23 +178,24 @@ export class AgentRuntimeSet {
         return definition.durable.read(actor.getSnapshot());
       },
       dispatch: (event) => this.accessor.get(IEventDispatcher).dispatch(event),
-      track: (work) => this.track(entry, work),
+      own: (resource) => scope.register(resource),
+      track: (work) => scope.track(this.track(entry, work)),
       onDidChange: (listener) => {
         listeners.add(listener);
-        return toDisposable(() => { listeners.delete(listener); });
+        const disposable = toDisposable(() => { listeners.delete(listener); });
+        scope.register(disposable);
+        return disposable;
       },
     };
     try {
-      entry.facade = definition.createFacade(actor, context);
-      if (!entry.activated) {
-        definition.activate?.(actor, context);
-        entry.activated = true;
-      }
-      return entry.facade;
+      const runtime = definition.create(context);
+      entry.runtime = runtime;
+      this.lifecycleOf(runtime)?.start?.();
+      return runtime;
     } catch (error) {
       entry.status = 'failed';
       entry.error = error;
-      this.disposeRuntimeResources(entry);
+      void this.disposeRuntimeResources(entry);
       throw error;
     }
   }
@@ -162,7 +203,7 @@ export class AgentRuntimeSet {
   private materialize(entry: RuntimeEntry): void {
     if (entry.actor !== undefined) return;
     if (this.closed || entry.retiring) {
-      throw new Error(`Agent runtime '${entry.record.capability.id}' is unavailable`);
+      throw new Error(`Agent runtime '${entry.record.definition.id}' is unavailable`);
     }
     const definition = entry.record.definition;
     try {
@@ -220,12 +261,12 @@ export class AgentRuntimeSet {
       commit: (state) => { durable.commit(actor, state); },
     };
     entry.attachment = host.attach(participant);
-    if (definition.eager === true) this.facade(entry);
+    if (definition.eager === true) this.runtime(entry);
   }
 
   private track<T>(entry: RuntimeEntry, work: Promise<T>): Promise<T> {
     if (this.closed || entry.retiring) {
-      throw new Error(`Agent runtime '${entry.record.capability.id}' is retiring`);
+      throw new Error(`Agent runtime '${entry.record.definition.id}' is retiring`);
     }
     const lease = work.finally(() => { entry.leases.delete(lease); });
     entry.leases.add(lease);
@@ -235,29 +276,59 @@ export class AgentRuntimeSet {
   private retireEntry(entry: RuntimeEntry): void {
     if (entry.retiring) return;
     entry.retiring = true;
-    if (entry.leases.size === 0) {
-      this.stopEntry(entry);
-      return;
-    }
-    entry.drain = Promise.allSettled(entry.leases).then(() => { this.stopEntry(entry); });
+    entry.drain = entry.leases.size === 0
+      ? this.stopEntry(entry)
+      : Promise.allSettled(entry.leases).then(() => this.stopEntry(entry));
   }
 
-  private stopEntry(entry: RuntimeEntry): void {
-    if (entry.retired) return;
+  private stopEntry(entry: RuntimeEntry): Promise<void> {
+    if (entry.retired) return Promise.resolve();
     entry.retired = true;
-    this.disposeRuntimeResources(entry);
     entry.status = 'retired';
+    return this.disposeRuntimeResources(entry);
   }
 
-  private disposeRuntimeResources(entry: RuntimeEntry): void {
+  private disposeRuntimeResources(entry: RuntimeEntry): Promise<void> {
     entry.attachment?.dispose();
     entry.attachment = undefined;
-    entry.subscription?.unsubscribe();
-    entry.actor?.stop();
-    entry.subscription = undefined;
-    entry.actor = undefined;
-    entry.facade = undefined;
-    entry.listeners = undefined;
+    const finish = (): void => {
+      entry.subscription?.unsubscribe();
+      entry.actor?.stop();
+      entry.subscription = undefined;
+      entry.actor = undefined;
+      entry.runtime = undefined;
+      entry.listeners = undefined;
+      entry.scope = undefined;
+    };
+    const disposeScope = (): Promise<void> => {
+      const scope = entry.scope;
+      if (scope === undefined) {
+        finish();
+        return Promise.resolve();
+      }
+      return scope.dispose().then(finish);
+    };
+    try {
+      const disposal = this.lifecycleOf(entry.runtime)?.dispose?.();
+      if (disposal instanceof Promise) {
+        return disposal.then(disposeScope, (error: unknown) => {
+          entry.error = error;
+          return disposeScope();
+        });
+      }
+    } catch (error) {
+      entry.error = error;
+    }
+    return disposeScope();
+  }
+
+  private lifecycleOf(runtime: unknown): AgentRuntimeLifecycleProtocol | undefined {
+    if ((typeof runtime !== 'object' || runtime === null) && typeof runtime !== 'function') {
+      return undefined;
+    }
+    return (runtime as { readonly [AgentRuntimeLifecycle]?: AgentRuntimeLifecycleProtocol })[
+      AgentRuntimeLifecycle
+    ];
   }
 
   private line(entry: RuntimeEntry): AgentRuntimeContributionSnapshot {

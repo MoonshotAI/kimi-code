@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
-import { assign, fromCallback, setup, type AnyActorRef, type EventObject, type Snapshot } from 'xstate';
+import { assign, setup, type Snapshot } from 'xstate';
 
-import { DisposableStore, MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { abortError } from '#/_base/utils/abort';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -22,8 +22,7 @@ import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
-import { type AgentRuntimeContext, defineAgentRuntime } from '#/agent/runtime/agentRuntime';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { defineAgentRuntime, type AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -43,12 +42,12 @@ import {
   toKimiErrorPayload,
   type KimiErrorPayload,
 } from '#/errors';
-import { MAIN_AGENT_ID, IAgentManager } from '#/session/agentManager/agentManager';
+import { MAIN_AGENT_ID } from '#/session/agentManager/agentManager';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
-import { AgentGoal, IAgentGoal, type GoalReasonInput, type ResumeGoalInput } from './goal';
+import type { GoalReasonInput, ResumeGoalInput } from './goal';
 import { IGoalDeadlineScheduler } from './goalDeadlineScheduler';
 import {
   GoalClear,
@@ -177,27 +176,14 @@ interface ResumeContinuation {
   readonly goalId: string;
 }
 
-interface GoalActivation {
-  readonly runtime: AgentRuntimeContext<GoalRuntimeState>;
-  readonly core: GoalRuntimeCore;
-}
-
 interface GoalActorContext {
   readonly durable: GoalRuntimeState;
-  readonly activation?: GoalActivation;
 }
 
 interface GoalCommitEvent {
   readonly type: 'goal.commit';
   readonly durable: GoalRuntimeState;
 }
-
-interface GoalActivateEvent {
-  readonly type: 'goal.activate';
-  readonly activation: GoalActivation;
-}
-
-type GoalActorEvent = GoalCommitEvent | GoalActivateEvent;
 
 type GoalActorSnapshot = Snapshot<unknown> & { readonly context: GoalActorContext };
 
@@ -211,7 +197,7 @@ function isGoalContinuationOrigin(origin: TurnStarted['origin']): boolean {
   return origin.kind === 'system_trigger' && origin.name === 'goal_continuation';
 }
 
-class GoalRuntimeCore {
+export class GoalRuntime {
   private readonly wallClockDeadline = new MutableDisposable<IDisposable>();
   private pendingContinuation?: PendingContinuation;
   private liveTurnId: number | undefined;
@@ -227,13 +213,14 @@ class GoalRuntimeCore {
   private liveWallClockStartedAt: number | undefined;
   private resumeContinuation: ResumeContinuation | undefined;
 
-  constructor(private readonly runtime: AgentRuntimeContext<GoalRuntimeState>) {}
+  constructor(private readonly runtime: AgentRuntimeContext<GoalRuntimeState>) {
+    this.attach();
+  }
 
-  attach(): () => void {
-    const store = new DisposableStore();
-    store.add(this.wallClockDeadline);
-    if (this.runtime.agent.agentId !== MAIN_AGENT_ID) return () => store.dispose();
-    store.add(
+  private attach(): void {
+    this.runtime.own(this.wallClockDeadline);
+    if (this.runtime.agent.agentId !== MAIN_AGENT_ID) return;
+    this.runtime.own(
       new GoalInjection(
         {
           getGoal: () => this.getGoal().goal,
@@ -242,36 +229,36 @@ class GoalRuntimeCore {
         this.runtime.get(IAgentContextInjectorService),
       ),
     );
-    store.add(
+    this.runtime.own(
       this.runtime.get(IEventDispatcher).hooks.onDidRestore.register('goal', async (_ctx, next) => {
         this.normalizeAfterReplay();
         await next();
       }),
     );
-    store.add(
+    this.runtime.own(
       this.runtime.get(IEventBus).subscribe(TurnStarted, (e) => {
         this.handleTurnLaunched(e.turnId, e.origin);
       }),
     );
-    store.add(
+    this.runtime.own(
       this.runtime.get(ISessionUsageService).onDidRecord((ctx) => {
         if (ctx.agent !== this.runtime.agent) return;
         this.handleUsageRecorded(ctx);
       }),
     );
-    store.add(
+    this.runtime.own(
       this.loopService.hooks.onWillBeginStep.register('goal-count-turn', async (ctx, next) => {
         await this.handleBeforeStep(ctx);
         await next();
       }),
     );
-    store.add(
+    this.runtime.own(
       this.loopService.hooks.onDidFinishStep.register('goal-outcome-continuation', async (ctx, next) => {
         this.handleAfterStep(ctx);
         await next();
       }),
     );
-    store.add(
+    this.runtime.own(
       this.runtime.get(IAgentToolExecutorService).onBeforeExecuteTool((event) => {
         if (
           event.toolCall.name !== 'CreateGoal' ||
@@ -299,7 +286,7 @@ class GoalRuntimeCore {
         );
       }),
     );
-    store.add(
+    this.runtime.own(
       this.runtime.get(IAgentToolExecutorService).onBeforeExecuteTool((event) => {
         if (this.isStaleGoalToolCall(event)) {
           event.veto({ output: GOAL_STALE_TOOL_RESULT });
@@ -310,7 +297,7 @@ class GoalRuntimeCore {
         }
       }),
     );
-    store.add(
+    this.runtime.own(
       this.runtime.get(IAgentToolExecutorService).hooks.onDidExecuteTool.register('goal-outcome-tool-result', async (ctx, next) => {
         const goalId = this.goalTurnTarget(ctx.turnId);
         if (
@@ -322,7 +309,7 @@ class GoalRuntimeCore {
         await next();
       }),
     );
-    store.add(
+    this.runtime.own(
       this.runtime.get(IEventBus).subscribe(TurnEnded, (e) => {
         const goalId = this.goalTurnTarget(e.turnId);
         void this.handleTurnEnded(e.turnId, { reason: e.reason, error: e.error }).catch((error) =>
@@ -330,7 +317,6 @@ class GoalRuntimeCore {
         );
       }),
     );
-    return () => store.dispose();
   }
 
   private get loopService(): IAgentLoopService {
@@ -1238,17 +1224,10 @@ function pauseReasonWithMessage(prefix: string, message: string | undefined): st
   return trimmed === undefined || trimmed.length === 0 ? prefix : `${prefix}: ${trimmed}`;
 }
 
-const goalEffectLogic = fromCallback<EventObject, GoalActivation>(({ input }) =>
-  input.core.attach(),
-);
-
 const goalActorLogic = setup({
   types: {} as {
     context: GoalActorContext;
-    events: GoalActorEvent;
-  },
-  actors: {
-    effect: goalEffectLogic,
+    events: GoalCommitEvent;
   },
 }).createMachine({
   context: {
@@ -1257,33 +1236,14 @@ const goalActorLogic = setup({
       forkNotice: { goalPresent: false, reminderPending: false },
     },
   },
-  initial: 'inactive',
   on: {
     'goal.commit': {
       actions: assign({ durable: ({ event }) => event.durable }),
     },
   },
-  states: {
-    inactive: {
-      on: {
-        'goal.activate': {
-          target: 'active',
-          actions: assign({ activation: ({ event }) => event.activation }),
-        },
-      },
-    },
-    active: {
-      invoke: {
-        src: 'effect',
-        input: ({ context }) => context.activation!,
-      },
-    },
-  },
 });
 
-const cores = new WeakMap<AnyActorRef, GoalRuntimeCore>();
-
-export const GoalAgentRuntimeDefinition = defineAgentRuntime<GoalRuntimeState, IAgentGoal>({
+export const AgentGoal = defineAgentRuntime<GoalRuntimeState, GoalRuntime>({
   id: 'goal',
   logic: goalActorLogic,
   eager: true,
@@ -1357,31 +1317,7 @@ export const GoalAgentRuntimeDefinition = defineAgentRuntime<GoalRuntimeState, I
     read: (snapshot) => (snapshot as GoalActorSnapshot).context.durable,
     commit: (actor, durable) => { actor.send({ type: 'goal.commit', durable }); },
   },
-  createFacade: (actor, context) => {
-    const core = new GoalRuntimeCore(context);
-    cores.set(actor, core);
-    return {
-      _serviceBrand: undefined,
-      getGoal: () => core.getGoal(),
-      isGoalToolTarget: (turnId, goalId) => core.isGoalToolTarget(turnId, goalId),
-      createGoal: (input, goalActor) => core.createGoal(input, goalActor),
-      pauseGoal: (input, goalActor) => core.pauseGoal(input, goalActor),
-      resumeGoal: (input, goalActor) => core.resumeGoal(input, goalActor),
-      cancelGoal: (input, goalActor) => core.cancelGoal(input, goalActor),
-      setBudgetLimits: (input, goalActor) => core.setBudgetLimits(input, goalActor),
-      markComplete: (input, goalActor) => core.markComplete(input, goalActor),
-      markBlocked: (input, goalActor) => core.markBlocked(input, goalActor),
-      pauseOnInterrupt: (input) => core.pauseOnInterrupt(input),
-      recordTokenUsage: (tokenDelta) => core.recordTokenUsage(tokenDelta),
-      incrementTurn: () => core.incrementTurn(),
-    };
-  },
-  activate: (actor, context) => {
-    actor.send({
-      type: 'goal.activate',
-      activation: { runtime: context, core: cores.get(actor)! },
-    });
-  },
+  create: (context) => new GoalRuntime(context),
   inspect: (snapshot) => {
     const goal = (snapshot as GoalActorSnapshot).context.durable.goal;
     if (goal === null) return null;
@@ -1398,66 +1334,3 @@ export const GoalAgentRuntimeDefinition = defineAgentRuntime<GoalRuntimeState, I
   },
 });
 
-export class AgentGoalBinding implements IAgentGoal {
-  declare readonly _serviceBrand: undefined;
-
-  private readonly goal: IAgentGoal;
-
-  constructor(
-    @IAgentManager manager: IAgentManager,
-    @IAgentScopeContext scope: IAgentScopeContext,
-  ) {
-    this.goal = manager.resolve(scope.agentContext, AgentGoal);
-  }
-
-  getGoal(): GoalToolResult {
-    return this.goal.getGoal();
-  }
-
-  isGoalToolTarget(turnId: number, goalId: string): boolean {
-    return this.goal.isGoalToolTarget(turnId, goalId);
-  }
-
-  createGoal(input: CreateGoalInput, actor?: GoalActor): Promise<GoalSnapshot> {
-    return this.goal.createGoal(input, actor);
-  }
-
-  pauseGoal(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot> {
-    return this.goal.pauseGoal(input, actor);
-  }
-
-  resumeGoal(input?: ResumeGoalInput, actor?: GoalActor): Promise<GoalSnapshot> {
-    return this.goal.resumeGoal(input, actor);
-  }
-
-  cancelGoal(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot> {
-    return this.goal.cancelGoal(input, actor);
-  }
-
-  setBudgetLimits(
-    input: { readonly budgetLimits: GoalBudgetLimits },
-    actor?: GoalActor,
-  ): Promise<GoalSnapshot> {
-    return this.goal.setBudgetLimits(input, actor);
-  }
-
-  markComplete(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot | null> {
-    return this.goal.markComplete(input, actor);
-  }
-
-  markBlocked(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot | null> {
-    return this.goal.markBlocked(input, actor);
-  }
-
-  pauseOnInterrupt(input?: GoalReasonInput): Promise<GoalSnapshot | null> {
-    return this.goal.pauseOnInterrupt(input);
-  }
-
-  recordTokenUsage(tokenDelta: number): Promise<GoalSnapshot | null> {
-    return this.goal.recordTokenUsage(tokenDelta);
-  }
-
-  incrementTurn(): Promise<GoalSnapshot | null> {
-    return this.goal.incrementTurn();
-  }
-}

@@ -2,7 +2,6 @@ import { assign, createMachine, fromCallback } from 'xstate';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ServicesAccessor } from '#/_base/di/instantiation';
-import type { IDisposable } from '#/_base/di/lifecycle';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import {
@@ -17,16 +16,15 @@ import type { DurableRuntimeParticipantHost } from '#/state/eventDispatcher';
 const agent = { agentId: 'main', generation: 1, space: {} } as AgentContext;
 const accessor = { get: vi.fn() } as unknown as ServicesAccessor;
 
-function record<Facade>(
+function record<Runtime>(
   id: string,
-  createFacade: AgentRuntimeDefinitionRecord['definition']['createFacade'] = () => ({}) as Facade,
+  create: AgentRuntimeDefinition<any, Runtime>['create'] = () => ({}) as Runtime,
   generation = 1,
   logic: AgentRuntimeDefinition<any, any>['logic'] = fromCallback(() => {}),
   durable?: AgentRuntimeDefinition<any, any>['durable'],
-): AgentRuntimeDefinitionRecord {
+): AgentRuntimeDefinitionRecord & { definition: AgentRuntimeDefinition<any, Runtime> } {
   return {
-    capability: { id },
-    definition: defineAgentRuntime({ id, logic, durable, createFacade }),
+    definition: defineAgentRuntime({ id, logic, durable, create }),
     generation,
     active: true,
   };
@@ -39,20 +37,21 @@ function host<T extends DurableRuntimeParticipantHost['attach']>(
 }
 
 describe('AgentRuntimeSet', () => {
-  it('materializes lazily and cleans up the actor when facade creation fails', () => {
+  it('materializes lazily and cleans up the actor when runtimeInstance creation fails', async () => {
     let stopped = 0;
     const runtime = record(
       'failing',
-      () => { throw new Error('facade failed'); },
+      () => { throw new Error('runtimeInstance failed'); },
       1,
       fromCallback(() => () => { stopped += 1; }),
     );
     const set = new AgentRuntimeSet(agent, accessor);
     set.apply(runtime);
 
-    expect(() => set.resolve(runtime.capability)).toThrow('facade failed');
+    expect(() => set.resolve(runtime.definition)).toThrow('runtimeInstance failed');
+    await set.close();
     expect(stopped).toBe(1);
-    expect(set.inspect()[0]).toMatchObject({ id: 'failing', status: 'failed', error: 'facade failed' });
+    expect(set.inspect()[0]).toMatchObject({ id: 'failing', status: 'retired', error: 'runtimeInstance failed' });
     return set.close();
   });
 
@@ -69,12 +68,12 @@ describe('AgentRuntimeSet', () => {
     );
     const set = new AgentRuntimeSet(context, accessor);
     set.apply(runtime);
-    const facade = set.resolve<{ value: number }>(runtime.capability);
+    const runtimeInstance = set.resolve(runtime.definition);
 
     space._kill();
 
-    expect(facade.value).toBe(1);
-    expect(set.resolve(runtime.capability)).toBe(facade);
+    expect(runtimeInstance.value).toBe(1);
+    expect(set.resolve(runtime.definition)).toBe(runtimeInstance);
     expect(stopped).toBe(0);
     await set.close();
     expect(stopped).toBe(1);
@@ -89,7 +88,7 @@ describe('AgentRuntimeSet', () => {
     );
     const set = new AgentRuntimeSet(agent, accessor);
     set.apply(runtime);
-    set.resolve(runtime.capability);
+    set.resolve(runtime.definition);
     await Promise.resolve();
 
     expect(set.inspect()[0]).toMatchObject({ status: 'failed', error: 'actor failed' });
@@ -122,7 +121,7 @@ describe('AgentRuntimeSet', () => {
     let participant: { commit(state: number): void } | undefined;
     const runtime = record(
       'listeners',
-      (_actor, context) => ({ onDidChange: context.onDidChange }),
+      (context) => ({ onDidChange: context.onDidChange }),
       1,
       createMachine({
         context: { value: 0 },
@@ -146,11 +145,9 @@ describe('AgentRuntimeSet', () => {
       participant = attached;
       return { dispose: vi.fn() };
     })));
-    const facade = set.resolve<{ onDidChange(listener: (state: number) => void): IDisposable }>(
-      runtime.capability,
-    );
+    const runtimeInstance = set.resolve(runtime.definition);
     const listener = vi.fn();
-    const subscription = facade.onDidChange(listener);
+    const subscription = runtimeInstance.onDidChange(listener);
 
     participant!.commit(1);
     subscription.dispose();
@@ -166,7 +163,7 @@ describe('AgentRuntimeSet', () => {
     let release!: () => void;
     const runtime = record(
       'leased',
-      (_actor, context) => ({
+      (context) => ({
         run: () => context.track(new Promise<void>((resolve) => { release = resolve; })),
       }),
       1,
@@ -174,8 +171,8 @@ describe('AgentRuntimeSet', () => {
     );
     const set = new AgentRuntimeSet(agent, accessor);
     set.apply(runtime);
-    const facade = set.resolve<{ run(): Promise<void> }>(runtime.capability);
-    void facade.run();
+    const runtimeInstance = set.resolve(runtime.definition);
+    void runtimeInstance.run();
 
     const closing = set.close();
     await Promise.resolve();
@@ -183,6 +180,60 @@ describe('AgentRuntimeSet', () => {
     release();
     await closing;
     expect(stopped).toBe(1);
+  });
+
+  it('disposes registered resources before stopping its actor', async () => {
+    const order: string[] = [];
+    let releaseCleanup!: () => void;
+    const runtime = record(
+      'scope',
+      (context) => {
+        context.own({ dispose: () => { order.push('subscription'); } });
+        context.own({ dispose: () => { order.push('tool'); } });
+        context.own(async () => {
+          order.push('cleanup:start');
+          await new Promise<void>((resolve) => { releaseCleanup = resolve; });
+          order.push('cleanup:end');
+        });
+        return {};
+      },
+      1,
+      fromCallback(() => () => { order.push('actor:stop'); }),
+    );
+    const set = new AgentRuntimeSet(agent, accessor);
+    set.apply(runtime);
+    set.resolve(runtime.definition);
+
+    const closing = set.close();
+    await Promise.resolve();
+    expect(order).toEqual(['cleanup:start']);
+
+    releaseCleanup();
+    await closing;
+
+    expect(order).toEqual(['cleanup:start', 'cleanup:end', 'tool', 'subscription', 'actor:stop']);
+  });
+
+  it('resolves only the current definition object for a runtime id', async () => {
+    const old = record('identity', () => ({ generation: 1 }), 1);
+    const current = record('identity', () => ({ generation: 2 }), 2);
+    const forged = defineAgentRuntime({
+      id: 'identity',
+      logic: fromCallback(() => {}),
+      create: () => ({ generation: 999 }),
+    });
+    const set = new AgentRuntimeSet(agent, accessor);
+    set.apply(old);
+
+    expect(set.resolve(old.definition).generation).toBe(1);
+    expect(() => set.resolve(forged)).toThrow("Agent runtime 'identity' is unavailable");
+
+    set.apply(current);
+
+    expect(() => set.resolve(old.definition)).toThrow("Agent runtime 'identity' is unavailable");
+    expect(() => set.resolve(forged)).toThrow("Agent runtime 'identity' is unavailable");
+    expect(set.resolve(current.definition).generation).toBe(2);
+    await set.close();
   });
 
   it('retires the old runtime while allowing a new definition generation', async () => {
@@ -202,11 +253,12 @@ describe('AgentRuntimeSet', () => {
     );
     const set = new AgentRuntimeSet(agent, accessor);
     set.apply(first);
-    set.resolve(first.capability);
+    set.resolve(first.definition);
     set.retireDefinition(first);
+    await Promise.resolve();
     expect(set.inspect()).toContainEqual(expect.objectContaining({ generation: 1, status: 'retired' }));
     set.apply(second);
-    set.resolve(second.capability);
+    set.resolve(second.definition);
     await set.close();
     expect(firstStopped).toBe(1);
     expect(secondStopped).toBe(1);

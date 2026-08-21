@@ -17,7 +17,7 @@ import {
   ISessionTokenCountingService,
   ISessionUsageService,
   makeAgentScopeContext,
-  type IAgentInteraction,
+  type InteractionRuntime,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
@@ -72,7 +72,7 @@ function makeSession(agents: FakeAgentHandle[]): ISessionScopeHandle {
     onDidChangePending: () => ({ dispose: () => {} }),
     onDidResolve: () => ({ dispose: () => {} }),
     listPending: () => [],
-  } as unknown as IAgentInteraction;
+  } as unknown as InteractionRuntime;
   const lifecycle = {
     list: () => agents.map((agent) => agent.context),
     get: (agentId: string) => agents.find((agent) => agent.id === agentId)?.context,

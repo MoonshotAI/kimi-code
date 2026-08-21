@@ -24,11 +24,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IAgentManager } from '#/session/agentManager/agentManager';
 import { ManagedAgent } from '#/session/agentManager/managedAgent';
-import { AgentTodo, IAgentTodo } from '#/session/todo/sessionTodo';
-import {
-  AgentTodoBinding,
-  TodoAgentRuntimeDefinition,
-} from '#/session/todo/todoAgentRuntime';
+import { AgentTodo, type TodoRuntime } from '#/session/todo/todoAgentRuntime';
 import type { TodoItem } from '#/session/todo/todoItem';
 import { TODO_LIST_REMINDER_VARIANT } from '#/session/todo/todoListReminder';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -48,7 +44,7 @@ const noopBlob: IAgentBlobService = {
 interface RuntimeAgent {
   readonly context: AgentContext;
   readonly managed: ManagedAgent;
-  readonly todo: IAgentTodo;
+  readonly todo: TodoRuntime;
   readonly dispatcher: IEventDispatcher;
   readonly journal: WireRecord[];
   readonly registeredVariants: string[];
@@ -59,8 +55,7 @@ interface RuntimeAgent {
 
 function todoRecord(generation = 1): AgentRuntimeDefinitionRecord {
   return {
-    capability: AgentTodo,
-    definition: TodoAgentRuntimeDefinition,
+    definition: AgentTodo,
     generation,
     active: true,
   };
@@ -71,13 +66,13 @@ class RuntimeRegistry {
   private readonly records = new Map<string, AgentRuntimeDefinitionRecord>();
 
   register(record: AgentRuntimeDefinitionRecord): void {
-    this.records.set(record.capability.id, record);
+    this.records.set(record.definition.id, record);
     for (const managed of this.managed) managed.runtimeSet.apply(record);
   }
 
   withdraw(record: AgentRuntimeDefinitionRecord): void {
-    if (this.records.get(record.capability.id) !== record) return;
-    this.records.delete(record.capability.id);
+    if (this.records.get(record.definition.id) !== record) return;
+    this.records.delete(record.definition.id);
     record.active = false;
     for (const managed of this.managed) managed.runtimeSet.retireDefinition(record);
   }
@@ -189,7 +184,7 @@ describe('TodoAgentRuntime', () => {
     await next.dispose();
   });
 
-  it('materializes durable state before facade activation and starts the reminder once', async () => {
+  it('materializes durable state before runtime creation and starts the reminder once', async () => {
     const registry = new RuntimeRegistry();
     registry.register(todoRecord());
     const scope = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 });
@@ -250,30 +245,19 @@ describe('TodoAgentRuntime', () => {
     expect(agent.managed.runtimeSet.inspect()[0]).toMatchObject({ status: 'retired' });
   });
 
-  it('resolves the Agent DI facade once through the manager binding', async () => {
+  it('uses the definition as the typed resolve token', async () => {
     const registry = new RuntimeRegistry();
     registry.register(todoRecord());
     const agent = makeRuntimeAgent(registry, 'main');
-    let resolves = 0;
     const manager = {
-      resolve: () => {
-        resolves += 1;
-        return agent.managed.runtimeSet.resolve(AgentTodo);
-      },
+      resolve: () => agent.managed.runtimeSet.resolve(AgentTodo),
     } as unknown as IAgentManager;
-    const binding = new AgentTodoBinding(
-      manager,
-      {
-        _serviceBrand: undefined,
-        agentId: agent.context.agentId,
-        agentContext: agent.context,
-        scope: () => 'agents/main',
-      },
-    );
 
-    expect(binding.get()).toEqual([]);
-    binding.onDidChange(() => {}).dispose();
-    expect(resolves).toBe(1);
+    const todo = manager.resolve(agent.context, AgentTodo);
+
+    expect(todo.get()).toEqual([]);
+    todo.onDidChange(() => {}).dispose();
+    expect(manager.resolve(agent.context, AgentTodo)).toBe(todo);
     await agent.dispose();
   });
 
@@ -363,6 +347,7 @@ describe('TodoAgentRuntime', () => {
     expect(() => main.managed.runtimeSet.resolve(AgentTodo)).toThrow('closed');
 
     registry.withdraw(record);
+    await nextTick();
     expect(sub.activeReminders()).toBe(0);
     expect(() => sub.managed.runtimeSet.resolve(AgentTodo)).toThrow('unavailable');
     await sub.dispose();
@@ -373,14 +358,13 @@ describe('TodoAgentRuntime', () => {
     const ephemeral = defineAgentRuntime<undefined, object>({
       id: 'ephemeral-runtime',
       logic: fromCallback(() => {}),
-      createFacade: () => {
+      create: () => {
         creates += 1;
         return {};
       },
     });
     const registry = new RuntimeRegistry();
     registry.register({
-      capability: { id: 'ephemeral-runtime' },
       definition: ephemeral,
       generation: 1,
       active: true,
@@ -405,7 +389,7 @@ describe('TodoAgentRuntime', () => {
 
     expect(creates).toBe(0);
     expect(managed.runtimeSet.inspect()[0]).toMatchObject({ status: 'registered' });
-    managed.runtimeSet.resolve({ id: 'ephemeral-runtime' });
+    managed.runtimeSet.resolve(ephemeral);
     expect(creates).toBe(1);
     expect(managed.runtimeSet.inspect()[0]).toMatchObject({ status: 'materialized' });
     await managed.runtimeSet.close();
@@ -417,7 +401,7 @@ describe('TodoAgentRuntime', () => {
     const leaseDefinition = defineAgentRuntime<undefined, { run(): Promise<void> }>({
       id: 'lease-runtime',
       logic: fromCallback(() => {}),
-      createFacade: (_actor, context) => ({
+      create: (context) => ({
         run: () => {
           let resolveWork!: () => void;
           const work = new Promise<void>((resolve) => {
@@ -430,7 +414,6 @@ describe('TodoAgentRuntime', () => {
       }),
     });
     const record: AgentRuntimeDefinitionRecord = {
-      capability: { id: 'lease-runtime' },
       definition: leaseDefinition,
       generation: 1,
       active: true,
@@ -453,11 +436,11 @@ describe('TodoAgentRuntime', () => {
     };
     const managed = new ManagedAgent(scope.agentContext, handle, []);
     registry.track(managed);
-    const facade = managed.runtimeSet.resolve<{ run(): Promise<void> }>({ id: 'lease-runtime' });
-    void facade.run();
+    const runtime = managed.runtimeSet.resolve(leaseDefinition);
+    void runtime.run();
 
     registry.withdraw(record);
-    expect(() => facade.run()).toThrow('retiring');
+    expect(() => runtime.run()).toThrow('retiring');
     expect(managed.runtimeSet.inspect()[0]).toMatchObject({ status: 'materialized' });
 
     pending.shift()!();
@@ -465,7 +448,7 @@ describe('TodoAgentRuntime', () => {
     expect(managed.runtimeSet.inspect()[0]).toMatchObject({ status: 'retired' });
 
     registry.register({ ...record, generation: 2, active: true });
-    const revived = managed.runtimeSet.resolve<{ run(): Promise<void> }>({ id: 'lease-runtime' });
+    const revived = managed.runtimeSet.resolve(leaseDefinition);
     void revived.run();
     let closed = false;
     const closing = managed.runtimeSet.close().then(() => {
@@ -541,12 +524,11 @@ describe('TodoAgentRuntime', () => {
         read: () => 0,
         commit: () => {},
       },
-      createFacade: () => ({}),
+      create: () => ({}),
       inspect: () => ({ value: 0 }),
     });
     const registry = new RuntimeRegistry();
     registry.register({
-      capability: { id: 'failed-runtime' },
       definition,
       generation: 1,
       active: true,

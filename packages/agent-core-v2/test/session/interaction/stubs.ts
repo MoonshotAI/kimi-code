@@ -2,19 +2,24 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
 import { TestInstantiationService } from '#/_base/di/test';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type { AgentCapability } from '#/agent/runtime/agentRuntime';
+import type {
+  AgentRuntimeDefinition,
+  RuntimeOf,
+} from '#/agent/runtime/agentRuntime';
 import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentManager } from '#/session/agentManager/agentManager';
-import { AgentInteraction, type IAgentInteraction } from '#/session/interaction/interaction';
-import { InteractionAgentRuntimeDefinition } from '#/session/interaction/interactionAgentRuntime';
+import {
+  AgentInteraction,
+  type InteractionRuntime,
+} from '#/session/interaction/interactionAgentRuntime';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 export interface InteractionManagerStub {
   readonly manager: IAgentManager;
-  facadeOf(agentId: string): IAgentInteraction;
+  runtimeOf(agentId: string): InteractionRuntime;
   dispatchedOf(agentId: string): readonly { type: string }[];
   readonly disposables: DisposableStore;
 }
@@ -43,8 +48,7 @@ export function stubInteractionManagerFor(agentIds: readonly string[]): Interact
     } as unknown as IEventDispatcher);
     const runtimes = new AgentRuntimeSet(context, { get: (id) => ix.get(id) });
     runtimes.apply({
-      capability: AgentInteraction,
-      definition: InteractionAgentRuntimeDefinition,
+      definition: AgentInteraction,
       generation: 1,
       active: true,
     });
@@ -55,16 +59,19 @@ export function stubInteractionManagerFor(agentIds: readonly string[]): Interact
     onDidCreate: Event.None,
     get: (id: string) => agents.get(id)?.context,
     list: () => [...agents.values()].map((agent) => agent.context),
-    resolve: <T,>(agent: AgentContext, capability: AgentCapability<T>): T => {
+    resolve: <Definition extends AgentRuntimeDefinition<any, any>>(
+      agent: AgentContext,
+      definition: Definition,
+    ): RuntimeOf<Definition> => {
       for (const candidate of agents.values()) {
-        if (candidate.context === agent) return candidate.runtimes.resolve(capability);
+        if (candidate.context === agent) return candidate.runtimes.resolve(definition);
       }
       throw new Error(`unknown agent ${agent.agentId}`);
     },
   } as unknown as IAgentManager;
   return {
     manager,
-    facadeOf: (agentId) => agents.get(agentId)!.runtimes.resolve(AgentInteraction),
+    runtimeOf: (agentId) => agents.get(agentId)!.runtimes.resolve(AgentInteraction),
     dispatchedOf: (agentId) => agents.get(agentId)!.dispatched,
     disposables,
   };

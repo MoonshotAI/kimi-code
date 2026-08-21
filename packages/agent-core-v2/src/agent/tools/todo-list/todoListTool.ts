@@ -1,7 +1,9 @@
 import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 
-import { IAgentTodo } from '#/session/todo/sessionTodo';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentManager } from '#/session/agentManager/agentManager';
+import { AgentTodo, type TodoRuntime } from '#/session/todo/todoAgentRuntime';
 import {
   TODO_LIST_TOOL_NAME,
   renderTodoList,
@@ -22,7 +24,14 @@ export class TodoListTool implements ITodoListTool {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TodoListInputSchema);
 
-  constructor(@IAgentTodo private readonly todo: IAgentTodo) {}
+  private readonly todo: TodoRuntime;
+
+  constructor(
+    @IAgentManager manager: IAgentManager,
+    @IAgentScopeContext scope: IAgentScopeContext,
+  ) {
+    this.todo = manager.resolve(scope.agentContext, AgentTodo);
+  }
 
   resolveExecution(args: TodoListInput): ToolExecution {
     const description =

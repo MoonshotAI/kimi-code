@@ -9,7 +9,7 @@ import { TurnStarted } from '#/agent/loop/turnEvents';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
-import { IAgentGoal } from '#/agent/goal/goal';
+import { AgentGoal, type GoalRuntime } from '#/agent/goal/goalAgentRuntime';
 import { IGoalDeadlineScheduler } from '#/agent/goal/goalDeadlineScheduler';
 
 import { GoalUpdated } from '#/agent/goal/goalOps';
@@ -18,7 +18,6 @@ import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { UpdateGoalToolInputSchema } from '#/agent/tools/goal/update-goal/update-goal';
-import { UpdateGoalTool } from '#/agent/tools/goal/update-goal/updateGoalTool';
 import {
   createMaxStepsExceededError,
   IAgentLoopService,
@@ -80,7 +79,7 @@ function createTestAgent(
 
 const testAgent = createTestAgent;
 
-type GoalServiceTestManager = IAgentGoal;
+type GoalServiceTestManager = GoalRuntime;
 type GoalRecord = WireRecord & { type: `goal.${string}` };
 type TurnEndedInput = {
   readonly reason: TurnEnded['reason'];
@@ -197,7 +196,7 @@ function goalRecords(records: readonly WireRecord[]): readonly GoalRecord[] {
 
 async function restoreGoalRecords(
   ctx: TestAgentContext,
-  goals: IAgentGoal,
+  goals: GoalRuntime,
   records: readonly WireRecord[],
 ): Promise<void> {
   goals.getGoal();
@@ -237,7 +236,7 @@ async function runGoalStep(loopService: StubLoop, turn: Turn): Promise<boolean> 
 
 async function recordStepUsage(
   usageService: TestAgentContext['usage'],
-  goals: IAgentGoal,
+  goals: GoalRuntime,
   turn: Turn,
   usage: TokenUsage,
 ): Promise<boolean> {
@@ -316,7 +315,7 @@ describe('AgentGoalService', () => {
       telemetryServices(recordingTelemetry(telemetry)),
     );
     context = ctx.get(IAgentContextMemoryService);
-    goals = ctx.get(IAgentGoal) as GoalServiceTestManager;
+    goals = ctx.resolve(AgentGoal) as GoalServiceTestManager;
     records = persistence.records;
     const eventBus = ctx.get(IEventBus);
     eventBus.subscribe(GoalUpdated, (event) => events.push(event));
@@ -515,7 +514,8 @@ describe('AgentGoalService', () => {
 
     it('forbids model-driven goal pauses', async () => {
       await goals.createGoal({ objective: 'work' });
-      const tool = new UpdateGoalTool(goals);
+      const tool = ctx.get(IAgentToolRegistryService).resolve('UpdateGoal');
+      if (tool === undefined) throw new Error('UpdateGoal should be registered');
 
       for (const status of ['active', 'complete', 'blocked']) {
         expect(UpdateGoalToolInputSchema.safeParse({ status }).success).toBe(true);
@@ -755,7 +755,7 @@ describe('AgentGoalService goal-start review', () => {
       agentService(IAgentToolApprovalService, approvalStub()),
       agentService(IAgentToolExecutorService, executorEvents.executor),
     );
-    ctx.get(IAgentGoal);
+    ctx.resolve(AgentGoal);
   }
 
   afterEach(async () => {
@@ -828,7 +828,7 @@ describe('AgentGoalService goal-start review', () => {
 describe('AgentGoalService core workflow hooks', () => {
   let ctx: TestAgentContext | undefined;
   let context: IAgentContextMemoryService;
-  let goals: IAgentGoal;
+  let goals: GoalRuntime;
   let loopService: StubLoop;
   let toolExecutor: IAgentToolExecutorService;
   let usageService: TestAgentContext['usage'];
@@ -844,7 +844,7 @@ describe('AgentGoalService core workflow hooks', () => {
       permissionModeServices('auto'),
     );
     context = ctx.get(IAgentContextMemoryService);
-    goals = ctx.get(IAgentGoal);
+    goals = ctx.resolve(AgentGoal);
     toolExecutor = ctx.get(IAgentToolExecutorService);
     usageService = ctx.usage;
     eventBus = ctx.get(IEventBus);
@@ -1719,20 +1719,20 @@ describe('AgentGoalService agent eligibility', () => {
   });
 
   it.each([
-    ['getGoal', (goals: IAgentGoal) => goals.getGoal()],
-    ['isGoalToolTarget', (goals: IAgentGoal) => goals.isGoalToolTarget(1, 'goal-1')],
-    ['createGoal', (goals: IAgentGoal) => goals.createGoal({ objective: 'work' })],
-    ['pauseGoal', (goals: IAgentGoal) => goals.pauseGoal()],
-    ['resumeGoal', (goals: IAgentGoal) => goals.resumeGoal()],
-    ['setBudgetLimits', (goals: IAgentGoal) =>
+    ['getGoal', (goals: GoalRuntime) => goals.getGoal()],
+    ['isGoalToolTarget', (goals: GoalRuntime) => goals.isGoalToolTarget(1, 'goal-1')],
+    ['createGoal', (goals: GoalRuntime) => goals.createGoal({ objective: 'work' })],
+    ['pauseGoal', (goals: GoalRuntime) => goals.pauseGoal()],
+    ['resumeGoal', (goals: GoalRuntime) => goals.resumeGoal()],
+    ['setBudgetLimits', (goals: GoalRuntime) =>
       goals.setBudgetLimits({ budgetLimits: { turnBudget: 1 } })],
-    ['cancelGoal', (goals: IAgentGoal) => goals.cancelGoal()],
-    ['markBlocked', (goals: IAgentGoal) => goals.markBlocked()],
-    ['markComplete', (goals: IAgentGoal) => goals.markComplete()],
+    ['cancelGoal', (goals: GoalRuntime) => goals.cancelGoal()],
+    ['markBlocked', (goals: GoalRuntime) => goals.markBlocked()],
+    ['markComplete', (goals: GoalRuntime) => goals.markComplete()],
   ] as const)(
     '%s rejects direct goal service access when the agent is a subagent',
     async (_name, call) => {
-      const goals = ctx.get(IAgentGoal);
+      const goals = ctx.resolve(AgentGoal);
       await expect(Promise.resolve().then<unknown>(() => call(goals))).rejects.toMatchObject({
         code: 'goal.unsupported_agent',
         details: { agentId: 'sub-1' },
@@ -1786,7 +1786,7 @@ describe('goal pause classification on provider errors', () => {
   async function goalAfterFailedTurn(generate: GenerateFn) {
     const ctx = testAgent({ generate, ...singleAttemptAgentOptions() });
     ctx.configure();
-    const goals = ctx.get(IAgentGoal);
+    const goals = ctx.resolve(AgentGoal);
     await goals.createGoal({ objective: 'work' });
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'work' }] });
@@ -1870,7 +1870,7 @@ describe('AgentGoalService hard wall-clock deadline', () => {
       ctx.configure();
       await ctx.rpc.createGoal({ objective: 'finish bounded work' });
       await ctx
-        .get(IAgentGoal)
+        .resolve(AgentGoal)
         .setBudgetLimits({ budgetLimits: { wallClockBudgetMs: 1_000 } }, 'user');
 
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
@@ -1923,7 +1923,7 @@ describe('AgentGoalService hard wall-clock deadline', () => {
       ctx.configure({ tools: ['SlowWork'] });
       await ctx.rpc.createGoal({ objective: 'finish bounded work' });
       await ctx
-        .get(IAgentGoal)
+        .resolve(AgentGoal)
         .setBudgetLimits({ budgetLimits: { wallClockBudgetMs: 1_000 } }, 'user');
       ctx.mockNextResponse({
         type: 'function',
@@ -1963,7 +1963,7 @@ describe('AgentGoalService hard wall-clock deadline', () => {
       ctx.configure();
       await ctx.rpc.createGoal({ objective: 'finish bounded work' });
       await ctx
-        .get(IAgentGoal)
+        .resolve(AgentGoal)
         .setBudgetLimits({ budgetLimits: { wallClockBudgetMs: 1_000 } }, 'user');
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start work' }] });
       await llm.started;
@@ -1990,7 +1990,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
     try {
       ctx.configure({ tools: ['GetGoal'] });
       await ctx.rpc.createGoal({ objective: 'work' });
-      const goals = ctx.get(IAgentGoal);
+      const goals = ctx.resolve(AgentGoal);
       await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 1 } }, 'model');
 
       ctx.mockNextResponse({
@@ -2043,7 +2043,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
     const ctx = createTestAgent();
     try {
       ctx.configure({ tools: ['GetGoal'] });
-      const goals = ctx.get(IAgentGoal);
+      const goals = ctx.resolve(AgentGoal);
       await goals.createGoal({ objective: 'work' });
       await goals.markBlocked({ reason: 'ready for a fresh continuation' });
       await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 1 } }, 'model');
@@ -2092,7 +2092,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
     try {
       ctx.configure({ tools: ['GetGoal', 'SetGoalBudget'] });
       await ctx.rpc.createGoal({ objective: 'work' });
-      const goals = ctx.get(IAgentGoal);
+      const goals = ctx.resolve(AgentGoal);
       await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 1 } }, 'model');
 
       ctx.mockNextResponse({
@@ -2140,7 +2140,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
     const ctx = createTestAgent();
     try {
       ctx.configure({ tools: ['UpdateGoal', 'SetGoalBudget'] });
-      const goals = ctx.get(IAgentGoal) as GoalServiceTestManager;
+      const goals = ctx.resolve(AgentGoal) as GoalServiceTestManager;
       await goals.createGoal({ objective: 'work' });
       await goals.setBudgetLimits({ budgetLimits: { turnBudget: 1 } }, 'model');
       await goals.incrementTurn();
@@ -2181,7 +2181,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
     const ctx = createTestAgent(telemetryServices(recordingTelemetry(telemetry)));
     try {
       ctx.configure();
-      const goals = ctx.get(IAgentGoal) as GoalServiceTestManager;
+      const goals = ctx.resolve(AgentGoal) as GoalServiceTestManager;
       await goals.createGoal({ objective: 'work' });
       await goals.setBudgetLimits({ budgetLimits: { turnBudget: 1 } }, 'model');
       await goals.incrementTurn();
@@ -2224,7 +2224,7 @@ describe('AgentGoalService goal outcome tool result flow', () => {
     const ctx = createTestAgent();
     try {
       ctx.configure({ tools: ['UpdateGoal'] });
-      const goals = ctx.get(IAgentGoal);
+      const goals = ctx.resolve(AgentGoal);
       await goals.createGoal({ objective: 'work' });
       await goals.markBlocked({ reason: 'ready for a fresh continuation' });
 
@@ -2302,12 +2302,12 @@ describe('AgentGoalService goal outcome tool result flow', () => {
 describe('AgentGoalService fork boundaries', () => {
   let ctx: TestAgentContext;
   let context: IAgentContextMemoryService;
-  let goals: IAgentGoal;
+  let goals: GoalRuntime;
 
   beforeEach(() => {
     ctx = createTestAgent(wireRecordPersistenceServices(new InMemoryWireRecordPersistence()));
     context = ctx.get(IAgentContextMemoryService);
-    goals = ctx.get(IAgentGoal);
+    goals = ctx.resolve(AgentGoal);
   });
 
   afterEach(async () => {

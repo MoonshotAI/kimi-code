@@ -16,10 +16,10 @@ import {
   IWorkspaceInstanceManager,
   LifecycleScope,
   makeAgentScopeContext,
-  type AgentCapability,
   type AgentContext,
+  type AgentRuntimeDefinition,
   type Event2,
-  type IAgentInteraction,
+  type RuntimeOf,
   type Interaction,
   type InteractionKind,
   type InteractionPendingChangedEvent,
@@ -1913,8 +1913,7 @@ describe('bindSessionTranscript', () => {
   }
 
 
-  class FakeInteractionKernel implements IAgentInteraction {
-    declare readonly _serviceBrand: undefined;
+  class FakeInteractionKernel {
     private readonly pending = new Map<string, Interaction>();
     private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
     private readonly resolveEmitter = new Emitter<InteractionResolution>();
@@ -1986,7 +1985,6 @@ describe('bindSessionTranscript', () => {
         }).agentContext;
         entry = { context, kernel: new FakeInteractionKernel() };
         this.entries.set(agentId, entry);
-        this.createEmitter.fire(context);
       }
       return entry.kernel;
     }
@@ -2009,12 +2007,13 @@ describe('bindSessionTranscript', () => {
       return this.entries.get(agentId)?.context;
     }
 
-    resolve(context: AgentContext, capability: AgentCapability<unknown>): unknown {
-      if (capability !== (AgentInteraction as AgentCapability<unknown>)) {
-        throw new Error('unsupported capability');
-      }
+    resolve<Definition extends AgentRuntimeDefinition<any, any>>(
+      context: AgentContext,
+      definition: Definition,
+    ): RuntimeOf<Definition> {
+      if (definition !== AgentInteraction) throw new Error('unsupported runtime');
       for (const entry of this.entries.values()) {
-        if (entry.context === context) return entry.kernel;
+        if (entry.context === context) return entry.kernel as RuntimeOf<Definition>;
       }
       throw new Error(`unknown agent ${context.agentId}`);
     }
@@ -2073,15 +2072,16 @@ describe('bindSessionTranscript', () => {
       }
       return entry.kernel;
     }
-    resolve(context: AgentContext, capability: AgentCapability<unknown>): unknown {
-      if (capability !== (AgentInteraction as AgentCapability<unknown>)) {
-        throw new Error('unsupported capability');
-      }
+    resolve<Definition extends AgentRuntimeDefinition<any, any>>(
+      context: AgentContext,
+      definition: Definition,
+    ): RuntimeOf<Definition> {
+      if (definition !== AgentInteraction) throw new Error('unsupported runtime');
       for (const handle of this.handles.values()) {
-        if (handle.context === context) return handle.kernel;
+        if (handle.context === context) return handle.kernel as RuntimeOf<Definition>;
       }
       for (const entry of this.kernels.values()) {
-        if (entry.context === context) return entry.kernel;
+        if (entry.context === context) return entry.kernel as RuntimeOf<Definition>;
       }
       throw new Error(`unknown agent ${context.agentId}`);
     }

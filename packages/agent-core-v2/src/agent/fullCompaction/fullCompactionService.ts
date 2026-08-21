@@ -26,7 +26,8 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { stripDynamicToolContext } from '#/agent/toolSelect/dynamicTools';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { IAgentTodo } from '#/session/todo/sessionTodo';
+import { IAgentManager } from '#/session/agentManager/agentManager';
+import { AgentTodo, type TodoRuntime } from '#/session/todo/todoAgentRuntime';
 import { renderTodoList } from '#/session/todo/todoItem';
 import {
   APIContextOverflowError,
@@ -135,6 +136,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   readonly onDidFinishCompaction: Event<FullCompactionTask> = this._onDidFinishCompaction.event;
 
   private readonly strategy: CompactionStrategy;
+  private readonly todo: TodoRuntime;
   private _compacting: ActiveCompaction | null = null;
 
   constructor(
@@ -144,7 +146,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
-    @IAgentTodo private readonly todo: IAgentTodo,
+    @IAgentManager manager: IAgentManager,
     @IAgentScopeContext private readonly agent: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
@@ -154,6 +156,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.todo = manager.resolve(agent.agentContext, AgentTodo);
     this.states.contributeState(fullCompactionKey);
     this.states.contributeState(fullCompactionCompactionCountInTurnKey);
     this.states.contributeState(fullCompactionObservedMaxContextTokensByModelKey);

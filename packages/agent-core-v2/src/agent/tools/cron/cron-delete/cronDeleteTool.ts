@@ -4,7 +4,8 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentCron } from '#/session/cron/agentCron';
+import { IAgentManager } from '#/session/agentManager/agentManager';
+import { AgentCron, type CronRuntime } from '#/session/cron/cronAgentRuntime';
 
 import { ICronDeleteTool, CronDeleteInputSchema, type CronDeleteInput } from './cron-delete';
 import CRON_DELETE_DESCRIPTION from './cron-delete.md?raw';
@@ -21,9 +22,13 @@ export class CronDeleteTool implements ICronDeleteTool {
   );
 
   constructor(
-    @IAgentCron private readonly cron: IAgentCron,
+    @IAgentManager private readonly manager: IAgentManager,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {}
+
+  private get cron(): CronRuntime {
+    return this.manager.resolve(this.scopeContext.agentContext, AgentCron);
+  }
 
   resolveExecution(args: CronDeleteInput): ToolExecution {
     if (!ID_PATTERN.test(args.id)) {

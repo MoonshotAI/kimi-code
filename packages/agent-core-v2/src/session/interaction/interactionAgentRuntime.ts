@@ -1,16 +1,17 @@
-import { assign, fromCallback, setup, type AnyActorRef, type EventObject, type Snapshot } from 'xstate';
+import { assign, setup, type Snapshot } from 'xstate';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import { type AgentRuntimeContext, defineAgentRuntime } from '#/agent/runtime/agentRuntime';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import {
+  AgentRuntimeLifecycle,
+  defineAgentRuntime,
+  type AgentRuntimeContext,
+  type AgentRuntimeLifecycle as AgentRuntimeLifecycleProtocol,
+} from '#/agent/runtime/agentRuntime';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentManager } from '#/session/agentManager/agentManager';
 
 import {
-  AgentInteraction,
-  IAgentInteraction,
   type Interaction,
   type InteractionKind,
   type InteractionPendingChangedEvent,
@@ -31,14 +32,8 @@ interface PendingEntry {
   readonly resolve: (response: unknown) => void;
 }
 
-interface InteractionActivation {
-  readonly runtime: AgentRuntimeContext<InteractionModelState>;
-  readonly core: InteractionCore;
-}
-
 interface InteractionActorContext {
   readonly records: InteractionModelState;
-  readonly activation?: InteractionActivation;
 }
 
 interface InteractionCommitEvent {
@@ -46,17 +41,11 @@ interface InteractionCommitEvent {
   readonly records: InteractionModelState;
 }
 
-interface InteractionActivateEvent {
-  readonly type: 'interaction.activate';
-  readonly activation: InteractionActivation;
-}
-
-type InteractionActorEvent = InteractionCommitEvent | InteractionActivateEvent;
-
 type InteractionActorSnapshot = Snapshot<unknown> & { readonly context: InteractionActorContext };
 
-class InteractionCore {
+export class InteractionRuntime {
   private readonly pending = new Map<string, PendingEntry>();
+  private lifecycleDisposer: (() => void) | undefined;
   private readonly recentlyResolved = new Map<string, number>();
   private nextId = 0;
   private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
@@ -65,9 +54,17 @@ class InteractionCore {
   readonly onDidChangePending: Event<InteractionPendingChangedEvent> = this.changeEmitter.event;
   readonly onDidResolve: Event<InteractionResolution> = this.resolveEmitter.event;
 
+  readonly [AgentRuntimeLifecycle]: AgentRuntimeLifecycleProtocol = {
+    start: () => { this.lifecycleDisposer = this.attach(); },
+    dispose: () => {
+      this.lifecycleDisposer?.();
+      this.lifecycleDisposer = undefined;
+    },
+  };
+
   constructor(private readonly runtime: AgentRuntimeContext<InteractionModelState>) {}
 
-  attach(): () => void {
+  private attach(): () => void {
     const store = new DisposableStore();
     store.add(this.changeEmitter);
     store.add(this.resolveEmitter);
@@ -187,50 +184,21 @@ function readPayloadToolCallId(payload: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
-const interactionEffectLogic = fromCallback<EventObject, InteractionActivation>(({ input }) =>
-  input.core.attach(),
-);
-
 const interactionActorLogic = setup({
   types: {} as {
     context: InteractionActorContext;
-    events: InteractionActorEvent;
-  },
-  actors: {
-    effect: interactionEffectLogic,
+    events: InteractionCommitEvent;
   },
 }).createMachine({
   context: { records: new Map() },
-  initial: 'inactive',
   on: {
     'interaction.commit': {
       actions: assign({ records: ({ event }) => event.records }),
     },
   },
-  states: {
-    inactive: {
-      on: {
-        'interaction.activate': {
-          target: 'active',
-          actions: assign({ activation: ({ event }) => event.activation }),
-        },
-      },
-    },
-    active: {
-      invoke: {
-        src: 'effect',
-        input: ({ context }) => context.activation!,
-      },
-    },
-  },
 });
 
-const cores = new WeakMap<AnyActorRef, InteractionCore>();
-
-export const InteractionAgentRuntimeDefinition = defineAgentRuntime<
-  InteractionModelState,
-  IAgentInteraction
->({
+export const AgentInteraction = defineAgentRuntime<InteractionModelState, InteractionRuntime>({
   id: 'interaction',
   logic: interactionActorLogic,
   durable: {
@@ -257,27 +225,7 @@ export const InteractionAgentRuntimeDefinition = defineAgentRuntime<
     read: (snapshot) => (snapshot as InteractionActorSnapshot).context.records,
     commit: (actor, records) => { actor.send({ type: 'interaction.commit', records }); },
   },
-  createFacade: (actor, context) => {
-    const core = new InteractionCore(context);
-    cores.set(actor, core);
-    return {
-      _serviceBrand: undefined,
-      request: (req) => core.request(req),
-      enqueue: (req) => core.enqueue(req),
-      respond: (id, response) => core.respond(id, response),
-      listPending: (kind) => core.listPending(kind),
-      isRecentlyResolved: (id) => core.isRecentlyResolved(id),
-      cancelPendingForTurn: (turnId) => core.cancelPendingForTurn(turnId),
-      onDidChangePending: core.onDidChangePending,
-      onDidResolve: core.onDidResolve,
-    };
-  },
-  activate: (actor, context) => {
-    actor.send({
-      type: 'interaction.activate',
-      activation: { runtime: context, core: cores.get(actor)! },
-    });
-  },
+  create: (context) => new InteractionRuntime(context),
   inspect: (snapshot) => {
     const records = (snapshot as InteractionActorSnapshot).context.records;
     return [...records.values()].map((record) => ({
@@ -288,47 +236,3 @@ export const InteractionAgentRuntimeDefinition = defineAgentRuntime<
   },
 });
 
-export class AgentInteractionBinding implements IAgentInteraction {
-  declare readonly _serviceBrand: undefined;
-
-  private readonly interaction: IAgentInteraction;
-
-  constructor(
-    @IAgentManager manager: IAgentManager,
-    @IAgentScopeContext scope: IAgentScopeContext,
-  ) {
-    this.interaction = manager.resolve(scope.agentContext, AgentInteraction);
-  }
-
-  request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse> {
-    return this.interaction.request(req);
-  }
-
-  enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction {
-    return this.interaction.enqueue(req);
-  }
-
-  respond(id: string, response: unknown): boolean {
-    return this.interaction.respond(id, response);
-  }
-
-  listPending(kind?: InteractionKind): readonly Interaction[] {
-    return this.interaction.listPending(kind);
-  }
-
-  isRecentlyResolved(id: string): boolean {
-    return this.interaction.isRecentlyResolved(id);
-  }
-
-  cancelPendingForTurn(turnId: number): void {
-    this.interaction.cancelPendingForTurn(turnId);
-  }
-
-  get onDidChangePending() {
-    return this.interaction.onDidChangePending;
-  }
-
-  get onDidResolve() {
-    return this.interaction.onDidResolve;
-  }
-}

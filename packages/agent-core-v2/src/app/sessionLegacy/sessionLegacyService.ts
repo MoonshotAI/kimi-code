@@ -13,7 +13,7 @@ import {
   type ServicesAccessor,
 } from '#/_base/di/instantiation';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { AgentGoal } from '#/agent/goal/goal';
+import { AgentGoal } from '#/agent/goal/goalAgentRuntime';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';

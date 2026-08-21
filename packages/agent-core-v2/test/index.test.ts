@@ -4,7 +4,7 @@ import {
   WIRE_PROTOCOL_VERSION,
   EVENT2_REGISTRY,
   IAgentContextMemoryService,
-  IAgentGoal,
+  AgentGoal,
   type ContextMessage,
   type WireRecord,
 } from '#/index';
@@ -386,7 +386,7 @@ describe('AgentRecords persistence metadata', () => {
 
     await expect(ctx.restorePersisted()).resolves.toBeUndefined();
     expect(context.get()).toHaveLength(0);
-    expect(ctx.get(IAgentGoal).getGoal().goal).toMatchObject({
+    expect(ctx.resolve(AgentGoal).getGoal().goal).toMatchObject({
       goalId: 'g1',
       objective: 'do work',
       completionCriterion: 'tests pass',
@@ -414,7 +414,7 @@ describe('AgentRecords persistence metadata', () => {
       'goal.create',
       'forked',
     ]);
-    expect(ctx.get(IAgentGoal).getGoal().goal).toBeNull();
+    expect(ctx.resolve(AgentGoal).getGoal().goal).toBeNull();
     const reminder = context.get().at(-1);
     expect(reminder?.origin).toEqual({
       kind: 'injection',
@@ -440,7 +440,7 @@ describe('AgentRecords persistence metadata', () => {
     );
 
     await expect(ctx.restorePersisted()).resolves.toBeUndefined();
-    expect(ctx.get(IAgentGoal).getGoal().goal).toMatchObject({
+    expect(ctx.resolve(AgentGoal).getGoal().goal).toMatchObject({
       goalId: 'fork-goal',
       objective: 'fork work',
     });

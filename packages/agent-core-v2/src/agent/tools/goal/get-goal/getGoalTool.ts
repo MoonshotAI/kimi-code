@@ -3,7 +3,8 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
-import { IAgentGoal } from '#/agent/goal/goal';
+import { AgentGoal, type GoalRuntime } from '#/agent/goal/goalAgentRuntime';
+import { IAgentManager } from '#/session/agentManager/agentManager';
 import { goalResultForModel } from '#/agent/goal/tools/serialize';
 
 import DESCRIPTION from './get-goal.md?raw';
@@ -15,7 +16,14 @@ export class GetGoalTool implements IGetGoalTool {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GetGoalToolInputSchema);
 
-  constructor(@IAgentGoal private readonly goal: IAgentGoal) {}
+  private readonly goal: GoalRuntime;
+
+  constructor(
+    @IAgentManager manager: IAgentManager,
+    @IAgentScopeContext scope: IAgentScopeContext,
+  ) {
+    this.goal = manager.resolve(scope.agentContext, AgentGoal);
+  }
 
   resolveExecution(_args: GetGoalToolInput): ToolExecution {
     return {

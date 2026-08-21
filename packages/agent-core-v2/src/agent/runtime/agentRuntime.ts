@@ -5,6 +5,7 @@ import type {
 } from 'xstate';
 
 import { collection } from '#/_base/di/collection';
+import type { IDisposable } from '#/_base/di/lifecycle';
 import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
@@ -23,6 +24,7 @@ export interface AgentRuntimeContext<State> {
   get<T>(id: ServiceIdentifier<T>): T;
   getState(): State;
   dispatch(event: Event2<any>): Promise<void>;
+  own(resource: IDisposable | (() => void | Promise<void>)): void;
   track<T>(work: Promise<T>): Promise<T>;
   readonly onDidChange: Event<State>;
 }
@@ -35,60 +37,45 @@ export interface AgentRuntimeDurableDefinition<State> {
   commit(actor: AnyActorRef, state: State): void;
 }
 
-export interface AgentRuntimeDefinition<State, Facade> {
+export const AgentRuntimeLifecycle = Symbol('agentRuntimeLifecycle');
+
+export interface AgentRuntimeLifecycle {
+  start?(): void;
+  dispose?(): void | Promise<void>;
+}
+
+export interface AgentRuntimeDefinition<State, Runtime> {
   readonly id: string;
   readonly logic: ActorLogic<any, any, any>;
   readonly input?: (agent: AgentContext) => unknown;
   readonly durable?: AgentRuntimeDurableDefinition<State>;
   readonly eager?: boolean;
-  readonly createFacade: (
-    actor: AnyActorRef,
-    context: AgentRuntimeContext<State>,
-  ) => Facade;
-  readonly activate?: (
-    actor: AnyActorRef,
-    context: AgentRuntimeContext<State>,
-  ) => void;
+  readonly create: (context: AgentRuntimeContext<State>) => Runtime;
   readonly inspect?: (snapshot: Snapshot<unknown>) => unknown;
 }
 
-export function defineAgentRuntime<State, Facade>(
-  definition: AgentRuntimeDefinition<State, Facade>,
-): AgentRuntimeDefinition<State, Facade> {
+export type RuntimeOf<Definition> =
+  Definition extends AgentRuntimeDefinition<any, infer Runtime> ? Runtime : never;
+
+export function defineAgentRuntime<State, Runtime>(
+  definition: AgentRuntimeDefinition<State, Runtime>,
+): AgentRuntimeDefinition<State, Runtime> {
   for (const cls of definition.durable?.events ?? []) registerEvent2Class(cls);
   return Object.freeze(definition);
 }
 
-export interface AgentCapability<T> {
-  readonly id: string;
-  readonly _type?: T;
-}
-
-export function defineAgentCapability<T>(id: string): AgentCapability<T> {
-  return Object.freeze({ id });
-}
-
-export interface AgentRuntimeContribution {
-  readonly capability: AgentCapability<any>;
-  readonly definition: AgentRuntimeDefinition<any, any>;
-}
-
-export const AgentRuntimeContributionPoint = collection<AgentRuntimeContribution>(
+export const AgentRuntimeContributionPoint = collection<AgentRuntimeDefinition<any, any>>(
   'agent-runtime',
   {
     validate: (value, existing) => {
-      if (existing.some((item) => item.capability.id === value.capability.id)) {
-        throw new Error(`Agent runtime capability '${value.capability.id}' already has an active provider`);
-      }
-      if (existing.some((item) => item.definition.id === value.definition.id)) {
-        throw new Error(`Agent runtime '${value.definition.id}' already has an active provider`);
+      if (existing.some((item) => item.id === value.id)) {
+        throw new Error(`Agent runtime '${value.id}' already has an active provider`);
       }
     },
   },
 );
 
 export interface AgentRuntimeDefinitionRecord {
-  readonly capability: AgentCapability<any>;
   readonly definition: AgentRuntimeDefinition<any, any>;
   readonly generation: number;
   active: boolean;

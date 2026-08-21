@@ -22,7 +22,7 @@ import { ConfigSectionContribution } from '#/app/config/configSectionContributio
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { FeatureManagerService } from '#/app/feature/featureManagerService';
 import { LifecycleScope } from '#/app/scopes';
-import { AgentRuntimeContributionPoint, defineAgentCapability, type AgentRuntimeDefinition } from '#/agent/runtime/agentRuntime';
+import { AgentRuntimeContributionPoint, type AgentRuntimeDefinition } from '#/agent/runtime/agentRuntime';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { Feature } from '#/features/feature';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
@@ -169,7 +169,6 @@ describe('Feature — built-in capability assembly (src/features)', () => {
       state: { initial: () => 0, schema: z.custom<number>() },
       events: [],
     });
-    const runtimeCapability = defineAgentCapability<object>('test-feature.runtime');
     const runtime: AgentRuntimeDefinition<number, object> = {
       id: 'test-feature.runtime',
       logic: fromTransition(
@@ -183,7 +182,7 @@ describe('Feature — built-in capability assembly (src/features)', () => {
         read: (snapshot) => (snapshot as typeof snapshot & { context: number }).context,
         commit: (actor, state) => { actor.send({ type: 'commit', state }); },
       },
-      createFacade: () => {
+      create: () => {
         creates += 1;
         return {};
       },
@@ -195,7 +194,7 @@ describe('Feature — built-in capability assembly (src/features)', () => {
         super();
         this.contributeSessionModel(sessionModel);
         this.contributeAgentModel(agentModel);
-        this.contributeAgentRuntime(runtimeCapability, runtime);
+        this.contributeAgentRuntime(runtime);
       }
     }
     class ReplacementFeature extends Feature {
@@ -218,7 +217,7 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     expect(views.map((view) => view.items)).toEqual([
       [sessionModel],
       [agentModel],
-      [{ capability: runtimeCapability, definition: runtime }],
+      [runtime],
     ]);
     expect(creates).toBe(0);
     expect(() => manager.provideUnit(ReplacementFeature)).toThrow(

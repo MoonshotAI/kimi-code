@@ -3,7 +3,9 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { IAgentCron } from '#/session/cron/agentCron';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentManager } from '#/session/agentManager/agentManager';
+import { AgentCron, type CronRuntime } from '#/session/cron/cronAgentRuntime';
 import { cronToHuman, parseCronExpression } from '#/app/cron/cron-expr';
 import { type CronTask } from '#/app/cron/cronTask';
 import { formatLocalIsoWithOffset } from '#/app/cron/format';
@@ -32,7 +34,14 @@ export class CronListTool implements ICronListTool {
     CronListInputSchema,
   );
 
-  constructor(@IAgentCron private readonly cron: IAgentCron) {}
+  constructor(
+    @IAgentManager private readonly manager: IAgentManager,
+    @IAgentScopeContext private readonly scope: IAgentScopeContext,
+  ) {}
+
+  private get cron(): CronRuntime {
+    return this.manager.resolve(this.scope.agentContext, AgentCron);
+  }
 
   resolveExecution(_args: CronListInput): ToolExecution {
     return {

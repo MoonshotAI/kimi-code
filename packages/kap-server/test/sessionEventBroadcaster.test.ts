@@ -4,9 +4,9 @@ import { join } from 'node:path';
 
 import type {
   AgentActivityState,
-  AgentCapability,
   AgentContext,
-  IAgentInteraction,
+  AgentRuntimeDefinition,
+  RuntimeOf,
   Interaction,
   InteractionKind,
   InteractionPendingChangedEvent,
@@ -127,8 +127,7 @@ class FakeAgentHandle {
   dispose(): void {}
 }
 
-class FakeInteractionKernel implements IAgentInteraction {
-  declare readonly _serviceBrand: undefined;
+class FakeInteractionKernel {
   private readonly pending = new Map<string, Interaction>();
   private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
   private readonly resolveEmitter = new Emitter<InteractionResolution>();
@@ -181,8 +180,7 @@ class FakeInteractionKernel implements IAgentInteraction {
   }
 }
 
-class FakeInteractionHub implements IAgentInteraction {
-  declare readonly _serviceBrand: undefined;
+class FakeInteractionHub {
   private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
   private readonly resolveEmitter = new Emitter<InteractionResolution>();
   readonly onDidChangePending = this.changeEmitter.event;
@@ -233,12 +231,14 @@ class FakeLifecycle {
   readonly handles: FakeAgentHandle[] = [];
   private readonly kernels = new Map<string, FakeInteractionKernel>();
   readonly interactions: FakeInteractionHub;
+  readonly workView: FakeSessionActivityView;
 
   constructor() {
     this.interactions = new FakeInteractionHub(
       (agentId) => this.kernelFor(agentId),
       () => this.kernels.values(),
     );
+    this.workView = new FakeSessionActivityView(this);
   }
 
   kernelFor(agentId: string): FakeInteractionKernel {
@@ -251,11 +251,12 @@ class FakeLifecycle {
     return kernel;
   }
 
-  resolve(context: AgentContext, capability: AgentCapability<unknown>): unknown {
-    if (capability !== (AgentInteraction as AgentCapability<unknown>)) {
-      throw new Error('unsupported capability');
-    }
-    return this.kernelFor(context.agentId);
+  resolve<Definition extends AgentRuntimeDefinition<any, any>>(
+    context: AgentContext,
+    definition: Definition,
+  ): RuntimeOf<Definition> {
+    if (definition !== AgentInteraction) throw new Error('unsupported runtime');
+    return this.kernelFor(context.agentId) as RuntimeOf<Definition>;
   }
   private readonly turnCounters = new Map<string, { dispose(): void }>();
   private createHandlers: Array<(context: AgentContext) => void> = [];
@@ -331,7 +332,6 @@ class FakeLifecycle {
       for (const cb of this.disposeHandlers) cb(removed.context);
     }
   }
-  readonly workView = new FakeSessionActivityView(this);
 }
 
 class FakeSessionActivityView {
