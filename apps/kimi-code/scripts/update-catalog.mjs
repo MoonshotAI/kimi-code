@@ -9,10 +9,9 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const scriptDir = import.meta.dirname;
-const outFile = resolveOutputFile(process.argv.slice(2));
-const modelsUrl = process.env.MODELS_DEV_URL || "https://models.dev/api.json";
 
 const KEEP_PROVIDER = new Set(["id", "name", "api", "env", "npm", "type", "models"]);
 const KEEP_MODEL = new Set([
@@ -22,6 +21,9 @@ const KEEP_MODEL = new Set([
   "limit",
   "tool_call",
   "reasoning",
+  "reasoning_options",
+  "status",
+  "provider",
   "interleaved",
   "modalities",
   // Message-level tool declarations capability — kosong's
@@ -71,6 +73,15 @@ function stripProvider(provider) {
   return result;
 }
 
+export function stripCatalog(raw) {
+  const stripped = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const p = stripProvider(v);
+    if (p !== undefined && Object.keys(p).length > 0) stripped[k] = p;
+  }
+  return stripped;
+}
+
 async function fetchCatalog(url) {
   const res = await fetch(url, { headers: { Accept: "application/json" } });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -78,15 +89,12 @@ async function fetchCatalog(url) {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw new Error("invalid payload shape");
   }
-  const stripped = {};
-  for (const [k, v] of Object.entries(raw)) {
-    const p = stripProvider(v);
-    if (p !== undefined && Object.keys(p).length > 0) stripped[k] = p;
-  }
-  return JSON.stringify(stripped);
+  return JSON.stringify(stripCatalog(raw));
 }
 
 async function main() {
+  const outFile = resolveOutputFile(process.argv.slice(2));
+  const modelsUrl = process.env.MODELS_DEV_URL || "https://models.dev/api.json";
   console.log(`Fetching ${modelsUrl} ...`);
   const json = await fetchCatalog(modelsUrl);
   mkdirSync(dirname(outFile), { recursive: true });
@@ -94,7 +102,10 @@ async function main() {
   console.log(`Wrote ${outFile} (${(json.length / 1024).toFixed(0)} KB JSON)`);
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+const isMain = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
+}
