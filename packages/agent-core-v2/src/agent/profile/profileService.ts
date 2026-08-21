@@ -1,4 +1,4 @@
-import { Disposable } from '#/_base/di/lifecycle';
+import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
@@ -203,12 +203,19 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     );
     this._register(
       this.models.onDidChangeModels(() => {
-        this.revalidateStoredThinkingEffort();
+        this.scheduleThinkingEffortRevalidation();
       }),
     );
     this._register(
       this.providers.onDidChangeProviders(() => {
-        this.revalidateStoredThinkingEffort();
+        this.scheduleThinkingEffortRevalidation();
+      }),
+    );
+    this._register(
+      toDisposable(() => {
+        if (this.thinkingEffortRevalidationTimer !== undefined) {
+          clearTimeout(this.thinkingEffortRevalidationTimer);
+        }
       }),
     );
     this._register(
@@ -635,6 +642,16 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.emitStatusUpdated(
       changed.modelAlias !== undefined || changed.thinkingLevel !== undefined,
     );
+  }
+
+  private thinkingEffortRevalidationTimer: ReturnType<typeof setTimeout> | undefined;
+
+  private scheduleThinkingEffortRevalidation(): void {
+    if (this.thinkingEffortRevalidationTimer !== undefined) return;
+    this.thinkingEffortRevalidationTimer = setTimeout(() => {
+      this.thinkingEffortRevalidationTimer = undefined;
+      this.revalidateStoredThinkingEffort();
+    }, 0);
   }
 
   private revalidateStoredThinkingEffort(): void {
