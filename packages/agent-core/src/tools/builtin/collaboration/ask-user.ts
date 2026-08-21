@@ -134,22 +134,33 @@ const BACKGROUND_DESCRIPTION =
 const BACKGROUND_UNAVAILABLE_MESSAGE =
   'Background questions are not available for this agent because TaskList, TaskOutput, and TaskStop are not enabled.';
 
+const PARAMETERS_WITH_BACKGROUND = toInputJsonSchema(AskUserQuestionInputSchemaWithBackground);
+const PARAMETERS_FOREGROUND_ONLY = toInputJsonSchema(AskUserQuestionInputSchema);
+
 // ── Implementation ───────────────────────────────────────────────────
 
 export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
   readonly name = 'AskUserQuestion' as const;
-  readonly description: string;
-  readonly parameters: Record<string, unknown>;
 
-  private readonly allowBackground: boolean;
+  private readonly canRunInBackground: () => boolean;
 
   constructor(
     private readonly agent: Agent,
-    options?: { allowBackground?: boolean },
+    options?: { allowBackground?: boolean | (() => boolean) },
   ) {
-    this.allowBackground = options?.allowBackground ?? true;
-    this.description = `${DESCRIPTION}${this.allowBackground ? BACKGROUND_DESCRIPTION : ''}`;
-    this.parameters = toInputJsonSchema(this.inputSchema());
+    const allowBackground = options?.allowBackground ?? true;
+    this.canRunInBackground =
+      typeof allowBackground === 'function' ? allowBackground : () => allowBackground;
+  }
+
+  get description(): string {
+    return `${DESCRIPTION}${this.canRunInBackground() ? BACKGROUND_DESCRIPTION : ''}`;
+  }
+
+  get parameters(): Record<string, unknown> {
+    return this.canRunInBackground()
+      ? PARAMETERS_WITH_BACKGROUND
+      : PARAMETERS_FOREGROUND_ONLY;
   }
 
   resolveExecution(args: AskUserQuestionInput): ToolExecution {
@@ -172,7 +183,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
       turnId,
     }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
-    if (args.background === true && !this.allowBackground) {
+    if (args.background === true && !this.canRunInBackground()) {
       return { isError: true, output: BACKGROUND_UNAVAILABLE_MESSAGE };
     }
 
@@ -188,12 +199,6 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     }
 
     return this.executeQuestion(args, { toolCallId, turnId, signal, traceId });
-  }
-
-  private inputSchema(): z.ZodType<AskUserQuestionInput> {
-    return this.allowBackground
-      ? AskUserQuestionInputSchemaWithBackground
-      : AskUserQuestionInputSchema;
   }
 
   private async executeQuestion(
