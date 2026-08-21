@@ -157,19 +157,21 @@ describe('handleUpgrade', () => {
     expect(stdout.join('')).toContain('To update manually, run: npm install -g @moonshot-ai/kimi-code@0.5.0');
   });
 
-  it('prints the manual update command without prompting when not interactive', async () => {
+  it('returns a failing exit code after printing the manual command when not interactive', async () => {
     const { stdout, writable } = captureOutput();
-    const deps = createDeps({ latest: '0.5.0', source: 'npm-global', isInteractive: false });
+    const deps = createDeps({ latest: '0.5.0', source: 'native', isInteractive: false });
 
-    await expect(handleUpgrade('0.4.0', { ...deps, ...writable })).resolves.toBe(0);
+    await expect(handleUpgrade('0.4.0', { ...deps, ...writable })).resolves.toBe(1);
 
     expect(deps.promptForInstallChoice).not.toHaveBeenCalled();
     expect(deps.installUpdate).not.toHaveBeenCalled();
     expect(deps.track).toHaveBeenCalledWith('upgrade_command_manual_command', expect.objectContaining({
       target_version: '0.5.0',
-      source: 'npm-global',
+      source: 'native',
     }));
-    expect(stdout.join('')).toContain('To update manually, run: npm install -g @moonshot-ai/kimi-code@0.5.0');
+    expect(stdout.join('')).toContain(
+      'To update manually, run: curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash',
+    );
   });
 
   it('returns a failing exit code when the foreground install fails', async () => {
