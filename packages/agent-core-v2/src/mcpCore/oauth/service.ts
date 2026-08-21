@@ -59,17 +59,16 @@ export interface BeginAuthorizationResult {
    */
   complete(opts?: { signal?: AbortSignal; timeoutMs?: number }): Promise<void>;
   /**
-   * Tears down the callback listener without finishing the flow. Only the
-   * initiating handle cancels the shared flow; on a joined handle this just
-   * detaches that caller. Safe to call repeatedly; called automatically by
+   * Detaches this caller without finishing the flow. The callback listener
+   * stays active while another handle is attached and closes when the final
+   * handle detaches. Safe to call repeatedly; called automatically by
    * `complete()`.
    */
   cancel(): Promise<void>;
 }
 
 interface SharedAuthorizationFlow {
-  readonly authorizationUrl: URL;
-  readonly startCompletion: BeginAuthorizationResult['complete'];
+  readonly attach: () => BeginAuthorizationResult;
   readonly cancelUnderlying: () => Promise<void>;
 }
 
@@ -344,22 +343,7 @@ export class McpOAuthService {
     const inFlight = this.activeAuthorizations.get(storeKey);
     if (inFlight !== undefined) {
       const flow = await inFlight;
-      let detached = false;
-      return {
-        authorizationUrl: flow.authorizationUrl,
-        complete: (opts = {}) => {
-          if (detached) {
-            return Promise.reject(
-              new Error2(ErrorCodes.MCP_OAUTH_FAILED, 'OAuth flow already completed or cancelled'),
-            );
-          }
-          return flow.startCompletion(opts);
-        },
-        cancel: () => {
-          detached = true;
-          return Promise.resolve();
-        },
-      };
+      return flow.attach();
     }
 
     const started = this.startAuthorizationFlow(serverName, serverUrl, options);
@@ -371,11 +355,7 @@ export class McpOAuthService {
       this.activeAuthorizations.delete(storeKey);
       throw error;
     }
-    return {
-      authorizationUrl: flow.authorizationUrl,
-      complete: (opts = {}) => flow.startCompletion(opts),
-      cancel: () => flow.cancelUnderlying(),
-    };
+    return flow.attach();
   }
 
   private async startAuthorizationFlow(
@@ -451,6 +431,7 @@ export class McpOAuthService {
 
     let settled = false;
     let completion: Promise<void> | undefined;
+    let attachedHandles = 0;
     const settle = async (): Promise<void> => {
       if (settled) return;
       settled = true;
@@ -459,48 +440,77 @@ export class McpOAuthService {
       await callbackServer.close().catch(() => undefined);
     };
 
-    return {
-      authorizationUrl,
-      startCompletion: (opts = {}) => {
-        if (completion !== undefined) return completion;
-        if (settled) {
-          return Promise.reject(
-            new Error2(ErrorCodes.MCP_OAUTH_FAILED, 'OAuth flow already completed or cancelled'),
-          );
-        }
-        completion = (async () => {
-          try {
-            const { code, state } = await callbackServer.waitForCode({
-              signal: opts.signal,
-              timeoutMs: opts.timeoutMs,
-            });
-            const expectedState = provider.expectedState();
-            if (expectedState !== undefined && state !== expectedState) {
-              throw new Error2(
-                ErrorCodes.MCP_OAUTH_FAILED,
-                'OAuth state mismatch — possible CSRF; refusing token exchange',
-              );
-            }
-            const finalResult = await auth(provider as OAuthClientProvider, {
-              serverUrl,
-              authorizationCode: code,
-              fetchFn: provider.createOAuthFetch(),
-            });
-            if (finalResult !== 'AUTHORIZED') {
-              throw new Error2(
-                ErrorCodes.MCP_OAUTH_FAILED,
-                `OAuth code exchange returned "${finalResult}" instead of AUTHORIZED`,
-                { details: { result: finalResult } },
-              );
-            }
-          } catch (error) {
-            await settle();
-            throw wrapAuthError(`OAuth flow for "${serverName}" failed`, error);
+    const startCompletion: BeginAuthorizationResult['complete'] = (opts = {}) => {
+      if (completion !== undefined) return completion;
+      if (settled) {
+        return Promise.reject(
+          new Error2(ErrorCodes.MCP_OAUTH_FAILED, 'OAuth flow already completed or cancelled'),
+        );
+      }
+      completion = (async () => {
+        try {
+          const { code, state } = await callbackServer.waitForCode({
+            signal: opts.signal,
+            timeoutMs: opts.timeoutMs,
+          });
+          const expectedState = provider.expectedState();
+          if (expectedState !== undefined && state !== expectedState) {
+            throw new Error2(
+              ErrorCodes.MCP_OAUTH_FAILED,
+              'OAuth state mismatch — possible CSRF; refusing token exchange',
+            );
           }
+          const finalResult = await auth(provider as OAuthClientProvider, {
+            serverUrl,
+            authorizationCode: code,
+            fetchFn: provider.createOAuthFetch(),
+          });
+          if (finalResult !== 'AUTHORIZED') {
+            throw new Error2(
+              ErrorCodes.MCP_OAUTH_FAILED,
+              `OAuth code exchange returned "${finalResult}" instead of AUTHORIZED`,
+              { details: { result: finalResult } },
+            );
+          }
+        } catch (error) {
           await settle();
-        })();
-        return completion;
-      },
+          throw wrapAuthError(`OAuth flow for "${serverName}" failed`, error);
+        }
+        await settle();
+      })();
+      return completion;
+    };
+
+    const attach = (): BeginAuthorizationResult => {
+      attachedHandles += 1;
+      let detached = false;
+      const detach = async (): Promise<void> => {
+        if (detached) return;
+        detached = true;
+        attachedHandles -= 1;
+        if (attachedHandles === 0) await settle();
+      };
+      return {
+        authorizationUrl,
+        complete: async (opts = {}) => {
+          if (detached) {
+            throw new Error2(
+              ErrorCodes.MCP_OAUTH_FAILED,
+              'OAuth flow already completed or cancelled',
+            );
+          }
+          try {
+            await startCompletion(opts);
+          } finally {
+            await detach();
+          }
+        },
+        cancel: detach,
+      };
+    };
+
+    return {
+      attach,
       cancelUnderlying: settle,
     };
   }

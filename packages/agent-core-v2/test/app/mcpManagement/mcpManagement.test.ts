@@ -1421,6 +1421,38 @@ describe('McpManagementService', () => {
       });
     }, 20000);
 
+    it('keeps a joined flow usable when an earlier flow handle is cancelled', async () => {
+      const authServer = await startInteractiveAuthServer();
+      const mcpUrl = `${authServer.origin}/mcp`;
+      await management.addServer({
+        name: 'oauthable',
+        transport: 'http',
+        url: mcpUrl,
+        auth: 'oauth',
+      });
+      await seedDiscovery('oauthable', mcpUrl, authServer.origin);
+
+      const first = await management.beginServerAuth({ source: 'global', name: 'oauthable' });
+      const second = await management.beginServerAuth({ source: 'global', name: 'oauthable' });
+      if (
+        first.status !== 'authorization-required' ||
+        second.status !== 'authorization-required'
+      ) {
+        throw new Error('expected both flows to require authorization');
+      }
+      expect(second.authorizationUrl).toBe(first.authorizationUrl);
+
+      await management.cancelServerAuth({ flowId: first.flowId });
+      const completing = management.completeServerAuth({
+        flowId: second.flowId,
+        timeoutMs: 10_000,
+      });
+      await deliverAuthCallback(second.authorizationUrl);
+      await completing;
+
+      expect((await oauth.tokenState('oauthable', mcpUrl)).hasTokens).toBe(true);
+    }, 20000);
+
     it('expires an idle flow: the flow is cancelled and a later complete rejects as unknown', async () => {
       await management.addServer({
         name: 'oauthable',

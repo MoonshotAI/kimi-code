@@ -673,7 +673,7 @@ describe('McpOAuthService interactive flow serialization', () => {
     expect(authServer.counts.exchange).toBe(0);
   }, 15000);
 
-  it('lets only the initiating handle cancel the shared flow', async () => {
+  it('keeps the shared flow active when a joined handle cancels, so the first handle completes', async () => {
     const fixture = makeFixture();
     cleanups.push(() => fixture.service.dispose());
     const authServer = await startFakeAuthServer();
@@ -692,7 +692,7 @@ describe('McpOAuthService interactive flow serialization', () => {
     expect(authServer.counts.exchange).toBe(1);
   }, 15000);
 
-  it('rejects joiners when the initiator cancels, then allows a fresh flow', async () => {
+  it('keeps the shared flow active when the first handle cancels, so a joined handle completes', async () => {
     const fixture = makeFixture();
     cleanups.push(() => fixture.service.dispose());
     const authServer = await startFakeAuthServer();
@@ -702,15 +702,29 @@ describe('McpOAuthService interactive flow serialization', () => {
     const first = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
     const second = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
     await first.cancel();
-    await expect(second.complete()).rejects.toThrow(/already completed or cancelled/);
+
+    const secondComplete = second.complete({ timeoutMs: 10_000 });
+    await deliverCallback(second);
+    await secondComplete;
+    expect(authServer.counts.exchange).toBe(1);
+    expect((await fixture.service.tokenState(SERVER_NAME, SERVER_URL)).hasTokens).toBe(true);
+  }, 15000);
+
+  it('closes the shared flow when its final handle cancels, so the next begin starts fresh', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    const authServer = await startFakeAuthServer();
+    const provider = await readyProvider(fixture);
+    await provider.saveDiscoveryState(authServerState(authServer.url).discovery);
+
+    const first = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    const second = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    await first.cancel();
+    await second.cancel();
 
     const third = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
     expect(third.authorizationUrl.toString()).not.toBe(first.authorizationUrl.toString());
-    const thirdComplete = third.complete({ timeoutMs: 10_000 });
-    await deliverCallback(third);
-    await thirdComplete;
-    expect(authServer.counts.exchange).toBe(1);
-    expect((await fixture.service.tokenState(SERVER_NAME, SERVER_URL)).hasTokens).toBe(true);
+    await third.cancel();
   }, 15000);
 
   it('leaves no shared flow behind when begin reports already-authorized', async () => {
