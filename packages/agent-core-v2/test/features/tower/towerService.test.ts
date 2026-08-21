@@ -59,6 +59,12 @@ import {
 
 const execFileAsync = promisify(execFile);
 
+async function initGitRepo(repo: string): Promise<void> {
+  await execFileAsync('git', ['init', '-b', 'main'], { cwd: repo });
+  await execFileAsync('git', ['config', 'user.email', 'tower-test@example.com'], { cwd: repo });
+  await execFileAsync('git', ['config', 'user.name', 'Tower Test'], { cwd: repo });
+}
+
 _setTowerFeatureAssembledForTests(true);
 
 const signal = new AbortController().signal;
@@ -459,7 +465,7 @@ describe('AgentTowerService', () => {
   it('enter() is a no-op while a foreign session owns the tower in this process', async () => {
     const repo = await mkdtemp(join(tmpdir(), 'tower-enter-foreign-'));
     try {
-      await execFileAsync('git', ['init', '-b', 'main'], { cwd: repo });
+      await initGitRepo(repo);
       await writeFile(join(repo, 'README.md'), '# fixture\n');
       await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
       await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
@@ -481,7 +487,7 @@ describe('AgentTowerService', () => {
   it('enter() adopts the tower once the owning session is gone — TowerInit stays reachable', async () => {
     const repo = await mkdtemp(join(tmpdir(), 'tower-enter-stale-'));
     try {
-      await execFileAsync('git', ['init', '-b', 'main'], { cwd: repo });
+      await initGitRepo(repo);
       await writeFile(join(repo, 'README.md'), '# fixture\n');
       await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
       await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
@@ -787,7 +793,7 @@ describe('AgentTowerService', () => {
 
     const repo = await mkdtemp(join(tmpdir(), 'tower-fork-'));
     try {
-      await execFileAsync('git', ['init', '-b', 'main'], { cwd: repo });
+      await initGitRepo(repo);
       await writeFile(join(repo, 'README.md'), '# fixture\n');
       await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
       await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
@@ -869,7 +875,7 @@ describe('AgentTowerService', () => {
 
     const repo = await mkdtemp(join(tmpdir(), 'tower-fork-stale-'));
     try {
-      await execFileAsync('git', ['init', '-b', 'main'], { cwd: repo });
+      await initGitRepo(repo);
       await writeFile(join(repo, 'README.md'), '# fixture\n');
       await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
       await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
@@ -951,7 +957,7 @@ describe('AgentTowerService', () => {
 
     const repo = await mkdtemp(join(tmpdir(), 'tower-fork-flag-off-'));
     try {
-      await execFileAsync('git', ['init', '-b', 'main'], { cwd: repo });
+      await initGitRepo(repo);
       await writeFile(join(repo, 'README.md'), '# fixture\n');
       await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
       await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });

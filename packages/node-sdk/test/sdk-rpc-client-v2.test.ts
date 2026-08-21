@@ -920,6 +920,7 @@ key = "${titleOAuthRef.key}"
   });
 
   it('serves setTowerMode and getStatus towerMode through the agent scope tower service', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '1');
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -952,6 +953,7 @@ key = "${titleOAuthRef.key}"
           code: ErrorCodes.SESSION_NOT_FOUND,
         });
     } finally {
+      vi.unstubAllEnvs();
       await client.close();
     }
   });
@@ -979,6 +981,7 @@ key = "${titleOAuthRef.key}"
   });
 
   it('exposes Session.setTowerMode and getStatus().towerMode on the v2 harness', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '1');
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
@@ -996,6 +999,7 @@ key = "${titleOAuthRef.key}"
         code: ErrorCodes.REQUEST_INVALID,
       });
     } finally {
+      vi.unstubAllEnvs();
       await harness.close();
     }
   });
