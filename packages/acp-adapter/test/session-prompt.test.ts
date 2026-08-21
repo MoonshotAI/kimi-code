@@ -16,6 +16,7 @@ import {
 } from '@agentclientprotocol/sdk';
 import type { Event, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
+import { AcpSession } from '../src/session';
 import { AcpServer } from '../src/server';
 import { AUTHED_STATUS } from './_helpers/harness-stubs';
 
@@ -71,17 +72,21 @@ function makeScriptedSession(
 ): {
   session: Session;
   unsubscribeCount: () => number;
+  emit: (events: readonly Event[]) => void;
 } {
   const listeners = new Set<(event: Event) => void>();
   let unsubCount = 0;
+  const emit = (events: readonly Event[]): void => {
+    for (const ev of events) {
+      for (const fn of listeners) fn(ev);
+    }
+  };
   const session = {
     id: sessionId,
     prompt: async (_input: unknown) => {
       // Emit asynchronously so the caller has time to set `settled`
       // before the first event lands (matches real RPC ordering).
-      for (const ev of script) {
-        for (const fn of listeners) fn(ev);
-      }
+      emit(script);
     },
     cancel: async () => undefined,
     onEvent: (fn: (event: Event) => void) => {
@@ -92,7 +97,7 @@ function makeScriptedSession(
       };
     },
   } as unknown as Session;
-  return { session, unsubscribeCount: () => unsubCount };
+  return { session, unsubscribeCount: () => unsubCount, emit };
 }
 
 const textBlock = (text: string): ContentBlock => ({ type: 'text', text });
@@ -143,8 +148,8 @@ describe('AcpServer session/prompt', () => {
       content: { type: 'text', text: 'lo' },
     });
 
-    // Listener must be unsubscribed exactly once after turn.ended fires.
-    expect(unsubscribeCount()).toBe(1);
+    // The session-lifetime listener remains active for autonomous turns.
+    expect(unsubscribeCount()).toBe(0);
   });
 
   it('resolves with cancelled stopReason when turn.ended reason is cancelled', async () => {
@@ -171,7 +176,7 @@ describe('AcpServer session/prompt', () => {
     });
 
     expect(response.stopReason).toBe('cancelled');
-    expect(unsubscribeCount()).toBe(1);
+    expect(unsubscribeCount()).toBe(0);
   });
 
   it('rejects prompt with invalid_params when sessionId is unknown', async () => {
@@ -191,7 +196,7 @@ describe('AcpServer session/prompt', () => {
     ).rejects.toMatchObject({ code: -32602 });
   });
 
-  it('rejects prompt (and unsubscribes) when underlying session.prompt rejects', async () => {
+  it('rejects prompt when underlying session.prompt rejects', async () => {
     const sessionId = 'sess-C';
     const listeners = new Set<(event: Event) => void>();
     let unsubCount = 0;
@@ -224,7 +229,7 @@ describe('AcpServer session/prompt', () => {
     await expect(
       client.prompt({ sessionId, prompt: [textBlock('hi')] }),
     ).rejects.toBeDefined();
-    expect(unsubCount).toBe(1);
+    expect(unsubCount).toBe(0);
   });
 
   it('rejects prompt when the SDK emits a turn.agent_busy error event', async () => {
@@ -254,7 +259,7 @@ describe('AcpServer session/prompt', () => {
     await expect(
       client.prompt({ sessionId, prompt: [textBlock('hi')] }),
     ).rejects.toMatchObject({ code: -32600 });
-    expect(unsubscribeCount()).toBe(1);
+    expect(unsubscribeCount()).toBe(0);
   });
 
   it('does not reject an already-started prompt when a later prompt gets busy', async () => {
@@ -342,7 +347,7 @@ describe('AcpServer session/prompt', () => {
 
     resolveFirstTurn?.();
     await expect(firstPrompt).resolves.toMatchObject({ stopReason: 'end_turn' });
-    expect(unsubCount).toBe(2);
+    expect(unsubCount).toBe(0);
   });
 
   it('ignores a subagent turn.ended and resolves on the main agent turn.ended', async () => {
@@ -401,6 +406,99 @@ describe('AcpServer session/prompt', () => {
     expect(response.stopReason).toBe('end_turn');
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(collecting.promptUpdates).toHaveLength(2);
+    expect(unsubscribeCount()).toBe(0);
+  });
+
+  it('streams a main-agent turn that starts after the prompt has returned', async () => {
+    const sessionId = 'sess-autonomous';
+    const { session, emit } = makeScriptedSession(sessionId, [
+      { type: 'assistant.delta', sessionId, agentId: 'main', turnId: 1, delta: 'prompt done' } as Event,
+      { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+    ]);
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await client.prompt({ sessionId, prompt: [textBlock('hi')] });
+
+    emit([
+      { type: 'turn.started', sessionId, agentId: 'main', turnId: 2, origin: { kind: 'system_trigger', name: 'cron' } } as Event,
+      { type: 'assistant.delta', sessionId, agentId: 'main', turnId: 2, delta: 'background result' } as Event,
+      { type: 'thinking.delta', sessionId, agentId: 'main', turnId: 2, delta: 'background thought' } as Event,
+      {
+        type: 'tool.call.started',
+        sessionId,
+        agentId: 'main',
+        turnId: 2,
+        toolCallId: 'bg-tool',
+        name: 'Bash',
+        args: { command: 'echo background' },
+        display: {
+          kind: 'todo_list',
+          items: [{ title: 'background task', status: 'in_progress' }],
+        },
+      } as Event,
+      {
+        type: 'tool.result',
+        sessionId,
+        agentId: 'main',
+        turnId: 2,
+        toolCallId: 'bg-tool',
+        output: 'background output',
+        isError: false,
+      } as Event,
+      { type: 'turn.ended', sessionId, agentId: 'main', turnId: 2, reason: 'completed' } as Event,
+    ]);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const autonomousUpdates = collecting.promptUpdates.slice(1);
+    expect(autonomousUpdates.map((note) => (note.update as { sessionUpdate: string }).sessionUpdate)).toEqual([
+      'agent_message_chunk',
+      'agent_thought_chunk',
+      'tool_call',
+      'plan',
+      'tool_call_update',
+    ]);
+    expect(autonomousUpdates[0]?.update).toMatchObject({
+      sessionUpdate: 'agent_message_chunk',
+      content: { text: 'background result' },
+    });
+    expect(autonomousUpdates[3]?.update).toMatchObject({
+      sessionUpdate: 'plan',
+      entries: [{ content: 'background task', status: 'in_progress' }],
+    });
+    expect(autonomousUpdates[4]?.update).toMatchObject({
+      sessionUpdate: 'tool_call_update',
+      status: 'completed',
+      rawOutput: 'background output',
+    });
+  });
+
+  it('releases the persistent event listener once when disposed', () => {
+    const sessionId = 'sess-dispose';
+    const { session, unsubscribeCount, emit } = makeScriptedSession(sessionId, []);
+    let updateCount = 0;
+    const conn = {
+      sessionUpdate: async () => {
+        updateCount += 1;
+      },
+    } as unknown as AgentSideConnection;
+    const acpSession = new AcpSession(conn, session);
+
+    expect(unsubscribeCount()).toBe(0);
+    acpSession.dispose();
+    acpSession.dispose();
     expect(unsubscribeCount()).toBe(1);
+    emit([
+      { type: 'assistant.delta', sessionId, agentId: 'main', turnId: 7, delta: 'late' } as Event,
+    ]);
+    expect(updateCount).toBe(0);
   });
 });

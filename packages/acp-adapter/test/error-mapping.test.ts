@@ -193,7 +193,7 @@ describe('AcpServer error mapping', () => {
     await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
     const response = await client.prompt({ sessionId, prompt: [textBlock('hi')] });
     expect(response.stopReason).toBe('end_turn');
-    expect(unsubscribeCount()).toBe(1);
+    expect(unsubscribeCount()).toBe(0);
   });
 
   it('maps a synchronous session.prompt rejection carrying an auth code to authRequired (-32000)', async () => {
@@ -295,6 +295,6 @@ describe('AcpServer error mapping', () => {
     await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
     const response = await client.prompt({ sessionId, prompt: [textBlock('hi')] });
     expect(response.stopReason).toBe('refusal');
-    expect(unsubscribeCount()).toBe(1);
+    expect(unsubscribeCount()).toBe(0);
   });
 });
