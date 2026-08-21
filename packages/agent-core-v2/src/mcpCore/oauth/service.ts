@@ -26,6 +26,10 @@ export interface McpOAuthServiceOptions {
   readonly resolveClientName?: () => string | undefined;
   readonly log?: Logger;
   readonly scheduler?: McpOAuthScheduler;
+  /** Per-request bound for OAuth-flow HTTP (discovery, registration, grants). */
+  readonly authRequestTimeoutMs?: number;
+  /** Upper bound for awaiting in-flight flows and refreshes during shutdown. */
+  readonly shutdownDrainTimeoutMs?: number;
 }
 
 export interface McpOAuthScheduledTask {
@@ -101,6 +105,8 @@ export interface McpOAuthTokenState {
 
 const REFRESH_AHEAD_MS = 120_000;
 const MAX_TIMER_DELAY_MS = 0x7fffffff;
+const DEFAULT_AUTH_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS = 30_000;
 
 const defaultScheduler: McpOAuthScheduler = {
   now: () => Date.now(),
@@ -117,6 +123,8 @@ export class McpOAuthService {
   private readonly resolveClientName: (() => string | undefined) | undefined;
   private readonly log: Logger;
   private readonly scheduler: McpOAuthScheduler;
+  private readonly authRequestTimeoutMs: number;
+  private readonly shutdownDrainTimeoutMs: number;
   private readonly providers = new Map<string, McpOAuthClientProvider>();
   private readonly listeners = new Set<McpOAuthEventListener>();
   private readonly refreshes = new Map<string, Promise<void>>();
@@ -132,6 +140,8 @@ export class McpOAuthService {
     this.resolveClientName = options.resolveClientName;
     this.log = options.log ?? defaultLog;
     this.scheduler = options.scheduler ?? defaultScheduler;
+    this.authRequestTimeoutMs = options.authRequestTimeoutMs ?? DEFAULT_AUTH_REQUEST_TIMEOUT_MS;
+    this.shutdownDrainTimeoutMs = options.shutdownDrainTimeoutMs ?? DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS;
   }
 
   dispose(): Promise<void> {
@@ -264,15 +274,18 @@ export class McpOAuthService {
     this.activeAuthorizations.clear();
     this.shutdownPromise = (async () => {
       try {
-        await Promise.all([
-          Promise.all(
-            authorizations.map(async (started) => {
-              const flow = await started.catch(() => undefined);
-              await flow?.cancelUnderlying();
-            }),
-          ),
-          Promise.allSettled(refreshes),
-          Promise.allSettled(backgroundTasks),
+        await Promise.race([
+          Promise.all([
+            Promise.all(
+              authorizations.map(async (started) => {
+                const flow = await started.catch(() => undefined);
+                await flow?.cancelUnderlying();
+              }),
+            ),
+            Promise.allSettled(refreshes),
+            Promise.allSettled(backgroundTasks),
+          ]),
+          this.drainDeadline(),
         ]);
       } finally {
         this.listeners.clear();
@@ -280,6 +293,28 @@ export class McpOAuthService {
       }
     })();
     return this.shutdownPromise;
+  }
+
+  private drainDeadline(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.scheduler.schedule(this.shutdownDrainTimeoutMs, () => {
+        this.log.warn('mcp oauth shutdown drain timed out; continuing teardown');
+        resolve();
+      });
+    });
+  }
+
+  private authFetch(provider: McpOAuthClientProvider): typeof fetch {
+    const fetchFn = provider.createOAuthFetch();
+    const timeoutMs = this.authRequestTimeoutMs;
+    return (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const timeout = AbortSignal.timeout(timeoutMs);
+      const signal =
+        init?.signal === undefined || init.signal === null
+          ? timeout
+          : AbortSignal.any([init.signal, timeout]);
+      return fetchFn(input, { ...init, signal });
+    }) as typeof fetch;
   }
 
   /**
@@ -384,7 +419,7 @@ export class McpOAuthService {
       try {
         const result = await auth(provider as OAuthClientProvider, {
           serverUrl,
-          fetchFn: provider.createOAuthFetch(),
+          fetchFn: this.authFetch(provider),
         });
         if (result !== 'REDIRECT') {
           await callbackServer.close();
@@ -544,7 +579,7 @@ export class McpOAuthService {
     try {
       const result = await auth(provider as OAuthClientProvider, {
         serverUrl,
-        fetchFn: provider.createOAuthFetch(),
+        fetchFn: this.authFetch(provider),
       });
       if (result !== 'AUTHORIZED') {
         throw new Error2(

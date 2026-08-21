@@ -30,10 +30,13 @@ interface Fixture {
   readonly scheduler: ManualMcpOAuthScheduler;
 }
 
-function makeFixture(store: McpOAuthStore = createMemoryMcpOAuthStore()): Fixture {
+function makeFixture(
+  store: McpOAuthStore = createMemoryMcpOAuthStore(),
+  options: { readonly authRequestTimeoutMs?: number; readonly shutdownDrainTimeoutMs?: number } = {},
+): Fixture {
   const events: McpOAuthEvent[] = [];
   const scheduler = new ManualMcpOAuthScheduler(1_000_000);
-  const service = new McpOAuthService({ store, scheduler });
+  const service = new McpOAuthService({ store, scheduler, ...options });
   service.onEvent((event) => events.push(event));
   return { service, store, events, scheduler };
 }
@@ -118,6 +121,28 @@ async function startFakeAuthServer(
   return { url: `http://127.0.0.1:${port}`, counts };
 }
 
+async function startHangingServer(): Promise<{ readonly url: string; readonly counts: { requests: number } }> {
+  const counts = { requests: 0 };
+  const httpServer: HttpServer = createHttpServer(() => {
+    counts.requests += 1;
+  });
+  await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+  cleanups.push(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        httpServer.close((err) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve();
+        });
+      }),
+  );
+  const port = (httpServer.address() as HttpAddress).port;
+  return { url: `http://127.0.0.1:${port}`, counts };
+}
+
 function authServerState(authServerUrl: string) {
   return {
     discovery: {
@@ -142,7 +167,9 @@ function authServerState(authServerUrl: string) {
   };
 }
 
-async function blockedRefreshFixture(): Promise<{
+async function blockedRefreshFixture(options?: {
+  readonly shutdownDrainTimeoutMs?: number;
+}): Promise<{
   readonly fixture: Fixture;
   readonly authServer: FakeAuthServer;
   readonly writeStarted: Promise<void>;
@@ -171,7 +198,7 @@ async function blockedRefreshFixture(): Promise<{
       await memory.write(key, value);
     },
   };
-  const fixture = makeFixture(store);
+  const fixture = makeFixture(store, options ?? {});
   cleanups.push(() => fixture.service.dispose());
   const authServer = await startFakeAuthServer({ refreshExpiresIn: 60 });
   const provider = await readyProvider(fixture);
@@ -350,6 +377,22 @@ describe('McpOAuthService single-flight refresh', () => {
     });
     expect(fixture.events.filter((event) => event.type === 'tokens-saved')).toHaveLength(2);
   }, 15000);
+
+  it('bounds a hung authorization-server request by the configured request timeout', async () => {
+    const hanging = await startHangingServer();
+    const fixture = makeFixture(createMemoryMcpOAuthStore(), { authRequestTimeoutMs: 50 });
+    cleanups.push(() => fixture.service.dispose());
+    const provider = fixture.service.getProvider(SERVER_NAME, hanging.url);
+    await provider.ready;
+    await provider.saveTokens({
+      access_token: 'stale-access-token',
+      refresh_token: 'stale-refresh-token',
+      token_type: 'Bearer',
+    });
+
+    await expect(fixture.service.refresh(SERVER_NAME, hanging.url)).rejects.toThrow();
+    expect(hanging.counts.requests).toBeGreaterThan(0);
+  });
 
   it('rejects when no refresh token is stored', async () => {
     const fixture = makeFixture();
@@ -868,6 +911,25 @@ describe('McpOAuthService shutdown', () => {
     releaseWrite();
     await Promise.all([refresh, shutdown]);
     expect(pendingWhileRefreshInFlight).toBe(true);
+  }, 15000);
+
+  it('caps the shutdown drain when an in-flight refresh outlives the drain timeout', async () => {
+    const { fixture, writeStarted, releaseWrite } = await blockedRefreshFixture({
+      shutdownDrainTimeoutMs: 50,
+    });
+    const refresh = fixture.service.refresh(SERVER_NAME, SERVER_URL);
+    await writeStarted;
+
+    const shutdown = fixture.service.shutdown();
+    await fixture.scheduler.advanceBy(60);
+    const settledBeforeRelease = await Promise.race([
+      shutdown.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1_000)),
+    ]);
+    releaseWrite();
+    await Promise.all([refresh, shutdown]);
+
+    expect(settledBeforeRelease).toBe(true);
   }, 15000);
 
   it('prevents a completing refresh from scheduling work after shutdown', async () => {
