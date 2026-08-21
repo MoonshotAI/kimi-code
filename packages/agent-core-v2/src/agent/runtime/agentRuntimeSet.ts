@@ -220,6 +220,7 @@ export class AgentRuntimeSet {
       commit: (state) => { durable.commit(actor, state); },
     };
     entry.attachment = host.attach(participant);
+    if (definition.eager === true) this.facade(entry);
   }
 
   private track<T>(entry: RuntimeEntry, work: Promise<T>): Promise<T> {

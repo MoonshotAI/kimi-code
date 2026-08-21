@@ -15,7 +15,11 @@ import {
 } from '#/agent/activityView/activityView';
 import type { TurnEndReason } from '#/agent/loop/turnEvents';
 import { IAgentManager, MAIN_AGENT_ID } from '#/session/agentManager/agentManager';
-import { ISessionInteractionService, type Interaction } from '#/session/interaction/interaction';
+import type { Interaction } from '#/session/interaction/interaction';
+import {
+  listSessionPendingInteractions,
+  onSessionInteractionDidChangePending,
+} from '#/session/interaction/sessionInteractions';
 import { ISessionStateService } from '#/session/state/sessionState';
 
 import {
@@ -55,7 +59,6 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
     @IAgentManager private readonly agents: IAgentManager,
-    @ISessionInteractionService private readonly interactions: ISessionInteractionService,
   ) {
     super();
     this.states.contributeState(sessionActivityFoldsKey);
@@ -78,7 +81,9 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
         if (this.folds.delete(agent.agentId)) this.recompute('agent_lifecycle');
       }),
     );
-    this._register(this.interactions.onDidChangePending(() => this.recompute('interaction')));
+    this._register(
+      onSessionInteractionDidChangePending(this.agents, () => this.recompute('interaction')),
+    );
     this._register(
       toDisposable(() => {
         for (const subscription of this.agentSubscriptions.values()) subscription.dispose();
@@ -151,7 +156,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
     return {
       busy,
       mainTurnActive: this.folds.get(MAIN_AGENT_ID)?.turnActive ?? false,
-      pendingInteraction: resolvePendingInteraction(this.interactions.listPending()),
+      pendingInteraction: resolvePendingInteraction(listSessionPendingInteractions(this.agents)),
       lastTurnReason: this.folds.get(MAIN_AGENT_ID)?.lastTurnReason,
     };
   }

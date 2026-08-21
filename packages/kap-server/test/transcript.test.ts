@@ -7,10 +7,11 @@ import {
   IAgentManager,
   IWireService,
   IEventBus,
-  ISessionInteractionService,
   ISessionQuestionService,
   closeSessionById,
+  enqueueSessionInteraction,
   getLiveSessionById,
+  respondSessionInteraction,
   resumeSessionById,
   IModelCatalog,
   type ContextMessage,
@@ -286,8 +287,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     );
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    const interactions = session!.accessor.get(ISessionInteractionService);
-    interactions.enqueue({
+    enqueueSessionInteraction(session!.accessor.get(IAgentManager), {
       id: 'apr-1',
       kind: 'approval',
       payload: {
@@ -310,7 +310,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       }),
     );
 
-    interactions.respond('apr-1', { decision: 'approved' });
+    respondSessionInteraction(session!.accessor.get(IAgentManager), 'apr-1', { decision: 'approved' });
     ({ body } = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`));
     expect(body.data.pending_interactions).toEqual([]);
     expect(body.data.interactions).toContainEqual(
@@ -542,7 +542,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     ]);
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    session!.accessor.get(ISessionInteractionService).enqueue({
+    enqueueSessionInteraction(session!.accessor.get(IAgentManager), {
       id: 'apr-1',
       kind: 'approval',
       payload: { toolCallId: 'call_9', toolName: 'Bash', action: 'run' },
@@ -560,7 +560,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       }),
     );
 
-    session!.accessor.get(ISessionInteractionService).respond('apr-1', { decision: 'approved' });
+    respondSessionInteraction(session!.accessor.get(IAgentManager), 'apr-1', { decision: 'approved' });
     const after = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     const turnAfter = after.body.data.items.find(
       (item): item is TurnContract => item.kind === 'turn' && item.turnId === 't0',
@@ -1121,8 +1121,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       options: [{ label: 'Approach A', description: 'fast' }],
     };
     const session = getLiveSessionById(server!.core.accessor, id);
-    const interactions = session!.accessor.get(ISessionInteractionService);
-    interactions.enqueue({
+    enqueueSessionInteraction(session!.accessor.get(IAgentManager), {
       id: 'apr-plan',
       kind: 'approval',
       payload: {
@@ -1133,7 +1132,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       },
       origin: { agentId: 'main', turnId: 1 },
     });
-    interactions.respond('apr-plan', { decision: 'approved', selectedLabel: 'Approach A' });
+    respondSessionInteraction(session!.accessor.get(IAgentManager), 'apr-plan', { decision: 'approved', selectedLabel: 'Approach A' });
 
     const { body } = await getJson<PlanContract>(
       `/api/v1/sessions/${id}/transcript/plan?agent_id=main&tool_call_id=call_plan`,
@@ -1251,8 +1250,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     ]);
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    const interactions = session!.accessor.get(ISessionInteractionService);
-    interactions.enqueue({
+    enqueueSessionInteraction(session!.accessor.get(IAgentManager), {
       id: 'apr-plan',
       kind: 'approval',
       payload: {
@@ -1263,7 +1261,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       },
       origin: { agentId: 'main', turnId: 0 },
     });
-    interactions.respond('apr-plan', {
+    respondSessionInteraction(session!.accessor.get(IAgentManager), 'apr-plan', {
       decision: 'rejected',
       selectedLabel: 'Revise',
       feedback: 'split it up',
@@ -1358,8 +1356,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     );
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    const interactions = session!.accessor.get(ISessionInteractionService);
-    interactions.enqueue({
+    enqueueSessionInteraction(session!.accessor.get(IAgentManager), {
       id: 'apr-final',
       kind: 'approval',
       payload: {
@@ -1370,7 +1367,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       },
       origin: { agentId: 'main', turnId: 1 },
     });
-    interactions.respond('apr-final', { decision: 'approved' });
+    respondSessionInteraction(session!.accessor.get(IAgentManager), 'apr-final', { decision: 'approved' });
 
     const { body } = await getJson<PlanContract>(
       `/api/v1/sessions/${id}/transcript/plan?agent_id=main`,

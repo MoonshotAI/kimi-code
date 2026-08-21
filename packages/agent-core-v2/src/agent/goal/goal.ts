@@ -1,4 +1,6 @@
-import { createDecorator } from "#/_base/di/instantiation";
+import { createDecorator } from '#/_base/di/instantiation';
+import { defineAgentCapability } from '#/agent/runtime/agentRuntime';
+
 import type {
   CreateGoalInput,
   GoalActor,
@@ -16,7 +18,7 @@ export interface ResumeGoalInput extends GoalReasonInput {
   readonly continueIfBlocked?: boolean;
 }
 
-export interface IAgentGoalService {
+export interface IAgentGoal {
   readonly _serviceBrand: undefined;
 
   getGoal(): GoalToolResult;
@@ -31,6 +33,11 @@ export interface IAgentGoalService {
   ): Promise<GoalSnapshot>;
   markComplete(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot | null>;
   markBlocked(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot | null>;
+  pauseOnInterrupt(input?: GoalReasonInput): Promise<GoalSnapshot | null>;
+  recordTokenUsage(tokenDelta: number): Promise<GoalSnapshot | null>;
+  incrementTurn(): Promise<GoalSnapshot | null>;
 }
 
-export const IAgentGoalService = createDecorator<IAgentGoalService>('agentGoalService');
+export const IAgentGoal = createDecorator<IAgentGoal>('agentGoal');
+
+export const AgentGoal = defineAgentCapability<IAgentGoal>('goal');

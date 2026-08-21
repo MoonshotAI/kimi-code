@@ -3,7 +3,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
-import { IAgentGoalService } from '#/agent/goal/goal';
+import { IAgentGoal } from '#/agent/goal/goal';
 import {
   buildGoalBlockedReasonPrompt,
   buildGoalCompletionSummaryPrompt,
@@ -22,7 +22,7 @@ export class UpdateGoalTool implements IUpdateGoalTool {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(UpdateGoalToolInputSchema);
 
-  constructor(@IAgentGoalService private readonly goal: IAgentGoalService) {}
+  constructor(@IAgentGoal private readonly goal: IAgentGoal) {}
 
   resolveExecution(args: UpdateGoalToolInput): ToolExecution {
     if (!isUpdateGoalStatus(args.status)) {

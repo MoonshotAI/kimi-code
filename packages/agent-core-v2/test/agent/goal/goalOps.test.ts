@@ -8,17 +8,14 @@ import { Event } from '#/_base/event';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IConfigService } from '#/app/config/config';
+import type { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentGoalService } from '#/agent/goal/goal';
+import { AgentGoal, type IAgentGoal } from '#/agent/goal/goal';
 import { IGoalDeadlineScheduler } from '#/agent/goal/goalDeadlineScheduler';
 import { GoalDeadlineSchedulerService } from '#/agent/goal/goalDeadlineSchedulerService';
-import { AgentGoalService } from '#/agent/goal/goalService';
-import { goalKey } from '#/agent/goal/goalOps';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentStateService } from '#/agent/state/agentState';
-import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
@@ -31,6 +28,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
 import {
+  attachGoalRuntime,
   registerTestAgentWire,
   registerTestEventDispatcher,
   restoreTestEventDispatcher,
@@ -102,20 +100,27 @@ function createConfigStub(): IConfigService {
   } as unknown as IConfigService;
 }
 
+interface GoalHost {
+  readonly dispatcher: IEventDispatcher;
+  readonly runtimes: AgentRuntimeSet;
+  readonly svc: IAgentGoal;
+  readonly log: IAppendLogStore;
+  readonly eventBus: IEventBus;
+}
+
+function inspectGoal(runtimes: AgentRuntimeSet): Record<string, unknown> | null {
+  const line = runtimes.inspect().find((entry) => entry.id === 'goal');
+  return (line?.state ?? null) as Record<string, unknown> | null;
+}
+
 let disposables: DisposableStore;
 let dispatcher: IEventDispatcher;
-let agentState: IAgentStateService;
-let svc: IAgentGoalService;
+let runtimes: AgentRuntimeSet;
+let svc: IAgentGoal;
 let log: IAppendLogStore;
 let eventBus: IEventBus;
 
-function buildHost(key: string): {
-  dispatcher: IEventDispatcher;
-  agentState: IAgentStateService;
-  svc: IAgentGoalService;
-  log: IAppendLogStore;
-  eventBus: IEventBus;
-} {
+function buildHost(key: string): GoalHost {
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
@@ -130,7 +135,6 @@ function buildHost(key: string): {
   ix.stub(ITelemetryService, createTelemetryStub());
   ix.stub(IAgentToolExecutorService, createToolExecutorStub());
   ix.stub(IConfigService, createConfigStub());
-  ix.set(IAgentStateService, new AgentStateService());
   ix.set(IGoalDeadlineScheduler, new SyncDescriptor(GoalDeadlineSchedulerService));
   registerTestAgentWire(ix, testWireScope(SCOPE, key), {
     log: ix.get(IAppendLogStore),
@@ -145,12 +149,11 @@ function buildHost(key: string): {
   ix.stub(IAgentScopeContext, mainScopeContext);
   (ix.get(IEventBus) as ISessionEventBus).activateAgent(mainScopeContext.agentContext);
   const dispatcher = registerTestEventDispatcher(ix);
-  const agentState = ix.get(IAgentStateService);
-  ix.set(IAgentGoalService, new SyncDescriptor(AgentGoalService));
+  const runtimes = attachGoalRuntime(ix, dispatcher);
   return {
     dispatcher,
-    agentState,
-    svc: ix.get(IAgentGoalService),
+    runtimes,
+    svc: runtimes.resolve(AgentGoal),
     log: ix.get(IAppendLogStore),
     eventBus: ix.get(IEventBus),
   };
@@ -160,7 +163,7 @@ beforeEach(() => {
   disposables = new DisposableStore();
   const host = buildHost(KEY);
   dispatcher = host.dispatcher;
-  agentState = host.agentState;
+  runtimes = host.runtimes;
   svc = host.svc;
   log = host.log;
   eventBus = host.eventBus;
@@ -177,15 +180,15 @@ async function readRecords(key = KEY): Promise<WireRecord[]> {
   return out;
 }
 
-describe('AgentGoalService (wire-backed)', () => {
+describe('goal runtime (wire-backed)', () => {
   it('create/update persist flat records and getGoal reflects the state', async () => {
     const created = await svc.createGoal({ objective: 'Ship feature X' });
     expect(created.status).toBe('active');
-    expect(agentState.get(goalKey)?.goalId).toBe(created.goalId);
+    expect(inspectGoal(runtimes)?.['goalId']).toBe(created.goalId);
     expect(svc.getGoal().goal?.objective).toBe('Ship feature X');
 
     await svc.pauseGoal({ reason: 'break' });
-    expect(agentState.get(goalKey)?.status).toBe('paused');
+    expect(inspectGoal(runtimes)?.['status']).toBe('paused');
     expect(svc.getGoal().goal?.status).toBe('paused');
 
     const records = await readRecords();
@@ -204,7 +207,7 @@ describe('AgentGoalService (wire-backed)', () => {
     await svc.createGoal({ objective: 'work' });
     await svc.cancelGoal();
     expect(svc.getGoal().goal).toBeNull();
-    expect(agentState.get(goalKey)).toBeNull();
+    expect(inspectGoal(runtimes)).toBeNull();
 
     const records = await readRecords();
     expect(records.map((record) => record.type)).toEqual(['goal.create', 'goal.clear']);
@@ -236,7 +239,7 @@ describe('AgentGoalService (wire-backed)', () => {
       testWireScope(SCOPE, 'goal-replay'),
       records,
     );
-    expect(host.agentState.get(goalKey)?.status).toBe('paused');
+    expect(inspectGoal(host.runtimes)?.['status']).toBe('paused');
     expect(replaySignals).toEqual([]);
   });
 
@@ -253,9 +256,9 @@ describe('AgentGoalService (wire-backed)', () => {
       testWireScope(SCOPE, 'goal-restore'),
       records,
     );
-    expect(host.agentState.get(goalKey)?.status).toBe('paused');
-    expect(host.agentState.get(goalKey)?.terminalReason).toBe('Paused after agent resume');
-    expect(host.agentState.get(goalKey)?.goalId).toBe(created.goalId);
+    expect(inspectGoal(host.runtimes)?.['status']).toBe('paused');
+    expect(inspectGoal(host.runtimes)?.['terminalReason']).toBe('Paused after agent resume');
+    expect(inspectGoal(host.runtimes)?.['goalId']).toBe(created.goalId);
 
     const written = await (async () => {
       const out: WireRecord[] = [];
@@ -282,7 +285,7 @@ describe('AgentGoalService (wire-backed)', () => {
       { type: 'goal.update' },
     ]);
 
-    expect(agentState.get(goalKey)).toMatchObject({
+    expect(inspectGoal(runtimes)).toMatchObject({
       goalId: 'goal-1',
       status: 'paused',
       budgetLimits: {},
@@ -301,7 +304,7 @@ describe('AgentGoalService (wire-backed)', () => {
       },
     ]);
 
-    expect(agentState.get(goalKey)).toMatchObject({
+    expect(inspectGoal(runtimes)).toMatchObject({
       goalId: 'goal-1',
       status: 'paused',
       budgetLimits: {},
@@ -314,7 +317,7 @@ describe('AgentGoalService (wire-backed)', () => {
       { type: 'goal.update', goalId: 'goal-1', status: 'blocked', reason: 'waiting' },
     ]);
 
-    expect(agentState.get(goalKey)).toMatchObject({
+    expect(inspectGoal(runtimes)).toMatchObject({
       goalId: 'goal-1',
       status: 'blocked',
       terminalReason: 'waiting',
@@ -331,7 +334,7 @@ describe('AgentGoalService (wire-backed)', () => {
       },
     ]);
 
-    expect(agentState.get(goalKey)).toMatchObject({ goalId: 'goal-1', objective: 'work' });
+    expect(inspectGoal(runtimes)).toMatchObject({ goalId: 'goal-1', objective: 'work' });
   });
 
   it('skips a goal update with an invalid status during restore', async () => {
@@ -343,7 +346,7 @@ describe('AgentGoalService (wire-backed)', () => {
         { type: 'goal.update', status: 'cancelled' },
       ]);
 
-      expect(agentState.get(goalKey)).toMatchObject({ status: 'paused' });
+      expect(inspectGoal(runtimes)).toMatchObject({ status: 'paused' });
       expect(unexpected).toContainEqual(
         expect.objectContaining({ code: 'wire.unknown_record', details: { type: 'goal.update', index: 1 } }),
       );
@@ -361,7 +364,7 @@ describe('AgentGoalService (wire-backed)', () => {
         { type: 'goal.update', actor: 'assistant' },
       ]);
 
-      expect(agentState.get(goalKey)).toMatchObject({ status: 'paused' });
+      expect(inspectGoal(runtimes)).toMatchObject({ status: 'paused' });
       expect(unexpected).toContainEqual(
         expect.objectContaining({ code: 'wire.unknown_record', details: { type: 'goal.update', index: 1 } }),
       );
@@ -385,7 +388,7 @@ describe('AgentGoalService (wire-backed)', () => {
         { type: 'goal.update', budgetLimits: { wallClockBudgetMs: Number.NaN } },
       ]);
 
-      expect(agentState.get(goalKey)).toMatchObject({
+      expect(inspectGoal(runtimes)).toMatchObject({
         turnsUsed: 0,
         tokensUsed: 0,
         wallClockMs: 0,
@@ -417,7 +420,7 @@ describe('AgentGoalService (wire-backed)', () => {
         ] as unknown as WireRecord[],
       );
 
-      expect(agentState.get(goalKey)).toBeNull();
+      expect(inspectGoal(runtimes)).toBeNull();
       expect(unexpected).toHaveLength(3);
     } finally {
       resetUnexpectedErrorHandler();

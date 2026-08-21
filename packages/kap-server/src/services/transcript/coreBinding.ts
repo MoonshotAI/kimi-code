@@ -4,8 +4,10 @@ import {
   IAgentTaskService,
   IEventBus,
   ISessionMetadata,
-  ISessionInteractionService,
   MAIN_AGENT_ID,
+  listSessionPendingInteractions,
+  onSessionInteractionDidChangePending,
+  onSessionInteractionDidResolve,
   type AgentMeta,
   type IDisposable,
   type IAgentScopeHandle,
@@ -48,7 +50,6 @@ export function bindSessionTranscript(
   onOps?: (event: TranscriptChangeEvent) => void,
 ): TranscriptBinding {
   const agents = session.accessor.get(IAgentManager);
-  const interactions = session.accessor.get(ISessionInteractionService);
   const disposables: IDisposable[] = [];
   const agentDisposables = new Map<string, IDisposable[]>();
   const subscribedAgents = new Set<string>();
@@ -198,7 +199,7 @@ export function bindSessionTranscript(
     }),
   );
 
-  for (const pending of interactions.listPending()) {
+  for (const pending of listSessionPendingInteractions(agents)) {
     if (pending.kind !== 'approval' && pending.kind !== 'question') continue;
     if (knownInteractions.has(pending.id)) continue;
     knownInteractions.add(pending.id);
@@ -221,7 +222,7 @@ export function bindSessionTranscript(
         applyOps(early.agentId, projector.mapInteractionResolved(id, early.response));
       }
     }
-    for (const pending of interactions.listPending()) {
+    for (const pending of listSessionPendingInteractions(agents)) {
       if (knownInteractions.has(pending.id)) continue;
       if (agentId !== undefined && interactionAgentId(pending) !== agentId) continue;
       knownInteractions.add(pending.id);
@@ -229,8 +230,8 @@ export function bindSessionTranscript(
     }
   };
   disposables.push(
-    interactions.onDidChangePending(() => {
-      for (const pending of interactions.listPending()) {
+    onSessionInteractionDidChangePending(agents, () => {
+      for (const pending of listSessionPendingInteractions(agents)) {
         if (knownInteractions.has(pending.id)) continue;
         const agentId = interactionAgentId(pending);
         knownInteractions.add(pending.id);
@@ -242,7 +243,7 @@ export function bindSessionTranscript(
         announceInteraction(pending);
       }
     }),
-    interactions.onDidResolve(({ id, response }) => {
+    onSessionInteractionDidResolve(agents, ({ id, response }) => {
       knownInteractions.delete(id);
       const agentId = interactionAgents.get(id);
       if (agentId === undefined) return;

@@ -40,6 +40,7 @@ export interface AgentRuntimeDefinition<State, Facade> {
   readonly logic: ActorLogic<any, any, any>;
   readonly input?: (agent: AgentContext) => unknown;
   readonly durable?: AgentRuntimeDurableDefinition<State>;
+  readonly eager?: boolean;
   readonly createFacade: (
     actor: AnyActorRef,
     context: AgentRuntimeContext<State>,

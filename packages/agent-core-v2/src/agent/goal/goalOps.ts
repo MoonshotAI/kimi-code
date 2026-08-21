@@ -2,7 +2,6 @@
 import { z } from 'zod';
 
 import { AgentEvent2 } from '#/app/event/event2';
-import { defineState } from '#/state/state';
 
 import type {
   GoalActor,
@@ -134,47 +133,3 @@ export class GoalUpdated extends AgentEvent2<GoalUpdatedPayload> {
   static override readonly observable = true;
 }
 export interface GoalUpdated extends GoalUpdatedPayload {}
-
-export const goalKey = defineState('goal', (): GoalModelState => null).replayable({
-  schema: z.custom<GoalModelState>(),
-})
-  .on(GoalCreate, (_s, e) => ({
-    goalId: e.goalId,
-    objective: e.objective,
-    completionCriterion: e.completionCriterion,
-    status: 'active' as const,
-    turnsUsed: 0,
-    tokensUsed: 0,
-    wallClockMs: 0,
-    wallClockResumedAt: e.wallClockResumedAt,
-    budgetLimits: {},
-  }))
-  .on(GoalUpdate, (s, e) => {
-    if (s === null) return;
-    if (e.status !== undefined && e.status !== s.status) {
-      s.status = e.status;
-      s.terminalReason = e.status === 'active' ? undefined : e.reason;
-      s.wallClockResumedAt = e.status === 'active' ? e.wallClockResumedAt : undefined;
-    }
-    if (e.turnsUsed !== undefined && e.turnsUsed !== s.turnsUsed) {
-      s.turnsUsed = e.turnsUsed;
-    }
-    if (e.tokensUsed !== undefined && e.tokensUsed !== s.tokensUsed) {
-      s.tokensUsed = e.tokensUsed;
-    }
-    if (e.wallClockMs !== undefined && e.wallClockMs !== s.wallClockMs) {
-      s.wallClockMs = e.wallClockMs;
-    }
-    if (
-      e.wallClockResumedAt !== undefined &&
-      (e.status ?? s.status) === 'active' &&
-      e.wallClockResumedAt !== s.wallClockResumedAt
-    ) {
-      s.wallClockResumedAt = e.wallClockResumedAt;
-    }
-    if (e.budgetLimits !== undefined && e.budgetLimits !== s.budgetLimits) {
-      s.budgetLimits = e.budgetLimits;
-    }
-  })
-  .on(GoalClear, () => null)
-  .on(GoalForked, () => null);

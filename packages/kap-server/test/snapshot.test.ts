@@ -12,7 +12,6 @@ import {
   IAgentManager,
   IAgentProfileService,
   IAgentPromptService,
-  ISessionInteractionService,
   ISessionContext,
   ISessionIndex,
   ISessionMetadata,
@@ -102,9 +101,9 @@ describe('server-v2 snapshot route enrichment', () => {
           {
             create: async () => ({ agentId: 'main', generation: 1 }) as never,
             handleOf: () => main,
+            list: () => [],
           },
         ],
-        [ISessionInteractionService, { listPending: () => [] }],
       ]),
     };
     const handler = {
@@ -267,9 +266,9 @@ describe('server-v2 snapshot route enrichment', () => {
           {
             create: async () => ({ agentId: 'main', generation: 1 }) as never,
             handleOf: () => main,
+            list: () => [],
           },
         ],
-        [ISessionInteractionService, { listPending: () => [] }],
       ]),
     };
     const handler = {

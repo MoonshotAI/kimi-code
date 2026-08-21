@@ -14,10 +14,10 @@ import {
   IAgentProfileService,
   IAgentScopeContext,
   IEventBus,
-  ISessionInteractionService,
   ISessionTokenCountingService,
   ISessionUsageService,
   makeAgentScopeContext,
+  type IAgentInteraction,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
@@ -68,20 +68,22 @@ class FakeAgentHandle {
 }
 
 function makeSession(agents: FakeAgentHandle[]): ISessionScopeHandle {
-  const lifecycle = {
-    list: () => agents.map((agent) => agent.context),
-    handleOf: (agentId: string) => agents.find((agent) => agent.id === agentId),
-    onDidCreate: () => ({ dispose: () => {} }),
-    onDidClose: () => ({ dispose: () => {} }),
-  };
   const interactions = {
     onDidChangePending: () => ({ dispose: () => {} }),
+    onDidResolve: () => ({ dispose: () => {} }),
     listPending: () => [],
+  } as unknown as IAgentInteraction;
+  const lifecycle = {
+    list: () => agents.map((agent) => agent.context),
+    get: (agentId: string) => agents.find((agent) => agent.id === agentId)?.context,
+    handleOf: (agentId: string) => agents.find((agent) => agent.id === agentId),
+    resolve: () => interactions,
+    onDidCreate: () => ({ dispose: () => {} }),
+    onDidClose: () => ({ dispose: () => {} }),
   };
   const accessor = {
     get: (token: unknown): unknown => {
       if (token === IAgentManager) return lifecycle;
-      if (token === ISessionInteractionService) return interactions;
       return undefined;
     },
   };

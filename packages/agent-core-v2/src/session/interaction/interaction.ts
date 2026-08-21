@@ -1,5 +1,6 @@
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import { createDecorator } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
+import { defineAgentCapability } from '#/agent/runtime/agentRuntime';
 
 export type InteractionKind = 'approval' | 'question' | 'user_tool';
 
@@ -32,12 +33,12 @@ export interface InteractionPendingChangedEvent {
   readonly pending: readonly string[];
 }
 
-export interface ISessionInteractionService {
+export interface IAgentInteraction {
   readonly _serviceBrand: undefined;
 
   request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse>;
   enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction;
-  respond(id: string, response: unknown): void;
+  respond(id: string, response: unknown): boolean;
   listPending(kind?: InteractionKind): readonly Interaction[];
   isRecentlyResolved(id: string): boolean;
   cancelPendingForTurn(turnId: number): void;
@@ -45,5 +46,6 @@ export interface ISessionInteractionService {
   readonly onDidResolve: Event<InteractionResolution>;
 }
 
-export const ISessionInteractionService: ServiceIdentifier<ISessionInteractionService> =
-  createDecorator<ISessionInteractionService>('sessionInteractionService');
+export const IAgentInteraction = createDecorator<IAgentInteraction>('agentInteraction');
+
+export const AgentInteraction = defineAgentCapability<IAgentInteraction>('interaction');

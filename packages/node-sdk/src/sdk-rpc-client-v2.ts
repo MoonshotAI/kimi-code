@@ -65,8 +65,9 @@
  *   rebuilt over the profile's cached AGENTS.md warning plus the engine's
  *   `prepareSystemPromptContext` (no v2 aggregate service exists).
  * - `createGoal` / `getGoal` / `pauseGoal` / `resumeGoal` / `cancelGoal` →
- *   `IAgentGoalService` through the agent scope; `getCronTasks` →
- *   `ISessionCronService` through the session scope with the v1 snapshot
+ *   the `AgentGoal` runtime facade resolved through the session's agent
+ *   manager; `getCronTasks` → the main agent's `AgentCron` runtime facade
+ *   with the v1 snapshot
  *   shape restored; `listBackgroundTasks` / `getBackgroundTaskOutput` → the
  *   `klient.session(id).agent(id)` facade; `stopBackgroundTask` /
  *   `detachBackgroundTask` → `IAgentTaskService` through the agent scope
@@ -179,7 +180,8 @@ import {
   IAgentContextMemoryService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
-  IAgentGoalService,
+  AgentCron,
+  AgentGoal,
   IAgentPluginService,
   IAgentManager,
   IAgentLoopService,
@@ -202,7 +204,6 @@ import {
   IProviderService,
   ISessionBtwService,
   ISessionContext,
-  ISessionCronService,
   ISessionExportService,
   ISessionIndex,
   ISessionIndexMirror,
@@ -2128,7 +2129,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   // -----------------------------------------------------------------------
 
   /**
-   * Through the agent scope (`IAgentGoalService.createGoal`) — no klient
+   * Through the `AgentGoal` runtime facade resolved from the session's agent
+   * manager — no klient
    * facade exists for the goal domain. Gap: v2 rejects every goal command on
    * a non-main agent (`goal.unsupported_agent`) where v1 keeps a `GoalMode`
    * on every agent; only reachable through a non-main `interactiveAgentId`
@@ -2136,35 +2138,48 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async createGoal(input: SessionIdRpcInput & CreateGoalInput): Promise<GoalSnapshot> {
     const agent = await this.agentScope(input.sessionId);
-    return agent.accessor
-      .get(IAgentGoalService)
+    return this.requireLiveSession(input.sessionId)
+      .accessor.get(IAgentManager)
+      .resolve(agentContextOf(agent), AgentGoal)
       .createGoal({ objective: input.objective, replace: input.replace });
   }
 
   override async getGoal(input: SessionIdRpcInput): Promise<GoalToolResult> {
     const agent = await this.agentScope(input.sessionId);
-    return agent.accessor.get(IAgentGoalService).getGoal();
+    return this.requireLiveSession(input.sessionId)
+      .accessor.get(IAgentManager)
+      .resolve(agentContextOf(agent), AgentGoal)
+      .getGoal();
   }
 
   override async pauseGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
     const agent = await this.agentScope(input.sessionId);
-    return agent.accessor.get(IAgentGoalService).pauseGoal();
+    return this.requireLiveSession(input.sessionId)
+      .accessor.get(IAgentManager)
+      .resolve(agentContextOf(agent), AgentGoal)
+      .pauseGoal();
   }
 
   override async resumeGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
     const agent = await this.agentScope(input.sessionId);
-    return agent.accessor.get(IAgentGoalService).resumeGoal();
+    return this.requireLiveSession(input.sessionId)
+      .accessor.get(IAgentManager)
+      .resolve(agentContextOf(agent), AgentGoal)
+      .resumeGoal();
   }
 
   override async cancelGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
     const agent = await this.agentScope(input.sessionId);
-    return agent.accessor.get(IAgentGoalService).cancelGoal();
+    return this.requireLiveSession(input.sessionId)
+      .accessor.get(IAgentManager)
+      .resolve(agentContextOf(agent), AgentGoal)
+      .cancelGoal();
   }
 
   /**
-   * Through the session scope (`ISessionCronService`) — no klient facade
+   * Through the main agent's `AgentCron` runtime facade — no klient facade
    * exists for cron. v1's cron manager is per-agent: the main agent's
-   * manager is what the v2 session-level service ports (it borrows the main
+   * manager is what the v2 cron runtime ports (it borrows the main
    * agent to steer fires), and a v1 subagent reports `[]` (`cron` is null) —
    * mirrored here for a non-main `interactiveAgentId`. The v1 snapshot shape
    * is restored field-by-field: `recurring` defaults to true, and the
@@ -2174,7 +2189,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async getCronTasks(input: SessionIdRpcInput): Promise<GetCronTasksResult> {
     await this.agentScope(input.sessionId);
     if (this.interactiveAgentId !== MAIN_AGENT_ID) return { tasks: [] };
-    const cron = this.requireLiveSession(input.sessionId).accessor.get(ISessionCronService);
+    const manager = this.requireLiveSession(input.sessionId).accessor.get(IAgentManager);
+    const mainContext = manager.get(MAIN_AGENT_ID);
+    if (mainContext === undefined) return { tasks: [] };
+    const cron = manager.resolve(mainContext, AgentCron);
     return {
       tasks: cron.list().map((task) => ({
         id: task.id,

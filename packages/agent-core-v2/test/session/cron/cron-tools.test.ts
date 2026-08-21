@@ -9,7 +9,7 @@ import type {
   ToolExecution,
 } from '#/tool/toolContract';
 import type { CronTask, CronTaskInit } from '#/app/cron/cronTask';
-import type { ISessionCronService } from '#/session/cron/sessionCronService';
+import type { IAgentCron } from '#/session/cron/agentCron';
 import {
   computeNextCronRun,
   parseCronExpression,
@@ -44,7 +44,7 @@ interface FakeStore {
 
 interface ToolHarness {
   readonly store: FakeStore;
-  readonly cron: ISessionCronService;
+  readonly cron: IAgentCron;
   readonly scheduled: CronTask[];
   readonly scheduledAgentIds: (string | undefined)[];
   readonly deleted: string[];
@@ -86,7 +86,7 @@ function createToolHarness(options: {
     },
   };
 
-  const cron: ISessionCronService = {
+  const cron: IAgentCron = {
     _serviceBrand: undefined,
     isEnabled: true,
     isDisabled: () => disabled,

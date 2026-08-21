@@ -4,7 +4,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { ISessionCronService } from '#/session/cron/sessionCronService';
+import { IAgentCron } from '#/session/cron/agentCron';
 
 import { ICronDeleteTool, CronDeleteInputSchema, type CronDeleteInput } from './cron-delete';
 import CRON_DELETE_DESCRIPTION from './cron-delete.md?raw';
@@ -21,7 +21,7 @@ export class CronDeleteTool implements ICronDeleteTool {
   );
 
   constructor(
-    @ISessionCronService private readonly cron: ISessionCronService,
+    @IAgentCron private readonly cron: IAgentCron,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {}
 

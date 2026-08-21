@@ -46,18 +46,20 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import '#/wire/wireService';
 import '#/state/eventDispatcherService';
 import { IAgentTaskService } from '#/agent/task/task';
-import { ISessionCronService } from '#/session/cron/sessionCronService';
-import { SessionCronServiceImpl } from '#/session/cron/sessionCronServiceImpl';
+import { AgentCron } from '#/session/cron/agentCron';
+import { CronAgentRuntimeDefinition } from '#/session/cron/cronAgentRuntime';
+import { ICronCreateTool } from '#/agent/tools/cron/cron-create/cron-create';
+import { ICronDeleteTool } from '#/agent/tools/cron/cron-delete/cron-delete';
+import { ICronListTool } from '#/agent/tools/cron/cron-list/cron-list';
 import { CRON_SECTION } from '#/app/cron/configSection';
-import { ISessionInteractionService } from '#/session/interaction/interaction';
-import { SessionInteractionService } from '#/session/interaction/interactionService';
+import { AgentInteraction } from '#/session/interaction/interaction';
+import { InteractionAgentRuntimeDefinition } from '#/session/interaction/interactionAgentRuntime';
 import { Ledger } from '#/_base/lifecycle/ledger';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { AgentRuntimeContributionPoint } from '#/agent/runtime/agentRuntime';
 import { AgentTodo } from '#/session/todo/sessionTodo';
 import { TODO_LIST_REMINDER_VARIANT } from '#/session/todo/todoListReminder';
 import { TodoAgentRuntimeDefinition } from '#/session/todo/todoAgentRuntime';
-import { interactionKey } from '#/session/interaction/interactionOps';
 import '#/agent/toolDedupe/toolDedupeService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -457,6 +459,24 @@ describe('AgentManagerService', () => {
     );
   }
 
+  function contributeCron(): () => void {
+    return ix.fiberHost.addCollectionRecord(
+      AgentRuntimeContributionPoint,
+      'test',
+      new Ledger('test'),
+      { capability: AgentCron, definition: CronAgentRuntimeDefinition },
+    );
+  }
+
+  function contributeInteraction(): () => void {
+    return ix.fiberHost.addCollectionRecord(
+      AgentRuntimeContributionPoint,
+      'test',
+      new Ledger('test'),
+      { capability: AgentInteraction, definition: InteractionAgentRuntimeDefinition },
+    );
+  }
+
   it('create / get / list / remove', async () => {
     const svc = ix.get(IAgentManager);
     const main = await svc.create({ agentId: 'main' });
@@ -723,7 +743,7 @@ describe('AgentManagerService', () => {
     expect(agent.accessor.get(IAgentRuntimeService).inspect().identity.generation).toBe('remote-one');
   });
 
-  it('contributes session-domain replayable keys before restore and replays them', async () => {
+  it('attaches durable runtimes before restore and replays their records', async () => {
     ix.stub(IAppendLogStore, recordingAppendLog([
       createWireMetadataRecord(1),
       {
@@ -733,6 +753,11 @@ describe('AgentManagerService', () => {
         time: 2,
       },
       { type: 'interaction.request', id: 'i1', kind: 'question', request: { q: 1 }, time: 3 },
+      {
+        type: 'cron.add',
+        task: { id: 'cron-1', cron: '0 9 * * *', prompt: 'ping', createdAt: 1, recurring: true },
+        time: 4,
+      },
     ]).store);
     ix.stub(IConfigService, {
       ready: Promise.resolve(),
@@ -740,28 +765,30 @@ describe('AgentManagerService', () => {
         section === CRON_SECTION ? { disabled: true } : undefined) as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
     } as unknown as IConfigService);
+    ix.stub(IAgentToolRegistryService, {
+      _serviceBrand: undefined,
+      register: () => ({ dispose: () => {} }),
+    } as unknown as IAgentToolRegistryService);
+    ix.stub(ICronCreateTool, { _serviceBrand: undefined });
+    ix.stub(ICronListTool, { _serviceBrand: undefined });
+    ix.stub(ICronDeleteTool, { _serviceBrand: undefined });
     contributeTodo();
-    ix.set(ISessionInteractionService, new SyncDescriptor(SessionInteractionService));
-    ix.set(ISessionCronService, new SyncDescriptor(SessionCronServiceImpl));
-    ix.get(ISessionInteractionService);
-    ix.get(ISessionCronService);
+    contributeCron();
+    contributeInteraction();
 
     const svc = ix.get(IAgentManager);
     const main = await svc.create({ agentId: 'main' });
 
-    const state = svc.handleOf('main')!.accessor.get(IAgentStateService);
-    expect(state.replayableKeys().map((key) => key.name)).toEqual(
-      expect.arrayContaining(['cron', 'interaction']),
-    );
-    expect(svc.inspect(main).contributions[0]?.state).toEqual([
+    const contributions = svc.inspect(main).contributions;
+    expect(contributions.find((line) => line.id === 'todo')?.state).toEqual([
       { title: 'bridged', status: 'pending' },
     ]);
-    expect(state.get(interactionKey).get('i1')).toMatchObject({
-      id: 'i1',
-      kind: 'question',
-      request: { q: 1 },
-      resolved: false,
-    });
+    expect(contributions.find((line) => line.id === 'interaction')?.state).toEqual([
+      { id: 'i1', kind: 'question', resolved: false },
+    ]);
+    expect(contributions.find((line) => line.id === 'cron')?.state).toEqual([
+      { id: 'cron-1', cron: '0 9 * * *', recurring: true, createdAt: 1, lastFiredAt: undefined },
+    ]);
   });
 
   it('broadcastPermissionMode sets the mode on every live agent', async () => {

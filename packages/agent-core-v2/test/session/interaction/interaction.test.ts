@@ -1,33 +1,40 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { Event } from '#/_base/event';
-import { LifecycleScope } from '#/app/scopes';
-import { type IAgentScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
+import type { AgentCapability } from '#/agent/runtime/agentRuntime';
+import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { EventBusService } from '#/app/event/eventBusService';
+import { IEventBus } from '#/app/event/eventBus';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentManager } from '#/session/agentManager/agentManager';
-import { stubAgentContext } from '../../agent/agentContext/stubs';
-import { ISessionInteractionService } from '#/session/interaction/interaction';
 import {
-  interactionKey,
+  AgentInteraction,
+  type IAgentInteraction,
+} from '#/session/interaction/interaction';
+import { InteractionAgentRuntimeDefinition } from '#/session/interaction/interactionAgentRuntime';
+import {
   InteractionRequestEvent,
   InteractionResolvedEvent,
 } from '#/session/interaction/interactionOps';
-import { SessionInteractionService } from '#/session/interaction/interactionService';
-import { ISessionStateService } from '#/session/state/sessionState';
-import { SessionStateService } from '#/session/state/sessionStateService';
-import { IAgentStateService } from '#/agent/state/agentState';
+import {
+  enqueueSessionInteraction,
+  isSessionInteractionRecentlyResolved,
+  listSessionPendingInteractions,
+  respondSessionInteraction,
+} from '#/session/interaction/sessionInteractions';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
 import {
+  attachInteractionRuntime,
   registerTestAgentWire,
   registerTestEventDispatcher,
   restoreTestEventDispatcher,
@@ -39,12 +46,21 @@ interface RecordedEvent {
   readonly [key: string]: unknown;
 }
 
-interface FakeAgent {
-  readonly handle: IAgentScopeHandle;
+interface RuntimeAgent {
+  readonly context: AgentContext;
+  readonly runtimes: AgentRuntimeSet;
+  readonly facade: IAgentInteraction;
   readonly dispatched: RecordedEvent[];
+  readonly disposables: DisposableStore;
 }
 
-function makeFakeAgent(agentId: string): FakeAgent {
+function makeRuntimeAgent(agentId: string): RuntimeAgent {
+  const disposables = new DisposableStore();
+  const ix = disposables.add(new TestInstantiationService());
+  const scope = makeAgentScopeContext({ agentId, agentScope: `agents/${agentId}`, generation: 1 });
+  const context = scope.agentContext;
+  const eventBus = disposables.add(new EventBusService());
+  eventBus.activateAgent(context);
   const dispatched: RecordedEvent[] = [];
   const dispatcher = {
     _serviceBrand: undefined,
@@ -53,16 +69,18 @@ function makeFakeAgent(agentId: string): FakeAgent {
       return Promise.resolve();
     },
   } as unknown as IEventDispatcher;
-  const accessor: ServicesAccessor = {
-    get: <T>(id: ServiceIdentifier<T>): T => {
-      if (id === IEventDispatcher) return dispatcher as unknown as T;
-      throw new Error(`unexpected service request in fake agent: ${String(id)}`);
-    },
-  };
-  return {
-    handle: { id: agentId, kind: LifecycleScope.Agent, accessor, dispose: () => {} },
-    dispatched,
-  };
+  ix.stub(IAgentScopeContext, scope);
+  ix.stub(IEventBus, eventBus);
+  ix.stub(IEventDispatcher, dispatcher);
+  const runtimes = new AgentRuntimeSet(context, { get: (id) => ix.get(id) });
+  runtimes.apply({
+    capability: AgentInteraction,
+    definition: InteractionAgentRuntimeDefinition,
+    generation: 1,
+    active: true,
+  });
+  const facade = runtimes.resolve(AgentInteraction);
+  return { context, runtimes, facade, dispatched, disposables };
 }
 
 function payloadOf(event: RecordedEvent): Record<string, unknown> {
@@ -70,30 +88,27 @@ function payloadOf(event: RecordedEvent): Record<string, unknown> {
   return payload;
 }
 
-describe('SessionInteractionService', () => {
-  let disposables: DisposableStore;
-  let ix: TestInstantiationService;
-  let agents: Map<string, FakeAgent>;
+function stubManagerFor(agents: Map<string, RuntimeAgent>): IAgentManager {
+  return {
+    _serviceBrand: undefined,
+    onDidCreate: Event.None,
+    get: (agentId: string) => agents.get(agentId)?.context,
+    list: () => [...agents.values()].map((agent) => agent.context),
+    resolve: <T,>(context: AgentContext, capability: AgentCapability<T>): T =>
+      agents.get(context.agentId)!.runtimes.resolve(capability),
+  } as unknown as IAgentManager;
+}
+
+describe('interaction runtime facade', () => {
+  let agent: RuntimeAgent;
 
   beforeEach(() => {
-    disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    agents = new Map();
-    ix.stub(IAgentManager, {
-      _serviceBrand: undefined,
-      onDidCreate: Event.None,
-      onDidClose: Event.None,
-      list: () => [...agents.keys()].map((agentId) => stubAgentContext(agentId, 1)),
-      get: (agentId: string) => (agents.has(agentId) ? stubAgentContext(agentId, 1) : undefined),
-      handleOf: (agentId: string) => agents.get(agentId)?.handle,
-    } as unknown as IAgentManager);
-    ix.set(ISessionStateService, new SessionStateService());
-    ix.set(ISessionInteractionService, new SyncDescriptor(SessionInteractionService));
+    agent = makeRuntimeAgent('main');
   });
-  afterEach(() => disposables.dispose());
+  afterEach(() => agent.disposables.dispose());
 
   it('request blocks until respond resolves it', async () => {
-    const svc = ix.get(ISessionInteractionService);
+    const svc = agent.facade;
     const pending = svc.request<{ n: number }, string>({
       kind: 'question',
       payload: { n: 1 },
@@ -106,7 +121,7 @@ describe('SessionInteractionService', () => {
   });
 
   it('uses the caller-provided id for correlation', async () => {
-    const svc = ix.get(ISessionInteractionService);
+    const svc = agent.facade;
     const pending = svc.request({ id: 'tool-1', kind: 'approval', payload: {} });
     expect(svc.listPending()[0]!.id).toBe('tool-1');
     svc.respond('tool-1', { decision: 'approved' });
@@ -114,7 +129,7 @@ describe('SessionInteractionService', () => {
   });
 
   it('listPending filters by kind', () => {
-    const svc = ix.get(ISessionInteractionService);
+    const svc = agent.facade;
     void svc.request({ kind: 'approval', payload: {} });
     void svc.request({ kind: 'question', payload: {} });
     expect(svc.listPending('approval')).toHaveLength(1);
@@ -123,9 +138,9 @@ describe('SessionInteractionService', () => {
   });
 
   it('onDidChangePending fires on request and on respond', async () => {
-    const svc = ix.get(ISessionInteractionService);
+    const svc = agent.facade;
     let count = 0;
-    disposables.add(svc.onDidChangePending(() => count++));
+    agent.disposables.add(svc.onDidChangePending(() => count++));
     const pending = svc.request({ kind: 'question', payload: {} });
     expect(count).toBe(1);
     svc.respond(svc.listPending()[0]!.id, 'x');
@@ -134,9 +149,9 @@ describe('SessionInteractionService', () => {
   });
 
   it('onDidChangePending carries the pending ids snapshot', () => {
-    const svc = ix.get(ISessionInteractionService);
+    const svc = agent.facade;
     const snapshots: (readonly string[])[] = [];
-    disposables.add(svc.onDidChangePending((e) => snapshots.push(e.pending)));
+    agent.disposables.add(svc.onDidChangePending((e) => snapshots.push(e.pending)));
     void svc.request({ id: 'a', kind: 'approval', payload: {} });
     void svc.request({ id: 'b', kind: 'question', payload: {} });
     svc.respond('a', {});
@@ -144,12 +159,12 @@ describe('SessionInteractionService', () => {
   });
 
   it('respond to an unknown id is a no-op', () => {
-    const svc = ix.get(ISessionInteractionService);
-    expect(() => svc.respond('nope', 'x')).not.toThrow();
+    const svc = agent.facade;
+    expect(svc.respond('nope', 'x')).toBe(false);
   });
 
   it('enqueue parks a request and returns it without blocking', () => {
-    const svc = ix.get(ISessionInteractionService);
+    const svc = agent.facade;
     const interaction = svc.enqueue({ id: 'e1', kind: 'approval', payload: { tool: 'bash' } });
     expect(interaction).toMatchObject({
       id: 'e1',
@@ -160,16 +175,16 @@ describe('SessionInteractionService', () => {
   });
 
   it('enqueue generates an id when none is provided', () => {
-    const svc = ix.get(ISessionInteractionService);
+    const svc = agent.facade;
     const interaction = svc.enqueue({ kind: 'question', payload: {} });
     expect(interaction.id).toMatch(/^interaction-/);
     expect(svc.listPending()[0]!.id).toBe(interaction.id);
   });
 
   it('onDidResolve fires with the id and response when responded to', () => {
-    const svc = ix.get(ISessionInteractionService);
+    const svc = agent.facade;
     const seen: { id: string; response: unknown }[] = [];
-    disposables.add(svc.onDidResolve((r) => seen.push(r)));
+    agent.disposables.add(svc.onDidResolve((r) => seen.push(r)));
 
     svc.enqueue({ id: 'e1', kind: 'approval', payload: {} });
     svc.respond('e1', { decision: 'approved' });
@@ -179,15 +194,15 @@ describe('SessionInteractionService', () => {
   });
 
   it('onDidResolve does not fire for an unknown id', () => {
-    const svc = ix.get(ISessionInteractionService);
+    const svc = agent.facade;
     let count = 0;
-    disposables.add(svc.onDidResolve(() => count++));
+    agent.disposables.add(svc.onDidResolve(() => count++));
     svc.respond('nope', 'x');
     expect(count).toBe(0);
   });
 
-  it('cancelPendingForTurn clears pending interactions whose turn has ended (矛盾 c)', () => {
-    const svc = ix.get(ISessionInteractionService);
+  it('cancelPendingForTurn clears pending interactions whose turn has ended', () => {
+    const svc = agent.facade;
 
     svc.enqueue({ id: 'a1', kind: 'approval', payload: {}, origin: { agentId: 'main', turnId: 3 } });
     svc.enqueue({ id: 'a2', kind: 'approval', payload: {}, origin: { agentId: 'main', turnId: 7 } });
@@ -200,9 +215,9 @@ describe('SessionInteractionService', () => {
   });
 
   it('cancelPendingForTurn resolves cancelled interactions through onDidResolve', () => {
-    const svc = ix.get(ISessionInteractionService);
+    const svc = agent.facade;
     const seen: { id: string; response: unknown }[] = [];
-    disposables.add(svc.onDidResolve((r) => seen.push(r)));
+    agent.disposables.add(svc.onDidResolve((r) => seen.push(r)));
 
     svc.enqueue({ id: 'a1', kind: 'approval', payload: {}, origin: { turnId: 5 } });
     svc.cancelPendingForTurn(5);
@@ -212,73 +227,44 @@ describe('SessionInteractionService', () => {
   });
 
   it('cancelPendingForTurn is a no-op when no interaction matches', () => {
-    const svc = ix.get(ISessionInteractionService);
+    const svc = agent.facade;
     svc.enqueue({ id: 'a1', kind: 'approval', payload: {}, origin: { turnId: 1 } });
     expect(() => svc.cancelPendingForTurn(99)).not.toThrow();
     expect(svc.listPending()).toHaveLength(1);
   });
 
-  it('request journals an interaction.request op to the origin agent wire', () => {
-    const sub = makeFakeAgent('agent-1');
-    agents.set('agent-1', sub);
-    const svc = ix.get(ISessionInteractionService);
-
-    svc.enqueue({
+  it('journals interaction.request to the owning agent dispatcher', () => {
+    agent.facade.enqueue({
       id: 'i1',
       kind: 'approval',
       payload: { toolCallId: 'call-1', toolName: 'Bash' },
-      origin: { agentId: 'agent-1', turnId: 2 },
+      origin: { agentId: 'main', turnId: 2 },
     });
 
-    expect(sub.dispatched.map((event) => ({ type: event.type, payload: payloadOf(event) }))).toEqual([
+    expect(agent.dispatched.map((event) => ({ type: event.type, payload: payloadOf(event) }))).toEqual([
       {
         type: 'interaction.request',
         payload: {
           id: 'i1',
           kind: 'approval',
           toolCallId: 'call-1',
-          agentId: 'agent-1',
+          agentId: 'main',
           request: { toolCallId: 'call-1', toolName: 'Bash' },
         },
       },
     ]);
   });
 
-  it('journals to the main agent wire when the origin has no agentId', () => {
-    const main = makeFakeAgent('main');
-    agents.set('main', main);
-    const svc = ix.get(ISessionInteractionService);
-
-    svc.enqueue({ id: 'i1', kind: 'question', payload: { question: '?' } });
-
-    expect(main.dispatched.map((event) => ({ type: event.type, payload: payloadOf(event) }))).toEqual([
-      {
-        type: 'interaction.request',
-        payload: {
-          id: 'i1',
-          kind: 'question',
-          toolCallId: undefined,
-          agentId: 'main',
-          request: { question: '?' },
-        },
-      },
-    ]);
-  });
-
-  it('respond journals an interaction.resolved op to the same wire', async () => {
-    const main = makeFakeAgent('main');
-    agents.set('main', main);
-    const svc = ix.get(ISessionInteractionService);
-
-    const pending = svc.request({ id: 'i1', kind: 'approval', payload: {} });
-    svc.respond('i1', { decision: 'approved' });
+  it('respond journals interaction.resolved to the same dispatcher', async () => {
+    const pending = agent.facade.request({ id: 'i1', kind: 'approval', payload: {} });
+    agent.facade.respond('i1', { decision: 'approved' });
     await pending;
 
-    expect(main.dispatched.map((event) => event.type)).toEqual([
+    expect(agent.dispatched.map((event) => event.type)).toEqual([
       'interaction.request',
       'interaction.resolved',
     ]);
-    expect(payloadOf(main.dispatched[1]!)).toEqual({
+    expect(payloadOf(agent.dispatched[1]!)).toEqual({
       agentId: 'main',
       id: 'i1',
       response: { decision: 'approved' },
@@ -286,14 +272,10 @@ describe('SessionInteractionService', () => {
   });
 
   it('cancelPendingForTurn journals the cancellation as interaction.resolved', () => {
-    const main = makeFakeAgent('main');
-    agents.set('main', main);
-    const svc = ix.get(ISessionInteractionService);
+    agent.facade.enqueue({ id: 'i1', kind: 'approval', payload: {}, origin: { turnId: 5 } });
+    agent.facade.cancelPendingForTurn(5);
 
-    svc.enqueue({ id: 'i1', kind: 'approval', payload: {}, origin: { turnId: 5 } });
-    svc.cancelPendingForTurn(5);
-
-    const last = main.dispatched.at(-1);
+    const last = agent.dispatched.at(-1);
     expect(last?.type).toBe('interaction.resolved');
     expect(last === undefined ? undefined : payloadOf(last)).toEqual({
       agentId: 'main',
@@ -301,13 +283,95 @@ describe('SessionInteractionService', () => {
       response: { cancelled: true, reason: 'turn_ended' },
     });
   });
+});
 
-  it('kernel semantics are unchanged when the origin agent is absent', async () => {
-    const svc = ix.get(ISessionInteractionService);
-    const pending = svc.request<unknown, string>({ kind: 'question', payload: {} });
-    svc.respond(svc.listPending()[0]!.id, 'ok');
+describe('session interaction helpers', () => {
+  let agents: Map<string, RuntimeAgent>;
+  let manager: IAgentManager;
+
+  beforeEach(() => {
+    agents = new Map();
+    manager = stubManagerFor(agents);
+  });
+  afterEach(() => {
+    for (const agent of agents.values()) agent.disposables.dispose();
+  });
+
+  it('routes requests to the origin agent runtime', () => {
+    const main = makeRuntimeAgent('main');
+    const sub = makeRuntimeAgent('agent-1');
+    agents.set('main', main);
+    agents.set('agent-1', sub);
+
+    enqueueSessionInteraction(manager, {
+      id: 'i1',
+      kind: 'approval',
+      payload: { toolCallId: 'call-1', toolName: 'Bash' },
+      origin: { agentId: 'agent-1', turnId: 2 },
+    });
+
+    expect(sub.facade.listPending()).toHaveLength(1);
+    expect(main.facade.listPending()).toHaveLength(0);
+    expect(sub.dispatched.map((event) => event.type)).toEqual(['interaction.request']);
+    expect(main.dispatched).toHaveLength(0);
+  });
+
+  it('routes to the main agent when the origin has no agentId', () => {
+    const main = makeRuntimeAgent('main');
+    agents.set('main', main);
+
+    enqueueSessionInteraction(manager, { id: 'i1', kind: 'question', payload: { question: '?' } });
+
+    expect(main.facade.listPending()).toHaveLength(1);
+    expect(main.dispatched.map((event) => event.type)).toEqual(['interaction.request']);
+  });
+
+  it('listPending aggregates across agents', () => {
+    const main = makeRuntimeAgent('main');
+    const sub = makeRuntimeAgent('agent-1');
+    agents.set('main', main);
+    agents.set('agent-1', sub);
+
+    enqueueSessionInteraction(manager, { id: 'i1', kind: 'approval', payload: {} });
+    enqueueSessionInteraction(manager, {
+      id: 'i2',
+      kind: 'question',
+      payload: {},
+      origin: { agentId: 'agent-1' },
+    });
+
+    expect(listSessionPendingInteractions(manager).map((i) => i.id).sort()).toEqual(['i1', 'i2']);
+    expect(listSessionPendingInteractions(manager, 'approval').map((i) => i.id)).toEqual(['i1']);
+  });
+
+  it('respond finds the owning agent', async () => {
+    const main = makeRuntimeAgent('main');
+    const sub = makeRuntimeAgent('agent-1');
+    agents.set('main', main);
+    agents.set('agent-1', sub);
+
+    const pending = sub.facade.request<unknown, string>({ kind: 'question', payload: {} });
+    respondSessionInteraction(manager, sub.facade.listPending()[0]!.id, 'ok');
     await expect(pending).resolves.toBe('ok');
-    expect(svc.listPending()).toHaveLength(0);
+    expect(listSessionPendingInteractions(manager)).toHaveLength(0);
+  });
+
+  it('respond to an unknown id is a no-op', () => {
+    agents.set('main', makeRuntimeAgent('main'));
+    expect(() => respondSessionInteraction(manager, 'nope', 'x')).not.toThrow();
+  });
+
+  it('isRecentlyResolved checks every agent', () => {
+    const main = makeRuntimeAgent('main');
+    const sub = makeRuntimeAgent('agent-1');
+    agents.set('main', main);
+    agents.set('agent-1', sub);
+
+    sub.facade.enqueue({ id: 'i1', kind: 'approval', payload: {} });
+    sub.facade.respond('i1', {});
+
+    expect(isSessionInteractionRecentlyResolved(manager, 'i1')).toBe(true);
+    expect(isSessionInteractionRecentlyResolved(manager, 'ghost')).toBe(false);
   });
 });
 
@@ -317,7 +381,7 @@ describe('interaction ops (wire-backed)', () => {
 
   let disposables: DisposableStore;
   let dispatcher: IEventDispatcher;
-  let agentState: IAgentStateService;
+  let runtimes: AgentRuntimeSet;
   let log: IAppendLogStore;
 
   beforeEach(() => {
@@ -328,8 +392,7 @@ describe('interaction ops (wire-backed)', () => {
     log = ix.get(IAppendLogStore);
     registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log });
     dispatcher = registerTestEventDispatcher(ix);
-    agentState = ix.get(IAgentStateService);
-    agentState.contributeState(interactionKey);
+    runtimes = attachInteractionRuntime(ix, dispatcher);
   });
   afterEach(() => disposables.dispose());
 
@@ -342,7 +405,12 @@ describe('interaction ops (wire-backed)', () => {
     return out;
   }
 
-  it('request/resolved persist to the journal and fold into the model by id', async () => {
+  function inspectRecords(): readonly { id: string; kind: string; resolved: boolean }[] {
+    const line = runtimes.inspect().find((entry) => entry.id === 'interaction');
+    return (line?.state ?? []) as readonly { id: string; kind: string; resolved: boolean }[];
+  }
+
+  it('request/resolved persist to the journal and fold into the runtime by id', async () => {
     await dispatcher.dispatch(
       new InteractionRequestEvent({
         agentId: 'test-agent',
@@ -360,15 +428,7 @@ describe('interaction ops (wire-backed)', () => {
       }),
     );
 
-    const entry = agentState.get(interactionKey).get('i1');
-    expect(entry).toMatchObject({
-      id: 'i1',
-      kind: 'approval',
-      toolCallId: 'call-1',
-      agentId: 'test-agent',
-      resolved: true,
-      response: { decision: 'approved' },
-    });
+    expect(inspectRecords()).toEqual([{ id: 'i1', kind: 'approval', resolved: true }]);
 
     expect(await readRecords()).toEqual([
       {
@@ -390,15 +450,14 @@ describe('interaction ops (wire-backed)', () => {
     ]);
   });
 
-  it('resolved without a known request leaves the model unchanged', async () => {
-    const before = agentState.get(interactionKey);
+  it('resolved without a known request leaves the runtime unchanged', async () => {
     await dispatcher.dispatch(
       new InteractionResolvedEvent({ agentId: 'test-agent', id: 'ghost', response: {} }),
     );
-    expect(agentState.get(interactionKey)).toBe(before);
+    expect(inspectRecords()).toEqual([]);
   });
 
-  it('replay rebuilds the interaction map from persisted records', async () => {
+  it('replay rebuilds the interaction records from persisted records', async () => {
     const records: WireRecord[] = [
       { type: 'interaction.request', id: 'i1', kind: 'question', request: { q: '?' } },
       { type: 'interaction.resolved', id: 'i1', response: { answer: 'a' } },
@@ -413,13 +472,13 @@ describe('interaction ops (wire-backed)', () => {
       log: log2,
     });
     const dispatcher2 = registerTestEventDispatcher(ix2);
-    const agentState2 = ix2.get(IAgentStateService);
-    agentState2.contributeState(interactionKey);
+    const runtimes2 = attachInteractionRuntime(ix2, dispatcher2);
     await restoreTestEventDispatcher(dispatcher2, log2, testWireScope(SCOPE, 'interaction-replay'), records);
 
-    const model = agentState2.get(interactionKey);
-    expect(model.size).toBe(2);
-    expect(model.get('i1')).toMatchObject({ resolved: true, response: { answer: 'a' } });
-    expect(model.get('i2')).toMatchObject({ resolved: false, toolCallId: 'call-2' });
+    const line = runtimes2.inspect().find((entry) => entry.id === 'interaction');
+    expect(line?.state).toEqual([
+      { id: 'i1', kind: 'question', resolved: true },
+      { id: 'i2', kind: 'approval', resolved: false },
+    ]);
   });
 });

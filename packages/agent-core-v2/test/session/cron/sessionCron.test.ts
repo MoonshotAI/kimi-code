@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { CronCursor } from '#/session/cron/cronOps';
-import { ISessionCronService } from '#/session/cron/sessionCronService';
+import { IAgentCron } from '#/session/cron/agentCron';
 
 import {
   createTestAgent,
@@ -26,7 +26,7 @@ describe('session cron wire persistence', () => {
     try {
       await first.restorePersisted();
 
-      const cron = first.get(ISessionCronService);
+      const cron = first.get(IAgentCron);
       const task = cron.addTask({ cron: '0 9 * * *', prompt: 'wire me', recurring: true });
       await first.dispatcher.dispatch(new CronCursor({ id: task.id, lastFiredAt: 1234 }));
       await first.dispatcher.flush();
@@ -44,7 +44,7 @@ describe('session cron wire persistence', () => {
     try {
       await second.restorePersisted();
 
-      const resumed = second.get(ISessionCronService);
+      const resumed = second.get(IAgentCron);
       const rebuilt = resumed.list();
       expect(rebuilt).toHaveLength(1);
       expect(rebuilt[0]).toMatchObject({
@@ -64,7 +64,7 @@ describe('session cron wire persistence', () => {
     try {
       await first.restorePersisted();
 
-      const cron = first.get(ISessionCronService);
+      const cron = first.get(IAgentCron);
       const kept = cron.addTask({ cron: '0 9 * * *', prompt: 'keep', recurring: true });
       const dropped = cron.addTask({ cron: '0 10 * * *', prompt: 'drop', recurring: true });
       cron.removeTasks([dropped.id]);
@@ -83,7 +83,7 @@ describe('session cron wire persistence', () => {
     try {
       await second.restorePersisted();
 
-      const resumed = second.get(ISessionCronService);
+      const resumed = second.get(IAgentCron);
       expect(resumed.list().map((task) => task.prompt)).toEqual(['keep']);
     } finally {
       await second.dispose();

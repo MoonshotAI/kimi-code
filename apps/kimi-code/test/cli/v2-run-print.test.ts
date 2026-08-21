@@ -5,11 +5,13 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  IAgentGoalService,
+  AgentCron,
+  AgentGoal,
   IAgentManager,
   IAgentPermissionModeService,
   IAgentProfileService,
   IAgentPromptService,
+  IAgentScopeContext,
   IAgentTaskService,
   IAuthSummaryService,
   IBootstrapService,
@@ -17,10 +19,10 @@ import {
   IEventBus,
   IFileSystemStorageService,
   IOAuthToolkit,
-  ISessionCronService,
   ISessionIndex,
   ISessionManager,
   ITelemetryService,
+  makeAgentScopeContext,
   type BootstrapInput,
   type Event2,
 } from '@moonshot-ai/agent-core-v2';
@@ -165,15 +167,29 @@ function makeFakeHarness() {
       },
     ],
     [IAgentTaskService, { list: vi.fn(() => []) }],
-    [IAgentGoalService, { createGoal: vi.fn(), getGoal: vi.fn() }],
+    [
+      IAgentScopeContext,
+      makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
+    ],
   ]);
   const agent = fakeScope('main', agentServices);
 
+  const goal = { createGoal: vi.fn(), getGoal: vi.fn() };
+  const cron = { getNextFireTime: vi.fn(() => null) };
   const sessionServices = new Map<unknown, unknown>([
     // drain enumerates agents; empty → no background work to wait on.
-    [IAgentManager, { list: vi.fn(() => []), handleOf: vi.fn(() => agent) }],
-    // No scheduled cron tasks → no future fire time to wait on.
-    [ISessionCronService, { getNextFireTime: vi.fn(() => null) }],
+    [
+      IAgentManager,
+      {
+        list: vi.fn(() => []),
+        handleOf: vi.fn(() => agent),
+        resolve: vi.fn((_context: unknown, capability: unknown) => {
+          if (capability === AgentGoal) return goal;
+          if (capability === AgentCron) return cron;
+          throw new Error('unexpected capability');
+        }),
+      },
+    ],
   ]);
   const session = fakeScope('ses_v2', sessionServices);
 

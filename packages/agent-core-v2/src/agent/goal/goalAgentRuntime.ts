@@ -1,65 +1,62 @@
 import { randomUUID } from 'node:crypto';
 
-import { z } from 'zod';
+import { assign, fromCallback, setup, type AnyActorRef, type EventObject, type Snapshot } from 'xstate';
 
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded } from '#/agent/loop/turnOps';
-import { Disposable, MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-
+import { DisposableStore, MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { abortError } from '#/_base/utils/abort';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { GoalInjection, GOAL_WAIT_FOR_GUIDANCE } from '#/agent/goal/injection/goalInjection';
+import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
+import { LoopErrors } from '#/agent/loop/errors';
 import {
   IAgentLoopService,
   type AfterStepContext,
   type BeforeStepContext,
   type EnqueueReceipt,
 } from '#/agent/loop/loop';
-import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
-import { LoopErrors } from '#/agent/loop/errors';
 import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRequest';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
-import type { ExecutableToolResult } from '#/tool/toolContract';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import { type AgentRuntimeContext, defineAgentRuntime } from '#/agent/runtime/agentRuntime';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
-import { ISessionUsageService } from '#/session/usage/sessionUsage';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import { type UsageRecordedContext } from '#/agent/usage/usage';
+import { IConfigService } from '#/app/config/config';
+import { IEventBus } from '#/app/event/eventBus';
+import { IFlagService } from '#/app/flag/flag';
 import type { GoalBudgetProperties } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IConfigService } from '#/app/config/config';
-import { IFlagService } from '#/app/flag/flag';
 import {
   ErrorCodes,
   Error2,
   toKimiErrorPayload,
   type KimiErrorPayload,
 } from '#/errors';
-import { IEventBus } from '#/app/event/eventBus';
+import { MAIN_AGENT_ID, IAgentManager } from '#/session/agentManager/agentManager';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { defineState } from '#/state/state';
+import type { ExecutableToolResult } from '#/tool/toolContract';
 
-import { IAgentGoalService, type GoalReasonInput, type ResumeGoalInput } from './goal';
-import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
+import { AgentGoal, IAgentGoal, type GoalReasonInput, type ResumeGoalInput } from './goal';
 import { IGoalDeadlineScheduler } from './goalDeadlineScheduler';
 import {
   GoalClear,
   GoalCreate,
   GoalForked,
-  goalKey,
   GoalUpdate,
   GoalUpdated,
+  type GoalModelState,
   type GoalState,
 } from './goalOps';
 import type {
@@ -159,9 +156,14 @@ const GOAL_STEP_CAP_CONTINUATION_PROMPT = [
   GOAL_CONTINUATION_PROMPT,
 ].join(' ');
 
-interface GoalForkNoticeState {
+export interface GoalForkNoticeState {
   readonly goalPresent: boolean;
   readonly reminderPending: boolean;
+}
+
+export interface GoalRuntimeState {
+  readonly goal: GoalModelState;
+  readonly forkNotice: GoalForkNoticeState;
 }
 
 interface PendingContinuation {
@@ -175,25 +177,29 @@ interface ResumeContinuation {
   readonly goalId: string;
 }
 
-export const goalForkNoticeKey = defineState(
-  'goalForkNotice',
-  (): GoalForkNoticeState => ({ goalPresent: false, reminderPending: false }),
-).replayable({ schema: z.custom<GoalForkNoticeState>() })
-  .on(GoalCreate, (s) => {
-    s.goalPresent = true;
-  })
-  .on(GoalClear, (s) => {
-    s.goalPresent = false;
-  })
-  .on(GoalForked, (s) => {
-    s.reminderPending = s.goalPresent || s.reminderPending;
-    s.goalPresent = false;
-  })
-  .on(ContextAppendMessage, (s, e) => {
-    if (s.reminderPending && isGoalForkClearedReminder(e.message)) {
-      s.reminderPending = false;
-    }
-  });
+interface GoalActivation {
+  readonly runtime: AgentRuntimeContext<GoalRuntimeState>;
+  readonly core: GoalRuntimeCore;
+}
+
+interface GoalActorContext {
+  readonly durable: GoalRuntimeState;
+  readonly activation?: GoalActivation;
+}
+
+interface GoalCommitEvent {
+  readonly type: 'goal.commit';
+  readonly durable: GoalRuntimeState;
+}
+
+interface GoalActivateEvent {
+  readonly type: 'goal.activate';
+  readonly activation: GoalActivation;
+}
+
+type GoalActorEvent = GoalCommitEvent | GoalActivateEvent;
+
+type GoalActorSnapshot = Snapshot<unknown> & { readonly context: GoalActorContext };
 
 function isGoalForkClearedReminder(message: ContextMessage | undefined): boolean {
   const origin = message?.origin;
@@ -205,136 +211,68 @@ function isGoalContinuationOrigin(origin: TurnStarted['origin']): boolean {
   return origin.kind === 'system_trigger' && origin.name === 'goal_continuation';
 }
 
-export const goalLiveTurnIdKey = defineState<number | undefined>(
-  'goal.liveTurnId',
-  () => undefined as number | undefined,
-);
-export const goalGoalDrivenTurnsKey = defineState<Map<number, string>>(
-  'goal.goalDrivenTurns',
-  () => new Map(),
-);
-export const goalCountedGoalTurnsKey = defineState<Set<number>>(
-  'goal.countedGoalTurns',
-  () => new Set(),
-);
-export const goalGoalStarterTurnsKey = defineState<Set<number>>(
-  'goal.goalStarterTurns',
-  () => new Set(),
-);
-export const goalGoalOutcomeToolResultTurnsKey = defineState<Map<number, string>>(
-  'goal.goalOutcomeToolResultTurns',
-  () => new Map(),
-);
-export const goalGoalOutcomeContinuationTurnsKey = defineState<Set<number>>(
-  'goal.goalOutcomeContinuationTurns',
-  () => new Set(),
-);
-export const goalBudgetGraceTurnsKey = defineState<Set<number>>(
-  'goal.budgetGraceTurns',
-  () => new Set(),
-);
-export const goalPendingContinuationGoalsKey = defineState<Map<number, string>>(
-  'goal.pendingContinuationGoals',
-  () => new Map(),
-);
-export const goalGoalTurnTargetsKey = defineState<Map<number, string>>(
-  'goal.goalTurnTargets',
-  () => new Map(),
-);
-export const goalExhaustedTurnBudgetGoalsKey = defineState<Map<number, string>>(
-  'goal.exhaustedTurnBudgetGoals',
-  () => new Map(),
-);
-export const goalLiveWallClockStartedAtKey = defineState<number | undefined>(
-  'goal.liveWallClockStartedAt',
-  () => undefined as number | undefined,
-);
-export const goalResumeContinuationKey = defineState<ResumeContinuation | undefined>(
-  'goal.resumeContinuation',
-  () => undefined as ResumeContinuation | undefined,
-);
-
-export class AgentGoalService extends Disposable implements IAgentGoalService {
-  declare readonly _serviceBrand: undefined;
-
-  private readonly wallClockDeadline = this._register(new MutableDisposable<IDisposable>());
+class GoalRuntimeCore {
+  private readonly wallClockDeadline = new MutableDisposable<IDisposable>();
   private pendingContinuation?: PendingContinuation;
+  private liveTurnId: number | undefined;
+  private readonly goalDrivenTurns = new Map<number, string>();
+  private readonly countedGoalTurns = new Set<number>();
+  private readonly goalStarterTurns = new Set<number>();
+  private readonly goalOutcomeToolResultTurns = new Map<number, string>();
+  private readonly goalOutcomeContinuationTurns = new Set<number>();
+  private readonly budgetGraceTurns = new Set<number>();
+  private readonly pendingContinuationGoals = new Map<number, string>();
+  private readonly goalTurnTargets = new Map<number, string>();
+  private readonly exhaustedTurnBudgetGoals = new Map<number, string>();
+  private liveWallClockStartedAt: number | undefined;
+  private resumeContinuation: ResumeContinuation | undefined;
 
-  constructor(
-    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IEventBus private readonly eventBus: IEventBus,
-    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
-    @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentContextInjectorService injector: IAgentContextInjectorService,
-    @IAgentLoopService private readonly loopService: IAgentLoopService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
-    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
-    @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
-    @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
-    @ISessionUsageService usageService: ISessionUsageService,
-    @IConfigService private readonly config: IConfigService,
-    @IFlagService private readonly flags: IFlagService,
-    @IGoalDeadlineScheduler private readonly deadlineScheduler: IGoalDeadlineScheduler,
-    @IAgentScopeContext private readonly agentContext: IAgentScopeContext,
-    @IAgentStateService private readonly states: IAgentStateService,
-  ) {
-    super();
-    this.states.contributeState(goalKey);
-    this.states.contributeState(goalForkNoticeKey);
-    this.states.contributeState(goalLiveTurnIdKey);
-    this.states.contributeState(goalGoalDrivenTurnsKey);
-    this.states.contributeState(goalCountedGoalTurnsKey);
-    this.states.contributeState(goalGoalStarterTurnsKey);
-    this.states.contributeState(goalGoalOutcomeToolResultTurnsKey);
-    this.states.contributeState(goalGoalOutcomeContinuationTurnsKey);
-    this.states.contributeState(goalBudgetGraceTurnsKey);
-    this.states.contributeState(goalPendingContinuationGoalsKey);
-    this.states.contributeState(goalGoalTurnTargetsKey);
-    this.states.contributeState(goalExhaustedTurnBudgetGoalsKey);
-    this.states.contributeState(goalLiveWallClockStartedAtKey);
-    this.states.contributeState(goalResumeContinuationKey);
-    if (!this.isSupportedAgent) return;
-    this._register(
+  constructor(private readonly runtime: AgentRuntimeContext<GoalRuntimeState>) {}
+
+  attach(): () => void {
+    const store = new DisposableStore();
+    store.add(this.wallClockDeadline);
+    if (this.runtime.agent.agentId !== MAIN_AGENT_ID) return () => store.dispose();
+    store.add(
       new GoalInjection(
         {
           getGoal: () => this.getGoal().goal,
           isWaitForEnabled: () => this.isWaitForAvailable(),
         },
-        injector,
+        this.runtime.get(IAgentContextInjectorService),
       ),
     );
-    this._register(
-      this.dispatcher.hooks.onDidRestore.register('goal', async (_ctx, next) => {
+    store.add(
+      this.runtime.get(IEventDispatcher).hooks.onDidRestore.register('goal', async (_ctx, next) => {
         this.normalizeAfterReplay();
         await next();
       }),
     );
-    this._register(
-      this.eventBus.subscribe(TurnStarted, (e) => {
+    store.add(
+      this.runtime.get(IEventBus).subscribe(TurnStarted, (e) => {
         this.handleTurnLaunched(e.turnId, e.origin);
       }),
     );
-    this._register(
-      usageService.onDidRecord((ctx) => {
-        if (ctx.agent !== this.agentContext.agentContext) return;
+    store.add(
+      this.runtime.get(ISessionUsageService).onDidRecord((ctx) => {
+        if (ctx.agent !== this.runtime.agent) return;
         this.handleUsageRecorded(ctx);
       }),
     );
-    this._register(
-      loopService.hooks.onWillBeginStep.register('goal-count-turn', async (ctx, next) => {
+    store.add(
+      this.loopService.hooks.onWillBeginStep.register('goal-count-turn', async (ctx, next) => {
         await this.handleBeforeStep(ctx);
         await next();
       }),
     );
-    this._register(
-      loopService.hooks.onDidFinishStep.register('goal-outcome-continuation', async (ctx, next) => {
+    store.add(
+      this.loopService.hooks.onDidFinishStep.register('goal-outcome-continuation', async (ctx, next) => {
         this.handleAfterStep(ctx);
         await next();
       }),
     );
-    this._register(
-      toolExecutor.onBeforeExecuteTool((event) => {
+    store.add(
+      this.runtime.get(IAgentToolExecutorService).onBeforeExecuteTool((event) => {
         if (
           event.toolCall.name !== 'CreateGoal' ||
           this.permissionMode.mode === 'auto' ||
@@ -361,8 +299,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
         );
       }),
     );
-    this._register(
-      toolExecutor.onBeforeExecuteTool((event) => {
+    store.add(
+      this.runtime.get(IAgentToolExecutorService).onBeforeExecuteTool((event) => {
         if (this.isStaleGoalToolCall(event)) {
           event.veto({ output: GOAL_STALE_TOOL_RESULT });
           return;
@@ -372,8 +310,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
         }
       }),
     );
-    this._register(
-      toolExecutor.hooks.onDidExecuteTool.register('goal-outcome-tool-result', async (ctx, next) => {
+    store.add(
+      this.runtime.get(IAgentToolExecutorService).hooks.onDidExecuteTool.register('goal-outcome-tool-result', async (ctx, next) => {
         const goalId = this.goalTurnTarget(ctx.turnId);
         if (
           goalId !== undefined &&
@@ -384,91 +322,68 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
         await next();
       }),
     );
-    this._register(
-      this.eventBus.subscribe(TurnEnded, (e) => {
+    store.add(
+      this.runtime.get(IEventBus).subscribe(TurnEnded, (e) => {
         const goalId = this.goalTurnTarget(e.turnId);
         void this.handleTurnEnded(e.turnId, { reason: e.reason, error: e.error }).catch((error) =>
           this.settleGoalAfterContinuationFailure(error, goalId),
         );
       }),
     );
+    return () => store.dispose();
   }
 
-  private get liveTurnId(): number | undefined {
-    return this.states.get(goalLiveTurnIdKey);
+  private get loopService(): IAgentLoopService {
+    return this.runtime.get(IAgentLoopService);
   }
 
-  private set liveTurnId(value: number | undefined) {
-    this.states.set(goalLiveTurnIdKey, value);
+  private get reminders(): IAgentSystemReminderService {
+    return this.runtime.get(IAgentSystemReminderService);
   }
 
-  private get goalDrivenTurns(): Map<number, string> {
-    return this.states.get(goalGoalDrivenTurnsKey);
+  private get telemetry(): ITelemetryService {
+    return this.runtime.get(ITelemetryService);
   }
 
-  private get countedGoalTurns(): Set<number> {
-    return this.states.get(goalCountedGoalTurnsKey);
+  private get toolRegistry(): IAgentToolRegistryService {
+    return this.runtime.get(IAgentToolRegistryService);
   }
 
-  private get goalStarterTurns(): Set<number> {
-    return this.states.get(goalGoalStarterTurnsKey);
+  private get toolPolicy(): IAgentToolPolicyService {
+    return this.runtime.get(IAgentToolPolicyService);
   }
 
-  private get goalOutcomeToolResultTurns(): Map<number, string> {
-    return this.states.get(goalGoalOutcomeToolResultTurnsKey);
+  private get toolApproval(): IAgentToolApprovalService {
+    return this.runtime.get(IAgentToolApprovalService);
   }
 
-  private get goalOutcomeContinuationTurns(): Set<number> {
-    return this.states.get(goalGoalOutcomeContinuationTurnsKey);
+  private get permissionMode(): IAgentPermissionModeService {
+    return this.runtime.get(IAgentPermissionModeService);
   }
 
-  private get budgetGraceTurns(): Set<number> {
-    return this.states.get(goalBudgetGraceTurnsKey);
+  private get config(): IConfigService {
+    return this.runtime.get(IConfigService);
   }
 
-  private get pendingContinuationGoals(): Map<number, string> {
-    return this.states.get(goalPendingContinuationGoalsKey);
+  private get flags(): IFlagService {
+    return this.runtime.get(IFlagService);
   }
 
-  private get goalTurnTargets(): Map<number, string> {
-    return this.states.get(goalGoalTurnTargetsKey);
-  }
-
-  private get exhaustedTurnBudgetGoals(): Map<number, string> {
-    return this.states.get(goalExhaustedTurnBudgetGoalsKey);
-  }
-
-  private get liveWallClockStartedAt(): number | undefined {
-    return this.states.get(goalLiveWallClockStartedAtKey);
-  }
-
-  private set liveWallClockStartedAt(value: number | undefined) {
-    this.states.set(goalLiveWallClockStartedAtKey, value);
-  }
-
-  private get resumeContinuation(): ResumeContinuation | undefined {
-    return this.states.get(goalResumeContinuationKey);
-  }
-
-  private set resumeContinuation(value: ResumeContinuation | undefined) {
-    this.states.set(goalResumeContinuationKey, value);
-  }
-
-  private get isSupportedAgent(): boolean {
-    return this.agentContext.agentId === 'main';
+  private get deadlineScheduler(): IGoalDeadlineScheduler {
+    return this.runtime.get(IGoalDeadlineScheduler);
   }
 
   private assertSupportedAgent(): void {
-    if (this.isSupportedAgent) return;
+    if (this.runtime.agent.agentId === MAIN_AGENT_ID) return;
     throw new Error2(
       ErrorCodes.GOAL_UNSUPPORTED_AGENT,
       'Goals are only supported by the main agent',
-      { details: { agentId: this.agentContext.agentId } },
+      { details: { agentId: this.runtime.agent.agentId } },
     );
   }
 
   private get goalState(): GoalState | null {
-    return this.states.get(goalKey);
+    return this.runtime.getState().goal;
   }
 
   getGoal(): GoalToolResult {
@@ -487,9 +402,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const objective = this.validateObjective(input.objective);
     this.prepareForGoalCreation(input.replace === true);
     const wallClockResumedAt = Date.now();
-    void this.dispatcher.dispatch(
+    void this.runtime.dispatch(
       new GoalCreate({
-        agentId: this.agentContext.agentId,
+        agentId: this.runtime.agent.agentId,
         goalId: randomUUID(),
         objective,
         completionCriterion: normalizeCompletionCriterion(input.completionCriterion),
@@ -543,7 +458,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     return this.applyLifecycle(state, 'paused', input.reason, actor);
   }
 
-  async pauseActiveGoal(
+  private async pauseActiveGoal(
     input: GoalReasonInput = {},
     actor: GoalActor = 'runtime',
   ): Promise<GoalSnapshot | null> {
@@ -592,7 +507,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.assertSupportedAgent();
     const state = this.requireState();
     const budgetLimits = { ...state.budgetLimits, ...input.budgetLimits };
-    void this.dispatcher.dispatch(new GoalUpdate({ agentId: this.agentContext.agentId, budgetLimits }));
+    void this.runtime.dispatch(new GoalUpdate({ agentId: this.runtime.agent.agentId, budgetLimits }));
     const next = this.requireState();
     this.emitGoalUpdated(this.toSnapshot(next));
     this.telemetry.track2('goal_budget_set', {
@@ -653,8 +568,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   private dispatchCompletion(state: GoalState, reason: string | undefined, actor: GoalActor): void {
     const wallClockMs = this.settleWallClock(state);
-    void this.dispatcher.dispatch(
-      new GoalUpdate({ agentId: this.agentContext.agentId, status: 'complete', reason, wallClockMs, actor }),
+    void this.runtime.dispatch(
+      new GoalUpdate({ agentId: this.runtime.agent.agentId, status: 'complete', reason, wallClockMs, actor }),
     );
   }
 
@@ -683,25 +598,25 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     return this.accountTokenUsage(tokenDelta);
   }
 
+  async incrementTurn(): Promise<GoalSnapshot | null> {
+    this.assertSupportedAgent();
+    return this.incrementGoalTurn();
+  }
+
   private accountTokenUsage(tokenDelta: number, goalId?: string): GoalSnapshot | null {
     const state = this.goalState;
     if (state === null || state.status !== 'active' || !matchesGoal(state, goalId)) return null;
     const tokensUsed = state.tokensUsed + Math.max(0, tokenDelta);
-    void this.dispatcher.dispatch(new GoalUpdate({ agentId: this.agentContext.agentId, tokensUsed }));
+    void this.runtime.dispatch(new GoalUpdate({ agentId: this.runtime.agent.agentId, tokensUsed }));
     const next = this.requireState();
     return this.blockIfBudgetReached(next) ?? this.toSnapshot(next);
-  }
-
-  async incrementTurn(): Promise<GoalSnapshot | null> {
-    this.assertSupportedAgent();
-    return this.incrementGoalTurn();
   }
 
   private incrementGoalTurn(goalId?: string): GoalSnapshot | null {
     const state = this.goalState;
     if (state === null || state.status !== 'active' || !matchesGoal(state, goalId)) return null;
     const turnsUsed = state.turnsUsed + 1;
-    void this.dispatcher.dispatch(new GoalUpdate({ agentId: this.agentContext.agentId, turnsUsed }));
+    void this.runtime.dispatch(new GoalUpdate({ agentId: this.runtime.agent.agentId, turnsUsed }));
     const next = this.requireState();
     this.emitGoalUpdated(this.toSnapshot(next));
     this.telemetry.track2('goal_continued', { turns_used: next.turnsUsed });
@@ -1006,9 +921,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     if (state.status !== 'active') return;
 
     const reason = 'Paused after agent resume';
-    void this.dispatcher.dispatch(
+    void this.runtime.dispatch(
       new GoalUpdate({
-        agentId: this.agentContext.agentId,
+        agentId: this.runtime.agent.agentId,
         status: 'paused',
         reason,
         wallClockMs: this.settleWallClock(state),
@@ -1019,7 +934,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   private appendForkClearedReminder(): void {
-    if (!this.states.get(goalForkNoticeKey).reminderPending) return;
+    if (!this.runtime.getState().forkNotice.reminderPending) return;
     this.reminders.appendSystemReminder(GOAL_FORK_CLEARED_REMINDER, {
       kind: 'injection',
       variant: GOAL_FORK_CLEARED_REMINDER_NAME,
@@ -1035,7 +950,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.cancelPendingContinuation(opts.preserveLiveContinuation === true);
     this.wallClockDeadline.clear();
     this.liveWallClockStartedAt = undefined;
-    void this.dispatcher.dispatch(new GoalClear({ agentId: this.agentContext.agentId }));
+    void this.runtime.dispatch(new GoalClear({ agentId: this.runtime.agent.agentId }));
     if (opts.emit !== false) this.emitGoalUpdated(null);
     if (opts.track !== false) this.telemetry.track2('goal_cleared', { actor });
   }
@@ -1063,8 +978,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       this.wallClockDeadline.clear();
       this.liveWallClockStartedAt = undefined;
     }
-    void this.dispatcher.dispatch(
-      new GoalUpdate({ agentId: this.agentContext.agentId, status, reason, wallClockMs, wallClockResumedAt, actor }),
+    void this.runtime.dispatch(
+      new GoalUpdate({ agentId: this.runtime.agent.agentId, status, reason, wallClockMs, wallClockResumedAt, actor }),
     );
     const next = this.requireState();
     if (status === 'active') this.adoptStarterTurn(actor);
@@ -1094,8 +1009,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   private emitGoalUpdated(snapshot: GoalSnapshot | null, change?: GoalChange): void {
-    void this.dispatcher.dispatch(
-      new GoalUpdated({ agentId: this.agentContext.agentId, snapshot, change }),
+    void this.runtime.dispatch(
+      new GoalUpdated({ agentId: this.runtime.agent.agentId, snapshot, change }),
     );
   }
 
@@ -1323,10 +1238,226 @@ function pauseReasonWithMessage(prefix: string, message: string | undefined): st
   return trimmed === undefined || trimmed.length === 0 ? prefix : `${prefix}: ${trimmed}`;
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentGoalService,
-  AgentGoalService,
-  ScopeActivation.OnScopeCreated,
-  'goal',
+const goalEffectLogic = fromCallback<EventObject, GoalActivation>(({ input }) =>
+  input.core.attach(),
 );
+
+const goalActorLogic = setup({
+  types: {} as {
+    context: GoalActorContext;
+    events: GoalActorEvent;
+  },
+  actors: {
+    effect: goalEffectLogic,
+  },
+}).createMachine({
+  context: {
+    durable: {
+      goal: null,
+      forkNotice: { goalPresent: false, reminderPending: false },
+    },
+  },
+  initial: 'inactive',
+  on: {
+    'goal.commit': {
+      actions: assign({ durable: ({ event }) => event.durable }),
+    },
+  },
+  states: {
+    inactive: {
+      on: {
+        'goal.activate': {
+          target: 'active',
+          actions: assign({ activation: ({ event }) => event.activation }),
+        },
+      },
+    },
+    active: {
+      invoke: {
+        src: 'effect',
+        input: ({ context }) => context.activation!,
+      },
+    },
+  },
+});
+
+const cores = new WeakMap<AnyActorRef, GoalRuntimeCore>();
+
+export const GoalAgentRuntimeDefinition = defineAgentRuntime<GoalRuntimeState, IAgentGoal>({
+  id: 'goal',
+  logic: goalActorLogic,
+  eager: true,
+  durable: {
+    events: [GoalCreate, GoalUpdate, GoalClear, GoalForked, ContextAppendMessage],
+    undoable: false,
+    transition: (state, event) => {
+      if (event instanceof GoalCreate) {
+        state.goal = {
+          goalId: event.goalId,
+          objective: event.objective,
+          completionCriterion: event.completionCriterion,
+          status: 'active',
+          turnsUsed: 0,
+          tokensUsed: 0,
+          wallClockMs: 0,
+          wallClockResumedAt: event.wallClockResumedAt,
+          budgetLimits: {},
+        };
+        state.forkNotice.goalPresent = true;
+        return;
+      }
+      if (event instanceof GoalUpdate) {
+        const s = state.goal;
+        if (s !== null) {
+          if (event.status !== undefined && event.status !== s.status) {
+            s.status = event.status;
+            s.terminalReason = event.status === 'active' ? undefined : event.reason;
+            s.wallClockResumedAt = event.status === 'active' ? event.wallClockResumedAt : undefined;
+          }
+          if (event.turnsUsed !== undefined && event.turnsUsed !== s.turnsUsed) {
+            s.turnsUsed = event.turnsUsed;
+          }
+          if (event.tokensUsed !== undefined && event.tokensUsed !== s.tokensUsed) {
+            s.tokensUsed = event.tokensUsed;
+          }
+          if (event.wallClockMs !== undefined && event.wallClockMs !== s.wallClockMs) {
+            s.wallClockMs = event.wallClockMs;
+          }
+          if (
+            event.wallClockResumedAt !== undefined &&
+            (event.status ?? s.status) === 'active' &&
+            event.wallClockResumedAt !== s.wallClockResumedAt
+          ) {
+            s.wallClockResumedAt = event.wallClockResumedAt;
+          }
+          if (event.budgetLimits !== undefined && event.budgetLimits !== s.budgetLimits) {
+            s.budgetLimits = event.budgetLimits;
+          }
+        }
+        return;
+      }
+      if (event instanceof GoalClear) {
+        state.goal = null;
+        state.forkNotice.goalPresent = false;
+        return;
+      }
+      if (event instanceof GoalForked) {
+        state.goal = null;
+        state.forkNotice.reminderPending =
+          state.forkNotice.goalPresent || state.forkNotice.reminderPending;
+        state.forkNotice.goalPresent = false;
+        return;
+      }
+      if (event instanceof ContextAppendMessage) {
+        if (state.forkNotice.reminderPending && isGoalForkClearedReminder(event.message)) {
+          state.forkNotice.reminderPending = false;
+        }
+      }
+    },
+    read: (snapshot) => (snapshot as GoalActorSnapshot).context.durable,
+    commit: (actor, durable) => { actor.send({ type: 'goal.commit', durable }); },
+  },
+  createFacade: (actor, context) => {
+    const core = new GoalRuntimeCore(context);
+    cores.set(actor, core);
+    return {
+      _serviceBrand: undefined,
+      getGoal: () => core.getGoal(),
+      isGoalToolTarget: (turnId, goalId) => core.isGoalToolTarget(turnId, goalId),
+      createGoal: (input, goalActor) => core.createGoal(input, goalActor),
+      pauseGoal: (input, goalActor) => core.pauseGoal(input, goalActor),
+      resumeGoal: (input, goalActor) => core.resumeGoal(input, goalActor),
+      cancelGoal: (input, goalActor) => core.cancelGoal(input, goalActor),
+      setBudgetLimits: (input, goalActor) => core.setBudgetLimits(input, goalActor),
+      markComplete: (input, goalActor) => core.markComplete(input, goalActor),
+      markBlocked: (input, goalActor) => core.markBlocked(input, goalActor),
+      pauseOnInterrupt: (input) => core.pauseOnInterrupt(input),
+      recordTokenUsage: (tokenDelta) => core.recordTokenUsage(tokenDelta),
+      incrementTurn: () => core.incrementTurn(),
+    };
+  },
+  activate: (actor, context) => {
+    actor.send({
+      type: 'goal.activate',
+      activation: { runtime: context, core: cores.get(actor)! },
+    });
+  },
+  inspect: (snapshot) => {
+    const goal = (snapshot as GoalActorSnapshot).context.durable.goal;
+    if (goal === null) return null;
+    return {
+      goalId: goal.goalId,
+      objective: goal.objective,
+      status: goal.status,
+      turnsUsed: goal.turnsUsed,
+      tokensUsed: goal.tokensUsed,
+      wallClockMs: goal.wallClockMs,
+      budgetLimits: goal.budgetLimits,
+      terminalReason: goal.terminalReason,
+    };
+  },
+});
+
+export class AgentGoalBinding implements IAgentGoal {
+  declare readonly _serviceBrand: undefined;
+
+  private readonly goal: IAgentGoal;
+
+  constructor(
+    @IAgentManager manager: IAgentManager,
+    @IAgentScopeContext scope: IAgentScopeContext,
+  ) {
+    this.goal = manager.resolve(scope.agentContext, AgentGoal);
+  }
+
+  getGoal(): GoalToolResult {
+    return this.goal.getGoal();
+  }
+
+  isGoalToolTarget(turnId: number, goalId: string): boolean {
+    return this.goal.isGoalToolTarget(turnId, goalId);
+  }
+
+  createGoal(input: CreateGoalInput, actor?: GoalActor): Promise<GoalSnapshot> {
+    return this.goal.createGoal(input, actor);
+  }
+
+  pauseGoal(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot> {
+    return this.goal.pauseGoal(input, actor);
+  }
+
+  resumeGoal(input?: ResumeGoalInput, actor?: GoalActor): Promise<GoalSnapshot> {
+    return this.goal.resumeGoal(input, actor);
+  }
+
+  cancelGoal(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot> {
+    return this.goal.cancelGoal(input, actor);
+  }
+
+  setBudgetLimits(
+    input: { readonly budgetLimits: GoalBudgetLimits },
+    actor?: GoalActor,
+  ): Promise<GoalSnapshot> {
+    return this.goal.setBudgetLimits(input, actor);
+  }
+
+  markComplete(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot | null> {
+    return this.goal.markComplete(input, actor);
+  }
+
+  markBlocked(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot | null> {
+    return this.goal.markBlocked(input, actor);
+  }
+
+  pauseOnInterrupt(input?: GoalReasonInput): Promise<GoalSnapshot | null> {
+    return this.goal.pauseOnInterrupt(input);
+  }
+
+  recordTokenUsage(tokenDelta: number): Promise<GoalSnapshot | null> {
+    return this.goal.recordTokenUsage(tokenDelta);
+  }
+
+  incrementTurn(): Promise<GoalSnapshot | null> {
+    return this.goal.incrementTurn();
+  }
+}

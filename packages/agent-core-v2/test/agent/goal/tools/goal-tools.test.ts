@@ -7,7 +7,7 @@ import {
   validateToolArgs,
 } from '#/tool/args-validator';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
-import { IAgentGoalService } from '#/agent/goal/goal';
+import { IAgentGoal } from '#/agent/goal/goal';
 import { CreateGoalTool } from '#/agent/tools/goal/create-goal/createGoalTool';
 import { GetGoalTool } from '#/agent/tools/goal/get-goal/getGoalTool';
 import { SetGoalBudgetTool } from '#/agent/tools/goal/set-goal-budget/setGoalBudgetTool';
@@ -39,7 +39,7 @@ const signal = new AbortController().signal;
 
 describe('goal tools', () => {
   let ctx: TestAgentContext;
-  let goals: IAgentGoalService;
+  let goals: IAgentGoal;
   let loopService: IAgentLoopService;
   let eventBus: IEventBus;
   let toolExecutor: IAgentToolExecutorService;
@@ -53,7 +53,7 @@ describe('goal tools', () => {
       agentService(IAgentSwarmService, stubAgentSwarm()),
       permissionModeServices('auto'),
     );
-    goals = ctx.get(IAgentGoalService);
+    goals = ctx.get(IAgentGoal);
     eventBus = ctx.get(IEventBus);
     toolExecutor = ctx.get(IAgentToolExecutorService);
     setGoalBudgetTool = new SetGoalBudgetTool(goals);

@@ -1,7 +1,7 @@
 import { join } from 'pathe';
 
 import { IInstantiationService } from '#/_base/di/instantiation';
-import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { type CollectionView } from '#/_base/di/collection';
 import { Emitter } from '#/_base/event';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
@@ -15,7 +15,7 @@ import {
 } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
+import { ISessionEventBus } from '#/app/event/eventBus';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import { permissionModeConfiguredKey } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
@@ -30,7 +30,6 @@ import {
   makeAgentScopeContext,
 } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { abortError } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -40,8 +39,6 @@ import '#/agent/runtimeBinding/runtimeBindingService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { ISessionInteractionService } from '#/session/interaction/interaction';
-import { interactionKey } from '#/session/interaction/interactionOps';
 import { IWireService } from '#/wire/wire';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -78,7 +75,6 @@ export class AgentManagerService extends Disposable implements IAgentManager {
   private readonly onDidCreateScopeEmitter = this._register(new Emitter<AgentScopeCreatedEvent>());
   private readonly onWillCloseEmitter = this._register(new Emitter<AgentContext>());
   private readonly onDidCloseEmitter = this._register(new Emitter<AgentContext>());
-  private readonly interactionBusDisposables = new Map<string, IDisposable>();
 
   get onDidCreate() {
     return this.onDidCreateEmitter.event;
@@ -99,7 +95,6 @@ export class AgentManagerService extends Disposable implements IAgentManager {
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
-    @ISessionInteractionService private readonly interaction: ISessionInteractionService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @AgentRuntimeContributionPoint contributionView: CollectionView<AgentRuntimeContribution>,
   ) {
@@ -112,40 +107,13 @@ export class AgentManagerService extends Disposable implements IAgentManager {
       }),
     );
     this._register(
-      this.onDidCreateScope(({ handle }) => this.subscribeInteractionBus(handle)),
-    );
-    this._register(
-      this.onDidCreateScope(({ handle }) => {
-        handle.accessor.get(IAgentStateService).contributeState(interactionKey);
-      }),
-    );
-    this._register(
-      this.onDidClose((agent) => {
-        const d = this.interactionBusDisposables.get(agent.agentId);
-        if (d !== undefined) {
-          d.dispose();
-          this.interactionBusDisposables.delete(agent.agentId);
-        }
-      }),
-    );
-    this._register(
       toDisposable(() => {
         for (const managed of this.roster.values()) {
           void managed.runtimeSet.close().catch((error: unknown) => onUnexpectedError(error));
         }
         this.roster.clear();
-        for (const d of this.interactionBusDisposables.values()) d.dispose();
-        this.interactionBusDisposables.clear();
       }),
     );
-  }
-
-  private subscribeInteractionBus(handle: IAgentScopeHandle): void {
-    if (this.interactionBusDisposables.has(handle.id)) return;
-    const d = handle.accessor
-      .get(IEventBus)
-      .subscribe(TurnEnded, (e) => this.interaction.cancelPendingForTurn(e.turnId));
-    this.interactionBusDisposables.set(handle.id, d);
   }
 
   private registerContribution(contribution: AgentRuntimeContribution): void {

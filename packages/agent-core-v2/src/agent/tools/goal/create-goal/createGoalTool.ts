@@ -6,7 +6,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
-import { IAgentGoalService } from '#/agent/goal/goal';
+import { IAgentGoal } from '#/agent/goal/goal';
 import { goalForModel } from '#/agent/goal/tools/serialize';
 
 import DESCRIPTION from './create-goal.md?raw';
@@ -23,7 +23,7 @@ export class CreateGoalTool implements ICreateGoalTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(CreateGoalToolInputSchema);
 
   constructor(
-    @IAgentGoalService private readonly goal: IAgentGoalService,
+    @IAgentGoal private readonly goal: IAgentGoal,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
   ) {}
 

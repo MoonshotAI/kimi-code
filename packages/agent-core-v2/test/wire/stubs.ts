@@ -12,6 +12,12 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { AgentTodo } from '#/session/todo/sessionTodo';
 import { TodoAgentRuntimeDefinition } from '#/session/todo/todoAgentRuntime';
+import { AgentCron } from '#/session/cron/agentCron';
+import { CronAgentRuntimeDefinition } from '#/session/cron/cronAgentRuntime';
+import { AgentInteraction } from '#/session/interaction/interaction';
+import { InteractionAgentRuntimeDefinition } from '#/session/interaction/interactionAgentRuntime';
+import { AgentGoal } from '#/agent/goal/goal';
+import { GoalAgentRuntimeDefinition } from '#/agent/goal/goalAgentRuntime';
 import {
   IWireService,
   type IWireService as AgentWire,
@@ -105,6 +111,54 @@ export function attachTodoRuntime(
   runtimes.apply({
     capability: AgentTodo,
     definition: TodoAgentRuntimeDefinition,
+    generation: 1,
+    active: true,
+  });
+  runtimes.attachDurable(dispatcher);
+  return runtimes;
+}
+
+export function attachCronRuntime(
+  ix: TestInstantiationService,
+  dispatcher: IEventDispatcher,
+): AgentRuntimeSet {
+  const agent = ix.get(IAgentScopeContext).agentContext;
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  runtimes.apply({
+    capability: AgentCron,
+    definition: CronAgentRuntimeDefinition,
+    generation: 1,
+    active: true,
+  });
+  runtimes.attachDurable(dispatcher);
+  return runtimes;
+}
+
+export function attachInteractionRuntime(
+  ix: TestInstantiationService,
+  dispatcher: IEventDispatcher,
+): AgentRuntimeSet {
+  const agent = ix.get(IAgentScopeContext).agentContext;
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  runtimes.apply({
+    capability: AgentInteraction,
+    definition: InteractionAgentRuntimeDefinition,
+    generation: 1,
+    active: true,
+  });
+  runtimes.attachDurable(dispatcher);
+  return runtimes;
+}
+
+export function attachGoalRuntime(
+  ix: TestInstantiationService,
+  dispatcher: IEventDispatcher,
+): AgentRuntimeSet {
+  const agent = ix.get(IAgentScopeContext).agentContext;
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  runtimes.apply({
+    capability: AgentGoal,
+    definition: GoalAgentRuntimeDefinition,
     generation: 1,
     active: true,
   });

@@ -16,10 +16,12 @@ import {
   IEventBus,
   IEventService,
   ISessionActivityView,
-  ISessionInteractionService,
   ISessionIndex,
   MAIN_AGENT_ID,
   getLiveSessionById,
+  listSessionPendingInteractions,
+  onSessionInteractionDidChangePending,
+  onSessionInteractionDidResolve,
 } from '@moonshot-ai/agent-core-v2';
 import type {
   ConfigWarningItem,
@@ -1074,13 +1076,13 @@ export class SessionEventBroadcaster {
     session: ISessionScopeHandle,
     state: SessionState,
   ): void {
-    const interactions = session.accessor.get(ISessionInteractionService);
-    for (const i of interactions.listPending()) {
+    const agents = session.accessor.get(IAgentManager);
+    for (const i of listSessionPendingInteractions(agents)) {
       state.knownInteractions.set(i.id, { kind: i.kind, agentId: i.origin.agentId ?? 'main' });
     }
     state.lifecycleDisposables.push(
-      interactions.onDidChangePending(() => {
-        for (const i of interactions.listPending()) {
+      onSessionInteractionDidChangePending(agents, () => {
+        for (const i of listSessionPendingInteractions(agents)) {
           if (state.knownInteractions.has(i.id)) continue;
           state.knownInteractions.set(i.id, {
             kind: i.kind,
@@ -1092,7 +1094,7 @@ export class SessionEventBroadcaster {
           }
         }
       }),
-      interactions.onDidResolve(({ id, response }) => {
+      onSessionInteractionDidResolve(agents, ({ id, response }) => {
         const known = state.knownInteractions.get(id);
         if (known === undefined) return;
         state.knownInteractions.delete(id);

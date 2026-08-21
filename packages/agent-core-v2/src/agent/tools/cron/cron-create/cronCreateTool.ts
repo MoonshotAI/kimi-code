@@ -5,7 +5,7 @@ import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern } from '#/tool/rule-match';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { ISessionCronService } from '#/session/cron/sessionCronService';
+import { IAgentCron } from '#/session/cron/agentCron';
 import { computeNextCronRun, cronToHuman, hasFireWithinYears, parseCronExpression, type ParsedCronExpression } from '#/app/cron/cron-expr';
 import { formatLocalIsoWithOffset } from '#/app/cron/format';
 
@@ -31,7 +31,7 @@ export class CronCreateTool implements ICronCreateTool {
   );
 
   constructor(
-    @ISessionCronService private readonly cron: ISessionCronService,
+    @IAgentCron private readonly cron: IAgentCron,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {}
 

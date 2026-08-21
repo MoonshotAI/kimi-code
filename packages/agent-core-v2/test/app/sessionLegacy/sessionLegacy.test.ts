@@ -26,7 +26,6 @@ import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLi
 import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { IAgentManager } from '#/session/agentManager/agentManager';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
-import { ISessionCronService } from '#/session/cron/sessionCronService';
 
 function accessor(
   entries: ReadonlyArray<readonly [ServiceIdentifier<unknown>, unknown]>,
@@ -155,7 +154,6 @@ describe('Session legacy status (best-effort runtime state)', () => {
       kind: LifecycleScope.Session,
       accessor: accessor([
         [IAgentManager, agents],
-        [ISessionCronService, { _serviceBrand: undefined }],
       ]),
       dispose: () => {},
     };
@@ -218,7 +216,6 @@ describe('Session legacy status (best-effort runtime state)', () => {
       kind: LifecycleScope.Session,
       accessor: accessor([
         [IAgentManager, agents],
-        [ISessionCronService, { _serviceBrand: undefined }],
       ]),
       dispose: () => {},
     };
@@ -290,7 +287,6 @@ describe('Session legacy status (best-effort runtime state)', () => {
       kind: LifecycleScope.Session,
       accessor: accessor([
         [IAgentManager, agents],
-        [ISessionCronService, { _serviceBrand: undefined }],
       ]),
       dispose: () => {},
     };
@@ -368,7 +364,6 @@ describe('Session legacy status (best-effort runtime state)', () => {
       kind: LifecycleScope.Session,
       accessor: accessor([
         [IAgentManager, agents],
-        [ISessionCronService, { _serviceBrand: undefined }],
       ]),
       dispose: () => {},
     };

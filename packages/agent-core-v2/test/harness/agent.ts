@@ -25,11 +25,9 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import '#/agent/contextInjector/contextInjectorService';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from '../state/builtinReplayableKeys';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { ISessionCronService } from '#/session/cron/sessionCronService';
-import { SessionCronServiceImpl } from '#/session/cron/sessionCronServiceImpl';
+import { IAgentCron } from '#/session/cron/agentCron';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
-import { IAgentGoalService } from '#/agent/goal/goal';
-import { AgentGoalService } from '#/agent/goal/goalService';
+import { IAgentGoal } from '#/agent/goal/goal';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
@@ -218,7 +216,7 @@ import {
 } from '#/kosong/provider/provider';
 import type { ApprovalResponse } from '#/session/approval/approval';
 import {
-  ISessionInteractionService,
+  IAgentInteraction,
   type Interaction,
   type InteractionRequest,
   type InteractionPendingChangedEvent,
@@ -731,10 +729,6 @@ export function taskServices(): TestAgentServiceOverride {
   return agentService(IAgentTaskService, new SyncDescriptor(AgentTaskService));
 }
 
-export function cronServices(): TestAgentServiceOverride {
-  return sessionService(ISessionCronService, new SyncDescriptor(SessionCronServiceImpl));
-}
-
 export function mcpServices(options: {
   readonly manager?: McpConnectionManager;
 }): TestAgentServiceOverride {
@@ -1239,7 +1233,6 @@ export class AgentTestContext {
               onDidCreateSession: Event.None as Event<SessionCreatedEvent & IWaitUntil>,
               onWillCloseSession: Event.None as Event<SessionWillCloseEvent & IWaitUntil>,
             });
-            reg.defineInstance(ISessionInteractionService, this.createInteractionService());
             reg.defineInstance(ISessionApprovalService, this.createApprovalService());
             reg.defineInstance(ISessionQuestionService, this.createQuestionService());
             reg.defineInstance(ISessionSkillCatalogData, {
@@ -1272,10 +1265,6 @@ export class AgentTestContext {
             reg.defineDescriptor(
               ISessionWorkspaceContext,
               new SyncDescriptor(SessionWorkspaceContextService),
-            );
-            reg.defineDescriptor(
-              ISessionCronService,
-              new SyncDescriptor(SessionCronServiceImpl),
             );
           },
         ],
@@ -1366,7 +1355,7 @@ export class AgentTestContext {
               IAgentTaskService,
               new SyncDescriptor(AgentTaskService),
             );
-            reg.defineDescriptor(IAgentGoalService, new SyncDescriptor(AgentGoalService));
+            reg.defineInstance(IAgentInteraction, this.createInteractionService());
             reg.defineDescriptor(IAgentSkillService, new SyncDescriptor(AgentSkillService));
             reg.defineDescriptor(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
             const agentStateService = new TestAgentStateService(
@@ -1524,7 +1513,7 @@ export class AgentTestContext {
     const usage = this.usage;
     const permissionMode = this.get(IAgentPermissionModeService);
     const permissionRules = this.get(IAgentPermissionRulesService);
-    const cron = this.get(ISessionCronService);
+    const cron = this.get(IAgentCron);
     const plan = this.get(IAgentPlanService);
     void this.get(IAgentToolActivationService).activate();
     this.get(IAgentToolDedupeService);
@@ -1546,7 +1535,7 @@ export class AgentTestContext {
     cron.list();
     void plan.status();
 
-    this.get(IAgentGoalService);
+    this.get(IAgentGoal);
     this.get(IAgentSkillService);
     this.get(IAgentUserToolService);
     this.get(IAgentLLMRequesterService);
@@ -2056,7 +2045,7 @@ export class AgentTestContext {
     };
   }
 
-  private createInteractionService(): ISessionInteractionService {
+  private createInteractionService(): IAgentInteraction {
     const pending = new Map<string, Interaction>();
     function createTestInteraction<TPayload>(
       request: InteractionRequest<TPayload>,
@@ -2108,8 +2097,9 @@ export class AgentTestContext {
         return interaction;
       },
       respond: (id, response) => {
-        pending.delete(id);
+        const had = pending.delete(id);
         this.resolvePendingRpc('toolCall', id, response);
+        return had;
       },
       listPending: (kind) => {
         const interactions = [...pending.values()];
@@ -2250,11 +2240,11 @@ export class AgentTestContext {
       },
       detachTask: (payload) => this.get(IAgentTaskService).detach(payload.taskId),
       clearContext: () => this.get(IAgentPromptService).clear(),
-      createGoal: (payload) => this.get(IAgentGoalService).createGoal(payload),
-      getGoal: () => this.get(IAgentGoalService).getGoal(),
-      pauseGoal: () => this.get(IAgentGoalService).pauseGoal(),
-      resumeGoal: () => this.get(IAgentGoalService).resumeGoal(),
-      cancelGoal: () => this.get(IAgentGoalService).cancelGoal(),
+      createGoal: (payload) => this.get(IAgentGoal).createGoal(payload),
+      getGoal: () => this.get(IAgentGoal).getGoal(),
+      pauseGoal: () => this.get(IAgentGoal).pauseGoal(),
+      resumeGoal: () => this.get(IAgentGoal).resumeGoal(),
+      cancelGoal: () => this.get(IAgentGoal).cancelGoal(),
       getTaskOutput: (payload) =>
         this.get(IAgentTaskService).readOutput(payload.taskId, payload.tail),
       getConfig: () => this.get(IAgentProfileService).data(),

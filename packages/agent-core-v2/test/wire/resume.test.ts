@@ -10,7 +10,7 @@ import {
 } from '#/_base/errors/unexpectedError';
 import {
   WIRE_PROTOCOL_VERSION,
-  IAgentGoalService,
+  IAgentGoal,
   type WireRecord,
   type PromptOrigin,
 } from '#/index';
@@ -740,7 +740,7 @@ describe('Agent resume', () => {
     try {
       await ctx.restorePersisted();
 
-      const goal = ctx.get(IAgentGoalService).getGoal().goal;
+      const goal = ctx.get(IAgentGoal).getGoal().goal;
       expect(goal).toMatchObject({
         status: 'paused',
         wallClockMs: 7_000,
@@ -797,7 +797,7 @@ describe('Agent resume', () => {
     try {
       await ctx.restorePersisted();
 
-      expect(ctx.get(IAgentGoalService).getGoal().goal).toMatchObject({
+      expect(ctx.get(IAgentGoal).getGoal().goal).toMatchObject({
         status: 'paused',
         wallClockMs: 5_000,
       });

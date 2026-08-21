@@ -3,7 +3,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { ISessionCronService } from '#/session/cron/sessionCronService';
+import { IAgentCron } from '#/session/cron/agentCron';
 import { cronToHuman, parseCronExpression } from '#/app/cron/cron-expr';
 import { type CronTask } from '#/app/cron/cronTask';
 import { formatLocalIsoWithOffset } from '#/app/cron/format';
@@ -32,7 +32,7 @@ export class CronListTool implements ICronListTool {
     CronListInputSchema,
   );
 
-  constructor(@ISessionCronService private readonly cron: ISessionCronService) {}
+  constructor(@IAgentCron private readonly cron: IAgentCron) {}
 
   resolveExecution(_args: CronListInput): ToolExecution {
     return {
