@@ -145,12 +145,9 @@ const chevronLabel = computed(() =>
   cursor: pointer;
   user-select: none;
 }
-/* Touch: the head row is the tap target — lift it to the 44px minimum. */
-@media (hover: none) {
-  .tl-head.clickable {
-    min-height: var(--touch-target-min);
-  }
-}
+/* Touch keeps the same compact rhythm as desktop: a uniform ~24px line for
+   every stream row — lifting only expandable rows to the 44px tap target made
+   adjacent rows alternate heights. */
 
 .tl-ic {
   display: inline-flex;
