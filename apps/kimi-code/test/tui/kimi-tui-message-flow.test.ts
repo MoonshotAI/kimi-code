@@ -8270,8 +8270,42 @@ describe('/effort support_efforts override', () => {
     );
   });
 
-  it('still sends unlisted efforts unchanged for Anthropic models without a declared list', async () => {
+  it('persists only the enabled flag when a padded list top tier is selected', async () => {
     const session = makeSession();
+    const setConfig = vi.fn(async () => ({}));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'kimi', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 100,
+            displayName: 'Compatible Model',
+            capabilities: ['thinking'],
+            supportEfforts: [' low ', ' max '],
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true, effort: 'low' },
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/effort max');
+
+    await vi.waitFor(() => {
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'k2',
+        thinking: { enabled: true },
+      });
+    });
+  });
+
+  it('still sends unlisted efforts unchanged for Anthropic models without a declared list', async () => {    const session = makeSession();
     const { driver } = await makeDriver(session, {
       getConfig: vi.fn(async () => ({
         providers: {

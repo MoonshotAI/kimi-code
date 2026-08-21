@@ -27,7 +27,12 @@ export function thinkingEffortToConfig(
 } {
   if (effort === 'off') return { enabled: false };
   if (effort === 'on') return { enabled: true };
-  const top = supportEfforts?.at(-1);
+  // Declared entries are padded-tolerant, matching the engine resolvers:
+  // trim and drop blanks before identifying the top tier.
+  const declared = (supportEfforts ?? [])
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  const top = declared.at(-1);
   if (top !== undefined && effort === top) return { enabled: true };
   return { enabled: true, effort };
 }
