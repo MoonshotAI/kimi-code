@@ -811,16 +811,18 @@ html[data-color-scheme="dark"] {
 
 /* macOS desktop vibrancy tint. The sidebar column on the desktop app is
    otherwise unpainted so the window's native vibrancy material ('menu',
-   pinned to visualEffectState 'inactive' — see apps/desktop/src/main/window.ts)
-   reads through; this single translucent wash presses that pinned material
-   one step in each scheme:
-   dark  ≈ #282829 → ≈ #1e1e1f   (rgba(0,0,0,0.25) over the material)
-   light ≈ #E7E7E7 → ≈ #f1f1f1   (rgba(255,255,255,0.4) over the material)
+   pinned to visualEffectState 'active' — see apps/desktop/src/main/window.ts)
+   reads through with the desktop showing behind it; this single translucent
+   wash presses that material one small step in each scheme (a shade darker
+   in dark mode, a shade brighter in light) so ink stays legible over the
+   see-through material. Keep the alpha LOW — the wash is what flattens the
+   material's see-through look: 0.4/0.25 (light/dark) read as a solid panel,
+   so it stays a whisper and the resulting tone follows the wallpaper.
    Consumed only by .side.macos-desktop; web keeps the opaque --color-sidebar-bg. */
-:root { --color-sidebar-tint: rgba(255, 255, 255, 0.4); }
-html[data-color-scheme="dark"] { --color-sidebar-tint: rgba(0, 0, 0, 0.25); }
+:root { --color-sidebar-tint: rgba(255, 255, 255, 0.2); }
+html[data-color-scheme="dark"] { --color-sidebar-tint: rgba(0, 0, 0, 0.12); }
 @media (prefers-color-scheme: dark) {
-  html[data-color-scheme="system"] { --color-sidebar-tint: rgba(0, 0, 0, 0.25); }
+  html[data-color-scheme="system"] { --color-sidebar-tint: rgba(0, 0, 0, 0.12); }
 }
 
 /* Transcript find bar (Cmd/Ctrl+F, the apps' components/chat/TranscriptSearch.vue):

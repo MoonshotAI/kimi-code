@@ -1975,7 +1975,7 @@ onBeforeUnmount(() => {
 /* macOS desktop + frosted material on: frosted sidebar — the column paints
    ONLY the translucent --color-sidebar-tint wash, which presses the window's
    native vibrancy material (NSVisualEffectView 'menu', pinned to
-   visualEffectState 'inactive' — set in src/main/window.ts) one step darker
+   visualEffectState 'active' — set in src/main/window.ts) one step darker
    in dark mode / one step brighter in light mode. Every sub-surface that
    normally re-paints the sidebar surface (header, footer) stays transparent
    so the tint reads as one uniform pane; the .col hairline still separates

@@ -327,15 +327,18 @@ export function applyWindowsTitleBarOverlay(win: BrowserWindow): void {
 /** macOS frosted chrome: the window carries a native NSVisualEffectView
     ('menu') behind the renderer's unpainted sidebar column, so backgroundColor
     must stay transparent or it would cover the material. visualEffectState
-    'inactive' pins the flat rendering with no focus drift; Electron re-applies
-    it from the creation options on every later setVibrancy, so the option is
-    always passed and an opt-out launch removes the material right after
-    creation instead (see createWindow). */
+    'active' pins the focused, translucent rendering — the desktop reads
+    through — with no focus drift: followWindow would flip between the
+    translucent focused look and the flat unfocused one on every focus change,
+    while 'inactive' pins that flat, nearly opaque look. Electron re-applies
+    the pinned state from the creation options on every later setVibrancy, so
+    the option is always passed and an opt-out launch removes the material
+    right after creation instead (see createWindow). */
 export function vibrancyWindowOptions(
   platform: NodeJS.Platform,
-): { vibrancy?: 'menu'; visualEffectState?: 'inactive'; backgroundColor: string } {
+): { vibrancy?: 'menu'; visualEffectState?: 'active'; backgroundColor: string } {
   if (platform === 'darwin') {
-    return { vibrancy: 'menu', visualEffectState: 'inactive', backgroundColor: '#00000000' };
+    return { vibrancy: 'menu', visualEffectState: 'active', backgroundColor: '#00000000' };
   }
   return { backgroundColor: '#0b0b0c' };
 }
@@ -374,7 +377,7 @@ export function windowsAppDetails(
 }
 
 /** Live-apply the settings vibrancy toggle to the created window. Re-enabling
-    re-pins visualEffectState 'inactive' — Electron keeps it from the creation
+    re-pins visualEffectState 'active' — Electron keeps it from the creation
     options and applies it on every SetVibrancy. */
 export function applyWindowVibrancy(enabled: boolean): void {
   if (process.platform !== 'darwin') return;
@@ -429,7 +432,7 @@ export function createWindow(): void {
     win.once('closed', () => nativeTheme.removeListener('updated', syncTitleBar));
   }
   // Opted-out launch: the window is still created WITH the material (so the
-  // 'inactive' pin is stored for any later re-enable) and it is removed
+  // 'active' pin is stored for any later re-enable) and it is removed
   // immediately — before the first paint, so there is no frosted flash.
   if (!isVibrancyEnabled()) applyWindowVibrancy(false);
   // The fresh renderer boot is not subscribed yet — tray session-select clicks

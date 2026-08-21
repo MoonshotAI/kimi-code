@@ -278,10 +278,10 @@ describe('clampBoundsToWorkArea', () => {
 });
 
 describe('vibrancyWindowOptions', () => {
-  it('always passes the pinned flat material + transparent flash on macOS (an opt-out launch removes it right after creation)', () => {
+  it('always passes the pinned translucent material + transparent flash on macOS (an opt-out launch removes it right after creation)', () => {
     expect(vibrancyWindowOptions('darwin')).toEqual({
       vibrancy: 'menu',
-      visualEffectState: 'inactive',
+      visualEffectState: 'active',
       backgroundColor: '#00000000',
     });
   });
