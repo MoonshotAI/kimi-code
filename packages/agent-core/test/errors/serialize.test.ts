@@ -1,6 +1,8 @@
 import { APIProviderQuotaExhaustedError, APIStatusError } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
+import { ErrorCodes } from '#/errors/codes';
+import { KimiError } from '#/errors/classes';
 import { toKimiErrorPayload } from '#/errors/serialize';
 
 const NGINX_413_HTML =
@@ -64,5 +66,21 @@ describe('toKimiErrorPayload — quota-exhausted 429', () => {
     expect(payload.retryable).toBe(false);
     expect(payload.message).toContain('recharge');
     expect(payload.details).toMatchObject({ statusCode: 429, requestId: 'req-quota' });
+  });
+});
+
+describe('toKimiErrorPayload — MCP OAuth failure', () => {
+  it('serializes the public MCP OAuth error as non-retryable', () => {
+    const payload = toKimiErrorPayload(
+      new KimiError(ErrorCodes.MCP_OAUTH_FAILED, 'OAuth callback timed out'),
+    );
+
+    expect(payload).toEqual({
+      code: 'mcp.oauth_failed',
+      message: 'OAuth callback timed out',
+      name: 'KimiError',
+      details: undefined,
+      retryable: false,
+    });
   });
 });

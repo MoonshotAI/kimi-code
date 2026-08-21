@@ -137,6 +137,7 @@ import {
   ErrorCodes,
   HookDefSchema,
   KimiError,
+  KIMI_ERROR_INFO,
   limitAgentReplayByTurns,
   noopTelemetryClient,
   type AgentContextData,
@@ -2617,15 +2618,21 @@ function normalizeRequiredWorkDir(operation: string, workDir: string): string {
 /**
  * Restate an engine `Error2` in the SDK's public error shape (`KimiError`,
  * what `isKimiError` branches on) so the delegated management plane throws
- * the same class the v1 client throws for the same failure. Non-Error2
- * failures (DI resolution bugs, aborts) pass through untouched.
+ * the same class the v1 client throws for the same failure. Unknown engine
+ * codes collapse to the stable public `internal` code instead of forging an
+ * invalid `KimiError`; non-Error2 failures pass through untouched.
  */
 function restateMcpManagementError(error: unknown): unknown {
   if (!isError2(error)) return error;
-  return new KimiError(error.code as KimiErrorCode, error.message, {
+  const code = isKimiErrorCode(error.code) ? error.code : ErrorCodes.INTERNAL;
+  return new KimiError(code, error.message, {
     details: error.details as Record<string, unknown> | undefined,
     cause: error.cause,
   });
+}
+
+function isKimiErrorCode(code: string): code is KimiErrorCode {
+  return Object.hasOwn(KIMI_ERROR_INFO, code);
 }
 
 /**

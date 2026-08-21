@@ -67,6 +67,7 @@ export const ErrorCodes = {
   MCP_SERVER_DISABLED: 'mcp.server_disabled',
   MCP_STARTUP_FAILED: 'mcp.startup_failed',
   MCP_TOOL_NAME_COLLISION: 'mcp.tool_name_collision',
+  MCP_OAUTH_FAILED: 'mcp.oauth_failed',
 
   PLUGIN_NOT_FOUND: 'plugin.not_found',
   PLUGIN_LOAD_FAILED: 'plugin.load_failed',
@@ -402,6 +403,12 @@ export const KIMI_ERROR_INFO = {
     retryable: false,
     public: true,
     action: 'Rename one of the colliding MCP tools or servers so their qualified names are unique.',
+  },
+  'mcp.oauth_failed': {
+    title: 'MCP OAuth failed',
+    retryable: false,
+    public: true,
+    action: 'Restart the MCP OAuth flow and complete authorization again.',
   },
 
   'plugin.not_found': {
