@@ -15,9 +15,9 @@ export default {
     // starts the flow without a region)
     kimiTitle: 'Sign in with Kimi',
     kimiHint: 'Ready out of the box with Kimi membership benefits',
-    kimiCnTitle: 'Kimi Code (kimi.com/code)',
+    kimiCnTitle: 'Kimi Code',
     kimiCnHint: 'Sign in with your kimi.com account',
-    kimiOverseasTitle: 'Kimi Code (kimi.ai/code)',
+    kimiOverseasTitle: 'Kimi Code',
     kimiOverseasHint: 'Sign in with your kimi.ai account',
     customProviderTitle: 'Add a custom provider',
     customProviderHint: 'Bring your own API key for OpenAI-compatible and other services',

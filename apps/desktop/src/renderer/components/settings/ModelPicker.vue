@@ -7,6 +7,8 @@ import type { AppModel } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
 import { formatTokens } from '@moonshot-ai/app-core/lib';
 import { Dialog, Icon, IconButton, Input, Kbd, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
+import { useIsMobile } from '@moonshot-ai/app-client/composables';
+import BottomSheet from '../dialogs/BottomSheet.vue';
 
 const { t } = useI18n();
 
@@ -66,6 +68,25 @@ function metaText(m: AppModel): string {
 const isCoarsePointer =
   typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches;
 useDialogFocus(dialogRef, isCoarsePointer ? undefined : searchRef);
+
+// Shell by viewport: narrow screens get the grab-handle BottomSheet shared
+// with the other mobile drawers (no × close button); desktop keeps the
+// centered Dialog.
+const isMobile = useIsMobile();
+const shell = computed(() => (isMobile.value ? BottomSheet : Dialog));
+const shellProps = computed(() =>
+  isMobile.value
+    ? { modelValue: true, title: t('model.title'), closeOnEsc: false }
+    : {
+        open: true,
+        closeOnEsc: false,
+        title: t('model.title'),
+        size: 'lg' as const,
+        height: 'fixed' as const,
+        padded: false,
+        focusOnOpen: !isCoarsePointer,
+      },
+);
 
 const providerTabs = computed(() => {
   const seen = new Set<string>();
@@ -172,8 +193,8 @@ function selectTab(tabId: string): void {
 </script>
 
 <template>
-  <Dialog :open="true" :close-on-esc="false" :title="t('model.title')" size="lg" height="fixed" :padded="false" :focus-on-open="!isCoarsePointer" @close="emit('close')">
-    <div ref="dialogRef" class="mp">
+  <component :is="shell" v-bind="shellProps" @close="emit('close')">
+    <div ref="dialogRef" class="mp" :class="{ 'mp--sheet': isMobile }">
       <!-- Search -->
       <div class="search-wrap">
         <Input
@@ -278,13 +299,19 @@ function selectTab(tabId: string): void {
         <span>{{ t('model.hintClose') }}</span>
       </div>
     </div>
-  </Dialog>
+  </component>
 </template>
 
 <style scoped>
 /* Flush anatomy (Dialog :padded="false"), mirroring SearchSessionsDialog:
    content zones inset individually; footer is a full-bleed bar. */
 .mp { display: flex; flex-direction: column; gap: var(--space-2); height: 100%; min-height: 0; padding-top: 4px; }
+
+/* BottomSheet shell: size to content (the sheet body owns the scrolling) and
+   align insets to the sheet's 16px head padding. */
+.mp--sheet { height: auto; padding-top: 0; }
+.mp--sheet .search-wrap,
+.mp--sheet .chip-strip { margin: 0 16px; }
 
 /* Search + chips align with the Dialog head padding (title sits at 22px). */
 .search-wrap { position: relative; margin: 0 22px; padding-bottom: var(--space-1); }

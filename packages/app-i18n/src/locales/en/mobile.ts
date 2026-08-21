@@ -21,4 +21,6 @@ export default {
   archivedSessions: 'Archived sessions',
   archivedSessionsSub: 'Browse and restore archived sessions',
   archivedBack: 'Back',
+  viewFlat: 'Flat',
+  viewGrouped: 'By workspace',
 } as const;

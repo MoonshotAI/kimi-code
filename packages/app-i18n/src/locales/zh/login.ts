@@ -2,9 +2,9 @@ export default {
   title: '登录 Kimi Code',
   close: '关闭 (Esc)',
   // 区域选择卡片（进入设备码流程前的国内/国际双入口）
-  regionCnTitle: 'Kimi Code（kimi.com/code）',
+  regionCnTitle: 'Kimi Code',
   regionCnHint: '使用 kimi.com 账号登录',
-  regionOverseasTitle: 'Kimi Code（kimi.ai/code）',
+  regionOverseasTitle: 'Kimi Code',
   regionOverseasHint: '使用 kimi.ai 账号登录',
   // 单卡兜底（老 daemon 不支持 region 时展示，不带 region 启动流程）
   oauthTitle: '登录 Kimi 账号',

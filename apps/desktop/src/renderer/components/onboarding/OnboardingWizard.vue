@@ -486,7 +486,9 @@ function onLoginSuccess(): void {
   min-width: 140px;
 }
 
+/* Small screens keep the three-across grid — collapsing to one column makes
+   the full-width 16:10 previews huge on phones; just tighten the gap. */
 @media (max-width: 640px) {
-  .theme-cards { grid-template-columns: 1fr; }
+  .theme-cards { gap: var(--space-2); }
 }
 </style>

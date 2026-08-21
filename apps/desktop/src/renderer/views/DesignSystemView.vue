@@ -714,7 +714,7 @@ onUnmounted(() => {
               <div class="stage p col">
                 <ActionCard style="max-width:460px">
                   <template #leading><Icon name="globe" size="lg" /></template>
-                  Kimi Code (kimi.com/code)
+                  Kimi Code
                   <template #hint>Sign in with your kimi.com account</template>
                 </ActionCard>
                 <ActionCard style="max-width:460px" disabled>

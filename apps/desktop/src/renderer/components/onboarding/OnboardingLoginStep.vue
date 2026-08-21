@@ -10,6 +10,7 @@ import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard, resolveOAuthLoginCards } from '@moonshot-ai/app-core/lib';
 import type { OAuthRegionSupport } from '@moonshot-ai/app-core/lib';
 import {
+  useIsMobile,
   useOAuthLoginFlow,
   type OAuthLoginStartResult,
   type OAuthRegion,
@@ -26,6 +27,7 @@ import { ActionCard, AuthStateIcon, Button, Icon, Spinner } from '@moonshot-ai/a
 import BrandLogo from './BrandLogo.vue';
 
 const { t } = useI18n();
+const isMobile = useIsMobile();
 
 const props = defineProps<{
   authReady: boolean;
@@ -161,8 +163,9 @@ function formatSeconds(s: number): string {
       <template #hint>{{ t(card.hintKey) }}</template>
     </ActionCard>
     <!-- Third-party entry: lands on Settings → Providers (the parent completes
-         onboarding first, same as skipping the login step). -->
-    <ActionCard @select="emit('addProvider')">
+         onboarding first, same as skipping the login step). Parked on mobile
+         for now — desktop keeps the entry. -->
+    <ActionCard v-if="!isMobile" @select="emit('addProvider')">
       <template #leading><span class="ls-card-icon"><Icon name="bolt" size="lg" /></span></template>
       {{ t('onboarding.login.customProviderTitle') }}
       <template #hint>{{ t('onboarding.login.customProviderHint') }}</template>

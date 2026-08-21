@@ -21,4 +21,6 @@ export default {
   archivedSessions: '已归档会话',
   archivedSessionsSub: '查看并恢复已归档会话',
   archivedBack: '返回',
+  viewFlat: '平铺',
+  viewGrouped: '按工作区',
 } as const;

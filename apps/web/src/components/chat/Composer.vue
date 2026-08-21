@@ -3331,7 +3331,10 @@ function selectModel(modelId: string): void {
     gap: 6px;
     min-width: 0;
   }
-  /* Send → 36px round (hide the SVG arrow, show only the ::after glyph) */
+  /* Send → 36px round. The glyph stays the shared 28px registry icon
+     (--composer-send-icon-size) — the earlier ::after text-glyph swap read
+     tiny at this size and its `svg { display: none }` also hid the starting
+     spinner. */
   .send {
     width: var(--composer-send-size);
     height: var(--composer-send-size);
@@ -3342,17 +3345,7 @@ function selectModel(modelId: string): void {
     align-self: flex-end;
     position: relative;
   }
-  .send svg {
-    display: none;
-  }
-  .send::after {
-    content: "↑";
-    /* Fixed icon glyph size — not part of the UI font scale. */
-    font-size: 17px;
-    line-height: 1;
-    color: var(--bg);
-  }
-  /* Stop → 36px round "■" glyph to match the mobile Send sizing. */
+  /* Stop → 36px round to match the mobile Send sizing, same 28px glyph. */
   .stop {
     width: var(--composer-send-size);
     height: var(--composer-send-size);
@@ -3362,15 +3355,6 @@ function selectModel(modelId: string): void {
     font-size: 0;
     align-self: flex-end;
     position: relative;
-  }
-  .stop svg {
-    display: none;
-  }
-  .stop::after {
-    content: "■";
-    /* Fixed icon glyph size — not part of the UI font scale. */
-    font-size: 17px;
-    line-height: 1;
   }
 
   /* Mobile toolbar: hide secondary controls; attach / context ring / model /

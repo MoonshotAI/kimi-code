@@ -14,9 +14,9 @@ export default {
     // 单卡兜底（老 daemon 不支持 region 时展示，不带 region 启动流程）
     kimiTitle: '登录 Kimi 账号',
     kimiHint: '使用 Kimi 会员权益，开箱即用',
-    kimiCnTitle: 'Kimi Code（kimi.com/code）',
+    kimiCnTitle: 'Kimi Code',
     kimiCnHint: '使用 kimi.com 账号登录',
-    kimiOverseasTitle: 'Kimi Code（kimi.ai/code）',
+    kimiOverseasTitle: 'Kimi Code',
     kimiOverseasHint: '使用 kimi.ai 账号登录',
     customProviderTitle: '添加自定义供应商',
     customProviderHint: '使用自己的 API Key，接入 OpenAI 兼容等模型服务',

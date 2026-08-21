@@ -46,6 +46,10 @@ export const STORAGE_KEYS = {
   sidebarCollapsed: 'kimi-web.sidebar-collapsed',
   sidebarWidth: 'kimi-web.sidebar-width',
   sidebarViewMode: 'kimi-web.sidebar-view-mode',
+  // Mobile switcher sheet's own flat/grouped display preference (defaults to
+  // 'flat'; the desktop sidebar's sidebarViewMode defaults to 'grouped' —
+  // the two ends never share a value).
+  mobileSwitcherViewMode: 'kimi-web.mobile-switcher-view-mode',
   // Draggable height cap of the sidebar's pinned section (PinnedSessionList,
   // useResizable raw px) — UI-only, same family as sidebarWidth.
   sidebarPinnedHeight: 'kimi-web.sidebar-pinned-height',
@@ -200,6 +204,21 @@ export function loadSidebarViewMode(): SidebarViewMode {
 
 export function saveSidebarViewMode(mode: SidebarViewMode): void {
   safeSetString(STORAGE_KEYS.sidebarViewMode, mode);
+}
+
+/**
+ * Mobile switcher sheet's session-list display: 'flat' (all sessions across
+ * workspaces, newest first — the default) or 'grouped' (by workspace).
+ * Deliberately separate from the desktop sidebar's sidebarViewMode: the two
+ * ends have different defaults and an explicit choice on one end must not
+ * silently flip the other. UI-only, no server-side source of truth.
+ */
+export function loadMobileSwitcherViewMode(): SidebarViewMode {
+  return safeGetString(STORAGE_KEYS.mobileSwitcherViewMode) === 'grouped' ? 'grouped' : 'flat';
+}
+
+export function saveMobileSwitcherViewMode(mode: SidebarViewMode): void {
+  safeSetString(STORAGE_KEYS.mobileSwitcherViewMode, mode);
 }
 
 /**

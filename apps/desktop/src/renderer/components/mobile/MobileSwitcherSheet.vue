@@ -6,14 +6,19 @@
      right-aligned time + "…"). Tapping a session selects it AND closes the
      sheet; tapping a group header folds it, same as the desktop sidebar. -->
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session, WorkspaceGroup, WorkspaceView } from '../../types';
 import type { SessionCreatedSource } from '../../../shared/track-events';
-import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import {
+  copyTextToClipboard,
+  loadMobileSwitcherViewMode,
+  saveMobileSwitcherViewMode,
+  type SidebarViewMode,
+} from '@moonshot-ai/app-core/lib';
 import { SESSIONS_EXPAND_BATCH } from '@moonshot-ai/app-client/client';
 import BottomSheet from '../dialogs/BottomSheet.vue';
-import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/app-ui';
+import { Icon, IconButton, Menu, MenuItem, SegmentedControl, Tooltip } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 
@@ -22,12 +27,20 @@ const props = withDefaults(
     modelValue: boolean;
     /** Workspace groups (same list the desktop sidebar renders). */
     groups: WorkspaceGroup[];
+    /** Flat tab: all sessions across workspaces, newest first (client.flatSessions). */
+    flatSessions: Session[];
+    /** Pinned sessions — merged back into the flat tab (see flatRows). */
+    pinnedSessions: Session[];
+    flatHasMore?: boolean;
+    flatLoadingMore?: boolean;
     activeWorkspaceId: string | null;
     activeId: string;
     attentionBySession?: Record<string, number>;
     attentionByWorkspace?: Record<string, number>;
   }>(),
   {
+    flatHasMore: false,
+    flatLoadingMore: false,
     activeWorkspaceId: null,
     attentionBySession: () => ({}),
     attentionByWorkspace: () => ({}),
@@ -45,6 +58,8 @@ const emit = defineEmits<{
   /** NOTE: App.vue wires this to confirmDeleteWorkspace (modal confirm + async delete). */
   deleteWorkspace: [workspaceId: string];
   loadMore: [workspaceId: string];
+  ensureFlatSessions: [];
+  loadMoreFlatSessions: [];
 }>();
 
 function close(): void {
@@ -70,6 +85,59 @@ function onAddWorkspace(): void {
   emit('addWorkspace');
   close();
 }
+
+// ---------------------------------------------------------------------------
+// View mode: flat (every session across workspaces, newest first — the mobile
+// default) vs grouped by workspace. Persisted per device (lib/storage);
+// deliberately NOT shared with the desktop sidebar's preference.
+// ---------------------------------------------------------------------------
+const viewMode = ref<SidebarViewMode>(loadMobileSwitcherViewMode());
+const viewOptions = computed(() => [
+  { value: 'flat', label: t('mobile.viewFlat') },
+  { value: 'grouped', label: t('mobile.viewGrouped') },
+]);
+watch(viewMode, (mode) => saveMobileSwitcherViewMode(mode));
+
+// Seed the flat list's first page whenever the sheet is open on the flat tab
+// (idempotent; the desktop sidebar seeds it on init but never mounts on
+// mobile).
+watch(
+  () => [props.modelValue, viewMode.value] as const,
+  ([open, mode]) => {
+    if (open && mode === 'flat') emit('ensureFlatSessions');
+  },
+  { immediate: true },
+);
+
+// Flat tab rows: client.flatSessions excludes pinned sessions (they render in
+// the desktop sidebar's pinned section), but mobile has no pinned section —
+// merge them back so a session pinned on desktop stays reachable here. Every
+// row's position stays timestamp-pure.
+const flatRows = computed<Session[]>(() => {
+  const seen = new Set<string>();
+  const merged: Session[] = [];
+  for (const s of [...props.flatSessions, ...props.pinnedSessions]) {
+    if (seen.has(s.id)) continue;
+    seen.add(s.id);
+    merged.push(s);
+  }
+  return merged.sort(
+    (a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime(),
+  );
+});
+
+// Grouped tab: groups ordered by their latest session (the incoming order is
+// the workspace list's). Sessions inside a group arrive updatedAt-desc, so
+// the first row is the group's latest. Empty groups sink to the bottom and
+// keep their original relative order.
+const sortedGroups = computed<WorkspaceGroup[]>(() => {
+  const latestMs = (g: WorkspaceGroup): number =>
+    g.sessions.length > 0 ? new Date(g.sessions[0]!.updatedAt ?? 0).getTime() : 0;
+  return props.groups
+    .map((g, index) => ({ g, index, ms: latestMs(g) }))
+    .sort((a, b) => b.ms - a.ms || a.index - b.index)
+    .map((x) => x.g);
+});
 
 // ---------------------------------------------------------------------------
 // Collapse groups — same interaction as the desktop sidebar header.
@@ -210,13 +278,18 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
       </button>
     </div>
 
-    <!-- Workspace groups with their sessions -->
-    <div class="mlist">
-      <div v-if="groups.length === 0" class="mempty">
+    <!-- Flat vs grouped display switch (persisted per device) -->
+    <div class="view-tabs">
+      <SegmentedControl v-model="viewMode" :options="viewOptions" size="sm" />
+    </div>
+
+    <!-- Workspace groups with their sessions (sorted by each group's latest) -->
+    <div v-if="viewMode === 'grouped'" class="mlist">
+      <div v-if="sortedGroups.length === 0" class="mempty">
         {{ t('workspace.noWorkspace') }}
       </div>
 
-      <div v-for="g in groups" :key="g.workspace.id" class="mgroup">
+      <div v-for="g in sortedGroups" :key="g.workspace.id" class="mgroup">
         <div
           class="mgh"
           :class="{ on: g.workspace.id === activeWorkspaceId }"
@@ -315,6 +388,51 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
         </div>
       </div>
     </div>
+
+    <!-- Flat tab: every session across workspaces, newest first (pinned merged
+         back in — mobile has no pinned section) -->
+    <div v-else class="mlist">
+      <div v-if="flatRows.length === 0" class="mempty">{{ t('sidebar.noSessions') }}</div>
+      <div
+        v-for="s in flatRows"
+        :key="s.id"
+        class="srow srow-flat"
+        :class="{ cur: s.id === activeId }"
+        @click="onSelectSession(s.id)"
+      >
+        <span class="srow-main">
+          <span class="t" :class="{ run: s.busy, aborted: !s.busy && (attentionBySession[s.id] ?? 0) === 0 && s.lastTurnReason === 'failed' }">{{ s.title }}</span>
+          <span class="srow-sub">{{ s.cwdLabel ?? '-' }}</span>
+        </span>
+        <span v-if="(attentionBySession[s.id] ?? 0) > 0" class="att">{{ attentionBySession[s.id] }}</span>
+        <span class="time">{{ s.time }}</span>
+        <IconButton
+          size="lg"
+          class="kb"
+          :label="t('sidebar.options')"
+          @click.stop="toggleMenu(s.id)"
+        >
+          <Icon name="dots-horizontal" size="md" />
+        </IconButton>
+
+        <!-- Kebab menu -->
+        <Menu v-if="menuFor === s.id" class="kmenu" @click.stop>
+          <MenuItem size="lg" @click="onRename(s)">{{ t('sidebar.rename') }}</MenuItem>
+          <MenuItem size="lg" @click="onArchive(s.id)">{{ t('sidebar.archive') }}</MenuItem>
+        </Menu>
+      </div>
+      <div v-if="flatHasMore" class="mshow-more-row">
+        <button
+          type="button"
+          class="mshow-more"
+          :disabled="flatLoadingMore"
+          @click.stop="emit('loadMoreFlatSessions')"
+        >
+          <Icon name="chevron-down" size="sm" />
+          {{ flatLoadingMore ? t('sidebar.loadingMore') : t('sidebar.showMore') }}
+        </button>
+      </div>
+    </div>
   </BottomSheet>
 </template>
 
@@ -349,6 +467,12 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   font-weight: var(--weight-regular);
 }
 .newrow.secondary:active { color: var(--color-text); }
+
+/* ---- View tabs: segmented switch under the action block, stretched to the
+       sheet's full width with equal-width options ---- */
+.view-tabs { padding: var(--space-1) var(--space-3) var(--space-2); }
+.view-tabs :deep(.ui-seg) { display: flex; width: 100%; }
+.view-tabs :deep(.ui-seg__item) { flex: 1; justify-content: center; }
 
 /* ---- List + alignment contract (mirrors the desktop sidebar):
         session titles start at --m-pad + --m-gutter + --m-gap, exactly under
@@ -491,6 +615,24 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
 }
 .srow .kb { flex: none; margin: 0 calc(-1 * var(--space-2)) 0 0; }
 .srow .kb:active { color: var(--color-text); background: var(--color-hover); }
+
+/* ---- Flat tab rows: two lines (title + cwd), same indent as grouped rows ---- */
+.srow-flat { min-height: 52px; }
+.srow-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.srow-main .t { flex: none; }
+.srow-sub {
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Kebab menu — surface from Menu primitive; only positioning here. */
 .kmenu {

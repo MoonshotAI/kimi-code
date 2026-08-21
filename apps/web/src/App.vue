@@ -1721,6 +1721,10 @@ function openPr(url: string): void {
       v-if="isMobile"
       v-model="showMobileSwitcher"
       :groups="client.mobileWorkspaceGroups.value"
+      :flat-sessions="client.flatSessions.value"
+      :pinned-sessions="client.pinnedSessions.value"
+      :flat-has-more="client.flatSessionsHasMore.value"
+      :flat-loading-more="client.flatSessionsLoadingMore.value"
       :active-workspace-id="client.activeWorkspaceId.value"
       :active-id="client.activeSessionId.value"
       :attention-by-session="client.attentionBySession.value"
@@ -1733,6 +1737,8 @@ function openPr(url: string): void {
       @archive="archiveSessionWithToast($event)"
       @delete-workspace="confirmDeleteWorkspace($event)"
       @load-more="(id) => void client.loadMoreSessions(id)"
+      @ensure-flat-sessions="void client.ensureFlatSessions()"
+      @load-more-flat-sessions="void client.loadMoreFlatSessions()"
     />
 
     <!-- Mobile settings bottom-sheet: session controls + app prefs + auth -->

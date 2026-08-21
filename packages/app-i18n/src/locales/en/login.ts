@@ -2,9 +2,9 @@ export default {
   title: 'Sign in to Kimi Code',
   close: 'Close (Esc)',
   // Region choice cards (China / International entries before the device flow)
-  regionCnTitle: 'Kimi Code (kimi.com/code)',
+  regionCnTitle: 'Kimi Code',
   regionCnHint: 'Sign in with your kimi.com account',
-  regionOverseasTitle: 'Kimi Code (kimi.ai/code)',
+  regionOverseasTitle: 'Kimi Code',
   regionOverseasHint: 'Sign in with your kimi.ai account',
   // Single-card fallback (shown when the daemon predates region support;
   // starts the flow without a region)
