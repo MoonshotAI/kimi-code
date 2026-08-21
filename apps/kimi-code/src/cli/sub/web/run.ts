@@ -142,11 +142,6 @@ export function buildWebCommand(cmd: Command): Command {
       false,
     )
     .option(
-      '--allow-remote-terminals',
-      'On a non-loopback bind, keep the PTY /api/v1/terminals/* routes enabled (default: disabled → 404). Remote shell is high risk.',
-      false,
-    )
-    .option(
       '--dangerous-bypass-auth',
       'Disable bearer-token auth on every REST and WebSocket route, and advertise it via /api/v1/meta so the web UI connects without a token. Only use on a trusted network or behind your own authenticating proxy.',
       false,
@@ -361,7 +356,6 @@ async function runServerInProcess(
     debugEndpoints: options.debugEndpoints,
     insecureNoTls: options.insecureNoTls,
     allowRemoteShutdown: options.allowRemoteShutdown,
-    allowRemoteTerminals: options.allowRemoteTerminals,
     allowedHosts: options.allowedHosts,
     disableAuth: options.dangerousBypassAuth,
     webTitle: options.webTitle,
