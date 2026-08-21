@@ -210,6 +210,21 @@ describe('resolveThinkingEffort', () => {
     );
   });
 
+  it('ignores whitespace-only supportEfforts entries on every protocol', () => {
+    // A whitespace-only entry is not a real effort: the list must not count as
+    // declared, and a trimmed declared list must match against trimmed values.
+    const blankOnly = model({ capabilities: ['thinking'], supportEfforts: ['   '] });
+    expect(resolveThinkingEffort('ultra', undefined, blankOnly, false)).toBe('ultra');
+    expect(resolveThinkingEffort('ultra', undefined, blankOnly, true)).toBe('on');
+    const padded = model({
+      capabilities: ['thinking'],
+      supportEfforts: [' low ', ' xhigh '],
+      defaultEffort: 'xhigh',
+    });
+    expect(resolveThinkingEffort('high', undefined, padded, false)).toBe('xhigh');
+    expect(resolveThinkingEffort('low', undefined, padded, false)).toBe('low');
+  });
+
   it('falls back to the declared default when the model omits the thinking capability', () => {
     // A model may declare support_efforts/default_effort without declaring
     // the thinking capability; the declared list is still authoritative for

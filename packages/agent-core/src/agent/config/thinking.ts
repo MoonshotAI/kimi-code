@@ -21,7 +21,10 @@ function middleOf(efforts: readonly string[]): string {
 
 function effortsFor(model: ModelAlias | undefined): readonly string[] {
   const effective = model === undefined ? undefined : effectiveModelAlias(model);
-  return effective?.supportEfforts?.filter((effort) => effort.length > 0) ?? [];
+  return (
+    effective?.supportEfforts?.map((effort) => effort.trim()).filter((effort) => effort.length > 0) ??
+    []
+  );
 }
 
 /**
