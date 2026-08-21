@@ -139,7 +139,11 @@ export const sessionHandlers: Record<string, Handler<any, any>> = {
       if (resumeState?.agents["main"] === undefined) {
         throw new Error("Session history is unavailable.");
       }
-      history = replaySessionToWebviewEvents(resumeState, runtime.id);
+      history = replaySessionToWebviewEvents(
+        resumeState,
+        runtime.id,
+        (filePath) => ctx.runtime.registerPlanFile(filePath),
+      );
     } catch (error) {
       await ctx.closeSession();
       throw error;

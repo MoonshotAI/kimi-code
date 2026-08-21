@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import {
   createKimiHarness,
   createKimiHarnessV2,
@@ -56,6 +58,8 @@ export class KimiRuntime {
   private readonly log: KimiRuntimeOptions["log"];
   private readonly sessions = new Map<string, SessionRuntime>();
   private readonly sessionByView = new Map<string, string>();
+  private readonly planFiles = new Map<string, string>();
+  private readonly planReferences = new Map<string, string>();
   private closed = false;
 
   constructor(options: KimiRuntimeOptions) {
@@ -83,6 +87,20 @@ export class KimiRuntime {
 
   getSession(id: string): SessionRuntime | undefined {
     return this.sessions.get(id);
+  }
+
+  registerPlanFile(filePath: string): string {
+    const existing = this.planReferences.get(filePath);
+    if (existing !== undefined) return existing;
+
+    const reference = randomUUID();
+    this.planFiles.set(reference, filePath);
+    this.planReferences.set(filePath, reference);
+    return reference;
+  }
+
+  resolvePlanFile(reference: string): string | undefined {
+    return this.planFiles.get(reference);
   }
 
   async openSession(options: OpenSessionOptions): Promise<SessionRuntime> {
@@ -227,6 +245,8 @@ export class KimiRuntime {
     await Promise.all([...this.sessions.values()].map((session) => session.close()));
     this.sessions.clear();
     this.sessionByView.clear();
+    this.planFiles.clear();
+    this.planReferences.clear();
     await this.harness.close();
   }
 
@@ -236,6 +256,7 @@ export class KimiRuntime {
       legacyApproval,
       broadcast: this.broadcast,
       captureBaseline: this.captureBaseline,
+      registerPlanFile: (filePath) => this.registerPlanFile(filePath),
       log: this.log,
     });
     this.sessions.set(session.id, runtime);
