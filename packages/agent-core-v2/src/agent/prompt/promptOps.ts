@@ -12,6 +12,7 @@ const promptAcceptedSchema = z.object({
 export class PromptAccepted extends AgentEvent2<z.infer<typeof promptAcceptedSchema>> {
   static override readonly type = 'prompt.accepted';
   static override readonly durable = true;
+  static override readonly observable = true;
   static override readonly schema = promptAcceptedSchema;
 }
 export interface PromptAccepted {
