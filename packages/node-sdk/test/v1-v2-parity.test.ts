@@ -30,6 +30,7 @@ import {
   createKimiHarness,
   createKimiHarnessV2,
   ErrorCodes,
+  isKimiError,
   SDKRpcClient,
   SDKRpcClientV2,
   type ApprovalRequest,
@@ -3726,6 +3727,8 @@ async function expectSameMcpRejection(
     captureRejection(v1Call(pair.v1)),
     captureRejection(v2Call(pair.v2)),
   ]);
+  expect(isKimiError(v1Error)).toBe(true);
+  expect(isKimiError(v2Error)).toBe(true);
   const payload = (error: unknown): unknown => {
     const err = error as { name?: unknown; code?: unknown; message?: unknown };
     return {
@@ -4727,12 +4730,14 @@ describe('v1↔v2 session MCP parity', () => {
         command: process.execPath,
         args: [MCP_STDIO_FIXTURE],
       };
-      await expect(
-        pair.v1.addSessionMcpServer({ ...input, server, persist: true }),
-      ).rejects.toMatchObject({ code: 'request.invalid' });
-      await expect(
-        pair.v2.addSessionMcpServer({ ...input, server, persist: true }),
-      ).rejects.toMatchObject({ code: 'request.invalid' });
+      const [v1Error, v2Error] = await Promise.all([
+        captureRejection(pair.v1.addSessionMcpServer({ ...input, server, persist: true })),
+        captureRejection(pair.v2.addSessionMcpServer({ ...input, server, persist: true })),
+      ]);
+      expect(isKimiError(v1Error)).toBe(true);
+      expect(isKimiError(v2Error)).toBe(true);
+      expect(v1Error).toMatchObject({ code: 'request.invalid' });
+      expect(v2Error).toMatchObject({ code: 'request.invalid' });
       // Neither engine wrote the user-level shadow.
       const [v1File, v2File] = await Promise.all([
         readFile(join(pair.v1Home.raw, 'mcp.json'), 'utf-8').catch(() => ''),
@@ -4765,12 +4770,14 @@ describe('v1↔v2 session MCP parity', () => {
         args: [MCP_STDIO_FIXTURE],
       };
 
-      await expect(
-        pair.v1.addSessionMcpServer({ ...input, server, persist: true }),
-      ).rejects.toMatchObject({ code: 'request.invalid' });
-      await expect(
-        pair.v2.addSessionMcpServer({ ...input, server, persist: true }),
-      ).rejects.toMatchObject({ code: 'request.invalid' });
+      const [v1Error, v2Error] = await Promise.all([
+        captureRejection(pair.v1.addSessionMcpServer({ ...input, server, persist: true })),
+        captureRejection(pair.v2.addSessionMcpServer({ ...input, server, persist: true })),
+      ]);
+      expect(isKimiError(v1Error)).toBe(true);
+      expect(isKimiError(v2Error)).toBe(true);
+      expect(v1Error).toMatchObject({ code: 'request.invalid' });
+      expect(v2Error).toMatchObject({ code: 'request.invalid' });
 
       const [v1File, v2File] = await Promise.all([
         readFile(join(pair.v1Home.raw, 'mcp.json'), 'utf-8').catch(() => ''),

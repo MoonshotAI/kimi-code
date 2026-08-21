@@ -148,6 +148,34 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   });
 
+  it('restates unsupported engine MCP errors with the stable public internal code', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    vi.spyOn(
+      client.engineAccessor.get(IMcpManagementService),
+      'completeServerAuth',
+    ).mockRejectedValue(
+      new Error2(EngineErrorCodes.STORAGE_DISK_FULL, 'MCP credential store is full'),
+    );
+
+    try {
+      const error = await client
+        .completeMcpServerAuth({ flowId: 'flow_test' })
+        .then(() => undefined)
+        .catch((error: unknown) => error);
+
+      expect(error).toBeInstanceOf(KimiError);
+      expect(error).toMatchObject({ code: ErrorCodes.INTERNAL });
+      expect(toKimiErrorPayload(error)).toMatchObject({
+        code: ErrorCodes.INTERNAL,
+        retryable: false,
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
   it('exposes the validated runtime binding through Session', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));

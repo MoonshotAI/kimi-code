@@ -2573,9 +2573,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     if (input.persist === true) {
       const cwd = session.accessor.get(ISessionWorkspaceContext).workDir;
       await this.rejectProjectLayerPersistedMcpAdd(cwd, target.name);
-      await this.engineAccessor
-        .get(IMcpManagementService)
-        .addServer(target, { cwd });
+      await this.mcpManagement((management) => management.addServer(target, { cwd }));
     }
     await manager.connect(target.name, mcpConfigWithoutName(target));
     const entry = manager.get(target.name);
