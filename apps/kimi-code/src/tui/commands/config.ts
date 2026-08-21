@@ -316,7 +316,8 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
     showEffortPicker(host, effective, segments);
     return;
   }
-  if (!segments.includes(arg)) {
+  const canonical = segments.find((segment) => segment.toLowerCase() === arg);
+  if (canonical === undefined) {
     const declared = effortsOf(effective);
     // 'on' is the generic enable signal: with a declared effort list the
     // engine maps it to the declared default effort, so it stays a valid
@@ -343,7 +344,7 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
       'warning',
     );
   }
-  await performModelSwitch(host, alias, arg, true);
+  await performModelSwitch(host, alias, canonical ?? arg, true);
 }
 
 function showEffortPicker(

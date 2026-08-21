@@ -146,12 +146,22 @@ export function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
   const efforts = effortsOf(model);
   if (efforts.length > 0) {
     const declared = model.defaultEffort?.trim();
-    return declared !== undefined && declared.length > 0 && efforts.includes(declared)
-      ? declared
-      : efforts[Math.floor(efforts.length / 2)]!;
+    const matched = declared === undefined ? undefined : matchDeclaredEffort(efforts, declared);
+    return (matched ?? efforts[Math.floor(efforts.length / 2)]!) as ThinkingEffort;
   }
   if (thinkingAvailability(model) === 'unsupported') return 'off';
   return 'on';
+}
+
+/**
+ * Case-insensitive membership against the declared list, returning the
+ * declared (canonical) entry — the backend recognizes the declared casing.
+ */
+function matchDeclaredEffort(
+  efforts: readonly string[],
+  effort: string,
+): string | undefined {
+  return efforts.find((candidate) => candidate.toLowerCase() === effort.toLowerCase());
 }
 
 /**
@@ -170,7 +180,10 @@ export function resolveConfiguredEffortForModel(
   if (normalized.length === 0) return defaultThinkingEffortFor(model);
   const efforts = effortsOf(model);
   if (efforts.length === 0 || normalized === 'off') return normalized;
-  if (normalized !== 'on' && efforts.includes(normalized)) return normalized;
+  if (normalized !== 'on') {
+    const matched = matchDeclaredEffort(efforts, normalized);
+    if (matched !== undefined) return matched as ThinkingEffort;
+  }
   return defaultThinkingEffortFor(model);
 }
 

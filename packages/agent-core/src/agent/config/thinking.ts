@@ -49,11 +49,23 @@ function declaredDefaultEffortFor(
   efforts: readonly string[],
 ): ThinkingEffort {
   const declaredDefault = model?.defaultEffort?.trim();
-  return declaredDefault !== undefined &&
-    declaredDefault.length > 0 &&
-    efforts.includes(declaredDefault)
-    ? declaredDefault
-    : middleOf(efforts);
+  if (declaredDefault !== undefined && declaredDefault.length > 0) {
+    const matched = matchDeclaredEffort(efforts, declaredDefault);
+    if (matched !== undefined) return matched;
+  }
+  return middleOf(efforts);
+}
+
+/**
+ * Case-insensitive membership against the declared list, returning the
+ * declared (canonical) entry — backends recognize the declared casing, so the
+ * canonical form is what goes on the wire.
+ */
+function matchDeclaredEffort(
+  efforts: readonly string[],
+  effort: string,
+): string | undefined {
+  return efforts.find((candidate) => candidate.toLowerCase() === effort.toLowerCase());
 }
 
 /**
@@ -85,7 +97,7 @@ export function supportsThinkingEffort(
   const efforts = effortsFor(effective);
   // A declared effort list is itself a declaration of thinking support: list
   // membership decides, even when the thinking capability was omitted.
-  if (efforts.length > 0) return effort === 'on' || efforts.includes(effort);
+  if (efforts.length > 0) return effort === 'on' || matchDeclaredEffort(efforts, effort) !== undefined;
   return supportsThinking(effective);
 }
 
@@ -105,16 +117,12 @@ function normalizeThinkingEffortForModel(
     // no effort list — with a declared list, an unlisted effort is a config
     // mistake the backend would reject, so fall back like the Kimi wire does.
     if (efforts.length === 0) return effort;
-    if (effort === 'on' || !efforts.includes(effort)) {
-      return declaredDefaultEffortFor(effective, efforts);
-    }
-    return effort;
+    if (effort === 'on') return declaredDefaultEffortFor(effective, efforts);
+    return matchDeclaredEffort(efforts, effort) ?? declaredDefaultEffortFor(effective, efforts);
   }
   if (efforts.length > 0) {
-    if (effort === 'on' || !efforts.includes(effort)) {
-      return declaredDefaultEffortFor(effective, efforts);
-    }
-    return effort;
+    if (effort === 'on') return declaredDefaultEffortFor(effective, efforts);
+    return matchDeclaredEffort(efforts, effort) ?? declaredDefaultEffortFor(effective, efforts);
   }
   if (!supportsThinking(effective)) return 'off';
   return 'on';
@@ -175,7 +183,10 @@ export function resolveThinkingEffortWithFallback(
   const resolved = normalizeThinkingEffortForModel(effort, effectiveModel, kimiProtocol);
   const efforts = effortsFor(effectiveModel);
   const fallback: ThinkingEffortFallback | undefined =
-    effort !== 'on' && effort !== 'off' && efforts.length > 0 && !efforts.includes(effort)
+    effort !== 'on' &&
+    effort !== 'off' &&
+    efforts.length > 0 &&
+    matchDeclaredEffort(efforts, effort) === undefined
       ? { configured: effort, resolved }
       : undefined;
   return { effort: resolved, fallback };

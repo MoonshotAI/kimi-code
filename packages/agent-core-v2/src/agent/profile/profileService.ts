@@ -638,15 +638,18 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private revalidateStoredThinkingEffort(): void {
-    if (this.warnAboutThinkingEffortFallback(this.profileState.thinkingLevel)) {
+    const before = this.lastResolvedThinkingEffort;
+    this.warnAboutThinkingEffortFallback(this.profileState.thinkingLevel);
+    const after = this.getEffectiveThinkingLevel();
+    if (before !== undefined && after !== before) {
       this.emitStatusUpdated(true);
     }
   }
 
-  private warnAboutThinkingEffortFallback(requested: string | undefined): boolean {
+  private warnAboutThinkingEffortFallback(requested: string | undefined): void {
     try {
       const model = this.tryResolveRawModel();
-      if (model === undefined) return false;
+      if (model === undefined) return;
       const thinking = this.config.get<ThinkingConfig>(THINKING_SECTION);
       const { effort, fallback } = resolveThinkingEffortForModelWithFallback(
         requested,
@@ -654,24 +657,22 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         model,
         this.strictThinkingValidation(model),
       );
-      if (fallback === undefined) return false;
+      if (fallback === undefined) return;
       const forced = resolveForcedThinkingEffort(
         thinking?.forcedEffort,
         effort,
         drivesThinkingThroughTraits(model.providerType),
       );
-      if (forced !== undefined) return false;
+      if (forced !== undefined) return;
       const efforts = declaredThinkingEfforts(model);
       const knownEfforts = efforts.join(',');
       const code = 'thinking-effort-not-listed';
       const message = `Thinking effort "${fallback.configured}" is not listed for model "${model.name}" (known: ${efforts.join(', ')}). Falling back to the model's default effort "${fallback.resolved}".`;
       const key = [code, model.id, model.name, fallback.configured, knownEfforts].join('\u0000');
-      if (this.emittedThinkingEffortWarnings.has(key)) return false;
+      if (this.emittedThinkingEffortWarnings.has(key)) return;
       this.emittedThinkingEffortWarnings.add(key);
       void this.dispatcher.dispatch(new WarningIssued({ agentId: this.scopeContext.agentId, code, message }));
-      return true;
     } catch {
-      return false;
     }
   }
 
@@ -741,6 +742,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     return this.resolveThinkingEffort(this.profileState.thinkingLevel, this.tryResolveRawModel());
   }
 
+  private lastResolvedThinkingEffort: ThinkingEffort | undefined;
+
   private resolveThinkingState(model: Model | undefined): {
     readonly effective: ThinkingEffort;
     readonly forced: ThinkingEffort | undefined;
@@ -751,7 +754,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       base,
       drivesThinkingThroughTraits(model?.providerType),
     );
-    return { effective: forced ?? base, forced };
+    const effective = forced ?? base;
+    this.lastResolvedThinkingEffort = effective;
+    return { effective, forced };
   }
 
   private strictThinkingValidation(model: Model | undefined): boolean {

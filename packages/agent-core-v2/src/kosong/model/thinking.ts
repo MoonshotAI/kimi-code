@@ -117,9 +117,18 @@ function declaredDefaultEffortFor(
   efforts: readonly string[],
 ): ThinkingEffort {
   const declaredDefault = nonEmpty(model?.defaultEffort);
-  return (declaredDefault !== undefined && efforts.includes(declaredDefault)
-    ? declaredDefault
-    : middleOf(efforts)) as ThinkingEffort;
+  if (declaredDefault !== undefined) {
+    const matched = matchDeclaredEffort(efforts, declaredDefault);
+    if (matched !== undefined) return matched as ThinkingEffort;
+  }
+  return middleOf(efforts) as ThinkingEffort;
+}
+
+function matchDeclaredEffort(
+  efforts: readonly string[],
+  effort: string,
+): string | undefined {
+  return efforts.find((candidate) => candidate.toLowerCase() === effort.toLowerCase());
 }
 
 export function modelSupportsThinking(model: ModelThinkingMetadata | undefined): boolean {
@@ -148,7 +157,7 @@ export function modelSupportsThinkingEffort(
 ): boolean {
   if (!strictValidation || effort === 'off') return true;
   const efforts = effortsFor(model);
-  if (efforts.length > 0) return effort === 'on' || efforts.includes(effort);
+  if (efforts.length > 0) return effort === 'on' || matchDeclaredEffort(efforts, effort) !== undefined;
   return modelSupportsThinking(model);
 }
 
@@ -161,16 +170,14 @@ function normalizeThinkingEffortForModel(
   const efforts = effortsFor(model);
   if (!strictValidation) {
     if (efforts.length === 0) return effort;
-    if (effort === 'on' || !efforts.includes(effort)) {
-      return declaredDefaultEffortFor(model, efforts);
-    }
-    return effort;
+    if (effort === 'on') return declaredDefaultEffortFor(model, efforts);
+    return (matchDeclaredEffort(efforts, effort) ??
+      declaredDefaultEffortFor(model, efforts)) as ThinkingEffort;
   }
   if (efforts.length > 0) {
-    if (effort === 'on' || !efforts.includes(effort)) {
-      return declaredDefaultEffortFor(model, efforts);
-    }
-    return effort;
+    if (effort === 'on') return declaredDefaultEffortFor(model, efforts);
+    return (matchDeclaredEffort(efforts, effort) ??
+      declaredDefaultEffortFor(model, efforts)) as ThinkingEffort;
   }
   if (!modelSupportsThinking(model)) return 'off';
   return 'on';
@@ -207,7 +214,7 @@ export function resolveThinkingEffortForModelWithFallback(
   const resolved = normalizeThinkingEffortForModel(effort, model, strictValidation);
   const efforts = effortsFor(model);
   const fallback: ThinkingEffortFallback | undefined =
-    effort !== 'on' && effort !== 'off' && efforts.length > 0 && !efforts.includes(effort)
+    effort !== 'on' && effort !== 'off' && efforts.length > 0 && matchDeclaredEffort(efforts, effort) === undefined
       ? { configured: effort, resolved }
       : undefined;
   return { effort: resolved, fallback };

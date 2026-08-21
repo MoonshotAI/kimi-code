@@ -561,6 +561,12 @@ describe('ModelSelectorComponent', () => {
     expect(resolveConfiguredEffortForModel(' ULTRA ', declared)).toBe('high');
   });
 
+  it('matches declared efforts case-insensitively and resolves the declared casing', () => {
+    const declared = effortModel('Kimi Other', ['Low', 'High', 'Max'], 'max');
+    expect(resolveConfiguredEffortForModel('low', declared)).toBe('Low');
+    expect(defaultThinkingEffortFor(declared)).toBe('Max');
+  });
+
   it('falls back to the middle entry when the declared default is not listed', () => {
     // Matches the engine resolvers: an unlisted default_effort is rejected.
     expect(defaultThinkingEffortFor(effortModel('Kimi Other', ['low', 'high'], 'max', []))).toBe(

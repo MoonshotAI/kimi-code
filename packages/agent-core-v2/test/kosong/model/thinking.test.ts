@@ -165,6 +165,21 @@ describe('resolveThinkingEffortForModel', () => {
     ).toBe('xhigh');
   });
 
+  it('matches declared efforts case-insensitively and resolves the declared casing', () => {
+    const declared = {
+      capabilities: ['thinking'],
+      supportEfforts: ['Low', 'High', 'Max'],
+      defaultEffort: 'max',
+    };
+    expect(resolveThinkingEffortForModel('low', undefined, declared, true)).toBe('Low');
+    expect(resolveThinkingEffortForModel(undefined, { effort: 'high' }, declared, false)).toBe(
+      'High',
+    );
+    expect(defaultThinkingEffortForModel(declared)).toBe('Max');
+    expect(modelSupportsThinkingEffort('low', declared, true)).toBe(true);
+    expect(resolveThinkingEffortForModel('ultra', undefined, declared, false)).toBe('Max');
+  });
+
   it('keeps always-thinking models on under kimi semantics', () => {
     const always = {
       capabilities: ['always_thinking'],

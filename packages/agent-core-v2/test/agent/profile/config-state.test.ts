@@ -437,6 +437,52 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     });
   });
 
+  it('republishes the status when a reload makes a stranded effort valid again', async () => {
+    profile.update({ modelAlias: 'kimi-code/ultra', thinkingLevel: 'high' });
+    expect(profile.data().thinkingLevel).toBe('high');
+
+    const withUltraEfforts = (supportEfforts: string[]) => ({
+      ...kimiConfig,
+      models: {
+        ...kimiConfig.models,
+        'kimi-code/ultra': {
+          provider: 'kimi',
+          model: 'kimi-ultra',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts,
+          defaultEffort: 'ultra',
+        },
+      },
+    });
+
+    kimiConfig = withUltraEfforts(['low', 'ultra']);
+    await vi.waitFor(() => {
+      expect(profile.data().thinkingLevel).toBe('ultra');
+    });
+    await vi.waitFor(() => {
+      const statuses = ctx.allEvents.filter((event) => event.event === 'agent.status.updated');
+      expect(statuses.at(-1)?.args).toMatchObject({ thinkingEffort: 'ultra' });
+    });
+
+    kimiConfig = withUltraEfforts(['low', 'high', 'ultra']);
+    await vi.waitFor(() => {
+      expect(profile.data().thinkingLevel).toBe('high');
+    });
+    await vi.waitFor(() => {
+      const statuses = ctx.allEvents.filter((event) => event.event === 'agent.status.updated');
+      expect(statuses.at(-1)?.args).toMatchObject({ thinkingEffort: 'high' });
+    });
+    for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
+    expect(
+      ctx.allEvents.filter(
+        (event) =>
+          event.event === 'warning' &&
+          (event.args as { code?: string }).code === 'thinking-effort-not-listed',
+      ),
+    ).toHaveLength(1);
+  });
+
   it('warns once when a provider-only reload changes the inferred effort list', async () => {
     kimiConfig = {
       providers: {

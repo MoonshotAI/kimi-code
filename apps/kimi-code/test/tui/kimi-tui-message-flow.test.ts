@@ -8324,6 +8324,40 @@ describe('/effort support_efforts override', () => {
     expect(setConfig).not.toHaveBeenCalled();
   });
 
+  it('accepts a case-insensitive /effort match and applies the declared casing', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'kimi', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 100,
+            displayName: 'Compatible Model',
+            capabilities: ['thinking'],
+            supportEfforts: ['Low', 'High'],
+            defaultEffort: 'High',
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true, effort: 'low' },
+      })),
+    });
+
+    driver.handleUserInput('/effort low');
+
+    await vi.waitFor(() => {
+      expect(session.setThinking).toHaveBeenCalledWith('Low');
+    });
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain('Thinking set to Low.');
+    });
+  });
+
   it('persists only the enabled flag when a padded list top tier is selected', async () => {
     const session = makeSession();
     const setConfig = vi.fn(async () => ({}));

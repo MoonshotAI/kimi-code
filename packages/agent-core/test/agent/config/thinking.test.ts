@@ -287,6 +287,19 @@ describe('resolveThinkingEffort', () => {
     expect(resolveThinkingEffort('high', undefined, declared, false)).toBe('xhigh');
   });
 
+  it('matches declared efforts case-insensitively and resolves the declared casing', () => {
+    const declared = model({
+      capabilities: ['thinking'],
+      supportEfforts: ['Low', 'High', 'Max'],
+      defaultEffort: 'max',
+    });
+    expect(resolveThinkingEffort('low', undefined, declared, true)).toBe('Low');
+    expect(resolveThinkingEffort(undefined, { effort: 'high' }, declared, false)).toBe('High');
+    expect(defaultThinkingEffortFor(declared)).toBe('Max');
+    expect(supportsThinkingEffort('low', declared, true)).toBe(true);
+    expect(resolveThinkingEffort('ultra', undefined, declared, false)).toBe('Max');
+  });
+
   it('projects a concrete effort to on for a boolean-only Kimi model', () => {
     expect(resolveThinkingEffort('ultra', undefined, booleanModel, true)).toBe('on');
   });
