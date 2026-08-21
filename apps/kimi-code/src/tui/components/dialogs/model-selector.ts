@@ -164,9 +164,13 @@ export function resolveConfiguredEffortForModel(
   effort: ThinkingEffort,
   model: ModelAlias,
 ): ThinkingEffort {
+  // Normalize like the engine does before any comparison (trim + lowercase);
+  // a blank value reads as unconfigured and resolves to the model default.
+  const normalized = effort.trim().toLowerCase();
+  if (normalized.length === 0) return defaultThinkingEffortFor(model);
   const efforts = effortsOf(model);
-  if (efforts.length === 0 || effort === 'off') return effort;
-  if (effort !== 'on' && efforts.includes(effort)) return effort;
+  if (efforts.length === 0 || normalized === 'off') return normalized;
+  if (normalized !== 'on' && efforts.includes(normalized)) return normalized;
   return defaultThinkingEffortFor(model);
 }
 

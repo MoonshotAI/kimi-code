@@ -5,6 +5,7 @@ import { defineState } from '#/state/state';
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/kosong/contract/capability';
 import { type SamplingOptions, type ThinkingEffort } from '#/kosong/contract/provider';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { IModelService } from '#/kosong/model/model';
 import { type ModelOverrides } from '#/kosong/model/model.types';
 import { type ModelRequestParams } from '#/kosong/model/modelRequester';
 import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
@@ -151,6 +152,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
     @IConfigService private readonly config: IConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IModelService private readonly models: IModelService,
     @IProtocolAdapterRegistry private readonly protocolAdapters: IProtocolAdapterRegistry,
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @IHostClock private readonly clock: IHostClock,
@@ -195,6 +197,11 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
           this.publishToolPatternWarnings();
           void this.refreshSystemPrompt();
         }
+      }),
+    );
+    this._register(
+      this.models.onDidChangeModels(() => {
+        this.warnAboutThinkingEffortFallback(this.profileState.thinkingLevel);
       }),
     );
     this._register(

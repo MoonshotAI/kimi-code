@@ -397,6 +397,42 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     expect(profile.data().thinkingLevel).toBe('max');
   });
 
+  it('warns once when a model metadata reload strands the stored effort', async () => {
+    profile.update({ modelAlias: 'kimi-code/ultra', thinkingLevel: 'high' });
+    expect(profile.data().thinkingLevel).toBe('high');
+    expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+
+    kimiConfig = {
+      ...kimiConfig,
+      models: {
+        ...kimiConfig.models,
+        'kimi-code/ultra': {
+          provider: 'kimi',
+          model: 'kimi-ultra',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'ultra'],
+          defaultEffort: 'ultra',
+        },
+      },
+    };
+
+    await vi.waitFor(() => {
+      expect(profile.data().thinkingLevel).toBe('ultra');
+    });
+    await vi.waitFor(() => {
+      expect(ctx.allEvents).toContainEqual({
+        type: '[rpc]',
+        event: 'warning',
+        args: expect.objectContaining({
+          code: 'thinking-effort-not-listed',
+          message:
+            'Thinking effort "high" is not listed for model "kimi-ultra" (known: low, ultra). Falling back to the model\'s default effort "ultra".',
+        }),
+      });
+    });
+  });
+
   it('projects an inherited concrete effort to on when switching to a boolean model', () => {
     profile.update({ modelAlias: 'kimi-code/ultra', thinkingLevel: 'ultra' });
 

@@ -2,7 +2,11 @@ import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import { visibleWidth } from '@moonshot-ai/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ModelSelectorComponent, defaultThinkingEffortFor } from '#/tui/components/dialogs/model-selector';
+import {
+  ModelSelectorComponent,
+  defaultThinkingEffortFor,
+  resolveConfiguredEffortForModel,
+} from '#/tui/components/dialogs/model-selector';
 import { currentTheme } from '#/tui/theme';
 import { darkColors } from '#/tui/theme/colors';
 
@@ -548,6 +552,13 @@ describe('ModelSelectorComponent', () => {
     expect(defaultThinkingEffortFor(effortModel('Kimi Other', ['low', 'high', 'max'], undefined, []))).toBe(
       'high',
     );
+  });
+
+  it('normalizes a padded configured effort before matching the declared list', () => {
+    const declared = effortModel('Kimi Other', ['low', 'high', 'max'], 'high');
+    expect(resolveConfiguredEffortForModel(' LOW ', declared)).toBe('low');
+    expect(resolveConfiguredEffortForModel('  ', declared)).toBe('high');
+    expect(resolveConfiguredEffortForModel(' ULTRA ', declared)).toBe('high');
   });
 
   it('falls back to the middle entry when the declared default is not listed', () => {

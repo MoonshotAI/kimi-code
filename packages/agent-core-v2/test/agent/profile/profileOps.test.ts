@@ -16,6 +16,7 @@ import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalo
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { IModelService } from '#/kosong/model/model';
 import { IProtocolAdapterRegistry, type Protocol } from '#/kosong/protocol/protocol';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
@@ -205,6 +206,11 @@ function buildHost(key: string): {
   );
   host.stub(IConfigService, createConfigStub());
   host.stub(IModelCatalog, modelCatalog);
+  host.stub(IModelService, {
+    _serviceBrand: undefined,
+    onDidChangeModels: Event.None,
+    onDidChangeDefaultModel: Event.None,
+  } as unknown as IModelService);
   host.stub(IProtocolAdapterRegistry, createProtocolRegistryStub());
   host.stub(IHostEnvironment, stubUnused());
   host.stub(IHostFileSystem, stubUnused());

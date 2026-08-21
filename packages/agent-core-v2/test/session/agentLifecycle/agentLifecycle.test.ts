@@ -32,6 +32,7 @@ import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { IModelCatalog } from '#/kosong/model/catalog';
+import { IModelService } from '#/kosong/model/model';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
 import { IHostClock } from '#/os/interface/hostClock';
@@ -367,6 +368,11 @@ describe('AgentLifecycleService', () => {
     ix.stub(IHostFileSystem, { _serviceBrand: undefined } as IHostFileSystem);
     ix.stub(IHostClock, { _serviceBrand: undefined } as IHostClock);
     ix.stub(IModelCatalog, { _serviceBrand: undefined } as IModelCatalog);
+    ix.stub(IModelService, {
+      _serviceBrand: undefined,
+      onDidChangeModels: Event.None,
+      onDidChangeDefaultModel: Event.None,
+    } as unknown as IModelService);
     ix.stub(IFlagService, stubFlag());
     ix.stub(IProtocolAdapterRegistry, {
       _serviceBrand: undefined,
