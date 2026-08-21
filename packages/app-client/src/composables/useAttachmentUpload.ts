@@ -10,7 +10,11 @@
 //
 // Pending attachments are scoped per session (keyed by session id) so switching
 // sessions can't leak one session's unsent attachments into another session's
-// next submit. The composer keeps `handleSubmit`/`handleSteer` (which read the
+// next submit. Ready attachments (upload completed, daemon file id known) also
+// persist to localStorage per session scope, so they survive the composer
+// unmounting — switching away from the New Session page and back, or a page
+// refresh — exactly like the text draft (see "Draft persistence" below).
+// The composer keeps `handleSubmit`/`handleSteer` (which read the
 // attachments to build the payload) and the `hasUpload` toolbar flag; this
 // composable owns the attachment state, all the file-input UI handlers, and the
 // paste listener + object-URL cleanup lifecycle.
@@ -19,7 +23,16 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { KimiWebApi } from '@moonshot-ai/app-core/api';
 import type { TurnAttachment } from '@moonshot-ai/app-core/client';
 import { track } from '../contracts';
-import { partitionDroppedItems, partitionPastedItems } from '@moonshot-ai/app-core/lib';
+import {
+  attachmentDraftStorageKey,
+  partitionDroppedItems,
+  partitionPastedItems,
+  safeGetJson,
+  safeRemove,
+  safeSetJson,
+} from '@moonshot-ai/app-core/lib';
+import { promptAttachmentToTurnAttachment } from '../client/attachmentsToContent';
+import type { PromptAttachment } from '../client/types';
 
 export interface Attachment {
   /** Unique local id (used as :key) */
@@ -52,8 +65,9 @@ type UploadImage = (
 
 export interface AttachmentUploadDeps {
   /** Authenticated file-byte fetch — a bare getFileUrl src 401s under daemon
-      auth, so protected thumbnails load through the API client. */
-  api: Pick<KimiWebApi, 'getFileBlob' | 'getSessionMediaBlob'>;
+      auth, so protected thumbnails load through the API client. The URL
+      builders rebuild a restored draft's preview/lightbox target. */
+  api: Pick<KimiWebApi, 'getFileBlob' | 'getSessionMediaBlob' | 'getFileUrl' | 'getSessionMediaUrl'>;
   /** Upload a blob; resolves to the daemon file id, or null on failure.
       Getter so a prop change is picked up. Undefined disables attaching. */
   uploadImage: () => UploadImage | undefined;
@@ -80,8 +94,89 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     return `att_${++localIdCounter}`;
   }
 
+  // -------------------------------------------------------------------------
+  // Draft persistence. Pending attachments survive the composer unmounting
+  // (switching between the New Session page and a session view, or a page
+  // refresh) the same way the text draft does: metadata is written to
+  // localStorage per session scope and rehydrated on next mount. Only READY
+  // attachments persist — the entry's daemon file id is the restore handle.
+  // In-flight uploads (no fileId yet) are dropped: rehydrating them would
+  // need the local bytes, and base64-inlining file data into localStorage is
+  // off the table (5 MB quota). Failed uploads drop too. Thumbnails are NOT
+  // stored — restore re-fetches them with auth via loadAttachments.
+  // -------------------------------------------------------------------------
+
+  /** localStorage shape of one persisted attachment — mirrors PromptAttachment. */
+  type PersistedAttachmentDraft = Pick<PromptAttachment, 'fileId' | 'kind' | 'name' | 'mediaType' | 'size' | 'sessionId'>;
+
+  function persistForSession(sid: string, atts: readonly Attachment[]): void {
+    const key = attachmentDraftStorageKey(sid);
+    const ready: PersistedAttachmentDraft[] = [];
+    for (const att of atts) {
+      if (att.uploading || att.error || !att.fileId) continue;
+      ready.push({
+        fileId: att.fileId,
+        kind: att.kind,
+        name: att.name,
+        mediaType: att.mediaType,
+        size: att.size,
+        sessionId: att.sessionId,
+      });
+    }
+    if (ready.length === 0) safeRemove(key);
+    else safeSetJson(key, ready);
+  }
+
+  // Set by onUnmounted. Async callbacks that outlive the composer (an
+  // in-flight upload, a thumbnail blob fetch) must not touch state or
+  // storage afterwards: setForSession would write this dead instance's stale
+  // array over a newer composer instance's persisted draft, and a
+  // late-created object URL would never be revoked (the unmount hook can only
+  // revoke URLs that already exist).
+  let disposed = false;
+
   function setForSession(sid: string, next: Attachment[]): void {
+    // Drop post-unmount writes — see `disposed` above.
+    if (disposed) return;
     attachmentsBySession.value = { ...attachmentsBySession.value, [sid]: next };
+    // Persist synchronously: a submit/steer clears the strip right before the
+    // composer unmounts (optimistic first message), so a watcher would flush
+    // too late and the remount would resurrect already-sent attachments — the
+    // same race useComposerDraft's clearDraft guards against.
+    persistForSession(sid, next);
+  }
+
+  /** Rehydrate a session's persisted attachment draft into the strip. Skipped
+      when the in-memory map already holds the session — live state (with its
+      object-URL thumbnails) always wins over storage. Invalid entries are
+      dropped; a malformed payload hydrates nothing. */
+  function hydrateDraft(sid: string): void {
+    if (attachmentsBySession.value[sid] !== undefined) return;
+    const stored = safeGetJson<unknown>(attachmentDraftStorageKey(sid));
+    if (!Array.isArray(stored) || stored.length === 0) return;
+    const valid: PersistedAttachmentDraft[] = [];
+    for (const entry of stored as Array<Partial<PersistedAttachmentDraft> | null>) {
+      if (!entry || typeof entry.fileId !== 'string' || entry.fileId === '') continue;
+      if (entry.kind !== 'image' && entry.kind !== 'video' && entry.kind !== 'file') continue;
+      valid.push({
+        fileId: entry.fileId,
+        kind: entry.kind,
+        name: typeof entry.name === 'string' && entry.name !== '' ? entry.name : entry.kind,
+        mediaType: typeof entry.mediaType === 'string' ? entry.mediaType : undefined,
+        size: typeof entry.size === 'number' ? entry.size : undefined,
+        sessionId: typeof entry.sessionId === 'string' ? entry.sessionId : undefined,
+      });
+    }
+    if (valid.length === 0) return;
+    // loadAttachments rebuilds the chips without re-uploading (fileIds are
+    // reused), restores the protected preview URL, and re-fetches authed
+    // thumbnails for images — exactly the edit/queue refill path. Append is
+    // moot (the slot is empty) but keeps it from touching live state.
+    loadAttachments(
+      valid.map((att) => promptAttachmentToTurnAttachment(api, att)),
+      sid,
+      { append: true },
+    );
   }
 
   function revokeAttachment(att: Attachment): void {
@@ -383,6 +478,10 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
             ? api.getSessionMediaBlob(att.sessionId, att.fileId)
             : api.getFileBlob(att.fileId);
           void blobRequest.then((blob) => {
+            // Unmounted while the fetch was in flight: drop the response
+            // without creating an object URL — one created now would never
+            // be revoked (the unmount hook already ran).
+            if (disposed) return;
             const blobUrl = URL.createObjectURL(blob);
             const current = attachmentsBySession.value[sid] ?? [];
             if (!current.some((a) => a.localId === localId)) {
@@ -436,10 +535,15 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
   }
 
   // Close the preview lightbox when switching sessions — it may reference an
-  // attachment that belongs to the previous session.
+  // attachment that belongs to the previous session. Then rehydrate the new
+  // session's persisted draft if it has no live state yet.
   watch(sessionId, () => {
     previewAttachment.value = null;
+    hydrateDraft(sessionId() ?? '');
   });
+
+  // First mount: restore the current session's persisted attachment draft.
+  hydrateDraft(sessionId() ?? '');
 
   onMounted(() => {
     document.addEventListener('paste', handleDocumentPaste);
@@ -451,6 +555,8 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
 
   // Revoke all object URLs (every session) and remove the global listener on unmount.
   onUnmounted(() => {
+    // First: late async callbacks must no-op from here on (see `disposed`).
+    disposed = true;
     document.removeEventListener('paste', handleDocumentPaste);
     document.removeEventListener('dragenter', handleWindowDragEnter);
     document.removeEventListener('dragover', handleWindowDragOver);

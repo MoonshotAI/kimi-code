@@ -17,8 +17,15 @@ vi.mock('vue', async (importOriginal) => {
   return { ...actual, onMounted: vi.fn(), onUnmounted: vi.fn() };
 });
 
-// The api is injected; stub the file-byte fetch.
-const apiMock = { getFileBlob: vi.fn(), getSessionMediaBlob: vi.fn() };
+// The api is injected; stub the file-byte fetch and the URL builders.
+const apiMock = {
+  getFileBlob: vi.fn(),
+  getSessionMediaBlob: vi.fn(),
+  getFileUrl: vi.fn((fileId: string) => `https://example.test/api/v1/files/${fileId}`),
+  getSessionMediaUrl: vi.fn(
+    (sessionId: string, fileId: string) => `https://example.test/api/v1/sessions/${sessionId}/media/${fileId}`,
+  ),
+};
 
 type UploadImage = (
   file: Blob,

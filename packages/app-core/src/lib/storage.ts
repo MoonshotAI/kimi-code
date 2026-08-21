@@ -81,6 +81,13 @@ export function draftStorageKey(sid: string | undefined): string {
   return `kimi-web.draft.${sid && sid.length > 0 ? sid : '__new__'}`;
 }
 
+/** Per-session composer attachment-draft key (metadata only — the file bytes
+    stay on the daemon; see useAttachmentUpload). Mirrors draftStorageKey's
+    `__new__` scope for the no-session composer. */
+export function attachmentDraftStorageKey(sid: string | undefined): string {
+  return `kimi-web.attachment-draft.${sid && sid.length > 0 ? sid : '__new__'}`;
+}
+
 export function safeGetString(key: string): string | null {
   try {
     return globalThis.localStorage.getItem(key);
