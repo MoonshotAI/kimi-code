@@ -406,14 +406,30 @@ export class Agent {
     try {
       const effort = provider.thinkingEffort;
       if (effort === null || effort === 'on' || effort === 'off') return;
-      // An effort pinned by KIMI_MODEL_THINKING_EFFORT is already covered by
-      // the apply-time override warning — do not double-report it here.
-      if (this.config.thinkingEffortOverridden) return;
       const resolved =
         modelAlias === undefined
           ? undefined
           : this.modelProvider?.resolveProviderConfig(modelAlias);
       if (resolved === undefined) return;
+      if (this.config.thinkingEffortOverridden) {
+        // The pin may have been listed when applied (no warning then) and
+        // dropped by a later reload: re-check it against the current list
+        // and emit the override warning. Its dedup key carries the list, so
+        // an unchanged list dedups against the apply-time warning.
+        this.warnAboutUnlistedThinkingEffortOverride(
+          modelAlias,
+          {
+            provider: resolved.providerName,
+            model: resolved.provider.model,
+            maxContextSize: Math.max(resolved.modelCapabilities.max_context_tokens, 1),
+            supportEfforts:
+              resolved.supportEfforts === undefined ? undefined : [...resolved.supportEfforts],
+            defaultEffort: resolved.defaultEffort,
+          },
+          effort,
+        );
+        return;
+      }
       const supportEfforts = normalizeDeclaredEfforts(resolved.supportEfforts);
       if (supportEfforts.length === 0) return;
       if (supportEfforts.includes(effort)) return;

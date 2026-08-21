@@ -587,6 +587,151 @@ describe('ConfigState model capabilities', () => {
     });
   });
 
+  it('warns once when a reload drops the env-pinned effort from the declared list', async () => {
+    // The pin was listed when applied (no apply-time warning); the reload
+    // narrows the list to ["max"], so the next request must surface the
+    // override diagnostic against the new list — exactly once.
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'high');
+    try {
+      const compatibleModel = (supportEfforts: string[]) => ({
+        provider: 'compatible',
+        model: 'compatible-model',
+        protocol: 'anthropic' as const,
+        maxContextSize: 128_000,
+        capabilities: ['thinking'],
+        supportEfforts,
+      });
+      let current: KimiConfig = {
+        providers: {
+          compatible: {
+            type: 'kimi',
+            apiKey: 'test-key',
+            baseUrl: 'https://api.example.test',
+          },
+        },
+        models: { compatible: compatibleModel(['high', 'max']) },
+      };
+      let requests = 0;
+      const ctx = testAgent({
+        initialConfig: current,
+        providerManager: new ProviderManager({ config: () => current }),
+        generate: async (provider) => {
+          requests += 1;
+          expect(provider.thinkingEffort).toBe('high');
+          return {
+            id: 'response-1',
+            message: { role: 'assistant', content: [], toolCalls: [] },
+            usage: emptyUsage(),
+            finishReason: 'completed',
+            rawFinishReason: 'stop',
+          };
+        },
+      });
+      ctx.agent.config.update({
+        modelAlias: 'compatible',
+        systemPrompt: 'system',
+      });
+
+      await ctx.agent.llm.chat({
+        messages: [],
+        tools: [],
+        signal: new AbortController().signal,
+      });
+
+      expect(requests).toBe(1);
+      expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+
+      current = {
+        ...current,
+        models: { compatible: compatibleModel(['max']) },
+      };
+
+      await ctx.agent.llm.chat({
+        messages: [],
+        tools: [],
+        signal: new AbortController().signal,
+      });
+
+      expect(requests).toBe(2);
+      expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([
+        {
+          type: '[rpc]',
+          event: 'warning',
+          args: {
+            code: 'thinking-effort-override-not-listed',
+            message:
+              'Thinking effort "high" is not listed for model "compatible-model" (known: max). The value will be sent unchanged to the backend.',
+          },
+        },
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('stays silent when the env-pinned effort survives a config reload', async () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'high');
+    try {
+      const compatibleModel = (supportEfforts: string[]) => ({
+        provider: 'compatible',
+        model: 'compatible-model',
+        protocol: 'anthropic' as const,
+        maxContextSize: 128_000,
+        capabilities: ['thinking'],
+        supportEfforts,
+      });
+      let current: KimiConfig = {
+        providers: {
+          compatible: {
+            type: 'kimi',
+            apiKey: 'test-key',
+            baseUrl: 'https://api.example.test',
+          },
+        },
+        models: { compatible: compatibleModel(['high', 'max']) },
+      };
+      const ctx = testAgent({
+        initialConfig: current,
+        providerManager: new ProviderManager({ config: () => current }),
+        generate: async (provider) => {
+          expect(provider.thinkingEffort).toBe('high');
+          return {
+            id: 'response-1',
+            message: { role: 'assistant', content: [], toolCalls: [] },
+            usage: emptyUsage(),
+            finishReason: 'completed',
+            rawFinishReason: 'stop',
+          };
+        },
+      });
+      ctx.agent.config.update({
+        modelAlias: 'compatible',
+        systemPrompt: 'system',
+      });
+
+      await ctx.agent.llm.chat({
+        messages: [],
+        tools: [],
+        signal: new AbortController().signal,
+      });
+
+      current = {
+        ...current,
+        models: { compatible: compatibleModel(['low', 'high']) },
+      };
+
+      await ctx.agent.llm.chat({
+        messages: [],
+        tools: [],
+        signal: new AbortController().signal,
+      });
+
+      expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('uses session id as a provider prompt cache hint without storing it on Agent', () => {
     const ctx = testAgent({
       providerManager: new ProviderManager({
