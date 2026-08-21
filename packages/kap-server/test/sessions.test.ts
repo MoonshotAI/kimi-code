@@ -20,9 +20,11 @@ import {
   IEventService,
   ISessionCronService,
   ISessionManager,
+  IWorkspaceService,
   MAIN_AGENT_ID,
   closeSessionById,
   getLiveSessionById,
+  resumeSessionById,
   sessionDirOf,
   type ServiceIdentifier,
   type ScopeSeed,
@@ -772,6 +774,30 @@ describe('server-v2 /api/v1/sessions', () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
+
+    const archived = await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
+    expect(archived.body.code).toBe(0);
+    expect(archived.body.data).toEqual({ archived: true });
+
+    const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
+    expect(got.body.code).toBe(0);
+    expect(got.body.data.archived).toBe(true);
+  });
+
+  it('archives a cold session after a failed resume when the workspace root is gone', async () => {
+    const cwd = join(home as string, 'gone-ws');
+    await mkdir(cwd);
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+    await closeSessionById((server as RunningServer).core.accessor, id);
+    await (server as RunningServer).core.accessor
+      .get(IWorkspaceService)
+      .delete(encodeWorkDirKey(cwd));
+    await rm(cwd, { recursive: true, force: true });
+
+    await expect(
+      resumeSessionById((server as RunningServer).core.accessor, id),
+    ).rejects.toThrow(/does not exist/);
 
     const archived = await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
     expect(archived.body.code).toBe(0);

@@ -10,7 +10,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import {
   AgentEffectContribution,
   type AgentEffectDefinition,
@@ -102,6 +102,7 @@ export class SessionTodoService extends Service implements ISessionTodoService {
     if (handle === undefined) {
       throw new Error(`Agent ${agent.agentId}:${String(agent.generation)} is stale`);
     }
+    if (agent.agentId !== MAIN_AGENT_ID) return;
     const eventBus = handle.accessor.get(IEventBus);
     const injector = handle.accessor.get(IAgentContextInjectorService);
     const memory = handle.accessor.get(IAgentContextMemoryService);

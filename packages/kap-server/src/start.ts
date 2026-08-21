@@ -3,8 +3,10 @@ import {
   drainQueryStoreDisposals,
   drainSessionMetadataWrites,
   drainSessionIndexMirror,
+  drainLogCloses,
   ConfigWarning,
   CapabilityChanged,
+  IAppendLogStore,
   IConfigService,
   IEventService,
   IOAuthService,
@@ -357,11 +359,14 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await drainSessionMetadataWrites();
       await core.accessor.get(ISessionIndexMirror).drain();
       fsWatchBridge.dispose();
+      const appendLogStore = core.accessor.get(IAppendLogStore);
       core.dispose();
+      await appendLogStore.drainRetirements();
       await drainSessionIndexMirror();
       await drainGlobalSearchDisposals();
       await drainQueryStoreDisposals();
       await drainSessionMetadataWrites();
+      await drainLogCloses();
     } finally {
       await registration.release();
     }

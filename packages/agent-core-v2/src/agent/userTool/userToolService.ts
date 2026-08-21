@@ -58,9 +58,17 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
     return [...this.agentState.get(userToolKey).values()];
   }
 
-  inheritUserTools(parent: IAgentUserToolService): void {
+  inheritUserTools(
+    parent: IAgentUserToolService,
+    activeToolNames?: readonly string[],
+  ): void {
     for (const registration of parent.list()) {
-      this.register(registration);
+      void this.dispatcher.dispatch(
+        new ToolsRegisterUserTool({ ...registration, agentId: this.scopeContext.agentId }),
+      );
+      const activate =
+        activeToolNames === undefined || activeToolNames.includes(registration.name);
+      this.applyRegister(registration, { activate });
     }
   }
 

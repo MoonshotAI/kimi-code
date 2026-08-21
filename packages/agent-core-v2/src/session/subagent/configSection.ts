@@ -333,6 +333,21 @@ export function stripSubagentModelParameter(
   return next;
 }
 
+export function stripSubagentForkParameter(
+  parameters: Record<string, unknown>,
+): Record<string, unknown> {
+  const properties = parameters['properties'];
+  if (!isPlainObject(properties) || !('fork' in properties)) return parameters;
+  const nextProperties = { ...properties };
+  delete nextProperties['fork'];
+  const next: Record<string, unknown> = { ...parameters, properties: nextProperties };
+  const required = parameters['required'];
+  if (Array.isArray(required) && required.includes('fork')) {
+    next['required'] = required.filter((entry) => entry !== 'fork');
+  }
+  return next;
+}
+
 export function wrapSubagentModelError(
   error: unknown,
   boundModel: string,

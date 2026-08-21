@@ -50,12 +50,12 @@ interface ProfileStub {
   readonly active: Set<string>;
 }
 
-function createProfileStub(): IAgentProfileService & ProfileStub {
+function createProfileStub(activeToolNames?: readonly string[]): IAgentProfileService & ProfileStub {
   const active = new Set<string>();
   return {
     active,
     _serviceBrand: undefined,
-    getActiveToolNames: () => undefined,
+    getActiveToolNames: () => activeToolNames,
     addActiveTool: (name: string) => {
       active.add(name);
     },
@@ -225,6 +225,32 @@ describe('AgentUserToolService (wire-backed)', () => {
         time: expect.any(Number),
       },
     ]);
+  });
+
+  it('inherits a registered tool without activating it when absent from the active tool names', () => {
+    svc.register(toolA);
+
+    const ixChild = disposables.add(new TestInstantiationService());
+    ixChild.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ixChild.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ixChild.set(IAgentStateService, new AgentStateService());
+    ixChild.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
+    const childProfile = createProfileStub([]);
+    ixChild.stub(IAgentProfileService, childProfile);
+    ixChild.stub(ISessionInteractionService, createInteractionStub());
+    ixChild.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
+    registerTestAgentWire(ixChild, testWireScope(SCOPE, 'inactive-user-tool-child'), {
+      log: ixChild.get(IAppendLogStore),
+    });
+    registerTestEventDispatcher(ixChild);
+    const child = ixChild.get(IAgentUserToolService);
+    const childRegistry = ixChild.get(IAgentToolRegistryService);
+
+    child.inheritUserTools(svc, []);
+
+    expect(child.list()).toEqual([toolA]);
+    expect(childRegistry.resolve(toolA.name)).toBeDefined();
+    expect(childProfile.active.has(toolA.name)).toBe(false);
   });
 
   it('re-registering an equal tool is a no-op on the model (same reference)', () => {

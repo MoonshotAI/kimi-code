@@ -255,7 +255,7 @@ describe('SessionTodoService', () => {
       { title: 'sub todo', status: 'done' },
     ]);
     expect(main.activeReminders()).toBe(1);
-    expect(sub.activeReminders()).toBe(1);
+    expect(sub.activeReminders()).toBe(0);
     runtime.dispose();
   });
 
@@ -340,6 +340,19 @@ describe('SessionTodoService', () => {
     runtime.dispose();
   });
 
+  it('binds the stale-todo reminder only into the main agent', async () => {
+    const main = makeFakeAgent('main');
+    const sub = makeFakeAgent('agent-1');
+    const runtime = makeTodoRuntime(makeLifecycleStub([main.handle, sub.handle]));
+
+    await runtime.service.getTodos(main.context);
+    await runtime.service.getTodos(sub.context);
+
+    expect(main.registeredVariants).toContain(TODO_LIST_REMINDER_VARIANT);
+    expect(sub.registeredVariants).not.toContain(TODO_LIST_REMINDER_VARIANT);
+    runtime.dispose();
+  });
+
   it('cleans malformed replay values', async () => {
     const main = makeFakeAgent('main');
     const runtime = makeTodoRuntime(makeLifecycleStub([main.handle]));
@@ -373,7 +386,7 @@ describe('SessionTodoService', () => {
     await nextTick();
 
     expect(main.activeReminders()).toBe(0);
-    expect(sub.activeReminders()).toBe(1);
+    expect(sub.activeReminders()).toBe(0);
     await expect(runtime.service.getTodos(main.context)).rejects.toThrow('Agent main:1 is stale');
     runtime.dispose();
   });

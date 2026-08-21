@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.2
+
+### Patch Changes
+
+- [#3079](https://github.com/MoonshotAI/kimi-code/pull/3079) [`35befdc`](https://github.com/MoonshotAI/kimi-code/commit/35befdcef2be344d931ea20063cb64113350dc4b) Thanks [@gaoyuan1223m](https://github.com/gaoyuan1223m)! - Fix multi-select questions jumping to the next question after only one answer is selected.
+
+- Updated dependencies [[`3d77620`](https://github.com/MoonshotAI/kimi-code/commit/3d7762003a4a35cbeb8571d471c6898a006152e6)]:
+  - @moonshot-ai/kimi-code-sdk@0.19.1
+
 ## 0.7.1
 
 ### Patch Changes

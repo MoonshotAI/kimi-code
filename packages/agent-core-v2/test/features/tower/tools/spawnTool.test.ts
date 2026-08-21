@@ -212,6 +212,19 @@ describe('TowerSpawnTool', () => {
     expect(createAgent).not.toHaveBeenCalled();
   });
 
+  it('rejects non-main callers with the main-agent-only error before any work', async () => {
+    ix.stub(IAgentScopeContext, { agentId: 'agent-w1', scope: (subKey?: string) => subKey ?? '' });
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result).toEqual({
+      output: 'Tower orchestration tools are only supported by the main agent.',
+      isError: true,
+    });
+    expect(createAgent).not.toHaveBeenCalled();
+    expect(registerTask).not.toHaveBeenCalled();
+  });
+
   it('surfaces the rate-limit reason as an error result', async () => {
     gate = { ok: false, reason: 'tower spawn paused: provider is rate-limiting' };
 

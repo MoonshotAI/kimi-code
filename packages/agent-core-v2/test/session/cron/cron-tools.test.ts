@@ -35,6 +35,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const TRUNCATED = '\u2026(truncated)';
 
 const scopeContext = makeAgentScopeContext({ agentId: 'main', agentScope: '' });
+const subagentScopeContext = makeAgentScopeContext({ agentId: 'agent-1', agentScope: '' });
 
 interface FakeStore {
   add(init: CronTaskInit, nowMs: number): CronTask;
@@ -490,7 +491,7 @@ describe('CronDeleteTool', () => {
 describe('CronListTool', () => {
   it('renders the empty case with a zero header and no separator', async () => {
     const harness = createToolHarness();
-    const tool = new CronListTool(harness.cron);
+    const tool = new CronListTool(harness.cron, scopeContext);
 
     expect(assertSuccess(await runTool<CronListInput>(tool, {}))).toMatchInlineSnapshot(`
       "cron_jobs: 0
@@ -500,7 +501,7 @@ describe('CronListTool', () => {
 
   it('renders a single recurring task with all expected columns', async () => {
     const harness = createToolHarness();
-    const tool = new CronListTool(harness.cron);
+    const tool = new CronListTool(harness.cron, scopeContext);
     harness.store.add({ cron: '*/5 * * * *', prompt: 'hi', recurring: true }, harness.now());
 
     const output = assertSuccess(await runTool<CronListInput>(tool, {}));
@@ -521,7 +522,7 @@ describe('CronListTool', () => {
   it('renders nextFireAt in local time with an explicit offset', async () => {
     const now = new Date(2026, 4, 29, 8, 35, 0, 0).getTime();
     const harness = createToolHarness({ now });
-    const tool = new CronListTool(harness.cron);
+    const tool = new CronListTool(harness.cron, scopeContext);
     harness.store.add({ cron: '0 9 * * *', prompt: 'morning', recurring: true }, now);
 
     const output = assertSuccess(await runTool<CronListInput>(tool, {}));
@@ -536,7 +537,7 @@ describe('CronListTool', () => {
 
   it('separates multiple records in insertion order', async () => {
     const harness = createToolHarness();
-    const tool = new CronListTool(harness.cron);
+    const tool = new CronListTool(harness.cron, scopeContext);
     harness.store.add({ cron: '*/5 * * * *', prompt: 'first', recurring: true }, harness.now());
     harness.store.add({ cron: '0 12 * * *', prompt: 'second', recurring: false }, harness.now());
 
@@ -566,7 +567,7 @@ describe('CronListTool', () => {
 
   it('flags recurring tasks older than seven days as stale', async () => {
     const harness = createToolHarness();
-    const tool = new CronListTool(harness.cron);
+    const tool = new CronListTool(harness.cron, scopeContext);
     harness.store.add({ cron: '*/5 * * * *', prompt: 'old', recurring: true }, harness.now() - 8 * MS_PER_DAY);
 
     const output = assertSuccess(await runTool<CronListInput>(tool, {}));
@@ -586,7 +587,7 @@ describe('CronListTool', () => {
 
   it('reports explicit one-shot tasks as recurring=false', async () => {
     const harness = createToolHarness();
-    const tool = new CronListTool(harness.cron);
+    const tool = new CronListTool(harness.cron, scopeContext);
     harness.store.add({ cron: '0 12 * * *', prompt: 'noon', recurring: false }, harness.now());
 
     const output = assertSuccess(await runTool<CronListInput>(tool, {}));
@@ -607,7 +608,7 @@ describe('CronListTool', () => {
 
   it('renders malformed cron records without throwing', async () => {
     const harness = createToolHarness();
-    const tool = new CronListTool(harness.cron);
+    const tool = new CronListTool(harness.cron, scopeContext);
     harness.store.add({ cron: 'garbage', prompt: 'x', recurring: true }, harness.now());
 
     const output = assertSuccess(await runTool<CronListInput>(tool, {}));
@@ -628,7 +629,7 @@ describe('CronListTool', () => {
   it('anchors one-shot nextFireAt at createdAt while the current slot is pending', async () => {
     const createdAt = new Date(2026, 4, 29, 11, 55, 0, 0).getTime();
     const harness = createToolHarness({ now: createdAt });
-    const tool = new CronListTool(harness.cron);
+    const tool = new CronListTool(harness.cron, scopeContext);
     harness.store.add({ cron: '0 12 * * *', prompt: 'noon-pending', recurring: false }, createdAt);
     harness.advance(10 * 60_000);
 
@@ -644,7 +645,7 @@ describe('CronListTool', () => {
   it('reports the current pending jitter window instead of skipping to the next period', async () => {
     const anchor = new Date(2026, 4, 29, 8, 35, 0, 0).getTime();
     const harness = createToolHarness({ now: anchor, noJitter: false });
-    const tool = new CronListTool(harness.cron);
+    const tool = new CronListTool(harness.cron, scopeContext);
     harness.store.adopt({
       id: 'ffffffff',
       cron: '*/5 * * * *',
@@ -665,7 +666,7 @@ describe('CronListTool', () => {
 
   it('truncates prompts over 200 UTF-8 bytes', async () => {
     const harness = createToolHarness();
-    const tool = new CronListTool(harness.cron);
+    const tool = new CronListTool(harness.cron, scopeContext);
     const longPrompt = 'x'.repeat(300);
     harness.store.add({ cron: '*/5 * * * *', prompt: longPrompt, recurring: true }, harness.now());
 
@@ -679,7 +680,7 @@ describe('CronListTool', () => {
 
   it('walks back to a UTF-8 character boundary when truncating prompts', async () => {
     const harness = createToolHarness();
-    const tool = new CronListTool(harness.cron);
+    const tool = new CronListTool(harness.cron, scopeContext);
     const cjkPrompt = '\u4f60'.repeat(100);
     harness.store.add({ cron: '*/5 * * * *', prompt: cjkPrompt, recurring: true }, harness.now());
 
@@ -692,6 +693,45 @@ describe('CronListTool', () => {
     expect(rendered).not.toContain('\ufffd');
     const stripped = rendered.replace(/^"|\\u2026\(truncated\)"$/g, '');
     expect(stripped.length).toBeGreaterThan(0);
+  });
+});
+
+describe('cron tools on non-main agents', () => {
+  it('CronCreate rejects with the main-agent-only error before any validation', async () => {
+    const harness = createToolHarness();
+    const tool = new CronCreateTool(harness.cron, subagentScopeContext);
+
+    const output = assertError(
+      await runTool<CronCreateInput>(tool, {
+        cron: '*/5 * * * *',
+        prompt: 'ping',
+        recurring: true,
+      }),
+    );
+
+    expect(output).toBe('Cron tools are only supported by the main agent.');
+    expect(harness.store.list()).toEqual([]);
+  });
+
+  it('CronDelete rejects with the main-agent-only error before mutating the store', async () => {
+    const harness = createToolHarness();
+    harness.store.add({ cron: '*/5 * * * *', prompt: 'ping', recurring: true }, harness.now());
+    const tool = new CronDeleteTool(harness.cron, subagentScopeContext);
+
+    const output = assertError(await runTool<CronDeleteInput>(tool, { id: 'deadbeef' }));
+
+    expect(output).toBe('Cron tools are only supported by the main agent.');
+    expect(harness.store.list()).toHaveLength(1);
+    expect(harness.deleted).toEqual([]);
+  });
+
+  it('CronList rejects with the main-agent-only error', async () => {
+    const harness = createToolHarness();
+    const tool = new CronListTool(harness.cron, subagentScopeContext);
+
+    const output = assertError(await runTool<CronListInput>(tool, {}));
+
+    expect(output).toBe('Cron tools are only supported by the main agent.');
   });
 });
 

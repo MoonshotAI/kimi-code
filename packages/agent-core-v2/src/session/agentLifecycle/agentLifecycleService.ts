@@ -32,6 +32,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { abortError } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { closeTrailingOpenToolExchange } from '#/agent/contextMemory/openToolExchange';
 import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import '#/agent/runtimeBinding/runtimeBindingService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
@@ -152,7 +153,12 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const agentScope = this.ctx.scope(`agents/${agentId}`);
     const agentHomedir = join(this.bootstrap.homeDir, agentScope);
     const generation = ++this.nextLifecycleGeneration;
-    const scopeContext = makeAgentScopeContext({ agentId, agentScope, generation });
+    const scopeContext = makeAgentScopeContext({
+      agentId,
+      agentScope,
+      forkedFrom: opts.forkedFrom,
+      generation,
+    });
     const agent = scopeContext.agentContext;
     const eventBus = this.instantiation.invokeFunction((accessor) =>
       accessor.get(ISessionEventBus) as ISessionEventBus | undefined,
@@ -235,6 +241,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       agentId: opts?.agentId,
       runtimeId: source.accessor.get(IAgentRuntimeBindingService).current.runtimeId,
       forkedFrom: source.id,
+      labels: opts?.labels,
     });
 
     const sourceData = source.accessor.get(IAgentProfileService).data();
@@ -254,7 +261,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
     const sourceMessages = source.accessor.get(IAgentContextMemoryService)?.get();
     if (sourceMessages !== undefined && sourceMessages.length > 0) {
-      child.accessor.get(IAgentContextMemoryService)?.append(...sourceMessages);
+      child.accessor
+        .get(IAgentContextMemoryService)
+        ?.append(...closeTrailingOpenToolExchange(sourceMessages));
     }
     return child;
   }

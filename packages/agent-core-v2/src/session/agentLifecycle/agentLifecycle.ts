@@ -23,6 +23,7 @@ export interface CreateAgentOptions {
 export interface ForkAgentOptions {
   readonly agentId?: string;
   readonly binding?: Partial<BindAgentInput>;
+  readonly labels?: Readonly<Record<string, string>>;
 }
 
 export interface AgentListFilter {

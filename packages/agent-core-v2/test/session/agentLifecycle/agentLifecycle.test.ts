@@ -24,10 +24,15 @@ import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import '#/agent/contextMemory/contextMemoryService';
+import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
+import type { ContextMessage } from '#/agent/contextMemory/types';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { IModelCatalog } from '#/kosong/model/catalog';
+import type { ToolCall } from '#/kosong/contract/message';
 import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionStateService } from '#/session/state/sessionState';
@@ -52,12 +57,16 @@ import { CRON_SECTION } from '#/app/cron/configSection';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { SessionInteractionService } from '#/session/interaction/interactionService';
 import { ISessionTodoService } from '#/session/todo/sessionTodo';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { SessionTodoService } from '#/session/todo/sessionTodoService';
 import { TodoAgentModelDefinition } from '#/session/todo/todoAgentModel';
 import { interactionKey } from '#/session/interaction/interactionOps';
 import '#/agent/toolDedupe/toolDedupeService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
+import { ISessionEventBus } from '#/app/event/eventBus';
+import { EventBusService } from '#/app/event/eventBusService';
 import '#/app/event/eventBusService';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
@@ -92,6 +101,7 @@ import {
 } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 const noopLog = {
@@ -155,6 +165,7 @@ function recordingAppendLog(initial: readonly WireRecord[] = []): {
     flush: () => Promise.resolve(),
     close: () => Promise.resolve(),
     acquire: () => ({ dispose: () => {} }),
+    drainRetirements: () => Promise.resolve(),
   };
   return {
     appended,
@@ -195,6 +206,7 @@ describe('AgentLifecycleService', () => {
     ix = disposables.add(new TestInstantiationService());
     ix.set(ISessionStateService, new SessionStateService());
     ix.set(IAgentStateService, new AgentStateService());
+    ix.set(ISessionEventBus, new SyncDescriptor(EventBusService));
     ix.get(IAgentStateService).contributeState(permissionModeKey);
     ix.get(IAgentStateService).contributeState(permissionModeConfiguredKey);
     ix.stub(IAppendLogStore, recordingAppendLog().store);
@@ -355,6 +367,7 @@ describe('AgentLifecycleService', () => {
     ix.stub(IHostFileSystem, { _serviceBrand: undefined } as IHostFileSystem);
     ix.stub(IHostClock, { _serviceBrand: undefined } as IHostClock);
     ix.stub(IModelCatalog, { _serviceBrand: undefined } as IModelCatalog);
+    ix.stub(IFlagService, stubFlag());
     ix.stub(IProtocolAdapterRegistry, {
       _serviceBrand: undefined,
     } as IProtocolAdapterRegistry);
@@ -438,6 +451,12 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       compacting: null,
     } as unknown as IAgentFullCompactionService);
+    ix.stub(ISessionTokenCountingService, {
+      estimateText: () => 0,
+      estimateMessage: () => 0,
+      estimateMessages: () => 0,
+      recordTruncation: () => {},
+    } as unknown as ISessionTokenCountingService);
     ix.set(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService));
   });
   afterEach(() => {
@@ -938,6 +957,73 @@ describe('AgentLifecycleService', () => {
     expect(childRuntime.current.runtimeId).toBe('remote');
     childRuntime.switch('local');
     expect(sourceRuntime.current.runtimeId).toBe('local');
+  });
+
+  it('fork seeds the child context, closing the trailing open tool exchange', async () => {
+    const logs = new Map<string, WireRecord[]>();
+    ix.stub(IAppendLogStore, {
+      _serviceBrand: undefined,
+      append: (scope: string, key: string, record: WireRecord) => {
+        const id = `${scope}/${key}`;
+        logs.set(id, [...(logs.get(id) ?? []), record]);
+      },
+      read: async function* (scope: string, key: string) {
+        for (const record of logs.get(`${scope}/${key}`) ?? []) yield record;
+      },
+      rewrite: (scope: string, key: string, next: readonly WireRecord[]) => {
+        logs.set(`${scope}/${key}`, [...next]);
+        return Promise.resolve();
+      },
+      flush: () => Promise.resolve(),
+      close: () => Promise.resolve(),
+      acquire: () => ({ dispose: () => {} }),
+    } as unknown as IAppendLogStore);
+    const svc = ix.get(IAgentLifecycleService);
+    const source = await svc.create({ agentId: 'main' });
+    const agentCall: ToolCall = {
+      type: 'function',
+      id: 'call_agent',
+      name: 'Agent',
+      arguments: '{}',
+    };
+    const history: ContextMessage[] = [
+      { role: 'user', content: [{ type: 'text', text: 'analyze this repo' }], toolCalls: [] },
+      { role: 'assistant', content: [], toolCalls: [agentCall], partial: true },
+    ];
+    source.accessor.get(IAgentContextMemoryService).append(...history);
+
+    const child = await svc.fork(agentContextOf(source), { agentId: 'forked' });
+
+    const seeded = child.accessor.get(IAgentContextMemoryService).get();
+    expect(seeded).toHaveLength(3);
+    expect(seeded[0]).toMatchObject({ role: 'user' });
+    expect(seeded[1]).toMatchObject({ role: 'assistant', partial: undefined });
+    expect(seeded[2]).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call_agent',
+      content: [{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }],
+    });
+  });
+
+  it('fork leaves the child context empty when the source history is empty', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const source = await svc.create({ agentId: 'main' });
+
+    const child = await svc.fork(agentContextOf(source), { agentId: 'forked' });
+
+    expect(child.accessor.get(IAgentContextMemoryService).get()).toEqual([]);
+  });
+
+  it('fork passes labels through to the registered agent metadata', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const source = await svc.create({ agentId: 'main' });
+
+    await svc.fork(agentContextOf(source), { agentId: 'forked', labels: { parentAgentId: 'main' } });
+
+    expect(registerAgent).toHaveBeenCalledWith(
+      'forked',
+      expect.objectContaining({ forkedFrom: 'main', labels: { parentAgentId: 'main' } }),
+    );
   });
 
   it('run throws when the agent does not exist', () => {

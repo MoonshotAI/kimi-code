@@ -1,12 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { AgentCacheProbeService } from '#/agent/usage/cacheProbeService';
 import {
   type UsageRecordedContext,
   type UsageStatus,
@@ -16,6 +17,8 @@ import { SessionUsageService } from '#/session/usage/sessionUsageService';
 import type { Event2 } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -182,8 +185,40 @@ describe('SessionUsageService (wire-backed)', () => {
         model: 'model-a',
         usage: a1,
         source: { type: 'turn', turnId: 7, step: 2 },
+        firstRecord: true,
       },
     ]);
+  });
+
+  it('marks firstRecord on the first live record only', async () => {
+    const contexts: UsageRecordedContext[] = [];
+    disposables.add(svc.onDidRecord((ctx) => contexts.push(ctx)));
+
+    await svc.record(agent, 'model-a', a1);
+    await svc.record(agent, 'model-b', b1);
+    await svc.record(agent, 'model-a', a2);
+
+    expect(contexts.map((ctx) => ctx.firstRecord)).toEqual([true, false, false]);
+  });
+
+  it('does not mark firstRecord when usage was restored from persisted records', async () => {
+    await svc.record(agent, 'model-a', a1);
+    const records = await readRecords();
+
+    const fresh = createFreshHost('usage-first-record-replay');
+    await restoreTestEventDispatcher(
+      fresh.dispatcher,
+      fresh.freshLog,
+      testWireScope(SCOPE, 'usage-first-record-replay'),
+      records,
+    );
+
+    const contexts: UsageRecordedContext[] = [];
+    disposables.add(fresh.usage.onDidRecord((ctx) => contexts.push(ctx)));
+    await fresh.usage.record(fresh.agent, 'model-a', a2);
+
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0]!.firstRecord).toBe(false);
   });
 
   it('rejects a context the lifecycle never issued', async () => {
@@ -275,6 +310,94 @@ describe('SessionUsageService (wire-backed)', () => {
       byModel: { 'model-a': a1 },
       total: a1,
       currentTurn: undefined,
+    });
+  });
+});
+
+describe('AgentCacheProbeService', () => {
+  function stubProbeDeps(forkedFrom: string | undefined): ReturnType<typeof vi.fn> {
+    const track2 = vi.fn();
+    ix.stub(ITelemetryService, {
+      _serviceBrand: undefined,
+      track2,
+    } as unknown as ITelemetryService);
+    ix.stub(IModelCatalog, {
+      _serviceBrand: undefined,
+      get: (alias: string) => {
+        if (alias !== 'model-a') throw new Error(`unknown model "${alias}"`);
+        return { id: alias, protocol: 'anthropic', providerType: 'kimi' } as unknown as Model;
+      },
+    } as unknown as IModelCatalog);
+    ix.stub(
+      IAgentScopeContext,
+      makeAgentScopeContext({ agentId: 'test-agent', agentScope: '', forkedFrom }),
+    );
+    return track2;
+  }
+
+  it('probes the first turn request of a forked agent', async () => {
+    const track2 = stubProbeDeps('main');
+    disposables.add(ix.createInstance(AgentCacheProbeService));
+
+    await svc.record(agent, 'model-a', a1, { type: 'turn', turnId: 1 });
+
+    expect(track2).toHaveBeenCalledTimes(1);
+    expect(track2).toHaveBeenCalledWith('prompt_cache_probe', {
+      source: 'fork',
+      turn_id: 1,
+      provider_type: 'kimi',
+      protocol: 'anthropic',
+      input_tokens: 8,
+      input_cache_read: 3,
+      input_cache_creation: 4,
+      output_tokens: 2,
+    });
+  });
+
+  it('probes only once', async () => {
+    const track2 = stubProbeDeps('main');
+    disposables.add(ix.createInstance(AgentCacheProbeService));
+
+    await svc.record(agent, 'model-a', a1, { type: 'turn', turnId: 1 });
+    await svc.record(agent, 'model-a', a2, { type: 'turn', turnId: 2 });
+
+    expect(track2).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays silent for a non-forked agent', async () => {
+    const track2 = stubProbeDeps(undefined);
+    disposables.add(ix.createInstance(AgentCacheProbeService));
+
+    await svc.record(agent, 'model-a', a1, { type: 'turn', turnId: 1 });
+
+    expect(track2).not.toHaveBeenCalled();
+  });
+
+  it('stays silent when the first record is not a turn request', async () => {
+    const track2 = stubProbeDeps('main');
+    disposables.add(ix.createInstance(AgentCacheProbeService));
+
+    await svc.record(agent, 'model-a', a1);
+    await svc.record(agent, 'model-a', a2, { type: 'turn', turnId: 1 });
+
+    expect(track2).not.toHaveBeenCalled();
+  });
+
+  it('probes without provider fields when the model alias is unknown', async () => {
+    const track2 = stubProbeDeps('main');
+    disposables.add(ix.createInstance(AgentCacheProbeService));
+
+    await svc.record(agent, 'model-b', b1, { type: 'turn', turnId: 1 });
+
+    expect(track2).toHaveBeenCalledWith('prompt_cache_probe', {
+      source: 'fork',
+      turn_id: 1,
+      provider_type: undefined,
+      protocol: undefined,
+      input_tokens: 800,
+      input_cache_read: 300,
+      input_cache_creation: 400,
+      output_tokens: 200,
     });
   });
 });
