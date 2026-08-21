@@ -15,7 +15,7 @@ import {
   ExperimentsSelectorComponent,
   type ExperimentalFeatureDraftChange,
 } from '../components/dialogs/experiments-selector';
-import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selector';
+import { modelDisplayName, segmentsFor, effortsOf } from '../components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
@@ -319,7 +319,7 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
     // input. Only Anthropic-compatible models WITHOUT a declared list keep
     // the warn-and-send escape hatch — there the engine passes the value
     // through for the backend to judge.
-    if (protocol !== 'anthropic' || (effective.supportEfforts?.length ?? 0) > 0) {
+    if (protocol !== 'anthropic' || effortsOf(effective).length > 0) {
       host.showError(
         `Unsupported thinking effort "${arg}" for ${alias}. Available: ${segments.join(', ')}`,
       );

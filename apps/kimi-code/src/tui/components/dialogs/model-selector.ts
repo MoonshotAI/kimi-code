@@ -107,7 +107,9 @@ export function thinkingAvailability(model: ModelAlias): ThinkingAvailability {
 }
 
 export function effortsOf(model: ModelAlias): readonly string[] {
-  return model.supportEfforts ?? [];
+  // Blank entries are not real efforts: the engine resolvers discard them
+  // (effortsFor), so a list like [""] must not count as a declared list here.
+  return (model.supportEfforts ?? []).filter((effort) => effort.trim().length > 0);
 }
 
 /**

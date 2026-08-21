@@ -8202,6 +8202,40 @@ describe('/effort support_efforts override', () => {
     expect(transcript).toContain('Thinking set to max.');
   });
 
+  it('treats a blank-only support_efforts list as no declared list', async () => {
+    // The engine resolvers discard empty entries, so support_efforts: [""]
+    // means "no declared list" and the Anthropic escape hatch still applies.
+    const session = makeSession();
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'kimi', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 100,
+            displayName: 'Compatible Model',
+            capabilities: ['thinking'],
+            supportEfforts: [''],
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true },
+      })),
+    });
+
+    driver.handleUserInput('/effort max');
+
+    await vi.waitFor(() => {
+      expect(session.setThinking).toHaveBeenCalledWith('max');
+    });
+    const transcript = renderTranscript(driver).replaceAll(/\s+/g, ' ');
+    expect(transcript).toContain('Sending "max" unchanged');
+  });
+
   it('offers the latest Opus efforts for an unknown Claude-marked Anthropic-compatible model', async () => {
     const { driver } = await makeDriver(makeSession(), {
       getConfig: vi.fn(async () => ({
