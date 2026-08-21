@@ -19,7 +19,7 @@ import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompacti
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
-import { IAgentExecutionContext } from '#/agent/agentContext/agentExecutionContext';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventService } from '#/app/event/event';
 import { AgentEvent2 } from '#/app/event/event2';
@@ -58,7 +58,7 @@ export class AgentConversationUndoService
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentConversationUndoParticipantRegistry
     private readonly participants: IAgentConversationUndoParticipantRegistry,
-    @IAgentExecutionContext private readonly agentCtx: IAgentExecutionContext,
+    @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @IEventService private readonly eventService: IEventService,

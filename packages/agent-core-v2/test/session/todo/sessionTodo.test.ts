@@ -261,12 +261,15 @@ describe('TodoAgentRuntime', () => {
         return agent.managed.runtimeSet.resolve(AgentTodo);
       },
     } as unknown as IAgentManager;
-    const binding = new AgentTodoBinding({
-      _serviceBrand: undefined,
-      agent: agent.context,
-      agentId: agent.context.agentId,
-      resolve: (capability) => manager.resolve(agent.context, capability),
-    });
+    const binding = new AgentTodoBinding(
+      manager,
+      {
+        _serviceBrand: undefined,
+        agentId: agent.context.agentId,
+        agentContext: agent.context,
+        scope: () => 'agents/main',
+      },
+    );
 
     expect(binding.get()).toEqual([]);
     binding.onDidChange(() => {}).dispose();

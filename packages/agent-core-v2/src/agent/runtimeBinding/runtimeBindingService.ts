@@ -3,7 +3,7 @@ import { defineState } from '#/state/state';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
 import { LifecycleScope } from '#/app/scopes';
-import { IAgentExecutionContext } from '#/agent/agentContext/agentExecutionContext';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import type { RuntimeBinding } from '#/runtime/runtime';
 import { RuntimeError } from '#/runtime/runtimeRegistry';
@@ -23,7 +23,7 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
   private readonly restoreHook: IDisposable;
 
   constructor(
-    @IAgentExecutionContext private readonly scopeContext: IAgentExecutionContext,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly state: IAgentStateService,
     @IAgentRuntimeBindingSeed seed: IAgentRuntimeBindingSeed,
     @ISessionContext private readonly session: ISessionContext,

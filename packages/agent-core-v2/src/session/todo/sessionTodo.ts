@@ -1,5 +1,6 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
+import { defineAgentCapability } from '#/agent/runtime/agentRuntime';
 
 import type { TodoItem } from './todoItem';
 
@@ -12,3 +13,5 @@ export interface IAgentTodo {
 }
 
 export const IAgentTodo = createDecorator<IAgentTodo>('agentTodo');
+
+export const AgentTodo = defineAgentCapability<IAgentTodo>('todo');

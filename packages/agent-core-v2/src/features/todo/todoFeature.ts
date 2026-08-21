@@ -3,7 +3,7 @@ import { ITodoListTool } from '#/agent/tools/todo-list/todo-list';
 import { TodoListTool } from '#/agent/tools/todo-list/todoListTool';
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
-import { IAgentTodo } from '#/session/todo/sessionTodo';
+import { AgentTodo, IAgentTodo } from '#/session/todo/sessionTodo';
 import { AgentTodoBinding, TodoAgentRuntimeDefinition } from '#/session/todo/todoAgentRuntime';
 
 export class TodoFeature extends Feature {
@@ -11,7 +11,7 @@ export class TodoFeature extends Feature {
 
   constructor() {
     super();
-    this.contributeAgentRuntime(TodoAgentRuntimeDefinition);
+    this.contributeAgentRuntime(AgentTodo, TodoAgentRuntimeDefinition);
     this.contributeAgentService(IAgentTodo, AgentTodoBinding, {
       activation: ScopeActivation.OnDemand,
     });

@@ -155,9 +155,7 @@ import {
   IHostProcessService,
   ISessionBtwService,
   ISessionContext,
-  IAgentExecutionContext,
   IAgentScopeContext,
-  makeAgentExecutionContext,
   makeAgentScopeContext,
   IAgentShellCommandService,
   IAgentStepRetryService,
@@ -1304,7 +1302,7 @@ export class AgentTestContext {
             get: (id) => container.invokeFunction((accessor) => accessor.get(id)),
           },
           dispose: () => { container.dispose(); },
-        }, agentScopeContext.agentContext);
+        });
       },
       seeds: collectScopeSeed(
         [
@@ -1379,15 +1377,6 @@ export class AgentTestContext {
             }
             reg.defineInstance(IAgentStateService, agentStateService);
             reg.defineInstance(IAgentScopeContext, agentScopeContext);
-            reg.defineInstance(
-              IAgentExecutionContext,
-              makeAgentExecutionContext(
-                agentScopeContext.agentContext,
-                (capability) => this.session.accessor
-                  .get(IAgentManager)
-                  .resolve(agentScopeContext.agentContext, capability),
-              ),
-            );
             reg.defineInstance(ITelemetryService, agentTelemetry);
           },
         ],

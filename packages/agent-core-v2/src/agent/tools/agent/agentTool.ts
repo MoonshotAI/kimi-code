@@ -19,7 +19,6 @@ import {
 } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
@@ -47,8 +46,8 @@ import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { IModelCatalog } from '#/kosong/model/catalog';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
+import { IAgentManager } from '#/session/agentManager/agentManager';
+import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentManager/subagentMetadata';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { Runtime } from '#/runtime/runtime';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -97,13 +96,12 @@ export class SubagentTool implements ISubagentTool {
   }
 
   private readonly callerAgentId: string;
-  private readonly callerAgent: AgentContext;
   private readonly canRunInBackground: () => boolean;
   private catalogReady = false;
   private frozenCatalogProfiles: readonly AgentProfile[] | undefined;
 
   constructor(
-    @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
+    @IAgentManager private readonly agentManager: IAgentManager,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
@@ -122,7 +120,6 @@ export class SubagentTool implements ISubagentTool {
     @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
   ) {
     this.callerAgentId = scopeContext.agentId;
-    this.callerAgent = scopeContext.agentContext;
     this.canRunInBackground = () =>
       this.toolPolicy.isToolActive('TaskList') &&
       this.toolPolicy.isToolActive('TaskOutput') &&
@@ -245,7 +242,7 @@ export class SubagentTool implements ISubagentTool {
   }
 
   private resumeProfileName(agentId: string): string | undefined {
-    const target = this.lifecycle.findAgentHandle(agentId);
+    const target = this.agentManager.handleOf(agentId);
     if (target === undefined) return undefined;
     return target.accessor.get(IAgentProfileService).data().profileName;
   }
@@ -256,7 +253,7 @@ export class SubagentTool implements ISubagentTool {
     controller: AbortController,
     runtime: Runtime,
   ): Promise<SubagentHandle> {
-    const requester = this.lifecycle.get(this.callerAgent);
+    const requester = this.agentManager.handleOf(this.callerAgentId);
     if (requester === undefined) {
       throw new Error2(
         ErrorCodes.AGENT_NOT_FOUND,
@@ -273,7 +270,7 @@ export class SubagentTool implements ISubagentTool {
     let displayModel: string | undefined;
     let promptText = args.prompt;
     if (isResume) {
-      const target = this.lifecycle.findAgentHandle(resumeAgentId);
+      const target = this.agentManager.handleOf(resumeAgentId);
       if (target === undefined) {
         throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent instance "${resumeAgentId}" does not exist`, {
           details: { agentId: resumeAgentId },
@@ -318,7 +315,7 @@ export class SubagentTool implements ISubagentTool {
       let created: IAgentScopeHandle;
       try {
         this.modelCatalog.get(binding.model);
-        created = await this.lifecycle.create({
+        const createdContext = await this.agentManager.create({
           binding: {
             profile: profile.name,
             model: binding.model,
@@ -327,6 +324,7 @@ export class SubagentTool implements ISubagentTool {
           labels: subagentLabels(this.callerAgentId),
           runtimeId: runtime.identity.runtimeId,
         });
+        created = this.agentManager.handleOf(createdContext.agentId)!;
       } catch (error) {
         throw wrapSubagentModelError(error, binding.model, own.modelAlias);
       }
@@ -353,7 +351,7 @@ export class SubagentTool implements ISubagentTool {
       model: displayModel,
     });
 
-    const target = this.lifecycle.findAgentHandle(agentId);
+    const target = this.agentManager.handleOf(agentId);
     if (target === undefined) throw new Error(`Agent "${agentId}" does not exist`);
     const run = await this.subagents.run(
       target.accessor.get(IAgentScopeContext).agentContext,
@@ -374,7 +372,7 @@ export class SubagentTool implements ISubagentTool {
       profileName,
       parentToolCallId: toolCallId,
       model: displayModel,
-      thinkingEffort: this.lifecycle.findAgentHandle(agentId)
+      thinkingEffort: this.agentManager.handleOf(agentId)
         ?.accessor.get(IAgentProfileService)
         .getEffectiveThinkingLevel(),
       completion: mirrored.then((r) => ({ result: r.summary, usage: r.usage })),
@@ -487,7 +485,7 @@ export class SubagentTool implements ISubagentTool {
         };
       }
 
-      const requester = this.lifecycle.get(this.callerAgent);
+      const requester = this.agentManager.handleOf(this.callerAgentId);
       if (requester !== undefined) {
         emitAgentRunSpawned(requester, handle.agentId, {
           profileName: handle.profileName,

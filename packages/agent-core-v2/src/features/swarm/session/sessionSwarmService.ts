@@ -12,13 +12,13 @@ import { Event2 } from '#/app/event/event2';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentManager } from '#/session/agentManager/agentManager';
 import {
   isSubagentMeta,
   subagentLabels,
   subagentParentAgentId,
   subagentSwarmItem,
-} from '#/session/agentLifecycle/subagentMetadata';
+} from '#/session/agentManager/subagentMetadata';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { wrapSubagentModelError } from '#/session/subagent/configSection';
@@ -64,7 +64,7 @@ export class SessionSwarmService implements ISessionSwarmService {
   private readonly inFlight = new Map<string, AbortController>();
 
   constructor(
-    @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
+    @IAgentManager private readonly agentManager: IAgentManager,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @ISessionContext private readonly sessionContext: ISessionContext,
@@ -98,7 +98,7 @@ export class SessionSwarmService implements ISessionSwarmService {
       resume: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, false),
       retry: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, true),
       suspended: (event) => {
-        const caller = this.lifecycle.findAgentHandle(callerAgentId);
+        const caller = this.agentManager.handleOf(callerAgentId);
         void caller?.accessor.get(IEventDispatcher)?.dispatch(
           new SubagentSuspended({
             subagentId: event.agentId,
@@ -147,7 +147,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     let child: IAgentScopeHandle;
     try {
       this.modelCatalog.get(binding.model);
-      child = await this.lifecycle.create({
+      const childContext = await this.agentManager.create({
         binding: {
           profile: profile.name,
           model: binding.model,
@@ -156,6 +156,7 @@ export class SessionSwarmService implements ISessionSwarmService {
         labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
         runtimeId: callerRuntime.runtimeId,
       });
+      child = this.agentManager.handleOf(childContext.agentId)!;
     } catch (error) {
       throw wrapSubagentModelError(error, binding.model, callerData.modelAlias);
     }
@@ -249,7 +250,7 @@ export class SessionSwarmService implements ISessionSwarmService {
   }
 
   private requireHandle(agentId: string, label: string): IAgentScopeHandle {
-    const handle = this.lifecycle.findAgentHandle(agentId);
+    const handle = this.agentManager.handleOf(agentId);
     if (handle === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `${label} "${agentId}" does not exist`, {
         details: { agentId },

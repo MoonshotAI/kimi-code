@@ -14,7 +14,7 @@ import type {
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentExecutionContext } from '#/agent/agentContext/agentExecutionContext';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentUserToolService, type UserToolRegistration } from './userTool';
@@ -37,7 +37,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
   private readonly registrations = new Map<string, IDisposable>();
 
   constructor(
-    @IAgentExecutionContext private readonly scopeContext: IAgentExecutionContext,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,

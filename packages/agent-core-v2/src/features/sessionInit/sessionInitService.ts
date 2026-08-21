@@ -10,7 +10,7 @@ import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
-import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentManager, MAIN_AGENT_ID } from '#/session/agentManager/agentManager';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
@@ -28,7 +28,7 @@ export class SessionInitService implements ISessionInitService {
   private initRun: AbortController | undefined;
 
   constructor(
-    @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
+    @IAgentManager private readonly agentManager: IAgentManager,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostEnvironment private readonly env: IHostEnvironment,
@@ -41,7 +41,7 @@ export class SessionInitService implements ISessionInitService {
   }
 
   async generateAgentsMd(): Promise<void> {
-    const main = this.lifecycle.list().find((handle) => handle.id === MAIN_AGENT_ID);
+    const main = this.agentManager.handleOf(MAIN_AGENT_ID);
     if (main === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
     }
@@ -55,13 +55,14 @@ export class SessionInitService implements ISessionInitService {
       }
       const permissionMode = main.accessor.get(IAgentPermissionModeService).mode;
 
-      const child = await this.lifecycle.create({
+      const childContext = await this.agentManager.create({
         binding: {
           profile: INIT_PROFILE_NAME,
           model: own.modelAlias,
           thinking: own.thinkingLevel,
         },
       });
+      const child = this.agentManager.handleOf(childContext.agentId)!;
       child.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
 
       emitAgentRunSpawned(main, child.id, {

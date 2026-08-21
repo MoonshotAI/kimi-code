@@ -21,7 +21,7 @@ import {
 } from '#/agent/loop/loop';
 import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
 import { TurnStarted } from '#/agent/loop/turnEvents';
-import { IAgentExecutionContext } from '#/agent/agentContext/agentExecutionContext';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
@@ -64,7 +64,7 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
     @IConfigService private readonly config: IConfigService,
     @IEventBus private readonly eventBus: IEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IAgentExecutionContext private readonly scopeContext: IAgentExecutionContext,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();

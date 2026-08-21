@@ -19,7 +19,7 @@ import { type CronTask, type CronTaskInit } from '#/app/cron/cronTask';
 import { renderCronFireXml } from '#/app/cron/format';
 import { jitteredNextCronRunMs, oneShotJitteredNextCronRunMs } from '#/app/cron/jitter';
 import { ISessionStateService } from '#/session/state/sessionState';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentManager, MAIN_AGENT_ID } from '#/session/agentManager/agentManager';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -67,7 +67,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
 
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
-    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentManager private readonly agentManager: IAgentManager,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IConfigService private readonly config: IConfigService,
   ) {
@@ -80,18 +80,20 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     this.states.contributeState(cronStartedKey);
 
     this._register(
-      this.agentLifecycle.onDidCreateScope(({ context, handle }) => {
+      this.agentManager.onDidCreateScope(({ context, handle }) => {
         handle.accessor.get(IAgentStateService).contributeState(cronKey);
-        if (context.agentId !== 'main') return;
+        if (context.agentId !== MAIN_AGENT_ID) return;
         this.bindMainAgent(handle);
       }),
     );
 
-    for (const handle of this.agentLifecycle.list()) {
+    for (const agent of this.agentManager.list()) {
+      const handle = this.agentManager.handleOf(agent.agentId);
+      if (handle === undefined) continue;
       handle.accessor.get(IAgentStateService).contributeState(cronKey);
     }
-    const existingMain = this.agentLifecycle.findAgentHandle('main');
-    if (existingMain) {
+    const existingMain = this.agentManager.handleOf(MAIN_AGENT_ID);
+    if (existingMain !== undefined) {
       this.bindMainAgent(existingMain);
     }
 
@@ -103,7 +105,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
   }
 
   private get tasks(): ReadonlyMap<string, CronTask> {
-    const main = this.agentLifecycle.findAgentHandle('main');
+    const main = this.agentManager.handleOf(MAIN_AGENT_ID);
     if (main === undefined) return new Map();
     return main.accessor.get(IAgentStateService).get(cronKey);
   }
@@ -250,7 +252,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     if (this.getCronConfig().disabled) return;
     if (this.tasks.size === 0) return;
 
-    const mainHandle = this.agentLifecycle.findAgentHandle('main');
+    const mainHandle = this.agentManager.handleOf(MAIN_AGENT_ID);
     if (!mainHandle) return;
 
     const loop = mainHandle.accessor.get(IAgentLoopService);
@@ -340,7 +342,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
   ): Turn | undefined {
     if (tasks.length === 0) return undefined;
 
-    const mainHandle = this.agentLifecycle.findAgentHandle('main');
+    const mainHandle = this.agentManager.handleOf(MAIN_AGENT_ID);
     if (!mainHandle) return undefined;
 
     const promptService = mainHandle.accessor.get(IAgentPromptService);
@@ -388,7 +390,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     task: CronTask,
     ctx: { readonly coalescedCount: number; readonly firedAt: number },
   ): Promise<boolean> {
-    const mainHandle = this.agentLifecycle.findAgentHandle('main');
+    const mainHandle = this.agentManager.handleOf(MAIN_AGENT_ID);
     if (!mainHandle) return Promise.resolve(false);
 
     const promptService = mainHandle.accessor.get(IAgentPromptService);
@@ -454,13 +456,13 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
   }
 
   private dispatchCron(event: CronAdd | CronDelete | CronCursor): void {
-    const mainHandle = this.agentLifecycle.findAgentHandle('main');
+    const mainHandle = this.agentManager.handleOf(MAIN_AGENT_ID);
     if (!mainHandle) return;
     void mainHandle.accessor.get(IEventDispatcher).dispatch(event);
   }
 
   private signalCron(event: CronFired): void {
-    const mainHandle = this.agentLifecycle.findAgentHandle('main');
+    const mainHandle = this.agentManager.handleOf(MAIN_AGENT_ID);
     if (!mainHandle) return;
     void mainHandle.accessor.get(IEventDispatcher).dispatch(event);
   }

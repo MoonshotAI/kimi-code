@@ -1,4 +1,6 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { IDisposable } from '#/_base/di/lifecycle';
+import type { DurableAgentRuntimeParticipant } from '#/agent/runtime/agentRuntime';
 import type { Event2 } from '#/app/event/event2';
 import type { Hooks } from '#/hooks';
 
@@ -13,7 +15,11 @@ export interface ModelCheckpointDepth {
   readonly depth: number;
 }
 
-export interface IEventDispatcher {
+export interface DurableRuntimeParticipantHost {
+  attach(participant: DurableAgentRuntimeParticipant): IDisposable;
+}
+
+export interface IEventDispatcher extends DurableRuntimeParticipantHost {
   readonly _serviceBrand: undefined;
 
   readonly hooks: Hooks<EventDispatcherHooks>;

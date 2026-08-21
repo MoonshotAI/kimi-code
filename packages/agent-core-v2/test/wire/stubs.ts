@@ -2,10 +2,6 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { toDisposable } from '#/_base/di/lifecycle';
 import type { ServiceRegistration, TestInstantiationService } from '#/_base/di/test';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import {
-  IAgentExecutionContext,
-  makeAgentExecutionContext,
-} from '#/agent/agentContext/agentExecutionContext';
 import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -67,10 +63,6 @@ export function registerTestAgentWire(
 ): AgentWire {
   const agentScope = stubAgentScopeContext(scope);
   ix.stub(IAgentScopeContext, agentScope);
-  ix.stub(IAgentExecutionContext, makeAgentExecutionContext(
-    agentScope.agentContext,
-    (capability) => { throw new Error(`Agent runtime '${capability.id}' is unavailable`); },
-  ));
   ix.set(IAppendLogStore, dependencies.log ?? noopLog);
   ix.set(IAgentBlobService, dependencies.blob ?? noopBlob);
   ix.set(IEventBus, dependencies.eventBus ?? noopEventBus);
@@ -86,12 +78,7 @@ export function registerTestAgentWireServices(
   registration: ServiceRegistration,
   scope = 'wire/test-agent',
 ): void {
-  const agentScope = stubAgentScopeContext(scope);
-  registration.defineInstance(IAgentScopeContext, agentScope);
-  registration.defineInstance(IAgentExecutionContext, makeAgentExecutionContext(
-    agentScope.agentContext,
-    (capability) => { throw new Error(`Agent runtime '${capability.id}' is unavailable`); },
-  ));
+  registration.defineInstance(IAgentScopeContext, stubAgentScopeContext(scope));
   registration.defineInstance(IAppendLogStore, noopLog);
   registration.defineInstance(IAgentBlobService, noopBlob);
   registration.defineInstance(IEventBus, noopEventBus);

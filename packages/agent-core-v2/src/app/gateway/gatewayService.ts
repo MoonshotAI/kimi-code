@@ -5,7 +5,7 @@ import {
   ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentManager } from '#/session/agentManager/agentManager';
 import { Error2, ErrorCodes } from '#/errors';
 import { ILogService } from '#/_base/log/log';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
@@ -29,8 +29,8 @@ export class RestGateway implements IRestGateway {
         details: { sessionId },
       });
     }
-    const agents = session.accessor.get(IAgentLifecycleService);
-    const agent = agents.list().find((handle) => handle.id === agentId);
+    const agents = session.accessor.get(IAgentManager);
+    const agent = agents.handleOf(agentId);
     if (agent === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `unknown agent '${agentId}'`, {
         details: { agentId, sessionId },

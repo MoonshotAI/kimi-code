@@ -7,7 +7,6 @@ import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentExecutionContext, makeAgentExecutionContext } from '#/agent/agentContext/agentExecutionContext';
 import { IAgentSkillService } from '#/agent/skill/skill';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';

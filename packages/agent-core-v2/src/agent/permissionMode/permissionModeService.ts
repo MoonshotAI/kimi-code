@@ -5,7 +5,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { PermissionModeInjection } from '#/agent/permissionMode/injection/permissionModeInjection';
-import { IAgentExecutionContext } from '#/agent/agentContext/agentExecutionContext';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   IAgentManager,
@@ -29,7 +29,7 @@ export class AgentPermissionModeService extends Service implements IAgentPermiss
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IInstantiationService instantiation: IInstantiationService,
-    @IAgentExecutionContext private readonly scopeContext: IAgentExecutionContext,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentManager private readonly agentManager: IAgentManager,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly agentState: IAgentStateService,

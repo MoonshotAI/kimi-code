@@ -26,8 +26,8 @@ import {
 import { IModelCatalog } from '#/kosong/model/catalog';
 import { IModelService } from '#/kosong/model/model';
 import { ErrorCodes, Error2 } from '#/errors';
-import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ensureMainAgent } from '#/session/agentManager/mainAgent';
+import { IAgentManager } from '#/session/agentManager/agentManager';
 import { IAgentActivityView } from '#/agent/activityView/activityView';
 
 import { ISessionLegacyService } from './sessionLegacy';
@@ -52,7 +52,12 @@ export class SessionLegacyService implements ISessionLegacyService {
     if (session === undefined) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     }
-    return ensureMainAgent(session);
+    const context = await ensureMainAgent(session);
+    const handle = session.accessor.get(IAgentManager).handleOf(context.agentId);
+    if (handle === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
+    }
+    return handle;
   }
 
   async status(sessionId: string): Promise<SessionStatusResponse> {
@@ -95,8 +100,11 @@ export class SessionLegacyService implements ISessionLegacyService {
   private readBusy(sessionId: string): boolean {
     const handle = getLiveSessionById(this.services, sessionId);
     if (handle === undefined) return false;
-    for (const agent of handle.accessor.get(IAgentLifecycleService).list()) {
-      const state = agent.accessor.get(IAgentActivityView).state();
+    const agents = handle.accessor.get(IAgentManager);
+    for (const agent of agents.list()) {
+      const agentHandle = agents.handleOf(agent.agentId);
+      if (agentHandle === undefined) continue;
+      const state = agentHandle.accessor.get(IAgentActivityView).state();
       if (state.turn !== undefined || state.background.length > 0) return true;
     }
     return false;

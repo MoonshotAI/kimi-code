@@ -2,7 +2,7 @@ import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
-import { IAgentExecutionContext } from '#/agent/agentContext/agentExecutionContext';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
@@ -21,7 +21,7 @@ export class AgentPermissionRulesService implements IAgentPermissionRulesService
 
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IAgentExecutionContext private readonly scopeContext: IAgentExecutionContext,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
     this.agentState.contributeState(permissionRulesKey);

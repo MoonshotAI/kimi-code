@@ -12,7 +12,7 @@ import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentP
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { createHooks } from '#/hooks';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentManager } from '#/session/agentManager/agentManager';
 
 import {
   type AgentRunHandle,
@@ -37,14 +37,14 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
   }
 
   constructor(
-    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentManager private readonly agentManager: IAgentManager,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
   ) {
     super();
   }
 
   run(agent: AgentContext, request: AgentRunRequest, opts: RunAgentOptions): Promise<AgentRunHandle> {
-    const handle = this.agentLifecycle.get(agent);
+    const handle = this.agentManager.handleOf(agent.agentId);
     if (handle === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agent.agentId}" does not exist`, {
         details: { agentId: agent.agentId },

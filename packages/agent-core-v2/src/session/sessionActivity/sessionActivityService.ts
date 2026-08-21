@@ -14,7 +14,7 @@ import {
   type AgentActivityState,
 } from '#/agent/activityView/activityView';
 import type { TurnEndReason } from '#/agent/loop/turnEvents';
-import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentManager, MAIN_AGENT_ID } from '#/session/agentManager/agentManager';
 import { ISessionInteractionService, type Interaction } from '#/session/interaction/interaction';
 import { ISessionStateService } from '#/session/state/sessionState';
 
@@ -54,13 +54,16 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
 
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
-    @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
+    @IAgentManager private readonly agents: IAgentManager,
     @ISessionInteractionService private readonly interactions: ISessionInteractionService,
   ) {
     super();
     this.states.contributeState(sessionActivityFoldsKey);
     this.states.contributeState(sessionActivityCurrentKey);
-    for (const handle of this.agents.list()) this.attachAgent(handle);
+    for (const agent of this.agents.list()) {
+      const handle = this.agents.handleOf(agent.agentId);
+      if (handle !== undefined) this.attachAgent(handle);
+    }
     this.current = this.aggregate();
     this._register(
       this.agents.onDidCreateScope(({ handle }) => {
@@ -69,7 +72,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
       }),
     );
     this._register(
-      this.agents.onDidDispose((agent) => {
+      this.agents.onDidClose((agent) => {
         this.agentSubscriptions.get(agent.agentId)?.dispose();
         this.agentSubscriptions.delete(agent.agentId);
         if (this.folds.delete(agent.agentId)) this.recompute('agent_lifecycle');

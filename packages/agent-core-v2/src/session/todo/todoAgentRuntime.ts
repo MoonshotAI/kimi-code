@@ -6,16 +6,15 @@ import {
   type Snapshot,
 } from 'xstate';
 
-import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
-import { defineAgentRuntime, IAgentRuntimeHostService } from '#/agent/runtime/agentRuntime';
+import { defineAgentRuntime } from '#/agent/runtime/agentRuntime';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { IEventDispatcher } from '#/state/eventDispatcher';
+import { IAgentManager } from '#/session/agentManager/agentManager';
 
-import { IAgentTodo } from './sessionTodo';
+import { AgentTodo, IAgentTodo } from './sessionTodo';
 import { TODO_LIST_TOOL_NAME, readTodoItems, type TodoItem } from './todoItem';
 import { TODO_LIST_REMINDER_VARIANT, todoListStaleReminder } from './todoListReminder';
 import { ToolsUpdateStore, type TodoState } from './todoOps';
@@ -132,26 +131,10 @@ export class AgentTodoBinding implements IAgentTodo {
   private readonly todo: IAgentTodo;
 
   constructor(
-    @IAgentRuntimeHostService host: IAgentRuntimeHostService,
+    @IAgentManager manager: IAgentManager,
     @IAgentScopeContext scope: IAgentScopeContext,
-    @IEventDispatcher dispatcher: IEventDispatcher,
-    @IAgentContextInjectorService injector: IAgentContextInjectorService,
-    @IAgentContextMemoryService memory: IAgentContextMemoryService,
-    @IAgentToolPolicyService toolPolicy: IAgentToolPolicyService,
   ) {
-    const services = new Map<ServiceIdentifier<any>, unknown>([
-      [IEventDispatcher, dispatcher],
-      [IAgentContextInjectorService, injector],
-      [IAgentContextMemoryService, memory],
-      [IAgentToolPolicyService, toolPolicy],
-    ]);
-    const accessor: ServicesAccessor = {
-      get: <T>(id: ServiceIdentifier<T>): T => {
-        if (!services.has(id)) throw new Error(`Todo runtime dependency '${String(id)}' is unavailable`);
-        return services.get(id) as T;
-      },
-    };
-    this.todo = host.resolve(scope.agentContext, TodoAgentRuntimeDefinition, accessor);
+    this.todo = manager.resolve(scope.agentContext, AgentTodo);
   }
 
   get(): readonly TodoItem[] {

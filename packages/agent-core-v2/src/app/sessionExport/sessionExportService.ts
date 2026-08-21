@@ -14,7 +14,7 @@ import {
   workspacePersistenceScope,
 } from '#/workspace/sessionLifecycle/internal/addressing';
 import { ErrorCodes, Error2 } from '#/errors';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentManager } from '#/session/agentManager/agentManager';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import { buildExportManifest, type ExportSessionManifestSummary } from './manifest';
@@ -127,10 +127,12 @@ export class SessionExportService implements ISessionExportService {
     await this.warnIfFails('export session log flush failed', () =>
       handle.accessor.get(ILogService).flush(),
     );
-    const agents = handle.accessor.get(IAgentLifecycleService);
+    const agents = handle.accessor.get(IAgentManager);
     for (const agent of agents.list()) {
+      const agentHandle = agents.handleOf(agent.agentId);
+      if (agentHandle === undefined) continue;
       await this.warnIfFails('export agent wire flush failed', () =>
-        agent.accessor.get(IWireService).flush(),
+        agentHandle.accessor.get(IWireService).flush(),
       );
     }
 

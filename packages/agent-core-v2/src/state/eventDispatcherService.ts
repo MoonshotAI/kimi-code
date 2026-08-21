@@ -3,18 +3,14 @@ import { applyPatches, produceWithPatches } from 'immer';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { Service } from '#/_base/di/service';
+import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { type CollectionView } from '#/_base/di/collection';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { AgentSpaceImpl, type AgentSpaceHost } from '#/agent/agentContext/agentSpace';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import {
-  AgentRuntimeContributionPoint,
-  IAgentRuntimeHostService,
-  type AgentRuntimeDefinition,
-  type DurableAgentRuntimeParticipant,
-} from '#/agent/runtime/agentRuntime';
+import { type DurableAgentRuntimeParticipant } from '#/agent/runtime/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import {
   event2FromRecord,
@@ -89,30 +85,24 @@ interface PreparedFold {
   readonly inversePatches: PatchEntry['inversePatches'];
 }
 
-interface ModelAttachment {
-  readonly definition: AgentModelDefinition<any, any>;
-  readonly model: AgentModel<any>;
-  readonly appliers: ReadonlyMap<Event2Class<any, any>, EventApplier>;
+type ParticipantApplier = (
+  state: any,
+  event: Event2<any>,
+  ctx: FoldContextImpl,
+) => unknown;
+
+interface ParticipantAttachment {
+  readonly id: string;
+  readonly appliers: ReadonlyMap<Event2Class<any, any>, ParticipantApplier>;
   readonly meta: StateMeta;
+  readonly undoable: boolean;
   readonly keepsCheckpoints: boolean;
+  readonly getState: () => any;
+  readonly commit: (state: any) => void;
 }
 
-interface PreparedModel {
-  readonly attachment: ModelAttachment;
-  readonly ctx: FoldContextImpl;
-  readonly next: any;
-  readonly patches: PatchEntry['patches'];
-  readonly inversePatches: PatchEntry['inversePatches'];
-}
-
-interface RuntimeAttachment {
-  readonly participant: DurableAgentRuntimeParticipant;
-  readonly folds: ReadonlyMap<Event2Class<any, any>, StateFold<any, any>>;
-  readonly meta: StateMeta;
-}
-
-interface PreparedRuntime {
-  readonly attachment: RuntimeAttachment;
+interface PreparedParticipant {
+  readonly attachment: ParticipantAttachment;
   readonly ctx: FoldContextImpl;
   readonly next: any;
   readonly patches: PatchEntry['patches'];
@@ -173,9 +163,12 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
   private activeModelDefs = new Map<string, AgentModelDefinition<any, any>>();
   private readonly withdrawnModelIds = new Set<string>();
   private modelTargets = new Map<string, readonly AgentModelDefinition<any, any>[]>();
-  private readonly attachments = new Map<AgentModelDefinition<any, any>, ModelAttachment>();
-  private runtimeTargets = new Map<string, readonly RuntimeAttachment[]>();
-  private runtimeAttachments = new Map<string, RuntimeAttachment>();
+  private readonly modelAttachments = new Map<
+    AgentModelDefinition<any, any>,
+    ParticipantAttachment
+  >();
+  private readonly participantTargets = new Map<string, ParticipantAttachment[]>();
+  private readonly participantAttachments = new Map<string, ParticipantAttachment>();
 
   private readonly spaceHost: AgentSpaceHost = {
     isActiveModelDefinition: (definition) =>
@@ -199,8 +192,6 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     @IAgentStateService private readonly agentState: IAgentStateService,
     @EventStateContribution view: CollectionView<EventStateContributionRecord>,
     @AgentModelContribution modelView: CollectionView<AgentModelDefinition<any, any>>,
-    @AgentRuntimeContributionPoint runtimeView: CollectionView<AgentRuntimeDefinition<any, any>>,
-    @IAgentRuntimeHostService private readonly runtimeHost: IAgentRuntimeHostService | undefined,
   ) {
     super();
     this.folded = this.foldContributions(view);
@@ -230,9 +221,10 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       modelView.onDidChange(({ added, removed }) => {
         for (const definition of removed) {
           this.withdrawnModelIds.add(definition.id);
-          const attachment = this.attachments.get(definition);
+          const attachment = this.modelAttachments.get(definition);
           if (attachment !== undefined) {
-            this.attachments.delete(definition);
+            this.modelAttachments.delete(definition);
+            this.detachParticipant(attachment);
             this.space()?.retireModel(definition);
           }
         }
@@ -243,15 +235,6 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         this.materializeUndoableModels();
       }),
     );
-    this.attachRuntimeParticipants();
-    this._register(runtimeView.onDidChange(({ added }) => {
-      if (added.length > 0 && this.restorePhase !== 'new') {
-        throw new BugIndicatingError(
-          `Agent runtime contributed while the event dispatcher is in phase '${this.restorePhase}'; durable runtime owners must contribute before restore`,
-        );
-      }
-      this.attachRuntimeParticipants();
-    }));
     this.space()?._attachHost(this.spaceHost);
     this.materializeUndoableModels();
   }
@@ -267,32 +250,54 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     return foldEventStateContributions(view.items, this.agentState.replayableKeys());
   }
 
-  private attachRuntimeParticipants(): void {
-    const agent = this.agentScope?.agentContext;
-    if (agent === undefined) return;
-    const attachments = new Map<string, RuntimeAttachment>();
-    const targets = new Map<string, RuntimeAttachment[]>();
-    for (const participant of this.runtimeHost?.participants(agent) ?? []) {
-      const base = new Map<Event2Class<any, any>, StateFold<any, any>>();
-      for (const cls of participant.events) base.set(cls, participant.transition);
-      const attachment = {
-        participant,
-        folds: expandedRuntimeFolds(participant.id, participant.undoable, base),
-        meta: this.runtimeAttachments.get(participant.id)?.meta ?? {
-          history: [],
-          checkpoints: [],
-          nextPatchId: 1,
-        },
-      };
-      attachments.set(participant.id, attachment);
-      for (const cls of attachment.folds.keys()) {
-        const list = targets.get(cls.type) ?? [];
-        list.push(attachment);
-        targets.set(cls.type, list);
-      }
+  attach(participant: DurableAgentRuntimeParticipant): IDisposable {
+    if (this.restorePhase !== 'new') {
+      throw new BugIndicatingError(
+        `Agent runtime participant '${participant.id}' attached while the event dispatcher is in phase '${this.restorePhase}'; durable runtime owners must attach before restore`,
+      );
     }
-    this.runtimeAttachments = attachments;
-    this.runtimeTargets = targets;
+    const base = new Map<Event2Class<any, any>, StateFold<any, any>>();
+    for (const cls of participant.events) base.set(cls, participant.transition);
+    const folds = expandedRuntimeFolds(participant.id, participant.undoable, base);
+    const appliers = new Map<Event2Class<any, any>, ParticipantApplier>();
+    for (const [cls, fold] of folds) {
+      appliers.set(cls, (state, event, ctx) => fold(state, event, ctx));
+    }
+    const attachment: ParticipantAttachment = {
+      id: participant.id,
+      appliers,
+      meta: { history: [], checkpoints: [], nextPatchId: 1 },
+      undoable: participant.undoable,
+      keepsCheckpoints: participant.undoable,
+      getState: participant.getState,
+      commit: participant.commit,
+    };
+    this.attachParticipant(attachment);
+    return toDisposable(() => { this.detachParticipant(attachment); });
+  }
+
+  private attachParticipant(attachment: ParticipantAttachment): void {
+    if (this.participantAttachments.has(attachment.id)) {
+      throw new BugIndicatingError(`Durable participant '${attachment.id}' is already attached`);
+    }
+    this.participantAttachments.set(attachment.id, attachment);
+    for (const cls of attachment.appliers.keys()) {
+      const list = this.participantTargets.get(cls.type) ?? [];
+      list.push(attachment);
+      this.participantTargets.set(cls.type, list);
+    }
+  }
+
+  private detachParticipant(attachment: ParticipantAttachment): void {
+    if (this.participantAttachments.get(attachment.id) !== attachment) return;
+    this.participantAttachments.delete(attachment.id);
+    for (const cls of attachment.appliers.keys()) {
+      const list = this.participantTargets.get(cls.type);
+      if (list === undefined) continue;
+      const next = list.filter((candidate) => candidate !== attachment);
+      if (next.length === 0) this.participantTargets.delete(cls.type);
+      else this.participantTargets.set(cls.type, next);
+    }
   }
 
   private refoldModels(records: readonly AgentModelDefinition<any, any>[]): void {
@@ -328,7 +333,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         add(cls.type, definition);
       }
     }
-    for (const [definition, attachment] of this.attachments) {
+    for (const [definition, attachment] of this.modelAttachments) {
       if (this.activeModelDefs.get(definition.id) !== definition) continue;
       for (const cls of attachment.appliers.keys()) add(cls.type, definition);
     }
@@ -339,7 +344,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     const space = this.space();
     if (space === undefined) return;
     for (const definition of this.activeModelDefs.values()) {
-      if (!definition.undoable || this.attachments.has(definition)) continue;
+      if (!definition.undoable || this.modelAttachments.has(definition)) continue;
       space.ensureModel(definition);
     }
   }
@@ -348,7 +353,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     definition: AgentModelDefinition<any, any>,
     model: AgentModel<any>,
   ): void {
-    if (this.attachments.has(definition)) return;
+    if (this.modelAttachments.has(definition)) return;
     const domainAppliers = new Map<Event2Class<any, any>, EventApplier>();
     for (const [cls, applier] of model._appliersTable()) {
       domainAppliers.set(cls, (event) => applier.call(model, event));
@@ -361,17 +366,34 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       domainAppliers,
       customUndo,
     );
-    this.attachments.set(definition, {
-      definition,
-      model,
-      appliers: expanded,
+    const appliers = new Map<Event2Class<any, any>, ParticipantApplier>();
+    for (const [cls, applier] of expanded) {
+      appliers.set(cls, (state, event, ctx) => {
+        model._enterWindow(state, ctx);
+        let windowResult: ReturnType<AgentModel<any>['_exitWindow']>;
+        try {
+          applier(event, ctx);
+        } finally {
+          windowResult = model._exitWindow();
+        }
+        return windowResult.replaced ? windowResult.replacement : undefined;
+      });
+    }
+    const attachment: ParticipantAttachment = {
+      id: definition.id,
+      appliers,
       meta: { history: [], checkpoints: [], nextPatchId: 1 },
+      undoable: definition.undoable,
       keepsCheckpoints: definition.undoable && customUndo === undefined,
-    });
+      getState: () => model._state(),
+      commit: (state) => { model._commitState(state); },
+    };
+    this.attachParticipant(attachment);
+    this.modelAttachments.set(definition, attachment);
     this.rebuildModelTargets();
   }
 
-  private materializeModel(definition: AgentModelDefinition<any, any>): ModelAttachment {
+  private materializeModel(definition: AgentModelDefinition<any, any>): ParticipantAttachment {
     const space = this.space();
     if (space === undefined) {
       throw new BugIndicatingError(
@@ -379,7 +401,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       );
     }
     space.ensureModel(definition);
-    const attachment = this.attachments.get(definition);
+    const attachment = this.modelAttachments.get(definition);
     if (attachment === undefined) {
       throw new BugIndicatingError(`Agent model '${definition.id}' failed to attach`);
     }
@@ -397,13 +419,9 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
 
   modelCheckpointDepths(): readonly ModelCheckpointDepth[] {
     const depths: ModelCheckpointDepth[] = [];
-    for (const attachment of this.attachments.values()) {
-      if (!attachment.keepsCheckpoints) continue;
-      depths.push({ id: attachment.definition.id, depth: attachment.meta.checkpoints.length });
-    }
-    for (const attachment of this.runtimeAttachments.values()) {
-      if (!attachment.participant.undoable) continue;
-      depths.push({ id: attachment.participant.id, depth: attachment.meta.checkpoints.length });
+    for (const attachment of this.participantAttachments.values()) {
+      if (!attachment.undoable) continue;
+      depths.push({ id: attachment.id, depth: attachment.meta.checkpoints.length });
     }
     return depths;
   }
@@ -507,63 +525,36 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       }
     }
     const modelTargets = this.modelTargets.get(event.type);
-    const preparedModels: PreparedModel[] = [];
     if (modelTargets !== undefined) {
       for (const definition of modelTargets) {
-        const attachment = this.attachments.get(definition) ?? this.materializeModel(definition);
+        if (!this.modelAttachments.has(definition)) this.materializeModel(definition);
+      }
+    }
+    const participantTargets = this.participantTargets.get(event.type);
+    const preparedParticipants: PreparedParticipant[] = [];
+    if (participantTargets !== undefined) {
+      for (const attachment of participantTargets) {
         const applier = attachment.appliers.get(event.constructor as Event2Class);
         if (applier === undefined) continue;
         const ctx = new FoldContextImpl(this, silent);
         const [next, patches, inversePatches] = produceWithPatches<any>(
-          attachment.model._state(),
-          (draft: any) => {
-            attachment.model._enterWindow(draft, ctx);
-            let windowResult: ReturnType<AgentModel<any>['_exitWindow']>;
-            try {
-              applier(event, ctx);
-            } finally {
-              windowResult = attachment.model._exitWindow();
-            }
-            return windowResult.replaced ? windowResult.replacement : undefined;
-          },
+          attachment.getState(),
+          (draft: any) => applier(draft, event, ctx) as any,
         );
         if (ctx.pendingUndo !== undefined && patches.length > 0) {
           throw new BugIndicatingError(
-            `Applier of event '${event.type}' on model '${definition.id}' both mutates and undoes to a checkpoint`,
+            `Fold of event '${event.type}' on durable participant '${attachment.id}' both mutates and undoes to a checkpoint`,
           );
         }
         sanitizePendingUndo(ctx, attachment.meta);
-        preparedModels.push({ attachment, ctx, next, patches, inversePatches });
-      }
-    }
-    const runtimeTargets = this.runtimeTargets.get(event.type);
-    const preparedRuntimes: PreparedRuntime[] = [];
-    if (runtimeTargets !== undefined) {
-      for (const attachment of runtimeTargets) {
-        const fold = attachment.folds.get(event.constructor as Event2Class);
-        if (fold === undefined) continue;
-        const ctx = new FoldContextImpl(this, silent);
-        const [next, patches, inversePatches] = produceWithPatches<any>(
-          attachment.participant.getState(),
-          (draft: any) => fold(draft, event, ctx) as any,
-        );
-        if (ctx.pendingUndo !== undefined && patches.length > 0) {
-          throw new BugIndicatingError(
-            `Fold of event '${event.type}' on agent runtime '${attachment.participant.id}' both mutates and undoes to a checkpoint`,
-          );
-        }
-        sanitizePendingUndo(ctx, attachment.meta);
-        preparedRuntimes.push({ attachment, ctx, next, patches, inversePatches });
+        preparedParticipants.push({ attachment, ctx, next, patches, inversePatches });
       }
     }
     for (const p of prepared) {
       this.commit(p.key, p.meta, p.ctx, event, p.next, p.patches, p.inversePatches);
     }
-    for (const p of preparedModels) {
-      this.commitModel(p.attachment, p.ctx, event, p.next, p.patches, p.inversePatches);
-    }
-    for (const p of preparedRuntimes) {
-      this.commitRuntime(p.attachment, p.ctx, event, p.next, p.patches, p.inversePatches);
+    for (const p of preparedParticipants) {
+      this.commitParticipant(p.attachment, p.ctx, event, p.next, p.patches, p.inversePatches);
     }
     if (silent) return;
     const cls = event.constructor as Event2Class;
@@ -579,11 +570,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
 
   override dispose(): void {
     this.disposed = true;
-    const space = this.space();
-    if (space !== undefined) {
-      space._detachHost(this.spaceHost);
-      space._kill();
-    }
+    this.space()?._detachHost(this.spaceHost);
     super.dispose();
   }
 
@@ -625,8 +612,8 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     this.trimHistory(key, meta);
   }
 
-  private commitModel(
-    attachment: ModelAttachment,
+  private commitParticipant(
+    attachment: ParticipantAttachment,
     ctx: FoldContextImpl,
     event: Event2<any>,
     next: any,
@@ -637,49 +624,11 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     if (ctx.pendingUndo !== undefined) {
       const targetIndex = meta.checkpoints.length - ctx.pendingUndo;
       const targetId = meta.checkpoints[targetIndex]!;
-      this.rollbackModel(attachment, targetId);
+      this.rollbackParticipant(attachment, targetId);
       meta.checkpoints = meta.checkpoints.slice(0, targetIndex);
       return;
     }
-    attachment.model._commitState(next);
-    if (ctx.pendingClear) {
-      meta.history = [];
-      meta.checkpoints = [];
-    }
-    let markerId = meta.history.at(-1)?.id ?? 0;
-    if (patches.length > 0 || inversePatches.length > 0) {
-      const entry: PatchEntry = {
-        id: meta.nextPatchId++,
-        eventType: event.type,
-        patches,
-        inversePatches,
-      };
-      meta.history.push(entry);
-      markerId = entry.id;
-    }
-    if (ctx.pendingCheckpoint) {
-      meta.checkpoints.push(markerId);
-    }
-    this.trimModelHistory(attachment);
-  }
-
-  private commitRuntime(
-    attachment: RuntimeAttachment,
-    ctx: FoldContextImpl,
-    event: Event2<any>,
-    next: any,
-    patches: PatchEntry['patches'],
-    inversePatches: PatchEntry['inversePatches'],
-  ): void {
-    const meta = attachment.meta;
-    if (ctx.pendingUndo !== undefined) {
-      const targetIndex = meta.checkpoints.length - ctx.pendingUndo;
-      const targetId = meta.checkpoints[targetIndex]!;
-      this.rollbackRuntime(attachment, targetId);
-      meta.checkpoints = meta.checkpoints.slice(0, targetIndex);
-      return;
-    }
-    attachment.participant.commit(next);
+    attachment.commit(next);
     if (ctx.pendingClear) {
       meta.history = [];
       meta.checkpoints = [];
@@ -696,7 +645,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       markerId = entry.id;
     }
     if (ctx.pendingCheckpoint) meta.checkpoints.push(markerId);
-    this.trimRuntimeHistory(attachment);
+    this.trimParticipantHistory(attachment);
   }
 
   private rollback(key: ReplayableStateKey<any>, meta: StateMeta, targetEntryId: number): void {
@@ -710,27 +659,18 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     meta.history = meta.history.slice(0, i + 1);
   }
 
-  private rollbackModel(attachment: ModelAttachment, targetEntryId: number): void {
+  private rollbackParticipant(
+    attachment: ParticipantAttachment,
+    targetEntryId: number,
+  ): void {
     const meta = attachment.meta;
     let i = meta.history.length - 1;
-    let current = attachment.model._state();
+    let current = attachment.getState();
     while (i >= 0 && meta.history[i]!.id > targetEntryId) {
       current = applyPatches(current, [...meta.history[i]!.inversePatches]);
       i--;
     }
-    attachment.model._commitState(current);
-    meta.history = meta.history.slice(0, i + 1);
-  }
-
-  private rollbackRuntime(attachment: RuntimeAttachment, targetEntryId: number): void {
-    const meta = attachment.meta;
-    let i = meta.history.length - 1;
-    let current = attachment.participant.getState();
-    while (i >= 0 && meta.history[i]!.id > targetEntryId) {
-      current = applyPatches(current, [...meta.history[i]!.inversePatches]);
-      i--;
-    }
-    attachment.participant.commit(current);
+    attachment.commit(current);
     meta.history = meta.history.slice(0, i + 1);
   }
 
@@ -748,22 +688,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     }
   }
 
-  private trimModelHistory(attachment: ModelAttachment): void {
-    const meta = attachment.meta;
-    const oldest = meta.checkpoints[0];
-    if (oldest !== undefined) {
-      const firstRetained = meta.history.findIndex((entry) => entry.id >= oldest);
-      if (firstRetained > 0) {
-        meta.history.splice(0, firstRetained);
-      }
-      return;
-    }
-    if (!attachment.keepsCheckpoints && meta.history.length > HISTORY_TAIL) {
-      meta.history.splice(0, meta.history.length - HISTORY_TAIL);
-    }
-  }
-
-  private trimRuntimeHistory(attachment: RuntimeAttachment): void {
+  private trimParticipantHistory(attachment: ParticipantAttachment): void {
     const meta = attachment.meta;
     const oldest = meta.checkpoints[0];
     if (oldest !== undefined) {
@@ -771,7 +696,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       if (firstRetained > 0) meta.history.splice(0, firstRetained);
       return;
     }
-    if (!attachment.participant.undoable && meta.history.length > HISTORY_TAIL) {
+    if (!attachment.keepsCheckpoints && meta.history.length > HISTORY_TAIL) {
       meta.history.splice(0, meta.history.length - HISTORY_TAIL);
     }
   }
