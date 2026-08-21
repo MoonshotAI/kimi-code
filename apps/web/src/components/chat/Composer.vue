@@ -1,11 +1,11 @@
 <!-- apps/web/src/components/chat/Composer.vue -->
 <script setup lang="ts">
 import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
-import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
 import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
-import { buildSlashItems, matchSlashItem, parseSlash, SKILL_COMMAND_PREFIX } from '@moonshot-ai/app-core/lib';
+import { buildSlashItems, matchSlashItem, parseSlash, SKILL_COMMAND_PREFIX, stripSkillPrefix } from '@moonshot-ai/app-core/lib';
 import { formatTokens } from '@moonshot-ai/app-core/lib';
 import { useAppearance } from '@moonshot-ai/app-core';
 import type { IconName } from '@moonshot-ai/app-client/icons';
@@ -27,6 +27,7 @@ import { useComposerDraft } from '@moonshot-ai/app-client/composables';
 import { useAttachmentUpload, type Attachment } from '@moonshot-ai/app-client/composables';
 import { toPromptAttachment } from '@moonshot-ai/app-client/client';
 import { openFileAttachment } from '@moonshot-ai/app-client/lib';
+import { createComposerEditor, startMentionSelectionSync, type ComposerEditorApi } from '@moonshot-ai/app-composer';
 import { getKimiWebApi } from '../../api';
 import { openUpgrade } from '@moonshot-ai/app-core/lib';
 import type { ManagedMembership, PromptAttachment } from '@moonshot-ai/app-client/client';
@@ -82,6 +83,10 @@ const props = withDefaults(defineProps<{
   starredIds?: string[];
   /** Session skills shown in the `/` menu (after the built-in commands). */
   skills?: AppSkill[];
+  /** Whether the session skill list finished loading. Only once loaded can a
+      revived pill's name be verified — see the submit path's stale-skill
+      degradation. */
+  skillsLoaded?: boolean;
   /** Hide the context-usage indicator (used on the empty-session landing page). */
   hideContext?: boolean;
 }>(), {
@@ -94,6 +99,7 @@ const props = withDefaults(defineProps<{
   models: () => [],
   starredIds: () => [],
   skills: () => [],
+  skillsLoaded: false,
 });
 
 const isMobile = useIsMobile();
@@ -121,9 +127,9 @@ const emit = defineEmits<{
   /** Slash command. Only skill commands carry the composer's attachments;
       built-in commands leave the chips untouched (attachments stay pending).
       `restoreText` is the original composer text a synthesized command was
-      built from — gate-failure restores load it back instead of the
-      synthesized command line. */
-  command: [payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string }];
+      built from (the single-skill-pill activation) — gate-failure restores
+      load it back instead of the synthesized command line. */
+  command: [payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string }];
   interrupt: [];
   setPermission: [mode: PermissionMode];
   setThinking: [level: ThinkingLevel];
@@ -143,27 +149,130 @@ const emit = defineEmits<{
 const { t, locale } = useI18n();
 
 // ---------------------------------------------------------------------------
-// Textarea + per-session draft persistence — see useComposerDraft. Web still
-// uses a plain <textarea> (the ProseMirror composer is desktop-only for now);
-// the shared composables only need the TextFieldLike char-offset subset, which
-// HTMLTextAreaElement satisfies.
+// Text state + per-session draft persistence — see useComposerDraft.
 // ---------------------------------------------------------------------------
 const { text, editorRef, loadForEdit, clearDraft } = useComposerDraft({
   sessionId: () => props.sessionId,
 });
-const textareaRef = editorRef as unknown as Ref<HTMLTextAreaElement | null>;
 
-// Autosize is textarea-specific (the desktop editor grows with its content):
-// reset to measure the natural content height, then fit the box to it. The
-// bounds stay in CSS (`min-height` / `max-height`); past the cap,
-// `overflow-y: auto` scrolls internally.
-function autosize(): void {
-  const el = textareaRef.value;
-  if (!el) return;
-  el.style.height = 'auto';
-  el.style.height = `${el.scrollHeight}px`;
-}
-watch(text, () => void nextTick(autosize));
+// ---------------------------------------------------------------------------
+// ProseMirror editing surface — see app-client's composerEditor. The host div
+// carries the .ph styling; the EditorView mounts inside it. The text model
+// stays a plain-string ref: user edits flow OUT via onChange, external writes
+// (draft load, history recall, mention select, submit clear) flow IN via the
+// watcher below, which skips editor-originated changes by comparing text.
+// ---------------------------------------------------------------------------
+const editorHostRef = ref<HTMLElement | null>(null);
+let editor: ComposerEditorApi | null = null;
+let stopMentionSelectionSync: (() => void) | null = null;
+
+onMounted(() => {
+  const host = editorHostRef.value;
+  if (!host) return;
+  editor = createComposerEditor(host, {
+    initialText: text.value,
+    onChange: (value) => {
+      text.value = value;
+      handleInput();
+    },
+    handleKeyDown: (e) => handleKeydown(e),
+    onBlur: handleEditorBlur,
+    onCompositionStart: handleCompositionStart,
+    onCompositionEnd: handleCompositionEnd,
+  });
+  editor.setEditable(!props.starting);
+  editorRef.value = editor;
+  // Browsers don't selection-paint an inline svg glyph — mark covered pills
+  // with a class instead (see mentionSelectionSync).
+  stopMentionSelectionSync = startMentionSelectionSync(() => editorHostRef.value);
+
+  // Restore the session's stashed state, falling back to the persisted
+  // draft. If the two ever diverge (e.g. localStorage lost the draft
+  // mid-run), the stashed state is the fresher truth — push it back into the
+  // text ref so data-empty/canSend/submit stay consistent with the visible
+  // doc (the draft watcher then re-persists it, healing the divergence).
+  function restoreSessionState(sid: string): void {
+    if (!editor) return;
+    if (editor.restoreState(sid)) {
+      const restored = editor.getText();
+      if (restored !== text.value) text.value = restored;
+    } else {
+      // Nothing stashed for this session — plain text load (fresh stack),
+      // exactly what the text watcher would do anyway.
+      editor.setText(text.value);
+    }
+  }
+
+  // A remount for the same session (empty-session ↔ docked composer swap)
+  // gets its stashed state back, undo stack included; first-ever mount finds
+  // nothing and keeps the draft text.
+  if (props.sessionId) restoreSessionState(props.sessionId);
+
+  // Session switching swaps the WHOLE editor state: stash the old session's
+  // state (doc + selection + undo stack) and adopt the new one's. Registered
+  // BEFORE the text watcher — the draft composable's session watcher has
+  // already loaded the new draft into `text` when this runs, and after a
+  // restore the texts match, so the text watcher below skips its setText
+  // (which would reset the freshly restored undo stack).
+  watch(
+    () => props.sessionId,
+    (newSid, oldSid) => {
+      if (!editor || newSid === oldSid) return;
+      // The empty-session composer (no sid yet) is never stashed: its first
+      // prompt becomes a brand-new session with no undo carry-over.
+      if (oldSid) editor.stashState(oldSid);
+      if (newSid) restoreSessionState(newSid);
+      else editor.setText(text.value);
+    },
+  );
+
+  // External text writes flow into the editor here. Registered on mount (not
+  // in setup) so it can see the editor handle; flush order guarantees this
+  // runs before the nextTick caret placement in the composables.
+  watch(text, (value) => {
+    if (editor && value !== editor.getText()) editor.setText(value);
+  });
+
+  // `starting` disables the field while the first prompt is being submitted.
+  watch(
+    () => props.starting,
+    (starting) => editor?.setEditable(!starting),
+  );
+
+  // Combobox semantics for the slash/mention menus live on the focusable PM
+  // root (the textarea used to carry them in template bindings). The
+  // localized placeholder doubles as the accessible name — the CSS ::before
+  // placeholder overlay never reaches the a11y tree.
+  watchEffect(() => {
+    const dom = editor?.dom;
+    if (!dom) return;
+    dom.setAttribute('aria-label', placeholder.value);
+    dom.setAttribute('aria-expanded', String(!!menuAriaControls.value));
+    const controls = menuAriaControls.value;
+    if (controls) dom.setAttribute('aria-controls', controls);
+    else dom.removeAttribute('aria-controls');
+    const activeDescendant = menuAriaActiveDescendant.value;
+    if (activeDescendant) dom.setAttribute('aria-activedescendant', activeDescendant);
+    else dom.removeAttribute('aria-activedescendant');
+  });
+});
+
+onUnmounted(() => {
+  // Keep the session's state (undo stack included) across composer remounts —
+  // the empty-session and docked composers are separate instances. Sync the
+  // text ref into the editor FIRST: an optimistic send clears `text` and
+  // swaps this component out within the same flush, so the pre-flush text
+  // watcher may never run — without the sync we'd stash a state still
+  // holding the just-sent prompt and resurrect it on the next mount.
+  if (editor && props.sessionId) {
+    if (text.value !== editor.getText()) editor.setText(text.value);
+    editor.stashState(props.sessionId);
+  }
+  stopMentionSelectionSync?.();
+  editor?.destroy();
+  editor = null;
+  editorRef.value = null;
+});
 
 // ---------------------------------------------------------------------------
 // Expanded editor — a taller, multi-line composing mode. While expanded, Enter
@@ -173,53 +282,48 @@ watch(text, () => void nextTick(autosize));
 const expanded = ref(false);
 function toggleExpand(): void {
   expanded.value = !expanded.value;
-  // Re-fit the textarea after the min/max-height swap between modes, then
-  // recompute growth against the *post-toggle* resting height. Without this,
+  // Re-measure growth against the *post-toggle* resting height. Without this,
   // collapsing would keep the isGrown measured against the expanded 70%-of-app-height
   // min-height, hiding the toggle even though the collapsed draft is still
   // multi-line. (This does not affect the expanded state itself — once
   // expanded, it stays at that height until toggled back or sent.)
   void nextTick(() => {
-    autosize();
     recomputeGrown();
-    // Return focus to the textarea so the user can keep typing right away;
+    // Return focus to the editor so the user can keep typing right away;
     // otherwise focus stays on the toggle button and the next Enter would
     // activate it again instead of inserting a newline.
-    textareaRef.value?.focus();
+    editor?.focus();
   });
 }
 
-// Collapse the expanded editor after a successful send/steer and re-fit the
-// textarea once the expanded min-height is gone. On image-only sends the text is
-// already empty, so the draft watcher never re-runs autosize — without this,
-// the textarea keeps the inline height measured while expanded and the collapsed cap
-// (1/4 viewport) leaves an oversized empty box until the next keystroke.
+// Collapse the expanded editor after a successful send/steer. On image-only
+// sends the text is already empty, so nothing else re-measures the box —
+// without this the collapsed cap (1/4 viewport) leaves an oversized empty box
+// until the next keystroke.
 function collapseAndRefit(): void {
   if (!expanded.value) return;
   expanded.value = false;
-  void nextTick(autosize);
+  void nextTick(recomputeGrown);
 }
 
 // The expand toggle is hidden at the resting height and only appears once the
 // box has grown past it (multi-line content) — keeps the empty composer
 // uncluttered. While expanded it always shows so the user can collapse back.
 //
-// The resting height equals the textarea's computed `min-height` (set in
+// The resting height equals the host's computed `min-height` (set in
 // style.css). We read it from the element instead of hard-coding.
 const RESTING_HEIGHT_FALLBACK_PX = 36;
-function restingHeightPx(el: HTMLTextAreaElement): number {
+function restingHeightPx(el: HTMLElement): number {
   if (typeof getComputedStyle === 'undefined') return RESTING_HEIGHT_FALLBACK_PX;
   const min = Number.parseFloat(getComputedStyle(el).minHeight);
   return Number.isFinite(min) && min > 0 ? min : RESTING_HEIGHT_FALLBACK_PX;
 }
 const isGrown = ref(false);
 function recomputeGrown(): void {
-  const el = textareaRef.value;
+  const el = editorHostRef.value;
   isGrown.value = !!el && el.scrollHeight > restingHeightPx(el);
 }
 watch(text, () => {
-  // Registered after the local autosize watcher above, so the inline height
-  // already reflects the latest content when this reads scrollHeight.
   void nextTick(recomputeGrown);
 });
 
@@ -228,7 +332,7 @@ watch(text, () => {
 // implementation; the composer keeps the keydown orchestration (which also
 // juggles the slash and mention menus).
 // ---------------------------------------------------------------------------
-const history = useInputHistory({ text, editorRef: textareaRef, sessionId: () => props.sessionId });
+const history = useInputHistory({ text, editorRef, sessionId: () => props.sessionId });
 
 // ---------------------------------------------------------------------------
 // Slash-command menu — see useSlashMenu for the implementation. The composer
@@ -266,7 +370,7 @@ const {
   select: selectSlashCommand,
 } = useSlashMenu({
   text,
-  editorRef: textareaRef,
+  editorRef,
   skills: () => props.skills,
   // Menu-selected bare commands never carry attachments (skills all take
   // `acceptsInput`, so they leave the command in the composer instead of
@@ -335,8 +439,19 @@ const {
   getToken: getMentionToken,
 } = useMentionMenu({
   text,
-  editorRef: textareaRef,
+  editorRef,
   searchFiles: () => props.searchFiles,
+  skills: () => props.skills,
+  // Pill insertion — replaces the @token with a mention atom (the plain-text
+  // splice fallback in the composable is the web textarea's path).
+  insertMention: (entry, range) => {
+    editor?.insertMention(
+      entry.kind === 'skill'
+        ? { kind: 'skill', name: entry.name, path: '' }
+        : { kind: entry.kind, name: entry.name, path: entry.path },
+      range,
+    );
+  },
 });
 
 // ---------------------------------------------------------------------------
@@ -355,7 +470,7 @@ const slashSheetQuery = computed<string>({
   },
 });
 // The mention sheet's search box edits against an ANCHORED token start:
-// captured when the sheet opens. Reading the blurred textarea's caret instead
+// captured when the sheet opens. Reading the blurred editor's caret instead
 // mis-tracks every keystroke, and once the browser resets the caret to the
 // end of the whole draft (an @token in the middle of a longer text), the
 // token walk returns null and the sheet would close mid-typing.
@@ -376,9 +491,9 @@ watch(mentionSheetQuery, (v) => {
     // Pin the caret at the token's end so the composable's own token walk
     // (and its in-flight search guard) keeps seeing the same @token after the
     // DOM flush — never the end of the full draft.
-    const el = textareaRef.value;
+    const ed = editorRef.value;
     const pos = start + 1 + v.length;
-    if (el) el.setSelectionRange(pos, pos);
+    ed?.setSelectionRange(pos, pos);
     updateMentionMenu();
   });
 });
@@ -442,7 +557,7 @@ watch(() => props.sessionId, () => {
 // it from the live text via handleInput.
 function handleEditorBlur(): void {
   // Mobile: the menu sheets move focus INTO their own search box — the
-  // textarea's blur is the whole interaction, not a dismissal signal (the
+  // editor's blur is the whole interaction, not a dismissal signal (the
   // sheet's scrim / grab handle / Escape own closing).
   if (isMobile.value) return;
   slashOpen.value = false;
@@ -473,26 +588,33 @@ function handleInput(): void {
 function insertFolderPaths(paths: string[]): void {
   // Quote paths containing whitespace so the draft tokenizes like typed input.
   const insertion = paths.map((p) => (/\s/.test(p) ? `"${p}"` : p)).join(' ');
-  const el = textareaRef.value;
+  const ed = editor;
   const val = text.value;
-  // A drop usually lands while the textarea is unfocused and its selection is
+  // A drop usually lands while the editor is unfocused and its selection is
   // stale — append at the end unless the caret is genuinely live.
-  const pos = el && document.activeElement === el ? el.selectionStart : val.length;
+  const pos = ed && document.activeElement === ed.dom ? (ed.selectionStart ?? val.length) : val.length;
   // Keep the inserted paths separated from the surrounding text.
   const prefix = pos > 0 && !/\s/.test(val[pos - 1]!) ? ' ' : '';
   const suffix = pos < val.length && !/\s/.test(val[pos]!) ? ' ' : '';
   // The draft changed without typing — leave history-browsing mode like
   // handleInput does, or the next ↑ would replace it with a history entry.
   history.resetBrowsing();
+  if (ed) {
+    // One undoable transaction at the caret offset — a text.value splice
+    // would make the text watcher rebuild the whole document via setText(),
+    // resetting the undo stack. The caret lands after the inserted paths.
+    // reviveMentions: false — a dropped path is LITERAL text; a dirname that
+    // merely looks like a mention link ('[archive](old)') must not become a
+    // pill pointing somewhere else.
+    // The drop is not typing, so close any popup the onChange-derived menu
+    // update may have opened (an absolute dropped path reads as a `/token`).
+    ed.insertTextAt(pos, prefix + insertion + suffix, { reviveMentions: false });
+    slashOpen.value = false;
+    closeMentionMenu();
+    ed.focus();
+    return;
+  }
   text.value = val.slice(0, pos) + prefix + insertion + suffix + val.slice(pos);
-  void nextTick(() => {
-    const ta = textareaRef.value;
-    if (!ta) return;
-    const caret = pos + prefix.length + insertion.length;
-    ta.setSelectionRange(caret, caret);
-    ta.focus();
-    autosize();
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -586,13 +708,11 @@ watch(
 );
 
 onMounted(() => {
-  // Fit the box to a restored draft on first render, and reflect its grown
-  // state so the expand toggle shows for an already-long draft.
+  // Reflect the grown state of a restored draft on first render so the expand
+  // toggle shows for an already-long draft. (The PM editor grows the box to
+  // fit its content on its own — no explicit re-fit needed here.)
   if (text.value) {
-    void nextTick(() => {
-      autosize();
-      recomputeGrown();
-    });
+    void nextTick(recomputeGrown);
   }
 });
 
@@ -608,7 +728,7 @@ onUnmounted(() => {
 function focus(): void {
   // preventScroll keeps the pane from jumping if the composer is already in view
   // or if focus is triggered during an animation/transition.
-  textareaRef.value?.focus({ preventScroll: true });
+  editor?.focus({ preventScroll: true });
 }
 function loadAttachmentsForEdit(atts: TurnAttachment[]): void {
   loadAttachments(atts);
@@ -709,12 +829,70 @@ function handleSubmit(): void {
   // commands such as `/model`. A hand-typed bare skill name (`/deploy`) also
   // resolves to its prefixed menu entry (`/skill:deploy`), mirroring the TUI.
   //
+  // A message carrying exactly ONE skill pill takes the same activation path:
+  // the pill stands for `/skill:<name>` and the WHOLE text becomes the args —
+  // the pill travels in its serialized mention-link form, so the sent bubble
+  // shows the original message verbatim (the link revives into a pill there).
+  // With TWO or more skill pills the message stays a plain prompt with link
+  // references — each activation is its own turn, so multi-activation from
+  // one message would be a mess. And while the session is BUSY the command
+  // path would lose the message to a busy refusal, so the branch is skipped
+  // and the normal submit queues the text like any other send.
+  //
   // Skill commands take the composer's attachments along (the daemon appends
   // them to the activation's user message); built-in commands don't consume
   // attachments, so the chips stay pending for the next send.
   if (trimmed) {
+    // An explicit known slash command always wins over the single-skill-pill
+    // auto-activation: '/compact [deploy](kimi-code://skill/deploy)' must run
+    // compact (the pill is a plain reference in its args), not hijack into a
+    // skill activation. Resolve the command FIRST.
     const parsed = parseSlash(trimmed);
     const matched = parsed ? matchSlashItem(buildSlashItems(props.skills), parsed.cmd) : undefined;
+    const skillMentions = editor?.getSkillMentions() ?? [];
+    // A pill revived from a draft/history/edit-resend may name a skill GONE
+    // from the workspace: the daemon would refuse the activation, the failure
+    // restore would load the same text back, and every retry would loop the
+    // same refusal — the message could never go out as a plain prompt. Once
+    // the list is loaded, an unresolvable name degrades to a plain reference
+    // (the same rule as multi-pill messages); while it is still loading the
+    // name can't be verified, so the old attempt path stays.
+    const staleSkillPill =
+      skillMentions.length === 1 && props.skillsLoaded && !props.skills.some((s) => s.name === skillMentions[0]!.name);
+    // Only activate when the session is FULLY idle with an empty queue.
+    // A busy session makes the command path fire activateSkill immediately
+    // into a running turn — and the composer has already cleared by the time
+    // a busy refusal comes back, losing the message and its attachments. A
+    // non-empty queue would let the later skill jump the FIFO order the
+    // normal submit path preserves (sendPrompt enqueues + flushes), and a
+    // running-but-not-working state (approval/question pending) is the same
+    // bypass. An armed GOAL intent also vetoes the shortcut: its objective
+    // IS this message's text, and only the normal submit path writes
+    // goalObjective and cashes the intent — activating here would drop the
+    // goal entirely and leave the intent armed for the next message. Let
+    // the normal submit path run instead: it queues the full serialized
+    // text like any other busy send; on replay it goes out as a plain
+    // prompt, matching the multi-pill degradation.
+    if (skillMentions.length === 1 && !staleSkillPill && !props.working && !props.running && props.queued.length === 0 && !matched && !props.goalMode) {
+      const mention = skillMentions[0]!;
+      const cmd = `/${SKILL_COMMAND_PREFIX}${mention.name} ${trimmed}`;
+      text.value = '';
+      clearDraft();
+      slashOpen.value = false;
+      collapseAndRefit();
+      // The chips leave with the command — same as the slash-menu skill path.
+      previewAttachment.value = null;
+      previewThumbImg.value = null;
+      clearAfterSubmit();
+      closeMentionMenu();
+      // restoreText: the gate-failure restore loads the ORIGINAL message back
+      // (pill intact) — restoring the synthesized cmd would prefix another
+      // `/skill:<name>` on every gate retry. skillName rides structured: a
+      // name with SPACES can't survive the space-delimited cmd string.
+      emit('command', { cmd, attachments: readyAttachments.map((a) => toPromptAttachment(a)), restoreText: trimmed, skillName: mention.name });
+      return;
+    }
+
     if (parsed && matched) {
       const cmd = parsed.arg ? `${parsed.cmd} ${parsed.arg}` : parsed.cmd;
       const isSkill = matched.isSkill === true;
@@ -729,7 +907,7 @@ function handleSubmit(): void {
         previewThumbImg.value = null;
         clearAfterSubmit();
         closeMentionMenu();
-        emit('command', { cmd, attachments: readyAttachments.map((a) => toPromptAttachment(a)) });
+        emit('command', { cmd, attachments: readyAttachments.map((a) => toPromptAttachment(a)), skillName: stripSkillPrefix(matched.name) });
       } else {
         emit('command', { cmd, attachments: [] });
       }
@@ -830,17 +1008,22 @@ function isComposingKeyEvent(e: KeyboardEvent): boolean {
   return isComposingText || e.isComposing || e.keyCode === 229;
 }
 
-function handleKeydown(e: KeyboardEvent): void {
-  if (isComposingKeyEvent(e)) return;
+// Keydown arbitrator, wired as the PM editor's handleKeyDown prop. Return
+// true = claimed (we preventDefault those ourselves, which also keeps them
+// from the global shortcut dispatcher); false = fall through to the PM
+// keymaps (history undo/redo, baseKeymap's Enter/Backspace behavior) and the
+// browser default.
+function handleKeydown(e: KeyboardEvent): boolean {
+  if (isComposingKeyEvent(e)) return false;
 
   // Backspace at the very start of the text deletes the mode pill (chip-style
   // dismissal), rather than doing nothing.
   if (workMode.value && e.key === 'Backspace' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
-    const el = textareaRef.value;
-    if (el && el.selectionStart === 0 && el.selectionEnd === 0) {
+    const sel = editorRef.value;
+    if (sel?.selectionStart === 0 && sel.selectionEnd === 0) {
       e.preventDefault();
       clearWorkMode();
-      return;
+      return true;
     }
   }
 
@@ -849,17 +1032,17 @@ function handleKeydown(e: KeyboardEvent): void {
     if (addMenuOpen.value) {
       e.preventDefault();
       closeAddMenu();
-      return;
+      return true;
     }
     if (dropdownOpen.value) {
       e.preventDefault();
       closeDropdown();
-      return;
+      return true;
     }
     if (permDropdownOpen.value) {
       e.preventDefault();
       closePermDropdown();
-      return;
+      return true;
     }
   }
 
@@ -870,31 +1053,31 @@ function handleKeydown(e: KeyboardEvent): void {
     if (e.key === 'Escape') {
       e.preventDefault();
       slashOpen.value = false;
-      return;
+      return true;
     }
     // An empty ("no commands") menu has nothing to select — let Tab move
     // focus on, but close the menu so it can't strand the popup open.
     if (e.key === 'Tab' && slashItems.value.length === 0) {
       slashOpen.value = false;
-      return;
+      return false;
     }
   }
   if (slashOpen.value && slashItems.value.length > 0) {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       slashActive.value = (slashActive.value + 1) % slashItems.value.length;
-      return;
+      return true;
     }
     if (e.key === 'ArrowUp') {
       e.preventDefault();
       slashActive.value = (slashActive.value - 1 + slashItems.value.length) % slashItems.value.length;
-      return;
+      return true;
     }
     if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault();
       const item = slashItems.value[slashActive.value];
       if (item) selectSlashCommand(item);
-      return;
+      return true;
     }
   }
 
@@ -907,42 +1090,44 @@ function handleKeydown(e: KeyboardEvent): void {
     if (e.key === 'Escape') {
       e.preventDefault();
       closeMentionMenu();
-      return;
+      return true;
     }
     // An empty menu (the bare-@ hint or no-match) has nothing to select — let
     // Tab move focus on, but close the menu first so the focus shift can't
     // strand the popup/sheet open over the page.
     if (e.key === 'Tab' && mentionItems.value.length === 0) {
       closeMentionMenu();
-      return;
+      return false;
     }
     if (mentionItems.value.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         mentionNavigate((mentionActive.value + 1) % mentionItems.value.length);
-        return;
+        return true;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
         mentionNavigate((mentionActive.value - 1 + mentionItems.value.length) % mentionItems.value.length);
-        return;
+        return true;
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
         const item = mentionItems.value[mentionActive.value];
         if (item) selectMentionItem(item);
-        return;
+        return true;
       }
     }
   }
 
-  // Ctrl+S / Cmd+S — steer into the running turn (TUI parity)
+  // Ctrl+S / Cmd+S — steer into the running turn (TUI parity). Hardcoded by
+  // decision (not customizable). The chord is consumed even when idle so it
+  // can't leak to the global dispatcher or the send/newline handling below.
   if (e.key === 's' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+    e.preventDefault();
     if (props.running) {
-      e.preventDefault();
       handleSteer();
     }
-    return;
+    return true;
   }
 
   // History recall (shell-style ↑/↓) — see useInputHistory for the machinery.
@@ -975,27 +1160,51 @@ function handleKeydown(e: KeyboardEvent): void {
       // ('/new'), and the menu's arrow-key branch would then swallow the
       // next history step. Typing reopens the menu via handleInput.
       slashOpen.value = false;
-      return;
+      return true;
     }
     if (e.key === 'ArrowDown' && browsing) {
       e.preventDefault();
       history.recallNewer();
       slashOpen.value = false;
-      return;
+      return true;
     }
   }
 
-  // Normal Enter / Shift+Enter
-  if (e.key === 'Enter' && !e.shiftKey) {
-    // Expanded editor: Enter inserts a newline; Cmd/Ctrl+Enter sends.
-    // (Clicking the send button always sends.) Shift+Enter already falls
-    // through to the default newline above, so behavior matches either way.
-    if (expanded.value && !(e.metaKey || e.ctrlKey)) {
-      return;
-    }
+  // Send / newline — hardcoded bindings (the customizable keymap is
+  // desktop-only; web keeps its defaults: Enter sends, Shift+Enter inserts a
+  // newline, with exact-modifier matching like the keymap's). The newline
+  // goes through the editor's splitBlock so the insert lands in the PM undo
+  // history (baseKeymap binds only Enter — Shift+Enter must be handled here,
+  // the browser's native contenteditable newline would produce DOM PM can't
+  // map to the schema). The preventDefault also keeps the chord away from
+  // the global shortcut dispatcher (it skips defaultPrevented events).
+  if (e.key === 'Enter' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    insertNewlineAtCaret();
+    return true;
+  }
+  // Plain Enter sends in the collapsed composer; Cmd/Ctrl+Enter sends in
+  // either mode (the expanded editor's send chord). In the expanded editor
+  // plain Enter falls through to the PM keymaps and inserts a newline.
+  if (e.key === 'Enter' && !e.shiftKey && !e.altKey && (e.metaKey || e.ctrlKey || !expanded.value)) {
     e.preventDefault();
     handleSubmit();
+    return true;
   }
+  return false;
+}
+
+// Insert a line break at the caret programmatically: Shift+Enter has no
+// keymap default (baseKeymap binds only Enter), so the composer does it
+// itself. The editor's splitBlock is a normal transaction, so it IS undoable
+// via PM history, and onChange runs handleInput for us.
+function insertNewlineAtCaret(): void {
+  if (!editor) {
+    text.value += '\n';
+    handleInput();
+    return;
+  }
+  editor.insertNewlineAtCaret();
 }
 
 // ---------------------------------------------------------------------------
@@ -1192,7 +1401,7 @@ function selectAddItem(item: { id?: string; action: () => void }): void {
   // would race the native picker and re-pop the keyboard. Every other action
   // hands focus back so the user can keep typing right away.
   if (isMobile.value && item.id === 'files') return;
-  textareaRef.value?.focus();
+  focus();
 }
 
 // Menu-pattern keys on the menu surface: arrows move DOM focus between rows,
@@ -1201,7 +1410,7 @@ function onAddMenuKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') {
     e.preventDefault();
     closeAddMenu();
-    textareaRef.value?.focus();
+    focus();
     return;
   }
   if (e.key === 'Tab') {
@@ -1231,8 +1440,9 @@ function primeComposerToken(token: '/' | '@'): void {
   closeAddMenu();
   text.value = token;
   void nextTick(() => {
-    const el = textareaRef.value;
-    if (el) el.setSelectionRange(el.value.length, el.value.length);
+    const ed = editorRef.value;
+    const end = text.value.length;
+    ed?.setSelectionRange(end, end);
     if (token === '/') updateSlashMenu();
     else updateMentionMenu();
   });
@@ -1366,7 +1576,7 @@ function clearWorkMode(): void {
 // room, measured from the pill itself (label width varies by mode/locale).
 const wmPillRef = ref<HTMLElement | null>(null);
 const wmIndent = ref('');
-const wmTextStyle = computed(() => (wmIndent.value ? { textIndent: wmIndent.value } : undefined));
+const wmHostStyle = computed(() => (wmIndent.value ? { '--wm-indent': wmIndent.value } : undefined));
 let wmResizeObserver: ResizeObserver | null = null;
 
 function syncWmIndent(): void {
@@ -1923,8 +2133,8 @@ function selectModel(modelId: string): void {
         <div class="input-row">
           <!-- The primary work mode (plan XOR goal-armed) as a leading pill —
                × disarms it; an active goal lives on the dock pill instead.
-               One text-line tall, floating over the textarea's first line
-               (text-indent makes the room). -->
+               One text-line tall, floating over the editor's first line (the
+               first paragraph's text-indent makes the room). -->
           <span v-if="workMode" ref="wmPillRef" class="wm-pill">
             <Icon :name="workMode === 'goal' ? 'target' : 'file-edit'" size="sm" />
             <span>{{ workMode === 'goal' ? t('status.goalLabel') : t('status.planLabel') }}</span>
@@ -1932,28 +2142,16 @@ function selectModel(modelId: string): void {
               <Icon name="close" size="sm" />
             </IconButton>
           </span>
-          <textarea
-            ref="textareaRef"
-            v-model="text"
+          <!-- ProseMirror mounts inside this host (see script). The host keeps
+               the .ph styling + placeholder data attrs; combobox ARIA lives on
+               the PM root (the focusable element), set imperatively. -->
+          <div
+            ref="editorHostRef"
             class="ph"
-            :style="wmTextStyle"
-            :placeholder="placeholder"
-            :disabled="starting"
-            autocomplete="off"
-            spellcheck="false"
-            rows="1"
-            role="combobox"
-            aria-autocomplete="list"
-            aria-haspopup="listbox"
-            :aria-expanded="!!menuAriaControls"
-            :aria-controls="menuAriaControls"
-            :aria-activedescendant="menuAriaActiveDescendant"
-            @keydown="handleKeydown"
-            @compositionstart="handleCompositionStart"
-            @compositionend="handleCompositionEnd"
-            @input="handleInput"
-            @blur="handleEditorBlur"
-          />
+            :style="wmHostStyle"
+            :data-placeholder="placeholder"
+            :data-empty="text.length === 0"
+          ></div>
           <Tooltip :text="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')">
           <button
             v-if="expanded || isGrown"
@@ -2569,9 +2767,10 @@ function selectModel(modelId: string): void {
      and an unset caret inherits that faint colour and nearly disappears. */
   caret-color: var(--color-text);
   flex: 1;
+  /* Anchor for the placeholder ::before overlay. */
+  position: relative;
   border: none;
   outline: none;
-  resize: none;
   font-family: var(--font-ui);
   font-size: var(--content-font-size);
   text-autospace: normal;
@@ -2589,12 +2788,61 @@ function selectModel(modelId: string): void {
   display: none;
 }
 
-.ph::placeholder {
+/* Placeholder: an overlay shown only while the doc is empty (a contenteditable
+   has no native `placeholder`); the text comes from the host's data attr. */
+.ph[data-empty='true']::before {
+  content: attr(data-placeholder);
+  position: absolute;
+  top: 0;
+  /* The mode pill floats over the first line — start after it (the same
+     reserve the first paragraph's text-indent makes). */
+  left: var(--wm-indent, 0px);
   color: var(--muted);
+  pointer-events: none;
 }
 
-.ph:not(:placeholder-shown) {
+.ph:not([data-empty='true']) {
   color: var(--color-text);
+}
+
+/* The ProseMirror root is created at runtime inside the host — :deep() reaches
+   it. Keep its paragraphs margin-free so lines pack exactly like the textarea
+   they replaced. */
+.ph :deep(.ProseMirror) {
+  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  /* Fill the host's minimum box (36px resting / 70%-of-app-height expanded) so clicking
+     anywhere in the visible editor area lands on the contenteditable and can
+     focus/place the caret — not on the inert host below the last line. */
+  min-height: inherit;
+}
+
+.ph :deep(.ProseMirror p) {
+  margin: 0;
+}
+
+/* PM appends a trailing <br> when a paragraph ends with an inline atom (a
+   caret target after the pill). Rendered, it reads as an unwanted extra
+   line after the pill — hide it, except when it is the paragraph's only
+   content (the empty-paragraph placeholder line needs it). */
+.ph :deep(.ProseMirror-trailingBreak:not(:only-child)) {
+  display: none;
+}
+
+/* Mention pills (file/folder/skill atoms): the visual vocabulary is global
+   (app-ui/style.css, shared with rendered messages). Editor-only: when the
+   atom is node-selected (first Backspace selects, second deletes), the ink
+   deepens to full text color to mark the pending deletion. */
+.ph :deep(.mention-pill.ProseMirror-selectednode) {
+  color: var(--color-text);
+}
+
+/* The mode pill's room: only the FIRST paragraph's first line indents (the
+   pill floats over it) — text-indent inherits, so target first-of-type
+   explicitly or every paragraph's first line would shift. */
+.ph :deep(.ProseMirror p:first-of-type) {
+  text-indent: var(--wm-indent, 0px);
 }
 
 /* Expanded editor: a tall composing area at ~70% of the viewport — clearly

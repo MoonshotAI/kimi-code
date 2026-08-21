@@ -53,7 +53,7 @@ import { initServerAuth, onAuthRequired } from '@moonshot-ai/app-core/lib';
 import type { AppConfig, OAuthRegion, ThinkingLevel } from './api/types';
 import { effectiveThinkingLevel } from '@moonshot-ai/app-core/lib';
 import { modelDisplayName, subagentEffortSuffix } from '@moonshot-ai/app-core/lib';
-import { stripSkillPrefix } from '@moonshot-ai/app-core/lib';
+import { stripSkillPrefix, SKILL_COMMAND_PREFIX } from '@moonshot-ai/app-core/lib';
 import { sessionDisplayStatus, type SessionDisplayStatus } from '@moonshot-ai/app-core/lib';
 import { ActionToast, Icon, IconButton } from '@moonshot-ai/app-ui';
 import InternalBuildBanner from './components/InternalBuildBanner.vue';
@@ -992,7 +992,7 @@ async function passCommandGates(text: string, attachments: PromptAttachment[] = 
 let sendGeneration = 0;
 
 // Handler for slash commands emitted by Composer (via ConversationPane)
-async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string }): Promise<void> {
+async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string }): Promise<void> {
   const { cmd, attachments, restoreText } = payload;
   // `/compact <text>` carries an optional free-text instruction steering what
   // the summary should focus on (TUI parity).
@@ -1092,8 +1092,24 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
       // the first prompt) so the activation isn't silently dropped on the
       // new-session screen.
       const space = cmd.indexOf(' ');
-      const name = stripSkillPrefix((space === -1 ? cmd : cmd.slice(0, space)).slice(1));
-      const args = space === -1 ? undefined : cmd.slice(space + 1).trim() || undefined;
+      // A skill name with SPACES can't ride the space-delimited cmd string
+      // ('/skill:write goal …' would activate 'write' with 'goal …' as args)
+      // — the single-skill-pill command carries it structured instead. Args
+      // follow the same rule: the original message (restoreText), or the cmd
+      // minus the exact '/skill:<name>' head — never "after the first space".
+      const name = payload.skillName ?? stripSkillPrefix((space === -1 ? cmd : cmd.slice(0, space)).slice(1));
+      const args = payload.skillName
+        ? (() => {
+            const head = cmd.startsWith(`/${SKILL_COMMAND_PREFIX}${payload.skillName} `)
+              ? `/${SKILL_COMMAND_PREFIX}${payload.skillName} `
+              : cmd.startsWith(`/${payload.skillName} `)
+                ? `/${payload.skillName} `
+                : null;
+            return (head ? cmd.slice(head.length).trim() : (restoreText ?? '').trim()) || undefined;
+          })()
+        : space === -1
+          ? undefined
+          : cmd.slice(space + 1).trim() || undefined;
       if (!name) break;
       // This activation is itself a send — a SECOND skill command (or a
       // normal submit, see handleSubmit) starting while an earlier
@@ -1398,6 +1414,7 @@ function openPr(url: string): void {
       :managed-membership="client.managedMembership.value"
       :starred-ids="client.starredModelIds.value"
       :skills="client.skills.value"
+      :skills-loaded="client.skillsLoaded.value"
       :questions="client.questions.value"
       :pending-question-actions="client.pendingQuestionActions"
       :pending-approval-actions="client.pendingApprovalActions"

@@ -118,6 +118,10 @@ const props = defineProps<{
   starredIds?: string[];
   /** Session skills shown in the composer `/` menu. */
   skills?: AppSkill[];
+  /** Whether the session skill list finished loading — forwarded to the
+      composer (a revived pill naming a GONE skill only degrades once the
+      list can be trusted). */
+  skillsLoaded?: boolean;
   /** Workspace name shown in the empty-session hint above the centred composer. */
   workspaceName?: string;
   /** Absolute workspace root path. */
@@ -1861,15 +1865,14 @@ function armEscUndo(): void {
   // Arm only with a main turn in flight and an empty queue (a draining queue
   // would retarget the undo); plugin command turns never arm, and a skill
   // activation arms only when its refill can replay the activation on resend
-  // (canEditTurn parity — the web textarea takes the synthesized command form
-  // only, see skillActivationEditText in app-composer).
+  // (canEditTurn parity — see skillActivationEditText in app-composer).
   if (!props.working || (props.queued?.length ?? 0) > 0) return;
   const turn = lastUserTurn();
   if (
     turn === null ||
     turn.pluginCommand !== undefined ||
     (turn.skillActivation !== undefined &&
-      !canUndoSkillActivation(turn.skillActivation, { revivePill: false }))
+      !canUndoSkillActivation(turn.skillActivation, { revivePill: true }))
   ) return;
   const zeroOutput = props.turns
     .slice(props.turns.indexOf(turn) + 1)
@@ -1910,7 +1913,7 @@ function executeEscUndo(turnId: string): void {
   // A skill activation refills in its replayable form (same rule as the hover
   // undo in ChatPane) so the resend replays the activation.
   const text = turn.skillActivation
-    ? (skillActivationEditText(turn.skillActivation, { revivePill: false }) ?? turn.text)
+    ? (skillActivationEditText(turn.skillActivation, { revivePill: true }) ?? turn.text)
     : turn.text;
   handleEditMessage({ text, attachments: turn.attachments });
 }
@@ -2330,6 +2333,7 @@ defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone
               :managed-membership="managedMembership"
               :starred-ids="starredIds"
               :skills="skills"
+              :skills-loaded="skillsLoaded"
               :starting="starting"
               hide-context
               @submit="handleComposerSubmit"
@@ -2492,6 +2496,7 @@ defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone
         :managed-membership="managedMembership"
         :starred-ids="starredIds"
         :skills="skills"
+        :skills-loaded="skillsLoaded"
         :goal="goal"
         :session-plans="sessionPlans"
         :dock-panel="dockPanel"

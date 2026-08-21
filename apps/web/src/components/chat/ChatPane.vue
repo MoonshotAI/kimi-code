@@ -431,10 +431,10 @@ const lastUserTurnId = computed<string | null>(() => {
 
 /** Whether to offer "edit & resend" on this turn: the latest user message, only
     while the conversation has nothing unfinished and it isn't a plugin command.
-    A skill activation is editable only via the synthesized `/skill:<name>
-    <args>` command refill — the web composer is a plain textarea with no pill
-    revival, so pill-composed args would resend as raw markdown and silently
-    drop the activation (skillActivationEditText with revivePill: false). */
+    A skill activation is editable whenever the refill can replay the
+    activation on resend — pill-composed args go back verbatim (this composer
+    revives the pill), anything else rides the synthesized `/skill:<name>
+    <args>` command form (see skillActivationEditText in app-composer). */
 function canEditTurn(turn: ChatTurn): boolean {
   return (
     !props.readOnly &&
@@ -442,7 +442,7 @@ function canEditTurn(turn: ChatTurn): boolean {
     turn.id === lastUserTurnId.value &&
     !props.working &&
     !turn.pluginCommand &&
-    !(turn.skillActivation && !canUndoSkillActivation(turn.skillActivation, { revivePill: false }))
+    !(turn.skillActivation && !canUndoSkillActivation(turn.skillActivation, { revivePill: true }))
   );
 }
 
@@ -505,11 +505,11 @@ async function onUndo(turn: ChatTurn): Promise<void> {
 function confirmEditMessage(turn: ChatTurn): void {
   if (undoingTurnId.value !== null) return;
   undoingTurnId.value = turn.id;
-  // A skill activation refills as the synthesized `/skill:<name> <args>`
-  // command (the textarea can't revive pills) so the resend replays the
+  // A skill activation refills in its replayable form (verbatim pill args, or
+  // the synthesized `/skill:<name> <args>` command) so the resend replays the
   // activation instead of degrading to a plain prompt.
   const text = turn.skillActivation
-    ? (skillActivationEditText(turn.skillActivation, { revivePill: false }) ?? turn.text)
+    ? (skillActivationEditText(turn.skillActivation, { revivePill: true }) ?? turn.text)
     : turn.text;
   emit('editMessage', { text, attachments: turn.attachments });
   // Fallback: if the server rewind never removes the turn (e.g. it failed),
