@@ -667,7 +667,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private revalidateStoredThinkingEffort(): void {
-    const before = this.lastResolvedThinkingEffort;
+    const before = this.lastPublishedThinkingEffort;
     this.warnAboutThinkingEffortFallback(this.profileState.thinkingLevel);
     const after = this.getEffectiveThinkingLevel();
     if (before !== undefined && after !== before) {
@@ -719,6 +719,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   private emitStatusUpdated(includeThinkingEffort = false): void {
     const custom = this.optionsValue.emitStatusUpdated;
     if (custom !== undefined) {
+      if (includeThinkingEffort) {
+        this.lastPublishedThinkingEffort = this.getEffectiveThinkingLevel();
+      }
       custom();
       return;
     }
@@ -726,13 +729,15 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     if (modelAlias === undefined) return;
     const capabilities = this.tryResolveRawModel()?.capabilities;
     const maxContextTokens = capabilities?.max_input_tokens ?? capabilities?.max_context_tokens;
+    const thinkingEffort = includeThinkingEffort ? this.getEffectiveThinkingLevel() : undefined;
+    if (thinkingEffort !== undefined) {
+      this.lastPublishedThinkingEffort = thinkingEffort;
+    }
     void this.dispatcher.dispatch(
       new AgentStatusUpdated({
         agentId: this.scopeContext.agentId,
         model: modelAlias,
-        thinkingEffort: includeThinkingEffort
-          ? this.getEffectiveThinkingLevel()
-          : undefined,
+        thinkingEffort,
         maxContextTokens:
           maxContextTokens !== undefined && maxContextTokens > 0 ? maxContextTokens : undefined,
       }),
@@ -771,7 +776,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     return this.resolveThinkingEffort(this.profileState.thinkingLevel, this.tryResolveRawModel());
   }
 
-  private lastResolvedThinkingEffort: ThinkingEffort | undefined;
+  private lastPublishedThinkingEffort: ThinkingEffort | undefined;
 
   private resolveThinkingState(model: Model | undefined): {
     readonly effective: ThinkingEffort;
@@ -783,9 +788,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       base,
       drivesThinkingThroughTraits(model?.providerType),
     );
-    const effective = forced ?? base;
-    this.lastResolvedThinkingEffort = effective;
-    return { effective, forced };
+    return { effective: forced ?? base, forced };
   }
 
   private strictThinkingValidation(model: Model | undefined): boolean {

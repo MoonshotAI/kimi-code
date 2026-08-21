@@ -567,6 +567,45 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     ).toHaveLength(1);
   });
 
+  it('republishes the status even when a read happens before the revalidation runs', async () => {
+    const scheduled: Array<() => void> = [];
+    profile.configure({
+      scheduleThinkingEffortRevalidation: (run) => {
+        scheduled.push(run);
+      },
+    });
+    profile.update({ modelAlias: 'kimi-code/ultra', thinkingLevel: 'high' });
+    expect(profile.data().thinkingLevel).toBe('high');
+
+    kimiConfig = {
+      ...kimiConfig,
+      models: {
+        ...kimiConfig.models,
+        'kimi-code/ultra': {
+          provider: 'kimi',
+          model: 'kimi-ultra',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'ultra'],
+          defaultEffort: 'ultra',
+        },
+      },
+    };
+    profile.data();
+    await vi.waitFor(() => {
+      expect(scheduled.length).toBeGreaterThan(0);
+    });
+
+    expect(profile.getEffectiveThinkingLevel()).toBe('ultra');
+
+    for (const run of scheduled.splice(0)) run();
+
+    await vi.waitFor(() => {
+      const statuses = ctx.allEvents.filter((event) => event.event === 'agent.status.updated');
+      expect(statuses.at(-1)?.args).toMatchObject({ thinkingEffort: 'ultra' });
+    });
+  });
+
   it('warns once when a provider-only reload changes the inferred effort list', async () => {
     const scheduled: Array<() => void> = [];
     profile.configure({
