@@ -101,6 +101,17 @@ function effortsFor(model: ModelThinkingMetadata | undefined): readonly string[]
   return model?.supportEfforts?.map(nonEmpty).filter((v): v is string => v !== undefined) ?? [];
 }
 
+/**
+ * The model's declared `support_efforts`, normalized the same way the
+ * resolution layer normalizes them (trimmed, blanks dropped) — for
+ * diagnostics that must agree with what resolution accepted.
+ */
+export function declaredThinkingEfforts(
+  model: ModelThinkingMetadata | undefined,
+): readonly string[] {
+  return effortsFor(model);
+}
+
 function declaredDefaultEffortFor(
   model: ModelThinkingMetadata | undefined,
   efforts: readonly string[],

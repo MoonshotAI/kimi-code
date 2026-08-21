@@ -337,6 +337,17 @@ describe('AgentLLMRequesterService thinking effort diagnostics', () => {
       }),
     ]);
   });
+
+  it('does not warn when the effort matches a padded declared list entry', async () => {
+    const calls = { value: 0 };
+    const requester = createRequester(calls, null);
+    Object.defineProperty(requester.model, 'supportEfforts', { value: [' max '] });
+    const { service, events } = createService(requester, undefined, { thinkingLevel: 'max' });
+
+    await service.request();
+
+    expect(events.filter((event) => event.type === 'warning')).toEqual([]);
+  });
 });
 
 describe('AgentLLMRequesterService strict resend', () => {

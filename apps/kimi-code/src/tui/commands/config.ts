@@ -312,6 +312,14 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
     return;
   }
   if (!segments.includes(arg)) {
+    const declared = effortsOf(effective);
+    // 'on' is the generic enable signal: with a declared effort list the
+    // engine maps it to the declared default effort, so it stays a valid
+    // command even though it never appears in the segment list.
+    if (arg === 'on' && declared.length > 0) {
+      await performModelSwitch(host, alias, arg, true);
+      return;
+    }
     const providerType = host.state.appState.availableProviders[effective.provider]?.type;
     const protocol = effective.protocol ?? providerType;
     // With a declared effort list the engine falls back to the model default
@@ -319,7 +327,7 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
     // input. Only Anthropic-compatible models WITHOUT a declared list keep
     // the warn-and-send escape hatch — there the engine passes the value
     // through for the backend to judge.
-    if (protocol !== 'anthropic' || effortsOf(effective).length > 0) {
+    if (protocol !== 'anthropic' || declared.length > 0) {
       host.showError(
         `Unsupported thinking effort "${arg}" for ${alias}. Available: ${segments.join(', ')}`,
       );

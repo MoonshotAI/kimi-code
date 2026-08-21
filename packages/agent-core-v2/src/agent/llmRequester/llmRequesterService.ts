@@ -40,7 +40,11 @@ import {
 import type { ModelOverrides } from '#/kosong/model/model.types';
 import { IModelService } from '#/kosong/model/model';
 import { completionBudgetParams, resolveCompletionBudget } from '#/kosong/model/completionBudget';
-import { resolveThinkingKeep, type ThinkingConfig } from '#/kosong/model/thinking';
+import {
+  declaredThinkingEfforts,
+  resolveThinkingKeep,
+  type ThinkingConfig,
+} from '#/kosong/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import type { Protocol } from '#/kosong/protocol/protocol';
 import type { ApiErrorEvent } from '#/app/telemetry/events';
@@ -517,8 +521,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   private warnAboutThinkingEffortNotListed(request: ResolvedLLMRequest): void {
     const effort = request.thinkingEffort;
     if (effort === 'on' || effort === 'off') return;
-    const supportEfforts = request.model.supportEfforts?.filter((value) => value.length > 0);
-    if (supportEfforts === undefined || supportEfforts.length === 0) return;
+    const supportEfforts = declaredThinkingEfforts(request.model);
+    if (supportEfforts.length === 0) return;
     if (supportEfforts.includes(effort)) return;
     const code = 'thinking-effort-not-listed';
     const knownEfforts = supportEfforts.join(',');

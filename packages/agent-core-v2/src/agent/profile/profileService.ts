@@ -9,6 +9,7 @@ import { type ModelOverrides } from '#/kosong/model/model.types';
 import { type ModelRequestParams } from '#/kosong/model/modelRequester';
 import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
 import {
+  declaredThinkingEfforts,
   drivesThinkingThroughTraits,
   modelSupportsThinkingEffort,
   normalizeRequestedThinkingEffort,
@@ -640,7 +641,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         drivesThinkingThroughTraits(model.providerType),
       );
       if (forced !== undefined) return;
-      const efforts = model.supportEfforts?.filter((value) => value.length > 0) ?? [];
+      const efforts = declaredThinkingEfforts(model);
       const knownEfforts = efforts.join(',');
       const code = 'thinking-effort-not-listed';
       const message = `Thinking effort "${fallback.configured}" is not listed for model "${model.name}" (known: ${efforts.join(', ')}). Falling back to the model's default effort "${fallback.resolved}".`;

@@ -19,12 +19,22 @@ function middleOf(efforts: readonly string[]): string {
   return efforts[Math.floor(efforts.length / 2)]!;
 }
 
+/**
+ * Normalize a declared `support_efforts` list: trim entries and drop blanks.
+ * Shared by resolution and diagnostics so a padded declaration means the same
+ * thing everywhere.
+ */
+export function normalizeDeclaredEfforts(
+  efforts: readonly string[] | undefined,
+): readonly string[] {
+  return (
+    efforts?.map((effort) => effort.trim()).filter((effort) => effort.length > 0) ?? []
+  );
+}
+
 function effortsFor(model: ModelAlias | undefined): readonly string[] {
   const effective = model === undefined ? undefined : effectiveModelAlias(model);
-  return (
-    effective?.supportEfforts?.map((effort) => effort.trim()).filter((effort) => effort.length > 0) ??
-    []
-  );
+  return normalizeDeclaredEfforts(effective?.supportEfforts);
 }
 
 /**

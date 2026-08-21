@@ -8165,6 +8165,59 @@ describe('/effort support_efforts override', () => {
     expect(session.setThinking).not.toHaveBeenCalled();
   });
 
+  it('accepts /effort on for a declared-list model and shows the mapped default', async () => {
+    // 'on' never appears in the segment list of an effort-declaring model,
+    // but the engine maps it to the declared default — keep it a valid
+    // command and display the resolved effort the engine reports.
+    const session = makeSession();
+    let effort = 'low';
+    Object.assign(session, {
+      setThinking: vi.fn(async (value: string) => {
+        effort = value === 'on' ? 'high' : value;
+      }),
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingEffort: effort,
+        permission: 'manual',
+        planMode: false,
+        contextTokens: 0,
+        maxContextTokens: 100,
+        contextUsage: 0,
+      })),
+    });
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'kimi', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 100,
+            displayName: 'Compatible Model',
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high'],
+            defaultEffort: 'high',
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true, effort: 'low' },
+      })),
+    });
+
+    driver.handleUserInput('/effort on');
+
+    await vi.waitFor(() => {
+      expect(session.setThinking).toHaveBeenCalledWith('on');
+    });
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain('Thinking set to high.');
+    });
+    expect(renderTranscript(driver)).not.toContain('Unsupported thinking effort');
+  });
+
   it('still sends unlisted efforts unchanged for Anthropic models without a declared list', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session, {

@@ -2,7 +2,7 @@ import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import { visibleWidth } from '@moonshot-ai/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
+import { ModelSelectorComponent, defaultThinkingEffortFor } from '#/tui/components/dialogs/model-selector';
 import { currentTheme } from '#/tui/theme';
 import { darkColors } from '#/tui/theme/colors';
 
@@ -520,6 +520,15 @@ describe('ModelSelectorComponent', () => {
     expect(text(picker)).toContain('[ Xhigh ]');
     picker.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({ alias: 'other', thinking: 'xhigh' });
+  });
+
+  it('prefers the declared default effort when the model omits the thinking capability', () => {
+    expect(defaultThinkingEffortFor(effortModel('Kimi Other', ['low', 'high', 'max'], 'max', []))).toBe(
+      'max',
+    );
+    expect(defaultThinkingEffortFor(effortModel('Kimi Other', ['low', 'high', 'max'], undefined, []))).toBe(
+      'high',
+    );
   });
 
   it('renders the warning line directly below the key-hint line when provided', () => {

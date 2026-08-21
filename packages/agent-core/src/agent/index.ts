@@ -35,7 +35,11 @@ import {
 } from './compaction';
 import { CronManager } from './cron';
 import { ConfigState } from './config';
-import type { ThinkingEffort, ThinkingEffortFallback } from './config/thinking';
+import {
+  normalizeDeclaredEfforts,
+  type ThinkingEffort,
+  type ThinkingEffortFallback,
+} from './config/thinking';
 import { ContextMemory } from './context';
 import { GoalMode } from './goal';
 import { HookEngine } from '../session/hooks';
@@ -346,7 +350,7 @@ export class Agent {
     fallback: ThinkingEffortFallback,
   ): void {
     const effective = model === undefined ? undefined : effectiveModelAlias(model);
-    const supportEfforts = effective?.supportEfforts?.filter((value) => value.length > 0) ?? [];
+    const supportEfforts = normalizeDeclaredEfforts(effective?.supportEfforts);
     const modelName = effective?.model ?? modelAlias ?? 'unknown';
     this.emitThinkingEffortWarning({
       code: 'thinking-effort-not-listed',
@@ -373,7 +377,7 @@ export class Agent {
   ): void {
     if (effort === 'on' || effort === 'off') return;
     const effective = model === undefined ? undefined : effectiveModelAlias(model);
-    const supportEfforts = effective?.supportEfforts?.filter((value) => value.length > 0) ?? [];
+    const supportEfforts = normalizeDeclaredEfforts(effective?.supportEfforts);
     if (supportEfforts.length === 0 || supportEfforts.includes(effort)) return;
     const modelName = effective?.model ?? modelAlias ?? 'unknown';
     this.emitThinkingEffortWarning({
@@ -407,8 +411,8 @@ export class Agent {
           ? undefined
           : this.modelProvider?.resolveProviderConfig(modelAlias);
       if (resolved === undefined) return;
-      const supportEfforts = resolved.supportEfforts?.filter((value) => value.length > 0);
-      if (supportEfforts === undefined || supportEfforts.length === 0) return;
+      const supportEfforts = normalizeDeclaredEfforts(resolved.supportEfforts);
+      if (supportEfforts.length === 0) return;
       if (supportEfforts.includes(effort)) return;
       this.emitThinkingEffortWarning({
         code: 'thinking-effort-not-listed',

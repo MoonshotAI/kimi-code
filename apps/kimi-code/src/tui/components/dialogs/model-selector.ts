@@ -143,7 +143,6 @@ export function effortLabel(effort: string): string {
  * thinking is unsupported.
  */
 export function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
-  if (thinkingAvailability(model) === 'unsupported') return 'off';
   const efforts = effortsOf(model);
   if (efforts.length > 0) {
     const declared = model.defaultEffort?.trim();
@@ -151,6 +150,7 @@ export function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
       ? declared
       : efforts[Math.floor(efforts.length / 2)]!;
   }
+  if (thinkingAvailability(model) === 'unsupported') return 'off';
   return 'on';
 }
 

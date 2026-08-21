@@ -319,6 +319,97 @@ describe('ConfigState model capabilities', () => {
     }
   });
 
+  it('does not warn when the effort matches a padded declared list entry', async () => {
+    let requests = 0;
+    const config: KimiConfig = {
+      providers: {
+        compatible: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test',
+        },
+      },
+      models: {
+        compatible: {
+          provider: 'compatible',
+          model: 'compatible-model',
+          protocol: 'anthropic',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: [' high ', ' max '],
+        },
+      },
+    };
+    const ctx = testAgent({
+      initialConfig: config,
+      providerManager: new ProviderManager({ config }),
+      generate: async (provider) => {
+        requests += 1;
+        expect(provider.thinkingEffort).toBe('high');
+        return {
+          id: 'response-1',
+          message: { role: 'assistant', content: [], toolCalls: [] },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      },
+    });
+    ctx.agent.config.update({
+      modelAlias: 'compatible',
+      systemPrompt: 'system',
+    });
+    ctx.agent.config.setThinkingEffort('high');
+
+    await ctx.agent.llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(requests).toBe(1);
+    expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+  });
+
+  it('does not warn when the env override matches a padded declared list entry', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'low');
+    try {
+      const config: KimiConfig = {
+        providers: {
+          compatible: {
+            type: 'kimi',
+            apiKey: 'test-key',
+            baseUrl: 'https://api.example.test',
+          },
+        },
+        models: {
+          compatible: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 128_000,
+            capabilities: ['thinking'],
+            supportEfforts: [' low ', ' high '],
+          },
+        },
+      };
+      const ctx = testAgent({
+        initialConfig: config,
+        providerManager: new ProviderManager({ config }),
+      });
+
+      ctx.agent.config.update({
+        modelAlias: 'compatible',
+        systemPrompt: 'system',
+      });
+
+      expect(ctx.agent.config.thinkingEffort).toBe('low');
+      expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('suppresses the fallback warning when the env override decides the final effort', () => {
     // The configured "high" is unlisted and would fall back to "xhigh", but
     // the env pin "low" decides what actually goes on the wire — warning
