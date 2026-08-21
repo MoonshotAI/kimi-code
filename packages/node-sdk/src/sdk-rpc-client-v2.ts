@@ -142,6 +142,7 @@ import {
   type AgentContextData,
   type BeginGlobalMcpServerAuthResult,
   type ExperimentalFeatureState,
+  type KimiErrorCode,
 } from '@moonshot-ai/agent-core';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
@@ -201,6 +202,7 @@ import {
   closeSessionById,
   followSessionLifecycles,
   getLiveSessionById,
+  isError2,
   programForSession,
   resumeSessionById,
   sessionDirOf,
@@ -2289,12 +2291,28 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   // exists for either group).
   // -----------------------------------------------------------------------
 
+  /**
+   * The engine's management plane throws `Error2`; the SDK's public error
+   * contract is `KimiError` (what `isKimiError` branches on, and what the v1
+   * client throws for the same failures). Restate so both engines surface
+   * the identical class — see `restateMcpManagementError`.
+   */
+  private async mcpManagement<T>(
+    call: (management: IMcpManagementService) => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await call(this.engineAccessor.get(IMcpManagementService));
+    } catch (error) {
+      throw restateMcpManagementError(error);
+    }
+  }
+
   override async listGlobalMcpServers(
     options: { readonly cwd?: string } = {},
   ): Promise<readonly McpManagedServerInfo[]> {
-    const servers = await this.engineAccessor
-      .get(IMcpManagementService)
-      .listServers({ cwd: options.cwd });
+    const servers = await this.mcpManagement((management) =>
+      management.listServers({ cwd: options.cwd }),
+    );
     return servers.map(toManagedServerInfo);
   }
 
@@ -2302,18 +2320,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     name: string,
     options: { readonly cwd?: string } = {},
   ): Promise<McpManagedServerInfo> {
-    const server = await this.engineAccessor
-      .get(IMcpManagementService)
-      .getServer(name, { cwd: options.cwd });
+    const server = await this.mcpManagement((management) =>
+      management.getServer(name, { cwd: options.cwd }),
+    );
     return toManagedServerInfo(server);
   }
 
   override async listGlobalMcpServerAuthStatuses(
     options: { readonly cwd?: string; readonly verify?: boolean } = {},
   ): Promise<readonly GlobalMcpServerAuthStatus[]> {
-    const statuses = await this.engineAccessor
-      .get(IMcpManagementService)
-      .listAuthStatuses({ cwd: options.cwd, verify: options.verify });
+    const statuses = await this.mcpManagement((management) =>
+      management.listAuthStatuses({ cwd: options.cwd, verify: options.verify }),
+    );
     // The legacy surface never reports `unavailable` (no ambiguity check
     // here), so the engine's wider state union narrows to the v1 wire one.
     return statuses as readonly GlobalMcpServerAuthStatus[];
@@ -2323,9 +2341,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     targets?: readonly McpServerLocator[],
     options: { readonly cwd?: string } = {},
   ): Promise<readonly AppMcpServerInspection[]> {
-    const inspections = await this.engineAccessor
-      .get(IMcpManagementService)
-      .inspectServers(targets, { cwd: options.cwd });
+    const inspections = await this.mcpManagement((management) =>
+      management.inspectServers(targets, { cwd: options.cwd }),
+    );
     // Field-identical with the v1 wire shape (the engines' locator /
     // config-view / auth-state declarations match structurally).
     return inspections as readonly AppMcpServerInspection[];
@@ -2335,9 +2353,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     server: McpServerConfig,
     options: { readonly cwd?: string } = {},
   ): Promise<readonly McpManagedServerInfo[]> {
-    const servers = await this.engineAccessor
-      .get(IMcpManagementService)
-      .addServer(server, { cwd: options.cwd });
+    const servers = await this.mcpManagement((management) =>
+      management.addServer(server, { cwd: options.cwd }),
+    );
     return servers.map(toManagedServerInfo);
   }
 
@@ -2345,9 +2363,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     server: McpServerConfig,
     options: { readonly cwd?: string } = {},
   ): Promise<readonly McpManagedServerInfo[]> {
-    const servers = await this.engineAccessor
-      .get(IMcpManagementService)
-      .updateServer(server, { cwd: options.cwd });
+    const servers = await this.mcpManagement((management) =>
+      management.updateServer(server, { cwd: options.cwd }),
+    );
     return servers.map(toManagedServerInfo);
   }
 
@@ -2355,9 +2373,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     name: string,
     options: { readonly cwd?: string } = {},
   ): Promise<readonly McpManagedServerInfo[]> {
-    const servers = await this.engineAccessor
-      .get(IMcpManagementService)
-      .removeServer(name, { cwd: options.cwd });
+    const servers = await this.mcpManagement((management) =>
+      management.removeServer(name, { cwd: options.cwd }),
+    );
     return servers.map(toManagedServerInfo);
   }
 
@@ -2370,18 +2388,19 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     name: string,
     options: { readonly cwd?: string } = {},
   ): Promise<BeginGlobalMcpServerAuthResult> {
-    const management = this.engineAccessor.get(IMcpManagementService);
-    const query = { cwd: options.cwd };
-    return management.beginServerAuth(await management.resolveServerByName(name, query), query);
+    return this.mcpManagement(async (management) => {
+      const query = { cwd: options.cwd };
+      return management.beginServerAuth(await management.resolveServerByName(name, query), query);
+    });
   }
 
   override async beginMcpServerAuth(
     locator: McpServerLocator,
     options: { readonly cwd?: string } = {},
   ): Promise<BeginGlobalMcpServerAuthResult> {
-    return this.engineAccessor
-      .get(IMcpManagementService)
-      .beginServerAuth(locator, { cwd: options.cwd });
+    return this.mcpManagement((management) =>
+      management.beginServerAuth(locator, { cwd: options.cwd }),
+    );
   }
 
   override async completeGlobalMcpServerAuth(
@@ -2401,9 +2420,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     },
     signal?: AbortSignal,
   ): Promise<void> {
-    return this.engineAccessor
-      .get(IMcpManagementService)
-      .completeServerAuth(input, { signal });
+    return this.mcpManagement((management) =>
+      management.completeServerAuth(input, { signal }),
+    );
   }
 
   override async cancelGlobalMcpServerAuth(flowId: string): Promise<void> {
@@ -2411,32 +2430,35 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   override async cancelMcpServerAuth(flowId: string): Promise<void> {
-    return this.engineAccessor.get(IMcpManagementService).cancelServerAuth({ flowId });
+    return this.mcpManagement((management) => management.cancelServerAuth({ flowId }));
   }
 
   override async resetGlobalMcpServerAuth(
     name: string,
     options: { readonly cwd?: string } = {},
   ): Promise<void> {
-    const management = this.engineAccessor.get(IMcpManagementService);
-    const query = { cwd: options.cwd };
-    return management.resetServerAuth(await management.resolveServerByName(name, query), query);
+    return this.mcpManagement(async (management) => {
+      const query = { cwd: options.cwd };
+      return management.resetServerAuth(await management.resolveServerByName(name, query), query);
+    });
   }
 
   override async resetMcpServerAuth(
     locator: McpServerLocator,
     options: { readonly cwd?: string } = {},
   ): Promise<void> {
-    return this.engineAccessor
-      .get(IMcpManagementService)
-      .resetServerAuth(locator, { cwd: options.cwd });
+    return this.mcpManagement((management) =>
+      management.resetServerAuth(locator, { cwd: options.cwd }),
+    );
   }
 
   override async testGlobalMcpServer(
     name: string,
     options: { readonly cwd?: string } = {},
   ): Promise<McpTestResult> {
-    return this.engineAccessor.get(IMcpManagementService).testServer({ name, cwd: options.cwd });
+    return this.mcpManagement((management) =>
+      management.testServer({ name, cwd: options.cwd }),
+    );
   }
 
   /**
@@ -2447,7 +2469,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     server: McpServerConfig,
     options: { readonly cwd?: string } = {},
   ): Promise<McpTestResult> {
-    return this.engineAccessor.get(IMcpManagementService).testServer({ server, cwd: options.cwd });
+    return this.mcpManagement((management) =>
+      management.testServer({ server, cwd: options.cwd }),
+    );
   }
 
   /**
@@ -2588,6 +2612,20 @@ function normalizeRequiredWorkDir(operation: string, workDir: string): string {
     throw new KimiError(ErrorCodes.REQUEST_WORK_DIR_REQUIRED, `${operation} requires workDir`);
   }
   return normalizeWorkDir(workDir);
+}
+
+/**
+ * Restate an engine `Error2` in the SDK's public error shape (`KimiError`,
+ * what `isKimiError` branches on) so the delegated management plane throws
+ * the same class the v1 client throws for the same failure. Non-Error2
+ * failures (DI resolution bugs, aborts) pass through untouched.
+ */
+function restateMcpManagementError(error: unknown): unknown {
+  if (!isError2(error)) return error;
+  return new KimiError(error.code as KimiErrorCode, error.message, {
+    details: error.details as Record<string, unknown> | undefined,
+    cause: error.cause,
+  });
 }
 
 /**

@@ -3713,8 +3713,9 @@ async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
 }
 
 /**
- * Both engines must reject with the same code and the same message (home
- * prefixes scrubbed — the file-store errors embed the mcp.json path).
+ * Both engines must reject with the same class, code, and message (home
+ * prefixes scrubbed — the file-store errors embed the mcp.json path). The
+ * class is pinned because SDK consumers branch on `isKimiError`.
  */
 async function expectSameMcpRejection(
   pair: GlobalMcpParityPair,
@@ -3726,8 +3727,12 @@ async function expectSameMcpRejection(
     captureRejection(v2Call(pair.v2)),
   ]);
   const payload = (error: unknown): unknown => {
-    const err = error as { code?: unknown; message?: unknown };
-    return { code: err.code ?? null, message: String(err.message ?? error) };
+    const err = error as { name?: unknown; code?: unknown; message?: unknown };
+    return {
+      name: err.name ?? null,
+      code: err.code ?? null,
+      message: String(err.message ?? error),
+    };
   };
   expect(scrubHomePrefixes(payload(v2Error), pair.v2Home)).toEqual(
     scrubHomePrefixes(payload(v1Error), pair.v1Home),
