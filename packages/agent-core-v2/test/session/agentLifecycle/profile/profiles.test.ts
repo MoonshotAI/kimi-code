@@ -10,9 +10,11 @@ function profile(name: string) {
 }
 
 describe('builtin agent profiles', () => {
-  it('wires TowerInit into the default profile', () => {
+  it('wires the tower control tools into the default profile', () => {
     const agent = profile('agent');
     expect(agent.tools).toContain('TowerInit');
+    expect(agent.tools).toContain('TowerStatus');
+    expect(agent.tools).toContain('TowerTeardown');
   });
 
   it('caps the default profile delegation at non-spawning profiles', () => {

@@ -69,6 +69,7 @@ import {
   handleTitleCommand,
 } from './session';
 import { handleSwarmCommand } from './swarm';
+import { handleTowerCommand } from './tower';
 import { handleUndoCommand } from './undo';
 import { handleWebCommand } from './web';
 
@@ -96,6 +97,7 @@ export {
   showSettingsSelector,
 } from './config';
 export { handleSwarmCommand } from './swarm';
+export { handleTowerCommand } from './tower';
 export { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
@@ -269,6 +271,7 @@ function dispatchInlineSkillCombo(host: SlashCommandHost, text: string): boolean
     pluginCommandMap: host.pluginCommandMap,
     isStreaming: false,
     isCompacting: false,
+    engineV2: host.engineV2,
   });
   if (intent.kind !== 'skill' && intent.kind !== 'message') return false;
 
@@ -306,6 +309,7 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
     pluginCommandMap: host.pluginCommandMap,
     isStreaming: host.state.appState.streamingPhase !== 'idle',
     isCompacting: host.state.appState.isCompacting,
+    engineV2: host.engineV2,
   });
 
   switch (intent.kind) {
@@ -572,6 +576,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'swarm':
       await handleSwarmCommand(host, args);
+      return;
+    case 'tower':
+      await handleTowerCommand(host, args);
       return;
     case 'compact':
       await handleCompactCommand(host, args);
