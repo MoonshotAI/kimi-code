@@ -212,6 +212,11 @@ export function useDetailPanel({
     return {
       id: target.subagentId,
       name: descriptor?.label ?? toolMetadata.name ?? target.subagentId,
+      // This branch only builds members for agent transcript targets — a
+      // bash/tool task always resolves through the task-store branch above
+      // (its id never has a transcript), so the kind here is deterministically
+      // subagent even when the optional subagentType is absent.
+      kind: 'subagent',
       subagentType:
         toolMetadata.subagentType ??
         (descriptor?.type === 'sub' ? 'subagent' : descriptor?.type),

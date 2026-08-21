@@ -254,6 +254,7 @@ export function toAgentMember(task: AppTask, recoveredCommand?: string): AgentMe
     id: task.agentId ?? task.id,
     toolCallId: task.parentToolCallId,
     name: task.description,
+    kind: task.kind,
     subagentType: task.subagentType,
     // Bash tasks reuse this member shape for the right-side detail panel;
     // their verbatim command rides the prompt field. When the task itself

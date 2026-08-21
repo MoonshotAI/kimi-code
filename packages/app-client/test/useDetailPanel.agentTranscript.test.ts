@@ -91,6 +91,7 @@ describe('useDetailPanel agent transcript state', () => {
     expect(panel!.agentPanelMember.value).toMatchObject({
       id: 'agent-30',
       name: 'Inspect files',
+      kind: 'subagent',
       subagentType: 'explore',
       phase: 'working',
     });
@@ -109,6 +110,7 @@ describe('useDetailPanel agent transcript state', () => {
     expect(panel!.agentPanelMember.value).toMatchObject({
       id: 'agent-30',
       name: 'Inspect renderer',
+      kind: 'subagent',
       subagentType: 'explore',
       phase: 'completed',
       outputLines: ['saved result'],
@@ -134,6 +136,73 @@ describe('useDetailPanel agent transcript state', () => {
       'session-1',
       'agent-30',
     );
+    app.unmount();
+  });
+
+  it('discriminates subagent from bash by task kind when subagentType is absent', () => {
+    const client = {
+      activeSessionId: ref('session-1'),
+      findBashCommandForTask: () => 'ls -la',
+      activeAppTasks: ref([
+        {
+          id: 'agent-40',
+          agentId: 'agent-40',
+          kind: 'subagent',
+          description: 'Explore the repo',
+          status: 'completed',
+          sessionId: 'session-1',
+          createdAt: '2026-07-28T00:00:00.000Z',
+          outputPreview: 'Done: found 3 entry points.',
+          // No subagentType — REST/event rows may never report a profile.
+        },
+        {
+          id: 'task-50',
+          kind: 'bash',
+          description: 'Bash: ls',
+          status: 'completed',
+          sessionId: 'session-1',
+          createdAt: '2026-07-28T00:00:00.000Z',
+          outputPreview: 'total 42',
+        },
+      ]),
+      turns: ref([]),
+      sideChatVisible: ref(false),
+      auxiliaryTranscripts: {
+        getEntry: vi.fn(() => undefined),
+        activate: vi.fn(),
+        deactivate: vi.fn(),
+      },
+    };
+    let panel: ReturnType<typeof useDetailPanel> | undefined;
+    const detailTarget = ref<DetailTarget | null>(null);
+    const app = renderer.createApp(defineComponent(() => {
+      panel = useDetailPanel({
+        client: client as never,
+        sideWidth: ref(280),
+        detailTarget,
+        closeFilePreview: vi.fn(),
+      });
+      return () => h('div');
+    }));
+    app.mount({ children: [] });
+
+    // The subagent row keeps its subagent kind (and thus the prose fallback)
+    // from the task store even though no profile was ever reported.
+    panel!.openAgentPanel('agent-40');
+    expect(panel!.agentPanelMember.value).toMatchObject({
+      id: 'agent-40',
+      kind: 'subagent',
+      summary: 'Done: found 3 entry points.',
+    });
+    expect(panel!.agentPanelMember.value?.subagentType).toBeUndefined();
+
+    // A bash task carries its kind too, so its command + output stay mono.
+    panel!.openAgentPanel('task-50');
+    expect(panel!.agentPanelMember.value).toMatchObject({
+      id: 'task-50',
+      kind: 'bash',
+      prompt: 'ls -la',
+    });
     app.unmount();
   });
 });

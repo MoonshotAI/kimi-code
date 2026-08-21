@@ -284,6 +284,12 @@ const fallbackOutput = computed(() => {
   }
   return output;
 });
+// The fallback body reads differently by task kind: a bash task's is the
+// verbatim command + terminal output (the output panel's mono), a subagent's
+// is its conclusion prose (assistant text / output preview) — the UI font.
+// Discriminate on the task-store kind: subagentType is optional and absent on
+// REST/event rows that never reported a profile.
+const fallbackProse = computed(() => props.member.kind === 'subagent');
 
 provide('pinScroll', () => {
   if (scroller.value) pinScroll();
@@ -371,6 +377,7 @@ const subtitle = computed(() => {
         <div
           v-if="turns.length === 0 && !loading && (loadError || fallbackOutput.length > 0)"
           class="agent-fallback"
+          :class="{ prose: fallbackProse }"
         >
           <div v-if="loadError" class="agent-error">{{ t('tasks.transcriptLoadError') }}</div>
           <OutputPanel v-if="fallbackOutput.length > 0" :lines="fallbackOutput" />
@@ -434,5 +441,11 @@ const subtitle = computed(() => {
   flex-direction: column;
   gap: var(--space-3);
   padding: var(--space-4);
+}
+/* A subagent's fallback body is conclusion prose, not terminal output — the
+   UI font. Bash tasks keep the output panel's mono (verbatim command +
+   terminal output). */
+.agent-fallback.prose :deep(.op) {
+  font-family: var(--font-ui);
 }
 </style>

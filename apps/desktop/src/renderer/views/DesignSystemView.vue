@@ -1792,7 +1792,7 @@ grid-template-rows: minmax(0, 1fr) auto;
             <p>The right panels (file preview / Diff / compaction summary / sub-agent / side chat) share one track and one head primitive.</p>
             <ul class="clean">
               <li>The panel head uses the <code>PanelHeader</code> primitive (48px = <code>--panel-head-h</code>), the same height as the conversation column head, so the hairline runs as one line.</li>
-              <li>Panel head: bold mono title + optional muted subtitle + middle slot (Badge / control / path) + close IconButton on the right. Truncation priority: the subtitle is the secondary text — it fills only the slack the title and controls leave and truncates first (floored at 20% so an overlong title can't starve it completely); the title itself shrinks + ellipsizes only as the last resort, so the trailing controls never overflow.</li>
+              <li>Panel head: semibold UI-font title + optional muted UI-font subtitle (agent type · model · effort and friends — prose, not code) + middle slot (Badge / control / path) + close IconButton on the right. Truncation priority: the subtitle is the secondary text — it fills only the slack the title and controls leave and truncates first (floored at 20% so an overlong title can't starve it completely); the title itself shrinks + ellipsizes only as the last resort, so the trailing controls never overflow.</li>
               <li>When opened, the panel width snaps from <code>0 → var(--preview-w)</code> with no animation, squeezing the conversation column in a single layout.</li>
               <li>At ≤640px the panel becomes a full-screen overlay (<code>position:fixed; inset:0</code>).</li>
             </ul>

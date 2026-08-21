@@ -1,8 +1,8 @@
 <!-- apps/kimi-web/src/components/ui/PanelHeader.vue -->
-<!-- Shared right-side panel header: bold mono title + optional muted subtitle,
-     a default slot for middle content (badges, controls, path…), and a close
-     IconButton pinned to the right. Replaces the per-panel hand-rolled headers
-     (.tp-header / .ap-header / .tdp-header / .dv-panel-head / .sc-header …). -->
+<!-- Shared right-side panel header: semibold UI-font title + optional muted
+     subtitle, a default slot for middle content (badges, controls, path…), and
+     a close IconButton pinned to the right. Replaces the per-panel hand-rolled
+     headers (.tp-header / .ap-header / .tdp-header / .dv-panel-head / .sc-header …). -->
 <script setup lang="ts">
 import { useKimiI18n } from '@moonshot-ai/app-i18n';
 import IconButton from './IconButton.vue';
@@ -91,7 +91,9 @@ const { t } = useKimiI18n();
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: var(--ui-c1) var(--font-mono);
+  /* Subtitles are user-facing prose (agent type · model · effort, a side
+     chat's first line) — the UI font, not mono. */
+  font: var(--ui-c1) var(--font-ui);
   color: var(--color-text-muted);
 }
 .ui-panel-header__close {

@@ -1,6 +1,6 @@
 // packages/app-core/src/client/types.ts
 
-import type { SessionPlan } from '../api/types';
+import type { AppTask, SessionPlan } from '../api/types';
 
 /** File content loaded for preview (text or base64-encoded binary). */
 export interface FileData {
@@ -163,6 +163,11 @@ export interface AgentMember {
   id: string;
   toolCallId?: string;
   name: string;
+  /** The task-store discriminator (`AppTask.kind`) — unlike the optional
+   *  `subagentType`, it always tells a subagent from a bash/tool task. Drives
+   *  the detail panel's fallback font: a subagent's conclusion is prose (UI
+   *  font), a bash task's command + terminal output stays mono. */
+  kind?: AppTask['kind'];
   subagentType?: string;
   /** The bound model alias (display-mapped at render). */
   model?: string;
