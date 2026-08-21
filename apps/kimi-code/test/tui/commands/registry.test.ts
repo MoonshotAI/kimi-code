@@ -240,4 +240,5 @@ describe('built-in slash command registry', () => {
     expect((command as KimiSlashCommand).experimentalFlag).toBe('remote-control');
     expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
   });
+
 });
