@@ -230,7 +230,7 @@ async function subscribeTranscript(server: RunningServer, sid: string): Promise<
 }
 
 
-describe('transcript contract e2e', { timeout: 90000 }, () => {
+describe('transcript contract e2e', () => {
   let home: string | undefined;
   let server: RunningServer | undefined;
   let llm: MockLlm | undefined;
@@ -487,4 +487,4 @@ describe('transcript contract e2e', { timeout: 90000 }, () => {
     );
     channel.close();
   });
-});
+}, 90000);
