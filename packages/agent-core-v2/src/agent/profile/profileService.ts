@@ -697,7 +697,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       const knownEfforts = efforts.join(',');
       const code = 'thinking-effort-not-listed';
       const message = `Thinking effort "${fallback.configured}" is not listed for model "${model.name}" (known: ${efforts.join(', ')}). Falling back to the model's default effort "${fallback.resolved}".`;
-      const key = [code, model.id, model.name, fallback.configured, knownEfforts].join('\u0000');
+      const key = [code, model.id, model.name, fallback.configured, fallback.resolved, knownEfforts].join('\u0000');
       if (this.emittedThinkingEffortWarnings.has(key)) return;
       this.emittedThinkingEffortWarnings.add(key);
       void this.dispatcher.dispatch(new WarningIssued({ agentId: this.scopeContext.agentId, code, message }));

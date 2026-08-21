@@ -446,6 +446,65 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     });
   });
 
+  it('warns again when a default_effort-only reload changes the fallback target', async () => {
+    const scheduled: Array<() => void> = [];
+    profile.configure({
+      scheduleThinkingEffortRevalidation: (run) => {
+        scheduled.push(run);
+      },
+    });
+    profile.update({ modelAlias: 'kimi-code/ultra', thinkingLevel: 'high' });
+    expect(profile.data().thinkingLevel).toBe('high');
+
+    const withUltraDefault = (defaultEffort: string) => ({
+      ...kimiConfig,
+      models: {
+        ...kimiConfig.models,
+        'kimi-code/ultra': {
+          provider: 'kimi',
+          model: 'kimi-ultra',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'ultra'],
+          defaultEffort,
+        },
+      },
+    });
+    const revalidate = async (): Promise<void> => {
+      profile.data();
+      await vi.waitFor(() => {
+        expect(scheduled.length).toBeGreaterThan(0);
+      });
+      for (const run of scheduled.splice(0)) run();
+    };
+    const fallbackWarnings = () =>
+      ctx.allEvents.filter(
+        (event) =>
+          event.event === 'warning' &&
+          (event.args as { code?: string }).code === 'thinking-effort-not-listed',
+      );
+
+    kimiConfig = withUltraDefault('ultra');
+    await revalidate();
+    expect(profile.data().thinkingLevel).toBe('ultra');
+    await vi.waitFor(() => {
+      expect(fallbackWarnings()).toHaveLength(1);
+    });
+
+    // Same list, new default_effort: the stored effort now falls back to a
+    // different value, so a materially changed fallback must warn again.
+    kimiConfig = withUltraDefault('low');
+    await revalidate();
+    expect(profile.data().thinkingLevel).toBe('low');
+    await vi.waitFor(() => {
+      expect(fallbackWarnings()).toHaveLength(2);
+    });
+    expect(fallbackWarnings().at(-1)?.args).toMatchObject({
+      message:
+        'Thinking effort "high" is not listed for model "kimi-ultra" (known: low, ultra). Falling back to the model\'s default effort "low".',
+    });
+  });
+
   it('republishes the status when a reload makes a stranded effort valid again', async () => {
     const scheduled: Array<() => void> = [];
     profile.configure({

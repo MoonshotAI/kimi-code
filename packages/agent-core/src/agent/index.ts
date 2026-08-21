@@ -464,6 +464,7 @@ export class Agent {
         warning.modelAlias,
         warning.model,
         warning.effort,
+        warning.fallbackEffort,
         warning.knownEfforts,
       ].join('\u0000');
       if (this.emittedThinkingEffortWarnings.has(key)) return;
