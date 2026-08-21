@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
   schedule:
     # Daily re-release so the binary always tracks the latest upstream sync
-    - cron: "41 6 * * *"
+    - cron: "10 3 * * *"
 
 permissions:
   contents: write
