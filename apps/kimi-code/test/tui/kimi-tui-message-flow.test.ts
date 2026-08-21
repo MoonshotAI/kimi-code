@@ -8236,6 +8236,41 @@ describe('/effort support_efforts override', () => {
     expect(transcript).toContain('Sending "max" unchanged');
   });
 
+  it('matches /effort against trimmed padded support_efforts entries', async () => {
+    // Padded declarations like [" low ", " high "] are normalized by the
+    // engine; the TUI must match /effort input against the trimmed values.
+    const session = makeSession();
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'kimi', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 100,
+            displayName: 'Compatible Model',
+            capabilities: ['thinking'],
+            supportEfforts: [' low ', ' high '],
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true },
+      })),
+    });
+
+    driver.handleUserInput('/effort high');
+
+    await vi.waitFor(() => {
+      expect(session.setThinking).toHaveBeenCalledWith('high');
+    });
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain('Thinking set to high.');
+    });
+  });
+
   it('offers the latest Opus efforts for an unknown Claude-marked Anthropic-compatible model', async () => {
     const { driver } = await makeDriver(makeSession(), {
       getConfig: vi.fn(async () => ({
