@@ -38,17 +38,20 @@ function declaredDefaultEffortFor(
   model: ModelAlias | undefined,
   efforts: readonly string[],
 ): ThinkingEffort {
-  const declaredDefault = model?.defaultEffort;
-  return declaredDefault !== undefined && efforts.includes(declaredDefault)
+  const declaredDefault = model?.defaultEffort?.trim();
+  return declaredDefault !== undefined &&
+    declaredDefault.length > 0 &&
+    efforts.includes(declaredDefault)
     ? declaredDefault
     : middleOf(efforts);
 }
 
 /**
  * Resolve the default thinking effort for a model from its declared metadata:
+ *   - models declaring `support_efforts` -> `default_effort`, else the middle
+ *     entry of the list (a declared list is itself a thinking declaration, so
+ *     the capability gate does not apply to it)
  *   - models that do not support thinking (or an unknown model) -> `'off'`
- *   - effort-capable models -> `default_effort`, else the middle entry of
- *     `support_efforts` (so we never pick an effort the model does not support)
  *   - boolean models (thinking support without `support_efforts`) -> `'on'`
  *
  * `support_efforts` is the single source of truth for efforts; the returned
@@ -56,9 +59,9 @@ function declaredDefaultEffortFor(
  */
 export function defaultThinkingEffortFor(model: ModelAlias | undefined): ThinkingEffort {
   const effective = model === undefined ? undefined : effectiveModelAlias(model);
-  if (!supportsThinking(effective)) return 'off';
   const efforts = effortsFor(effective);
   if (efforts.length > 0) return declaredDefaultEffortFor(effective, efforts);
+  if (!supportsThinking(effective)) return 'off';
   return 'on';
 }
 

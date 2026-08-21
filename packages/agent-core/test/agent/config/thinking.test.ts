@@ -268,6 +268,25 @@ describe('resolveThinkingEffort', () => {
     });
   });
 
+  it('resolves the declared default when nothing is configured and the capability is omitted', () => {
+    const declared = model({
+      supportEfforts: ['low', 'medium', 'xhigh'],
+      defaultEffort: 'xhigh',
+    });
+    expect(defaultThinkingEffortFor(declared)).toBe('xhigh');
+    expect(resolveThinkingEffort(undefined, undefined, declared, false)).toBe('xhigh');
+    expect(resolveThinkingEffort(undefined, undefined, declared, true)).toBe('xhigh');
+  });
+
+  it('trims a padded default_effort before matching the declared list', () => {
+    const declared = model({
+      supportEfforts: [' low ', ' medium ', ' xhigh '],
+      defaultEffort: ' xhigh ',
+    });
+    expect(defaultThinkingEffortFor(declared)).toBe('xhigh');
+    expect(resolveThinkingEffort('high', undefined, declared, false)).toBe('xhigh');
+  });
+
   it('projects a concrete effort to on for a boolean-only Kimi model', () => {
     expect(resolveThinkingEffort('ultra', undefined, booleanModel, true)).toBe('on');
   });

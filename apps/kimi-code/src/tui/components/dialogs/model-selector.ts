@@ -146,7 +146,10 @@ export function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
   if (thinkingAvailability(model) === 'unsupported') return 'off';
   const efforts = effortsOf(model);
   if (efforts.length > 0) {
-    return model.defaultEffort ?? efforts[Math.floor(efforts.length / 2)]!;
+    const declared = model.defaultEffort?.trim();
+    return declared !== undefined && declared.length > 0
+      ? declared
+      : efforts[Math.floor(efforts.length / 2)]!;
   }
   return 'on';
 }
@@ -204,9 +207,14 @@ export class ModelSelectorComponent extends Container implements Focusable {
     const efforts = effortsOf(choice.model);
     if (efforts.length > 0) {
       // A model with support_efforts but no default_effort defaults to the
-      // middle entry of its supported efforts.
-      const def = choice.model.defaultEffort ?? efforts[Math.floor(efforts.length / 2)];
-      if (def !== undefined && efforts.includes(def)) return def;
+      // middle entry of its supported efforts. default_effort is trimmed
+      // before matching, mirroring the trimmed declared entries (effortsOf).
+      const declared = choice.model.defaultEffort?.trim();
+      const def =
+        declared === undefined || declared.length === 0
+          ? efforts[Math.floor(efforts.length / 2)]!
+          : declared;
+      if (efforts.includes(def)) return def;
       return efforts[0]!;
     }
     return thinkingAvailability(choice.model) !== 'unsupported' ? 'on' : 'off';

@@ -504,6 +504,24 @@ describe('ModelSelectorComponent', () => {
     expect(text(picker)).toContain('[ Medium ]');
   });
 
+  it('trims a padded defaultEffort before matching the declared efforts', () => {
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: {
+        other: effortModel('Kimi Other', [' low ', ' medium ', ' xhigh '], ' xhigh '),
+      },
+      currentValue: 'current',
+      currentThinkingEffort: 'off',
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    // The padded declared default wins over the first/middle entry.
+    expect(text(picker)).toContain('[ Xhigh ]');
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({ alias: 'other', thinking: 'xhigh' });
+  });
+
   it('renders the warning line directly below the key-hint line when provided', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2') },

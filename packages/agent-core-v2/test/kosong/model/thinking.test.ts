@@ -146,6 +146,25 @@ describe('resolveThinkingEffortForModel', () => {
     });
   });
 
+  it('resolves the declared default when nothing is configured and the capability is omitted', () => {
+    const declared = {
+      supportEfforts: ['low', 'medium', 'xhigh'],
+      defaultEffort: 'xhigh',
+    };
+    expect(defaultThinkingEffortForModel(declared)).toBe('xhigh');
+    expect(resolveThinkingEffortForModel(undefined, undefined, declared, false)).toBe('xhigh');
+    expect(resolveThinkingEffortForModel(undefined, undefined, declared, true)).toBe('xhigh');
+  });
+
+  it('trims a padded default_effort before matching the declared list', () => {
+    expect(
+      defaultThinkingEffortForModel({
+        supportEfforts: [' low ', ' medium ', ' xhigh '],
+        defaultEffort: ' xhigh ',
+      }),
+    ).toBe('xhigh');
+  });
+
   it('keeps always-thinking models on under kimi semantics', () => {
     const always = {
       capabilities: ['always_thinking'],

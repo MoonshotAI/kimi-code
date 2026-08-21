@@ -124,9 +124,9 @@ export function modelSupportsThinking(model: ModelThinkingMetadata | undefined):
 export function defaultThinkingEffortForModel(
   model: ModelThinkingMetadata | undefined,
 ): ThinkingEffort {
-  if (model === undefined || !modelSupportsThinking(model)) return 'off';
   const efforts = effortsFor(model);
   if (efforts.length > 0) return declaredDefaultEffortFor(model, efforts);
+  if (model === undefined || !modelSupportsThinking(model)) return 'off';
   return 'on';
 }
 
