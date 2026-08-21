@@ -49,6 +49,8 @@ The spec divides methods into a **stable** surface and an evolving **unstable** 
 | `session/close` | No | |
 | `logout` | No | |
 
+`session/prompt` does not report a failed turn as `end_turn`. Authentication failures return `authRequired (-32000)` without error data, provider filtering and prompt-hook blocks return `refusal`, and other failures return `internalError (-32603)`. For public Kimi error codes returned as `internalError`, `error.data` contains only `code`, the canonical `retryable` value, and an optional valid HTTP `statusCode`; private codes, raw provider messages, and other details are not sent over ACP.
+
 ### Stable client-side reverse-RPC — agent → IDE (4 / 9)
 
 | Method | Implemented | Description |
