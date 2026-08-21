@@ -443,6 +443,7 @@ export async function refreshProviderModels(
             models: next.models,
             defaultModel: next.defaultModel,
             thinking: next.thinking,
+            defaultProvider: next['defaultProvider'],
           });
           changed.push({
             providerId: KIMI_CODE_PROVIDER_NAME,
@@ -522,6 +523,7 @@ export async function refreshProviderModels(
           models: next.models,
           defaultModel: next.defaultModel,
           thinking: next.thinking,
+          defaultProvider: next['defaultProvider'],
         });
         changed.push({
           providerId,
@@ -741,6 +743,7 @@ export async function refreshProviderModels(
           models: next.models,
           defaultModel: next.defaultModel,
           thinking: next.thinking,
+          defaultProvider: next['defaultProvider'],
         });
         for (const change of changedProviders) {
           changed.push({
