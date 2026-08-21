@@ -264,6 +264,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   configure(options: ProfileServiceOptions): void {
     this.optionsValue = {
       emitStatusUpdated: options.emitStatusUpdated ?? this.optionsValue.emitStatusUpdated,
+      scheduleThinkingEffortRevalidation:
+        options.scheduleThinkingEffortRevalidation ??
+        this.optionsValue.scheduleThinkingEffortRevalidation,
     };
   }
 
@@ -644,14 +647,23 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     );
   }
 
+  private thinkingEffortRevalidationScheduled = false;
   private thinkingEffortRevalidationTimer: ReturnType<typeof setTimeout> | undefined;
 
   private scheduleThinkingEffortRevalidation(): void {
-    if (this.thinkingEffortRevalidationTimer !== undefined) return;
-    this.thinkingEffortRevalidationTimer = setTimeout(() => {
+    if (this.thinkingEffortRevalidationScheduled) return;
+    this.thinkingEffortRevalidationScheduled = true;
+    const run = () => {
+      this.thinkingEffortRevalidationScheduled = false;
       this.thinkingEffortRevalidationTimer = undefined;
       this.revalidateStoredThinkingEffort();
-    }, 0);
+    };
+    const custom = this.optionsValue.scheduleThinkingEffortRevalidation;
+    if (custom !== undefined) {
+      custom(run);
+      return;
+    }
+    this.thinkingEffortRevalidationTimer = setTimeout(run, 0);
   }
 
   private revalidateStoredThinkingEffort(): void {

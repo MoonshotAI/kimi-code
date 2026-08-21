@@ -81,6 +81,7 @@ export interface ProfileBindingSnapshot {
 
 export interface ProfileServiceOptions {
   readonly emitStatusUpdated?: () => void;
+  readonly scheduleThinkingEffortRevalidation?: (run: () => void) => void;
 }
 
 export interface ApplyProfileOptions {

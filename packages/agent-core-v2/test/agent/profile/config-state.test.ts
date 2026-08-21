@@ -398,6 +398,12 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
   });
 
   it('warns once when a model metadata reload strands the stored effort', async () => {
+    const scheduled: Array<() => void> = [];
+    profile.configure({
+      scheduleThinkingEffortRevalidation: (run) => {
+        scheduled.push(run);
+      },
+    });
     profile.update({ modelAlias: 'kimi-code/ultra', thinkingLevel: 'high' });
     expect(profile.data().thinkingLevel).toBe('high');
     expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
@@ -416,10 +422,13 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
         },
       },
     };
-
+    profile.data();
     await vi.waitFor(() => {
-      expect(profile.data().thinkingLevel).toBe('ultra');
+      expect(scheduled.length).toBeGreaterThan(0);
     });
+    for (const run of scheduled.splice(0)) run();
+
+    expect(profile.data().thinkingLevel).toBe('ultra');
     await vi.waitFor(() => {
       expect(ctx.allEvents).toContainEqual({
         type: '[rpc]',
@@ -438,6 +447,12 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
   });
 
   it('republishes the status when a reload makes a stranded effort valid again', async () => {
+    const scheduled: Array<() => void> = [];
+    profile.configure({
+      scheduleThinkingEffortRevalidation: (run) => {
+        scheduled.push(run);
+      },
+    });
     profile.update({ modelAlias: 'kimi-code/ultra', thinkingLevel: 'high' });
     expect(profile.data().thinkingLevel).toBe('high');
 
@@ -455,10 +470,24 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
         },
       },
     });
+    const revalidate = async (): Promise<void> => {
+      profile.data();
+      await vi.waitFor(() => {
+      expect(scheduled.length).toBeGreaterThan(0);
+    });
+      for (const run of scheduled.splice(0)) run();
+    };
 
     kimiConfig = withUltraEfforts(['low', 'ultra']);
+    await revalidate();
+    expect(profile.data().thinkingLevel).toBe('ultra');
     await vi.waitFor(() => {
-      expect(profile.data().thinkingLevel).toBe('ultra');
+      expect(ctx.allEvents).toContainEqual(
+        expect.objectContaining({
+          event: 'warning',
+          args: expect.objectContaining({ code: 'thinking-effort-not-listed' }),
+        }),
+      );
     });
     await vi.waitFor(() => {
       const statuses = ctx.allEvents.filter((event) => event.event === 'agent.status.updated');
@@ -466,14 +495,12 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     });
 
     kimiConfig = withUltraEfforts(['low', 'high', 'ultra']);
-    await vi.waitFor(() => {
-      expect(profile.data().thinkingLevel).toBe('high');
-    });
+    await revalidate();
+    expect(profile.data().thinkingLevel).toBe('high');
     await vi.waitFor(() => {
       const statuses = ctx.allEvents.filter((event) => event.event === 'agent.status.updated');
       expect(statuses.at(-1)?.args).toMatchObject({ thinkingEffort: 'high' });
     });
-    for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
     expect(
       ctx.allEvents.filter(
         (event) =>
@@ -484,6 +511,12 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
   });
 
   it('warns once when a provider-only reload changes the inferred effort list', async () => {
+    const scheduled: Array<() => void> = [];
+    profile.configure({
+      scheduleThinkingEffortRevalidation: (run) => {
+        scheduled.push(run);
+      },
+    });
     kimiConfig = {
       providers: {
         compat: { type: 'openai', apiKey: 'test-key', baseUrl: 'https://api.example.test/v1' },
@@ -507,10 +540,13 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
         compat: { type: 'anthropic', apiKey: 'test-key', baseUrl: 'https://api.example.test/v1' },
       },
     };
-
+    profile.data();
     await vi.waitFor(() => {
-      expect(profile.data().thinkingLevel).toBe('high');
+      expect(scheduled.length).toBeGreaterThan(0);
     });
+    for (const run of scheduled.splice(0)) run();
+
+    expect(profile.data().thinkingLevel).toBe('high');
     await vi.waitFor(() => {
       expect(ctx.allEvents).toContainEqual({
         type: '[rpc]',
@@ -537,10 +573,12 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
         },
       },
     };
-
+    profile.data();
     await vi.waitFor(() => {
-      expect(profile.data().thinkingLevel).toBe('high');
+      expect(scheduled.length).toBeGreaterThan(0);
     });
+    for (const run of scheduled.splice(0)) run();
+
     await vi.waitFor(() => {
       expect(ctx.allEvents).toContainEqual({
         type: '[rpc]',
@@ -552,7 +590,6 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
         }),
       });
     });
-    for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
     expect(
       ctx.allEvents.filter(
         (event) =>

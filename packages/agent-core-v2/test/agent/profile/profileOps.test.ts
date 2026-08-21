@@ -753,12 +753,18 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     expect(host.svc.resolveRequestParams().cacheKey).toBe('session-test');
   });
 
-  it('coalesces a combined provider and model reload into one revalidation', async () => {
+  it('coalesces a combined provider and model reload into one revalidation', () => {
     const catalogModels: Record<string, Model> = {
       'kimi-code': createTestModel({ providerType: 'openai' }),
     };
     modelCatalog = createModelCatalogStub(catalogModels);
     const host = buildHost('profile-reload-coalesce');
+    const scheduled: Array<() => void> = [];
+    host.svc.configure({
+      scheduleThinkingEffortRevalidation: (run) => {
+        scheduled.push(run);
+      },
+    });
     const dispatched = vi.spyOn(host.dispatcher, 'dispatch');
 
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'ultra' });
@@ -775,7 +781,8 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     };
     modelChangeEvents.fire({ added: [], removed: [], changed: ['kimi-code'] });
 
-    for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
+    expect(scheduled).toHaveLength(1);
+    for (const run of scheduled.splice(0)) run();
 
     expect(host.svc.data().thinkingLevel).toBe('ultra');
     expect(dispatched.mock.calls.filter(([event]) => event instanceof WarningIssued)).toEqual([]);
