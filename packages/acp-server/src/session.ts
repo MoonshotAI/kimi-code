@@ -79,6 +79,7 @@ import {
   turnEndReasonToStopReason,
   usageUpdateNotification,
   isAuthError,
+  isProviderError,
   stringifyArgs,
 } from './events-map';
 import { AcpInteractionBridge } from './interaction-bridge';
@@ -111,6 +112,10 @@ const TURN_AGENT_BUSY_CODE = 'turn.agent_busy';
  *    re-auth flow (same mapping as the `turn.ended` auth path).
  *  - `turn.agent_busy` maps to `invalidRequest` (-32600), matching the legacy
  *    adapter's busy-prompt semantics.
+ *  - Provider / context failures surface as `internalError` (-32603) with a
+ *    generic wire message; the engine's full text and the code ride in the
+ *    JSON-RPC `data` payload so the client can log them without forcing PII
+ *    into every error toast.
  *  - Everything else becomes a fixed-message `internalError` (-32603): the
  *    raw engine message and stack are logged server-side but NEVER cross the
  *    wire, so internal details cannot leak into the JSON-RPC channel.
@@ -128,6 +133,17 @@ export function mapPromptLaunchError(error: unknown, sessionId: string): Request
   if (code === TURN_AGENT_BUSY_CODE) {
     log.warn('acp: prompt rejected because another turn is active', { sessionId });
     return RequestError.invalidRequest({ code }, message);
+  }
+  if (typeof code === 'string' && isProviderError({ code })) {
+    log.warn('acp: prompt launch rejected with a provider error; surfacing to client', {
+      sessionId,
+      code,
+      error: message,
+    });
+    return RequestError.internalError(
+      { code, message },
+      'model provider reported an error',
+    );
   }
   log.error('acp: prompt launch failed', {
     sessionId,
@@ -913,6 +929,18 @@ export class AcpSession {
       // so the client triggers its re-auth flow, not a silent `end_turn`.
       if (event.reason === 'failed' && isAuthError(error)) {
         driver.reject(RequestError.authRequired(undefined, error?.message));
+        return;
+      }
+      // Provider / context failures propagate as JSON-RPC `internalError`;
+      // the engine's full text rides in `data` so clients can log it
+      // without forcing PII into every error toast.
+      if (event.reason === 'failed' && isProviderError(error)) {
+        driver.reject(
+          RequestError.internalError(
+            { code: error?.code, message: error?.message },
+            'model provider reported an error',
+          ),
+        );
         return;
       }
       driver.resolve({ stopReason: turnEndReasonToStopReason(event.reason, error) });
