@@ -828,7 +828,8 @@ export class ToolManager {
         goalToolsEnabled && new b.GetGoalTool(this.agent),
         goalToolsEnabled && new b.SetGoalBudgetTool(this.agent),
         goalToolsEnabled && new b.UpdateGoalTool(this.agent),
-        this.agent.rpc?.requestQuestion && new b.AskUserQuestionTool(this.agent),
+        this.agent.rpc?.requestQuestion &&
+          new b.AskUserQuestionTool(this.agent, { allowBackground }),
         new b.TodoListTool(this.toolStore),
         new b.TaskListTool(background),
         new b.TaskOutputTool(background),

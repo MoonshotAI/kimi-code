@@ -128,6 +128,12 @@ const QUESTION_DISMISSED_MESSAGE = 'User dismissed the question without answerin
 const QUESTION_UNSUPPORTED_FAILURE_MESSAGE =
   'The connected client does not support interactive questions. Do NOT call this tool again. Ask the user directly in your text response instead.';
 
+const BACKGROUND_DESCRIPTION =
+  '- Set background=true when you can keep working without the answer. This starts a background question task and returns a task_id immediately. The answer arrives automatically in a later turn — you do not need to poll, sleep, or check on it. Continue with other work; never fabricate or predict the answer.';
+
+const BACKGROUND_UNAVAILABLE_MESSAGE =
+  'Background questions are not available for this agent because TaskList, TaskOutput, and TaskStop are not enabled.';
+
 // ── Implementation ───────────────────────────────────────────────────
 
 export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
@@ -135,8 +141,14 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
   readonly description: string;
   readonly parameters: Record<string, unknown>;
 
-  constructor(private readonly agent: Agent) {
-    this.description = `${DESCRIPTION}- Set background=true when you can keep working without the answer. This starts a background question task and returns a task_id immediately. The answer arrives automatically in a later turn — you do not need to poll, sleep, or check on it. Continue with other work; never fabricate or predict the answer.`;
+  private readonly allowBackground: boolean;
+
+  constructor(
+    private readonly agent: Agent,
+    options?: { allowBackground?: boolean },
+  ) {
+    this.allowBackground = options?.allowBackground ?? true;
+    this.description = `${DESCRIPTION}${this.allowBackground ? BACKGROUND_DESCRIPTION : ''}`;
     this.parameters = toInputJsonSchema(this.inputSchema());
   }
 
@@ -160,6 +172,10 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
       turnId,
     }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
+    if (args.background === true && !this.allowBackground) {
+      return { isError: true, output: BACKGROUND_UNAVAILABLE_MESSAGE };
+    }
+
     // AJV (the runtime arg validator) cannot express the uniqueness refine,
     // so enforce it here before any UI interaction or task registration.
     const uniquenessError = questionUniquenessError(args.questions);
@@ -175,7 +191,9 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
   }
 
   private inputSchema(): z.ZodType<AskUserQuestionInput> {
-    return AskUserQuestionInputSchemaWithBackground;
+    return this.allowBackground
+      ? AskUserQuestionInputSchemaWithBackground
+      : AskUserQuestionInputSchema;
   }
 
   private async executeQuestion(

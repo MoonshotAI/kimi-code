@@ -326,6 +326,33 @@ describe('Agent tools', () => {
     expect(subagentHost.spawn).not.toHaveBeenCalled();
   });
 
+  it('gates AskUserQuestion background mode on the complete task tool trio', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.agent.tools.setActiveTools(['AskUserQuestion', 'TaskList', 'TaskOutput']);
+
+    const foregroundOnly = ctx.agent.tools.loopTools.find(
+      (tool) => tool.name === 'AskUserQuestion',
+    );
+    expect(foregroundOnly).toBeDefined();
+    expect(foregroundOnly!.parameters).not.toHaveProperty('properties.background');
+    expect(foregroundOnly!.description.toLowerCase()).not.toContain('background');
+
+    ctx.agent.tools.setActiveTools([
+      'AskUserQuestion',
+      'TaskList',
+      'TaskOutput',
+      'TaskStop',
+    ]);
+
+    const backgroundEnabled = ctx.agent.tools.loopTools.find(
+      (tool) => tool.name === 'AskUserQuestion',
+    );
+    expect(backgroundEnabled).toBeDefined();
+    expect(backgroundEnabled!.parameters).toHaveProperty('properties.background');
+    expect(backgroundEnabled!.description).toContain('background=true');
+  });
+
   it('removes denied exact tool names from the active set', () => {
     const ctx = testAgent();
     ctx.configure();
