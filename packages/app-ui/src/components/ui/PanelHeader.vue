@@ -66,7 +66,9 @@ const { t } = useKimiI18n();
   /* Long auto-generated titles (e.g. a background Bash task's
      "Bash: <command…>") must shrink + ellipsize instead of pushing the
      trailing badge, controls and close button out of the preview column.
-     Same recipe as __sub below. */
+     That shrink is the last resort, though: the subtitle only fills the
+     slack the title leaves (see __sub), so an ordinary-length title always
+     renders in full. */
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -78,8 +80,14 @@ const { t } = useKimiI18n();
   color: var(--color-text);
 }
 .ui-panel-header__sub {
-  flex: 0 1 auto;
-  min-width: 0;
+  /* Secondary info (a side chat's opening prompt, an agent's type · model ·
+     effort) takes only the slack the title and the trailing controls leave
+     behind — basis 0 + grow — so a long subtitle truncates itself instead
+     of squeezing the title into an ellipsis. The 20% floor keeps a sliver
+     visible when the title is itself overlong (same proportion-cap idiom as
+     the session-search rows / swarm member rows). */
+  flex: 1 1 0%;
+  min-width: 20%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
