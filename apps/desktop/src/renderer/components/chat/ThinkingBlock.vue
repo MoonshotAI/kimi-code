@@ -24,16 +24,16 @@ const props = withDefaults(
         (ISO) and how long it streamed (ms). Absent for history. */
     startedAt?: string;
     durationMs?: number;
-    /** Inspector mode (subagent detail panel): pin the body open — the head
-        becomes a plain caption (no toggle, no chevron). */
-    forceOpen?: boolean;
+    /** Inspector mode (subagent detail panel): skip the reveal/collapse height
+        animation entirely — animating a full historical stream's height would
+        relayout the whole panel on every frame. Animation-only: the fold
+        state behaves exactly as in the main transcript. */
+    instantReveal?: boolean;
   }>(),
-  { mobile: false, streaming: false, startedAt: undefined, durationMs: undefined, forceOpen: false },
+  { mobile: false, streaming: false, startedAt: undefined, durationMs: undefined, instantReveal: false },
 );
 
 const open = ref(false);
-// Inspector mode pins the body open no matter what the fold state says.
-const effectiveOpen = computed(() => props.forceOpen || open.value);
 const { t } = useI18n();
 
 // Thinking is done once the stream moves past this block: fold back even if
@@ -85,16 +85,18 @@ const bodyInnerEl = ref<HTMLElement | null>(null);
 
 // Set for a reveal whose content already exceeds the viewport: the 160ms
 // grid-rows transition would streak thousands of px, so the reveal (and its
-// matching collapse) goes instant instead. Recomputed on every expand.
+// matching collapse) goes instant instead. Inspector mode (instantReveal)
+// pins this on: every disclosure there is historical content whose animation
+// would relayout the whole panel. Recomputed on every expand; the value set
+// on expand also covers the matching collapse.
 const instant = ref(false);
 
 function onHeadClick(): void {
-  if (props.forceOpen) return;
   if (!open.value) {
     const tall =
       (bodyInnerEl.value?.scrollHeight ?? 0) >
       (typeof window !== 'undefined' ? window.innerHeight : 0);
-    instant.value = props.streaming && tall;
+    instant.value = props.instantReveal || (props.streaming && tall);
   }
   open.value = !open.value;
   // User-initiated toggle only — the auto-fold when streaming ends (the
@@ -107,21 +109,20 @@ function onHeadClick(): void {
 </script>
 
 <template>
-  <div class="think" :class="{ mob: mobile, open: effectiveOpen, streaming }">
-    <component
-      :is="forceOpen ? 'div' : 'button'"
+  <div class="think" :class="{ mob: mobile, open, streaming }">
+    <button
       ref="headEl"
       class="think-head"
-      :class="{ 'is-static': forceOpen }"
-      v-bind="forceOpen ? {} : { type: 'button', 'aria-expanded': effectiveOpen }"
+      type="button"
+      :aria-expanded="open"
       @click="onHeadClick"
     >
       <Icon class="think-bulb" name="thinking" size="sm" />
       <span class="think-title">{{ streaming ? t('thinking.streaming') : t('thinking.panelTitle') }}</span>
       <span v-if="elapsedLabel" class="think-time">{{ elapsedLabel }}</span>
-      <Icon v-if="!forceOpen" class="think-car" name="chevron-right" size="sm" />
-    </component>
-    <div class="think-body" :class="{ open: effectiveOpen, instant }" :inert="!effectiveOpen">
+      <Icon class="think-car" name="chevron-right" size="sm" />
+    </button>
+    <div class="think-body" :class="{ open, instant }" :inert="!open">
       <div ref="bodyInnerEl" class="think-body-inner">
         <pre class="think-text">{{ text }}</pre>
       </div>
@@ -160,12 +161,6 @@ function onHeadClick(): void {
 }
 .think-head:hover {
   color: var(--color-text);
-}
-/* Inspector mode: the head is a plain caption, not a toggle. */
-.think-head.is-static,
-.think-head.is-static:hover {
-  cursor: default;
-  color: var(--color-text-faint);
 }
 .think-head:focus-visible {
   outline: none;

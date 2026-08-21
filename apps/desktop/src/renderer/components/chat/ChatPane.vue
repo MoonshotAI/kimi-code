@@ -856,7 +856,8 @@ function assistantFold(turn: ChatTurn): AssistantFold {
 
 /** The blocks rendered inline after any TurnFold row. Inspector mode renders
     the folded prefix inline too — flattened back into source order (see
-    flattenAssistantFold). Nothing folds away in an inspection view. */
+    flattenAssistantFold), so the turn-level fold is disabled; thinking blocks
+    keep their usual collapsed-by-default behavior. */
 function assistantVisibleBlocks(turn: ChatTurn): AssistantRenderBlock[] {
   const fold = assistantFold(turn);
   return props.inspector ? flattenAssistantFold(fold) : fold.visible;
@@ -1079,7 +1080,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           @open-agent="onOpenAgent"
         />
         <template v-for="(blk, bi) in assistantVisibleBlocks(turn)" :key="renderBlockKey(blk, bi)">
-          <ThinkingBlock v-if="blk.kind === 'thinking'" :text="blk.thinking" mobile :streaming="isStreamingRenderBlock(turn, blk)" :started-at="blk.startedAt" :duration-ms="blk.durationMs" :force-open="inspector" />
+          <ThinkingBlock v-if="blk.kind === 'thinking'" :text="blk.thinking" mobile :streaming="isStreamingRenderBlock(turn, blk)" :started-at="blk.startedAt" :duration-ms="blk.durationMs" :instant-reveal="inspector" />
           <div v-else-if="blk.kind === 'text' && blk.text" class="msg"><Markdown :text="blk.text" :streaming="isStreamingRenderBlock(turn, blk)" :open-file="onOpenFile" /></div>
           <ActivityRun
             v-else-if="blk.kind === 'activity-run'"

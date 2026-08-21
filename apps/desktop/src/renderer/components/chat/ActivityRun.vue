@@ -245,7 +245,7 @@ function isThinkingStreaming(item: ActivityItem): boolean {
             :streaming="isThinkingStreaming(item)"
             :started-at="item.startedAt"
             :duration-ms="item.durationMs"
-            :force-open="forceOpen"
+            :instant-reveal="forceOpen"
           />
           <ToolCall
             v-else
