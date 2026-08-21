@@ -42,6 +42,7 @@ import { IModelService } from '#/kosong/model/model';
 import { completionBudgetParams, resolveCompletionBudget } from '#/kosong/model/completionBudget';
 import {
   declaredThinkingEfforts,
+  isDeclaredThinkingEffort,
   resolveThinkingKeep,
   type ThinkingConfig,
 } from '#/kosong/model/thinking';
@@ -523,7 +524,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     if (effort === 'on' || effort === 'off') return;
     const supportEfforts = declaredThinkingEfforts(request.model);
     if (supportEfforts.length === 0) return;
-    if (supportEfforts.includes(effort)) return;
+    if (isDeclaredThinkingEffort(request.model.supportEfforts, effort)) return;
     const code = 'thinking-effort-not-listed';
     const knownEfforts = supportEfforts.join(',');
     const message = `Thinking effort "${effort}" is not listed for model "${request.model.name}" (known: ${supportEfforts.join(', ')}). The value will be sent unchanged to the backend.`;

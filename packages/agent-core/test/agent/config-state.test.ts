@@ -414,6 +414,101 @@ describe('ConfigState model capabilities', () => {
     }
   });
 
+  it('does not warn when the env override matches a mixed-case declared entry', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'high');
+    try {
+      const config: KimiConfig = {
+        providers: {
+          compatible: {
+            type: 'kimi',
+            apiKey: 'test-key',
+            baseUrl: 'https://api.example.test',
+          },
+        },
+        models: {
+          compatible: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 128_000,
+            capabilities: ['thinking'],
+            supportEfforts: [' High '],
+          },
+        },
+      };
+      const ctx = testAgent({
+        initialConfig: config,
+        providerManager: new ProviderManager({ config }),
+      });
+
+      ctx.agent.config.update({
+        modelAlias: 'compatible',
+        systemPrompt: 'system',
+      });
+
+      expect(ctx.agent.config.thinkingEffort).toBe('high');
+      expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('does not warn when a reloaded list matches the current effort case-insensitively', async () => {
+    const compatibleModel = (supportEfforts: string[]) => ({
+      provider: 'compatible',
+      model: 'compatible-model',
+      protocol: 'anthropic' as const,
+      maxContextSize: 128_000,
+      capabilities: ['thinking'],
+      supportEfforts,
+    });
+    let current: KimiConfig = {
+      providers: {
+        compatible: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test',
+        },
+      },
+      models: { compatible: compatibleModel(['high']) },
+    };
+    let requests = 0;
+    const ctx = testAgent({
+      initialConfig: current,
+      providerManager: new ProviderManager({ config: () => current }),
+      generate: async (provider) => {
+        requests += 1;
+        expect(provider.thinkingEffort).toBe('high');
+        return {
+          id: 'response-1',
+          message: { role: 'assistant', content: [], toolCalls: [] },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      },
+    });
+    ctx.agent.config.update({
+      modelAlias: 'compatible',
+      systemPrompt: 'system',
+    });
+    ctx.agent.config.setThinkingEffort('high');
+
+    current = {
+      ...current,
+      models: { compatible: compatibleModel([' High ']) },
+    };
+
+    await ctx.agent.llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(requests).toBe(1);
+    expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+  });
+
   it('suppresses the fallback warning when the env override decides the final effort', () => {
     // The configured "high" is unlisted and would fall back to "xhigh", but
     // the env pin "low" decides what actually goes on the wire — warning

@@ -348,6 +348,17 @@ describe('AgentLLMRequesterService thinking effort diagnostics', () => {
 
     expect(events.filter((event) => event.type === 'warning')).toEqual([]);
   });
+
+  it('does not warn when the effort matches a declared entry case-insensitively', async () => {
+    const calls = { value: 0 };
+    const requester = createRequester(calls, null);
+    Object.defineProperty(requester.model, 'supportEfforts', { value: [' High '] });
+    const { service, events } = createService(requester, undefined, { thinkingLevel: 'high' });
+
+    await service.request();
+
+    expect(events.filter((event) => event.type === 'warning')).toEqual([]);
+  });
 });
 
 describe('AgentLLMRequesterService strict resend', () => {

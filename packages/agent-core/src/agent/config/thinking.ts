@@ -69,6 +69,17 @@ function matchDeclaredEffort(
 }
 
 /**
+ * Whether a raw declared `support_efforts` list covers `effort`, using the
+ * resolvers' normalization: trimmed, case-insensitive comparison.
+ */
+export function isDeclaredThinkingEffort(
+  supportEfforts: readonly string[] | undefined,
+  effort: string,
+): boolean {
+  return matchDeclaredEffort(normalizeDeclaredEfforts(supportEfforts), effort) !== undefined;
+}
+
+/**
  * Resolve the default thinking effort for a model from its declared metadata:
  *   - models declaring `support_efforts` -> `default_effort`, else the middle
  *     entry of the list (a declared list is itself a thinking declaration, so

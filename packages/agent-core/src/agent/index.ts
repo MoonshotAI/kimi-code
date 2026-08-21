@@ -36,6 +36,7 @@ import {
 import { CronManager } from './cron';
 import { ConfigState } from './config';
 import {
+  isDeclaredThinkingEffort,
   normalizeDeclaredEfforts,
   type ThinkingEffort,
   type ThinkingEffortFallback,
@@ -378,7 +379,8 @@ export class Agent {
     if (effort === 'on' || effort === 'off') return;
     const effective = model === undefined ? undefined : effectiveModelAlias(model);
     const supportEfforts = normalizeDeclaredEfforts(effective?.supportEfforts);
-    if (supportEfforts.length === 0 || supportEfforts.includes(effort)) return;
+    if (supportEfforts.length === 0 || isDeclaredThinkingEffort(effective?.supportEfforts, effort))
+      return;
     const modelName = effective?.model ?? modelAlias ?? 'unknown';
     this.emitThinkingEffortWarning({
       code: 'thinking-effort-override-not-listed',
@@ -432,7 +434,7 @@ export class Agent {
       }
       const supportEfforts = normalizeDeclaredEfforts(resolved.supportEfforts);
       if (supportEfforts.length === 0) return;
-      if (supportEfforts.includes(effort)) return;
+      if (isDeclaredThinkingEffort(resolved.supportEfforts, effort)) return;
       this.emitThinkingEffortWarning({
         code: 'thinking-effort-not-listed',
         message: `Thinking effort "${effort}" is not listed for model "${provider.modelName}" (known: ${supportEfforts.join(', ')}). The value will be sent unchanged to the backend.`,
