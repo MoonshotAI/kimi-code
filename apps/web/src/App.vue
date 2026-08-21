@@ -51,7 +51,7 @@ import { useSidebarTabs } from '@moonshot-ai/app-core';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from '@moonshot-ai/app-core/lib';
 import type { AppConfig, OAuthRegion, ThinkingLevel } from './api/types';
-import { commitLevel, effectiveThinkingLevel, segmentsFor } from '@moonshot-ai/app-core/lib';
+import { effectiveThinkingLevel } from '@moonshot-ai/app-core/lib';
 import { modelDisplayName, subagentEffortSuffix } from '@moonshot-ai/app-core/lib';
 import { stripSkillPrefix } from '@moonshot-ai/app-core/lib';
 import { sessionDisplayStatus, type SessionDisplayStatus } from '@moonshot-ai/app-core/lib';
@@ -169,21 +169,6 @@ const activeDisplayStatus = computed<SessionDisplayStatus>(() => {
 // single document.title writer and prefixes an animated spinner while the
 // agent is running.
 usePageTitle({ running, title: client.documentBaseTitle });
-
-// The /thinking slash command has no popover anchor, so it steps to the next
-// segment for the active model (effort models cycle through their declared
-// levels; boolean models flip on/off; unsupported stays off).
-function nextThinkingLevel(current: ThinkingLevel | undefined): ThinkingLevel {
-  // Identity is the model id — display/model names can collide across providers.
-  const model = client.models.value.find((m) => m.id === client.status.value.modelId);
-  const segs = segmentsFor(model);
-  // No stored preference means the model default is in effect — cycle from
-  // there; a level the model doesn't declare (indexOf → -1) starts the cycle
-  // at the first segment.
-  const idx = segs.indexOf(effectiveThinkingLevel(model, current));
-  const next = segs[(idx + 1) % segs.length] ?? segs[0] ?? 'off';
-  return commitLevel(model, next);
-}
 
 // Status panel (/status) renders current client state only — show the
 // effective thinking level so "no preference" reads as the model default that
@@ -1090,16 +1075,6 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
       });
       break;
     }
-    case '/auto':
-      client.setPermission('auto');
-      break;
-    case '/yolo':
-      client.setPermission('yolo');
-      break;
-    case '/thinking':
-      // No popover anchor from a slash command — step to the next level.
-      client.setThinking(nextThinkingLevel(client.thinking.value));
-      break;
     case '/status':
       showStatusPanel.value = true;
       break;

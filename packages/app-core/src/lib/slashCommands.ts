@@ -35,9 +35,6 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   // directly via the command path, so it is NOT acceptsInput.
   { name: '/goal',       desc: 'commands.goal.desc' },
   { name: '/btw',        desc: 'commands.btw.desc', acceptsInput: true },
-  { name: '/auto',       desc: 'commands.auto.desc' },
-  { name: '/yolo',       desc: 'commands.yolo.desc' },
-  { name: '/thinking',   desc: 'commands.thinking.desc' },
   { name: '/compact',    desc: 'commands.compact.desc', acceptsInput: true },
   { name: '/undo',       desc: 'commands.undo.desc' },
   { name: '/fork',       desc: 'commands.fork.desc' },
