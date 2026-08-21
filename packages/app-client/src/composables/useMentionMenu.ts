@@ -475,5 +475,5 @@ export function useMentionMenu(deps: MentionMenuDeps) {
     });
   }
 
-  return { open, items, fileItems, fileStale, skillItems, active, loading, update, close, select, navigate };
+  return { open, items, fileItems, fileStale, skillItems, active, loading, update, close, select, navigate, getToken: getMentionToken };
 }

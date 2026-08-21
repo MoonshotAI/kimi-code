@@ -15,8 +15,14 @@ const props = withDefaults(defineProps<{
   /** Fuse's actual match ranges per item (aligned with `items`); rows fall
       back to local computation when absent. */
   ranges?: SlashMatchRanges[];
+  /** 'popup' = the absolute frame floating above the composer (desktop and
+      wide viewports). 'sheet' = a static list body living inside the mobile
+      BottomSheet — no absolute positioning and no viewport clamp (the sheet
+      owns the frame, the surface and the height budget). */
+  layout?: 'popup' | 'sheet';
 }>(), {
   query: '',
+  layout: 'popup',
 });
 
 const emit = defineEmits<{
@@ -182,6 +188,16 @@ function clampScrollToViewport(): void {
 }
 
 onMounted(() => {
+  if (props.layout === 'sheet') {
+    // Sheet layout: the BottomSheet owns the frame and the height budget —
+    // the scrollport keeps its token cap, nothing to clamp.
+    updateScrollState();
+    if (typeof ResizeObserver === 'function' && scrollEl.value) {
+      resizeObserver = new ResizeObserver(() => updateScrollState());
+      resizeObserver.observe(scrollEl.value);
+    }
+    return;
+  }
   clampScrollToViewport();
   updateScrollState();
   if (typeof ResizeObserver === 'function' && scrollEl.value) {
@@ -248,7 +264,7 @@ watch(
 </script>
 
 <template>
-  <div ref="menuEl" class="slash-menu" data-menu-frame>
+  <div ref="menuEl" class="slash-menu" :class="{ 'is-sheet': layout === 'sheet' }" data-menu-frame>
     <!-- Zero results is a live status note, not a listbox item. -->
     <div v-if="items.length === 0" class="slash-empty" role="status">{{ t('composer.noCommands') }}</div>
     <div id="composer-slash-menu" v-show="items.length > 0" ref="scrollEl" class="slash-scroll" role="listbox" :style="{ maskImage, maxHeight: scrollMaxHeight }" @scroll="onScroll">
@@ -293,6 +309,34 @@ watch(
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
   z-index: var(--z-dropdown);
+}
+
+/* Sheet layout: the BottomSheet owns the surface — the list is a static body
+   with no frame, no absolute positioning, no viewport clamp. */
+.slash-menu.is-sheet[data-menu-frame] {
+  position: static;
+  padding: 0;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  z-index: auto;
+}
+/* Sheet mode scrollport: drop the popup's negative-margin outreach (it would
+   bleed 6px past the sheet's edges); rows hug a plain 8px inset instead. */
+.slash-menu.is-sheet .slash-scroll {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+}
+/* Sheet rows: no −hug outreach — caps sit 8px from the sheet's edges
+   (symmetric) and the content lands on the 16px column shared with the
+   sheet's title and search box. */
+.slash-menu.is-sheet .slash-item {
+  margin: 0;
+  padding-left: var(--space-2);
+  padding-right: var(--space-2);
 }
 
 /* The real scroll container. overflow-y: auto forces overflow-x: auto, so

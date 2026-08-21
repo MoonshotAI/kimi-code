@@ -33,7 +33,8 @@ import type { ManagedMembership, PromptAttachment } from '@moonshot-ai/app-clien
 import AttachmentChip from './AttachmentChip.vue';
 import MediaLightbox from './MediaLightbox.vue';
 import MediaThumb from './MediaThumb.vue';
-import { ContextRing, Icon, IconButton, SegmentedControl, Spinner, Tooltip, trackMenuSurface } from '@moonshot-ai/app-ui';
+import { ContextRing, Icon, IconButton, Input, SegmentedControl, Spinner, Tooltip, trackMenuSurface } from '@moonshot-ai/app-ui';
+import BottomSheet from '../dialogs/BottomSheet.vue';
 
 // ---------------------------------------------------------------------------
 // Props & emits
@@ -331,11 +332,84 @@ const {
   close: closeMentionMenu,
   select: selectMentionItem,
   navigate: mentionNavigate,
+  getToken: getMentionToken,
 } = useMentionMenu({
   text,
   editorRef: textareaRef,
   searchFiles: () => props.searchFiles,
 });
+
+// ---------------------------------------------------------------------------
+// Mobile menu sheets (narrow viewports): the slash / mention / add popups
+// become grab-handle BottomSheets — the inline popups' viewport clamp is
+// unreliable under the iOS software keyboard. Each sheet's search box is a
+// SECOND editing surface for the same /token or @token: every keystroke
+// flows through the same text ref, so items, ranges, selection and dismissal
+// semantics are identical to the inline menus'.
+// ---------------------------------------------------------------------------
+const slashSheetQuery = computed<string>({
+  get: () => slashQuery.value,
+  set: (v) => {
+    text.value = `/${v}`;
+    updateSlashMenu();
+  },
+});
+// The mention sheet's search box edits against an ANCHORED token start:
+// captured when the sheet opens. Reading the blurred textarea's caret instead
+// mis-tracks every keystroke, and once the browser resets the caret to the
+// end of the whole draft (an @token in the middle of a longer text), the
+// token walk returns null and the sheet would close mid-typing.
+const mentionSheetStart = ref<number | null>(null);
+const mentionSheetQuery = ref('');
+watch(mentionSheetQuery, (v) => {
+  const start = mentionSheetStart.value;
+  if (start == null || !mentionOpen.value) return;
+  const val = text.value;
+  // The live token's end in the current text: the next whitespace after the
+  // anchored '@' (or the end of the draft). Derived from the text itself, so
+  // no stale-caret or skipped-keystroke drift is possible.
+  const after = val.slice(start + 1);
+  const ws = after.search(/\s/);
+  const tokenEnd = ws === -1 ? val.length : start + 1 + ws;
+  text.value = `${val.slice(0, start)}@${v}${val.slice(tokenEnd)}`;
+  void nextTick(() => {
+    // Pin the caret at the token's end so the composable's own token walk
+    // (and its in-flight search guard) keeps seeing the same @token after the
+    // DOM flush — never the end of the full draft.
+    const el = textareaRef.value;
+    const pos = start + 1 + v.length;
+    if (el) el.setSelectionRange(pos, pos);
+    updateMentionMenu();
+  });
+});
+const slashSearchRef = ref<InstanceType<typeof Input> | null>(null);
+const mentionSearchRef = ref<InstanceType<typeof Input> | null>(null);
+// Focus the sheet's search box when a menu sheet opens — the software
+// keyboard is already up from the composer's typing; keep it there.
+watch(slashOpen, (open) => {
+  if (open && isMobile.value) void nextTick(() => slashSearchRef.value?.focus());
+});
+watch(mentionOpen, (open) => {
+  if (open && isMobile.value) {
+    const range = getMentionToken();
+    mentionSheetStart.value = range?.start ?? null;
+    mentionSheetQuery.value = range?.token ?? '';
+    void nextTick(() => mentionSearchRef.value?.focus());
+  } else {
+    mentionSheetStart.value = null;
+  }
+});
+// BottomSheet dismissal (scrim tap / grab handle) routes to the same close
+// paths the inline popups use.
+function onSlashSheetClose(): void {
+  slashOpen.value = false;
+}
+function onMentionSheetClose(): void {
+  closeMentionMenu();
+}
+function onAddSheetClose(): void {
+  closeAddMenu();
+}
 
 // The slash / mention autocomplete popups are menu surfaces too: while one is
 // open, tooltips outside it hide (native behavior — the add/permission/model
@@ -367,6 +441,10 @@ watch(() => props.sessionId, () => {
 // editor. Refocusing does not reopen a menu — the next keystroke re-derives
 // it from the live text via handleInput.
 function handleEditorBlur(): void {
+  // Mobile: the menu sheets move focus INTO their own search box — the
+  // textarea's blur is the whole interaction, not a dismissal signal (the
+  // sheet's scrim / grab handle / Escape own closing).
+  if (isMobile.value) return;
   slashOpen.value = false;
   closeMentionMenu();
 }
@@ -831,6 +909,13 @@ function handleKeydown(e: KeyboardEvent): void {
       closeMentionMenu();
       return;
     }
+    // An empty menu (the bare-@ hint or no-match) has nothing to select — let
+    // Tab move focus on, but close the menu first so the focus shift can't
+    // strand the popup/sheet open over the page.
+    if (e.key === 'Tab' && mentionItems.value.length === 0) {
+      closeMentionMenu();
+      return;
+    }
     if (mentionItems.value.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -932,6 +1017,9 @@ const permDropdownOpen = ref(false);
 const addMenuOpen = ref(false);
 const toolbarRef = ref<HTMLElement | null>(null);
 const addMenuRef = ref<HTMLElement | null>(null);
+// The mobile add sheet's row container — the keyboard paths (initial focus,
+// arrow navigation) must target whichever container is actually rendered.
+const addSheetRef = ref<HTMLElement | null>(null);
 const permPillRef = ref<HTMLElement | null>(null);
 const permDropdownRef = ref<HTMLElement | null>(null);
 const modelPillRef = ref<HTMLElement | null>(null);
@@ -1060,9 +1148,11 @@ function toggleAddMenu(): void {
     closeMentionMenu();
     document.addEventListener('click', onDocClick, true);
     // A real menu takes DOM focus on open (the textarea's combobox ARIA never
-    // points at it); Escape and selection hand focus back to the textarea.
+    // points at it); Escape and selection hand focus back to the textarea. On
+    // mobile the sheet's container is the rendered one.
     void nextTick(() => {
-      addMenuRef.value?.querySelector<HTMLElement>('.am-row')?.focus();
+      const root = isMobile.value ? addSheetRef.value : addMenuRef.value;
+      root?.querySelector<HTMLElement>('.am-row')?.focus();
     });
   } else {
     document.removeEventListener('click', onDocClick, true);
@@ -1081,7 +1171,14 @@ function closeAddMenu(): void {
 const addItems = computed(() => {
   const items: { id: string; icon: IconName; nameKey: string; descKey?: string; action: () => void }[] = [];
   if (hasUpload.value) {
-    items.push({ id: 'files', icon: 'attachment', nameKey: 'composer.addFiles', action: onAddFiles });
+    items.push({ id: 'files', icon: 'attachment', nameKey: 'composer.addFiles', descKey: 'composer.addFilesDesc', action: onAddFiles });
+  }
+  // Mobile-only openers for the slash / mention sheets — the sheets' native
+  // triggers are keystrokes on the software keyboard, so the + menu offers
+  // them as tap targets too.
+  if (isMobile.value) {
+    items.push({ id: 'slash', icon: 'terminal', nameKey: 'composer.addSlash', descKey: 'composer.addSlashDesc', action: onAddSlashMenu });
+    items.push({ id: 'mention', icon: 'link', nameKey: 'composer.addMention', descKey: 'composer.addMentionDesc', action: onAddMentionMenu });
   }
   items.push({ id: 'goal', icon: 'target', nameKey: 'status.goalLabel', descKey: 'composer.addGoalDesc', action: onAddGoalMode });
   items.push({ id: 'plan', icon: 'file-edit', nameKey: 'status.planLabel', descKey: 'composer.addPlanDesc', action: onAddPlanMode });
@@ -1089,8 +1186,12 @@ const addItems = computed(() => {
   return items;
 });
 
-function selectAddItem(item: { action: () => void }): void {
+function selectAddItem(item: { id?: string; action: () => void }): void {
   item.action(); // every action closes the menu
+  // Only the files action skips the focus hand-back on touch — refocusing
+  // would race the native picker and re-pop the keyboard. Every other action
+  // hands focus back so the user can keep typing right away.
+  if (isMobile.value && item.id === 'files') return;
   textareaRef.value?.focus();
 }
 
@@ -1109,7 +1210,8 @@ function onAddMenuKeydown(e: KeyboardEvent): void {
   }
   if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
   e.preventDefault();
-  const items = Array.from(addMenuRef.value?.querySelectorAll<HTMLElement>('.am-row') ?? []);
+  const root = isMobile.value ? addSheetRef.value : addMenuRef.value;
+  const items = Array.from(root?.querySelectorAll<HTMLElement>('.am-row') ?? []);
   if (items.length === 0) return;
   const index = items.indexOf(document.activeElement as HTMLElement);
   const next = e.key === 'ArrowDown' ? (index + 1) % items.length : (index - 1 + items.length) % items.length;
@@ -1119,6 +1221,27 @@ function onAddMenuKeydown(e: KeyboardEvent): void {
 function onAddFiles(): void {
   closeAddMenu();
   openFilePicker();
+}
+
+// The slash / mention sheet openers (mobile add menu): prime the composer
+// with the trigger character, then open via the normal update path AFTER the
+// DOM flush — the mention token walk reads the caret, and the browser's
+// selection reset only lands once Vue has written the new value.
+function primeComposerToken(token: '/' | '@'): void {
+  closeAddMenu();
+  text.value = token;
+  void nextTick(() => {
+    const el = textareaRef.value;
+    if (el) el.setSelectionRange(el.value.length, el.value.length);
+    if (token === '/') updateSlashMenu();
+    else updateMentionMenu();
+  });
+}
+function onAddSlashMenu(): void {
+  primeComposerToken('/');
+}
+function onAddMentionMenu(): void {
+  primeComposerToken('@');
 }
 
 function onAddGoalMode(): void {
@@ -1745,9 +1868,10 @@ function selectModel(modelId: string): void {
 
       <!-- Input row with popup menus -->
       <div class="cin-wrap">
-        <!-- Slash menu (above textarea) -->
+        <!-- Slash menu (above textarea) — inline popup; on mobile the bottom
+             sheet at the end of the template takes over. -->
         <SlashMenu
-          v-if="slashOpen"
+          v-if="slashOpen && !isMobile"
           ref="slashMenuRef"
           :items="slashItems"
           :ranges="slashRanges"
@@ -1757,9 +1881,10 @@ function selectModel(modelId: string): void {
           @hover="slashActive = $event"
         />
 
-        <!-- Mention menu (above textarea) -->
+        <!-- Mention menu (above textarea) — inline popup; the sheet takes
+             over on mobile. -->
         <MentionMenu
-          v-if="mentionOpen"
+          v-if="mentionOpen && !isMobile"
           ref="mentionMenuRef"
           :items="mentionItems"
           :active-index="mentionActive"
@@ -1771,9 +1896,10 @@ function selectModel(modelId: string): void {
 
         <!-- Add menu: the composer's action list — the autocomplete family's
              surface and rows, with real menu semantics (focus moves in,
-             arrows navigate, Enter activates, Escape closes). -->
+             arrows navigate, Enter activates, Escape closes). On mobile the
+             bottom sheet takes over. -->
         <Transition name="composer-menu-pop">
-          <div v-if="addMenuOpen" ref="addMenuRef" class="add-menu" @click.stop @keydown="onAddMenuKeydown">
+          <div v-if="addMenuOpen && !isMobile" ref="addMenuRef" class="add-menu" @click.stop @keydown="onAddMenuKeydown">
             <div ref="addScrollRef" class="am-scroll" role="menu" @scroll="onAddMenuScroll">
               <button
                 v-for="item in addItems"
@@ -2133,6 +2259,104 @@ function selectModel(modelId: string): void {
       <span>{{ t('composer.dropToAttach') }}</span>
     </div>
   </div>
+
+  <!-- Mobile menu sheets: the slash / mention / add popups as grab-handle
+       bottom sheets (the inline popups' viewport clamp is unreliable under
+       the iOS software keyboard). Teleported to <body> — the composer card's
+       container-type would otherwise capture the sheet's fixed positioning.
+       Each sheet's search box edits the same /token or @token as the
+       composer's text, so filtering and selection semantics are shared. -->
+  <Teleport to="body">
+    <BottomSheet
+      :model-value="isMobile && slashOpen"
+      :title="t('composer.slashSheetTitle')"
+      @update:model-value="onSlashSheetClose"
+    >
+      <div class="msheet-search">
+        <Input
+          ref="slashSearchRef"
+          v-model="slashSheetQuery"
+          :placeholder="t('composer.slashSearchPlaceholder')"
+          autocomplete="off"
+          spellcheck="false"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-haspopup="listbox"
+          :aria-expanded="!!menuAriaControls"
+          :aria-controls="menuAriaControls"
+          :aria-activedescendant="menuAriaActiveDescendant"
+          @keydown="handleKeydown"
+          @compositionstart="handleCompositionStart"
+          @compositionend="handleCompositionEnd"
+        />
+      </div>
+      <SlashMenu
+        layout="sheet"
+        :items="slashItems"
+        :ranges="slashRanges"
+        :active-index="slashActive"
+        :query="slashSheetQuery"
+        @select="selectSlashCommand"
+        @hover="slashActive = $event"
+      />
+    </BottomSheet>
+  </Teleport>
+  <Teleport to="body">
+    <BottomSheet
+      :model-value="isMobile && mentionOpen"
+      :title="t('composer.mentionSheetTitle')"
+      @update:model-value="onMentionSheetClose"
+    >
+      <div class="msheet-search">
+        <Input
+          ref="mentionSearchRef"
+          v-model="mentionSheetQuery"
+          :placeholder="t('composer.mentionSearchPlaceholder')"
+          autocomplete="off"
+          spellcheck="false"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-haspopup="listbox"
+          :aria-expanded="!!menuAriaControls"
+          :aria-controls="menuAriaControls"
+          :aria-activedescendant="menuAriaActiveDescendant"
+          @keydown="handleKeydown"
+          @compositionstart="handleCompositionStart"
+          @compositionend="handleCompositionEnd"
+        />
+      </div>
+      <MentionMenu
+        layout="sheet"
+        :items="mentionItems"
+        :active-index="mentionActive"
+        :loading="mentionLoading"
+        :stale="mentionFileStale"
+        @select="selectMentionItem"
+        @hover="mentionNavigate"
+      />
+    </BottomSheet>
+  </Teleport>
+  <Teleport to="body">
+    <BottomSheet
+      :model-value="isMobile && addMenuOpen"
+      @update:model-value="onAddSheetClose"
+    >
+      <div ref="addSheetRef" class="msheet-add" role="menu" @keydown="onAddMenuKeydown">
+        <button
+          v-for="item in addItems"
+          :key="item.id"
+          type="button"
+          class="am-row"
+          role="menuitem"
+          @click="selectAddItem(item)"
+        >
+          <span class="am-icon"><Icon :name="item.icon" size="sm" /></span>
+          <span class="am-name">{{ t(item.nameKey) }}</span>
+          <span v-if="item.descKey" class="am-desc">{{ t(item.descKey) }}</span>
+        </button>
+      </div>
+    </BottomSheet>
+  </Teleport>
 </div>
 </template>
 
@@ -2462,6 +2686,20 @@ function selectModel(modelId: string): void {
 }
 .add-menu:hover .scroll-thumb {
   background: var(--color-menu-scrollbar-hover);
+}
+
+/* Mobile menu sheets: the search row above the sheet's list (aligned to the
+   sheet head's 16px inset), and the add sheet's row container (the hug math
+   keeps .am-row's negative margins inside the sheet's edges). */
+.msheet-search {
+  padding: 0 var(--space-4) var(--space-2);
+}
+.msheet-add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--menu-rows-seam);
+  padding: 0 var(--menu-row-hug);
+  font-family: var(--font-ui);
 }
 .am-row {
   display: flex;

@@ -14,7 +14,7 @@ import type { FileItem } from '../../types';
 // that import FileItem from this component.
 export type { FileItem };
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** Flat merged row list (files, folders and skills in ranking order). */
   items: MentionItem[];
   activeIndex: number;
@@ -22,7 +22,12 @@ const props = defineProps<{
   /** The file rows belong to an older query (a new search is pending) —
    *  they stay visible but dimmed rather than flashing an empty state. */
   stale?: boolean;
-}>();
+  /** 'popup' = the absolute frame floating above the composer (desktop and
+      wide viewports). 'sheet' = a static list body living inside the mobile
+      BottomSheet — no absolute positioning and no viewport clamp (the sheet
+      owns the frame, the surface and the height budget). */
+  layout?: 'popup' | 'sheet';
+}>(), { stale: false, layout: 'popup' });
 
 const emit = defineEmits<{
   select: [item: MentionItem];
@@ -197,6 +202,16 @@ function clampScrollToViewport(): void {
 }
 
 onMounted(() => {
+  if (props.layout === 'sheet') {
+    // Sheet layout: the BottomSheet owns the frame and the height budget —
+    // the scrollport keeps its token cap, nothing to clamp.
+    updateScrollState();
+    if (typeof ResizeObserver === 'function' && scrollEl.value) {
+      resizeObserver = new ResizeObserver(() => updateScrollState());
+      resizeObserver.observe(scrollEl.value);
+    }
+    return;
+  }
   clampScrollToViewport();
   updateScrollState();
   if (typeof ResizeObserver === 'function' && scrollEl.value) {
@@ -263,7 +278,7 @@ watch(
 </script>
 
 <template>
-  <div ref="menuEl" class="mention-menu" data-menu-frame>
+  <div ref="menuEl" class="mention-menu" :class="{ 'is-sheet': layout === 'sheet' }" data-menu-frame>
     <!-- The full-area loading note only appears when there is nothing to
          show; with rows visible, searching gets a corner spinner instead and
          the current candidates stay on screen. -->
@@ -330,6 +345,37 @@ watch(
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-menu);
   z-index: var(--z-dropdown);
+}
+
+/* Sheet layout: the BottomSheet owns the surface — the list is a static body
+   with no frame, no absolute positioning, no viewport clamp. */
+.mention-menu.is-sheet[data-menu-frame] {
+  position: static;
+  padding: 0;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  z-index: auto;
+}
+/* Sheet mode scrollport: drop the popup's negative-margin outreach (it would
+   bleed 6px past the sheet's edges); rows hug a plain 8px inset instead. */
+.mention-menu.is-sheet .mention-scroll {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+}
+/* Sheet rows: no −hug outreach — caps sit 8px from the sheet's edges
+   (symmetric) and the content lands on the 16px column shared with the
+   sheet's title and search box. */
+.mention-menu.is-sheet .mention-item {
+  margin: 0;
+  padding-left: var(--space-2);
+  padding-right: var(--space-2);
+}
+.mention-menu.is-sheet .mention-state {
+  padding-left: var(--space-4);
 }
 
 /* The real scroll container. overflow-y: auto forces overflow-x: auto, so
