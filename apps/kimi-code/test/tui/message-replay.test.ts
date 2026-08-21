@@ -1115,6 +1115,31 @@ describe('KimiTUI resume message replay', () => {
     ).toEqual(['run nightly']);
   });
 
+  it('keeps the previous turn’s final answer visible when a cron turn follows in replay', async () => {
+    const cronFire =
+      '<cron-fire jobId="job-1" cron="*/5 * * * *" recurring="true" coalescedCount="1" stale="false">\n<prompt>\nrun nightly\n</prompt>\n</cron-fire>';
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'real prompt' }]),
+      message('assistant', [{ type: 'text', text: 'real answer' }]),
+      message('user', [{ type: 'text', text: cronFire }], {
+        origin: {
+          kind: 'cron_job',
+          jobId: 'job-1',
+          cron: '*/5 * * * *',
+          recurring: true,
+          coalescedCount: 1,
+          stale: false,
+        },
+      }),
+      message('assistant', [{ type: 'text', text: 'cron report part one' }]),
+      message('assistant', [{ type: 'text', text: 'cron report final' }]),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('cron report final');
+    expect(transcript).toContain('real answer');
+  });
+
   it('renders cron_missed origin records during replay without exposing raw XML', async () => {
     const cronMissed =
       '<cron-fire jobId="job-2" missed="true" count="3">\n3 one-shot tasks missed while offline\n</cron-fire>';

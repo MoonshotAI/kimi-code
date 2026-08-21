@@ -51,6 +51,7 @@ export interface ResolveSlashCommandInput {
   readonly pluginCommandMap: ReadonlyMap<string, string>;
   readonly isStreaming: boolean;
   readonly isCompacting: boolean;
+  readonly engineV2: boolean;
 }
 
 export function resolveSlashCommandInput(options: ResolveSlashCommandInput): SlashCommandIntent {
@@ -61,7 +62,8 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
   // `command` is a literal union where only some members carry `experimentalFlag`; widen to read it.
   if (
     command !== undefined &&
-    isExperimentalFlagEnabled((command as KimiSlashCommand).experimentalFlag)
+    isExperimentalFlagEnabled((command as KimiSlashCommand).experimentalFlag) &&
+    (!(command as KimiSlashCommand).requiresEngineV2 || options.engineV2)
   ) {
     const busyReason = slashCommandBusyReason(options);
     if (
@@ -87,7 +89,7 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
     // Skill activations are never blocked by a busy session: the TUI queues
     // them behind the running turn exactly like normal messages (see
     // sendSkillActivation), and Ctrl-S steers them as real activations, so
-    // commands like /tower can be issued any time.
+    // skill commands can be issued any time.
     return {
       kind: 'skill',
       commandName: parsed.name,

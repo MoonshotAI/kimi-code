@@ -130,7 +130,9 @@
  *   scope's `ISessionSkillCatalog`; `startBtw` → the session scope's
  *   `ISessionBtwService`; `setSwarmMode` / `swarm` → the agent scope's
  *   `IAgentSwarmService` (the v2 port of v1's `SwarmMode`), with `swarm()`
- *   recomposed over the `setSwarmMode` + `prompt` overrides.
+ *   recomposed over the `setSwarmMode` + `prompt` overrides; `setTowerMode` →
+ *   the agent scope's `IAgentTowerService` (v2-only — the base class throws
+ *   `not_implemented`).
  *   `createSessionWithKaos` / `resumeSessionWithKaos` deliberately keep the
  *   base class's kaos-ignoring degradation (the v2 engine has no kaos
  *   injection point — see the session-lifecycle section header), and
@@ -195,6 +197,7 @@ import {
   ISessionTokenCountingService,
   IAgentToolPolicyService,
   IAgentToolRegistryService,
+  IAgentTowerService,
   IBootstrapService,
   IConfigService,
   IEventService,
@@ -234,6 +237,8 @@ import {
   PRINT_WAIT_CEILING_S_DEFAULT,
   ProfileError,
   ProfileErrors,
+  Error2 as V2Error2,
+  ErrorCodes as V2ErrorCodes,
   resolveAgentTaskConfig,
   resolveConfigPath,
   resolveKimiHome,
@@ -271,6 +276,7 @@ import {
   type SetSessionPlanModeRpcInput,
   type SetSessionSwarmModeRpcInput,
   type SetSessionThinkingRpcInput,
+  type SetSessionTowerModeRpcInput,
   type UpdateSessionMetadataRpcInput,
 } from '#/rpc';
 import type {
@@ -1800,6 +1806,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       permission: agent.accessor.get(IAgentPermissionModeService).mode,
       planMode: plan !== null,
       swarmMode: agent.accessor.get(IAgentSwarmService).isActive,
+      towerMode: agent.accessor.get(IAgentTowerService).isActive,
       contextTokens,
       maxContextTokens,
       contextUsage,
@@ -2111,6 +2118,24 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async swarm(input: SessionPromptRpcInput): Promise<void> {
     await this.setSwarmMode({ sessionId: input.sessionId, enabled: true, trigger: 'task' });
     return this.prompt(input);
+  }
+
+  /** Through the agent scope (`IAgentTowerService.enter` / `.exit`) — no klient facade exists. */
+  override async setTowerMode(input: SetSessionTowerModeRpcInput): Promise<void> {
+    const agent = await this.agentScope(input.sessionId);
+    const tower = agent.accessor.get(IAgentTowerService);
+    if (input.enabled) {
+      await tower.enter();
+      if (!tower.isActive) {
+        throw new V2Error2(
+          V2ErrorCodes.SESSION_TOWER_MODE_INVALID,
+          'tower mode could not be enabled — the tower feature is unavailable in this process, or another live session owns the workspace tower',
+        );
+      }
+    } else {
+      tower.exit();
+    }
+    await agent.accessor.get(IAgentContextInjectorService).reconcileWhenIdle('tower_mode');
   }
 
   // -----------------------------------------------------------------------

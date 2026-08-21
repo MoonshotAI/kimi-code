@@ -18,6 +18,7 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
+import { IAgentTowerService } from '#/features/tower/tower';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import {
   getLiveSessionById,
@@ -69,6 +70,7 @@ export class SessionLegacyService implements ISessionLegacyService {
     const permission = agent.accessor.get(IAgentPermissionModeService);
     const plan = agent.accessor.get(IAgentPlanService);
     const swarm = agent.accessor.get(IAgentSwarmService);
+    const tower = agent.accessor.get(IAgentTowerService);
 
     const model = profile.getModel();
     const capabilities = profile.getModelCapabilities();
@@ -86,6 +88,7 @@ export class SessionLegacyService implements ISessionLegacyService {
       permission: permission.mode,
       plan_mode: planData !== null,
       swarm_mode: swarm.isActive,
+      tower_mode: tower.isActive,
       context_tokens: tokens,
       max_context_tokens: maxTokens > 0 ? maxTokens : undefined,
       context_usage: maxTokens > 0 ? Math.min(1, tokens / maxTokens) : undefined,

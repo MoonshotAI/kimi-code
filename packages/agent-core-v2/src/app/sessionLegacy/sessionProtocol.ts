@@ -36,6 +36,7 @@ export const sessionAgentConfigSchema = z.object({
   permission_mode: promptPermissionModeSchema.optional(),
   plan_mode: z.boolean().optional(),
   swarm_mode: z.boolean().optional(),
+  tower_mode: z.boolean().optional(),
   goal_objective: z.string().optional(),
   goal_control: z.enum(['pause', 'resume', 'cancel']).optional(),
 });
@@ -75,6 +76,7 @@ export const sessionStatusResponseSchema = z.object({
   permission: z.string(),
   plan_mode: z.boolean(),
   swarm_mode: z.boolean(),
+  tower_mode: z.boolean().optional(),
   context_tokens: z.number().int().nonnegative(),
   max_context_tokens: z.number().int().nonnegative().optional(),
   context_usage: z.number().min(0).max(1).optional(),
