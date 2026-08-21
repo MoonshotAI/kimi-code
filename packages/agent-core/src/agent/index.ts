@@ -406,6 +406,9 @@ export class Agent {
     try {
       const effort = provider.thinkingEffort;
       if (effort === null || effort === 'on' || effort === 'off') return;
+      // An effort pinned by KIMI_MODEL_THINKING_EFFORT is already covered by
+      // the apply-time override warning — do not double-report it here.
+      if (this.config.thinkingEffortOverridden) return;
       const resolved =
         modelAlias === undefined
           ? undefined

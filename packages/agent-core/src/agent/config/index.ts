@@ -252,6 +252,18 @@ export class ConfigState {
     return this._thinkingEffort;
   }
 
+  /**
+   * Whether the current effort was pinned by the KIMI_MODEL_THINKING_EFFORT
+   * override rather than model-aware resolution. Diagnostics use this to
+   * avoid double-reporting the pinned value.
+   */
+  get thinkingEffortOverridden(): boolean {
+    return (
+      this._unforcedThinkingEffort !== undefined &&
+      this._thinkingEffort !== this._unforcedThinkingEffort
+    );
+  }
+
   private get currentModel(): ModelAlias | undefined {
     const resolved = this.tryResolvedProviderConfig();
     return this.modelForThinking(this._modelAlias, resolved);

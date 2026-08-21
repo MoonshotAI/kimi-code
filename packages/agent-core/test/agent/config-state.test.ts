@@ -266,15 +266,19 @@ describe('ConfigState model capabilities', () => {
       });
 
       expect(requests).toBe(1);
-      expect(ctx.allEvents).toContainEqual({
-        type: '[rpc]',
-        event: 'warning',
-        args: {
-          code: 'thinking-effort-override-not-listed',
-          message:
-            'Thinking effort "high" is not listed for model "compatible-model" (known: max). The value will be sent unchanged to the backend.',
+      // The apply-time override warning is the single diagnostic for the
+      // pinned value — the request-time stale check must not repeat it.
+      expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([
+        {
+          type: '[rpc]',
+          event: 'warning',
+          args: {
+            code: 'thinking-effort-override-not-listed',
+            message:
+              'Thinking effort "high" is not listed for model "compatible-model" (known: max). The value will be sent unchanged to the backend.',
+          },
         },
-      });
+      ]);
     } finally {
       vi.unstubAllEnvs();
     }
