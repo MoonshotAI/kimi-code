@@ -9,7 +9,7 @@ export default {
   fieldResult: '结果',
   moreLines: '…（还有 {count} 行）',
   copied: '已复制',
-  stop: 'stop',
+  stop: '停止',
   defaultDescription: '后台任务',
   dockTasks: '后台任务',
   dockBash: '后台 Bash',

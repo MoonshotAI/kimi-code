@@ -1,5 +1,5 @@
 export default {
-  workspaceMeta: 'workspace · {branch}',
+  workspaceMeta: '工作空间 · {branch}',
   sessionsHeader: '会话',
   // 搜索弹窗里工作区分组的标题（与 sessionsHeader 对应）。
   workspaces: '工作区',
@@ -50,8 +50,8 @@ export default {
   tabOpen: '进行中',
   tabDone: '已完成',
   tabWorkspaces: '工作空间',
-  tagOpen: 'Open',
-  tagDone: 'Done',
+  tagOpen: '进行中',
+  tagDone: '已完成',
   complete: '完成',
   markDone: '标记为完成',
   reopen: '恢复进行中',

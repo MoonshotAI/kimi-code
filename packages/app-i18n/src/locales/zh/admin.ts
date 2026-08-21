@@ -74,7 +74,7 @@ export default {
   // 行操作 + 右键菜单（P3）
   open: '打开会话',
   rename: '重命名…',
-  fork: 'Fork',
+  fork: '分叉会话',
   export: '导出',
   moreActions: '更多操作',
 } as const;
