@@ -129,6 +129,15 @@ function autosize(): void {
   el.style.height = 'auto';
   el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
 }
+
+/** Focus the composer textarea. App calls this after an explicit open
+    (shortcut / `/btw`) so typing continues in the side chat without a click;
+    deliberately not called when the panel is restored on a session switch. */
+function focusInput(): void {
+  inputRef.value?.focus();
+}
+
+defineExpose({ focusInput });
 </script>
 
 <template>

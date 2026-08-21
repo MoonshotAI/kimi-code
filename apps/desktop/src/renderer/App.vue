@@ -544,7 +544,14 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
       if (client.sideChatVisible.value) {
         closeSideChat();
       } else {
-        void runSessionCreatingAction(() => openSideChatTab());
+        void runSessionCreatingAction(async () => {
+          const focusWhenReady = armSideChatFocus();
+          try {
+            return await openSideChatTab();
+          } finally {
+            focusWhenReady();
+          }
+        });
       }
       break;
     case 'openFolder':
@@ -820,6 +827,53 @@ function onTerminalWindowResize(): void {
 
 // Reference to ConversationPane so we can imperatively switch tabs
 const conversationPaneRef = ref<InstanceType<typeof ConversationPane> | null>(null);
+const sideChatPanelRef = ref<InstanceType<typeof SideChatPanel> | null>(null);
+
+// Arm focus of the BTW composer for an explicit open (shortcut or `/btw`) so
+// typing continues in the side chat without a click. Deliberately NOT used
+// when the panel is restored on a session switch. The open is async and may
+// create the parent session first — that remounts the composer and fires the
+// session-switch autofocus, so an activeElement snapshot can't tell that
+// programmatic refocus from the user moving on. Track user input instead:
+// any pointerdown/keydown or the window losing focus between arming and the
+// focus means the user went elsewhere — don't yank focus back. A dialog opened in the meantime owns
+// focus too. The composer autofocus itself yields once the side chat is
+// focused (it drops its request when focus sits in any text-entry element),
+// so either ordering of the two lands focus here.
+function armSideChatFocus(): () => void {
+  let userActed = false;
+  const onUserAction = (e: Event): void => {
+    // Key auto-repeat from the still-held trigger (the `/btw` Enter, the
+    // shortcut chord) is not the user moving on.
+    if (e instanceof KeyboardEvent && e.repeat) return;
+    userActed = true;
+  };
+  document.addEventListener('pointerdown', onUserAction, true);
+  document.addEventListener('keydown', onUserAction, true);
+  // Switching to another tab/window/app produces no document events — track
+  // the window losing focus too.
+  window.addEventListener('blur', onUserAction);
+  document.addEventListener('visibilitychange', onUserAction);
+  return () => {
+    void nextTick(() => {
+      document.removeEventListener('pointerdown', onUserAction, true);
+      document.removeEventListener('keydown', onUserAction, true);
+      window.removeEventListener('blur', onUserAction);
+      document.removeEventListener('visibilitychange', onUserAction);
+      if (userActed) return;
+      // The window went (or still is) in the background — never move focus
+      // behind the user's back.
+      if (!document.hasFocus()) return;
+      // Mobile skips auto-focus entirely — it would pop the on-screen
+      // keyboard over the transcript (same convention as the composer
+      // autofocus), and outside the user gesture iOS wouldn't show the
+      // keyboard anyway.
+      if (isMobile.value) return;
+      if (anyOverlayOpen.value) return;
+      sideChatPanelRef.value?.focusInput();
+    });
+  };
+}
 
 // The mobile settings sheet's goal row mirrors the composer's arm guard: an
 // active goal owns the mode, so it focuses the goal's panel instead of
@@ -1385,8 +1439,20 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
       // client.closeSideChat() only hides the panel and leaves detailTarget set.
       closeSideChat();
     } else {
-      if (arg && !(await passCommandGates(cmd))) return;
-      void runSessionCreatingAction(() => openSideChatTab(arg || undefined));
+      // Arm before the (possibly async) command gate so user input during
+      // the gate is tracked too; a rejected gate disarms without opening.
+      const focusWhenReady = armSideChatFocus();
+      if (arg && !(await passCommandGates(cmd))) {
+        focusWhenReady();
+        return;
+      }
+      void runSessionCreatingAction(async () => {
+        try {
+          return await openSideChatTab(arg || undefined);
+        } finally {
+          focusWhenReady();
+        }
+      });
     }
     return;
   }
@@ -2060,6 +2126,7 @@ function openPr(url: string): void {
         @open-turn-diff="openTurnDiff($event)"
       />
       <SideChatPanel
+        ref="sideChatPanelRef"
         v-else-if="detailTarget === 'btw' && btwVisible"
         :turns="client.sideChatTurns.value"
         :running="client.sideChatRunning.value"
