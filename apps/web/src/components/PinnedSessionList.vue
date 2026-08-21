@@ -30,7 +30,7 @@ import {
   STORAGE_KEYS,
 } from '@moonshot-ai/app-core/lib';
 import { useAppearance } from '@moonshot-ai/app-core';
-import { useResizable } from '@moonshot-ai/app-client/composables';
+import { useResizable, useOverlayScrollbar } from '@moonshot-ai/app-client/composables';
 import SessionRow from './SessionRow.vue';
 import { Icon, IconButton } from '@moonshot-ai/app-ui';
 
@@ -457,6 +457,23 @@ const separatorPosition = computed(() => {
 const rowsScrolled = ref(false);
 const rowsCanScrollDown = ref(false);
 
+// Overlay scrollbar for the rows scroller — the same contract as the session
+// list's (Sidebar's .sessions): the native bar is hidden entirely (a layout
+// scrollbar reserves a right track and skewed the rows' insets against the
+// list's), and the floating thumb follows the scroll position — shown on
+// hover / while scrolling, faded out once idle, draggable.
+const {
+  thumb: rowsThumb,
+  thumbVisible: rowsThumbVisible,
+  update: updateRowsThumb,
+  markScrolling: markRowsScrolling,
+  onThumbPointerDown: onRowsThumbPointerDown,
+  onListMouseEnter: onRowsListMouseEnter,
+  onListMouseLeave: onRowsListMouseLeave,
+  onThumbMouseEnter: onRowsThumbMouseEnter,
+  onThumbMouseLeave: onRowsThumbMouseLeave,
+} = useOverlayScrollbar(pinnedRowsEl);
+
 function updateRowsScrollState(el = pinnedRowsEl.value): void {
   if (!el) return;
   contentHeight.value = el.scrollHeight;
@@ -476,10 +493,12 @@ function updateRowsScrollState(el = pinnedRowsEl.value): void {
   }
   rowsScrolled.value = el.scrollTop > 0;
   rowsCanScrollDown.value = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+  updateRowsThumb();
 }
 
 function onRowsScroll(): void {
   updateRowsScrollState();
+  markRowsScrolling();
 }
 
 // The box and the content can each change without a scroll event (a drag
@@ -502,6 +521,7 @@ watch(pinnedRowsEl, (el, prev) => {
     firstRowHeights.value = [];
     rowsScrolled.value = false;
     rowsCanScrollDown.value = false;
+    updateRowsThumb();
   }
 });
 onUpdated(() => updateRowsScrollState());
@@ -619,6 +639,8 @@ function onContainerDragLeave(event: DragEvent): void {
       v-if="!collapsed"
       class="pinned-rows-wrap"
       :class="{ scrolled: rowsScrolled, 'more-below': rowsCanScrollDown }"
+      @mouseenter="onRowsListMouseEnter"
+      @mouseleave="onRowsListMouseLeave"
     >
       <div ref="pinnedRowsEl" class="pinned-rows" @scroll="onRowsScroll">
         <div
@@ -654,6 +676,20 @@ function onContainerDragLeave(event: DragEvent): void {
            while more rows exist below. -->
       <span class="pinned-seam pinned-seam--top" aria-hidden="true"></span>
       <span class="pinned-seam pinned-seam--bottom" aria-hidden="true"></span>
+      <!-- Overlay scrollbar thumb (the native bar is hidden — it reserved a
+           right track and skewed the rows' insets against the session
+           list's). Geometry/visibility from useOverlayScrollbar; anchored to
+           the wrap like the seams. -->
+      <span
+        v-if="rowsThumb"
+        class="pinned-thumb"
+        :class="{ visible: rowsThumbVisible }"
+        :style="{ top: `${rowsThumb.top}px`, height: `${rowsThumb.height}px` }"
+        aria-hidden="true"
+        @pointerdown="onRowsThumbPointerDown"
+        @mouseenter="onRowsThumbMouseEnter"
+        @mouseleave="onRowsThumbMouseLeave"
+      ></span>
     </div>
     <!-- Height-split handle: rendered only while the pinned content overflows
          the compact threshold (see `resizable`) — dragging down grows the
@@ -686,14 +722,14 @@ function onContainerDragLeave(event: DragEvent): void {
 /* Section label — mirrors the sidebar's .side-section-label (scoped styles
    don't cross the component boundary), so the pinned caption reads exactly
    like the WORKSPACES one below it: --sb-pad-x leading alignment on the left,
-   the list's scrollbar track (--space-1) plus --sb-action-inset on the right
-   so the toggle's right edge shares the row buttons' vertical line. */
+   --sb-action-inset on the right so the toggle's right edge shares the row
+   buttons' vertical line. */
 .pinned-label {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 0 calc(var(--space-1) + var(--sb-action-inset)) var(--space-1) var(--space-2);
+  padding: 0 var(--sb-action-inset) var(--space-1) var(--space-2);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   font-weight: var(--weight-section-label);
@@ -754,34 +790,69 @@ function onContainerDragLeave(event: DragEvent): void {
 
 /* Cap the expanded rows so a long pinned set can't push the workspace list
    (and the footer) out of the column — the labels stay fixed, the rows
-   scroll internally. Thin overlay-styled scrollbar mirroring the sidebar's.
-   The 40vh cap is the resting/natural-height layout; once the resize handle
-   is offered, the draggable cap is written imperatively (inline max-height
-   overrides this — see the script's resizable block). The horizontal inset
-   lives INSIDE the scroller (paired with the wrapper's negative margins) so
-   the rows' right edge and the scrollbar track land exactly where the
-   session list's do — .sessions carries the same inset inside its own
-   scroll container. Same contract as .sessions: the custom 4px scrollbar is
-   classic, so its gutter stays reserved even when the rows fit — the pinned
-   rows' right edge never shifts against the session list's. */
+   scroll internally. Scrollbar: the native bar is hidden entirely — a layout
+   scrollbar (even the thin 4px one) reserves width on the right, so the
+   rows' right edge sat one track width further in than the session list's.
+   The overlay thumb (.pinned-thumb) floats over the padding strip instead:
+   no reserved layout space, symmetric insets whether or not the rows scroll
+   — same contract as the session list's .sessions. The 40vh cap is the
+   resting/natural-height layout; once the resize handle is offered, the
+   draggable cap is written imperatively (inline max-height overrides this —
+   see the script's resizable block). The horizontal inset lives INSIDE the
+   scroller (paired with the wrapper's negative margins) so the rows' right
+   edge and the thumb land exactly where the session list's do — .sessions
+   carries the same inset inside its own scroll container. */
 .pinned-rows {
   max-height: 40vh;
   overflow-y: auto;
   padding: 0 var(--sb-inset);
-  scrollbar-gutter: stable;
+  /* Floor for the overlay thumb's height (useOverlayScrollbar reads it from
+     the computed style). */
+  --overlay-scrollbar-thumb-min: var(--space-6);
+  scrollbar-width: none;
 }
-.pinned-rows::-webkit-scrollbar { width: var(--space-1); }
-.pinned-rows::-webkit-scrollbar-track { background: transparent; }
-.pinned-rows::-webkit-scrollbar-thumb {
-  background: transparent;
+.pinned-rows::-webkit-scrollbar { display: none; }
+
+/* Overlay scrollbar thumb: floats over the rows' right padding strip,
+   anchored to the wrap like the seams (the shared offsetParent — its top is
+   the scroller's offsetTop plus the track offset, computed in
+   useOverlayScrollbar). Hidden at rest; revealed while the wrap is hovered
+   or the rows scroll, fading back out once idle. Neutral, text-derived
+   translucency (deeper on hover) — the global scrollbar's vocabulary.
+   pointer-events wake up only while visible so the strip never blocks row
+   interactions at rest; the ::before strip widens the drag target leftward. */
+.pinned-thumb {
+  position: absolute;
+  right: 0;
+  width: var(--space-1);
   border-radius: var(--radius-full);
-  transition: background var(--duration-base) var(--ease-out);
-}
-.pinned-rows:hover::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--color-text) 12%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    background var(--duration-base) var(--ease-out);
+  /* Same layer as the seams: above the rows (their .se boxes are positioned)
+     but below the resize handle. */
+  z-index: var(--z-raised);
+  /* The thumb is the only scroll affordance, so it drags; without this the
+     browser may claim a touch drag as a page pan. */
+  touch-action: none;
 }
-.pinned-rows::-webkit-scrollbar-thumb:hover {
+.pinned-thumb.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.pinned-thumb.visible:hover {
   background: color-mix(in srgb, var(--color-text) 25%, transparent);
+}
+.pinned-thumb::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * var(--space-2));
+  right: 0;
 }
 
 /* Scroll-linked edge veils for the rows scroller — the same seam language as
@@ -876,28 +947,5 @@ function onContainerDragLeave(event: DragEvent): void {
 .pinned.drop-active {
   border-radius: var(--radius-sm);
   box-shadow: inset 0 0 0 1px var(--color-accent);
-}
-
-/* Firefox (the engine without ::-webkit-scrollbar) — same contract as
-   Sidebar's section label: the label gets the same browser-owned gutter
-   environment as the rows' scrollers (overflow + scrollbar-gutter: stable),
-   so the toggle's right edge shares the rows' line at any thin width —
-   nothing to measure; the label's right padding then drops the Chromium-only
-   --space-1 track compensation. The padding/negative-margin pairs reserve
-   the focus ring's spread (--p-focus-ring-w) so overflow can't clip it — on
-   top always, and on the right only when the font scale shrinks
-   --sb-action-inset below the ring (max/min clamp). No left reserve: the
-   toggle sits at the label's right end. This block sits after every base
-   rule it overrides (the .pinned-label padding shorthand in particular).
-   Inert on Chromium. */
-@supports not selector(::-webkit-scrollbar) {
-  .pinned-label {
-    overflow: hidden;
-    scrollbar-gutter: stable;
-    padding-top: var(--p-focus-ring-w);
-    margin-top: calc(var(--p-focus-ring-w) * -1);
-    padding-right: max(var(--sb-action-inset), var(--p-focus-ring-w));
-    margin-right: min(0px, var(--sb-action-inset) - var(--p-focus-ring-w));
-  }
 }
 </style>

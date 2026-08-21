@@ -42,9 +42,10 @@ import PinnedSessionList from './PinnedSessionList.vue';
 import SessionRow from './SessionRow.vue';
 import { isMacosDesktop, isWindowsDesktop } from '@moonshot-ai/app-core/lib';
 import { useVibrancy } from '../composables/useVibrancy';
-import { useSidebarTabs } from '@moonshot-ai/app-core';
+import { useSidebarTabs, useAppearance } from '@moonshot-ai/app-core';
 import { resolvedBindingKeys } from '../composables/useShortcuts';
 import { SESSIONS_EXPAND_BATCH } from '@moonshot-ai/app-client/client';
+import { useOverlayScrollbar } from '@moonshot-ai/app-client/composables';
 import { track } from '../lib/track';
 import type { SessionCreatedSource } from '../../shared/track-events';
 import { Icon, IconButton, Kbd, Menu, MenuItem, Pill, SegmentedControl, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
@@ -239,26 +240,35 @@ defineExpose({ openSearch, toggleSearch, isSearchOpen: () => showSearch.value, s
 const sessionsEl = ref<HTMLElement | null>(null);
 const sessionsScrolled = ref(false);
 const sessionsCanScrollDown = ref(false);
-// Overlay-style scrollbar: the thin thumb stays transparent until the list is
-// actually scrolled, then lingers briefly and fades back out (see the
-// .sessions::-webkit-scrollbar-thumb rules).
-const sessionsScrolling = ref(false);
-let sessionsScrollHideTimer: ReturnType<typeof setTimeout> | null = null;
+// Overlay scrollbar: the native bar is hidden entirely (a layout scrollbar
+// eats row width on the right and skewed the rows' insets — the bug this
+// fixes); the floating .sessions-thumb follows the scroll position, revealed
+// on list hover and while scrolling, fading back out once idle. The
+// composable owns the thumb geometry, the visibility state (including the
+// `scrolling` idle fade below) and the thumb's drag interaction.
+const {
+  thumb: sessionsThumb,
+  thumbVisible: sessionsThumbVisible,
+  scrolling: sessionsScrolling,
+  update: updateSessionsThumb,
+  markScrolling: markSessionsScrolling,
+  onThumbPointerDown: onSessionsThumbPointerDown,
+  onListMouseEnter: onSessionsListMouseEnter,
+  onListMouseLeave: onSessionsListMouseLeave,
+  onThumbMouseEnter: onSessionsThumbMouseEnter,
+  onThumbMouseLeave: onSessionsThumbMouseLeave,
+} = useOverlayScrollbar(sessionsEl);
 
 function updateSessionsScrollState(el = sessionsEl.value): void {
   if (!el) return;
   sessionsScrolled.value = el.scrollTop > 0;
   sessionsCanScrollDown.value = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+  updateSessionsThumb();
 }
 
 function onSessionsScroll(e: Event): void {
   updateSessionsScrollState(e.target as HTMLElement);
-  sessionsScrolling.value = true;
-  if (sessionsScrollHideTimer) clearTimeout(sessionsScrollHideTimer);
-  sessionsScrollHideTimer = setTimeout(() => {
-    sessionsScrolling.value = false;
-    sessionsScrollHideTimer = null;
-  }, 900);
+  markSessionsScrolling();
 }
 
 let sessionsResizeObserver: ResizeObserver | null = null;
@@ -272,9 +282,14 @@ onMounted(() => {
   });
 });
 onUpdated(() => updateSessionsScrollState());
+// A font-scale change resizes every row WITHOUT moving the list's border
+// box, so neither the ResizeObserver above nor a re-render fires and the
+// thumb geometry would go stale — re-read the scroll state once the new
+// sizes apply (the same gap the pinned rows' fontScale watcher covers).
+const { fontScale } = useAppearance();
+watch(fontScale, () => void nextTick(() => updateSessionsScrollState()));
 onBeforeUnmount(() => {
   sessionsResizeObserver?.disconnect();
-  if (sessionsScrollHideTimer) clearTimeout(sessionsScrollHideTimer);
   if (flashWsTimer) clearTimeout(flashWsTimer);
   if (flashSessionTimer) clearTimeout(flashSessionTimer);
 });
@@ -1483,6 +1498,8 @@ onBeforeUnmount(() => {
         @dragover="onSessionsPinnedDragOver"
         @drop="onSessionsPinnedDrop"
         @dragleave="onSessionsPinnedDragLeave"
+        @mouseenter="onSessionsListMouseEnter"
+        @mouseleave="onSessionsListMouseLeave"
       >
         <!-- 进行中：open sessions. Flat variant = the flat list's rows (all
              workspaces, newest first); grouped variant = the per-workspace
@@ -1736,6 +1753,22 @@ onBeforeUnmount(() => {
         </template>
       </div>
 
+      <!-- Overlay scrollbar thumb for the session list (the native bar is
+           hidden — it reserved a right track and skewed the rows' insets).
+           Positioned against .col (the shared offsetParent); geometry and
+           visibility come from useOverlayScrollbar. Purely visual chrome
+           (aria-hidden) — wheel/trackpad/keyboard scrolling is unaffected. -->
+      <div
+        v-if="sessionsThumb"
+        class="sessions-thumb"
+        :class="{ visible: sessionsThumbVisible }"
+        :style="{ top: `${sessionsThumb.top}px`, height: `${sessionsThumb.height}px` }"
+        aria-hidden="true"
+        @pointerdown="onSessionsThumbPointerDown"
+        @mouseenter="onSessionsThumbMouseEnter"
+        @mouseleave="onSessionsThumbMouseLeave"
+      />
+
       <!-- Footer: account area (user menu) pinned under the session list -->
       <div class="side-footer" :class="{ 'side-footer--shadowed': sessionsCanScrollDown }">
         <UserMenu @login="emit('login')" @open-settings="emit('openSettings')" />
@@ -1917,10 +1950,10 @@ onBeforeUnmount(() => {
      - row titles start at --sb-pad-x + --sb-gutter + --sb-gap;
      - every trailing action button (row hover cluster, group-head ⋯/+,
        section-label buttons) shares one right edge: --sb-action-inset inside
-       the row box's right border. The scrolling list reserves its scrollbar
-       track (--space-1) at all times (scrollbar-gutter: stable) and the
-       section labels' right padding adds the same track width, so the line
-       holds whether or not the list scrolls. */
+       the row box's right border. The list's scrollbar is a floating overlay
+       thumb that reserves no layout space (the native bar is hidden), so the
+       rows' left/right insets stay symmetric whether or not the list
+       scrolls. */
   --sb-inset: var(--space-2);  /* row box inset from the sidebar edge */
   --sb-pad-x: var(--space-4);  /* content start x (inset + row padding) */
   --sb-gutter: 16px;           /* leading icon slot (matches the 16px folder icon, so the session title aligns under the workspace name) */
@@ -2110,10 +2143,7 @@ onBeforeUnmount(() => {
    group list. It owns the scroll-linked list seam (hairline + fade) at its
    bottom edge, shown only while the group list is scrolled. No background:
    nothing scrolls under it, so the surface (and the macOS vibrancy tint)
-   shows through unchanged. The scrollbar-track compensation for the right
-   edge lives on the section labels' own padding (see .side-section-label),
-   NOT here — keeping the head symmetric keeps the pinned section's
-   drop-active frame symmetric too. */
+   shows through unchanged. */
 .sessions-head {
   position: relative;
   z-index: 1;
@@ -2420,35 +2450,62 @@ onBeforeUnmount(() => {
 /* Sessions — scrolling group list. The top gap to the action rows lives on
    the fixed .sessions-head (which carries the seam); this container keeps the
    side inset and the bottom breathing room. Scrolled content clips at the
-   .sessions-head seam. Scrollbar: the thin ::-webkit-scrollbar below; standard
-   scrollbar-width would kill it on Chromium (see the global scrollbar block
-   in style.css). The custom 4px scrollbar is classic — it reserves layout
-   width whenever it shows — so keep its gutter reserved even when the list
-   fits: the rows' right edge (and every trailing button's) then stays on one
-   line with .sessions-head in both states. */
+   .sessions-head seam. Scrollbar: the native bar is hidden entirely — a
+   layout scrollbar (even the thin 4px one this list used to show) reserves
+   width on the right, so the rows' right edge sat one track width further in
+   than the left edge. The overlay thumb below floats over the padding strip
+   instead: no reserved layout space, symmetric insets whether or not the
+   list scrolls. Wheel/trackpad/keyboard scrolling is unaffected. */
 .sessions {
   flex: 1;
   overflow-y: auto;
   padding: 0 var(--sb-inset) var(--space-3);
   min-height: 0;
-  scrollbar-gutter: stable;
+  /* Floor for the overlay thumb's height (useOverlayScrollbar reads it from
+     the computed style). */
+  --overlay-scrollbar-thumb-min: var(--space-6);
+  scrollbar-width: none;
 }
-.sessions::-webkit-scrollbar { width: var(--space-1); }
-.sessions::-webkit-scrollbar-track { background: transparent; }
-.sessions::-webkit-scrollbar-thumb {
-  /* Hidden until the list is scrolled (.scrolling) — an always-visible thumb
-     is permanent chrome on a surface that only scrolls occasionally. Neutral,
-     text-derived translucency — adapts to both schemes and sits quietly on
-     the sidebar surface (no accent tint on hover). */
-  background: transparent;
+.sessions::-webkit-scrollbar { display: none; }
+
+/* Overlay scrollbar thumb: floats over the list's right padding strip,
+   anchored to .col (the shared offsetParent — its top is the scroller's
+   offsetTop plus the track offset, computed in useOverlayScrollbar). Hidden
+   at rest; revealed while the list is hovered or scrolled, fading back out
+   once idle. Neutral, text-derived translucency (deeper on hover) — the
+   global scrollbar's vocabulary, adapting to both schemes. pointer-events
+   wake up only while visible so the strip never blocks row interactions at
+   rest; the ::before strip widens the drag target leftward. */
+.sessions-thumb {
+  position: absolute;
+  right: 0;
+  width: var(--space-1);
   border-radius: var(--radius-full);
-  transition: background var(--duration-base) var(--ease-out);
-}
-.sessions.scrolling::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--color-text) 12%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    background var(--duration-base) var(--ease-out);
+  z-index: var(--z-raised);
+  /* The thumb is the only scroll affordance, so it drags; without this the
+     browser may claim a touch drag as a page pan. */
+  touch-action: none;
 }
-.sessions.scrolling::-webkit-scrollbar-thumb:hover {
+.sessions-thumb.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.sessions-thumb.visible:hover {
   background: color-mix(in srgb, var(--color-text) 25%, transparent);
+}
+.sessions-thumb::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * var(--space-2));
+  right: 0;
 }
 
 /* Footer — account area (UserMenu) pinned under the session list. */
@@ -2472,17 +2529,14 @@ onBeforeUnmount(() => {
 
 /* Section label — heads the workspace list below the action buttons. Aligns
    with the rows' leading inset (--sb-pad-x) so it reads as the list's title.
-   The right padding is the list's scrollbar track (--space-1, reserved there
-   at all times via scrollbar-gutter: stable) plus --sb-action-inset, so the
-   section action buttons' right edge lands on the same vertical line as the
-   row buttons' — compensating here, not on .sessions-head, keeps the pinned
-   section's drop-active frame symmetric. */
+   The right padding is --sb-action-inset, so the section action buttons'
+   right edge lands on the same vertical line as the row buttons'. */
 .side-section-label {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 0 calc(var(--space-1) + var(--sb-action-inset)) var(--space-1) var(--space-2);
+  padding: 0 var(--sb-action-inset) var(--space-1) var(--space-2);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   font-weight: var(--weight-section-label);
@@ -2520,37 +2574,6 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 2px;
-}
-
-/* Firefox (the engine without ::-webkit-scrollbar — the same detector the
-   global scrollbar block in style.css uses): the global thin scrollbar
-   stays — users keep a draggable bar — and its stable gutter is
-   browser-owned, so no fixed compensation can ever match it. Instead the
-   section label gets the SAME gutter environment (a never-scrolling scroll
-   container with the gutter reserved), which the browser sizes identically
-   to the list's at any thin width — nothing to measure; the label's right
-   padding then drops the Chromium-only --space-1 track compensation. The
-   padding/negative-margin pairs reserve the focus ring's spread
-   (--p-focus-ring-w) so overflow can't clip it — on top always, and on the
-   right only when the font scale shrinks --sb-action-inset below the ring
-   (max/min clamp: at medium and up the pair collapses to the plain inset
-   and zero margin, so the button's right edge stays on the shared line at
-   every scale). No left reserve: the only focusable control sits at the
-   label's right end. This block must sit AFTER the base .side-section-label
-   rules — their padding shorthand would otherwise undo these overrides.
-   Inert on Chromium — desktop (Electron) never takes this branch. */
-@supports not selector(::-webkit-scrollbar) {
-  .side-section-label {
-    overflow: hidden;
-    scrollbar-gutter: stable;
-    padding-top: var(--p-focus-ring-w);
-    margin-top: calc(var(--p-focus-ring-w) * -1);
-    padding-right: max(var(--sb-action-inset), var(--p-focus-ring-w));
-    margin-right: min(0px, var(--sb-action-inset) - var(--p-focus-ring-w));
-  }
-  .sessions-head .pinned + .side-section-label {
-    margin-top: calc(var(--space-1) - var(--p-focus-ring-w));
-  }
 }
 
 /* Workspace drag-to-reorder: a line at the top (drop-before) or bottom

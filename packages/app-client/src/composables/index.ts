@@ -2,6 +2,7 @@ export * from './useIsMobile';
 export * from './useViewportWidth';
 export * from './useFollowScroll';
 export * from './useResizable';
+export * from './useOverlayScrollbar';
 export * from './useConfirmDialog';
 export * from './useComposerDraft';
 export * from './useComposerAutoFocus';
