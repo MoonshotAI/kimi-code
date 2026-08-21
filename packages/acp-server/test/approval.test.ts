@@ -175,6 +175,35 @@ describe('buildPermissionToolCallUpdate', () => {
       content: { type: 'text', text: 'Requesting approval to run `echo hi`' },
     });
   });
+
+  it('prepends a text entry carrying the full command from a `command` display block', () => {
+    const longCommand =
+      'echo "a longer command that crosses the 50-char threshold used for the action preview"';
+    expect(longCommand.length).toBeGreaterThan(50);
+    const update = buildPermissionToolCallUpdate({
+      toolName: 'Bash',
+      action: `Running: ${longCommand.slice(0, 50)}…`,
+      toolCallId: 'call_1',
+      turnId: 2,
+      display: {
+        kind: 'command',
+        command: longCommand,
+        cwd: '/tmp/example.test',
+        description: 'echo a long string',
+        language: 'bash',
+      } as unknown as ToolInputDisplay,
+    });
+    const first = update.content?.[0];
+    expect(first).toEqual({
+      type: 'content',
+      content: { type: 'text', text: longCommand },
+    });
+    const last = update.content?.at(-1);
+    expect(last).toMatchObject({
+      type: 'content',
+      content: { type: 'text', text: `Requesting approval to Running: ${longCommand.slice(0, 50)}…` },
+    });
+  });
 });
 
 describe('attachSelectedLabel', () => {
