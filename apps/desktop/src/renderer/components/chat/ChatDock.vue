@@ -59,6 +59,10 @@ const props = defineProps<{
   managedMembership?: ManagedMembership;
   starredIds?: string[];
   skills?: AppSkill[];
+  /** Whether the session skill list finished loading — forwarded to the
+      composer (a revived pill naming a GONE skill only degrades once the
+      list can be trusted). */
+  skillsLoaded?: boolean;
   goal?: AppGoal | null;
   dockPanel: 'bash' | 'subagent' | 'todos' | 'goal' | 'plan' | null;
   /** A modal/overlay layer is open above the dock (any dialog, sheet, or
@@ -714,6 +718,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
       :managed-membership="managedMembership"
       :starred-ids="starredIds"
       :skills="skills"
+      :skills-loaded="skillsLoaded"
       :starting="starting"
       @submit="emit('submit', $event)"
       @steer="emit('steer', $event)"
