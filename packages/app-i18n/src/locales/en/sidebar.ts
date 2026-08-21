@@ -118,4 +118,12 @@ export default {
   updateWhatsNew: 'What’s new',
   updateBackground: 'Download in Background',
   updateAutoDownload: 'Automatically download and install updates',
+  // rc (remote control) device switcher at the top of the sidebar.
+  rcSelectDevice: 'Select device',
+  rcCurrentDevice: 'Current device: {name}',
+  rcConnectable: 'Connectable',
+  rcUnavailable: 'Unavailable',
+  rcOnline: 'Online',
+  rcOffline: 'Offline',
+  rcDevicesLoadFailed: 'Failed to load devices',
 } as const;

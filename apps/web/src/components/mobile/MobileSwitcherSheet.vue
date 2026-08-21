@@ -1,10 +1,12 @@
 <!-- apps/kimi-web/src/components/mobile/MobileSwitcherSheet.vue -->
-<!-- Mobile switcher bottom sheet, mirroring the desktop sidebar: a "+ New
-     chat" action block (hairline-separated), then collapsible workspace
-     groups — a single-line header (folder icon + name + faint inline path +
-     per-group "…" and "+") with single-line session rows beneath (title +
-     right-aligned time + "…"). Tapping a session selects it AND closes the
-     sheet; tapping a group header folds it, same as the desktop sidebar. -->
+<!-- Mobile switcher bottom sheet, mirroring the desktop sidebar: in rc mode
+     a device switcher row on top (RcDeviceSwitcher, self-gates on ?rc=1),
+     then a "+ New chat" action block (hairline-separated), then collapsible
+     workspace groups — a single-line header (folder icon + name + faint
+     inline path + per-group "…" and "+") with single-line session rows
+     beneath (title + right-aligned time + "…"). Tapping a session selects it
+     AND closes the sheet; tapping a group header folds it, same as the
+     desktop sidebar. -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -17,6 +19,7 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import { SESSIONS_EXPAND_BATCH } from '@moonshot-ai/app-client/client';
 import BottomSheet from '../dialogs/BottomSheet.vue';
+import RcDeviceSwitcher from '../RcDeviceSwitcher.vue';
 import { Icon, IconButton, Menu, MenuItem, SegmentedControl, Tooltip } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
@@ -265,13 +268,17 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
     :model-value="modelValue"
     @update:model-value="emit('update:modelValue', $event)"
   >
+    <!-- rc device switcher: self-gates on ?rc=1, renders nothing otherwise.
+         Mirrors the desktop sidebar's top row. -->
+    <RcDeviceSwitcher />
+
     <!-- + New chat / workspace (mirrors the sidebar's top buttons) -->
     <div class="actions">
       <button type="button" class="newrow" @click="onCreate">
         <Icon name="chat-new" size="sm" />
         {{ t('sidebar.newChat') }}
       </button>
-      <button type="button" class="newrow secondary" @click="onAddWorkspace">
+      <button type="button" class="newrow" @click="onAddWorkspace">
         <Icon name="folder" size="sm" />
         {{ t('sidebar.newWorkspace') }}
       </button>
@@ -436,7 +443,10 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
 </template>
 
 <style scoped>
-/* ---- Action block: New chat / New workspace, hairline-separated ---- */
+/* ---- Action block: New chat / New workspace, hairline-separated ----
+       Sheet-wide alignment contract: every section's box sits at the 8px
+       gutter (--space-2), leading icons on the 16px line, labels on the
+       40px text line — same geometry as .mgh / .srow / the rc device row. */
 .actions {
   padding: 0 var(--space-2) var(--space-2);
   border-bottom: 0.5px solid var(--color-line);
@@ -445,31 +455,27 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
 .newrow {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
   width: 100%;
   min-height: 44px;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2);
   background: none;
   border: none;
   border-radius: var(--radius-md);
-  color: var(--color-accent);
+  color: var(--color-text-muted);
   font-family: var(--sans);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
   font-size: var(--ui-font-size);
   cursor: pointer;
   text-align: left;
 }
 .newrow:hover { background: var(--color-hover); }
-.newrow:active { background: var(--color-surface-sunken); }
-.newrow.secondary {
-  color: var(--color-text-muted);
-  font-weight: var(--weight-regular);
-}
-.newrow.secondary:active { color: var(--color-text); }
+.newrow:active { background: var(--color-surface-sunken); color: var(--color-text); }
 
 /* ---- View tabs: segmented switch under the action block, stretched to the
-       sheet's full width with equal-width options ---- */
-.view-tabs { padding: var(--space-1) var(--space-3) var(--space-2); }
+       sheet's full width with equal-width options; same 8px box gutter as
+       every other section ---- */
+.view-tabs { padding: var(--space-1) var(--space-2) var(--space-2); }
 .view-tabs :deep(.ui-seg) { display: flex; width: 100%; }
 .view-tabs :deep(.ui-seg__item) { flex: 1; justify-content: center; }
 

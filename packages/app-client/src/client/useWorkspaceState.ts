@@ -42,7 +42,8 @@ import { isDesktop } from '@moonshot-ai/app-core/lib';
 import { logWarn } from '@moonshot-ai/app-core/lib';
 import { workspaceRootKey } from '@moonshot-ai/app-core/lib';
 import { pathRelativeTo } from '@moonshot-ai/app-core/lib';
-import { readSessionIdFromLocation, sessionUrl } from '@moonshot-ai/app-core/lib';
+import { readSessionIdFromLocation, sessionUrl, withRcQuery } from '@moonshot-ai/app-core/lib';
+import { stripRcDevicePrefix } from '@moonshot-ai/app-core/lib';
 import { isSessionAdminLocation, SESSION_ADMIN_PATH } from '@moonshot-ai/app-core/lib';
 import { ackThinkingPending, markThinkingPending } from '@moonshot-ai/app-core/lib';
 import { attachmentsToContent } from './attachmentsToContent';
@@ -1498,10 +1499,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // so the address bar keeps /admin/sessions and closing the page lands on
       // the session it would otherwise have opened.
       const sessionAdminDeepLink =
-        typeof window !== 'undefined' && isSessionAdminLocation(window.location);
+        typeof window !== 'undefined' && isSessionAdminLocation(routeLocation());
       if (sessionAdminDeepLink) rawState.mainView = 'sessionAdmin';
       const urlSessionId =
-        typeof window !== 'undefined' ? readSessionIdFromLocation(window.location) : undefined;
+        typeof window !== 'undefined' ? readSessionIdFromLocation(routeLocation()) : undefined;
       if (!rawState.activeSessionId && urlSessionId !== undefined) {
         const available =
           rawState.sessions.some((s) => s.id === urlSessionId) ||
@@ -1993,13 +1994,28 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   // popstate-driven (the URL is already correct — writing it again would loop).
   // ---------------------------------------------------------------------------
 
+  // rc mode: the relay prefixes every path with /devices/<id> (e.g.
+  // /devices/<id>/sessions/<sid>) — strip it so the route parsers see the
+  // bare shapes above. Outside rc this is the identity function.
+  function routeLocation(): Pick<Location, 'pathname'> {
+    return { pathname: stripRcDevicePrefix(window.location.pathname) };
+  }
+
   function writeUrl(target: string, mode: SessionUrlMode): void {
     if (mode === 'none') return;
     if (typeof window === 'undefined' || !window.history) return;
-    if (window.location.pathname === target) return;
+    // Compare against the prefix-stripped path: under rc the address bar
+    // carries /devices/<id>/… while targets are always bare, so a raw
+    // comparison never dedupes and re-selecting the current session would
+    // push a duplicate history entry.
+    if (routeLocation().pathname === target) return;
+    // rc mode: keep the rc/from query alive across in-site navigation so a
+    // refresh stays in rc mode (no-op when the params are absent — see
+    // rcDevices.ts in app-core).
+    const carried = withRcQuery(target, window.location.search);
     try {
-      if (mode === 'push') window.history.pushState(null, '', target);
-      else window.history.replaceState(null, '', target);
+      if (mode === 'push') window.history.pushState(null, '', carried);
+      else window.history.replaceState(null, '', carried);
     } catch {
       // history API unavailable (e.g. sandboxed iframe) — URL sync is best-effort
     }
@@ -2077,14 +2093,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   function onSessionRoutePopState(): void {
     // Back/forward INTO the admin page: flip the main view only — the active
     // session underneath is deliberately untouched (closing lands back on it).
-    if (isSessionAdminLocation(window.location)) {
+    if (isSessionAdminLocation(routeLocation())) {
       rawState.mainView = 'sessionAdmin';
       return;
     }
     // Back/forward OUT of the admin page (or between session URLs): any
     // non-admin location is a chat-view route.
     rawState.mainView = 'chat';
-    const id = readSessionIdFromLocation(window.location);
+    const id = readSessionIdFromLocation(routeLocation());
     if (id === undefined) {
       // Back/forward landed on '/' — no active session.
       setActiveSessionId(undefined);

@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import { kimiRendererViteConfig } from '@moonshot-ai/vite-preset';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +7,51 @@ const webPort = Number(process.env.WEB_PORT) || 5175;
 // Where the dev proxy forwards server traffic. Defaults to the local server
 // (or `pnpm dev:stub`). Override to point dev at another server instance.
 const serverTarget = process.env.KIMI_SERVER_URL || 'http://127.0.0.1:58627';
+
+// Dev-only rc relay stub: with KIMI_RC_DEVICES_STUB=1 the dev server answers
+// GET /v1/remote/devices with sample rows so the sidebar's rc device switcher
+// can be verified locally (in production that endpoint lives on the rc relay,
+// which the dev proxy knows nothing about). Never added to preview.
+function rcDevicesStubPlugin(): Plugin {
+  return {
+    name: 'kimi-rc-devices-stub',
+    configureServer(server) {
+      if (process.env.KIMI_RC_DEVICES_STUB !== '1') return;
+      server.middlewares.use('/v1/remote/devices', (_req, res) => {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify({
+            devices: [
+              {
+                alias: 'dev',
+                client_version: 'kimi-code/0.37.2',
+                created_at: '2026-08-18T17:55:50+08:00',
+                device_id: '64831054-69a7-4363-93bc-7cea8abbd417',
+                last_remote_access_at: '',
+                local_base_url: 'http://127.0.0.1:58628',
+                platform: 'linux',
+                status: 'online',
+                updated_at: '2026-08-20T18:33:55+08:00',
+              },
+              {
+                alias: 'e2e-device',
+                client_version: 'kimi-code/0.0.0-e2e',
+                created_at: '2026-07-16T14:43:12+08:00',
+                device_id: 'whz-e2e-device',
+                last_remote_access_at: '',
+                local_base_url: 'http://127.0.0.1:5494',
+                platform: 'linux',
+                status: 'offline',
+                updated_at: '2026-08-17T12:34:22+08:00',
+              },
+            ],
+            max_devices: 5,
+          }),
+        );
+      });
+    },
+  };
+}
 
 // The web bundle ships inside the Kimi Code CLI (apps/web/dist is synced to
 // apps/kimi-code/dist-web in the kimi-code submodule), so the version the UI
@@ -50,6 +95,7 @@ const preset = kimiRendererViteConfig({
 
 export default defineConfig({
   ...preset,
+  plugins: [...(preset.plugins ?? []), rcDevicesStubPlugin()],
   build: {
     ...preset.build,
     outDir: 'dist',

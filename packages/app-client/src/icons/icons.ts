@@ -112,6 +112,7 @@ import TablerAdjustmentsHorizontal from '~icons/tabler/adjustments-horizontal';
 import TablerChevronLeft from '~icons/tabler/chevron-left';
 import TablerCircleCheck from '~icons/tabler/circle-check';
 import TablerCircleDashed from '~icons/tabler/circle-dashed';
+import TablerDeviceDesktop from '~icons/tabler/device-desktop';
 import TablerFlask from '~icons/tabler/flask';
 import TablerSidebarRightCollapse from '~icons/tabler/layout-sidebar-right-collapse';
 import TablerPaperclip from '~icons/tabler/paperclip';
@@ -220,6 +221,7 @@ import RawTablerAdjustmentsHorizontal from '~icons/tabler/adjustments-horizontal
 import RawTablerChevronLeft from '~icons/tabler/chevron-left?raw';
 import RawTablerCircleCheck from '~icons/tabler/circle-check?raw';
 import RawTablerCircleDashed from '~icons/tabler/circle-dashed?raw';
+import RawTablerDeviceDesktop from '~icons/tabler/device-desktop?raw';
 import RawTablerFlask from '~icons/tabler/flask?raw';
 import RawTablerSidebarRightCollapse from '~icons/tabler/layout-sidebar-right-collapse?raw';
 import RawTablerPaperclip from '~icons/tabler/paperclip?raw';
@@ -317,6 +319,7 @@ export type IconName =
   | 'eye-off'
   | 'code'
   | 'terminal'
+  | 'device-desktop'
   | 'pencil'
   | 'tool'
   | 'glob'
@@ -446,6 +449,9 @@ export const ICONS: Record<IconName, IconEntry> = {
   'eye-off': entry(RiEyeOffLine, RawEyeOffLine),
   code: entry(RiCodeLine, RawCodeLine),
   terminal: entry(KimiTerminal, RawKimiTerminal),
+  // rc device switcher rows; the Kimi set has no monitor glyph — tabler's,
+  // same stroke family as the state glyphs.
+  'device-desktop': entry(TablerDeviceDesktop, RawTablerDeviceDesktop),
   pencil: entry(KimiPencil, RawKimiPencil),
   tool: entry(RiToolsLine, RawToolsLine),
   glob: entry(RiBracesLine, RawBracesLine),
@@ -572,6 +578,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'image-off',
       'code',
       'terminal',
+      'device-desktop',
       'pencil',
       'tool',
       'glob',

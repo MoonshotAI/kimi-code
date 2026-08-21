@@ -116,4 +116,12 @@ export default {
   updateWhatsNew: '更新内容',
   updateBackground: '后台下载',
   updateAutoDownload: '以后自动下载并安装更新',
+  // rc（远程控制）侧栏顶部设备选择器。
+  rcSelectDevice: '选择设备',
+  rcCurrentDevice: '当前设备：{name}',
+  rcConnectable: '可连接',
+  rcUnavailable: '不可用',
+  rcOnline: '在线',
+  rcOffline: '离线',
+  rcDevicesLoadFailed: '设备列表加载失败',
 };

@@ -24,6 +24,7 @@ export * from './pinnedSectionLayout';
 export * from './pinnedSessions';
 export * from './planUsage';
 export * from './providerForm';
+export * from './rcDevices';
 export * from './readOutput';
 export * from './resolveRelativePath';
 export * from './riveInputs';

@@ -26,6 +26,7 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
 import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
+import RcDeviceSwitcher from './RcDeviceSwitcher.vue';
 import UserMenu from './UserMenu.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
 import PinnedSessionList from './PinnedSessionList.vue';
@@ -1156,6 +1157,10 @@ onBeforeUnmount(() => {
           </IconButton>
         </div>
       </div>
+
+      <!-- rc mode (URL carries ?rc=1) only: remote device switcher row. The
+           component self-hides outside rc mode. -->
+      <RcDeviceSwitcher />
 
       <!-- Sidebar actions share one container so New chat and Search are true
            sibling controls. The optional workspace action occupies column 2. -->
