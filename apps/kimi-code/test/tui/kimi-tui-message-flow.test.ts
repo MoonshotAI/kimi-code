@@ -8218,6 +8218,58 @@ describe('/effort support_efforts override', () => {
     expect(renderTranscript(driver)).not.toContain('Unsupported thinking effort');
   });
 
+  it('resolves /effort on to the declared default before a session exists (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(
+      session,
+      {
+        getConfig: vi.fn(async () => ({
+          providers: {
+            compatible: { type: 'kimi', apiKey: 'test-key' },
+          },
+          models: {
+            k2: {
+              provider: 'compatible',
+              model: 'compatible-model',
+              protocol: 'anthropic',
+              maxContextSize: 100,
+              displayName: 'Compatible Model',
+              capabilities: ['thinking'],
+              supportEfforts: ['low', 'high'],
+              defaultEffort: 'high',
+            },
+          },
+          defaultModel: 'k2',
+          thinking: { enabled: true, effort: 'low' },
+        })),
+      },
+      startupInput,
+    );
+    expect(driver.state.appState.sessionId).toBe('');
+
+    driver.handleUserInput('/effort on');
+
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain('Thinking set to high.');
+    });
+    expect(driver.state.appState.thinkingEffort).toBe('high');
+    expect(driver.state.appState.lazySessionThinking).toBe('high');
+
+    driver.handleUserInput('hello');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalled();
+    });
+    expect(harness.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'k2', thinking: 'high' }),
+    );
+  });
+
   it('still sends unlisted efforts unchanged for Anthropic models without a declared list', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session, {

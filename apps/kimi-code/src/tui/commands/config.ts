@@ -15,7 +15,12 @@ import {
   ExperimentsSelectorComponent,
   type ExperimentalFeatureDraftChange,
 } from '../components/dialogs/experiments-selector';
-import { modelDisplayName, segmentsFor, effortsOf } from '../components/dialogs/model-selector';
+import {
+  defaultThinkingEffortFor,
+  modelDisplayName,
+  segmentsFor,
+  effortsOf,
+} from '../components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
@@ -524,7 +529,17 @@ async function performModelSwitch(
 
   try {
     if (session === undefined && runtimeChanged) {
-      await host.authFlow.activateModelAfterLogin(alias, effort);
+      // Session-less (lazy creation): no engine is around to map the generic
+      // 'on' onto the model's declared default yet, so resolve it here — the
+      // carried state and the status line should show the effort the first
+      // session will actually use. The engine re-resolves the concrete value
+      // at creation, which is in-list and therefore unchanged.
+      const selectedModel = host.state.appState.availableModels[alias];
+      const sessionlessEffort =
+        effort === 'on' && selectedModel !== undefined
+          ? defaultThinkingEffortFor(effectiveModelForHost(host, selectedModel))
+          : effort;
+      await host.authFlow.activateModelAfterLogin(alias, sessionlessEffort);
     } else if (session !== undefined) {
       if (alias !== prevModel) {
         await session.setModel(alias);
