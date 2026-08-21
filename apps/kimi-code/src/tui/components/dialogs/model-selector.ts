@@ -155,6 +155,22 @@ export function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
 }
 
 /**
+ * Mirror of the engine's configured-effort resolution, for session-less
+ * display state: with a declared effort list, `'on'` or an unlisted value
+ * becomes the model's default effort; listed values (and anything, when no
+ * list is declared) pass through. `'off'` always stays `'off'`.
+ */
+export function resolveConfiguredEffortForModel(
+  effort: ThinkingEffort,
+  model: ModelAlias,
+): ThinkingEffort {
+  const efforts = effortsOf(model);
+  if (efforts.length === 0 || effort === 'off') return effort;
+  if (effort !== 'on' && efforts.includes(effort)) return effort;
+  return defaultThinkingEffortFor(model);
+}
+
+/**
  * Normalize a draft effort before committing a selection. A boolean `'on'`
  * never leaks past the UI boundary — it becomes the model's default effort
  * (a concrete effort for effort-capable models, `'on'` only for genuine

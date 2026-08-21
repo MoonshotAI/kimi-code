@@ -8270,6 +8270,60 @@ describe('/effort support_efforts override', () => {
     );
   });
 
+  it('hydrates an unlisted configured effort to the declared default (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const setConfig = vi.fn(async () => ({}));
+    const { driver } = await makeDriver(
+      session,
+      {
+        getConfig: vi.fn(async () => ({
+          providers: {
+            compatible: { type: 'kimi', apiKey: 'test-key' },
+          },
+          models: {
+            k2: {
+              provider: 'compatible',
+              model: 'compatible-model',
+              protocol: 'anthropic',
+              maxContextSize: 100,
+              displayName: 'Compatible Model',
+              capabilities: ['thinking'],
+              supportEfforts: ['low', 'xhigh'],
+              defaultEffort: 'xhigh',
+            },
+          },
+          defaultModel: 'k2',
+          thinking: { enabled: true, effort: 'high' },
+        })),
+        setConfig,
+      },
+      startupInput,
+    );
+
+    // "high" is outside the declared list: hydration mirrors the engine
+    // fallback instead of copying the configured value verbatim.
+    expect(driver.state.appState.thinkingEffort).toBe('xhigh');
+
+    // Confirming the current model in the picker must not turn thinking off.
+    driver.handleUserInput('/model');
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as TabbedModelSelectorComponent).handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain(
+        'Already using Compatible Model with thinking xhigh.',
+      );
+    });
+    expect(setConfig).not.toHaveBeenCalled();
+  });
+
   it('persists only the enabled flag when a padded list top tier is selected', async () => {
     const session = makeSession();
     const setConfig = vi.fn(async () => ({}));
