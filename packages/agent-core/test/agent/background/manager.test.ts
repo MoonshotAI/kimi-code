@@ -424,6 +424,24 @@ describe('BackgroundManager', () => {
     expect(await manager.readOutput(taskId)).toContain('captured output');
   });
 
+  it('keeps the task running when the process exits before stdout ends', async () => {
+    const { manager } = createBackgroundManager();
+    const stdout = new PassThrough();
+    const proc: KaosProcess = {
+      ...immediateProcess(0),
+      stdout,
+    };
+    const taskId = registerProcess(manager, proc, 'echo late output', 'late output test');
+
+    await Promise.resolve();
+    expect(manager.getTask(taskId)).toMatchObject({ status: 'running' });
+
+    stdout.end('late output\n');
+
+    await expect(manager.wait(taskId)).resolves.toMatchObject({ status: 'completed' });
+    expect(await manager.readOutput(taskId)).toContain('late output');
+  });
+
   it('fails process tasks when output capture errors after successful exit', async () => {
     const { manager } = createBackgroundManager();
     const taskId = registerProcess(
