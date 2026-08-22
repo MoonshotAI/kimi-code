@@ -45,6 +45,7 @@ const baseState: AppState = {
 
 const payload: StatusLinePayload = {
   model: 'kimi-k2',
+  thinkingEffort: 'off',
   cwd: '/tmp/project',
   gitBranch: 'main',
   permissionMode: 'manual',
@@ -142,6 +143,7 @@ describe('runStatusLineCommand', () => {
     expect(line).not.toBeNull();
     const parsed = JSON.parse(line!);
     expect(parsed.model).toBe('kimi-k2');
+    expect(parsed.thinkingEffort).toBe('off');
     expect(parsed.gitBranch).toBe('main');
     expect(parsed.cwd).toBe('/tmp/project');
   });
@@ -177,6 +179,21 @@ describe('runStatusLineCommand', () => {
 });
 
 describe('FooterComponent status_line command', () => {
+  it('passes the current thinking effort to the command', async () => {
+    const state: AppState = {
+      ...baseState,
+      thinkingEffort: 'max',
+      statusLine: { items: null, command: 'cat' },
+    };
+    const footer = new FooterComponent(state);
+
+    footer.render(1000);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const parsed = JSON.parse(plain(footer.render(1000)[0]!).trim());
+    expect(parsed.thinkingEffort).toBe('max');
+  });
+
   it('swaps line 1 to the command output once it lands', async () => {
     const state: AppState = {
       ...baseState,
