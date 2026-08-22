@@ -210,9 +210,7 @@ export class AuthFlowController {
 
   private async refreshProviderModelsWithScope(scope: RefreshProviderScope): Promise<RefreshResult> {
     const result = await refreshAllProviderModels(this.buildRefreshHost(), { scope });
-    if (result.changed.length > 0) {
-      await this.refreshAvailableModels();
-    }
+    await this.refreshAvailableModels();
     return result;
   }
 

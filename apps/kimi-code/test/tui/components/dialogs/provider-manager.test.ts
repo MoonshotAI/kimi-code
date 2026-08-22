@@ -1,7 +1,13 @@
+/**
+ * Scenario: Provider Manager rendering, keyboard actions, and refresh lifecycle.
+ * Responsibilities: expose stable provider actions and preserve explicit dismissal during refresh.
+ * Wiring: real component and command handler with callback spies; run with this file through Vitest.
+ */
 import type { ProviderConfig } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { handleProviderCommand } from '#/tui/commands/provider';
 import {
   ProviderManagerComponent,
   type ProviderManagerOptions,
@@ -25,6 +31,7 @@ function makeComponent(overrides: Partial<ProviderManagerOptions> = {}): Provide
   return new ProviderManagerComponent({
     providers: {} as Record<string, ProviderConfig>,
     onAdd: vi.fn(),
+    onRefresh: vi.fn(),
     onDeleteSource: vi.fn(),
     onClose: vi.fn(),
     ...overrides,
@@ -121,6 +128,68 @@ describe('ProviderManagerComponent', () => {
     expect(rendered(component)).toContain('[y/N]');
     component.handleInput('y');
     expect(onDeleteSource).toHaveBeenCalledWith(['acme']);
+  });
+
+  it('dispatches refresh when R arrives through the Kitty keyboard protocol', () => {
+    const onRefresh = vi.fn();
+    const component = makeComponent({ onRefresh });
+
+    component.handleInput(`${ESC}[114u`);
+
+    expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it('advertises the R refresh shortcut in the header hint', () => {
+    expect(rendered(makeComponent())).toContain('R refresh');
+  });
+
+  it('keeps the editor active when provider refresh finishes after the manager is dismissed', async () => {
+    const editor = {};
+    let focused: unknown = editor;
+    const editorChildren: unknown[] = [editor];
+    let finishRefresh!: () => void;
+    const refreshProviderModels = vi.fn(
+      () =>
+        new Promise<{ changed: []; unchanged: []; failed: [] }>((resolve) => {
+          finishRefresh = () => {
+            resolve({ changed: [], unchanged: [], failed: [] });
+          };
+        }),
+    );
+    const host = {
+      state: {
+        appState: {
+          availableModels: {},
+          availableProviders: {},
+          model: '',
+        },
+        editorContainer: { children: editorChildren },
+      },
+      authFlow: { refreshProviderModels },
+      mountEditorReplacement: (component: unknown) => {
+        editorChildren.splice(0, editorChildren.length, component);
+        focused = component;
+      },
+      restoreEditor: () => {
+        editorChildren.splice(0, editorChildren.length, editor);
+        focused = editor;
+      },
+      showError: vi.fn(),
+      showProgressSpinner: () => ({ stop: vi.fn() }),
+      showStatus: vi.fn(),
+    } as unknown as Parameters<typeof handleProviderCommand>[0];
+    await handleProviderCommand(host);
+    const manager = focused as ProviderManagerComponent;
+
+    manager.handleInput('R');
+    expect(refreshProviderModels).toHaveBeenCalledOnce();
+    manager.handleInput(ESC);
+    expect(focused).toBe(editor);
+
+    finishRefresh();
+    await Promise.resolve();
+
+    expect(focused).toBe(editor);
   });
 
   it('closes on Esc', () => {
