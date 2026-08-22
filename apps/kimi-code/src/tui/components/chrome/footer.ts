@@ -290,7 +290,7 @@ export class FooterComponent implements Component {
     let line1: string;
     let customLine: string | null = null;
     if (this.statusLineRunner !== null) {
-      this.statusLineRunner.maybeRefresh(this.statusLinePayload());
+      this.statusLineRunner.maybeRefresh(this.statusLinePayload(width));
       customLine = this.statusLineRunner.current();
     }
 
@@ -447,7 +447,7 @@ export class FooterComponent implements Component {
     return slots;
   }
 
-  private statusLinePayload(): StatusLinePayload {
+  private statusLinePayload(width: number): StatusLinePayload {
     const state = this.state;
     return {
       model: modelDisplayName(state),
@@ -460,6 +460,7 @@ export class FooterComponent implements Component {
       maxContextTokens: state.maxContextTokens,
       sessionId: state.sessionId,
       version: state.version,
+      width,
     };
   }
 
