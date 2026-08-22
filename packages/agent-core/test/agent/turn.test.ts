@@ -1930,6 +1930,15 @@ describe('Agent turn flow', () => {
         }),
       }),
     );
+    // Without an active goal the cap is a user-facing failure: the standalone
+    // error event (suppressed for goal-driven turns) is emitted right after
+    // turn.ended.
+    expect(ctx.newEvents()).toContainEqual(
+      expect.objectContaining({
+        event: 'error',
+        args: expect.objectContaining({ code: 'loop.max_steps_exceeded' }),
+      }),
+    );
   });
 
   describe('loop control env overrides', () => {
