@@ -113,7 +113,7 @@ Most growth goes through the data path — node count is bounded by "kinds of be
 **Harness constraints and product reviews no longer live on the chain.** A domain that owns one registers an `onBeforeExecuteTool` veto listener and adjudicates through the event:
 
 ```ts
-// src/plan/planService.ts — constructor
+// src/agent/plan/planService.ts — constructor
 constructor(@IAgentToolExecutorService executor, ...) {
   executor.onBeforeExecuteTool((event) => this.guardToolExecution(event));
 }
