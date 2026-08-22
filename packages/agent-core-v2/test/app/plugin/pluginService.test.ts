@@ -233,7 +233,7 @@ describe('PluginService (plugin boundary)', () => {
       createdDirs.push(pluginRoot);
       await writeInstalledFile(home, JSON.stringify(installedFile('recovery-demo', pluginRoot)));
       const reloads: ReloadSummary[] = [];
-      svc.onDidReload((summary) => reloads.push(summary));
+      svc.onDidReload(({ added, removed, errors }) => reloads.push({ added, removed, errors }));
 
       await expect(svc.reloadPlugins()).resolves.toEqual({
         added: ['recovery-demo'],
@@ -297,6 +297,73 @@ describe('PluginService (plugin boundary)', () => {
 
       await svc.reloadPlugins();
       expect(mutations).toHaveLength(4);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('resolves a mutation only after reload listeners settle their waitUntil work', async () => {
+    const home = await makeHome();
+    const pluginRoot = await makePluginDir('barrier-demo', {});
+    createdDirs.push(pluginRoot);
+    await writeInstalledFile(home, JSON.stringify(installedFile('barrier-demo', pluginRoot)));
+    const host = makeHost(home);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      await expect(svc.listPlugins()).resolves.toHaveLength(1);
+
+      const listenerCalled = deferred<void>();
+      const reconcileGate = deferred<void>();
+      let reconciled = false;
+      svc.onDidReload((event) => {
+        listenerCalled.resolve(undefined);
+        event.waitUntil(
+          reconcileGate.promise.then(() => {
+            reconciled = true;
+          }),
+        );
+      });
+
+      const mutation = svc.setPluginEnabled({ id: 'barrier-demo', enabled: false });
+      let mutationSettled = false;
+      void mutation.then(() => {
+        mutationSettled = true;
+      });
+      await listenerCalled.promise;
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      expect(mutationSettled).toBe(false);
+
+      reconcileGate.resolve(undefined);
+      await mutation;
+      expect(reconciled).toBe(true);
+      await expect(svc.listPlugins()).resolves.toEqual([
+        expect.objectContaining({ id: 'barrier-demo', enabled: false }),
+      ]);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('does not reject a mutation when a reload listener waitUntil promise rejects', async () => {
+    const home = await makeHome();
+    const pluginRoot = await makePluginDir('tolerant-demo', {});
+    createdDirs.push(pluginRoot);
+    await writeInstalledFile(home, JSON.stringify(installedFile('tolerant-demo', pluginRoot)));
+    const host = makeHost(home);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      await expect(svc.listPlugins()).resolves.toHaveLength(1);
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      svc.onDidReload((event) => {
+        event.waitUntil(Promise.reject(new Error('workspace reconcile failed')));
+      });
+
+      await expect(
+        svc.setPluginEnabled({ id: 'tolerant-demo', enabled: false }),
+      ).resolves.toBeUndefined();
+      await expect(svc.listPlugins()).resolves.toEqual([
+        expect.objectContaining({ id: 'tolerant-demo', enabled: false }),
+      ]);
     } finally {
       host.dispose();
     }
@@ -488,7 +555,7 @@ describe('PluginService (plugin boundary)', () => {
     try {
       const svc = host.app.accessor.get(IPluginService);
       const reloads: ReloadSummary[] = [];
-      svc.onDidReload((summary) => reloads.push(summary));
+      svc.onDidReload(({ added, removed, errors }) => reloads.push({ added, removed, errors }));
 
       const firstList = svc.listPlugins();
       await firstReadStarted.promise;

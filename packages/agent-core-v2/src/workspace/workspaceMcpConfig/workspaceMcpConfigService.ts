@@ -53,10 +53,12 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
       this.log.error('mcp config initial load failed', { error });
     });
     this._register(
-      this.plugins.onDidReload(() => {
-        void this.reloadPluginServers().catch((error) => {
-          this.log.warn(`mcp plugin reload failed: ${String(error)}`);
-        });
+      this.plugins.onDidReload((event) => {
+        event.waitUntil(
+          this.reloadPluginServers().catch((error) => {
+            this.log.warn(`mcp plugin reload failed: ${String(error)}`);
+          }),
+        );
       }),
     );
     this._register(

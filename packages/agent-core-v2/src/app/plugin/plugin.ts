@@ -12,6 +12,7 @@ import type {
   PluginInfo,
   PluginMcpServerEntry,
   PluginMutationSummary,
+  PluginReloadEvent,
   PluginSummary,
   PluginUpdateStatus,
   ReloadSummary,
@@ -60,7 +61,7 @@ export interface IPluginService {
   mcpServerEntries(): Promise<readonly PluginMcpServerEntry[]>;
   enabledHooks(): Promise<readonly HookDef[]>;
   hasLoadedSnapshot(): boolean;
-  readonly onDidReload: Event<ReloadSummary>;
+  readonly onDidReload: Event<PluginReloadEvent>;
   readonly onDidMutate: Event<PluginMutationSummary>;
 }
 

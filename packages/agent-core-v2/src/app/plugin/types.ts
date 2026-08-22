@@ -1,3 +1,4 @@
+import type { IWaitUntil } from '#/_base/event';
 import type { HookDefConfig } from '#/features/externalHooks/configSection';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 
@@ -171,6 +172,8 @@ export interface ReloadSummary {
   readonly removed: readonly string[];
   readonly errors: ReadonlyArray<{ readonly id: string; readonly message: string }>;
 }
+
+export type PluginReloadEvent = ReloadSummary & IWaitUntil;
 
 export interface PluginMutation {
   readonly kind: 'install' | 'enable' | 'disable' | 'remove' | 'mcp-server';

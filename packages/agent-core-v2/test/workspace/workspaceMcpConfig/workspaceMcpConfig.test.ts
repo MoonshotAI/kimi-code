@@ -17,7 +17,7 @@ import {
   type McpConfigWriteEvent,
 } from '#/app/mcpConfig/configStore';
 import { IPluginService } from '#/app/plugin/plugin';
-import type { ReloadSummary } from '#/app/plugin/types';
+import type { PluginReloadEvent } from '#/app/plugin/types';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -49,7 +49,7 @@ describe('WorkspaceMcpConfigService', () => {
   let disposables: DisposableStore;
   let watchFires: Map<string, Emitter<HostFsChange>>;
   let pluginServers: Record<string, McpServerConfig>;
-  let pluginReloads: Emitter<ReloadSummary>;
+  let pluginReloads: AsyncEmitter<PluginReloadEvent>;
   let storeWrites: AsyncEmitter<McpConfigWriteEvent>;
   let trusted: boolean;
   let trustFlips: Emitter<WorkspaceTrustChange>;
@@ -61,7 +61,7 @@ describe('WorkspaceMcpConfigService', () => {
     disposables = new DisposableStore();
     watchFires = new Map();
     pluginServers = {};
-    pluginReloads = new Emitter<ReloadSummary>();
+    pluginReloads = disposables.add(new AsyncEmitter<PluginReloadEvent>());
     storeWrites = disposables.add(new AsyncEmitter<McpConfigWriteEvent>());
     trusted = true;
     trustFlips = new Emitter<WorkspaceTrustChange>();
@@ -239,7 +239,10 @@ describe('WorkspaceMcpConfigService', () => {
       shared: stdioConfig('plugin-version'),
       pluginOnly: stdioConfig('plugin'),
     };
-    pluginReloads.fire({ added: [], removed: [], errors: [] });
+    await pluginReloads.fireAsyncConcurrent(
+      { added: [], removed: [], errors: [] },
+      new AbortController().signal,
+    );
 
     await vi.waitFor(
       () => {
@@ -260,7 +263,10 @@ describe('WorkspaceMcpConfigService', () => {
     await service.ready;
 
     pluginServers = { gamma: stdioConfig('gamma') };
-    pluginReloads.fire({ added: [], removed: [], errors: [] });
+    await pluginReloads.fireAsyncConcurrent(
+      { added: [], removed: [], errors: [] },
+      new AbortController().signal,
+    );
 
     await vi.waitFor(
       () => {
@@ -271,13 +277,30 @@ describe('WorkspaceMcpConfigService', () => {
     expect(service.servers()).toEqual({ gamma: stdioConfig('gamma') });
   }, 20000);
 
+  it('settles the plugin reload event only after the workspace reconcile is published', async () => {
+    const service = createService();
+    await service.ready;
+
+    pluginServers = { gamma: stdioConfig('gamma') };
+    await pluginReloads.fireAsyncConcurrent(
+      { added: [], removed: [], errors: [] },
+      new AbortController().signal,
+    );
+
+    expect(changes).toEqual([{ upsert: { gamma: stdioConfig('gamma') }, remove: [] }]);
+    expect(service.servers()).toEqual({ gamma: stdioConfig('gamma') });
+  });
+
   it('removes a plugin server that vanishes on plugin reload', async () => {
     pluginServers = { alpha: stdioConfig('alpha') };
     const service = createService();
     await service.ready;
 
     pluginServers = {};
-    pluginReloads.fire({ added: [], removed: [], errors: [] });
+    await pluginReloads.fireAsyncConcurrent(
+      { added: [], removed: [], errors: [] },
+      new AbortController().signal,
+    );
 
     await vi.waitFor(
       () => {
@@ -295,7 +318,10 @@ describe('WorkspaceMcpConfigService', () => {
     expect(service.servers()).toEqual({ shared: stdioConfig('plugin-version') });
 
     pluginServers = {};
-    pluginReloads.fire({ added: [], removed: [], errors: [] });
+    await pluginReloads.fireAsyncConcurrent(
+      { added: [], removed: [], errors: [] },
+      new AbortController().signal,
+    );
 
     await vi.waitFor(
       () => {
