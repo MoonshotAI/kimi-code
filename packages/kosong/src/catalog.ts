@@ -101,6 +101,8 @@ const KNOWN_WIRE_TYPES = [
   'google-genai',
   'openai_responses',
   'vertexai',
+  'google-vertex',
+  'google-vertex-anthropic',
 ] as const satisfies readonly ProviderType[];
 
 function isWireType(value: unknown): value is ProviderType {
@@ -244,6 +246,10 @@ function inferDeclaredWireType(entry: CatalogProviderEntry): ProviderType | unde
   if (isWireType(entry.type)) return entry.type;
   const npm = (entry.npm ?? '').toLowerCase();
   const id = (entry.id ?? '').toLowerCase();
+  if (id === 'google-vertex-anthropic' || npm.includes('google-vertex/anthropic') || id.includes('vertex-anthropic')) {
+    return 'google-vertex-anthropic';
+  }
+  if (id === 'google-vertex') return 'google-vertex';
   if (npm.includes('anthropic') || id.includes('anthropic') || id.includes('claude')) {
     return 'anthropic';
   }

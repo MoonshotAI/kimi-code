@@ -130,27 +130,33 @@ api_key = "xxxxx"
 base_url = "https://your-gateway.example"
 ```
 
-## `vertexai`
+## `google-vertex` / `vertexai`
 
-Shares the same implementation as `google-genai`; setting `type = "vertexai"` switches to the Vertex AI access path.
+Setting `type = "google-vertex"` (or `type = "vertexai"`) connects to Google Gemini models on Google Vertex AI.
 
-Authentication follows the standard Google Cloud ADC flow (`gcloud auth application-default login` or a `GOOGLE_APPLICATION_CREDENTIALS` service account JSON) — this part is unrelated to Kimi Code. **The project ID and region must be written in the `[providers.vertexai.env]` sub-table** — simply `export GOOGLE_CLOUD_PROJECT` in the shell will not be read by the CLI.
+Authentication supports a GCP service account JSON file (`service_account_file`, with `~` path expansion support), an environment variable (`GOOGLE_APPLICATION_CREDENTIALS`), or the standard ADC flow (`gcloud auth application-default login`).
 
 ```toml
-[providers.vertexai]
-type = "vertexai"
-
-[providers.vertexai.env]
-GOOGLE_CLOUD_PROJECT = "my-gcp-project"
-GOOGLE_CLOUD_LOCATION = "us-central1"
+[providers.vertex]
+type = "google-vertex"
+service_account_file = "~/.secrets/my-service-account.json"
+location = "us-central1"
 ```
 
-```sh
-gcloud auth application-default login   # one-time authentication
-kimi
-```
+When `service_account_file` is specified, Kimi Code automatically reads `project_id` from the service account JSON if `project` is omitted.
 
-To route Vertex requests through a custom (e.g. proxied) endpoint, set `base_url` (or the `GOOGLE_VERTEX_BASE_URL` env var); when omitted, the SDK default regional `*-aiplatform.googleapis.com` host is used. As with `google-genai`, give the host root only — the SDK appends `/v1beta1/publishers/google/models/…` itself.
+To route Vertex requests through a custom (e.g. proxied) endpoint, set `base_url` (or the `GOOGLE_VERTEX_BASE_URL` env var).
+
+## `google-vertex-anthropic`
+
+Setting `type = "google-vertex-anthropic"` connects to Anthropic Claude models served on Google Vertex AI.
+
+```toml
+[providers.vertex-claude]
+type = "google-vertex-anthropic"
+service_account_file = "~/.secrets/my-service-account.json"
+location = "us-east5"
+```
 
 ## OAuth and credential injection
 

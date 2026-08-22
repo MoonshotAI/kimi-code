@@ -57,6 +57,7 @@ import {
   sanitizeToolCallId,
   type ToolCallIdPolicy,
 } from './tool-call-id';
+import { expandHomePath, tryReadProjectIdFromServiceAccount } from './vertex-utils';
 
 /**
  * Normalize an Anthropic `stop_reason` string to the unified
@@ -121,6 +122,11 @@ export interface AnthropicOptions {
    * keeps the standard endpoint + header behavior.
    */
   betaApi?: boolean | undefined;
+  vertexai?: boolean | undefined;
+  project?: string | undefined;
+  location?: string | undefined;
+  serviceAccountFile?: string | undefined;
+  googleAuthOptions?: Record<string, unknown> | undefined;
   clientFactory?: (auth: ProviderRequestAuth) => Anthropic;
   /**
    * Vendor error classification, consulted by `convertAnthropicError` with
@@ -934,6 +940,11 @@ export class AnthropicChatProvider implements ChatProvider {
   private readonly _convertErrorHook: ((error: unknown) => ChatProviderError | undefined) | undefined;
   private _betaApi: boolean;
   private _explicitMaxTokens: boolean;
+  private _vertexai: boolean;
+  private _project: string | undefined;
+  private _location: string | undefined;
+  private _serviceAccountFile: string | undefined;
+  private _googleAuthOptions: Record<string, unknown> | undefined;
 
   constructor(options: AnthropicOptions) {
     this._model = options.model;
@@ -944,12 +955,40 @@ export class AnthropicChatProvider implements ChatProvider {
     this._kimiThinking = options.kimiThinking ?? false;
     this._convertErrorHook = options.convertError;
     this._betaApi = options.betaApi ?? false;
+    this._vertexai = options.vertexai ?? false;
     this._apiKey =
       options.apiKey === undefined || options.apiKey.length === 0 ? undefined : options.apiKey;
     this._baseUrl = options.baseUrl;
     this._defaultHeaders = options.defaultHeaders;
     this._clientFactory = options.clientFactory;
-    this._client = this._apiKey === undefined ? undefined : this._buildClient(this._apiKey);
+
+    const rawSaFile =
+      options.serviceAccountFile ??
+      process.env['GOOGLE_APPLICATION_CREDENTIALS'] ??
+      process.env['SERVICE_ACCOUNT_FILE'];
+    this._serviceAccountFile = expandHomePath(rawSaFile);
+    this._googleAuthOptions =
+      options.googleAuthOptions ??
+      (this._serviceAccountFile !== undefined
+        ? {
+            keyFilename: this._serviceAccountFile,
+            scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+          }
+        : undefined);
+
+    this._project =
+      options.project ??
+      (this._serviceAccountFile !== undefined
+        ? tryReadProjectIdFromServiceAccount(this._serviceAccountFile)
+        : undefined) ??
+      process.env['GOOGLE_CLOUD_PROJECT'];
+    this._location = options.location ?? process.env['GOOGLE_CLOUD_LOCATION'] ?? 'us-central1';
+
+    this._client = this._vertexai
+      ? this._buildVertexClient()
+      : this._apiKey === undefined
+        ? undefined
+        : this._buildClient(this._apiKey);
     this._explicitMaxTokens = options.defaultMaxTokens !== undefined;
     this._generationKwargs = {
       max_tokens: options.defaultMaxTokens ?? resolveDefaultMaxTokens(options.model),
@@ -1157,6 +1196,12 @@ export class AnthropicChatProvider implements ChatProvider {
   }
 
   private _createClient(auth: ProviderRequestAuth | undefined): Anthropic {
+    if (this._vertexai) {
+      if (this._client === undefined) {
+        this._client = this._buildVertexClient();
+      }
+      return this._client;
+    }
     return resolveAuthBackedClient(
       { cachedClient: this._client, clientFactory: this._clientFactory },
       auth,
@@ -1210,6 +1255,91 @@ export class AnthropicChatProvider implements ChatProvider {
   // These `null`s — and the nulled headers in _buildDefaultHeaders — are NOT
   // redundant: removing them reintroduces credential leakage. Regression cover:
   // test/e2e/anthropic-adapter.test.ts.
+  private _buildVertexClient(): Anthropic {
+    let googleAuth: unknown;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { GoogleAuth } = require('google-auth-library');
+      googleAuth = new GoogleAuth(
+        this._googleAuthOptions ?? {
+          scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+        },
+      );
+    } catch {
+      throw new ChatProviderError(
+        'google-auth-library is required for Google Vertex AI Anthropic authentication.',
+      );
+    }
+
+    const project = this._project;
+    const location = this._location ?? 'us-central1';
+    const customBaseUrl = this._baseUrl;
+
+    const vertexFetch = async (
+      url: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const authObj = googleAuth as {
+        getClient(): Promise<{ getAccessToken(): Promise<{ token?: string | null }> }>;
+      };
+      const client = await authObj.getClient();
+      const tokenResponse = await client.getAccessToken();
+      const token = tokenResponse.token;
+
+      let bodyObj: Record<string, unknown> = {};
+      if (init?.body && typeof init.body === 'string') {
+        try {
+          bodyObj = JSON.parse(init.body) as Record<string, unknown>;
+        } catch {
+          bodyObj = {};
+        }
+      }
+
+      const isStream = bodyObj['stream'] === true;
+      const modelName =
+        (typeof bodyObj['model'] === 'string' ? bodyObj['model'] : this._model) || this._model;
+      delete bodyObj['model'];
+      delete bodyObj['stream'];
+      bodyObj['anthropic_version'] = 'vertex-2023-10-16';
+
+      const verb = isStream ? 'streamRawPredict' : 'rawPredict';
+
+      let targetUrl: string;
+      if (customBaseUrl && customBaseUrl.length > 0) {
+        const cleanBase = customBaseUrl.replace(/\/+$/, '');
+        targetUrl = `${cleanBase}/v1/projects/${project}/locations/${location}/publishers/anthropic/models/${modelName}:${verb}`;
+      } else {
+        const host =
+          location === 'global'
+            ? 'aiplatform.googleapis.com'
+            : `${location}-aiplatform.googleapis.com`;
+        targetUrl = `https://${host}/v1/projects/${project}/locations/${location}/publishers/anthropic/models/${modelName}:${verb}`;
+      }
+
+      const headers = new Headers(init?.headers);
+      if (token) {
+        headers.set('Authorization', `Bearer ${token}`);
+      }
+      headers.set('Content-Type', 'application/json');
+
+      const newInit: RequestInit = {
+        ...init,
+        headers,
+        body: JSON.stringify(bodyObj),
+      };
+
+      return fetch(targetUrl, newInit);
+    };
+
+    return new Anthropic({
+      apiKey: this._apiKey ?? 'dummy-vertex-key',
+      authToken: null,
+      baseURL: null,
+      fetch: vertexFetch,
+      defaultHeaders: this._buildDefaultHeaders(this._apiKey ?? 'dummy-vertex-key'),
+    });
+  }
+
   private _buildClient(apiKey: string): Anthropic {
     return new Anthropic({
       apiKey,

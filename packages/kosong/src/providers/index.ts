@@ -18,7 +18,9 @@ export type ProviderConfig =
   | ({ type: 'kimi' } & KimiOptions)
   | ({ type: 'google-genai' } & GoogleGenAIOptions)
   | ({ type: 'openai_responses' } & OpenAIResponsesOptions)
-  | ({ type: 'vertexai' } & GoogleGenAIOptions);
+  | ({ type: 'vertexai' } & GoogleGenAIOptions)
+  | ({ type: 'google-vertex' } & GoogleGenAIOptions)
+  | ({ type: 'google-vertex-anthropic' } & AnthropicOptions);
 
 export type ProviderType = ProviderConfig['type'];
 
@@ -35,7 +37,10 @@ export function createProvider(config: ProviderConfig): ChatProvider {
     case 'openai_responses':
       return new OpenAIResponsesChatProvider(config);
     case 'vertexai':
-      return new GoogleGenAIChatProvider(config);
+    case 'google-vertex':
+      return new GoogleGenAIChatProvider({ ...config, vertexai: true });
+    case 'google-vertex-anthropic':
+      return new AnthropicChatProvider({ ...config, vertexai: true });
     default: {
       const exhaustive: never = config;
       throw new Error(`Unknown provider type: ${String(exhaustive)}`);
@@ -61,7 +66,10 @@ export function getModelCapability(wire: ProviderType, modelName: string): Model
       return getOpenAIResponsesModelCapability(modelName);
     case 'google-genai':
     case 'vertexai':
+    case 'google-vertex':
       return getGoogleGenAIModelCapability(modelName);
+    case 'google-vertex-anthropic':
+      return getAnthropicModelCapability(modelName);
     case 'kimi':
       return UNKNOWN_CAPABILITY;
     default: {

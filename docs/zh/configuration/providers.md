@@ -130,27 +130,33 @@ api_key = "xxxxx"
 base_url = "https://your-gateway.example"
 ```
 
-## `vertexai`
+## `google-vertex` / `vertexai`
 
-与 `google-genai` 共用实现，`type = "vertexai"` 时切换到 Vertex AI 访问路径。
+设置 `type = "google-vertex"`（或 `type = "vertexai"`）连接 Google Vertex AI 上的 Gemini 模型。
 
-认证走 Google Cloud 标准 ADC 流程（`gcloud auth application-default login` 或 `GOOGLE_APPLICATION_CREDENTIALS` 服务账号 JSON），这部分与 Kimi Code 无关。**项目 ID 和区域必须写在 `[providers.vertexai.env]` 子表里**——直接在 shell 里 `export GOOGLE_CLOUD_PROJECT` 不会被 CLI 读取。
+认证支持 GCP 服务账号 JSON 文件（`service_account_file`，支持 `~` 路径展开）、环境变量（`GOOGLE_APPLICATION_CREDENTIALS`）或标准 ADC 流程（`gcloud auth application-default login`）。
 
 ```toml
-[providers.vertexai]
-type = "vertexai"
-
-[providers.vertexai.env]
-GOOGLE_CLOUD_PROJECT = "my-gcp-project"
-GOOGLE_CLOUD_LOCATION = "us-central1"
+[providers.vertex]
+type = "google-vertex"
+service_account_file = "~/.secrets/my-service-account.json"
+location = "us-central1"
 ```
 
-```sh
-gcloud auth application-default login   # 一次性完成认证
-kimi
-```
+指定 `service_account_file` 时，如果未填 `project`，Kimi Code 会自动从服务账号 JSON 中读取 `project_id`。
 
-如需让 Vertex 请求走自定义（如代理）端点，可设置 `base_url`（或 `GOOGLE_VERTEX_BASE_URL` 环境变量）；不填时使用 SDK 默认的区域化 `*-aiplatform.googleapis.com` 地址。与 `google-genai` 一样，只填主机根地址——SDK 会自行追加 `/v1beta1/publishers/google/models/…`。
+如需让 Vertex 请求走自定义（如代理）端点，可设置 `base_url`（或 `GOOGLE_VERTEX_BASE_URL` 环境变量）。
+
+## `google-vertex-anthropic`
+
+设置 `type = "google-vertex-anthropic"` 连接 Google Vertex AI 托管的 Anthropic Claude 模型。
+
+```toml
+[providers.vertex-claude]
+type = "google-vertex-anthropic"
+service_account_file = "~/.secrets/my-service-account.json"
+location = "us-east5"
+```
 
 ## OAuth 与凭证注入
 

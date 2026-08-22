@@ -245,6 +245,22 @@ describe('AcpServer auth gate', () => {
     expect(createCalls).toHaveLength(0);
   });
 
+  it('accepts Vertex AI service-account file config', async () => {
+    const { harness, createCalls } = makeHarnessWithConfig(
+      configuredModelConfig({
+        type: 'google-vertex',
+        serviceAccountFile: '~/.secrets/sa.json',
+      }),
+    );
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    startAcpServer(harness, agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+
+    await client.newSession({ cwd: '/tmp/vertexai', mcpServers: [] });
+    expect(createCalls).toHaveLength(1);
+  });
+
   it('keeps the OAuth token short-circuit even when config loading fails', async () => {
     const createCalls: Array<{ id?: string; workDir: string }> = [];
     const harness = {

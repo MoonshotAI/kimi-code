@@ -161,9 +161,15 @@ function providerHasNonOAuthCredentials(provider: ProviderConfig): boolean {
     case 'google-genai':
       return hasProviderValue(provider, 'GOOGLE_API_KEY');
     case 'vertexai':
+    case 'google-vertex':
+    case 'google-vertex-anthropic':
       return (
         hasProviderValue(provider, 'VERTEXAI_API_KEY') ||
         hasEnvValue(provider, 'GOOGLE_API_KEY') ||
+        hasEnvValue(provider, 'ANTHROPIC_API_KEY') ||
+        nonEmptyString(provider.serviceAccountFile) !== undefined ||
+        hasEnvValue(provider, 'GOOGLE_APPLICATION_CREDENTIALS') ||
+        hasEnvValue(provider, 'SERVICE_ACCOUNT_FILE') ||
         (hasEnvValue(provider, 'GOOGLE_CLOUD_PROJECT') &&
           (hasEnvValue(provider, 'GOOGLE_CLOUD_LOCATION') ||
             vertexAILocationFromBaseUrl(provider.baseUrl) !== undefined))

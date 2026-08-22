@@ -386,6 +386,43 @@ describe('Model assembly (pure data)', () => {
     }
   });
 
+  it('enables google-vertex and google-vertex-anthropic through providerOptions with serviceAccountFile', () => {
+    const { host, catalog } = createHost({
+      providers: {
+        vtx: {
+          type: 'google-vertex',
+          serviceAccountFile: '~/.secrets/sa.json',
+          location: 'us-central1',
+        },
+        vtx_claude: {
+          type: 'google-vertex-anthropic',
+          serviceAccountFile: '~/.secrets/sa.json',
+          project: 'proj-claude',
+          location: 'us-east5',
+        },
+      },
+      models: {
+        v1: { provider: 'vtx', model: 'gemini-2.5-pro', maxContextSize: 1000 },
+        v2: { provider: 'vtx_claude', model: 'claude-sonnet-4-6', maxContextSize: 1000 },
+      },
+    });
+    try {
+      expect(catalog.get('v1').providerOptions).toMatchObject({
+        vertexai: true,
+        serviceAccountFile: expect.stringContaining('.secrets/sa.json'),
+        location: 'us-central1',
+      });
+      expect(catalog.get('v2').providerOptions).toMatchObject({
+        vertexai: true,
+        serviceAccountFile: expect.stringContaining('.secrets/sa.json'),
+        project: 'proj-claude',
+        location: 'us-east5',
+      });
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('supports flat models with an inline baseUrl (provider synthesized from the origin)', () => {
     const { host, catalog } = createHost({
       models: {
