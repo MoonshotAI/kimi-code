@@ -1,5 +1,6 @@
 import {
   isKimiError,
+  KimiError,
   type ContentPart as SdkContentPart,
   type Event,
   type PromptInput,
@@ -188,7 +189,7 @@ export class SessionRuntime {
       // such terminal event, so reject terminally: the caller's composer must
       // unlock rather than hang until the handshake timeout.
       this.emitError(
-        new Error(ALREADY_GENERATING_MESSAGE),
+        new KimiError("turn.agent_busy", ALREADY_GENERATING_MESSAGE),
         "runtime",
         { terminal: this.hasActiveWork ? false : undefined },
       );
@@ -225,7 +226,7 @@ export class SessionRuntime {
   beginHostAction(input: string | LegacyContentPart[], forkable = false): number {
     this.ensureOpen();
     if (this.isBusy) {
-      throw new Error(ALREADY_GENERATING_MESSAGE);
+      throw new KimiError("turn.agent_busy", ALREADY_GENERATING_MESSAGE);
     }
     const actionId = ++this.hostActionSequence;
     this.hostActionActive = true;
