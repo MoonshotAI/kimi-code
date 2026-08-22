@@ -107,8 +107,28 @@ function ensureKimiPropertyTypes(schema: Record<string, unknown>): Record<string
       'JSON Schema root must normalize to an object.',
     );
   }
+  sanitizeRegexKeyword(normalized);
   recurseSchema(normalized);
   return normalized;
+}
+
+function sanitizeRegexKeyword(node: unknown): void {
+  if (Array.isArray(node)) {
+    for (const item of node) sanitizeRegexKeyword(item);
+    return;
+  }
+  if (typeof node !== 'object' || node === null) return;
+  const obj = node as Record<string, unknown>;
+  if ('regex' in obj) {
+    const regexValue = obj['regex'];
+    if (typeof regexValue === 'string' && !('pattern' in obj)) {
+      obj['pattern'] = regexValue;
+    }
+    delete obj['regex'];
+  }
+  for (const value of Object.values(obj)) {
+    sanitizeRegexKeyword(value);
+  }
 }
 
 function hasUnresolvedDefinitionRef(node: unknown, bucketKey: string): boolean {
