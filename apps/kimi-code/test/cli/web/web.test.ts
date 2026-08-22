@@ -50,7 +50,7 @@ function makeRunner(origin = 'http://127.0.0.1:58627'): {
   const calls: { options: ParsedServerOptions | undefined } = { options: undefined };
   const runner: ForegroundRunner = async (options, hooks) => {
     calls.options = options;
-    hooks?.onReady?.(origin);
+    await hooks?.onReady?.(origin);
     return undefined as never;
   };
   return { runner, calls };
@@ -99,11 +99,12 @@ describe('kimi web', () => {
     expect(longs).toContain('--allowed-host');
     expect(longs).toContain('--insecure-no-tls');
     expect(longs).toContain('--allow-remote-shutdown');
-    expect(longs).toContain('--allow-remote-terminals');
     expect(longs).toContain('--dangerous-bypass-auth');
     expect(longs).toContain('--log-level');
     expect(longs).toContain('--debug-endpoints');
     expect(longs).toContain('--web-title');
+    const remoteControl = web!.options.find((option) => option.long === '--remote-control');
+    expect(remoteControl?.short).toBe('--rc');
     // web opens the browser by default → the option is the negative --no-open.
     expect(longs).toContain('--no-open');
     // The background/daemon era flags are gone: the server always runs in the
@@ -112,6 +113,7 @@ describe('kimi web', () => {
     expect(longs).not.toContain('--keep-alive');
     expect(longs).not.toContain('--daemon');
     expect(longs).not.toContain('--idle-grace-ms');
+    expect(longs).not.toContain('--allow-remote-terminals');
   });
 
   it('routes `kimi server` and any legacy subcommand to a deprecation notice', async () => {
@@ -339,6 +341,10 @@ describe('ready banner reflects the bind class', () => {
 });
 
 describe('`kimi web` opens the browser', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('opens the Web UI URL with the #token= fragment by default', async () => {
     const { handleWebCommand } = await import('#/cli/sub/web/run');
     const { runner } = makeRunner();
@@ -392,6 +398,125 @@ describe('`kimi web` opens the browser', () => {
 
     expect(openUrl).not.toHaveBeenCalled();
   });
+
+  it('maps --remote-control and --rc to the same option', () => {
+    for (const flag of ['--remote-control', '--rc']) {
+      const program = makeProgram();
+      const web = program.commands.find((command) => command.name() === 'web')!;
+      web.parseOptions([flag]);
+      expect(web.opts()).toMatchObject({ remoteControl: true });
+    }
+  });
+
+  it('rejects Remote Control on a non-loopback host', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '1');
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const { runner } = makeRunner();
+    const { stdout, stderr } = makeIo();
+
+    await expect(
+      handleWebCommand(
+        { remoteControl: true, host: '0.0.0.0', open: false },
+        { startServerForeground: runner, openUrl: vi.fn(), stdout, stderr },
+      ),
+    ).rejects.toThrow('--remote-control requires a loopback host.');
+  });
+
+  it('opens and saves only the public Remote Control URL without the local server token', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '1');
+    const tempRoot = mkdtempSync(join(tmpdir(), 'kimi-rc-qrcode-'));
+    const dataDir = join(tempRoot, 'custom-home');
+    vi.stubEnv('KIMI_CODE_HOME', dataDir);
+    const publicUrl =
+      'https://code-rc.kimi.com/devices/device-1/?rc=1&from=kimi_code_cli';
+    const pngPath = join(dataDir, 'rc-qrcode.png');
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const { generateRemoteControlQr } = await import('#/utils/remote-control-qr');
+    const QRCode = await import('qrcode');
+    const { isAbsolute } = await import('node:path');
+    await generateRemoteControlQr('https://example.test/previous', dataDir);
+    const previousPng = readFileSync(pngPath);
+    const { runner } = makeRunner();
+    const { stdout, stderr, readStdout } = makeIo();
+    const openUrl = vi.fn();
+    const startRemoteControl = vi.fn(async () => ({
+      deviceId: 'device-1',
+      url: publicUrl,
+      close: vi.fn(async () => {}),
+    }));
+
+    try {
+      await handleWebCommand(
+        { remoteControl: true, open: true },
+        {
+          startServerForeground: runner,
+          startRemoteControl,
+          resolveToken: () => 'local-server-token',
+          openUrl,
+          stdout,
+          stderr,
+        },
+      );
+
+      expect(startRemoteControl).toHaveBeenCalledWith(
+        expect.objectContaining({
+          homeDir: dataDir,
+          localOrigin: 'http://127.0.0.1:58627',
+          localServerToken: 'local-server-token',
+        }),
+      );
+      expect(openUrl).toHaveBeenCalledWith(publicUrl);
+      const written = readStdout();
+      expect(written).toContain('Kimi Remote Control (experimental):');
+      expect(written).toContain(
+        await QRCode.toString(publicUrl, { type: 'terminal', small: true }),
+      );
+      expect(written).not.toContain(
+        await QRCode.toString('http://127.0.0.1:58627', {
+          type: 'terminal',
+          small: true,
+        }),
+      );
+      expect(isAbsolute(pngPath)).toBe(true);
+      expect(written).toContain(`QR code PNG: ${pngPath}`);
+      const png = readFileSync(pngPath);
+      expect(png.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+      expect(png).not.toEqual(previousPng);
+      expect(png).toEqual(await QRCode.toBuffer(publicUrl));
+      expect(written).not.toContain('local-server-token');
+      expect(written).not.toContain('#token=');
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects --remote-control while the experimental flag is off', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '0');
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const { runner } = makeRunner();
+    const { stdout, stderr } = makeIo();
+
+    await expect(
+      handleWebCommand(
+        { remoteControl: true, open: false },
+        { startServerForeground: runner, openUrl: vi.fn(), stdout, stderr },
+      ),
+    ).rejects.toThrow('--remote-control is experimental:');
+  });
+
+  it('hides --remote-control from help unless the experimental flag is on', () => {
+    const remoteControlOption = () =>
+      makeProgram()
+        .commands.find((command) => command.name() === 'web')!
+        .options.find((option) => option.long === '--remote-control');
+
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '0');
+    expect(remoteControlOption()?.hidden).toBe(true);
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '1');
+    expect(remoteControlOption()?.hidden).toBe(false);
+  });
 });
 
 describe('`kimi web` option threading', () => {
@@ -409,7 +534,6 @@ describe('`kimi web` option threading', () => {
         dangerousBypassAuth: true,
         debugEndpoints: true,
         allowRemoteShutdown: true,
-        allowRemoteTerminals: true,
         open: false,
       },
       { startServerForeground: runner, openUrl: vi.fn(), stdout, stderr },
@@ -422,7 +546,6 @@ describe('`kimi web` option threading', () => {
       debugEndpoints: true,
       insecureNoTls: true,
       allowRemoteShutdown: true,
-      allowRemoteTerminals: true,
       dangerousBypassAuth: true,
       allowedHosts: ['.example.com'],
     });
