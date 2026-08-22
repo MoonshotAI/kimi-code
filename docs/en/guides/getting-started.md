@@ -53,6 +53,51 @@ Or with pnpm:
 pnpm add -g @moonshot-ai/kimi-code
 ```
 
+## Build from source
+
+To build a standalone `kimi` executable from the repository, first clone it:
+
+```sh
+git clone https://github.com/MoonshotAI/kimi-code.git
+cd kimi-code
+```
+
+Source builds support these operating system and architecture combinations:
+
+| Operating system | Architectures | Build targets |
+| --- | --- | --- |
+| macOS | `arm64`, `x64` | `darwin-arm64`, `darwin-x64` |
+| GNU/Linux, including WSL | `arm64`, `x64` | `linux-arm64`, `linux-x64` |
+| Windows | `arm64`, `x64` | `win32-arm64`, `win32-x64` |
+
+Other operating systems and architectures are not supported by the native build.
+
+On macOS, Linux, or WSL, use [nvm](https://github.com/nvm-sh/nvm) to install the Node.js version pinned in `.nvmrc`, then enable pnpm through Corepack:
+
+```sh
+nvm install
+corepack enable pnpm
+```
+
+On native Windows, `nvm-sh` does not apply. Install the Node.js version shown in `.nvmrc`; for example, pass it explicitly to [nvm-windows](https://github.com/coreybutler/nvm-windows), then enable pnpm:
+
+```powershell
+$nodeVersion = (Get-Content .nvmrc).Trim()
+nvm install $nodeVersion
+nvm use $nodeVersion
+corepack enable pnpm
+```
+
+Corepack uses the pnpm version declared in `package.json`. Install the dependencies, build the native executable, and run its smoke test:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm --filter @moonshot-ai/kimi-code run build:native:sea
+pnpm --filter @moonshot-ai/kimi-code run test:native:smoke
+```
+
+The executable is written to `apps/kimi-code/dist-native/bin/<platform>-<architecture>/kimi` (`kimi.exe` on Windows). This builds for the current platform and architecture; release signing and notarization are not required for a local build.
+
 ## Upgrade and uninstall
 
 After installation, verify that the executable is ready:
