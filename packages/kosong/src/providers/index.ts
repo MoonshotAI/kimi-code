@@ -37,6 +37,7 @@ export function createProvider(config: ProviderConfig): ChatProvider {
     case 'openai_responses':
       return new OpenAIResponsesChatProvider(config);
     case 'vertexai':
+      return new GoogleGenAIChatProvider(config);
     case 'google-vertex':
       return new GoogleGenAIChatProvider({ ...config, vertexai: true });
     case 'google-vertex-anthropic':

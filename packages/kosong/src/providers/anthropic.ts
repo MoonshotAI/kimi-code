@@ -50,6 +50,7 @@ import {
   type AnthropicModelProfile,
   type AnthropicModelVersion,
 } from './anthropic-profile';
+import { GoogleAuth } from 'google-auth-library';
 import { mergeConsecutiveUserMessages } from './merge-user-messages';
 import { mergeRequestHeaders, resolveAuthBackedClient } from './request-auth';
 import {
@@ -1256,20 +1257,11 @@ export class AnthropicChatProvider implements ChatProvider {
   // redundant: removing them reintroduces credential leakage. Regression cover:
   // test/e2e/anthropic-adapter.test.ts.
   private _buildVertexClient(): Anthropic {
-    let googleAuth: unknown;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { GoogleAuth } = require('google-auth-library');
-      googleAuth = new GoogleAuth(
-        this._googleAuthOptions ?? {
-          scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-        },
-      );
-    } catch {
-      throw new ChatProviderError(
-        'google-auth-library is required for Google Vertex AI Anthropic authentication.',
-      );
-    }
+    const googleAuth = new GoogleAuth(
+      this._googleAuthOptions ?? {
+        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+      },
+    );
 
     const project = this._project;
     const location = this._location ?? 'us-central1';

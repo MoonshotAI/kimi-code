@@ -49,6 +49,8 @@ import type {
 import type { Tool } from '#/kosong/contract/tool';
 import type { TokenUsage } from '#/kosong/contract/usage';
 
+import { GoogleAuth } from 'google-auth-library';
+
 import {
   BUDGET_THINKING_EFFORTS,
   inferAnthropicModelProfile,
@@ -1162,20 +1164,11 @@ export class AnthropicChatProvider implements ChatProvider {
   }
 
   private _buildVertexClient(): Anthropic {
-    let googleAuth: unknown;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { GoogleAuth } = require('google-auth-library');
-      googleAuth = new GoogleAuth(
-        this._googleAuthOptions ?? {
-          scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-        },
-      );
-    } catch {
-      throw new ChatProviderError(
-        'google-auth-library is required for Google Vertex AI Anthropic authentication.',
-      );
-    }
+    const googleAuth = new GoogleAuth(
+      this._googleAuthOptions ?? {
+        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+      },
+    );
 
     const project = this._project;
     const location = this._location ?? 'us-central1';

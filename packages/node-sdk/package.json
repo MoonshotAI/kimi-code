@@ -66,6 +66,7 @@
     "@moonshot-ai/klient": "workspace:^",
     "@moonshot-ai/kosong": "workspace:^",
     "@types/yazl": "^2.4.6",
+    "google-auth-library": "^10.6.2",
     "jimp": "^1.6.1"
   }
 }

@@ -25,6 +25,7 @@ registerProtocolBase({
         vertexai: config.providerOptions?.vertexai,
         project: config.providerOptions?.project,
         location: config.providerOptions?.location,
+        serviceAccountFile: config.providerOptions?.serviceAccountFile,
       }),
     });
   },

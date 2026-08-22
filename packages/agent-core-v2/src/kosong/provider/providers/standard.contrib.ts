@@ -52,6 +52,7 @@ registerProviderDefinition({
   id: 'google-vertex-anthropic',
   baseProtocol: 'anthropic',
   traits: [
+    { endpoint: () => ({ apiKeyEnv: 'VERTEXAI_API_KEY', baseUrlEnv: 'GOOGLE_VERTEX_BASE_URL' }) },
     { endpoint: () => ({ apiKeyEnv: 'ANTHROPIC_API_KEY', baseUrlEnv: 'ANTHROPIC_BASE_URL' }) },
   ],
 });

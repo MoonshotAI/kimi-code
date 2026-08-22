@@ -308,6 +308,9 @@ merge_all_available_skills = true
   # default_model: string
   # type: string
   # api_key: string
+  # service_account_file: string
+  # project: string
+  # location: string
   # oauth: object
     # storage: "file" | "keyring"
     # key: string
