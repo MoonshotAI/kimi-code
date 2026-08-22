@@ -646,6 +646,36 @@ describe('projector tool-exchange normalization', () => {
     });
   });
 
+  describe('image format gate at projection time', () => {
+    it('replaces an empty-payload image already in history with a notice (self-heal)', () => {
+      const history = [
+        {
+          role: 'user' as const,
+          content: [{ type: 'image_url' as const, imageUrl: { url: 'data:image/png;base64,' } }],
+          toolCalls: [],
+          origin: { kind: 'user' as const },
+        },
+        user('what do you see?'),
+      ];
+      const parts = project(history).flatMap((message) => message.content);
+      expect(parts.some((part) => part.type === 'image_url')).toBe(false);
+      const texts = parts.filter((part) => part.type === 'text').map((part) => part.text);
+      expect(texts.some((text) => text.includes('no image data (0 bytes)'))).toBe(true);
+      expect(texts.some((text) => text.includes('what do you see?'))).toBe(true);
+    });
+
+    it('passes a deliverable image through untouched', () => {
+      const part = {
+        type: 'image_url' as const,
+        imageUrl: { url: 'data:image/png;base64,QUJD' },
+      };
+      const history = [
+        { role: 'user' as const, content: [part], toolCalls: [], origin: { kind: 'user' as const } },
+      ];
+      expect(project(history).flatMap((message) => message.content)).toContainEqual(part);
+    });
+  });
+
   describe('project with media: degraded policy', () => {
     function imageMessage(url: string): ContextMessage {
       return {
@@ -678,7 +708,7 @@ describe('projector tool-exchange normalization', () => {
         .filter((part) => part.type === 'text')
         .map((part) => part.text);
       expect(
-        markers.filter((text) => text.includes('dropped to fit the provider request size limit')),
+        markers.filter((text) => text.includes('removed to fit the provider request size limit')),
       ).toHaveLength(2);
     });
 
@@ -737,8 +767,8 @@ describe('projector tool-exchange normalization', () => {
       const texts = allParts.filter((part) => part.type === 'text').map((part) => part.text);
       expect(texts).toContain('look at these');
       expect(texts).toContain('<image path="/tmp/shot.png">');
-      expect(texts.some((text) => text.includes('omitted for provider compatibility'))).toBe(true);
-      expect(texts.some((text) => text.includes('get conversion guidance'))).toBe(true);
+      expect(texts.some((text) => text.includes('unsupported or unreadable image data'))).toBe(true);
+      expect(texts.some((text) => text.includes('You have NOT seen this image'))).toBe(true);
     });
 
     it('returns the projected messages untouched when there is no media', () => {

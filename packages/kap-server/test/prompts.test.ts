@@ -876,6 +876,48 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(notice.text).toContain('photo.avif');
   });
 
+  it('rejects an inline base64 image that decodes to zero bytes without enqueuing the prompt', async () => {
+    // A clipboard/upload failure can produce a payload that carries no bytes
+    // (issue #2209). Submitting the prompt without the image the user meant
+    // to attach would silently waste the turn, so the route rejects — the
+    // client keeps the draft and can re-paste. The wire schema rejects an
+    // empty `data` string outright, so the reachable shape is one that
+    // passes min(1) but decodes to nothing.
+    const id = await createSession(home as string);
+    const session = getLiveSessionById(server!.core.accessor, id);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [
+        { type: 'text', text: 'what is in this image?' },
+        { type: 'image', source: { kind: 'base64', media_type: 'image/png', data: '====' } },
+      ],
+    });
+    expect(body.code).toBe(40001);
+    expect(body.msg).toContain('no image data (0 bytes)');
+
+    // The failed request must not have materialized the main agent either.
+    expect(session!.accessor.get(IAgentLifecycleService).findAgentHandle('main')).toBeUndefined();
+  });
+
+  it('rejects a zero-byte uploaded image file without enqueuing the prompt', async () => {
+    const id = await createSession(home as string);
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const uploaded = await uploadFile(Buffer.alloc(0), 'image/png', 'image.png');
+    expect(uploaded.size).toBe(0);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [
+        { type: 'text', text: 'what is in this image?' },
+        { type: 'image', source: { kind: 'file', file_id: uploaded.id } },
+      ],
+    });
+    expect(body.code).toBe(40001);
+    expect(body.msg).toContain('no image data (0 bytes)');
+    expect(body.msg).toContain('image.png');
+
+    expect(session!.accessor.get(IAgentLifecycleService).findAgentHandle('main')).toBeUndefined();
+  });
+
   it('replaces a remote image URL with an unsupported extension with a text notice', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);

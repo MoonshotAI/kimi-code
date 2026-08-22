@@ -37,6 +37,12 @@ type WireContent = PromptSubmission['content'];
  * the wrong media kind, e.g. a PDF submitted as a video) must reject the
  * request without creating the prompt agent and without touching the
  * session's model/thinking/permission.
+ *
+ * Zero-byte images are rejected here too (inline base64 that decodes to
+ * nothing, or an uploaded image file with no bytes): a clipboard/upload
+ * failure captured nothing, and submitting the prompt without the image the
+ * user meant to attach would silently waste the turn. The client keeps the
+ * draft and can re-paste.
  */
 export async function assertPromptFileRefs(content: WireContent, store: IFileService): Promise<void> {
   for (const part of content) {
@@ -45,6 +51,21 @@ export async function assertPromptFileRefs(content: WireContent, store: IFileSer
     } else if ((part.type === 'image' || part.type === 'video') && part.source.kind === 'file') {
       const file = await store.get(part.source.file_id);
       assertMediaFile(file, part.type);
+      if (part.type === 'image' && file.meta.size === 0) {
+        throw new Error2(
+          'validation.failed',
+          `"${file.meta.name}" contained no image data (0 bytes) — the clipboard or upload ` +
+            'captured nothing. Re-paste or re-upload the image and try again.',
+        );
+      }
+    } else if (part.type === 'image' && part.source.kind === 'base64') {
+      if (decodeBase64Prefix(part.source.data).length === 0) {
+        throw new Error2(
+          'validation.failed',
+          'The attached image contained no image data (0 bytes) — the clipboard or upload ' +
+            'captured nothing. Re-paste or re-upload the image and try again.',
+        );
+      }
     }
   }
 }
