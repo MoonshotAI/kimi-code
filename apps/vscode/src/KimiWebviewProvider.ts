@@ -18,6 +18,7 @@ function getNonce(): string {
  */
 export class KimiWebviewProvider implements vscode.WebviewViewProvider {
   private webviews = new Map<string, vscode.Webview>();
+  private sidebarWebviewId: string | undefined;
   private bridgeHandler: BridgeHandler;
 
   constructor(
@@ -50,9 +51,11 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     const webviewId = `sidebar_${crypto.randomUUID()}`;
+    this.sidebarWebviewId = webviewId;
     this.setupWebview(webviewId, webviewView.webview);
 
     webviewView.onDidDispose(() => {
+      if (this.sidebarWebviewId === webviewId) this.sidebarWebviewId = undefined;
       void this.bridgeHandler.disposeView(webviewId);
       this.webviews.delete(webviewId);
     });
@@ -79,6 +82,12 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
 
   broadcast(event: string, data: unknown): void {
     this.broadcastInternal(event, data);
+  }
+
+  /** Actions contributed to the sidebar's `view/title` act on that view alone; panels own their own state. */
+  broadcastToSidebar(event: string, data: unknown): void {
+    if (this.sidebarWebviewId === undefined) return;
+    this.broadcastInternal(event, data, this.sidebarWebviewId);
   }
 
   async insertEditorMention(documentUri: vscode.Uri, selection: vscode.Selection): Promise<boolean> {
