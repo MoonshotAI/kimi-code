@@ -275,7 +275,9 @@ export class BashTool implements BuiltinTool<BashInput> {
     const shellArgs = [
       this.kaos.osEnv.shellPath,
       '-c',
-      `cd ${shellQuote(shellCwd)} && ${command}`,
+      // `cd … && <cmd>` binds the cd into the first AND-list, so `cd /d && a & b`
+      // parses as `{ cd /d && a } & b` and runs `b` in the original directory.
+      `cd ${shellQuote(shellCwd)} || exit 1\n${command}`,
     ];
 
     const noninteractiveEnv: Record<string, string> = {
