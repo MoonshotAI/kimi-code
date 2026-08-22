@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code-sdk": patch
 ---
 
-Add optional `cwd` and `verify` parameters to the global MCP management and authorization methods.
+Add an optional `cwd` parameter to the global MCP management methods; `verify: false` on the global MCP authorization-status listing now returns a fully offline classification instead of behaving like an omitted `verify`.

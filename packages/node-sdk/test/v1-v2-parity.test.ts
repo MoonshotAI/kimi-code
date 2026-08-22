@@ -3924,6 +3924,26 @@ describe('v1↔v2 global MCP parity', () => {
         { name: 'unavailable-dynamic', authStatus: 'not-applicable' },
       ]);
       expect(v2LegacyStatuses).toEqual(v1LegacyStatuses);
+
+      // verify: false stays fully offline — the challenging `detected` server
+      // is no longer probed (it flips to `not-applicable`), while pinned and
+      // stored-grant entries keep their offline classification.
+      const [v1OfflineStatuses, v2OfflineStatuses] = await Promise.all([
+        pair.v1.listGlobalMcpServerAuthStatuses({ verify: false }),
+        pair.v2.listGlobalMcpServerAuthStatuses({ verify: false }),
+      ]);
+      expect(v1OfflineStatuses).toEqual([
+        { name: 'stdio', authStatus: 'not-applicable' },
+        { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'detected', authStatus: 'not-applicable' },
+        { name: 'bearer', authStatus: 'bearer-token' },
+        { name: 'oauth-required', authStatus: 'oauth-required' },
+        { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
+        { name: 'oauth-stale', authStatus: 'oauth-authorized' },
+        { name: 'unavailable-explicit', authStatus: 'oauth-required' },
+        { name: 'unavailable-dynamic', authStatus: 'not-applicable' },
+      ]);
+      expect(v2OfflineStatuses).toEqual(v1OfflineStatuses);
     } finally {
       await closeGlobalMcpPair(pair);
       await statusServer.close();
