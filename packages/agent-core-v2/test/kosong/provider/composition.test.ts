@@ -27,7 +27,11 @@ import {
 import '#/kosong/provider/bases/google-genai/index';
 import { GoogleGenAIChatProvider } from '#/kosong/provider/bases/google-genai/google-genai';
 import '#/kosong/provider/bases/openai/index';
-import { OpenAIResponsesChatProvider } from '#/kosong/provider/bases/openai/openai-responses';
+import { extractUsage } from '#/kosong/provider/bases/openai/openai-common';
+import {
+  OpenAIResponsesChatProvider,
+  OpenAIResponsesStreamedMessage,
+} from '#/kosong/provider/bases/openai/openai-responses';
 import { OpenAILegacyChatProvider } from '#/kosong/provider/bases/openai/openai-legacy';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
 import {
@@ -623,6 +627,46 @@ async function captureResponsesBody(
   if (captured === undefined) throw new Error('expected responses.create to be called');
   return captured;
 }
+
+describe('OpenAI usage normalization', () => {
+  it('keeps Chat Completions uncached input non-negative when cached tokens lack a prompt total', () => {
+    expect(
+      extractUsage({
+        completion_tokens: 5,
+        prompt_tokens_details: { cached_tokens: 10 },
+      }),
+    ).toEqual({
+      inputOther: 0,
+      output: 5,
+      inputCacheRead: 10,
+      inputCacheCreation: 0,
+    });
+  });
+
+  it('keeps Responses uncached input non-negative when cached tokens lack an input total', async () => {
+    const stream = new OpenAIResponsesStreamedMessage(
+      {
+        id: 'resp_partial_usage',
+        status: 'completed',
+        output: [],
+        usage: {
+          output_tokens: 5,
+          input_tokens_details: { cached_tokens: 10 },
+        },
+      },
+      false,
+    );
+
+    await drain(stream);
+
+    expect(stream.usage).toEqual({
+      inputOther: 0,
+      output: 5,
+      inputCacheRead: 10,
+      inputCacheCreation: 0,
+    });
+  });
+});
 
 describe('per-turn intent wire encoding (behavior probes)', () => {
   it('encodes cacheKey + thinking + budget on the Kimi wire as prompt_cache_key + expanded thinking, never reasoning_effort', async () => {
