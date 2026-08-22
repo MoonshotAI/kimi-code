@@ -66,9 +66,11 @@ Kimi Code CLI 有三个地方可以影响运行参数：配置文件、命令行
 互斥规则（违反时启动报错）：
 
 - `--output-format` 只能配合 `-p` 使用
-- `--prompt` 不能同时用 `--yolo` 或 `--plan`
+- `--prompt` 不能同时用 `--yolo`、`--auto` 或 `--plan`
 - `--continue` 和 `--session` 不能同时用
-- 非 prompt 模式下，`--yolo` 和 `--plan` 不能配合 `--continue` 或 `--session`
+- `--yolo` 和 `--auto` 不能同时使用
+
+恢复会话时，可以通过 `--auto`、`--yolo` 或 `--plan` 临时覆盖会话保存的权限或 Plan 模式。
 
 ::: tip
 `--skills-dir` 是一次性替换，只影响本次启动。如需长期追加搜索目录，在 `config.toml` 里写 `extra_skill_dirs`（详见 [Agent Skills](../customization/skills.md)）。
@@ -89,10 +91,10 @@ KIMI_CODE_HOME="$PWD/.kimi-sandbox" kimi
 KIMI_API_KEY = "sk-test"
 ```
 
-**跳过审批运行批处理任务**：
+**以非交互方式运行批处理任务**——prompt 模式会自动使用 auto 权限：
 
 ```sh
-kimi --yolo -p "批量重命名以下文件..."
+kimi -p "批量重命名以下文件..."
 ```
 
 **临时进入 Plan 模式**（若想永久生效，在配置文件设 `default_plan_mode = true`）：
