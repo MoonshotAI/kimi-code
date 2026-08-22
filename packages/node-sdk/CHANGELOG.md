@@ -1,5 +1,37 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.19.1
+
+### Patch Changes
+
+- [#2862](https://github.com/MoonshotAI/kimi-code/pull/2862) [`3d77620`](https://github.com/MoonshotAI/kimi-code/commit/3d7762003a4a35cbeb8571d471c6898a006152e6) Thanks [@liruifengv](https://github.com/liruifengv)! - Add an optional region parameter to the auth login API for selecting the OAuth login endpoint (.com or .ai deployment).
+
+## 0.19.0
+
+### Minor Changes
+
+- [#2593](https://github.com/MoonshotAI/kimi-code/pull/2593) [`d833a1a`](https://github.com/MoonshotAI/kimi-code/commit/d833a1a893c4d69d96af542f40557442992085e0) Thanks [@7Sageer](https://github.com/7Sageer)! - Daemon file references no longer persist a materialization path; the display path is derived from the session media store at read time.
+
+- [#2934](https://github.com/MoonshotAI/kimi-code/pull/2934) [`61591bc`](https://github.com/MoonshotAI/kimi-code/commit/61591bce09f4467aa1664cb8ecb6aa6904b7accd) Thanks [@chengluyu](https://github.com/chengluyu)! - Add `session.promptWithSkills(input, skills)` to submit one prompt with multiple skill activations in a single turn (v2 engine only).
+
+- [#2593](https://github.com/MoonshotAI/kimi-code/pull/2593) [`d833a1a`](https://github.com/MoonshotAI/kimi-code/commit/d833a1a893c4d69d96af542f40557442992085e0) Thanks [@7Sageer](https://github.com/7Sageer)! - Add `uploadFile` for uploading media and referencing it from prompts, and an optional `promptId` on prompt submissions. Both require the v2 harness.
+
+- [#3026](https://github.com/MoonshotAI/kimi-code/pull/3026) [`13857f3`](https://github.com/MoonshotAI/kimi-code/commit/13857f383200881aa77dc972a8963ba421eeb2b6) Thanks [@bj456736](https://github.com/bj456736)! - Unify the MCP management surface behind a source-tagged registry, covering plugin-declared servers in `listMcpServers` and adding `getMcpServer`, `testMcpServerConfig`, runtime `addMcpServer`, `inspectAppMcpServers`, and an `oauth-expired` auth state.
+
+## 0.18.0
+
+### Minor Changes
+
+- [#2351](https://github.com/MoonshotAI/kimi-code/pull/2351) [`6be2697`](https://github.com/MoonshotAI/kimi-code/commit/6be26978b123bacf1c5ebce52bbeb6f7b7ff0629) Thanks [@7Sageer](https://github.com/7Sageer)! - Add `generateSessionTitle` (v2 engine) for managed AI session titles: optional `force` regeneration over generated/custom titles and selectable conversation excerpts (`user_prompts` / `first_turn` / `digest`). Gated by the experimental `auto_session_title` flag and a managed OAuth login.
+
+### Patch Changes
+
+- [#2916](https://github.com/MoonshotAI/kimi-code/pull/2916) [`7475c2e`](https://github.com/MoonshotAI/kimi-code/commit/7475c2e2e3dd86ac0b8a8d51d4f1d233ed7df797) Thanks [@Grapedge](https://github.com/Grapedge)! - Cascade turn cancellation to the session-level /init run in the v2-backed client.
+
+- [#2916](https://github.com/MoonshotAI/kimi-code/pull/2916) [`7475c2e`](https://github.com/MoonshotAI/kimi-code/commit/7475c2e2e3dd86ac0b8a8d51d4f1d233ed7df797) Thanks [@Grapedge](https://github.com/Grapedge)! - Implement session deletion in the v2-backed client.
+
+- [#2916](https://github.com/MoonshotAI/kimi-code/pull/2916) [`7475c2e`](https://github.com/MoonshotAI/kimi-code/commit/7475c2e2e3dd86ac0b8a8d51d4f1d233ed7df797) Thanks [@Grapedge](https://github.com/Grapedge)! - Support forking a session from a specific turn in the v2-backed client, and reject forking a live session while its turn is running.
+
 ## 0.17.0
 
 ### Minor Changes

@@ -1,51 +1,3 @@
-/**
- * `kosong/provider` composition probes — the runtime invariants of the L2
- * layer, exercised through the real registry path with every base contrib and
- * the Kimi + canonical-vendor endpoint definitions registered:
- *
- *  1. Composing Kimi without a config apiKey and without env vars must NOT
- *     silently pick up `OPENAI_API_KEY` (the `apiKey ?? ''` suppression in
- *     the openai contrib factory).
- *  2. Config `defaultHeaders` always win over trait-declared headers (the
- *     trailing synthetic trait).
- *  4. `supportedProtocols()` is derived from the registered bases and never
- *     contains `kimi` — a vendor is not a protocol. It does not contain
- *     `vertexai` either: Vertex AI is a `providerOptions` mode of the
- *     google-genai base, exercised below (flag forwarding, and the
- *     `VERTEXAI_API_KEY` → `GOOGLE_API_KEY` endpoint chain the google-genai
- *     definition declares).
- *
- * Plus the registry resolution contract: `resolveAdapterIdentity` branches,
- * `resolveProviderBaseId`, the `resolveCapability` fallback chain, and the
- * composed-provider shape (`name` is the base's, `uploadVideo` is bound only
- * when a trait declares it).
- *
- * The final sections drive `generate` with mocked SDK clients and assert the
- * exact request params on the wire (the morph era asserted baked provider
- * state instead):
- *
- *  - the behavior probes for per-turn intent encoding (cacheKey / thinking /
- *     budget) on the Kimi, OpenAI, and Anthropic wires;
- *  - reasoning-only assistant history remains canonical while each wire
- *    projects it into a provider-valid representation;
- *  - the per-base `responseFormat` encodings (re-added from the deleted
- *     llmProtocol structured-output suite; morph-seeded kwargs cases that no
- *     longer have a channel are noted where they dropped);
- *  - the Anthropic thinking-keep context-management overlay and max-tokens
- *     profile, and the OpenAI `reasoning_effort` auto-enable with its
- *     load-bearing kill switch (a `withThinking` hook disables it).
- *
- * Plus one construction invariant: every wire base builds its SDK client
- * with `maxRetries: 0` — retry is owned by the engine's step-retry layer,
- * never by the SDK (whose backoff sleep ignores the turn's AbortSignal). The
- * closing section proves it over a real HTTP 429: the first response reaches
- * the caller after exactly one request, carrying the server-directed delay.
- *
- * Note: base/definition registries are module-level state shared across this
- * file, so the contribs and test-vendor definitions are imported/registered
- * exactly once here.
- */
-
 import { createServer } from 'node:http';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -497,7 +449,6 @@ describe('kimi provider definitions', () => {
   });
 });
 
-
 const PROBE_HISTORY: Message[] = [
   { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
 ];
@@ -789,6 +740,52 @@ describe('reasoning-only assistant history projection', () => {
       role: 'model',
       parts: [{ text: 'earlier reasoning', thought: true }],
     });
+  });
+});
+
+describe('tool-call-only assistant history projection (issue #3017)', () => {
+  it('emits content: null for an assistant message carrying only tool_calls', async () => {
+    const provider = new OpenAILegacyChatProvider({
+      model: 'gpt-4.1',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [
+          { type: 'function', id: 'call_abc123', name: 'add', arguments: '{"a": 2, "b": 3}' },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: '5' }],
+        toolCallId: 'call_abc123',
+        toolCalls: [],
+      },
+    ];
+
+    const body = await captureOpenAIBody(provider, undefined, history);
+    const messages = body['messages'] as Array<Record<string, unknown>>;
+
+    expect(messages).toEqual([
+      { role: 'user', content: 'Add 2 and 3' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            type: 'function',
+            id: 'call_abc123',
+            function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+          },
+        ],
+      },
+      { role: 'tool', content: '5', tool_call_id: 'call_abc123' },
+    ]);
   });
 });
 

@@ -1,18 +1,15 @@
-/**
- * `plugin` domain test stubs — shared plugin boundary fixtures.
- */
-
 import { Event, type Emitter } from '#/_base/event';
 import type { IPluginService } from '#/app/plugin/plugin';
 import type {
   EnabledPluginSessionStart,
   PluginMutationSummary,
+  PluginReloadEvent,
   ReloadSummary,
 } from '#/app/plugin/types';
 
 interface StubPluginServiceOptions {
   readonly sessionStarts: readonly EnabledPluginSessionStart[];
-  readonly reloadEmitter?: Emitter<ReloadSummary>;
+  readonly reloadEmitter?: Emitter<PluginReloadEvent>;
   readonly mutateEmitter?: Emitter<PluginMutationSummary>;
 }
 
@@ -37,6 +34,7 @@ export function stubPluginService(options: StubPluginServiceOptions): IPluginSer
     enabledSessionStarts: async () => options.sessionStarts,
     enabledSystemPrompts: async () => [],
     enabledMcpServers: async () => ({}),
+    mcpServerEntries: async () => [],
     enabledHooks: async () => [],
     hasLoadedSnapshot: () => true,
   };

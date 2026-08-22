@@ -1,29 +1,3 @@
-/**
- * `sessionTitle` domain (L6) — `ISessionTitleService` implementation.
- *
- * Generates the session's title from the first active prompts in the main
- * Agent's live conversation context through the managed platform `/tools`
- * `chat_title` endpoint, persists it through
- * `sessionMetadata`, and rebroadcasts `session.meta.updated`.
- * Generation is on demand only: `generateTitle()` is the single entry point
- * (the kap-server route), gated by the experimental `auto_session_title` flag and
- * a managed Kimi Code OAuth login; any
- * failure degrades to keeping the current title, and a custom title set by
- * the user is never overwritten. An already-generated title is not
- * regenerated. Concurrent calls coalesce onto one shared in-flight
- * generation. `force` requests an explicit user-driven regeneration: it
- * bypasses the in-flight coalescing and both title-kind guards, and the
- * applied title is marked `generated` (a previous custom marking is
- * dropped). The `source` option picks the conversation excerpt sent to the
- * backend (see `SessionTitleSource`): the default first-prompts window, the
- * strict `first_turn` user+assistant pair, or the head+tail `digest` for
- * multi-turn regeneration.
- * Provider config comes
- * from `provider`, the bearer token from `auth`, host identity headers from
- * `model`, prompt history from `agentLifecycle`/`sessionTitle`, and logs
- * through `log`. Bound at Session scope.
- */
-
 import {
   KIMI_CODE_PROVIDER_NAME,
   OAuthError,
@@ -45,6 +19,7 @@ import { IProviderService } from '#/kosong/provider/provider';
 import { isOAuthCatalogVendor } from '#/kosong/provider/providerDefinition';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
 
 import { IAgentTitlePromptSource } from './agentTitlePromptSource';
 import { AUTO_SESSION_TITLE_FLAG_ID } from './flag';
@@ -56,12 +31,15 @@ const MAX_TITLE_INPUT_LENGTH = 1000;
 
 const MAX_TITLE_PROMPTS = 3;
 
-/** Per-segment excerpt budgets inside the composed chat_content. */
-const MAX_TITLE_USER_SEGMENT = 300;
+const MAX_TITLE_USER_SEGMENT = 400;
 
-const MAX_TITLE_FIRST_TURN_ASSISTANT = 600;
+const MAX_TITLE_FIRST_TURN_ASSISTANT = 300;
 
-const MAX_TITLE_DIGEST_ASSISTANT = 400;
+const MAX_TITLE_DIGEST_USER_SEGMENT = 200;
+
+const MAX_TITLE_DIGEST_ASSISTANT = 200;
+
+const MAX_TITLE_DIGEST_INPUT_LENGTH = 3000;
 
 export class SessionTitleService implements ISessionTitleService {
   declare readonly _serviceBrand: undefined;
@@ -105,7 +83,7 @@ export class SessionTitleService implements ISessionTitleService {
       if (current.titleKind === 'custom') return undefined;
       if (current.titleKind === 'generated') return undefined;
     }
-    const main = this.agentLifecycle.get(MAIN_AGENT_ID);
+    const main = this.agentLifecycle.findAgentHandle(MAIN_AGENT_ID);
     if (main === undefined) return undefined;
     const promptSource = main.accessor.get(IAgentTitlePromptSource);
     const input = await composeTitleInput(promptSource, source);
@@ -170,15 +148,16 @@ export class SessionTitleService implements ISessionTitleService {
     const title = result.title.slice(0, MAX_GENERATED_TITLE_LENGTH);
     const applied = await this.metadata.setGeneratedTitleIfUncustomized(title, { force });
     if (!applied) return undefined;
-    this.eventService.publish({
-      type: 'session.meta.updated',
-      payload: {
-        agentId: 'main',
-        sessionId: this.ctx.sessionId,
-        title,
-        patch: { title, isCustomTitle: false },
-      },
-    });
+    this.eventService.publish(
+      new SessionMetaUpdated({
+        payload: {
+          agentId: 'main',
+          sessionId: this.ctx.sessionId,
+          title,
+          patch: { title, isCustomTitle: false },
+        },
+      }),
+    );
     return title;
   }
 }
@@ -186,7 +165,7 @@ export class SessionTitleService implements ISessionTitleService {
 function titleInputFromPrompts(prompts: readonly string[]): string | undefined {
   if (prompts.length === 0) return undefined;
   return prompts
-    .map((prompt) => `user: ${prompt}`)
+    .map((prompt) => `user: ${prompt.slice(0, MAX_TITLE_USER_SEGMENT)}`)
     .join('\n')
     .slice(0, MAX_TITLE_INPUT_LENGTH);
 }
@@ -205,19 +184,41 @@ async function composeTitleInput(
   }
   if (source === 'digest') {
     const excerpt = await promptSource.digestExcerpt();
-    const lines: string[] = [];
-    if (excerpt.firstUser !== undefined) {
-      lines.push(`user: ${excerpt.firstUser.slice(0, MAX_TITLE_USER_SEGMENT)}`);
+    const turns: string[][] = [];
+    for (const turn of excerpt.turns) {
+      const group = [`user: ${turn.user.slice(0, MAX_TITLE_DIGEST_USER_SEGMENT)}`];
+      if (turn.assistant !== undefined) {
+        group.push(`assistant: ${turn.assistant.slice(0, MAX_TITLE_DIGEST_ASSISTANT)}`);
+      }
+      turns.push(group);
     }
-    if (excerpt.lastUser !== undefined) {
-      lines.push(`user: ${excerpt.lastUser.slice(0, MAX_TITLE_USER_SEGMENT)}`);
-    }
-    if (excerpt.assistant !== undefined) {
-      lines.push(`assistant: ${excerpt.assistant.slice(0, MAX_TITLE_DIGEST_ASSISTANT)}`);
-    }
-    return lines.length === 0 ? undefined : lines.join('\n');
+    return elideTitleDigestTurns(turns);
   }
   return titleInputFromPrompts(await promptSource.firstUserPrompts(MAX_TITLE_PROMPTS));
+}
+
+const TITLE_DIGEST_ELISION_MARKER = '...';
+
+function elideTitleDigestTurns(turns: readonly (readonly string[])[]): string | undefined {
+  if (turns.length === 0) return undefined;
+  const joined = turns.flat().join('\n');
+  if (joined.length <= MAX_TITLE_DIGEST_INPUT_LENGTH) return joined;
+  let budget = MAX_TITLE_DIGEST_INPUT_LENGTH - TITLE_DIGEST_ELISION_MARKER.length - 2;
+  const head: string[] = [];
+  for (const line of turns[0]!) {
+    if (budget < line.length + 1) break;
+    head.push(line);
+    budget -= line.length + 1;
+  }
+  const tail: string[] = [];
+  for (let index = turns.length - 1; index >= 1; index--) {
+    const group = turns[index]!;
+    const cost = group.reduce((sum, line) => sum + line.length + 1, 0);
+    if (budget < cost) break;
+    tail.unshift(...group);
+    budget -= cost;
+  }
+  return [...head, TITLE_DIGEST_ELISION_MARKER, ...tail].join('\n');
 }
 
 registerScopedService(

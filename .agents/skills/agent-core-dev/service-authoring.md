@@ -17,7 +17,7 @@ One folder per domain, **camelCase**: `session/`, `sessionActivity/`, `contextMe
 ```
 
 - **Strictly one service per file.** An interface file holds exactly one injectable interface and exactly one `createDecorator(...)`; an impl file holds exactly one service implementation class and exactly one `registerScopedService(...)`. No exceptions for "tightly-coupled" groups: even same-scope collaborators each get their own `<name>.ts` + `<name>Service.ts` pair.
-- **Scope is in the filename.** `workspace*.ts` = Workspace, `session*.ts` = Session, `agent*.ts` = Agent, no scope prefix = App (see [Naming](#naming)). The header comment restates the same scope.
+- **Scope is in the filename.** `workspace*.ts` = Workspace, `session*.ts` = Session, `agent*.ts` = Agent, no scope prefix = App (see [Naming](#naming)).
 - A domain therefore has as many impl files as it has services (e.g. `logService.ts` for the App `ILogService`, `sessionLogService.ts` for the Session `ISessionLogService`). See [Multi-Service domains](#multi-service-domains).
 
 The package entry `src/index.ts` imports and `export *`s every domain's leaf files precisely (one line per leaf), so importing the package still runs every `registerScopedService(...)` side effect — exactly as the old per-domain barrels did.
@@ -293,11 +293,10 @@ Importing the package therefore fires every `register*` side effect, exactly as 
 
 - Load the impl file too — its top-level `registerScopedService(...)` only runs when the module is imported.
 - `export *` helper modules only if they are part of the domain's public surface.
-- Each leaf's file-header comment still names the domain, scope, and (for impls) the `register*` binding it owns.
 
 ## Comments
 
-- **File-header comment is mandatory** and the only place comments live (orient.md). State the identity line, the role, collaborators (impls), and scope.
+- **No comments** (orient.md): no file headers, no statement-level narration; the only exception is JSDoc attached to exported symbols.
 - **Methods and fields carry no comments by default.** Well-named identifiers and types say *what*; the code is the source of truth for *how*.
 - Write an inline comment only when the *why* is non-obvious (a hidden constraint, a subtle invariant, a workaround). One short line.
 - For unimplemented stubs, throw `NotImplementedError('feature')` rather than `throw new Error('TODO: …')` (errors.md).
@@ -351,4 +350,4 @@ import './greet/greetService';
 - Never `new` a `@IService`-carrying Service — except inside an explicit factory method, which is not a DI request.
 - Events: typed per-Service event → `Event<T>`/`Emitter` from `'#/_base/event'`; cross-domain broadcast → `IEventService` from `'#/event'`.
 - `src/index.ts` must import/export every leaf file (including the impl) so each `register*` side effect runs.
-- File-header comment only; methods/fields carry no comments by default; stubs throw `NotImplementedError`.
+- No comments by default (orient.md); stubs throw `NotImplementedError`.

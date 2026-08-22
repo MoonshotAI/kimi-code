@@ -1,12 +1,3 @@
-/**
- * Scenario: agent context injection position tracking and wire restoration.
- *
- * Exercises the real injector through its service contract with in-memory
- * context, loop, reminder, event-bus, and wire collaborators.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/agent/contextInjector/contextInjector.test.ts`.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -19,6 +10,7 @@ import {
 } from '#/agent/contextInjector/contextInjector';
 import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -27,6 +19,7 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import { IEventBus } from '#/app/event/eventBus';
+import { EventBusService } from '#/app/event/eventBusService';
 import { IWireService } from '#/wire/wire';
 import { registerLogServices } from '../../_base/log/stubs';
 import { registerContextMemoryServices, type StubContextMemory } from '../contextMemory/stubs';
@@ -36,6 +29,7 @@ import {
   stubLoopWithHooks,
   stubWire,
 } from '../loop/stubs';
+import { stubAgentContext } from '../agentContext/stubs';
 
 function injector(ix: TestInstantiationService): IAgentContextInjectorService {
   return ix.get(IAgentContextInjectorService);
@@ -103,12 +97,18 @@ describe('AgentContextInjectorService', () => {
   ): void {
     const backing = (context as StubContextMemory).messages as ContextMessage[];
     backing.splice(start, deleteCount, ...inserted);
-    ix.get(IEventBus).publish({
-      type: 'context.spliced',
-      start,
-      deleteCount,
-      messages: [...inserted],
-    });
+    const eventBus = ix.get(IEventBus);
+    const agentContext = stubAgentContext('main', 1);
+    (eventBus as EventBusService).activateAgent(agentContext);
+    eventBus.publish(
+      new ContextSpliced({
+        agentId: 'main',
+        start,
+        deleteCount,
+        messages: [...inserted],
+      }),
+      agentContext,
+    );
   }
 
   it('registers providers and appends injection messages with the provider variant', async () => {

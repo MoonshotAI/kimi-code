@@ -12,10 +12,12 @@ import type { Event } from '@moonshot-ai/agent-core';
 import {
   IAgentLifecycleService,
   IAgentProfileService,
-  IAgentTokenCountingService,
-  IAgentUsageService,
+  IAgentScopeContext,
   IEventBus,
   ISessionInteractionService,
+  ISessionTokenCountingService,
+  ISessionUsageService,
+  makeAgentScopeContext,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
@@ -50,6 +52,10 @@ class FakeAgentHandle {
   readonly accessor;
   private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
+    this.services.set(
+      IAgentScopeContext,
+      makeAgentScopeContext({ agentId: id, agentScope: `agents/${id}` }),
+    );
     this.services.set(IEventBus, this.bus);
     this.accessor = {
       get: (token: unknown) => this.services.get(token),
@@ -101,12 +107,12 @@ const USAGE = {
 };
 
 function bindStatusServices(agent: FakeAgentHandle, model: string): void {
-  agent.set(IAgentTokenCountingService, { statusSize: () => 10 });
+  agent.set(ISessionTokenCountingService, { statusSize: () => 10 });
   agent.set(IAgentProfileService, {
     getModel: () => model,
     getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
   });
-  agent.set(IAgentUsageService, { status: () => USAGE });
+  agent.set(ISessionUsageService, { status: () => USAGE });
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +131,7 @@ describe('SessionEventWiring status snapshot fold', () => {
       // later usage-only slice must still carry the model at this edge.
       sub.bus.emit({ type: 'agent.status.updated', usage: USAGE });
       // Non-status events pass through untouched.
-      sub.bus.emit({ type: 'assistant.delta', delta: 'Hi' });
+      sub.bus.emit({ type: 'assistant.delta', delta: 'Hi', time: 1_700_000_000_123 });
     } finally {
       wiring.dispose();
     }
@@ -140,7 +146,11 @@ describe('SessionEventWiring status snapshot fold', () => {
       maxContextTokens: 128_000,
       model: 'sub-model',
     });
-    expect(events[1]).toMatchObject({ type: 'assistant.delta', delta: 'Hi' });
+    expect(events[1]).toMatchObject({
+      type: 'assistant.delta',
+      delta: 'Hi',
+      time: 1_700_000_000_123,
+    });
     expect(events[1]).not.toHaveProperty('model');
   });
 
@@ -158,5 +168,35 @@ describe('SessionEventWiring status snapshot fold', () => {
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ type: 'agent.status.updated', usage: USAGE });
     expect(events[0]).not.toHaveProperty('model');
+  });
+
+  it('strips the internal promptAttachments field from turn.started', () => {
+    const sub = new FakeAgentHandle('agent-1');
+    const { sink, events } = collectingSink();
+    const wiring = new SessionEventWiring(makeSession([sub]), sink);
+    try {
+      // `promptAttachments` is transcript-projection metadata: kap-server
+      // strips it from the WS wire event, so SDK consumers must not see it
+      // either.
+      sub.bus.emit({
+        type: 'turn.started',
+        turnId: 1,
+        origin: { kind: 'user' },
+        prompt: 'describe this',
+        promptAttachments: [{ kind: 'image', fileId: 'f_1' }],
+      });
+    } finally {
+      wiring.dispose();
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'turn.started',
+      turnId: 1,
+      sessionId: 's1',
+      agentId: 'agent-1',
+      prompt: 'describe this',
+    });
+    expect(events[0]).not.toHaveProperty('promptAttachments');
   });
 });

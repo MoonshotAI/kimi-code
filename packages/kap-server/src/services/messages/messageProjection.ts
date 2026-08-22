@@ -1,26 +1,4 @@
-/**
- * `ContextMessage` → v1 wire `Message` projection.
- *
- * Mirrors the v1 protocol projection so the `messages`, `snapshot`, and
- * `sessions` (`:undo`) surfaces produce byte-compatible message objects.
- * Lives in kap-server (next to the wire schema in `protocol/message.ts`) —
- * the engine speaks only the native `ContextMessage`.
- *
- * Tool results project to a single `tool_result` part: plain-text results keep
- * the historical flattened-text output, while a result carrying media parts
- * (image/video/audio — e.g. ReadMediaFile) passes the raw kosong content-part
- * array through, the same shape the live `tool.result` event stream carries,
- * so REST consumers can still render the media after reload/resume.
- *
- * A user `video_url` part projects to a structured `video` content part so
- * REST consumers can render it: an internal `kimi-file://<id>?path=…`
- * reference becomes `{ kind: 'file', file_id }` (the materialization path is
- * stripped, never leaked to clients); any other url becomes `{ kind: 'url' }`
- * carrying the provider id. An `audio_url` part still flattens to a text
- * marker.
- */
-
-import { parseKimiFileUrl, type ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { daemonFileRefFromPart, parseDaemonFileUrl, type ContentPart, type ContextMessage } from '@moonshot-ai/agent-core-v2';
 
 import type { Message, MessageContent, MessageRole, ToolUseContent } from '../../protocol/message';
 
@@ -43,17 +21,18 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
         ? { type: 'thinking', thinking: part.think, signature: sig }
         : { type: 'thinking', thinking: part.think };
     }
-    case 'image_url':
-      return {
-        type: 'image',
-        source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id },
-      };
+    case 'image_url': {
+      const ref = parseDaemonFileUrl(part.imageUrl.url);
+      return ref !== undefined
+        ? { type: 'image', source: { kind: 'session_media', file_id: ref.fileId } }
+        : { type: 'image', source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id } };
+    }
     case 'audio_url':
       return { type: 'text', text: `[audio:${part.audioUrl.url}]` };
     case 'video_url': {
-      const ref = parseKimiFileUrl(part.videoUrl.url);
+      const ref = parseDaemonFileUrl(part.videoUrl.url);
       return ref !== undefined
-        ? { type: 'video', source: { kind: 'file', file_id: ref.fileId } }
+        ? { type: 'video', source: { kind: 'session_media', file_id: ref.fileId } }
         : { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } };
     }
   }
@@ -109,6 +88,41 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
   }
 
   return base;
+}
+
+/**
+ * Prompt content (engine kosong parts) → the v1 wire `messageContentSchema`
+ * shape. Shared by every prompt-queue surface — the REST prompt list, the
+ * `prompt.steered` session event, and the transcript prompt entity — so a
+ * self-contained daemon-ref media part projects back to
+ * `{ kind: 'session_media', file_id }`: neither the transient App upload nor
+ * the internal `kimi-file://` URL becomes the stored read-model contract.
+ */
+export function projectPromptContentParts(content: readonly ContentPart[]): MessageContent[] {
+  const parts: MessageContent[] = [];
+  for (const part of content) {
+    const daemonRef = daemonFileRefFromPart(part);
+    if (daemonRef !== undefined) {
+      parts.push({
+        type: daemonRef.kind,
+        source: { kind: 'session_media', file_id: daemonRef.ref.fileId },
+      });
+      continue;
+    }
+    if (part.type === 'text') parts.push({ type: 'text', text: part.text });
+    else if (part.type === 'image_url') {
+      const match = /^data:([^;]+);base64,(.*)$/.exec(part.imageUrl.url);
+      parts.push(match === null
+        ? { type: 'image', source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id } }
+        : { type: 'image', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
+    } else if (part.type === 'video_url') {
+      const match = /^data:([^;]+);base64,(.*)$/.exec(part.videoUrl.url);
+      parts.push(match === null
+        ? { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } }
+        : { type: 'video', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
+    }
+  }
+  return parts;
 }
 
 export function toProtocolMessage(

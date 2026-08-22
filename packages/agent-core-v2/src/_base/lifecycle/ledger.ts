@@ -1,15 +1,3 @@
-/**
- * `_base.lifecycle` — `Ledger`: an ordered book of rollbackable registrations.
- *
- * A Ledger records entries (disposers, effects, child ledgers) in registration
- * order and tears them down in strict reverse order, awaiting each entry
- * serially — never in parallel. Rollback is uninterruptible: a failing entry
- * is logged (with its label) and teardown continues. Registering into a
- * disposing/disposed ledger throws immediately.
- *
- * The Ledger knows nothing about DI; scopes and containers build on top of it.
- */
-
 import { onUnexpectedError } from '../errors/unexpectedError';
 import {
   isAsyncIterable,

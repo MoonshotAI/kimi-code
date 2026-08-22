@@ -1,36 +1,3 @@
-/**
- * `sessionIndex` domain (L2) — session index contract.
- *
- * `ISessionIndex` is a domain-specific persistence Store: a backend-neutral
- * query facade over the set of persisted sessions (open or closed). It serves
- * recency-ordered pages, point lookups, and counts (`SessionSummary` data or
- * numbers — never filesystem paths or live handles). Writes (create /
- * archive) live in `sessionLifecycle` / `session`; the index is a read model.
- * Backends are deployment-specific (local filesystem today; database / query
- * store on a server). `remove` is the one write: it evicts a deleted
- * session's derived/cached state so `get` stops answering for the id — the
- * authoritative record (the session directory) is deleted by the caller
- * (`sessionLifecycle.delete`).
- *
- * Listings follow a canonical order — `updatedAt` descending, `id`
- * descending as the tie-break — and page with keyset cursors: `before` /
- * `after` take a session id and return the page strictly older / newer than
- * it; `Page.nextCursor` carries the id to pass as `before` for the next
- * older page. An unknown cursor id yields an empty, terminal page.
- *
- * Lifecycle (flag `persistence_minidb_readmodel`): the read model has an
- * explicit `prepare()` — `uninitialized → preparing → ready`, or `degraded`
- * when it must fall back to the authoritative store. `prepare()` is called
- * once by the composition root; read paths kick it lazily (single-flight)
- * when a host never did. `status()` exposes the state machine, the published
- * generation, and the cumulative degraded count.
- *
- * `ISessionIndexMirror` is the write side of the read model: `SessionMetadata`
- * records fresh summaries into a bounded, coalescing queue after the
- * authoritative document is durable, so user mutations never wait on the
- * derived store. Bound at App scope.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Page } from '#/persistence/interface/queryStore';
 

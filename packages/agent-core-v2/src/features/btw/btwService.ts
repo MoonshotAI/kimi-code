@@ -1,23 +1,10 @@
-/**
- * `btw` domain — `ISessionBtwService` implementation.
- *
- * Forks the main agent into a side-question child: inherits profile/context via
- * `IAgentLifecycleService.fork`, then disables tool calls via an
- * `onBeforeExecuteTool` veto listener (blocks every tool call with the
- * `toolApproval.formatDenyMessage`-formatted TOOL_CALL_DISABLED_MESSAGE) and
- * appends the side-channel reminder through the child's `systemReminder`.
- * Contributed at Session scope by `BtwFeature` (`features/btw/btwFeature`) —
- * `fork('main')` is a session-level operation, so the service injects the
- * session's `IAgentLifecycleService` directly rather than resolving it through
- * the main agent's accessor. Callers materialize the main agent first; forking
- * a missing source throws.
- */
-
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ErrorCodes, Error2 } from '#/errors';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 
 import { ISessionBtwService, SIDE_QUESTION_SYSTEM_REMINDER, TOOL_CALL_DISABLED_MESSAGE } from './btw';
 
@@ -29,7 +16,11 @@ export class SessionBtwService implements ISessionBtwService {
   ) {}
 
   async start(): Promise<string> {
-    const child = await this.lifecycle.fork('main');
+    const main = this.lifecycle.findAgentHandle(MAIN_AGENT_ID);
+    if (main === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
+    }
+    const child = await this.lifecycle.fork(main.accessor.get(IAgentScopeContext).agentContext);
     child.accessor
       .get(IAgentSystemReminderService)
       ?.appendSystemReminder(SIDE_QUESTION_SYSTEM_REMINDER, {

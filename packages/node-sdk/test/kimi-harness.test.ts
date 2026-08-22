@@ -138,3 +138,22 @@ read_byte_budget = 65536
     expect(harness.imageLimits?.maxEdgePx()).toBe(900);
   });
 });
+
+describe('KimiHarness v1 file ops', () => {
+  it('rejects file upload and deletion as not implemented on the v1 harness', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-harness-'));
+    tempDirs.push(homeDir);
+
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    try {
+      await expect(
+        harness.uploadFile(new Uint8Array([137, 80, 78, 71]), { name: 'pixel.png' }),
+      ).rejects.toThrow(/does not support file upload/);
+      await expect(harness.deleteFile('f_example')).rejects.toThrow(
+        /does not support file deletion/,
+      );
+    } finally {
+      await harness.close();
+    }
+  });
+});

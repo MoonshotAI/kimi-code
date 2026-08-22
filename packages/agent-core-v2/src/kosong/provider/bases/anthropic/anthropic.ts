@@ -1,32 +1,3 @@
-/**
- * `kosong/provider` domain — Anthropic Messages wire base.
- *
- * Speaks the Anthropic Messages wire format: system blocks with ephemeral
- * cache control, tool-result user blocks, consecutive-user merging, beta
- * headers vs the beta endpoint, and the thinking profile matrix (budget vs
- * adaptive).
- *
- * The hook surface is `withThinking` plus `convertError`. `withThinking`
- * lets a vendor dialect running over this transport re-encode the thinking
- * intent; when the per-turn thinking intent carries `keep`, the BASE
- * overlays the context-management edit uniformly on top of whatever
- * thinking encoding happened (hook or base path), so a trait never handles
- * `keep` itself.
- *
- * `convertAnthropicError`'s FIRST line is the contract's `throwIfAbortError`
- * guard: a user cancellation is THROWN as the standard abort DOMException at
- * the very front of the classification chain. After the guard,
- * already-converted `ChatProviderError`s pass through untouched; only then is
- * the trait-composed `convertError` hook consulted, so a vendor riding this
- * transport classifies each RAW SDK failure exactly once before the base
- * rules run.
- *
- * The SDK client is built with `maxRetries: 0`: the SDK's internal backoff
- * sleep never observes the turn's AbortSignal, so rate-limit / server /
- * connection retry is owned by the engine's step-retry layer (observable and
- * cancellable), never by the SDK.
- */
-
 import Anthropic, {
   APIError as AnthropicAPIError,
   APIConnectionError as AnthropicConnectionError,
@@ -718,7 +689,6 @@ class AnthropicStreamedMessage implements StreamedMessage {
           const blockEvt = evt as unknown as RawContentBlockStartEvent;
           const block = blockEvt.content_block;
           const blockIndex = blockEvt.index;
-          // eslint-disable-next-line typescript-eslint/switch-exhaustiveness-check
           switch (block.type) {
             case 'text':
               yield { type: 'text', text: block.text };
@@ -748,7 +718,6 @@ class AnthropicStreamedMessage implements StreamedMessage {
           const deltaEvt = evt as unknown as RawContentBlockDeltaEvent;
           const delta = deltaEvt.delta;
           const blockIndex = deltaEvt.index;
-          // eslint-disable-next-line typescript-eslint/switch-exhaustiveness-check
           switch (delta.type) {
             case 'text_delta':
               yield { type: 'text', text: delta.text };
@@ -1176,7 +1145,6 @@ function applyThinkingKeep(
     betaFeatures,
   };
 }
-
 
 const CLAUDE_VISION_TOOL_PREFIXES = ['claude-3-', 'claude-3.5-', 'claude-3.7-'] as const;
 

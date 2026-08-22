@@ -17,6 +17,7 @@ function resolve(
     pluginCommandMap: new Map<string, string>(),
     isStreaming: false,
     isCompacting: false,
+    engineV2: true,
     ...overrides,
   });
 }
@@ -195,7 +196,7 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
-  it('resolves skill commands and blocks them while busy', () => {
+  it('resolves skill commands and keeps them resolvable while busy (queued downstream)', () => {
     const skillCommandMap = new Map([['skill:review', 'review']]);
 
     expect(resolve('/skill:review src/app.ts', { skillCommandMap })).toEqual({
@@ -205,13 +206,14 @@ describe('resolveSlashCommandInput', () => {
       args: 'src/app.ts',
     });
     expect(resolve('/skill:review src/app.ts', { skillCommandMap, isStreaming: true })).toEqual({
-      kind: 'blocked',
+      kind: 'skill',
       commandName: 'skill:review',
-      reason: 'streaming',
+      skillName: 'review',
+      args: 'src/app.ts',
     });
   });
 
-  it('resolves unprefixed built-in skill commands and blocks them while busy', () => {
+  it('resolves unprefixed built-in skill commands and keeps them resolvable while busy', () => {
     const skillCommandMap = new Map([['mcp-config', 'mcp-config']]);
 
     expect(resolve('/mcp-config', { skillCommandMap })).toEqual({
@@ -221,9 +223,10 @@ describe('resolveSlashCommandInput', () => {
       args: '',
     });
     expect(resolve('/mcp-config', { skillCommandMap, isCompacting: true })).toEqual({
-      kind: 'blocked',
+      kind: 'skill',
       commandName: 'mcp-config',
-      reason: 'compacting',
+      skillName: 'mcp-config',
+      args: '',
     });
   });
 
@@ -253,6 +256,31 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
+  it('resolves /tower to the builtin command when the tower flag is enabled', () => {
+    setExperimentalFeatures([{ id: 'tower', enabled: true }]);
+
+    expect(resolve('/tower Ship feature X')).toMatchObject({
+      kind: 'builtin',
+      name: 'tower',
+      args: 'Ship feature X',
+    });
+  });
+
+  it('does not resolve /tower as a builtin when the tower flag is disabled', () => {
+    expect(resolve('/tower Ship feature X')).toEqual({
+      kind: 'message',
+      input: '/tower Ship feature X',
+    });
+  });
+
+  it('does not resolve /tower as a builtin on the legacy engine', () => {
+    setExperimentalFeatures([{ id: 'tower', enabled: true }]);
+
+    expect(resolve('/tower on', { engineV2: false })).toEqual({
+      kind: 'message',
+      input: '/tower on',
+    });
+  });
 });
 
 describe('goal command resolution', () => {

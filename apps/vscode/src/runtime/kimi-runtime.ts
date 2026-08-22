@@ -1,5 +1,6 @@
 import {
   createKimiHarness,
+  createKimiHarnessV2,
   type KimiHarness,
   type Session,
   type SessionSummary,
@@ -29,6 +30,12 @@ export interface KimiRuntimeOptions {
   readonly log: (message: string, error?: unknown) => void;
   readonly homeDir?: string;
   readonly harness?: KimiHarness;
+  /**
+   * Engine rollback: create the legacy v1 harness instead of the default v2
+   * one. The decision is made once in `config/vscode-settings.ts`; a change
+   * applies on the next window reload, when the runtime is rebuilt.
+   */
+  readonly useAgentCoreV1?: boolean;
 }
 
 export interface OpenSessionOptions {
@@ -55,10 +62,11 @@ export class KimiRuntime {
     this.broadcast = options.broadcast;
     this.captureBaseline = options.captureBaseline;
     this.log = options.log;
+    const createHarness = options.useAgentCoreV1 ? createKimiHarness : createKimiHarnessV2;
     this.harness =
       options.harness ??
-      createKimiHarness({
-        ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
+      createHarness({
+        homeDir: options.homeDir,
         identity: {
           productName: "kimi-code-vscode",
           version: options.version,

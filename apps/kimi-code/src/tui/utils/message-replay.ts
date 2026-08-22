@@ -24,6 +24,16 @@ import { nextTranscriptId } from './transcript-id';
 
 export const REPLAY_TURN_LIMIT = 10;
 
+/**
+ * Resume fetches one extra turn of records: the SDK trims the replay to the
+ * requested limit before returning it, and a trim that lands between a
+ * bundled prompt and the hook results recorded immediately before it would
+ * make them unrecoverable. The extra margin lets the TUI-side limiter
+ * (session-replay's preserveBundleHookResults) do the final cut without
+ * losing them.
+ */
+export const REPLAY_FETCH_TURN_LIMIT = REPLAY_TURN_LIMIT + 1;
+
 export interface ReplayRenderContext {
   turnIndex: number;
   stepIndex: number;
@@ -44,6 +54,8 @@ export interface SkillActivationProjection {
   readonly skillName: string;
   readonly skillArgs?: string;
   readonly trigger: SkillActivationTrigger;
+  /** The activation rode a bundled prompt message, not a standalone one. */
+  readonly bundled?: boolean;
 }
 
 export interface PluginCommandProjection {
@@ -218,6 +230,10 @@ export function toolResultOutput(content: readonly ContentPart[]): string {
 }
 
 export function contentPartsToText(content: readonly ContentPart[]): string {
+  // A daemon-ref media part is self-contained and renders as a bare
+  // `[image]`/`[video]` placeholder downstream — neither the materialization
+  // path nor the internal `kimi-file://` url may surface as user text. A
+  // standalone `<media path>` tag is user text and stays verbatim.
   return content.map(contentPartToText).join('');
 }
 
@@ -253,6 +269,48 @@ export function skillActivationFromOrigin(
     skillArgs: origin.skillArgs,
     trigger: origin.trigger,
   };
+}
+
+/**
+ * The v2 engine bundles a prompt's inline skill activations into the prompt
+ * message itself: the rendered skill blocks precede the caller's parts in
+ * the content, and this origin field carries every activation's metadata so
+ * replay can rebuild the per-skill cards from the single message. The SDK's
+ * origin union is typed from the v1 engine, which never sets the field, so
+ * read it structurally here instead of widening the deprecated v1 package's
+ * types.
+ */
+export function bundledSkillsFromOrigin(
+  origin: PromptOrigin | undefined,
+): readonly SkillActivationProjection[] {
+  if (origin?.kind !== 'user') return [];
+  const activations = (
+    origin as {
+      readonly skillActivations?: readonly {
+        readonly activationId: string;
+        readonly skillName: string;
+        readonly skillArgs?: string;
+      }[];
+    }
+  ).skillActivations;
+  if (activations === undefined) return [];
+  return activations.map((activation) => ({
+    activationId: activation.activationId,
+    skillName: activation.skillName,
+    skillArgs: activation.skillArgs,
+    trigger: 'user-slash' as const,
+    bundled: true,
+  }));
+}
+
+/**
+ * Content parts the caller actually typed: the engine prepends one rendered
+ * text part per bundled skill, so the caller's own parts start right after
+ * them.
+ */
+export function stripBundledSkillParts(message: ContextMessage): readonly ContentPart[] {
+  const bundledCount = bundledSkillsFromOrigin(message.origin).length;
+  return bundledCount === 0 ? message.content : message.content.slice(bundledCount);
 }
 
 export function pluginCommandFromOrigin(

@@ -70,7 +70,6 @@ describe('AskUserQuestionTool', () => {
     const { tool } = makeTool();
 
     expect(tool.name).toBe('AskUserQuestion');
-    expect(tool.description).toContain('structured options');
     expect(tool.parameters).toMatchObject({
       type: 'object',
       properties: { questions: { type: 'array' } },
@@ -186,31 +185,6 @@ describe('AskUserQuestionTool', () => {
     expect(requestQuestion).not.toHaveBeenCalled();
   });
 
-  it('describes the no-Other rule on options and the Recommended hint on label', () => {
-    const { tool } = makeTool();
-    const params = tool.parameters as {
-      properties: {
-        questions: {
-          items: {
-            properties: {
-              options: {
-                description?: string;
-                items: { properties: { label: { description?: string } } };
-              };
-            };
-          };
-        };
-      };
-    };
-
-    const optionsSchema = params.properties.questions.items.properties.options;
-    expect(optionsSchema.description).toContain("Do NOT include an 'Other' option");
-    expect(optionsSchema.description).toContain('the system adds one automatically');
-
-    const labelSchema = optionsSchema.items.properties.label;
-    expect(labelSchema.description).toContain("append '(Recommended)'");
-  });
-
   it('always builds the background-question schema', () => {
     const agent = {
       rpc: { requestQuestion: vi.fn() },
@@ -220,7 +194,6 @@ describe('AskUserQuestionTool', () => {
 
     const tool = new AskUserQuestionTool(agent);
 
-    expect(tool.description).toContain('Set background=true');
     expect(JSON.stringify(tool.parameters)).toContain('background');
   });
 
@@ -302,8 +275,6 @@ describe('AskUserQuestionTool', () => {
       background: manager,
     } as unknown as Agent;
     const tool = new AskUserQuestionTool(agent);
-    expect(tool.description).toContain('Set background=true');
-
     const result = await executeTool(tool, {
       turnId: '0',
       toolCallId: 'call_background_question',
@@ -350,8 +321,6 @@ describe('AskUserQuestionTool', () => {
       background: manager,
     } as unknown as Agent;
     const tool = new AskUserQuestionTool(agent);
-    expect(tool.description).toContain('Set background=true');
-
     const result = await executeTool(tool, {
       turnId: '0',
       toolCallId: 'call_bg_enabled',

@@ -8,25 +8,28 @@ import { expect, vi } from 'vitest';
 import { toDisposable } from '#/_base/di/lifecycle';
 import type { IInstantiationService } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { Emitter, Event, type IWaitUntil } from '#/_base/event';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import {
+  IAgentLifecycleService,
+  type AgentScopeCreatedEvent,
+} from '#/session/agentLifecycle/agentLifecycle';
 import type { Promisable, PromisifyMethods } from '#/_base/utils/types';
 import type { AgentTaskInfo } from '#/agent/task/task';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
-import { CHECKPOINTED_MODELS, type Checkpointed } from '#/agent/contextMemory/conversationTime';
+import { BUILTIN_REPLAYABLE_STATE_KEYS } from '../state/builtinReplayableKeys';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { SessionCronServiceImpl } from '#/session/cron/sessionCronServiceImpl';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
-import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
-import { CronTaskPersistenceService } from '#/app/cron/cronTaskPersistenceService';
-import { IAgentGoalService } from '#/agent/goal/goal';
-import { AgentGoalService } from '#/agent/goal/goalService';
+import { IAgentGoalService } from '#/features/goal/goal';
+import { AgentGoalService } from '#/features/goal/goalService';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
@@ -49,7 +52,7 @@ import type {
 import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
 import type { AgentContextData } from '#/agent/contextMemory/types';
-import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/agent/goal/types';
+import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/features/goal/types';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { RunShellCommandInput, RunShellCommandResult } from '#/agent/shellCommand/shellCommand';
@@ -60,9 +63,6 @@ import type { ActivatePluginCommandPayload } from '#/agent/pluginCommand/pluginC
 import { IAgentPluginCommandService } from '#/agent/pluginCommand/pluginCommand';
 import type { ToolInfo } from '#/tool/toolContract';
 
-// Test-facing wire vocabulary, formerly imported from the deleted RPC
-// aggregation layer; payloads with an owner-domain type are aliased above,
-// the rest are local to the harness.
 type EmptyPayload = {};
 type CreateGoalPayload = CreateGoalInput;
 type RegisterToolPayload = UserToolRegistration;
@@ -86,15 +86,25 @@ interface StopTaskPayload { readonly taskId: string; readonly reason?: string }
 interface UndoHistoryPayload { readonly count: number }
 interface UnregisterToolPayload { readonly name: string }
 import { type UsageStatus } from '#/agent/usage/usage';
-import { IAgentSkillService, type SkillActivationInput } from '#/agent/skill/skill';
+import { IAgentSkillService, type PromptWithSkillsInput, type PromptWithSkillsResult, type SkillActivationInput } from '#/agent/skill/skill';
 import { AgentSkillService } from '#/agent/skill/skillService';
+import { IAgentRuntimeBindingSeed } from '#/agent/runtimeBinding/runtimeBinding';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { RuntimeLease } from '#/runtime/runtime';
+import { LocalRuntime } from '#/runtime/localRuntime';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import type {
   ExecutableToolOutput as ToolOutput,
   ExecutableToolResult,
 } from '#/tool/toolContract';
-import { AGENT_WIRE_RECORD_KEY, wireRecordToPayload, type WireRecord } from '#/wire/record';
-import { OP_REGISTRY } from '#/wire/op';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
+import { ISessionStateService } from '#/session/state/sessionState';
+import type { StateKey } from '#/state/state';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import { EventDispatcherService } from '#/state/eventDispatcherService';
+import { EVENT2_REGISTRY, event2FromRecord } from '#/app/event/event2';
 import { IProtocolAdapterRegistry, type ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
 import { hasProviderDefinition } from '#/kosong/provider/providerDefinition';
@@ -103,6 +113,12 @@ import { type ModelCapability } from '#/kosong/contract/capability';
 import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMessage, type StreamedMessagePart } from '#/kosong/contract/message';
 import { type ThinkingEffort } from '#/kosong/contract/provider';
 import { type Tool as KosongTool } from '#/kosong/contract/tool';
+import { type TokenUsage } from '#/kosong/contract/usage';
+import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
+import { type AgentModelDefinition } from '#/state/agentModel';
+import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';
+import { TodoAgentModelDefinition } from '#/session/todo/todoAgentModel';
+import { type TodoItem } from '#/session/todo/todoItem';
 import type { generate as kosongGenerate } from '#/kosong/contract/generate';
 import type { ChatProvider, GenerateOptions, StreamedMessage } from '#/kosong/contract/provider';
 import type { ILogger, LogContext, LogLevel } from '#/_base/log/log';
@@ -135,23 +151,25 @@ import {
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IHostFileSystem,
+  IHostFsWatchService,
+  IHostProcessService,
   ISessionBtwService,
   ISessionContext,
-  ISessionProcessRunner,
   IAgentScopeContext,
+  makeAgentScopeContext,
   IAgentShellCommandService,
   IAgentStepRetryService,
   IAgentLoopContinuationService,
   IAgentSwarmService,
   AgentSwarmService,
-  IAgentTokenCountingService,
+  ISessionTokenCountingService,
   IAppStateService,
   ITelemetryService,
   IHostTerminalService,
   IAgentToolRegistryService,
   IAgentToolActivationService,
   IAgentUserToolService,
-  IAgentUsageService,
+  ISessionUsageService,
   ISessionWorkspaceContext,
   IWorkspaceStateService,
   AgentLLMRequesterService,
@@ -173,14 +191,14 @@ import {
   type ServiceIdentifier,
 } from '#/index';
 import {
-  ISessionLifecycleService,
   type SessionCreatedEvent,
   type SessionWillCloseEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { IEventBus } from '#/app/event/eventBus';
+import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
-import { promptTurn } from '#/agent/loop/turnOps';
+import { TurnPrompt } from '#/agent/loop/turnOps';
 import { IModelService, type ModelsSection } from '#/kosong/model/model';
 import {
   DEFAULT_MODEL_SECTION,
@@ -206,7 +224,9 @@ import {
   type InteractionPendingChangedEvent,
   type InteractionResolution,
 } from '#/session/interaction/interaction';
-import type { IProcess } from '#/session/process/processRunner';
+import type { IHostProcess } from '#/os/interface/hostProcess';
+import { IHostClock } from '#/os/interface/hostClock';
+import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionQuestionService, type QuestionResult } from '#/session/question/question';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionSwarmService } from '#/features/swarm/session/sessionSwarm';
@@ -236,6 +256,25 @@ const MOCK_PROVIDER = {
 interface TestModelProviderOptions {
   readonly promptCacheKey?: string;
   readonly kimiRequestHeaders?: Record<string, string>;
+}
+
+function disclosedTestEnvironment(clock: IHostClock, cwd: string): EnvironmentDisclosureSnapshot {
+  const timeZone = clock.timeZone();
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(clock.now());
+  const part = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((candidate) => candidate.type === type)?.value ?? '';
+  return {
+    cwd,
+    date: {
+      disclosed: true,
+      value: { localDate: `${part('year')}-${part('month')}-${part('day')}`, timeZone },
+    },
+  };
 }
 
 interface KimiConfig {
@@ -329,6 +368,7 @@ type RpcPromise<T> = Promise<T> & {
 
 interface AgentRpcPassthroughAPI {
   prompt: (payload: PromptPayload) => Promisable<PromptLaunchResult | undefined>;
+  promptWithSkills: (payload: PromptWithSkillsInput) => Promisable<PromptWithSkillsResult>;
   steer: (payload: SteerPayload) => Promisable<PromptLaunchResult | undefined>;
   cancel: (payload: CancelPayload) => void;
   undoHistory: (payload: UndoHistoryPayload) => Promisable<number>;
@@ -398,8 +438,9 @@ interface ResumeStateSnapshot {
     readonly history: readonly ContextMessage[];
   };
   readonly checkpointedModels: Readonly<Record<string, unknown>>;
+  readonly todos: readonly TodoItem[];
   readonly permission: Omit<ReturnType<IAgentPermissionGate['data']>, 'rules'>;
-  readonly usage: Omit<ReturnType<IAgentUsageService['status']>, 'currentTurn'>;
+  readonly usage: Omit<ReturnType<ISessionUsageService['status']>, 'currentTurn'>;
 }
 
 interface ConfigureOptions {
@@ -425,7 +466,6 @@ export interface TestAgentOptions {
 
 type MutableScopeSeed = Array<readonly [ServiceIdentifier<unknown>, unknown]>;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyCtor<T> = new (...args: any[]) => T;
 type TestAgentServiceScope = 'app' | 'session' | 'agent';
 
@@ -503,31 +543,28 @@ function defineServiceValue<T>(
 
 export interface ExecEnvOverride {
   readonly hostFs?: IHostFileSystem | Partial<IHostFileSystem>;
-  readonly processRunner?: ISessionProcessRunner | Partial<ISessionProcessRunner>;
+  readonly processRunner?: IHostProcessService | Partial<IHostProcessService>;
 }
 
 export function execEnvServices(override: ExecEnvOverride = {}): TestAgentServiceOverride {
   const session = sessionServices((reg) => {
-    if (override.processRunner !== undefined) {
-      reg.defineInstance(
-        ISessionProcessRunner,
-        resolveProcessRunnerOverride(override.processRunner),
-      );
-    }
     reg.defineDescriptor(
       ISessionWorkspaceContext,
       new SyncDescriptor(SessionWorkspaceContextService),
     );
   });
-  if (override.hostFs === undefined) return session;
-
-  const hostFs = resolveHostFsOverride(override.hostFs);
-  return [
-    appServices((reg) => {
-      reg.defineInstance(IHostFileSystem, hostFs);
-    }),
-    session,
-  ];
+  const app = appServices((reg) => {
+    if (override.processRunner !== undefined) {
+      reg.defineInstance(
+        IHostProcessService,
+        resolveProcessRunnerOverride(override.processRunner),
+      );
+    }
+    if (override.hostFs !== undefined) {
+      reg.defineInstance(IHostFileSystem, resolveHostFsOverride(override.hostFs));
+    }
+  });
+  return [app, session];
 }
 
 function resolveHostFsOverride(input: IHostFileSystem | Partial<IHostFileSystem>): IHostFileSystem {
@@ -555,16 +592,16 @@ function isFullHostFs(input: unknown): boolean {
 }
 
 function resolveProcessRunnerOverride(
-  input: ISessionProcessRunner | Partial<ISessionProcessRunner>,
-): ISessionProcessRunner {
+  input: IHostProcessService | Partial<IHostProcessService>,
+): IHostProcessService {
   if (
     typeof input === 'object' &&
     input !== null &&
-    typeof (input as ISessionProcessRunner).exec === 'function'
+    typeof (input as IHostProcessService).spawn === 'function'
   ) {
-    return input as ISessionProcessRunner;
+    return input as IHostProcessService;
   }
-  return createFakeProcessRunner(input as Partial<ISessionProcessRunner>);
+  return createFakeProcessRunner(input as Partial<IHostProcessService>);
 }
 
 export function homeDirServices(homeDir: string | undefined): TestAgentServiceOverride {
@@ -776,21 +813,22 @@ export function swarmServices(
   ];
 }
 
-export function createCommandRunner(stdout: string, exitCode = 0): ISessionProcessRunner {
-  function createProcess(): IProcess {
+export function createCommandRunner(stdout: string, exitCode = 0): IHostProcessService {
+  function createProcess(): IHostProcess {
     return {
+      _serviceBrand: undefined,
       stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
       stdout: Readable.from([stdout]),
       stderr: Readable.from(['']),
       pid: 42,
       exitCode,
-      wait: vi.fn().mockResolvedValue(exitCode) as IProcess['wait'],
-      kill: vi.fn().mockResolvedValue(undefined) as IProcess['kill'],
-      dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+      wait: vi.fn().mockResolvedValue(exitCode),
+      kill: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn(),
     };
   }
   return createFakeProcessRunner({
-    exec: vi.fn().mockImplementation(async () => createProcess()),
+    spawn: vi.fn().mockImplementation(async () => createProcess()),
   });
 }
 
@@ -848,6 +886,13 @@ function flattenServiceOverrides(
   return flattened;
 }
 
+class TestAgentStateService extends AgentStateService {
+  override contributeState<T>(key: StateKey<T>): IDisposable {
+    if (this.has(key)) return toDisposable(() => {});
+    return super.contributeState(key);
+  }
+}
+
 function collectScopeSeed(
   baseGroups: readonly TestAgentServiceGroup[],
   overrides: readonly TestAgentScopedServiceOverride[],
@@ -899,11 +944,6 @@ function collectScopeSeed(
   return seed;
 }
 
-// Feature contributions (`ScopeUnits` fold) provide into a scope through the
-// cascade and would replace a same-token seed instance installed at creation;
-// re-asserting overrides of feature-contributed tokens through the live
-// container right after scope creation keeps test stubs winning, as they did
-// over static registrations (which `provideScopeServices` skips when seeded).
 function reassertServiceOverrides(
   overrides: readonly TestAgentScopedServiceOverride[],
   scope: TestAgentServiceScope,
@@ -943,6 +983,7 @@ function reassertServiceOverrides(
 class PersistenceAppendLogStore implements IAppendLogStore {
   declare readonly _serviceBrand: undefined;
   private readonly history: WireRecord[] = [];
+  private readSeeded = false;
 
   constructor(
     private readonly persistence: WireRecordPersistence,
@@ -958,11 +999,13 @@ class PersistenceAppendLogStore implements IAppendLogStore {
   }
 
   async *read<R>(_scope: string, _key: string): AsyncIterable<R> {
+    const seeding = !this.readSeeded;
     for await (const event of this.persistence.read()) {
       this.onRead(event);
-      this.history.push(cloneRecord(event));
+      if (seeding) this.history.push(cloneRecord(event));
       yield event as R;
     }
+    this.readSeeded = true;
   }
 
   rewrite<R>(_scope: string, _key: string, records: readonly R[]): Promise<void> {
@@ -980,6 +1023,10 @@ class PersistenceAppendLogStore implements IAppendLogStore {
 
   acquire(_scope: string, _key: string): IDisposable {
     return toDisposable(() => { });
+  }
+
+  drainRetirements(): Promise<void> {
+    return Promise.resolve();
   }
 
   snapshot(): WireRecord[] {
@@ -1048,6 +1095,7 @@ export class AgentTestContext {
   private readonly root: Scope;
   private readonly session: Scope;
   private readonly agent: Scope;
+  private agentLifecycleScope: Scope | undefined;
   private readonly disposables: IDisposable[] = [];
   private suppressWireSnapshot = false;
   kimiConfig: KimiConfig;
@@ -1095,10 +1143,6 @@ export class AgentTestContext {
             IConfigService,
             configService(() => this.kimiConfig),
           );
-          // The harness is a config-already-loaded world, so the identity is
-          // handed out pre-frozen (no custom identity, matching the empty
-          // bootstrap headers above); the freeze ordering itself is covered
-          // by the agentIdentity suite. Suites override via `appService`.
           reg.defineInstance(IAgentIdentity, stubAgentIdentity());
           reg.defineInstance(
             IAppendLogStore,
@@ -1153,6 +1197,7 @@ export class AgentTestContext {
             );
           }
           reg.defineInstance(IHostTerminalService, createHostTerminalService());
+          reg.defineInstance(IHostFileSystem, new HostFileSystem());
           reg.defineInstance(
             IHostEnvironment,
             {
@@ -1167,13 +1212,20 @@ export class AgentTestContext {
               ready: Promise.resolve(),
             } satisfies IHostEnvironment,
           );
-          reg.defineDescriptor(ICronTaskPersistence, new SyncDescriptor(CronTaskPersistenceService));
         },
       ],
       this.serviceOverrides,
       'app',
     );
     this.root = createAppScope({ seeds: appSeeds });
+    reassertServiceOverrides(this.serviceOverrides, 'app', this.root.instantiation);
+    const hookRunnerSeed = appSeeds.find(([id]) => id === IExternalHooksRunnerService);
+    if (hookRunnerSeed !== undefined) {
+      this.root.instantiation.provide(
+        IExternalHooksRunnerService,
+        hookRunnerSeed[1] as IExternalHooksRunnerService,
+      );
+    }
 
     const initialConfig = this.root.accessor.get(IConfigService);
     this.root.accessor
@@ -1195,6 +1247,16 @@ export class AgentTestContext {
       .get(ITelemetryService)
       .withContext({ agent_id: agentId });
     const sessionScope = `${bootstrap.scope('sessions')}/${workspaceId}/${sessionId}`;
+    const lifecycleHandle = (): IAgentScopeHandle | undefined => {
+      const agent = this.agentLifecycleScope;
+      if (agent === undefined) return undefined;
+      return {
+        id: agentId,
+        kind: LifecycleScope.Agent,
+        accessor: agent.accessor,
+        dispose: () => agent.dispose(),
+      };
+    };
     this.session = this.root.createChild(LifecycleScope.Session, sessionId, {
       seeds: collectScopeSeed(
         [
@@ -1209,7 +1271,7 @@ export class AgentTestContext {
               scope: (subKey?: string): string =>
                 subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
             });
-            reg.definePartialInstance(ISessionLifecycleService, {
+            reg.definePartialInstance(ISessionManager, {
               onDidCreateSession: Event.None as Event<SessionCreatedEvent & IWaitUntil>,
               onWillCloseSession: Event.None as Event<SessionWillCloseEvent & IWaitUntil>,
             });
@@ -1245,8 +1307,9 @@ export class AgentTestContext {
             );
             reg.defineInstance(IAgentLifecycleService, {
               _serviceBrand: undefined,
-              onDidCreate: Event.None as Event<IAgentScopeHandle>,
-              onDidDispose: Event.None as Event<string>,
+              onDidCreate: Event.None as Event<AgentContext>,
+              onDidCreateScope: Event.None as Event<AgentScopeCreatedEvent>,
+              onDidDispose: Event.None as Event<AgentContext>,
               create: () =>
                 Promise.reject(
                   new Error('IAgentLifecycleService.create is not supported in the test harness'),
@@ -1255,8 +1318,12 @@ export class AgentTestContext {
                 Promise.reject(
                   new Error('IAgentLifecycleService.fork is not supported in the test harness'),
                 ),
-              get: () => undefined,
-              list: () => [],
+              get: () => lifecycleHandle(),
+              findAgentHandle: () => lifecycleHandle(),
+              list: () => {
+                const handle = lifecycleHandle();
+                return handle === undefined ? [] : [handle];
+              },
               remove: () => Promise.resolve(),
               broadcastPermissionMode: (mode: PermissionMode) => {
                 this.agent.accessor.get(IAgentPermissionModeService).setMode(mode);
@@ -1279,13 +1346,49 @@ export class AgentTestContext {
     reassertServiceOverrides(this.serviceOverrides, 'session', this.session.instantiation);
     const workspace = this.session.accessor.get(ISessionWorkspaceContext);
 
+    const agentScopeContext = makeAgentScopeContext({
+      agentId,
+      agentScope: `${sessionScope}/agents/${agentId}`,
+      generation: 1,
+    });
+    this.session.accessor.get(ISessionEventBus).activateAgent(agentScopeContext.agentContext);
+
     this.agent = this.session.createChild(LifecycleScope.Agent, agentId, {
       seeds: collectScopeSeed(
         [
           (reg) => {
+            reg.defineInstance(IAgentRuntimeBindingSeed, {
+              _serviceBrand: undefined,
+              binding: { workspaceId: 'workspace-1', runtimeId: 'local' },
+            });
+            const runtime = new LocalRuntime(
+              'workspace-1',
+              this.root.accessor.get(IHostEnvironment),
+              this.root.accessor.get(IHostFileSystem),
+              this.root.accessor.get(IHostProcessService),
+              this.root.accessor.get(IHostFsWatchService),
+              this.root.accessor.get(IHostTerminalService),
+            );
+            reg.defineInstance<IAgentRuntimeService>(IAgentRuntimeService, {
+              _serviceBrand: undefined,
+              onDidChange: () => ({ dispose: () => {} }),
+              isAvailable: (required = []) => required.every((capability) => runtime.capabilities.has(capability)),
+              inspect: () => runtime,
+              acquire: (required = []): RuntimeLease => {
+                const missing = required.filter((capability) => !runtime.capabilities.has(capability));
+                if (missing.length > 0) {
+                  throw new Error(`test runtime missing capabilities: ${missing.join(', ')}`);
+                }
+                return { runtime, track: (resource) => resource, dispose: () => {} };
+              },
+            });
             reg.defineDescriptor(
               IWireService,
               new SyncDescriptor(WireService),
+            );
+            reg.defineDescriptor(
+              IEventDispatcher,
+              new SyncDescriptor(EventDispatcherService),
             );
             reg.defineDescriptor(IAgentBlobService, new SyncDescriptor(AgentBlobServiceImpl));
             reg.defineDescriptor(IAgentProfileService, new SyncDescriptor(AgentProfileService));
@@ -1316,13 +1419,14 @@ export class AgentTestContext {
             reg.defineDescriptor(IAgentGoalService, new SyncDescriptor(AgentGoalService));
             reg.defineDescriptor(IAgentSkillService, new SyncDescriptor(AgentSkillService));
             reg.defineDescriptor(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
-            const agentScope = `${sessionScope}/agents/${agentId}`;
-            reg.defineInstance(IAgentScopeContext, {
-              _serviceBrand: undefined,
-              agentId,
-              scope: (subKey?: string): string =>
-                subKey === undefined || subKey === '' ? agentScope : `${agentScope}/${subKey}`,
-            });
+            const agentStateService = new TestAgentStateService(
+              this.session.accessor.get(ISessionStateService),
+            );
+            for (const key of BUILTIN_REPLAYABLE_STATE_KEYS) {
+              agentStateService.contributeState(key);
+            }
+            reg.defineInstance(IAgentStateService, agentStateService);
+            reg.defineInstance(IAgentScopeContext, agentScopeContext);
             reg.defineInstance(ITelemetryService, agentTelemetry);
           },
         ],
@@ -1330,6 +1434,10 @@ export class AgentTestContext {
         'agent',
       ),
     });
+    this.agentLifecycleScope = this.agent;
+    this.session.accessor
+      .get(ISessionEventBus)
+      .activateAgent(this.agent.accessor.get(IAgentScopeContext).agentContext);
     reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);
 
     this.initializeRestorableServices();
@@ -1365,38 +1473,93 @@ export class AgentTestContext {
     return this.get(IAgentContextMemoryService);
   }
 
-  get tokenCounting(): IAgentTokenCountingService {
-    return this.get(IAgentTokenCountingService);
+  get tokenCounting() {
+    const service = this.get(ISessionTokenCountingService);
+    const agent = this.agentContext;
+    return {
+      get strategy() {
+        return service.strategy;
+      },
+      get: (start?: number, end?: number) => service.get(agent, start, end),
+      measured: (
+        input: readonly KosongMessage[],
+        output: readonly KosongMessage[],
+        usage: TokenUsage,
+      ) => service.measured(agent, input, output, usage),
+      latestMeasured: () => service.latestMeasured(agent),
+      statusSize: () => service.statusSize(agent),
+      requestSize: (request: Parameters<ISessionTokenCountingService['requestSize']>[0]) =>
+        service.requestSize(request),
+      estimateText: (text: string) => service.estimateText(text),
+      estimateMessage: (message: KosongMessage) => service.estimateMessage(message),
+      estimateMessages: (messages: readonly KosongMessage[]) =>
+        service.estimateMessages(messages),
+      estimateTools: (tools: readonly KosongTool[]) => service.estimateTools(tools),
+    };
+  }
+
+  get usage() {
+    const service = this.get(ISessionUsageService);
+    const agent = this.agentContext;
+    return {
+      record: (model: string, usage: TokenUsage, source?: AgentLLMRequestSource) =>
+        service.record(agent, model, usage, source),
+      status: () => service.status(agent),
+      onDidRecord: service.onDidRecord,
+    };
+  }
+
+  get agentContext(): AgentContext {
+    return this.get(IAgentScopeContext).agentContext;
+  }
+
+  readModel<D extends AgentModelDefinition<any, any>, R>(
+    definition: D,
+    read: (model: AgentModelInstanceOf<D>) => R,
+  ): R {
+    return this.agentContext.space.use(definition, read);
   }
 
   get wire(): IWireService {
     return this.get(IWireService);
   }
 
+  get dispatcher(): IEventDispatcher {
+    return this.get(IEventDispatcher);
+  }
+
+  get agentState(): IAgentStateService {
+    return this.get(IAgentStateService);
+  }
+
   async restorePersisted(): Promise<void> {
-    await this.wire.restore();
+    await this.dispatcher.restore();
   }
 
   private async restoreRecordsOnly(records: readonly WireRecord[]): Promise<void> {
     const scope = this.get(IAgentScopeContext).scope();
     const log = this.get(IAppendLogStore);
     await log.rewrite(scope, AGENT_WIRE_RECORD_KEY, records);
-    await this.wire.restore();
+    await this.dispatcher.restore();
   }
 
   private async dispatchRecordsOnly(records: readonly WireRecord[]): Promise<void> {
     for (const record of records) {
-      const descriptor = OP_REGISTRY.get(record.type);
-      if (descriptor === undefined) {
+      const cls = EVENT2_REGISTRY.get(record.type);
+      if (cls === undefined) {
         throw new Error(`Unknown wire record type in test harness: ${record.type}`);
       }
-      this.wire.dispatch({
-        type: record.type,
-        payload: wireRecordToPayload(record),
-        descriptor,
-      });
+      let eventRecord = record;
+      if (cls.agentDomain && record['agentId'] === undefined) {
+        eventRecord = { ...record, agentId: this.get(IAgentScopeContext).agentId };
+      }
+      const event = event2FromRecord(cls, eventRecord);
+      if (event === undefined) {
+        throw new Error(`Malformed wire record in test harness: ${record.type}`);
+      }
+      await this.dispatcher.dispatch(event);
     }
-    await this.wire.flush();
+    await this.dispatcher.flush();
   }
 
   private async closeWire(): Promise<void> {
@@ -1405,8 +1568,8 @@ export class AgentTestContext {
 
   private initializeRestorableServices(): void {
     const context = this.get(IAgentContextMemoryService);
-    const tokenCounting = this.get(IAgentTokenCountingService);
-    const usage = this.get(IAgentUsageService);
+    const tokenCounting = this.tokenCounting;
+    const usage = this.usage;
     const permissionMode = this.get(IAgentPermissionModeService);
     const permissionRules = this.get(IAgentPermissionRulesService);
     const cron = this.get(ISessionCronService);
@@ -1430,6 +1593,23 @@ export class AgentTestContext {
     void permissionRules.rules;
     cron.list();
     void plan.status();
+
+    this.get(IAgentGoalService);
+    this.get(IAgentSkillService);
+    this.get(IAgentUserToolService);
+    this.get(IAgentLLMRequesterService);
+    this.get(IAgentFullCompactionService);
+    this.get(IAgentProfileService);
+    const agentState = this.get(IAgentStateService);
+    const expected = new Set(BUILTIN_REPLAYABLE_STATE_KEYS.map((key) => key.name));
+    const contributed = new Set(agentState.replayableKeys().map((key) => key.name));
+    const missing = [...expected].filter((name) => !contributed.has(name));
+    const unexpected = [...contributed].filter((name) => !expected.has(name));
+    if (missing.length > 0 || unexpected.length > 0) {
+      throw new Error(
+        `test harness replayable state drift: missing=[${missing.join(', ')}] unexpected=[${unexpected.join(', ')}]`,
+      );
+    }
   }
 
   configure({
@@ -1443,6 +1623,10 @@ export class AgentTestContext {
       modelAlias: provider.model,
       systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
       thinkingLevel: 'off',
+      environmentDisclosure: disclosedTestEnvironment(
+        this.get(IHostClock),
+        this.get(ISessionContext).cwd,
+      ),
     });
 
     if (tools.length > 0) {
@@ -1468,7 +1652,7 @@ export class AgentTestContext {
 
   contextData(): { readonly history: readonly ContextMessage[]; readonly tokenCount: number } {
     const context = this.get(IAgentContextMemoryService);
-    const tokenCounting = this.get(IAgentTokenCountingService);
+    const tokenCounting = this.tokenCounting;
     return {
       history: context.get(),
       tokenCount: tokenCounting.get().measured,
@@ -1502,8 +1686,12 @@ export class AgentTestContext {
   }
 
   appendUserTurn(text: string): void {
-    this.get(IWireService).dispatch(
-      promptTurn({ input: [{ type: 'text', text }], origin: { kind: 'user' } }),
+    void this.dispatcher.dispatch(
+      new TurnPrompt({
+        agentId: 'main',
+        input: [{ type: 'text', text }],
+        origin: { kind: 'user' },
+      }),
     );
     this.appendMessage({
       role: 'user',
@@ -2065,6 +2253,7 @@ export class AgentTestContext {
   private createRpcPassthroughAdapters(): AgentRpcPassthroughAPI {
     return {
       prompt: (payload) => this.get(IAgentPromptService).submit(payload),
+      promptWithSkills: (payload) => this.get(IAgentSkillService).promptWithSkills(payload),
       steer: (payload) => this.get(IAgentPromptService).submitSteer(payload),
       cancel: (payload) => this.get(IAgentLoopService).cancelFromUser(payload.turnId),
       undoHistory: (payload) => this.get(IAgentConversationUndoService).undo(payload.count),
@@ -2078,7 +2267,7 @@ export class AgentTestContext {
       runCommand: (payload) => this.get(IAgentCommandService).run(payload.name, payload.args),
       getContext: () => ({
         history: this.get(IAgentContextMemoryService).get(),
-        tokenCount: this.get(IAgentTokenCountingService).statusSize(),
+        tokenCount: this.tokenCounting.statusSize(),
       }),
       getTools: () => this.toolsData(),
       runShellCommand: (payload) => this.get(IAgentShellCommandService).run(payload),
@@ -2123,7 +2312,7 @@ export class AgentTestContext {
       getConfig: () => this.get(IAgentProfileService).data(),
       getPermission: () => this.get(IAgentPermissionGate).data(),
       getPlan: () => this.get(IAgentPlanService).status(),
-      getUsage: () => this.get(IAgentUsageService).status(),
+      getUsage: () => this.usage.status(),
       getTasks: (payload) =>
         this.get(IAgentTaskService).list(payload.activeOnly ?? false, payload.limit),
     };
@@ -2167,11 +2356,10 @@ export class AgentTestContext {
       inputCacheCreation: 0,
     };
     const context = this.get(IAgentContextMemoryService);
-    const tokenCounting = this.get(IAgentTokenCountingService);
+    const tokenCounting = this.tokenCounting;
     tokenCounting.measured(context.get(), [], usage);
     const profile = this.get(IAgentProfileService);
-    const usageService = this.get(IAgentUsageService);
-    usageService.record(profile.data().modelAlias ?? 'mock-model', usage, {
+    void this.usage.record(profile.data().modelAlias ?? 'mock-model', usage, {
       type: 'turn',
       turnId: context.get().length,
     });
@@ -2265,7 +2453,7 @@ const failOnResumeGenerate: GenerateFn = async () => {
 };
 
 function resumeStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot {
-  const usage = ctx.get(IAgentUsageService);
+  const usage = ctx.usage;
   const permission = ctx.get(IAgentPermissionGate);
   const { currentTurn: _currentTurn, ...usageStatus } = usage.status();
   const { rules: _rules, ...permissionData } = permission.data();
@@ -2273,11 +2461,13 @@ function resumeStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot {
     config: configStateSnapshot(ctx),
     context: resumeContextSnapshot(ctx),
     checkpointedModels: Object.fromEntries(
-      CHECKPOINTED_MODELS.map((model) => [
-        model.name,
-        (ctx.get(IWireService).getModel(model) as Checkpointed<unknown>).current,
-      ]),
+      ctx
+        .get(IAgentStateService)
+        .replayableKeys()
+        .filter((key) => key.replayable.undoable !== undefined)
+        .map((key) => [key.name, ctx.get(IAgentStateService).get(key)]),
     ),
+    todos: ctx.readModel(TodoAgentModelDefinition, (model) => model.items()),
     permission: permissionData,
     usage: usageStatus,
   };

@@ -1,148 +1,36 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { z } from 'zod';
 
+import { DisposableStore } from '#/_base/di/lifecycle';
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { createDecorator } from '#/_base/di/instantiation';
-import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
-import { Service } from '#/_base/di/service';
 import { TestInstantiationService } from '#/_base/di/test';
 import { resetUnexpectedErrorHandler, setUnexpectedErrorHandler } from '#/_base/errors/unexpectedError';
-import { IEventBus } from '#/app/event/eventBus';
-import { EventBusService } from '#/app/event/eventBusService';
+import { IAgentBlobService } from '#/agent/blob/agentBlobService';
+import type { ContentPart } from '#/kosong/contract/message';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { defineModel, type ModelDef } from '#/wire/model';
+import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
-import { bindDefineOp, DuplicateOpError, type Op, type OpDescriptor } from '#/wire/op';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
-import {
-  builtinWireContribution,
-  foldWireContributions,
-  WireModelContribution,
-  type WireModelContributionRecord,
-} from '#/wire/wireContribution';
-import { CycleError } from '#/wire/wireService';
-import '#/agent/interruptionReminder/interruptionReminderOps';
 
-import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from './stubs';
+import { recordingWireLog, registerTestAgentWire, testWireScope } from './stubs';
 
 const SCOPE = 'wire';
-const KEY = 'store-test';
-
-const trace: string[] = [];
-
-const CounterModel = defineModel('store.counter', () => ({ value: 0 }));
-const OtherModel = defineModel('store.other', () => ({ value: 0 }));
-
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'wire.test.counter_changed': { readonly value: number };
-    'wire.test.other_changed': { readonly value: number };
-  }
-}
-
-const counterAdd = CounterModel.defineOp('store.counter.add', {
-  schema: z.object({ by: z.number() }),
-  apply: (s, p) => {
-    trace.push('apply.counter');
-    return { value: s.value + p.by };
-  },
-  toEvent: (_payload, state) => ({
-    type: 'wire.test.counter_changed' as const,
-    value: state.value,
-  }),
-});
-
-declare module '#/wire/types' {
-  interface PersistedOpMap {
-    'store.counter.add': typeof counterAdd;
-  }
-}
-
-const otherSet = OtherModel.defineOp('store.other.set', {
-  schema: z.object({ value: z.number() }),
-  apply: (_s, p) => {
-    trace.push('apply.other');
-    return { value: p.value };
-  },
-});
-const otherInc = OtherModel.defineOp('store.other.inc', {
-  schema: z.object({}),
-  apply: (s) => ({ value: s.value + 1 }),
-  toEvent: (_payload, state) => ({
-    type: 'wire.test.other_changed' as const,
-    value: state.value,
-  }),
-});
-const mutateCounter = CounterModel.defineOp('store.counter.mutate', {
-  schema: z.object({}),
-  apply: (s) => {
-    (s as { value: number }).value = 123;
-    return s;
-  },
-});
-
-interface DynState {
-  readonly hits: number;
-}
-
-const dynModel: ModelDef<DynState> = {
-  name: 'wire.test.dyn',
-  initial: () => ({ hits: 0 }),
-  defineOp: bindDefineOp(() => dynModel),
-};
-
-const dynHit: OpDescriptor<'wire.test.dyn.hit', DynState, { n: number }> = {
-  type: 'wire.test.dyn.hit',
-  model: dynModel,
-  schema: z.object({ n: z.number() }),
-  apply: (state, payload) => ({ hits: state.hits + payload.n }),
-};
-
-const dynHitOp = (payload: { n: number }): Op<'wire.test.dyn.hit', { n: number }> => ({
-  type: 'wire.test.dyn.hit',
-  payload,
-  descriptor: dynHit,
-});
-
-const evilCounterAdd: OpDescriptor<'store.counter.add', DynState, { by: number }> = {
-  type: 'store.counter.add',
-  model: dynModel,
-  schema: z.object({ by: z.number() }),
-  apply: () => ({ hits: 999 }),
-};
-
-interface IDynContributor {
-  readonly marker: string;
-}
-const IDynContributor = createDecorator<IDynContributor>('wire-test-dyn-contributor');
-
-class DynContributor extends Service {
-  constructor(record: WireModelContributionRecord) {
-    super();
-    this.provide(WireModelContribution, record);
-  }
-}
+const KEY = 'journal-test';
 
 let disposables: DisposableStore;
 let ix: TestInstantiationService;
 let wire: IWireService;
 let log: IAppendLogStore;
-let eventBus: IEventBus;
 
 beforeEach(() => {
-  trace.length = 0;
   disposables = new DisposableStore();
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.set(IEventBus, new SyncDescriptor(EventBusService));
   log = ix.get(IAppendLogStore);
-  eventBus = ix.get(IEventBus);
-  wire = registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log, eventBus });
+  wire = registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log });
 });
 
 afterEach(() => disposables.dispose());
@@ -159,335 +47,361 @@ async function readRecords(
   return out;
 }
 
-describe('WireService', () => {
-  it('dispatches a single op into model state and the journal', async () => {
-    wire.dispatch(counterAdd({ by: 3 }));
+async function collect(journal: AsyncIterable<WireRecord>): Promise<WireRecord[]> {
+  const out: WireRecord[] = [];
+  for await (const record of journal) {
+    out.push(record);
+  }
+  return out;
+}
 
-    expect(wire.getModel(CounterModel)).toEqual({ value: 3 });
+function wireOverLog(
+  stubLog: IAppendLogStore,
+  key: string,
+  dependencies: { blob?: IAgentBlobService } = {},
+): IWireService {
+  const stubIx = disposables.add(new TestInstantiationService());
+  return registerTestAgentWire(stubIx, testWireScope(SCOPE, key), { log: stubLog, ...dependencies });
+}
+
+describe('WireService seal', () => {
+  it('writes the metadata envelope once and ignores repeated calls', async () => {
+    await wire.seal();
+    await wire.seal();
+
     expect(await readRecords()).toEqual([
-      { type: 'store.counter.add', by: 3, time: expect.any(Number) },
+      {
+        type: 'metadata',
+        protocol_version: WIRE_PROTOCOL_VERSION,
+        created_at: expect.any(Number),
+      },
     ]);
   });
 
-  it('applies a multi-op group across its models in order', () => {
-    wire.dispatch(counterAdd({ by: 1 }), otherSet({ value: 42 }));
-
-    expect(trace).toEqual(['apply.counter', 'apply.other']);
-    expect(wire.getModel(CounterModel)).toEqual({ value: 1 });
-    expect(wire.getModel(OtherModel)).toEqual({ value: 42 });
-  });
-
-  it('replays silently: apply runs, no event or persist, onDidRestore once', async () => {
-    wire.dispatch(counterAdd({ by: 5 }));
-    const records = await readRecords();
-
-    const ix2 = disposables.add(new TestInstantiationService());
-    ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
-    ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    ix2.set(IEventBus, new SyncDescriptor(EventBusService));
-    const log2 = ix2.get(IAppendLogStore);
-    const replayEventBus = ix2.get(IEventBus);
-    const replayed = registerTestAgentWire(ix2, testWireScope(SCOPE, 'replay'), {
-      log: log2,
-      eventBus: replayEventBus,
+  it('does not seal a journal that already has records', async () => {
+    log.append(testWireScope(SCOPE, KEY), AGENT_WIRE_RECORD_KEY, {
+      type: 'wire.test.existing',
+      time: 1,
     });
+    await log.flush();
 
-    const events: number[] = [];
-    let restored = 0;
-    disposables.add(
-      replayEventBus.subscribe('wire.test.counter_changed', (event) => events.push(event.value)),
-    );
-    disposables.add(
-      replayed.hooks.onDidRestore.register('test', async (_ctx, next) => {
-        restored += 1;
-        await next();
-      }),
-    );
+    await wire.seal();
 
-    await restoreTestAgentWire(
-      replayed,
-      log2,
-      testWireScope(SCOPE, 'replay'),
-      records,
-    );
-
-    expect(replayed.getModel(CounterModel)).toEqual({ value: 5 });
-    expect(events).toEqual([]);
-    expect(restored).toBe(1);
-    expect((await readRecords(log2, SCOPE, 'replay')).slice(1)).toEqual(records);
-  });
-
-  it('fails restore when an onDidRestore hook fails', async () => {
-    const expected = new Error('restore participant failed');
-    disposables.add(
-      wire.hooks.onDidRestore.register('failing-participant', async () => {
-        throw expected;
-      }),
-    );
-
-    await expect(wire.restore()).rejects.toBe(expected);
-  });
-
-  it('applies each current-version record before requesting the next record during restore', async () => {
-    let streamed!: IWireService;
-    const streamingLog: IAppendLogStore = {
-      _serviceBrand: undefined,
-      append: () => {},
-      read: async function* <R>() {
-        yield {
-          type: 'metadata',
-          protocol_version: WIRE_PROTOCOL_VERSION,
-          created_at: 1,
-        } as R;
-        yield { type: 'store.counter.add', by: 2 } as R;
-        expect(streamed.getModel(CounterModel)).toEqual({ value: 2 });
-        yield { type: 'store.counter.add', by: 3 } as R;
-      },
-      rewrite: async () => {},
-      flush: async () => {},
-      close: async () => {},
-      acquire: () => toDisposable(() => {}),
-    };
-    const streamingIx = disposables.add(new TestInstantiationService());
-    streamed = registerTestAgentWire(
-      streamingIx,
-      testWireScope(SCOPE, 'streaming'),
-      { log: streamingLog },
-    );
-
-    await streamed.restore();
-
-    expect(streamed.getModel(CounterModel)).toEqual({ value: 5 });
-  });
-
-  it('queues reentrant dispatch and drains it after the current group', () => {
-    const seen: number[] = [];
-    disposables.add(
-      eventBus.subscribe('wire.test.counter_changed', (event) => {
-        seen.push(event.value);
-        if (event.value < 3) wire.dispatch(counterAdd({ by: 1 }));
-      }),
-    );
-
-    wire.dispatch(counterAdd({ by: 1 }));
-
-    expect(wire.getModel(CounterModel)).toEqual({ value: 3 });
-    expect(seen).toEqual([1, 2, 3]);
-  });
-
-  it('throws CycleError when a dispatch cascade exceeds MAX_DRAIN', () => {
-    disposables.add(
-      eventBus.subscribe('wire.test.counter_changed', () => wire.dispatch(otherInc({}))),
-    );
-    disposables.add(
-      eventBus.subscribe('wire.test.other_changed', () => wire.dispatch(counterAdd({ by: 1 }))),
-    );
-
-    expect(() => wire.dispatch(counterAdd({ by: 1 }))).toThrow(CycleError);
-    try {
-      wire.dispatch(counterAdd({ by: 1 }));
-      expect.unreachable('dispatch should have thrown');
-    } catch (error) {
-      expect(error).toMatchObject({
-        code: 'wire.cycle',
-        details: { depth: expect.any(Number), opTypes: expect.any(Array) },
-      });
-    }
-  });
-
-  it('reports unknown record types during replay and skips them', async () => {
-    const unexpected: unknown[] = [];
-    setUnexpectedErrorHandler((error) => unexpected.push(error));
-    try {
-      await restoreTestAgentWire(
-        wire,
-        log,
-        testWireScope(SCOPE, KEY),
-        [
-          { type: 'store.counter.add', by: 2 },
-          { type: 'no.such.op', foo: 1 },
-          { type: 'store.counter.add', by: 3 },
-        ],
-      );
-
-      expect(wire.getModel(CounterModel)).toEqual({ value: 5 });
-      expect(unexpected).toHaveLength(1);
-      expect(unexpected[0]).toMatchObject({
-        code: 'wire.unknown_record',
-        details: { type: 'no.such.op', index: 1 },
-      });
-    } finally {
-      resetUnexpectedErrorHandler();
-    }
-  });
-
-  it('replays legacy interruption records without reporting them', async () => {
-    const unexpected: unknown[] = [];
-    setUnexpectedErrorHandler((error) => unexpected.push(error));
-    try {
-      await restoreTestAgentWire(
-        wire,
-        log,
-        testWireScope(SCOPE, KEY),
-        [
-          { type: 'store.counter.add', by: 2 },
-          { type: 'interruptionReminder.recorded', turnId: 0 },
-          { type: 'store.counter.add', by: 3 },
-        ],
-      );
-
-      expect(wire.getModel(CounterModel)).toEqual({ value: 5 });
-      expect(unexpected).toEqual([]);
-    } finally {
-      resetUnexpectedErrorHandler();
-    }
-  });
-
-  it('freezes state: getModel is frozen and mutation throws in strict mode', () => {
-    wire.dispatch(counterAdd({ by: 2 }));
-    const state = wire.getModel(CounterModel);
-
-    expect(Object.isFrozen(state)).toBe(true);
-    expect(() => {
-      (state as { value: number }).value = 99;
-    }).toThrow(TypeError);
-    expect(wire.getModel(CounterModel)).toEqual({ value: 2 });
-  });
-
-  it('throws when an apply mutates its already-frozen incoming state', () => {
-    wire.dispatch(counterAdd({ by: 1 }));
-
-    expect(() => wire.dispatch(mutateCounter({}))).toThrow(TypeError);
-    expect(wire.getModel(CounterModel)).toEqual({ value: 1 });
+    expect(await readRecords()).toEqual([{ type: 'wire.test.existing', time: 1 }]);
   });
 });
 
-describe('WireService × WireModelContribution fold', () => {
-  function contribute(record: WireModelContributionRecord): void {
-    ix.provide(IDynContributor, new SyncDescriptor(DynContributor, [record] as never));
-    ix.invokeFunction((accessor) => accessor.get(IDynContributor));
-  }
+describe('WireService appendRecord', () => {
+  it('appends flat records without a dehydrator', async () => {
+    wire.appendRecord({ type: 'wire.test.append', value: 1, time: 10 });
+    wire.appendRecord({ type: 'wire.test.append', value: 2, time: 11 });
 
-  it('replays records of a runtime-contributed op while its record lives', async () => {
-    contribute({ models: [dynModel], ops: [dynHit] });
-
-    await restoreTestAgentWire(wire, log, testWireScope(SCOPE, KEY), [
-      { type: 'wire.test.dyn.hit', n: 2 },
-      { type: 'store.counter.add', by: 1 },
+    expect(await readRecords()).toEqual([
+      { type: 'wire.test.append', value: 1, time: 10 },
+      { type: 'wire.test.append', value: 2, time: 11 },
     ]);
-
-    expect(wire.getModel(dynModel)).toEqual({ hits: 2 });
-    expect(wire.getModel(CounterModel)).toEqual({ value: 1 });
   });
 
-  it('dispatches a runtime-contributed op and persists its record', async () => {
-    contribute({ models: [dynModel], ops: [dynHit] });
-
-    wire.dispatch(dynHitOp({ n: 2 }), counterAdd({ by: 1 }));
-
-    expect(wire.getModel(dynModel)).toEqual({ hits: 2 });
-    expect(await readRecords()).toContainEqual({
-      type: 'wire.test.dyn.hit',
-      n: 2,
-      time: expect.any(Number),
+  it('runs records through the dehydrate queue in append order', async () => {
+    const order: string[] = [];
+    wire.appendRecord({ type: 'wire.test.a', time: 1 }, async (record) => {
+      order.push('a');
+      return { ...record, dehydrated: true };
     });
+    wire.appendRecord({ type: 'wire.test.b', time: 2 }, async (record) => {
+      order.push('b');
+      return record;
+    });
+    await wire.flush();
+
+    expect(order).toEqual(['a', 'b']);
+    expect(await readRecords()).toEqual([
+      { type: 'wire.test.a', time: 1, dehydrated: true },
+      { type: 'wire.test.b', time: 2 },
+    ]);
   });
 
-  it('skips and counts replayed records of an op whose contribution was withdrawn', async () => {
-    contribute({ models: [dynModel], ops: [dynHit] });
-    ix.unprovide(IDynContributor);
+  it('queues a plain append behind a pending dehydrate', async () => {
+    const records: WireRecord[] = [];
+    const queued = wireOverLog(recordingWireLog(records), 'queued');
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    queued.appendRecord({ type: 'wire.test.gated', time: 1 }, async (record) => {
+      await gate;
+      return record;
+    });
+    queued.appendRecord({ type: 'wire.test.plain', time: 2 });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(records).toEqual([]);
+
+    release();
+    await queued.flush();
+    expect(records).toEqual([
+      { type: 'wire.test.gated', time: 1 },
+      { type: 'wire.test.plain', time: 2 },
+    ]);
+  });
+
+  it('hands the dehydrator a blob offload transform backed by the blob service', async () => {
+    const offloaded: unknown[][] = [];
+    const blob: IAgentBlobService = {
+      _serviceBrand: undefined,
+      offloadParts: async (parts) => {
+        offloaded.push([...parts]);
+        return parts.map((part) => ({ type: 'blob_ref', part })) as unknown as ContentPart[];
+      },
+      loadParts: async (parts) => parts,
+      isBlobRef: () => false,
+    };
+    const records: WireRecord[] = [];
+    const withBlob = wireOverLog(recordingWireLog(records), 'blob', { blob });
+
+    withBlob.appendRecord(
+      { type: 'wire.test.blob', parts: [{ type: 'text', text: 'x' }], time: 1 },
+      async (record, transform) => ({
+        ...record,
+        parts: await transform(record['parts'] as readonly unknown[]),
+      }),
+    );
+    await withBlob.flush();
+
+    expect(offloaded).toEqual([[{ type: 'text', text: 'x' }]]);
+    expect(records).toEqual([
+      {
+        type: 'wire.test.blob',
+        parts: [{ type: 'blob_ref', part: { type: 'text', text: 'x' } }],
+        time: 1,
+      },
+    ]);
+  });
+
+  it('reports a synchronous append failure through onUnexpectedError instead of throwing', () => {
+    const expected = new Error('append exploded');
+    const failing = recordingWireLog([]);
+    failing.append = () => {
+      throw expected;
+    };
+    const stub = wireOverLog(failing, 'failing');
 
     const unexpected: unknown[] = [];
     setUnexpectedErrorHandler((error) => unexpected.push(error));
     try {
-      await restoreTestAgentWire(wire, log, testWireScope(SCOPE, KEY), [
-        { type: 'wire.test.dyn.hit', n: 2 },
-        { type: 'store.counter.add', by: 1 },
-      ]);
+      stub.appendRecord({ type: 'wire.test.fail', time: 1 });
+      expect(unexpected).toEqual([expected]);
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
+  });
 
-      expect(wire.getModel(dynModel)).toEqual({ hits: 0 });
-      expect(wire.getModel(CounterModel)).toEqual({ value: 1 });
-      expect(unexpected).toHaveLength(1);
+  it('reports a dehydrate failure and keeps the queue usable for later appends', async () => {
+    const expected = new Error('dehydrate exploded');
+    const records: WireRecord[] = [];
+    const stub = wireOverLog(recordingWireLog(records), 'dehydrate-fail');
+
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      stub.appendRecord({ type: 'wire.test.bad', time: 1 }, async () => {
+        throw expected;
+      });
+      stub.appendRecord({ type: 'wire.test.good', time: 2 });
+      await stub.flush();
+
+      expect(unexpected).toEqual([expected]);
+      expect(records).toEqual([{ type: 'wire.test.good', time: 2 }]);
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
+  });
+});
+
+describe('WireService readJournal', () => {
+  it('bootstraps the metadata envelope onto an empty journal', async () => {
+    expect(await collect(wire.readJournal())).toEqual([]);
+
+    expect(await readRecords()).toEqual([
+      {
+        type: 'metadata',
+        protocol_version: WIRE_PROTOCOL_VERSION,
+        created_at: expect.any(Number),
+      },
+    ]);
+  });
+
+  it('heals an envelope-less legacy journal through the v1.4 to v1.5 migration', async () => {
+    log.append(testWireScope(SCOPE, KEY), AGENT_WIRE_RECORD_KEY, {
+      type: 'goal.create',
+      goalId: 'g1',
+      objective: 'legacy',
+      time: 7,
+    });
+    await log.flush();
+
+    const yielded = await collect(wire.readJournal());
+
+    expect(yielded).toEqual([
+      {
+        type: 'goal.create',
+        goalId: 'g1',
+        objective: 'legacy',
+        time: 7,
+        wallClockResumedAt: 7,
+      },
+    ]);
+    expect(await readRecords()).toEqual([
+      {
+        type: 'metadata',
+        protocol_version: WIRE_PROTOCOL_VERSION,
+        created_at: expect.any(Number),
+      },
+      ...yielded,
+    ]);
+  });
+
+  it('migrates a v1.4 journal and rewrites it at the current protocol version', async () => {
+    log.append(testWireScope(SCOPE, KEY), AGENT_WIRE_RECORD_KEY, {
+      type: 'metadata',
+      protocol_version: '1.4',
+      created_at: 1,
+    });
+    log.append(testWireScope(SCOPE, KEY), AGENT_WIRE_RECORD_KEY, {
+      type: 'goal.create',
+      goalId: 'g1',
+      time: 9,
+    });
+    await log.flush();
+
+    const yielded = await collect(wire.readJournal());
+
+    expect(yielded).toEqual([
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'goal.create', goalId: 'g1', time: 9, wallClockResumedAt: 9 },
+    ]);
+    expect(await readRecords()).toEqual(yielded);
+  });
+
+  it('reads a current-version journal without rewriting it', async () => {
+    const seeded: WireRecord[] = [
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.current', value: 1, time: 2 },
+    ];
+    let rewrites = 0;
+    const counting = recordingWireLog(seeded);
+    const rewrite = counting.rewrite.bind(counting);
+    counting.rewrite = async (scope, key, next) => {
+      rewrites += 1;
+      return rewrite(scope, key, next);
+    };
+    const stub = wireOverLog(counting, 'current');
+
+    expect(await collect(stub.readJournal())).toEqual(seeded);
+    expect(rewrites).toBe(0);
+  });
+
+  it('reads a newer-version journal without stamping or rewriting it', async () => {
+    const seeded: WireRecord[] = [
+      { type: 'metadata', protocol_version: '9.9', created_at: 1 },
+      { type: 'wire.test.newer', value: 1, time: 2 },
+    ];
+    let rewrites = 0;
+    const counting = recordingWireLog(seeded);
+    const rewrite = counting.rewrite.bind(counting);
+    counting.rewrite = async (scope, key, next) => {
+      rewrites += 1;
+      return rewrite(scope, key, next);
+    };
+    const stub = wireOverLog(counting, 'newer');
+
+    expect(await collect(stub.readJournal())).toEqual(seeded);
+    expect(rewrites).toBe(0);
+  });
+
+  it('rejects a malformed metadata envelope as corrupted storage', async () => {
+    const stub = wireOverLog(
+      recordingWireLog([{ type: 'metadata' }]),
+      'malformed-metadata',
+    );
+
+    const failure = await collect(stub.readJournal()).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(StorageError);
+    expect(failure).toMatchObject({
+      code: StorageErrors.codes.STORAGE_CORRUPTED,
+    });
+  });
+
+  it('skips malformed lines and reports them through onUnexpectedError', async () => {
+    const seeded: WireRecord[] = [
+      'garbage' as unknown as WireRecord,
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      42 as unknown as WireRecord,
+      { type: 'wire.test.ok', time: 3 },
+    ];
+    const stub = wireOverLog(recordingWireLog(seeded), 'malformed-lines');
+
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      const yielded = await collect(stub.readJournal());
+
+      expect(yielded).toEqual([
+        { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+        { type: 'wire.test.ok', time: 3 },
+      ]);
+      expect(unexpected).toHaveLength(2);
       expect(unexpected[0]).toMatchObject({
         code: 'wire.unknown_record',
-        details: { type: 'wire.test.dyn.hit', index: 0 },
+        details: { type: undefined, index: 0 },
+      });
+      expect(unexpected[1]).toMatchObject({
+        code: 'wire.unknown_record',
+        details: { type: undefined, index: 1 },
       });
     } finally {
       resetUnexpectedErrorHandler();
     }
   });
 
-  it('keeps the built-in op when a contribution conflicts with a built-in op type', async () => {
-    const unexpected: unknown[] = [];
-    setUnexpectedErrorHandler((error) => unexpected.push(error));
-    try {
-      contribute({ models: [dynModel], ops: [evilCounterAdd] });
-      expect(unexpected).toHaveLength(1);
-      expect(unexpected[0]).toMatchObject({
-        code: 'wire.duplicate_op',
-        details: { type: 'store.counter.add' },
-      });
+  it('throws when the journal version has no migration path', async () => {
+    const stub = wireOverLog(
+      recordingWireLog([{ type: 'metadata', protocol_version: '0.9', created_at: 1 }]),
+      'no-migration',
+    );
 
-      await restoreTestAgentWire(wire, log, testWireScope(SCOPE, KEY), [
-        { type: 'store.counter.add', by: 5 },
-      ]);
-
-      expect(wire.getModel(CounterModel)).toEqual({ value: 5 });
-      expect(wire.getModel(dynModel)).toEqual({ hits: 0 });
-    } finally {
-      resetUnexpectedErrorHandler();
-    }
+    await expect(collect(stub.readJournal())).rejects.toThrow(
+      'Missing wire migration for version 0.9',
+    );
   });
+});
 
-  it('runs cross-reducers from a contribution, and stops once it is withdrawn', () => {
-    contribute({
-      models: [dynModel],
-      crossReducers: new Map([
-        [
-          'store.counter.add',
-          [{ model: dynModel, reducer: (state: DynState, p: { by: number }) => ({ hits: state.hits + p.by }) }],
-        ],
-      ]),
+describe('WireService flush', () => {
+  it('drains the dehydrate queue before resolving', async () => {
+    const records: WireRecord[] = [];
+    const stub = wireOverLog(recordingWireLog(records), 'flush');
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
     });
 
-    wire.dispatch(counterAdd({ by: 2 }));
-    expect(wire.getModel(dynModel)).toEqual({ hits: 2 });
+    stub.appendRecord({ type: 'wire.test.gated', time: 1 }, async (record) => {
+      await gate;
+      return record;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(records).toEqual([]);
 
-    ix.unprovide(IDynContributor);
-    wire.dispatch(counterAdd({ by: 3 }));
-    expect(wire.getModel(CounterModel)).toEqual({ value: 5 });
-    expect(wire.getModel(dynModel)).toEqual({ hits: 2 });
-  });
+    let flushed = false;
+    const flushPromise = stub.flush().then(() => {
+      flushed = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(flushed).toBe(false);
 
-  it('keeps defineOp module-path behavior: duplicate type throws DuplicateOpError', () => {
-    expect(() =>
-      CounterModel.defineOp('store.counter.add', {
-        schema: z.object({}),
-        apply: (state) => state,
-      }),
-    ).toThrow(DuplicateOpError);
-  });
-
-  it('foldWireContributions folds the built-in layer, keeps the first op per type, dedups models', () => {
-    const dynHitClone: OpDescriptor<'wire.test.dyn.hit', DynState, { n: number }> = { ...dynHit };
-    const unexpected: unknown[] = [];
-    setUnexpectedErrorHandler((error) => unexpected.push(error));
-    try {
-      const folded = foldWireContributions([
-        builtinWireContribution(),
-        { models: [dynModel, dynModel], ops: [dynHit, dynHitClone] },
-      ]);
-
-      expect(folded.ops.get('store.counter.add')?.type).toBe('store.counter.add');
-      expect(folded.ops.get('wire.test.dyn.hit')).toBe(dynHit);
-      expect(folded.models.filter((model) => model === dynModel)).toHaveLength(1);
-      expect(unexpected).toHaveLength(1);
-      expect(unexpected[0]).toMatchObject({
-        code: 'wire.duplicate_op',
-        details: { type: 'wire.test.dyn.hit' },
-      });
-    } finally {
-      resetUnexpectedErrorHandler();
-    }
+    release();
+    await flushPromise;
+    expect(flushed).toBe(true);
+    expect(records).toEqual([{ type: 'wire.test.gated', time: 1 }]);
   });
 });

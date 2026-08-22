@@ -1,14 +1,7 @@
-/**
- * `sessionSwarm` domain — batch scheduler for swarm agent runs.
- *
- * Defines `ISessionSwarmService`, the Session-scoped service that runs a batch
- * of agents on behalf of a caller agent. Owns the in-flight batch state so
- * cancellation can reach every run. Bound at Session scope.
- */
-
 import type { TokenUsage } from '#/kosong/contract/usage';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { SubagentSpawnPlan } from '#/session/subagent/spawn';
 
 type SessionSwarmTaskBase<T> = {
   readonly data: T;
@@ -27,7 +20,7 @@ type SessionSwarmTaskBase<T> = {
 export type SessionSwarmSpawnTask<T = unknown> = SessionSwarmTaskBase<T> & {
   readonly kind: 'spawn';
   readonly resumeAgentId?: undefined;
-  readonly binding?: { readonly model: string; readonly thinking?: string };
+  readonly plan: SubagentSpawnPlan;
 };
 
 export type SessionSwarmResumeTask<T = unknown> = SessionSwarmTaskBase<T> & {

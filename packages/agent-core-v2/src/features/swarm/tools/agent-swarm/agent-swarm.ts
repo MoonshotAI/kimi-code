@@ -1,13 +1,3 @@
-/**
- * `swarm` domain — `IAgentSwarmTool` contract (the `AgentSwarm` tool).
- *
- * Public contract of the `AgentSwarm` collaboration tool: the input zod
- * schema the model-facing parameters are derived from, the tool-owned
- * constants the schema is built around (prompt template placeholder, maximum
- * subagent count), and the `IAgentSwarmTool` DI decorator used to resolve the
- * implementation through the container. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';
@@ -46,6 +36,12 @@ export const AgentSwarmToolInputSchema = z
       .describe(
         `Values used to fill ${PROMPT_TEMPLATE_PLACEHOLDER}. Each item launches one new subagent.`,
       ),
+    fork: z
+      .boolean()
+      .optional()
+      .describe(
+        'Fork the current context for every item-spawned subagent: each starts with a snapshot of this agent\'s completed conversation history instead of zero context, inheriting this agent\'s agent type, tool set, and model. A non-empty resume_agent_ids map is rejected. If subagent_type is provided, it must match this agent\'s type; if model is provided, it must be this agent\'s model or "primary". Different types and model overrides are rejected. Use it only when every item builds on this conversation; keep independent tasks zero-context.',
+      ),
     resume_agent_ids: z
       .record(z.string().trim().min(1), z.string().trim().min(1))
       .optional()
@@ -62,7 +58,6 @@ export const AgentSwarmToolInputSchema = z
   .strict();
 
 export type AgentSwarmToolInput = z.infer<typeof AgentSwarmToolInputSchema>;
-
 
 export interface IAgentSwarmTool extends AgentTool<AgentSwarmToolInput> { readonly _serviceBrand: undefined }
 export const IAgentSwarmTool = createDecorator<IAgentSwarmTool>('agentSwarmTool');

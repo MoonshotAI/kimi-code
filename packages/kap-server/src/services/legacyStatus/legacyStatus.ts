@@ -1,24 +1,8 @@
-/**
- * `LegacyStatus` — kap-server-layer projection of the v1-style
- * combined `agent.status.updated` payload from the agent's native v2 services.
- *
- * v1 emits a single `agent.status.updated` carrying usage + contextTokens +
- * maxContextTokens + model together. v2 splits those into independent Models /
- * Ops (`usage.record`, `token_counting.measured`, `config.update` …), so the
- * partial events reach clients separately and a usage-only event can overwrite
- * a previously-known contextTokens with a stale zero. The v1 edge re-reads the
- * authoritative services when a native status or context change arrives, so it
- * always forwards a real, consistent context-window value.
- *
- * Temporary bridge while the v2 wire contract still exposes the slices
- * separately — defined at the kap-server edge rather than in agent-core-v2 so
- * the core engine stays free of v1 wire-compatibility concerns.
- */
-
 import {
+  agentContextOf,
   IAgentProfileService,
-  IAgentTokenCountingService,
-  IAgentUsageService,
+  ISessionTokenCountingService,
+  ISessionUsageService,
   IModelCatalog,
   IModelService,
   type IAgentScopeHandle,
@@ -108,27 +92,21 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   const profile = agent.accessor.get(IAgentProfileService) as
     | IAgentProfileService
     | undefined;
-  const usageService = agent.accessor.get(IAgentUsageService) as
-    | IAgentUsageService
+  const usageService = agent.accessor.get(ISessionUsageService) as
+    | ISessionUsageService
     | undefined;
-  const tokenCounting = agent.accessor.get(IAgentTokenCountingService) as
-    | IAgentTokenCountingService
+  const tokenCounting = agent.accessor.get(ISessionTokenCountingService) as
+    | ISessionTokenCountingService
     | undefined;
   if (profile === undefined || usageService === undefined || tokenCounting === undefined) {
     return undefined;
   }
-  const usage = usageService.status();
-  // Externally reported context size, resolved by the `[token_counting]`
-  // strategy inside the service (`IAgentTokenCountingService.statusSize`) —
-  // mirrors the REST status rollup (`ISessionLegacyService.status`) and v1's
-  // `context.tokenCount`.
-  const contextTokens = tokenCounting.statusSize();
+  const context = agentContextOf(agent);
+  const usage = usageService.status(context);
+  const contextTokens = tokenCounting.statusSize(context);
   const capabilities = profile.getModelCapabilities();
   let maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
   if (maxContextTokens === 0 && profile.getModel() === '') {
-    // No model bound yet (e.g. a draft session): fall back to the configured
-    // default model's limit, mirroring the REST status rollup
-    // (`ISessionLegacyService.status`), so the push and REST agree.
     maxContextTokens = defaultModelContextTokens(agent) ?? 0;
   }
   const model = profile.getModel();
@@ -140,10 +118,6 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   };
 }
 
-/**
- * Context limit of the configured default model, or `undefined` when no
- * default model is configured or it does not resolve.
- */
 function defaultModelContextTokens(agent: IAgentScopeHandle): number | undefined {
   const models = agent.accessor.get(IModelService) as IModelService | undefined;
   const catalog = agent.accessor.get(IModelCatalog) as IModelCatalog | undefined;
@@ -254,6 +228,5 @@ export function toLegacyPhase(state: AgentActivityState): AgentPhase | undefined
     }
   }
 
-  // `disposing` / `disposed` — no v1 concept.
   return undefined;
 }

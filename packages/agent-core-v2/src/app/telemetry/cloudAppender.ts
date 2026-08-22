@@ -1,14 +1,3 @@
-/**
- * `telemetry` domain — `CloudAppender`, an `ITelemetryAppender` that
- * batches events, drops non-primitive properties, redacts PII from string
- * values, enriches events with common context, and posts them to the
- * telemetry endpoint through `CloudTransport`, which persists failed events
- * through the `storage` byte layer. Reads host facts (`clientIdentity`, env,
- * platform/arch) from `IBootstrapService`; `createCloudAppender` assembles
- * one from a `ServicesAccessor` so hosts only supply identity facts.
- * App-scoped; independent of `@moonshot-ai/kimi-telemetry`.
- */
-
 import { randomUUID } from 'node:crypto';
 import { release } from 'node:os';
 
@@ -95,6 +84,10 @@ export class CloudAppender implements ITelemetryAppender {
       storage: options.storage,
       deviceId: options.deviceId,
       endpoint: options.endpoint,
+      homeDir: options.bootstrap.homeDir,
+      readMarker:
+        (options.bootstrap.getEnv('KIMI_CODE_REGION_MARKER') ??
+          process.env['KIMI_CODE_REGION_MARKER']) !== 'off',
       getAccessToken: options.getAccessToken,
       fetchImpl: options.fetchImpl,
       retryBackoffsMs: options.retryBackoffsMs,

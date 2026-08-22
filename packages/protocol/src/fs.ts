@@ -42,6 +42,15 @@ export const fsSearchHitSchema = z.object({
 });
 export type FsSearchHit = z.infer<typeof fsSearchHitSchema>;
 
+export const fsSuggestItemSchema = z.object({
+  path: z.string(),
+  name: z.string(),
+  kind: fsKindSchema,
+  score: z.number().min(0).max(1),
+  match_positions: z.array(z.number().int().nonnegative()),
+});
+export type FsSuggestItem = z.infer<typeof fsSuggestItemSchema>;
+
 export const fsGrepMatchSchema = z.object({
   line: z.number().int().positive(),
   col: z.number().int().positive(),

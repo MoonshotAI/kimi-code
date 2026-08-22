@@ -1,12 +1,3 @@
-/**
- * `contextMemory` test stubs — shared doubles for `IAgentContextMemoryService` and its
- * collaborator (`IWireService`).
- *
- * Lives under `test/` (not `src/`) so test-support code stays out of the
- * production tree. Import from a relative path (`./stubs` or
- * `../contextMemory/stubs`).
- */
-
 import type { ServiceRegistration } from '#/_base/di/test';
 import { buildContextCompactionShape } from '#/agent/contextMemory/compactionHandoff';
 import {
@@ -15,13 +6,15 @@ import {
   type ContextCompactionResult,
 } from '#/agent/contextMemory/contextMemory';
 import { computeUndoCut, type UndoCut } from '#/agent/contextMemory/contextOps';
+import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IEventBus } from '#/app/event/eventBus';
+import { IEventBus, type ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IWireService } from '#/wire/wire';
 
 import { stubAgentWire } from '../../wire/stubs';
+import { stubAgentContext } from '../agentContext/stubs';
 
 export interface StubContextMemory extends IAgentContextMemoryService {
   readonly messages: readonly ContextMessage[];
@@ -36,7 +29,15 @@ function publishSplice(
     tokens?: number;
   },
 ): void {
-  eventBus?.publish({ type: 'context.spliced', ...input });
+  if (eventBus === undefined) return;
+  const sessionBus = eventBus as Partial<ISessionEventBus>;
+  if (typeof sessionBus.activateAgent === 'function') {
+    const context = stubAgentContext('main', 1);
+    sessionBus.activateAgent(context);
+    sessionBus.publish?.(new ContextSpliced({ agentId: 'main', ...input }), context);
+    return;
+  }
+  eventBus.publish(new ContextSpliced({ agentId: 'main', ...input }));
 }
 
 export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {

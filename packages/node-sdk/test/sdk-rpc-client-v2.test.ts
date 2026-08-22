@@ -1,9 +1,10 @@
 /**
- * Scenario: v2 wiring MVP — the harness talks to the in-process agent-core-v2
+ * Scenario: v2 wiring — the harness talks to the in-process agent-core-v2
  * engine (klient memory transport) instead of the v1 KimiCore RPC pair.
- * Responsibilities: `getExperimentalFeatures` is migrated end-to-end; every
- * not-yet-migrated method fails loudly with `not_implemented` instead of
- * silently hitting a v1 core.
+ * Responsibilities: v2-client behaviors the v1↔v2 parity gate does not
+ * compare (engine telemetry forwarding, host request headers, the Windows
+ * Git Bash probe, workspace trust, the config write cascade, deleteSession,
+ * foldAgentWireReplay).
  * Wiring: real v2 engine bootstrapped on a temp KIMI_CODE_HOME; remote provider calls are stubbed.
  * Run: pnpm exec vitest run test/sdk-rpc-client-v2.test.ts
  */
@@ -19,12 +20,15 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  buildDaemonFileUrl,
   createKimiHarnessV2,
   ErrorCodes,
-  KimiError,
+  isDaemonFileUrl,
+  isKimiError,
   KimiHarness,
   removeProviderFromConfig,
   SDKRpcClientV2,
+  toKimiErrorPayload,
   type Event,
   type KimiConfig,
 } from '#/index';
@@ -33,20 +37,26 @@ import {
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
   ensureMainAgent,
+  Error2,
   getLiveSessionById,
+  agentContextOf,
   HostProcessError,
+  IAgentLifecycleService,
   IAgentProfileService,
+  IAgentTowerService,
   IHostRequestHeaders,
-  ISessionLifecycleService,
-  IWorkspaceLifecycleService,
+  IMcpManagementService,
+  IMcpOAuthService,
+  ISessionManager,
+  ISessionTodoService,
   OsProcessErrors,
   type ProfileData,
 } from '@moonshot-ai/agent-core-v2';
 
 import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
+import { McpOAuthService as McpOAuthServiceV2 } from '@moonshot-ai/agent-core-v2/mcpCore/oauth/service';
 
 import { TEST_IDENTITY } from './test-identity';
-import { startMcpAuthStatusServer } from './mcp-auth-status-server';
 import { recordingTelemetry, type TelemetryRecord } from './telemetry';
 
 const hostEnvProbe = vi.hoisted(() => ({ failWithMissingShell: false }));
@@ -76,7 +86,7 @@ afterEach(async () => {
   await drainSessionIndexMirror();
   await drainQueryStoreDisposals();
   for (const dir of tempDirs.splice(0)) {
-    await rm(dir, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
 });
 
@@ -96,11 +106,46 @@ async function makeHarness(): Promise<{ harness: KimiHarness; homeDir: string }>
   return { harness: createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY }), homeDir };
 }
 
-describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
-  it('reports global MCP authorization from the persisted v2 credential store', async () => {
+/** Whether the persisted session directory exists under `<home>/sessions/<bucket>/<id>`. */
+async function sessionDirExists(homeDir: string, sessionId: string): Promise<boolean> {
+  let buckets: readonly string[];
+  try {
+    buckets = await readdir(join(homeDir, 'sessions'));
+  } catch {
+    return false;
+  }
+  for (const bucket of buckets) {
+    try {
+      await readdir(join(homeDir, 'sessions', bucket, sessionId));
+      return true;
+    } catch {
+      // Not under this bucket.
+    }
+  }
+  return false;
+}
+
+describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
+  it('exposes the validated runtime binding through Session', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const session = await harness.createSession({ id: 'ses_runtime', workDir });
+    try {
+      const binding = await session.getRuntime();
+      expect(binding.runtimeId).toBe('local');
+      expect(binding.workspaceId.length).toBeGreaterThan(0);
+      await expect(session.switchRuntime('missing-runtime')).rejects.toThrow(/missing-runtime/);
+      expect(await session.getRuntime()).toEqual(binding);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('reports global MCP authorization without probing when verify is false', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
-    const statusServer = await startMcpAuthStatusServer();
+    const implicitOAuthUrl = 'https://implicit-oauth.example.test/mcp';
     const authorizedUrl = 'https://authorized.example.test/mcp';
     const requiredUrl = 'https://required.example.test/mcp';
     const externalOAuth = new McpOAuthService({ kimiHomeDir: homeDir });
@@ -108,17 +153,17 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
       .getProvider('oauth-authorized', authorizedUrl)
       .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
     await externalOAuth
-      .getProvider('sse', statusServer.oauthUrl)
+      .getProvider('sse', implicitOAuthUrl)
       .saveTokens({ access_token: 'stale-sse-token', token_type: 'Bearer' });
     await writeFile(
       join(homeDir, 'mcp.json'),
       JSON.stringify({
         mcpServers: {
           stdio: { command: 'local-command' },
-          plain: { transport: 'http', url: statusServer.plainUrl },
-          detected: { transport: 'http', url: statusServer.oauthUrl },
-          sse: { transport: 'sse', url: statusServer.oauthUrl },
-          'sse-oauth': { transport: 'sse', url: statusServer.oauthUrl, auth: 'oauth' },
+          plain: { transport: 'http', url: 'https://plain.example.test/mcp' },
+          detected: { transport: 'http', url: implicitOAuthUrl },
+          sse: { transport: 'sse', url: implicitOAuthUrl },
+          'sse-oauth': { transport: 'sse', url: implicitOAuthUrl, auth: 'oauth' },
           bearer: {
             transport: 'http',
             url: 'https://bearer.example.test/mcp',
@@ -141,10 +186,10 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
     const harness = createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
 
     try {
-      await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
+      await expect(harness.listMcpServerAuthStatuses({ verify: false })).resolves.toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
-        { name: 'detected', authStatus: 'oauth-required' },
+        { name: 'detected', authStatus: 'not-applicable' },
         { name: 'sse', authStatus: 'not-applicable' },
         { name: 'sse-oauth', authStatus: 'oauth-required' },
         { name: 'bearer', authStatus: 'bearer-token' },
@@ -157,10 +202,10 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
         .saveTokens({ access_token: 'new-test-access-token', token_type: 'Bearer' });
       await externalOAuth.invalidate('oauth-authorized', authorizedUrl, 'tokens');
 
-      await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
+      await expect(harness.listMcpServerAuthStatuses({ verify: false })).resolves.toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
-        { name: 'detected', authStatus: 'oauth-required' },
+        { name: 'detected', authStatus: 'not-applicable' },
         { name: 'sse', authStatus: 'not-applicable' },
         { name: 'sse-oauth', authStatus: 'oauth-required' },
         { name: 'bearer', authStatus: 'bearer-token' },
@@ -169,9 +214,115 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
       ]);
     } finally {
       await harness.close();
-      await statusServer.close();
     }
   }, 15_000);
+
+  it('restates engine MCP management Error2s as KimiError, undeclared codes as internal', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      const management = client.engineAccessor.get(IMcpManagementService);
+      const listSpy = vi.spyOn(management, 'listServers');
+      const captureRejection = async (promise: Promise<unknown>): Promise<unknown> => {
+        try {
+          await promise;
+        } catch (error) {
+          return error;
+        }
+        return expect.unreachable('expected the call to reject');
+      };
+      try {
+        // A declared engine code keeps its identity across the restate: the
+        // SDK throws the same class v1 throws, and the payload serializer
+        // accepts the code.
+        listSpy.mockRejectedValueOnce(
+          new Error2('mcp.oauth_failed', 'OAuth flow timed out', {
+            details: { flowId: 'flow-1' },
+          }),
+        );
+        const oauthError = await captureRejection(client.listGlobalMcpServers());
+        expect(isKimiError(oauthError)).toBe(true);
+        expect(oauthError).toMatchObject({
+          code: 'mcp.oauth_failed',
+          message: 'OAuth flow timed out',
+          details: { flowId: 'flow-1' },
+        });
+        expect(toKimiErrorPayload(oauthError)).toMatchObject({
+          code: 'mcp.oauth_failed',
+          message: 'OAuth flow timed out',
+        });
+
+        // A code this build's registry does not declare (a newer engine than
+        // the pinned SDK) restates as `internal` instead of minting an
+        // undeclared KimiError code the serializer would reject.
+        listSpy.mockRejectedValueOnce(new Error2('mcp.future_code' as never, 'from a newer engine'));
+        const unknownError = await captureRejection(client.listGlobalMcpServers());
+        expect(isKimiError(unknownError)).toBe(true);
+        expect(unknownError).toMatchObject({
+          code: ErrorCodes.INTERNAL,
+          message: 'from a newer engine',
+        });
+        expect(toKimiErrorPayload(unknownError)).toMatchObject({
+          code: ErrorCodes.INTERNAL,
+          message: 'from a newer engine',
+        });
+      } finally {
+        listSpy.mockRestore();
+      }
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('close() awaits the MCP OAuth service shutdown', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    // Activate the OnDemand OAuth service, then gate its shutdown behind a
+    // manual release: close() alone (no manual service.shutdown()) must
+    // trigger and await that shutdown, so a host removing homeDir right after
+    // close() cannot race in-flight token writes.
+    client.engineAccessor.get(IMcpOAuthService);
+    let releaseShutdown: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseShutdown = resolve;
+    });
+    const baseShutdown = McpOAuthServiceV2.prototype.shutdown;
+    const shutdownSpy = vi
+      .spyOn(McpOAuthServiceV2.prototype, 'shutdown')
+      .mockImplementation(function (this: McpOAuthServiceV2) {
+        return baseShutdown.call(this).then(() => gate);
+      });
+    try {
+      let closed = false;
+      const closePromise = client.close().then(() => {
+        closed = true;
+      });
+      await vi.waitFor(() => {
+        expect(shutdownSpy).toHaveBeenCalled();
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(closed).toBe(false);
+      releaseShutdown();
+      await closePromise;
+      expect(closed).toBe(true);
+    } finally {
+      releaseShutdown();
+      shutdownSpy.mockRestore();
+    }
+  });
+
+  it('close() resolves promptly when the MCP OAuth service was never used', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    // Nothing touched IMcpOAuthService: close() force-activates the OnDemand
+    // service only to shut it down, and that activate-then-shutdown cycle
+    // must be a clean no-op (the proactive-refresh sweep bows out on the
+    // shutdown flag).
+    await expect(client.close()).resolves.toBeUndefined();
+  });
 
   it('seeds the host request headers (User-Agent + X-Msh-*) into the engine', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
@@ -242,6 +393,32 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
         expect(typeof feature.enabled).toBe('boolean');
         expect(typeof feature.defaultEnabled).toBe('boolean');
       }
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('uploadFile stores bytes through the klient files facade', async () => {
+    const { harness } = await makeHarness();
+    try {
+      const bytes = new Uint8Array([137, 80, 78, 71]);
+      const meta = await harness.uploadFile(bytes, {
+        name: 'pixel.png',
+        mimeType: 'image/png',
+        expiresInSec: 60,
+      });
+      expect(meta.id.startsWith('f_')).toBe(true);
+      expect(meta.name).toBe('pixel.png');
+      expect(meta.media_type).toBe('image/png');
+      expect(meta.size).toBe(bytes.length);
+      expect(typeof meta.created_at).toBe('string');
+      expect(typeof meta.expires_at).toBe('string');
+
+      // Re-export smoke only — helper behavior is pinned by agent-core-v2's
+      // mediaRef tests.
+      expect(isDaemonFileUrl(buildDaemonFileUrl(meta.id))).toBe(true);
+      await harness.deleteFile(meta.id);
+      await expect(harness.deleteFile(meta.id)).rejects.toThrow(/file not found/);
     } finally {
       await harness.close();
     }
@@ -432,10 +609,8 @@ key = "${titleOAuthRef.key}"
       // lands while the close is still in flight.
       const titlePromise = client.generateSessionTitle({ id: 'ses_title_race' });
       await fetchStarted;
-      const handler = await client.engineAccessor
-        .get(IWorkspaceLifecycleService)
-        .handlerFor({ root: workDir });
-      const tempHandle = handler.accessor.get(ISessionLifecycleService).get('ses_title_race');
+      const sessionManager = client.engineAccessor.get(ISessionManager);
+      const tempHandle = sessionManager.get('ses_title_race');
       expect(tempHandle).toBeDefined();
       let markCloseStarted!: () => void;
       let openCloseGate!: () => void;
@@ -445,7 +620,7 @@ key = "${titleOAuthRef.key}"
       const closeGate = new Promise<void>((resolve) => {
         openCloseGate = resolve;
       });
-      handler.accessor.get(ISessionLifecycleService).onWillCloseSession((event) => {
+      sessionManager.onWillCloseSession!((event) => {
         if (event.sessionId !== 'ses_title_race') return;
         markCloseStarted();
         event.waitUntil(closeGate);
@@ -478,8 +653,14 @@ key = "${titleOAuthRef.key}"
       // The resumed session is a fresh, fully usable scope — not the handle
       // the temporary path just tore down.
       await client.renameSession({ id: 'ses_title_race', title: 'Resumed title' });
-      const sessions = await client.listSessions({ workDir });
-      expect(sessions.find((item) => item.id === 'ses_title_race')?.title).toBe('Resumed title');
+      await expect
+        .poll(
+          async () =>
+            (await client.listSessions({ workDir })).find((item) => item.id === 'ses_title_race')
+              ?.title,
+          { interval: 50, timeout: 4000 },
+        )
+        .toBe('Resumed title');
     } finally {
       await client.close();
       fetchSpy.mockRestore();
@@ -1057,17 +1238,143 @@ key = "${titleOAuthRef.key}"
     }
   });
 
-  it('fails loudly with not_implemented for methods not yet migrated', async () => {
-    const { harness } = await makeHarness();
+  it('deleteSession removes a session and rejects a missing id with session_not_found', async () => {
+    const { harness, homeDir } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
     try {
-      // `deleteSession` is the permanent case: the v2 engine has no
-      // session-deletion capability, so it stays not_implemented by design
-      // (tracked in `.tmp/v2-migration-tracker.md`).
-      await expect(harness.deleteSession('session_missing')).rejects.toThrowError(KimiError);
+      const session = await harness.createSession({ workDir });
+      await harness.deleteSession(session.id);
+      await expect(harness.resumeSession({ id: session.id })).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_NOT_FOUND,
+      });
+      expect(await sessionDirExists(homeDir, session.id)).toBe(false);
       await expect(harness.deleteSession('session_missing')).rejects.toMatchObject({
-        code: ErrorCodes.NOT_IMPLEMENTED,
+        code: ErrorCodes.SESSION_NOT_FOUND,
       });
     } finally {
+      await harness.close();
+    }
+  });
+
+  it('serves getTodos from the live session todo state', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_todos', workDir });
+      expect(await client.getTodos({ sessionId: 'ses_todos' })).toEqual([]);
+
+      const handle = getLiveSessionById(client.engineAccessor, 'ses_todos');
+      expect(handle).toBeDefined();
+      const main = await handle!.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+      await handle!.accessor.get(ISessionTodoService).setTodos(agentContextOf(main), [
+        { title: 'write tests', status: 'in_progress' },
+        { title: 'ship it', status: 'pending' },
+      ]);
+
+      expect(await client.getTodos({ sessionId: 'ses_todos' })).toEqual([
+        { title: 'write tests', status: 'in_progress' },
+        { title: 'ship it', status: 'pending' },
+      ]);
+
+      const served = await client.getTodos({ sessionId: 'ses_todos' });
+      const stored = await handle!
+        .accessor.get(ISessionTodoService)
+        .getTodos(agentContextOf(main));
+      expect(served).not.toBe(stored);
+      expect(served[0]).not.toBe(stored[0]);
+      await expect(client.getTodos({ sessionId: 'ses_missing' })).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_NOT_FOUND,
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('serves setTowerMode and getStatus towerMode through the agent scope tower service', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '1');
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_tower', workDir });
+      expect((await client.getStatus({ sessionId: 'ses_tower' })).towerMode).toBe(false);
+
+      const mainTower = () => {
+        const handle = getLiveSessionById(client.engineAccessor, 'ses_tower');
+        expect(handle).toBeDefined();
+        const agent = handle!.accessor.get(IAgentLifecycleService).findAgentHandle('main');
+        expect(agent).toBeDefined();
+        return agent!.accessor.get(IAgentTowerService);
+      };
+
+      await client.setTowerMode({ sessionId: 'ses_tower', enabled: true });
+      // The tower feature is flag-gated engine-side, so enter() may be a
+      // no-op; the wire must always mirror the engine truth.
+      expect((await client.getStatus({ sessionId: 'ses_tower' })).towerMode).toBe(
+        mainTower().isActive,
+      );
+
+      await client.setTowerMode({ sessionId: 'ses_tower', enabled: false });
+      expect((await client.getStatus({ sessionId: 'ses_tower' })).towerMode).toBe(false);
+
+      await expect(client.setTowerMode({ sessionId: 'ses_missing', enabled: true }))
+        .rejects.toMatchObject({
+          code: ErrorCodes.SESSION_NOT_FOUND,
+        });
+    } finally {
+      vi.unstubAllEnvs();
+      await client.close();
+    }
+  });
+
+  it('rejects setTowerMode when the tower feature is unavailable', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_tower_off', workDir });
+
+      await expect(client.setTowerMode({ sessionId: 'ses_tower_off', enabled: true }))
+        .rejects.toMatchObject({ code: 'session.tower_mode_invalid' });
+      expect((await client.getStatus({ sessionId: 'ses_tower_off' })).towerMode).toBe(false);
+
+      await client.setTowerMode({ sessionId: 'ses_tower_off', enabled: false });
+      expect((await client.getStatus({ sessionId: 'ses_tower_off' })).towerMode).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      await client.close();
+    }
+  });
+
+  it('exposes Session.setTowerMode and getStatus().towerMode on the v2 harness', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '1');
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    try {
+      const session = await harness.createSession({ workDir });
+      expect((await session.getStatus()).towerMode).toBe(false);
+
+      await expect(session.setTowerMode(true)).resolves.toBeUndefined();
+      expect(typeof (await session.getStatus()).towerMode).toBe('boolean');
+
+      await expect(session.setTowerMode(false)).resolves.toBeUndefined();
+      expect((await session.getStatus()).towerMode).toBe(false);
+
+      await expect(session.setTowerMode('yes' as unknown as boolean)).rejects.toMatchObject({
+        code: ErrorCodes.REQUEST_INVALID,
+      });
+    } finally {
+      vi.unstubAllEnvs();
       await harness.close();
     }
   });

@@ -1,12 +1,3 @@
-/**
- * `sessionSwarm` domain — internal concurrency / rate-limit scheduler.
- *
- * Owns the burst-then-throttle launch ramp and the provider-rate-limit recovery
- * loop for swarm agent runs; drives each attempt through a
- * `AgentRunBatchLauncher` and surfaces requeues via `suspended`. Pure scheduling
- * logic — owns no scoped state.
- */
-
 import { isProviderRateLimitError } from '#/kosong/contract/errors';
 import { type TokenUsage } from '#/kosong/contract/usage';
 import * as retry from 'retry';
@@ -14,8 +5,8 @@ import * as retry from 'retry';
 import { isUserCancellation } from '#/_base/utils/abort';
 import { setClampedTimeout } from '#/_base/utils/timer';
 import { BugIndicatingError, Error2, ErrorCodes } from '#/errors';
+import type { SubagentSpawnPlan } from '#/session/subagent/spawn';
 import type { SessionSwarmRunResult, SessionSwarmTask } from './sessionSwarm';
-
 
 export interface AgentRunAttemptOptions {
   readonly parentToolCallId: string;
@@ -32,7 +23,7 @@ export interface AgentRunAttemptOptions {
 export interface AgentSpawnAttemptOptions extends AgentRunAttemptOptions {
   readonly profileName: string;
   readonly swarmItem?: string;
-  readonly binding?: { readonly model: string; readonly thinking?: string };
+  readonly plan: SubagentSpawnPlan;
 }
 
 export type AgentRunAttemptHandle = {
@@ -43,7 +34,6 @@ export type AgentRunAttemptHandle = {
     readonly usage?: TokenUsage;
   }>;
 };
-
 
 const INITIAL_LAUNCH_LIMIT = 5;
 const INITIAL_LAUNCH_INTERVAL_MS = 700;
@@ -303,7 +293,7 @@ export class AgentRunBatch<T> {
         const spawnOptions: AgentSpawnAttemptOptions = {
           profileName: task.profileName,
           swarmItem: task.swarmItem,
-          binding: task.binding,
+          plan: task.plan,
           ...runOptions,
         };
         handle = await this.launcher.spawn(spawnOptions);

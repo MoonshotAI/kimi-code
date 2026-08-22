@@ -1,64 +1,3 @@
-/**
- * `minidb` backend — `IQueryStore` implementation over `ClusterDb`.
- *
- * A rebuildable, in-process derived read-model. The store is a `ClusterDb`
- * of 16 shards rooted at `<cacheDir>/query-store`: keys are hash-routed over
- * ordinary `MiniDb` directories, so multiple kimi processes can read and
- * write the same read model concurrently (a single writer per shard, readers
- * that never take write locks) instead of failing against a database-wide
- * single-writer lock. Authoritative data lives elsewhere, never here, so
- * losing the read model is always safe.
- *
- * Values are JSON (`valueCodec: 'json'`, required by secondary indexes and
- * `query`) and held in memory (`valueMode: 'memory'`); durability is
- * `everysec`, which is acceptable for a cache. Writes are atomic per shard;
- * a `batch` spanning shards is best-effort across them — a projector can
- * always replay from its checkpoint. `lockAcquireTimeoutMs` is lowered from
- * the 30s default: a cache read must not hang behind a contended shard, and
- * with `lockHoldMs` yields one second is ample for a live writer.
- *
- * The database is opened **lazily** on the first actual IO, not at
- * construction. Construction therefore does no filesystem work — important
- * because `MiniDbQueryStore` is resolved transitively whenever a consumer
- * is constructed, including in tests that share a
- * home dir and never read or write the read model.
- *
- * Corruption handling lifts `MiniDb.openOrRebuild`'s predicate
- * (`SyntaxError` / `CorruptFrameError`) to the cluster: the first
- * rebuildable failure triggers one process-lifetime rebuild — close, delete
- * the directory, reopen empty, retry the operation once — and consumers'
- * checkpoint-based reprojection repopulates the model. Every other error
- * propagates as-is; in particular a per-shard `LockError` (a live process
- * holding a shard beyond the acquire timeout) is transient and must NOT
- * become `storage.locked`, which consumers would treat as a permanent
- * read-model outage.
- *
- * A `collection` is encoded as a key prefix (`<collection>` + NUL + `<key>`); index
- * names are prefixed with the collection to keep them isolated in the
- * cluster-wide registry, and value indexes are created `sparse` so documents
- * from other collections (which lack the indexed field) are skipped.
- *
- * This store is a STRUCTURAL read model: stores, datetime/order columns, and
- * secondary/compound indexes only. `ensureIndex` rejects text-index
- * definitions — a text index would pull tokenizers, postings files, and
- * full-text generation builds into the session-list critical path, which is
- * exactly what the search-index separation forbids here; full-text search
- * lives in the kap-server search-index database (`IGlobalSearchService`),
- * never in this cluster.
- *
- * Ordered columns map to the engine's `dt` channels: `put`/`batch` forward
- * `columns` as `SetOptions.dt`, and `pageByColumn` issues a dt-bounded,
- * dt-sorted, limited query — which the engine serves by walking its ordered
- * column structure with early stop instead of materializing and sorting all
- * candidates. `pageByColumn` deliberately sends no key prefix (a key range
- * would disqualify that walk); callers keep column names collection-unique
- * per the `IQueryStore` contract. `listKeys`/`dropCollection` are prefix
- * scans (deletes applied in chunks); `getMany` is the cluster `mget` (one
- * reader call per touched shard).
- *
- * Bound at App scope as a peer of the other access-pattern stores.
- */
-
 import { promises as fsp } from 'node:fs';
 
 import { join } from 'pathe';
@@ -103,20 +42,12 @@ function isRebuildable(error: unknown): boolean {
   return error instanceof SyntaxError || (error as { name?: string }).name === 'CorruptFrameError';
 }
 
-/**
- * Fire-and-forget close promises produced by DI disposal (which is
- * synchronous). The server shutdown path awaits these via
- * `drainQueryStoreDisposals()` before the homeDir is released, so a teardown
- * `rm()` never races an in-flight ClusterDb open/close (a late shard open
- * would recreate db.wal and fail the rm with ENOTEMPTY).
- */
 const pendingDisposals = new Set<Promise<void>>();
 
 export async function drainQueryStoreDisposals(): Promise<void> {
   await Promise.all(pendingDisposals);
 }
 
-// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class MiniDbQueryStore extends Disposable implements IQueryStore {
   declare readonly _serviceBrand: undefined;
 
@@ -132,9 +63,6 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
     super();
     this.dir = join(this.bootstrap.cacheDir, STORE_SUBDIR);
     this._register(toDisposable(() => {
-      // DI disposal is synchronous, but closing a ClusterDb is not: track the
-      // close module-level so the shutdown path (`drainQueryStoreDisposals`)
-      // can await it before the homeDir is torn down.
       const pending = this.close().catch(() => {});
       pendingDisposals.add(pending);
       void pending.finally(() => pendingDisposals.delete(pending));
@@ -154,8 +82,6 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
   }
 
   private openFresh(): Promise<ClusterDb> {
-    // Answers "which database does a session-list read touch" from logs alone:
-    // the read model lives in this cluster, one MiniDb per shard directory.
     this.log.info('minidb query-store opening', { dir: this.dir, shardCount: SHARD_COUNT });
     return ClusterDb.open({
       dir: this.dir,
@@ -245,10 +171,6 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
   }
 
   async pageByColumn<T>(collection: string, query: ColumnPageQuery): Promise<Page<T>> {
-    // No key prefix: a key-range disqualifies the engine's ordered-column
-    // walk, and the column is only ever declared by this collection's writes,
-    // so the walk visits no foreign rows. Cross-collection contamination is
-    // prevented by the contract (column names are store-wide).
     const dir = query.dir ?? 'asc';
     const rows = (await this.withDb((db) =>
       db.query({

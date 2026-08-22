@@ -1,17 +1,3 @@
-/**
- * `tools` domain — `IGlobTool` contract.
- *
- * Public contract of Glob, the model's ripgrep-backed file pattern matcher.
- * Finds files matching a glob pattern, returned sorted by modification time
- * (most recent first). `.gitignore` / `.ignore` / `.rgignore` are respected by
- * default; sensitive files (such as `.env`) are always filtered out. Results
- * are files-only — directories are never listed.
- *
- * Owns the `GlobInput` zod schema, the tool-owned constants (`MAX_MATCHES`,
- * `WINDOWS_PATH_HINT`), and the Agent-scope service identifier. Bound at Agent
- * scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

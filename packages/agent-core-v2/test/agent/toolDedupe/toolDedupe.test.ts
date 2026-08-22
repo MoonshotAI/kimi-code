@@ -8,7 +8,7 @@ import { type ToolCall } from '#/kosong/contract/message';
 import { emptyUsage } from '#/kosong/contract/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import type { ISessionProcessRunner } from '#/session/process/processRunner';
+import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -30,6 +30,7 @@ import { registerToolResultTruncationServices } from '../toolResultTruncation/st
 import { registerTestAgentWireServices } from '../../wire/stubs';
 import { createTestAgent, execEnvServices, telemetryServices } from '../../harness';
 import { createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
+import { stubAgentContext } from '../agentContext/stubs';
 
 const { REMINDER_TEXT_1, REMINDER_TEXT_3, makeReminderText2 } = toolDedupeTesting;
 const ZERO_USAGE = emptyUsage();
@@ -85,6 +86,7 @@ function createHarness(
       reg.defineInstance(IAgentScopeContext, {
         _serviceBrand: undefined,
         agentId: 'main',
+        agentContext: stubAgentContext('main', 0),
         scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
       } satisfies IAgentScopeContext);
       reg.defineInstance(IBootstrapService, {
@@ -937,10 +939,10 @@ describe('AgentToolDedupeService', () => {
       readonly ctx: ReturnType<typeof createTestAgent>;
       readonly exec: ReturnType<typeof vi.fn>;
     } {
-      const exec = vi.fn<ISessionProcessRunner['exec']>().mockRejectedValue(new Error('Bash should not execute'));
+      const exec = vi.fn<IHostProcessService['spawn']>().mockRejectedValue(new Error('Bash should not execute'));
       const ctx = createTestAgent(
         telemetryServices(recordingTelemetry(records)),
-        execEnvServices({ processRunner: createFakeProcessRunner({ exec: exec as unknown as ISessionProcessRunner['exec'] }) }),
+        execEnvServices({ processRunner: createFakeProcessRunner({ spawn: exec as unknown as IHostProcessService['spawn'] }) }),
       );
       ctx.get(IAgentProfileService).update({ activeToolNames: ['Bash'] });
       records.length = 0;

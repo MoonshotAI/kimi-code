@@ -1,11 +1,3 @@
-/**
- * `sessionTitle` domain (L6) — title prompt projection contract.
- *
- * Defines the Agent-scoped `IAgentTitlePromptSource` used to read the first
- * active natural-language prompts from the live conversation context, plus
- * the turn excerpts behind the `first_turn` / `digest` title sources.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 /**
@@ -20,14 +12,23 @@ export interface TitleTurnExcerpt {
 }
 
 /**
- * The whole-conversation digest excerpt: the first and last natural-language
- * user prompts (collapsed into one when the conversation has a single
- * prompt) and the final assistant text of the latest turn.
+ * One turn of the whole-conversation digest: a natural-language user prompt
+ * paired with the final assistant text of its turn (`undefined` while that
+ * turn has not produced one).
+ */
+export interface TitleDigestTurn {
+  readonly user: string;
+  readonly assistant?: string;
+}
+
+/**
+ * The whole-conversation digest excerpt: every natural-language user prompt
+ * in the live window, each paired with its own turn's final assistant text,
+ * in chronological order. The window may be post-compaction — the digest
+ * covers whatever the window still holds.
  */
 export interface TitleDigestExcerpt {
-  readonly firstUser?: string | undefined;
-  readonly lastUser?: string | undefined;
-  readonly assistant?: string | undefined;
+  readonly turns: readonly TitleDigestTurn[];
 }
 
 export interface IAgentTitlePromptSource {

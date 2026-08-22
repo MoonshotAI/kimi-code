@@ -1,12 +1,3 @@
-/**
- * `skillCatalog` domain — concrete in-memory skill catalog.
- *
- * Owns registered skill lookup, plugin-scoped skill lookup, prompt rendering,
- * and model-facing skill listings for `skill`, plus the skipped-skill /
- * scanned-root diagnostics accumulated from discovery results. It is not a
- * scoped service.
- */
-
 import { escapeXmlAttr, escapeXmlTags } from '#/_base/utils/xml-escape';
 
 import type {

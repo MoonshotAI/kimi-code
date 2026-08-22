@@ -1,11 +1,3 @@
-/**
- * `skillCatalog` domain — user/brand `ISkillSource` producer.
- *
- * Discovers user skills from the bootstrap home directories through
- * `ISkillDiscovery`, contributing them at priority 20 (above extra / plugin /
- * builtin, below workspace). Bound at App scope.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
@@ -29,7 +21,6 @@ export interface IUserFileSkillSource extends ISkillSource {
 export const IUserFileSkillSource: ServiceIdentifier<IUserFileSkillSource> =
   createDecorator<IUserFileSkillSource>('userFileSkillSource');
 
-// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class UserFileSkillSource extends Disposable implements IUserFileSkillSource {
   declare readonly _serviceBrand: undefined;
 

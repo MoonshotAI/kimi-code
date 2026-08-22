@@ -1,32 +1,3 @@
-/**
- * `kosong/model` domain — model configuration registry contract.
- *
- * Owns the `ModelRecord` config record type (id → resolution recipe) and the
- * in-memory model registry contract. App-scoped — model configuration is
- * global and shared across sessions. Kosong has no persistence — it defines
- * types only. Persisting mutations is the upper layer's job, not this
- * domain's.
- *
- * Two configuration paths are supported:
- *   - **Structured**: `providerId` references an entry in `[providers.*]`.
- *     Multiple Models can share a Provider (and thus its base URL and auth).
- *   - **Flat**: `baseUrl` (+ optional inline `apiKey` / `oauth`) is set
- *     directly on the Model — no `providerId` required. The catalog
- *     synthesizes a Provider from the baseUrl's origin so multiple Models
- *     targeting the same host converge on one Provider record at runtime
- *     (auth comes from the Model itself).
- *
- * `name` is the wire-facing model identifier sent to the endpoint; `model` is
- * the legacy spelling of the same field (at least one is required at resolve
- * time). `aliases` is a free-form list of routing keys; callers may request
- * "claude-sonnet-4" and the router picks any Model whose name or aliases
- * match (many-to-many).
- *
- * `protocol` names one of the four real wire protocols (no vendor entries —
- * a vendor such as `kimi` is expressed as the referenced provider's free-form
- * `type`, never as a protocol).
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event, IWaitUntil } from '#/_base/event';
 import type { Protocol } from '#/kosong/protocol/protocol';

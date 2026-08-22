@@ -1,9 +1,3 @@
-/**
- * Scenario: `/api/v1/debug` transport error translation.
- * Responsibilities: verify stable domain-to-wire mappings and the internal-error fallback.
- * Wiring: real error mapper with in-process coded errors; no external boundaries.
- * Run: `pnpm --filter @moonshot-ai/kap-server exec vitest run test/transport-errors.test.ts`.
- */
 import { Error2, ErrorCodes } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../src/protocol/error-codes';
 import { describe, expect, it } from 'vitest';
@@ -22,6 +16,7 @@ describe('/api/v1/debug transport mapError', () => {
     [ErrorCodes.STORAGE_LOCKED, ErrorCode.PERSISTENCE_FAILURE],
     [ErrorCodes.CONFIG_INVALID, ErrorCode.VALIDATION_FAILED],
     [ErrorCodes.GOAL_UNSUPPORTED_AGENT, ErrorCode.GOAL_UNSUPPORTED_AGENT],
+    [ErrorCodes.PROMPT_ID_CONFLICT, ErrorCode.PROMPT_ID_CONFLICT],
   ])('maps domain code %s to its wire equivalent', (code, wire) => {
     const env = mapError(new Error2(code, 'boom'), 'req-1');
     expect(env.code).toBe(wire);

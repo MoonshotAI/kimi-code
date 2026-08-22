@@ -1,13 +1,3 @@
-/**
- * Scenario: agent-file parsing primitives — frontmatter validation, defaults,
- * and the AgentFileDefinition → AgentProfile factory (template substitution,
- * `${base_prompt}`, `${plugin_sections}`, tool pass-through, explicit override
- * intent).
- * Pure-function level, no IO.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/workspace/workspaceAgentProfileLoader/agentFile.test.ts`.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { AgentFileParseError, parseAgentFileText } from '#/workspace/workspaceAgentProfileLoader/internal/agentFile';
@@ -155,7 +145,7 @@ describe('parseAgentFileText', () => {
   it('treats a lone "*" subagents field as all subagent types', () => {
     const def = parse('---\nname: solo\ndescription: d\nsubagents: "*"\n---\n\nbody\n');
 
-    expect(def.subagents).toBeUndefined();
+    expect(def.subagents).toEqual(['*']);
   });
 
   it('rejects a non-string, non-list subagents field', () => {

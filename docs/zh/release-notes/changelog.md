@@ -6,6 +6,79 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.38.0（2026-08-20）
+
+### 新功能
+
+- 支持 kimi.ai 与 kimi.com 两种 OAuth 登录方式。
+- 新增 WaitFor 工具：Agent 可以在当前轮次内等待后台任务完成，无需结束轮次后再次被唤起。
+- 官方 Kimi Datasource 插件新增 13 个数据源：中国政府数据（NDA/NBS）与标准（GB/HB/DB/TT）、八个国际组织数据集（WHO、FAO、UNSD、ECB、Eurostat、UNICEF、OECD、FRED）、新华财经和财新。在 /plugins 的 Official 标签页中更新插件。
+- web: 聊天头部的更多菜单新增置顶操作。
+
+### 优化
+
+- Edit 和 Write 现在要求先读取已存在的文件再进行修改。
+<!-- - 子 Agent 默认不再派生自己的子 Agent；自定义 Agent 配置仍可显式允许。 -->
+- 折叠过长的 `!` Shell 命令输出，避免刷屏；按 ctrl+o 可与工具输出一起展开或折叠。
+
+### 修复
+
+- 修复 config.toml 在存在语法错误或在应用外被编辑时条目丢失的问题。
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
+## 0.37.2（2026-08-19）
+
+### 优化
+
+- web: 设置页新增 「实验室」标签页，上线「多标签侧边栏开关」功能；开启后侧边栏显示 Open / Done / Workspaces 标签页。
+- 做了若干细节优化和内部改进。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
+## 0.37.1（2026-08-18）
+
+### 修复
+
+- 修复粘贴的图片和视频无法发送给模型的问题。
+
+## 0.37.0（2026-08-18）
+
+### 新功能
+
+- 支持在单条提示词中激活多个 skill：在空白后输入 `/` 即可插入 skill 标记。
+- Windows 原生（单文件）CLI 现支持自动更新。
+- web: 侧边栏新增 Open / Done / Workspaces 标签页，会话可标记为 Done。
+- web: 新增会话管理页面。
+
+### 优化
+
+- Agent 忙碌时输入的 skill 斜杠命令现在会排队执行，不再直接拒绝。
+- web: 聊天消息中 @提及的文件、文件夹和 skill 现在渲染为图标胶囊。
+- web: 浏览器标签页标题现在显示当前工作区目录名。
+- web: 搜索对话框现在支持搜索工作区，选中结果后会展开侧边栏并滚动定位到该条目。
+- web: Subagent 面板更名为 "Background Agent"。
+- 输入的 `/goal` 目标超过 4000 字符限制时现在会给出警告，且被拒绝时保留已输入的内容。
+
+### 修复
+
+- 修复 Gemini 工具调用会话后续请求失败的问题。
+- web: 修复 macOS 上输入框中 Ctrl+K 误打开会话搜索的问题，会话搜索现仅响应 Cmd+K。
+- web: 修复 Background Agent 面板显示数量和状态不对的问题。
+- web: 修复把复制的文件夹粘贴进输入框会导致上传报连接错误的问题，现在文件夹会被直接跳过。
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
+## 0.36.1（2026-08-14）
+
+### 新功能
+
+- web: AI 自动生成会话标题（实验性）。默认关闭，设置 `KIMI_CODE_EXPERIMENTAL_AUTO_SESSION_TITLE=1`（或实验总开关 `KIMI_CODE_EXPERIMENTAL_FLAG=1`）开启。
+
+### 优化
+
+- web: 优化输入框的 Plan、Goal、Swarm 开关，现收进了输入框旁的 + 号菜单。
+
+### 修复
+
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
 ## 0.36.0（2026-08-13）
 
 ### 新功能

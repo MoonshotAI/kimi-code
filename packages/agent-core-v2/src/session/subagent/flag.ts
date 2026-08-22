@@ -1,13 +1,3 @@
-/**
- * `subagent` domain — registers the `secondary-model` experimental flag
- * into `flag`.
- *
- * Gates the subagent model pool for newly spawned subagents, including the
- * agent-facing model choices and startup pool validation. Off by default;
- * enable via `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL`, the master
- * `KIMI_CODE_EXPERIMENTAL_FLAG`, or the `[experimental]` config section.
- */
-
 import { type FlagDefinitionInput, registerFlagDefinition } from '#/app/flag/flagRegistry';
 
 export const SECONDARY_MODEL_FLAG_ID = 'secondary-model';
@@ -24,3 +14,18 @@ export const secondaryModelFlag: FlagDefinitionInput = {
 };
 
 registerFlagDefinition(secondaryModelFlag);
+
+export const SUBAGENT_FORK_FLAG_ID = 'subagent_fork';
+export const SUBAGENT_FORK_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK';
+
+export const subagentForkFlag: FlagDefinitionInput = {
+  id: SUBAGENT_FORK_FLAG_ID,
+  title: 'Fork context for subagents',
+  description:
+    'Let the Agent and AgentSwarm tools start a subagent with a snapshot of the calling agent\'s conversation history via the fork parameter.',
+  env: SUBAGENT_FORK_FLAG_ENV,
+  default: false,
+  surface: 'core',
+};
+
+registerFlagDefinition(subagentForkFlag);

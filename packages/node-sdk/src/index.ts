@@ -132,6 +132,24 @@ export type {
   FlagSurface,
 } from '@moonshot-ai/agent-core';
 
+// Daemon file references (agent-core-v2) — pure helpers for the internal
+// `kimi-file://` media URLs and the model-facing `<image|video|file>` path
+// tags. A daemon-ref media part is self-contained (kind from the part type,
+// file id from the url) — there is no tag+ref pairing to fold.
+// Hosts must not import agent-core-v2 directly; `FileMeta` and
+// `UploadFileOptions` ride the `export type * from '#/types'` below.
+export {
+  buildDaemonFileUrl,
+  buildMediaPathTag,
+  isDaemonFileUrl,
+  matchSingleMediaPathTag,
+  parseDaemonFileUrl,
+} from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
+export type {
+  DaemonFileRef,
+  MediaKind,
+} from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
+
 export type {
   KimiAuthCompleteFeedbackUploadInput,
   KimiAuthCompleteFeedbackUploadPart,

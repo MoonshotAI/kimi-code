@@ -1,17 +1,3 @@
-/**
- * `auth` domain (cross-cutting) — `IOAuthService` / `IAuthSummaryService`
- * implementation.
- *
- * Owns the device-code OAuth flows and the auth readiness view; reads and
- * writes provider configuration through `provider`, refreshes the managed
- * OAuth provider's server-side model configuration through `config`, publishes
- * model-catalog changes through `event`, reports through `telemetry`,
- * logs through `log`, and delegates
- * the device-code protocol, token storage, and token refresh to `IOAuthToolkit`
- * (provided by `OAuthToolkitService` over `@moonshot-ai/kimi-code-oauth`,
- * which locates token storage through `bootstrap`). Bound at App scope.
- */
-
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -20,6 +6,7 @@ import {
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
   kimiCodeBaseUrl,
+  kimiRegionLoginHosts,
   OAuthError,
   applyManagedKimiCodeConfig,
   clearManagedKimiCodeConfig,
@@ -27,10 +14,12 @@ import {
   resolveKimiCodeLoginAuth,
   resolveKimiCodeOAuthRef,
   resolveKimiCodeRuntimeAuth,
+  resolveKimiRegion,
   type AuthManagedUserInfoResult,
   type AuthManagedUsageResult,
   type BearerTokenProvider,
   type DeviceAuthorization,
+  type KimiRegion,
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
 import type {
@@ -64,6 +53,7 @@ import {
   PROVIDERS_SECTION,
   THINKING_SECTION,
 } from '#/app/kosongConfig/configSection';
+import { ModelCatalogChanged } from '#/app/kosongConfig/discovery';
 import {
   IProviderService,
   type OAuthRef,
@@ -81,6 +71,7 @@ import {
   IAuthSummaryService,
   IOAuthService,
   IOAuthToolkit,
+  type OAuthLoginOptions,
 } from './auth';
 
 const TERMINAL_RETENTION_MS = 5 * 60 * 1000;
@@ -101,7 +92,6 @@ interface FlowState {
   resolvedAt: string | undefined;
 }
 
-// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class OAuthService extends Disposable implements IOAuthService {
   declare readonly _serviceBrand: undefined;
   private readonly flows = new Map<string, FlowState>();
@@ -115,6 +105,7 @@ export class OAuthService extends Disposable implements IOAuthService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
     @IEventService private readonly events: IEventService,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {
     super();
     this._register(providerService.onDidChangeProviders((event) => {
@@ -122,9 +113,12 @@ export class OAuthService extends Disposable implements IOAuthService {
     }));
   }
 
-  async startLogin(provider = KIMI_CODE_PROVIDER_NAME): Promise<OAuthFlowStart> {
+  async startLogin(
+    provider = KIMI_CODE_PROVIDER_NAME,
+    options: OAuthLoginOptions = {},
+  ): Promise<OAuthFlowStart> {
     this.log.info('oauth startLogin: enter', { provider });
-    const loginAuth = this.resolveLoginAuth(provider);
+    const loginAuth = this.resolveLoginAuth(provider, options.region);
     this.log.info('oauth startLogin: resolved login auth', {
       provider,
       hasOAuthRef: loginAuth.oauthRef !== undefined,
@@ -381,7 +375,7 @@ export class OAuthService extends Disposable implements IOAuthService {
 
     const result = { changed, unchanged, failed };
     if (result.changed.length > 0) {
-      this.events.publish({ type: 'event.model_catalog.changed', payload: result });
+      this.events.publish(new ModelCatalogChanged({ payload: result }));
     }
     return result;
   }
@@ -404,7 +398,22 @@ export class OAuthService extends Disposable implements IOAuthService {
     };
   }
 
-  private resolveLoginAuth(provider: string): {
+  getRegion(): KimiRegion {
+    const oauth = this.providerService.get(KIMI_CODE_PROVIDER_NAME)?.oauth;
+    return resolveKimiRegion({
+      configuredOAuthHost: oauth?.oauthHost,
+      configuredOAuthKey: oauth?.key,
+      readMarker:
+        (this.bootstrap.getEnv('KIMI_CODE_REGION_MARKER') ??
+          process.env['KIMI_CODE_REGION_MARKER']) !== 'off',
+      homeDir: this.bootstrap.homeDir,
+    });
+  }
+
+  private resolveLoginAuth(
+    provider: string,
+    region?: KimiRegion,
+  ): {
     readonly oauthRef: OAuthRef | undefined;
     readonly baseUrl: string | undefined;
     readonly oauthHost: string | undefined;
@@ -413,9 +422,12 @@ export class OAuthService extends Disposable implements IOAuthService {
     if (provider !== KIMI_CODE_PROVIDER_NAME) {
       return { oauthRef: config?.oauth, baseUrl: undefined, oauthHost: undefined };
     }
+    const hosts = region === undefined ? undefined : kimiRegionLoginHosts(region);
     const loginAuth = resolveKimiCodeLoginAuth({
       configuredBaseUrl: config?.baseUrl,
       configuredOAuthRef: config?.oauth,
+      requestedBaseUrl: hosts?.baseUrl,
+      requestedOAuthHost: hosts?.oauthHost,
     });
     const oauthRef =
       loginAuth.oauthRef ??
