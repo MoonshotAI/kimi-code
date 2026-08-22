@@ -394,8 +394,11 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 
     // Reasoning content: honor the explicit key when set, otherwise scan the
     // de facto field set and remember the dialect for outbound echo.
+    // Observe empty strings for dialect detection, but do not journal no-op
+    // think parts — some gateways keep `reasoning_content: ""` on every chunk
+    // after thinking ends (see #2506).
     const reasoning = reasoningKeyDialect.observe(message);
-    if (reasoning !== undefined) {
+    if (reasoning) {
       yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
     }
 
@@ -449,8 +452,11 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 
         // Reasoning content: honor the explicit key when set, otherwise scan
         // the de facto field set and remember the dialect for outbound echo.
+        // Observe empty strings for dialect detection, but do not journal no-op
+        // think parts — some gateways keep `reasoning_content: ""` on every chunk
+        // after thinking ends (see #2506).
         const reasoning = reasoningKeyDialect.observe(delta);
-        if (reasoning !== undefined) {
+        if (reasoning) {
           yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
         }
 
