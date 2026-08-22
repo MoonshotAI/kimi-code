@@ -19,6 +19,7 @@ import type { KimiConfig, KimiConfigPatch, McpServerConfig } from '#/config';
 import type { ExperimentalFeatureState } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
 import type { SessionMeta } from '#/session';
+import type { TodoItem } from '#/tools/builtin/state/todo-list';
 import type { GlobalMcpServerConfig } from '#/mcp/global-config';
 import type { McpServerConfigView } from '#/mcp/config-view';
 import type { McpRegistryPluginOrigin, McpServerSource } from '#/mcp/registry';
@@ -644,6 +645,7 @@ export interface AgentAPI {
   getPlan: (payload: EmptyPayload) => PlanData;
   getUsage: (payload: EmptyPayload) => UsageStatus;
   getTools: (payload: EmptyPayload) => readonly ToolInfo[];
+  getTodos: (payload: EmptyPayload) => readonly TodoItem[];
   getBackground: (payload: GetBackgroundPayload) => readonly BackgroundTaskInfo[];
 }
 

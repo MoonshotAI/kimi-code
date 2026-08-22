@@ -752,11 +752,11 @@ export abstract class SDKRpcClientBase {
   }
 
   async getTodos(input: SessionIdRpcInput): Promise<readonly SessionTodoItem[]> {
-    void input;
-    throw new KimiError(
-      ErrorCodes.NOT_IMPLEMENTED,
-      'getTodos is only available on the agent-core-v2 engine.',
-    );
+    const rpc = await this.getRpc();
+    return rpc.getTodos({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
   }
 
   async undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void> {
