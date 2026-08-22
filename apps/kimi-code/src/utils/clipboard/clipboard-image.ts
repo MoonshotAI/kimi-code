@@ -128,8 +128,11 @@ function selectPreferredImageMimeType(candidates: string[]): string | null {
     const match = normalized.find((t) => t.base === preferred);
     if (match !== undefined) return match.raw;
   }
-  const anyImage = normalized.find((t) => t.base.startsWith('image/'));
-  return anyImage?.raw ?? null;
+  // Only accept formats the image pipeline can actually decode. Anything
+  // else (e.g. WSLg bridges Windows clipboard images as image/bmp only)
+  // would be dropped downstream anyway — and would short-circuit the WSL
+  // PowerShell fallback that could have produced a PNG.
+  return null;
 }
 
 function videoMimeFromPath(path: string): string | null {
@@ -241,8 +244,8 @@ function runCommand(command: string, args: string[], options?: RunCommandOptions
   });
 }
 
-function readClipboardFileMediaViaWlPaste(): ClipboardMedia | null {
-  const list = runCommand('wl-paste', ['--list-types'], {
+function readClipboardFileMediaViaWlPaste(run: RunCommand): ClipboardMedia | null {
+  const list = run('wl-paste', ['--list-types'], {
     timeoutMs: DEFAULT_LIST_TIMEOUT_MS,
   });
   if (!list.ok) return null;
@@ -251,12 +254,12 @@ function readClipboardFileMediaViaWlPaste(): ClipboardMedia | null {
   const uriType = types.find((t) => baseMimeType(t) === 'text/uri-list');
   if (uriType === undefined) return null;
 
-  const uris = runCommand('wl-paste', ['--type', uriType, '--no-newline']);
+  const uris = run('wl-paste', ['--type', uriType, '--no-newline']);
   return uris.ok ? readMediaFromText(uris.stdout.toString('utf-8')) : null;
 }
 
-function readClipboardImageViaWlPaste(): ClipboardImage | null {
-  const list = runCommand('wl-paste', ['--list-types'], {
+function readClipboardImageViaWlPaste(run: RunCommand): ClipboardImage | null {
+  const list = run('wl-paste', ['--list-types'], {
     timeoutMs: DEFAULT_LIST_TIMEOUT_MS,
   });
   if (!list.ok) return null;
@@ -264,13 +267,13 @@ function readClipboardImageViaWlPaste(): ClipboardImage | null {
   const selected = selectPreferredImageMimeType(parseTargetList(list.stdout));
   if (selected === null) return null;
 
-  const data = runCommand('wl-paste', ['--type', selected, '--no-newline']);
+  const data = run('wl-paste', ['--type', selected, '--no-newline']);
   if (!data.ok || data.stdout.length === 0) return null;
   return { kind: 'image', bytes: data.stdout, mimeType: baseMimeType(selected) };
 }
 
-function readClipboardFileMediaViaXclip(): ClipboardMedia | null {
-  const targets = runCommand('xclip', ['-selection', 'clipboard', '-t', 'TARGETS', '-o'], {
+function readClipboardFileMediaViaXclip(run: RunCommand): ClipboardMedia | null {
+  const targets = run('xclip', ['-selection', 'clipboard', '-t', 'TARGETS', '-o'], {
     timeoutMs: DEFAULT_LIST_TIMEOUT_MS,
   });
   if (!targets.ok) return null;
@@ -279,12 +282,12 @@ function readClipboardFileMediaViaXclip(): ClipboardMedia | null {
   const uriType = candidates.find((t) => baseMimeType(t) === 'text/uri-list');
   if (uriType === undefined) return null;
 
-  const uris = runCommand('xclip', ['-selection', 'clipboard', '-t', uriType, '-o']);
+  const uris = run('xclip', ['-selection', 'clipboard', '-t', uriType, '-o']);
   return uris.ok ? readMediaFromText(uris.stdout.toString('utf-8')) : null;
 }
 
-function readClipboardImageViaXclip(): ClipboardImage | null {
-  const targets = runCommand('xclip', ['-selection', 'clipboard', '-t', 'TARGETS', '-o'], {
+function readClipboardImageViaXclip(run: RunCommand): ClipboardImage | null {
+  const targets = run('xclip', ['-selection', 'clipboard', '-t', 'TARGETS', '-o'], {
     timeoutMs: DEFAULT_LIST_TIMEOUT_MS,
   });
 
@@ -296,7 +299,7 @@ function readClipboardImageViaXclip(): ClipboardImage | null {
       : [...SUPPORTED_IMAGE_MIME_TYPES];
 
   for (const mime of tryTypes) {
-    const data = runCommand('xclip', ['-selection', 'clipboard', '-t', mime, '-o']);
+    const data = run('xclip', ['-selection', 'clipboard', '-t', mime, '-o']);
     if (data.ok && data.stdout.length > 0) {
       return { kind: 'image', bytes: data.stdout, mimeType: baseMimeType(mime) };
     }
@@ -310,27 +313,29 @@ function readClipboardImageViaXclip(): ClipboardImage | null {
  * we round-trip via a temp PNG because binary stdout is unreliable
  * across the WSL interop boundary.
  */
-function readClipboardImageViaPowerShell(): ClipboardImage | null {
+function readClipboardImageViaPowerShell(run: RunCommand): ClipboardImage | null {
   const tmpFile = join(tmpdir(), `kimi-wsl-clip-${randomUUID()}.png`);
   try {
-    const winPathResult = runCommand('wslpath', ['-w', tmpFile], {
+    const winPathResult = run('wslpath', ['-w', tmpFile], {
       timeoutMs: DEFAULT_LIST_TIMEOUT_MS,
     });
     if (!winPathResult.ok) return null;
     const winPath = winPathResult.stdout.toString('utf-8').trim();
     if (winPath.length === 0) return null;
 
+    // The temp path is embedded in the script text: WSL only forwards
+    // environment variables listed in WSLENV to Win32 processes, so an
+    // env-var hand-off would silently arrive empty without user config.
     const psScript = [
       'Add-Type -AssemblyName System.Windows.Forms',
       'Add-Type -AssemblyName System.Drawing',
-      '$path = $env:KIMI_WSL_CLIPBOARD_IMAGE_PATH',
+      `$path = '${winPath.replaceAll("'", "''")}'`,
       '$img = [System.Windows.Forms.Clipboard]::GetImage()',
       "if ($img) { $img.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); Write-Output 'ok' } else { Write-Output 'empty' }",
     ].join('; ');
 
-    const result = runCommand('powershell.exe', ['-NoProfile', '-Command', psScript], {
+    const result = run('powershell.exe', ['-NoProfile', '-Command', psScript], {
       timeoutMs: DEFAULT_POWERSHELL_TIMEOUT_MS,
-      env: { ...process.env, KIMI_WSL_CLIPBOARD_IMAGE_PATH: winPath },
     });
     if (!result.ok) return null;
     if (result.stdout.toString('utf-8').trim() !== 'ok') return null;
@@ -419,12 +424,12 @@ export async function readClipboardMedia(options?: {
     const wsl = isWSL(env);
 
     if (wayland || wsl) {
-      const fileMedia = readClipboardFileMediaViaWlPaste() ?? readClipboardFileMediaViaXclip();
+      const fileMedia = readClipboardFileMediaViaWlPaste(run) ?? readClipboardFileMediaViaXclip(run);
       if (fileMedia !== null) return fileMedia;
-      image = readClipboardImageViaWlPaste() ?? readClipboardImageViaXclip();
+      image = readClipboardImageViaWlPaste(run) ?? readClipboardImageViaXclip(run);
     }
     if (image === null && wsl) {
-      image = readClipboardImageViaPowerShell();
+      image = readClipboardImageViaPowerShell(run);
     }
     if (image === null && !wayland) {
       const nativeFileMedia = await readClipboardFileMediaViaNativeText(clip);
