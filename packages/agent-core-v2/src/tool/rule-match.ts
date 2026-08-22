@@ -1,3 +1,17 @@
+/**
+ * `tool` domain — permission rule-subject matching.
+ *
+ * Owns the glob / path matching primitives (`globMatch` / `pathGlobMatch`)
+ * and the rule-subject helpers (`literalRulePattern`,
+ * `escapeRuleSubjectLiteral`, `matchesGlobRuleSubject`,
+ * `matchesPathRuleSubject`) that tool implementations use to build their
+ * `matchesRule` closures and canonical rule strings. Glob matching accepts a
+ * subject under path-glob semantics or as opaque text where `*` also crosses
+ * `/`; NUL-bearing subjects match under path-glob semantics only. Path
+ * matching compares normalized path variants, so `./a`, `dir/../a`, and
+ * Windows separator or case variants can match the same rule. Pure
+ * functions; no scoped service.
+ */
 import { isAbsolute, join, parse } from 'pathe';
 
 import picomatch from 'picomatch';
@@ -15,17 +29,44 @@ interface PathMatchSemantics {
   readonly pathClass: PathClass;
 }
 
+const SLASH_PLACEHOLDER = '\0';
+
 export function globMatch(value: string, pattern: string, options?: { nocase?: boolean }): boolean {
+  if (pathSegmentGlobMatch(value, pattern, options)) return true;
+  if (value.includes(SLASH_PLACEHOLDER) || pattern.includes(SLASH_PLACEHOLDER)) return false;
+
+  const opaqueOptions = { ...options, dot: true };
+  if (picomatch.isMatch(asOpaqueText(value), asOpaqueText(pattern), opaqueOptions)) return true;
+
+  const normalizedValue = stripLeadingDotSlash(value);
+  const normalizedPattern = stripLeadingDotSlash(pattern);
+  if (normalizedValue === value && normalizedPattern === pattern) return false;
+  return picomatch.isMatch(
+    asOpaqueText(normalizedValue),
+    asOpaqueText(normalizedPattern),
+    opaqueOptions,
+  );
+}
+
+function asOpaqueText(value: string): string {
+  return value.replaceAll('/', SLASH_PLACEHOLDER);
+}
+
+function stripLeadingDotSlash(value: string): string {
+  return value.startsWith('./') ? value.slice(2) : value;
+}
+
+function pathSegmentGlobMatch(
+  value: string,
+  pattern: string,
+  options?: { nocase?: boolean },
+): boolean {
   if (picomatch.isMatch(value, pattern, options)) return true;
 
   const normalizedValue = stripLeadingDotSlash(value);
   const normalizedPattern = stripLeadingDotSlash(pattern);
   if (normalizedValue === value && normalizedPattern === pattern) return false;
   return picomatch.isMatch(normalizedValue, normalizedPattern, options);
-}
-
-function stripLeadingDotSlash(value: string): string {
-  return value.startsWith('./') ? value.slice(2) : value;
 }
 
 export function pathGlobMatch(
@@ -36,11 +77,11 @@ export function pathGlobMatch(
   const semantics = pathMatchSemantics(value, pattern, pathOptions);
   const nocase = pathOptions?.caseInsensitivePaths ?? true;
 
-  if (globMatch(value, pattern, { nocase })) return true;
+  if (pathSegmentGlobMatch(value, pattern, { nocase })) return true;
 
   for (const valueVariant of pathVariants(value, semantics, pathOptions)) {
     for (const patternVariant of pathVariants(pattern, semantics, pathOptions)) {
-      if (globMatch(valueVariant, patternVariant, { nocase })) return true;
+      if (pathSegmentGlobMatch(valueVariant, patternVariant, { nocase })) return true;
     }
   }
   return false;
