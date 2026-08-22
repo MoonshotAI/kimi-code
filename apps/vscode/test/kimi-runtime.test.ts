@@ -645,13 +645,15 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
     boundary.emit({ type: "turn.started", agentId: "main", sessionId: opened.id, turnId: "t1" } as unknown as Event);
     expect(opened.isBusy).toBe(true);
 
-    await expect(opened.prompt("concurrent message")).resolves.toEqual({ status: "failed" });
+    await expect(opened.prompt("concurrent message")).resolves.toEqual({ status: "failed", reason: "busy" });
 
     // The rejection surfaces as a mid-turn warning; the active turn is untouched.
     expect(opened.isBusy).toBe(true);
     const busyWarning = broadcasts.find(({ data }) => (data as { type?: string }).type === "error");
     expect(busyWarning?.data).toMatchObject({
       type: "error",
+      code: "turn.agent_busy",
+      message: "A message is being sent. Please wait.",
       phase: "runtime",
       detail: "A response is already being generated for this session.",
       terminal: false,
@@ -677,7 +679,7 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
     // terminal so the caller's composer can unlock.
     expect(opened.isBusy).toBe(true);
 
-    await expect(opened.prompt("during fork")).resolves.toEqual({ status: "failed" });
+    await expect(opened.prompt("during fork")).resolves.toEqual({ status: "failed", reason: "busy" });
     const rejection = broadcasts.find(({ data }) => (data as { type?: string }).type === "error");
     expect(rejection?.data).toMatchObject({ type: "error", phase: "runtime" });
     expect((rejection?.data as Record<string, unknown>)["terminal"]).toBeUndefined();

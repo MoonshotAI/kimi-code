@@ -67,6 +67,7 @@ beforeEach(() => {
     isStreaming: false,
     isCompacting: false,
     handshakeReceived: false,
+    awaitingTurnBegin: false,
     draftMedia: [],
     lastStatus: null,
     tokenUsage: { input_other: 0, output: 0, input_cache_read: 0, input_cache_creation: 0 },
@@ -419,6 +420,8 @@ describe("Webview thinking effort parity with the TUI", () => {
 
 describe("Webview mid-turn warnings", () => {
   it("shows a non-terminal error as a toast without unlocking the composer", async () => {
+    // A genuinely started turn keeps its bridge call open until the turn ends.
+    boundary.streamChat.mockImplementation(() => new Promise(() => {}));
     useChatStore.getState().sendMessage("first message");
     useChatStore.getState().sendMessage("queued follow-up");
     expect(useChatStore.getState().isStreaming).toBe(true);
@@ -426,15 +429,15 @@ describe("Webview mid-turn warnings", () => {
 
     useChatStore.getState().processEvent({
       type: "error",
-      code: "internal",
-      message: "Internal error occurred.",
+      code: "turn.agent_busy",
+      message: "A message is being sent. Please wait.",
       detail: "A response is already being generated for this session.",
       phase: "runtime",
       terminal: false,
     });
 
     // The turn is still running: nothing unlocks, nothing flushes, nothing is retried.
-    expect(boundary.toastWarning).toHaveBeenCalledWith("Internal error occurred.");
+    expect(boundary.toastWarning).toHaveBeenCalledWith("A message is being sent. Please wait.");
     const state = useChatStore.getState();
     expect(state.isStreaming).toBe(true);
     expect(state.queue).toHaveLength(1);
@@ -447,5 +450,143 @@ describe("Webview mid-turn warnings", () => {
     await vi.waitFor(() => {
       expect(boundary.streamChat).toHaveBeenCalledTimes(2);
     });
+  });
+});
+
+describe("Webview send bounce handling", () => {
+  it("enqueues the message when the session bounced the send as busy", async () => {
+    boundary.streamChat.mockResolvedValue({ done: false, bounced: true });
+
+    useChatStore.getState().sendMessage("hold this");
+
+    await vi.waitFor(() => {
+      expect(useChatStore.getState().queue).toHaveLength(1);
+    });
+    const state = useChatStore.getState();
+    expect(state.queue[0]?.content).toBe("hold this");
+    // The live (untracked) turn still owns the composer state: stays
+    // streaming so further input enqueues, and nothing is parked in
+    // pendingInput.
+    expect(state.isStreaming).toBe(true);
+    expect(state.pendingInput).toBeNull();
+    expect(state.awaitingTurnBegin).toBe(false);
+  });
+
+  it("rolls the composer back when the send never started a turn", async () => {
+    boundary.streamChat.mockResolvedValue({ done: false });
+
+    useChatStore.getState().sendMessage("give it back");
+
+    await vi.waitFor(() => {
+      expect(useChatStore.getState().isStreaming).toBe(false);
+    });
+    const state = useChatStore.getState();
+    // pendingInput keeps the text so the composer restores it.
+    expect(state.pendingInput).toEqual({ content: "give it back", model: "plain" });
+    expect(state.queue).toHaveLength(0);
+    expect(state.awaitingTurnBegin).toBe(false);
+  });
+
+  it("does not roll back a send whose turn already started", async () => {
+    let resolveSend!: (result: { done: boolean }) => void;
+    boundary.streamChat.mockImplementation(
+      () => new Promise<{ done: boolean }>((resolve) => { resolveSend = resolve; }),
+    );
+
+    useChatStore.getState().sendMessage("in flight");
+    useChatStore.getState().processEvent({
+      type: "TurnBegin",
+      payload: { user_input: "in flight" },
+    });
+    resolveSend({ done: true });
+
+    await vi.waitFor(() => {
+      expect(boundary.streamChat).toHaveBeenCalledTimes(1);
+    });
+    const state = useChatStore.getState();
+    expect(state.isStreaming).toBe(true);
+    expect(state.pendingInput).toEqual({ content: "in flight", model: "plain" });
+    expect(state.queue).toHaveLength(0);
+  });
+});
+
+describe("Webview send bounce ordering", () => {
+  it("resends the prompt when the busy turn completes before the bounce reply arrives", async () => {
+    let resolveFirst!: (result: { done: boolean; bounced: boolean }) => void;
+    boundary.streamChat
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ done: boolean; bounced: boolean }>((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockResolvedValue({ done: true });
+
+    useChatStore.getState().sendMessage("later");
+    // The live turn ends before the bounce reply lands: its terminal event
+    // clears the parked input and the streaming state.
+    useChatStore.getState().processEvent({ type: "stream_complete", result: { status: "finished" } });
+    resolveFirst({ done: false, bounced: true });
+
+    await vi.waitFor(() => {
+      expect(boundary.streamChat).toHaveBeenCalledTimes(2);
+    });
+    const state = useChatStore.getState();
+    expect(state.isStreaming).toBe(true);
+    expect(state.pendingInput).toEqual({ content: "later", model: "plain" });
+    expect(state.queue).toHaveLength(0);
+  });
+});
+
+describe("Webview send reply correlation", () => {
+  it("enqueues a bounced send even when another view's TurnBegin arrived first", async () => {
+    boundary.streamChat.mockResolvedValue({ done: false, bounced: true });
+
+    useChatStore.getState().sendMessage("from the losing view");
+    // The winning view's TurnBegin is broadcast to every subscriber and
+    // clears our awaitingTurnBegin before our bounce reply arrives.
+    useChatStore.getState().processEvent({
+      type: "TurnBegin",
+      payload: { user_input: "the winning view" },
+    });
+
+    await vi.waitFor(() => {
+      expect(useChatStore.getState().queue).toHaveLength(1);
+    });
+    expect(useChatStore.getState().queue[0]?.content).toBe("from the losing view");
+  });
+
+  it("ignores a stale bridge reply once a newer send owns the composer", async () => {
+    let resolveFirst!: (result: { done: boolean }) => void;
+    boundary.streamChat
+      .mockImplementationOnce(
+        () => new Promise<{ done: boolean }>((resolve) => { resolveFirst = resolve; }),
+      )
+      // The second send stays in flight for the whole test.
+      .mockImplementation(() => new Promise(() => {}));
+
+    useChatStore.getState().sendMessage("first");
+    useChatStore.getState().processEvent({
+      type: "TurnBegin",
+      payload: { user_input: "first" },
+    });
+    useChatStore.getState().processEvent({
+      type: "error",
+      code: "provider.api_error",
+      message: "Service temporarily unavailable.",
+      phase: "runtime",
+    });
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    useChatStore.getState().sendMessage("second");
+    // The first send's bridge reply only arrives now — it must not touch the
+    // second send's state.
+    resolveFirst({ done: false });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const state = useChatStore.getState();
+    expect(state.isStreaming).toBe(true);
+    expect(state.pendingInput).toEqual({ content: "second", model: "plain" });
+    expect(state.queue).toHaveLength(0);
   });
 });
