@@ -14,12 +14,14 @@ import {
   type SessionStatus,
   type TelemetryClient,
 } from '@moonshot-ai/kimi-code-sdk';
+import { Writable } from 'node:stream';
 import { resolve } from 'pathe';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, PROMPT_CLEANUP_TIMEOUT_MS } from '#/constant/app';
 
 import { resolveAgentProfileSelection } from './agent-selection';
 import { isKimiV2Enabled } from './experimental-v2';
+import { drainStdio } from './headless-exit';
 import { resolveOutputFormat } from './options';
 import type { CLIOptions, PromptOutputFormat } from './options';
 import {
@@ -113,6 +115,9 @@ export async function runPrompt(
   const stdout = io.stdout ?? process.stdout;
   const stderr = io.stderr ?? process.stderr;
   const promptProcess = io.process ?? process;
+  const streams = [stdout, stderr].filter(
+    (stream): stream is Writable => stream instanceof Writable,
+  );
   const outputFormat = resolveOutputFormat(opts);
   const workDir = process.cwd();
   const telemetryBootstrap = createCliTelemetryBootstrap();
@@ -146,9 +151,9 @@ export async function runPrompt(
   let restorePromptSessionPermission = async (): Promise<void> => {};
   let removeTerminationCleanup: (() => void) | undefined;
   let cleanupPromise: Promise<void> | undefined;
+  let outputDrainPromise: Promise<void> | undefined;
   const cleanupPromptRun = async (): Promise<void> => {
     const pending = (cleanupPromise ??= (async () => {
-      removeTerminationCleanup?.();
       setCrashPhase('shutdown');
       try {
         await restorePromptSessionPermission();
@@ -162,9 +167,24 @@ export async function runPrompt(
     // keep a completed headless run alive forever. The cleanup keeps running in
     // the background if it overruns; the caller (`kimi -p`) force-exits shortly
     // after, so any straggling work is torn down with the process.
-    await raceWithTimeout(pending, PROMPT_CLEANUP_TIMEOUT_MS);
+    const cleanupOutcome = await raceWithTimeout(pending, PROMPT_CLEANUP_TIMEOUT_MS).then(
+      () => ({ ok: true }) as const,
+      (error: unknown) => ({ ok: false, error }) as const,
+    );
+    await (outputDrainPromise ??= drainStdio(streams).finally(() => {
+      // Keep the signal handlers installed through async cleanup and output
+      // flushing. Removing them earlier restores Node's default immediate
+      // signal exit, which can discard the final assistant and resume hint.
+      removeTerminationCleanup?.();
+    }));
+    if (!cleanupOutcome.ok) {
+      throw cleanupOutcome.error;
+    }
   };
-  removeTerminationCleanup = installPromptTerminationCleanup(promptProcess, cleanupPromptRun);
+  removeTerminationCleanup = installPromptTerminationCleanup(
+    promptProcess,
+    cleanupPromptRun,
+  );
 
   try {
     await harness.ensureConfigFile();
@@ -428,6 +448,10 @@ function installHeadlessHandlers(session: PromptSession): void {
   session.setQuestionHandler(() => null);
 }
 
+/**
+ * Install one-shot signal handlers that clean up and flush queued output before
+ * forcing the process to exit with the signal's conventional exit code.
+ */
 export function installPromptTerminationCleanup(
   promptProcess: PromptProcess,
   cleanup: () => Promise<void>,
