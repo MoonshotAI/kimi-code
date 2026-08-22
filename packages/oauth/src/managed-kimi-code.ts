@@ -200,6 +200,7 @@ export interface ManagedKimiConfigAdapter<TConfig> {
       readonly oauthKey?: string | undefined;
       readonly oauthHost?: string | undefined;
       readonly preserveDefaultModel?: boolean | undefined;
+      readonly preserveNonManagedDefaultModel?: boolean;
     },
   ): ManagedKimiCodeApplyResult;
   remove?(config: TConfig): void;
@@ -213,6 +214,7 @@ export interface ProvisionManagedKimiCodeConfigOptions<TConfig> {
   readonly oauthKey?: string | undefined;
   readonly oauthHost?: string | undefined;
   readonly preserveDefaultModel?: boolean | undefined;
+  readonly preserveNonManagedDefaultModel?: boolean;
   readonly fetchImpl?: typeof fetch | undefined;
   readonly headers?: Record<string, string> | undefined;
 }
@@ -568,6 +570,7 @@ export function applyManagedKimiCodeConfig(
     readonly oauthKey?: string | undefined;
     readonly oauthHost?: string | undefined;
     readonly preserveDefaultModel?: boolean | undefined;
+    readonly preserveNonManagedDefaultModel?: boolean;
   },
 ): ManagedKimiCodeApplyResult {
   if (options.models.length === 0) {
@@ -585,6 +588,7 @@ export function applyManagedKimiCodeConfig(
   const existingModels = config.models ?? {};
   const selectedDefault = selectDefaultModel(config, options.models, {
     preserveExisting: options.preserveDefaultModel === true,
+    preserveNonManaged: options.preserveNonManagedDefaultModel !== false,
   });
 
   config.providers[KIMI_CODE_PROVIDER_NAME] = {
@@ -734,7 +738,10 @@ function forcedThinking(
 function selectDefaultModel(
   config: ManagedKimiConfigShape,
   models: readonly ManagedKimiCodeModelInfo[],
-  options: { readonly preserveExisting: boolean },
+  options: {
+    readonly preserveExisting: boolean;
+    readonly preserveNonManaged: boolean;
+  },
 ): SelectedDefaultModel {
   const firstModel = models[0];
   if (firstModel === undefined) {
@@ -751,7 +758,12 @@ function selectDefaultModel(
   if (
     options.preserveExisting &&
     currentDefault !== undefined &&
-    canPreserveDefaultModel(existingModels, currentDefault, managedModels)
+    canPreserveDefaultModel(
+      existingModels,
+      currentDefault,
+      managedModels,
+      options.preserveNonManaged,
+    )
   ) {
     const preservedModel = managedModels.get(currentDefault);
     return {
@@ -773,8 +785,10 @@ function canPreserveDefaultModel(
   existingModels: Record<string, ManagedKimiModelAlias | Record<string, unknown>>,
   defaultModel: string,
   managedModels: ReadonlyMap<string, ManagedKimiCodeModelInfo>,
+  preserveNonManaged: boolean,
 ): boolean {
   if (managedModels.has(defaultModel)) return true;
+  if (!preserveNonManaged) return false;
   const existing = existingModels[defaultModel];
   return isRecord(existing) && existing['provider'] !== KIMI_CODE_PROVIDER_NAME;
 }
@@ -846,6 +860,7 @@ export async function provisionManagedKimiCodeConfig<TConfig>(
     oauthKey: options.oauthKey,
     oauthHost: options.oauthHost,
     preserveDefaultModel: options.preserveDefaultModel,
+    preserveNonManagedDefaultModel: options.preserveNonManagedDefaultModel,
   });
   await options.adapter.write(config);
   return {

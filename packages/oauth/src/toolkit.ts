@@ -199,6 +199,9 @@ export class KimiOAuthToolkit<TConfig = unknown> {
           oauthKey,
           oauthHost,
           preserveDefaultModel: hadToken,
+          // Re-login keeps an existing managed model selection, but must not
+          // leave another provider as default after Kimi Code was selected.
+          preserveNonManagedDefaultModel: name !== KIMI_CODE_PROVIDER_NAME,
           fetchImpl: this.fetchImpl,
           headers: this.identityHeaders(),
         });
