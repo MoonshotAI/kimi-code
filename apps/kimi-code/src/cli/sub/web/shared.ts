@@ -46,6 +46,8 @@ export interface ParsedServerOptions {
   dangerousBypassAuth: boolean;
   /** Extra `Host` header values to allow through the DNS-rebinding check. */
   allowedHosts: readonly string[];
+  /** Custom browser tab title for this web UI instance (`--web-title`). */
+  webTitle?: string;
 }
 
 export interface ServerCliOptions {
@@ -63,6 +65,8 @@ export interface ServerCliOptions {
   dangerousBypassAuth?: boolean;
   /** Extra `Host` header values to allow (`--allowed-host`). */
   allowedHost?: string[];
+  /** Custom browser tab title for this web UI instance (`--web-title`). */
+  webTitle?: string;
 }
 
 export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions {
@@ -76,6 +80,7 @@ export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions 
     allowRemoteTerminals: opts.allowRemoteTerminals === true,
     dangerousBypassAuth: opts.dangerousBypassAuth === true,
     allowedHosts: parseAllowedHostArgs(opts.allowedHost),
+    webTitle: opts.webTitle,
   };
 }
 

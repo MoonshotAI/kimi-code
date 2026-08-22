@@ -1,9 +1,6 @@
-/**
- * `auth` domain tests — covers the `OAuthService` device-code orchestration,
- * its dependency on the `provider` domain, and the managed OAuth provider
- * model refresh, using a fake `IOAuthToolkit` so no real network or token
- * storage is exercised.
- */
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import {
@@ -30,7 +27,8 @@ import { IAuthLegacyService } from '#/app/authLegacy/authLegacy';
 import { AuthLegacyService } from '#/app/authLegacy/authLegacyService';
 import { IConfigService } from '#/app/config/config';
 import { ConfigRegistry } from '#/app/config/configService';
-import { type DomainEvent, IEventService } from '#/app/event/event';
+import { IEventService } from '#/app/event/event';
+import type { Event2 } from '#/app/event/event2';
 import { ILogService } from '#/_base/log/log';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -73,6 +71,15 @@ const ENV_SCOPED_REF = {
   oauthHost: 'https://env-auth.example.com',
 } as const;
 
+const OVERSEAS_SCOPED_REF = {
+  storage: 'file',
+  key: resolveKimiCodeOAuthKey({
+    oauthHost: 'https://auth.kimi.ai',
+    baseUrl: 'https://api.kimi.ai/coding/v1',
+  }),
+  oauthHost: 'https://auth.kimi.ai',
+} as const;
+
 interface FakeToolkit {
   readonly login: Mock<(...args: any[]) => any>;
   readonly logout: ReturnType<typeof vi.fn>;
@@ -94,7 +101,7 @@ describe('OAuthService', () => {
   let providerSet: ReturnType<typeof vi.fn>;
   let configSet: ReturnType<typeof vi.fn>;
   let configReplace: ReturnType<typeof vi.fn>;
-  let events: DomainEvent[];
+  let events: Event2[];
   let providerChangedEmitter: Emitter<ProvidersChangedEvent>;
 
   beforeEach(() => {
@@ -188,7 +195,7 @@ describe('OAuthService', () => {
           error: vi.fn(),
         });
         reg.definePartialInstance(IEventService, {
-          publish: (event: DomainEvent) => events.push(event),
+          publish: (event: Event2) => events.push(event),
           subscribe: () => ({ dispose: () => {} }),
         });
         reg.defineInstance(IOAuthToolkit, toolkit as unknown as IOAuthToolkit);
@@ -357,6 +364,113 @@ describe('OAuthService', () => {
         oauth: ENV_SCOPED_REF,
       }),
     );
+  });
+
+  it('startLogin with region global resolves the global login environment', async () => {
+    stubManagedModelsFetch();
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER, { region: 'global' });
+
+    expect(toolkit.login).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        oauthRef: OVERSEAS_SCOPED_REF,
+        baseUrl: 'https://api.kimi.ai/coding/v1',
+        oauthHost: 'https://auth.kimi.ai',
+      }),
+    );
+    await flush();
+    expect(providerSet).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        type: 'kimi',
+        baseUrl: 'https://api.kimi.ai/coding/v1',
+        oauth: OVERSEAS_SCOPED_REF,
+      }),
+    );
+  });
+
+  it('startLogin with a region still honors env endpoint overrides', async () => {
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://env-auth.example.com');
+    stubManagedModelsFetch();
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER, { region: 'global' });
+
+    expect(toolkit.login).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        oauthHost: 'https://env-auth.example.com',
+        baseUrl: 'https://api.example.com',
+      }),
+    );
+  });
+
+  it('getRegion resolves cn by default and global from the persisted login host', () => {
+    vi.stubEnv('KIMI_CODE_REGION_MARKER', 'off');
+    const svc = createService();
+    expect(svc.getRegion()).toBe('mainland-cn');
+
+    providers[OAUTH_PROVIDER] = {
+      type: 'kimi',
+      oauth: { storage: 'file', key: OVERSEAS_SCOPED_REF.key, oauthHost: 'https://auth.kimi.ai' },
+    };
+    expect(svc.getRegion()).toBe('global');
+  });
+
+  it('getRegion reads the install marker from the bootstrapped home unless KIMI_CODE_REGION_MARKER=off', async () => {
+    const home = ix.get(IBootstrapService).homeDir;
+    try {
+      await mkdir(home, { recursive: true });
+      await writeFile(join(home, 'region'), 'global\n', 'utf-8');
+      vi.stubEnv('KIMI_CODE_OAUTH_HOST', '');
+      providers[OAUTH_PROVIDER] = { type: 'kimi' };
+      expect(createService().getRegion()).toBe('global');
+
+      vi.stubEnv('KIMI_CODE_REGION_MARKER', 'off');
+      expect(createService().getRegion()).toBe('mainland-cn');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('getRegion reads the marker from the bootstrapped home, not KIMI_CODE_HOME', async () => {
+    const bootstrapHome = ix.get(IBootstrapService).homeDir;
+    const envHome = await mkdtemp(join(tmpdir(), 'kimi-v2-auth-envhome-'));
+    try {
+      await mkdir(bootstrapHome, { recursive: true });
+      await writeFile(join(bootstrapHome, 'region'), 'global\n', 'utf-8');
+      vi.stubEnv('KIMI_CODE_HOME', envHome);
+      vi.stubEnv('KIMI_CODE_OAUTH_HOST', '');
+      providers[OAUTH_PROVIDER] = { type: 'kimi' };
+      expect(createService().getRegion()).toBe('global');
+    } finally {
+      await rm(bootstrapHome, { recursive: true, force: true });
+      await rm(envHome, { recursive: true, force: true });
+    }
+  });
+
+  it('getRegion resolves cn from the default-slot oauth ref despite an global marker', async () => {
+    const home = ix.get(IBootstrapService).homeDir;
+    try {
+      await mkdir(home, { recursive: true });
+      await writeFile(join(home, 'region'), 'global\n', 'utf-8');
+      vi.stubEnv('KIMI_CODE_OAUTH_HOST', '');
+      providers[OAUTH_PROVIDER] = {
+        type: 'kimi',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      };
+      expect(createService().getRegion()).toBe('mainland-cn');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it('resolves the runtime credential slot to the env environment after an env-scoped login', async () => {
@@ -773,10 +887,10 @@ describe('OAuthService', () => {
     expect(configReplace).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
     expect(configReplace).toHaveBeenCalledWith('thinking', { enabled: true });
     expect(events).toEqual([
-      {
+      expect.objectContaining({
         type: 'event.model_catalog.changed',
         payload: result,
-      },
+      }),
     ]);
   });
 
@@ -1029,9 +1143,6 @@ describe('WebSearchProviderService', () => {
     expect(resolveTokenProvider).not.toHaveBeenCalled();
   });
 
-  // Tool activation gates on presence alone. An env-configured endpoint is
-  // visible before config finishes loading, so a fast bootstrap can evaluate
-  // the gate before the identity snapshot froze — presence must not read it.
   it('answers presence without touching a not-yet-frozen identity', () => {
     const notFrozen: IAgentIdentity = {
       _serviceBrand: undefined,

@@ -36,7 +36,7 @@ describe('FeatureManager — dynamic unit assembly at App scope (§5.10)', () =>
     expect(ix.invokeFunction((a) => a.get(IGizmo)).tag).toBe('gizmo');
     const infos = manager.units();
     expect(infos).toHaveLength(1);
-    expect(infos[0]).toMatchObject({ name: 'Gizmo', state: FiberState.Active });
+    expect(infos[0]).toMatchObject({ name: 'Gizmo', state: FiberState.Active, meta: {} });
     expect(typeof infos[0]!.uid).toBe('number');
     expect(events.length).toBe(1);
 
@@ -71,5 +71,20 @@ describe('FeatureManager — dynamic unit assembly at App scope (§5.10)', () =>
     ix.invokeFunction((a) => a.get(IGizmo));
     ix.dispose();
     await expect(Promise.resolve()).resolves.toBeUndefined();
+  });
+
+  it('carries a recipe-declared static meta into introspection', () => {
+    const { ix, manager } = host();
+    class Documented extends Service {
+      static readonly meta = { summary: 'a documented unit' };
+    }
+    manager.provideUnit(Documented);
+    expect(manager.units()[0]).toMatchObject({
+      name: 'Documented',
+      meta: { summary: 'a documented unit' },
+    });
+    manager.provideUnit(IGizmo, Gizmo);
+    expect(manager.units().find((unit) => unit.name === 'Gizmo')!.meta).toEqual({});
+    ix.dispose();
   });
 });

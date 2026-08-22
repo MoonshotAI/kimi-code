@@ -1,7 +1,3 @@
-/**
- * `skillCatalog` domain — builtin `import-from-cc-codex` skill definition.
- */
-
 import type { SkillDefinition } from '#/app/skillCatalog/types';
 import { parseSkillText } from '#/app/skillCatalog/parser';
 import IMPORT_FROM_CC_CODEX_BODY from './import-from-cc-codex.md?raw';

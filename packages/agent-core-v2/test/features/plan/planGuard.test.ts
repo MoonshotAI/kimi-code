@@ -1,17 +1,3 @@
-/**
- * Scenario: plan-mode Harness constraints as an `onBeforeExecuteTool` veto
- * listener. Responsibilities: verify Write/Edit plan-file allow and vetoes,
- * TaskStop/Cron vetoes, abstention on unrelated tools, and every ExitPlanMode
- * review branch (approve with/without option, Reject and Exit, Revise,
- * dismiss, auto / no-plan / empty-plan / non-plan_review skips) with
- * telemetry.
- * Wiring: real wire and plan services against a fireable executor event
- * stub; a stand-in listener registered after the plan listener proves
- * whether the guard ended adjudication (veto/allow) or abstained;
- * `IAgentToolApprovalService` is a recording stub.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/features/plan/planGuard.test.ts`.
- */
-
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';

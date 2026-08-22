@@ -33,18 +33,17 @@ import type {
   ToolInputDisplay,
 } from '@moonshot-ai/agent-core';
 import {
+  agentContextOf,
   IAgentLifecycleService,
   IAgentProfileService,
-  IAgentTokenCountingService,
-  IAgentUsageService,
   IEventBus,
-  IModelCatalog,
   ISessionApprovalService,
   ISessionInteractionService,
   ISessionQuestionService,
+  ISessionTokenCountingService,
+  ISessionUsageService,
   MAIN_AGENT_ID,
-  SECONDARY_DERIVED_MODEL_ID,
-  type DomainEvent,
+  type Event2,
   type IAgentScopeHandle,
   type IDisposable,
   type Interaction,
@@ -120,11 +119,12 @@ export class SessionEventWiring {
     );
     const lifecycle = session.accessor.get(IAgentLifecycleService);
     this.disposables.push(
-      lifecycle.onDidCreate((agent) => {
-        this.attachAgent(agent);
+      lifecycle.onDidCreate((context) => {
+        const handle = lifecycle.get(context);
+        if (handle !== undefined) this.attachAgent(handle);
       }),
-      lifecycle.onDidDispose((agentId) => {
-        this.detachAgent(agentId);
+      lifecycle.onDidDispose((context) => {
+        this.detachAgent(context.agentId);
       }),
     );
     for (const agent of lifecycle.list()) {
@@ -270,45 +270,25 @@ export class SessionEventWiring {
  * two client-facing packages so the core engine stays free of v1
  * wire-compatibility concerns.
  */
-function withStatusSnapshot(agent: IAgentScopeHandle, event: DomainEvent): DomainEvent {
+function withStatusSnapshot(agent: IAgentScopeHandle, event: Event2<any>): Event2<any> {
   const profile = agent.accessor.get(IAgentProfileService) as IAgentProfileService | undefined;
-  const usageService = agent.accessor.get(IAgentUsageService) as IAgentUsageService | undefined;
-  const tokenCounting = agent.accessor.get(IAgentTokenCountingService) as
-    | IAgentTokenCountingService
+  const usageService = agent.accessor.get(ISessionUsageService) as ISessionUsageService | undefined;
+  const tokenCounting = agent.accessor.get(ISessionTokenCountingService) as
+    | ISessionTokenCountingService
     | undefined;
   if (profile === undefined || usageService === undefined || tokenCounting === undefined) {
     return event;
   }
   // Externally reported context size, resolved by the `[token_counting]`
-  // strategy inside the service (`IAgentTokenCountingService.statusSize`).
-  const contextTokens = tokenCounting.statusSize();
+  // strategy inside the service (`ISessionTokenCountingService.statusSize`).
+  const context = agentContextOf(agent);
+  const contextTokens = tokenCounting.statusSize(context);
   const capabilities = profile.getModelCapabilities();
   const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
-  return {
-    ...event,
-    usage: usageService.status(),
+  return Object.assign({}, event, {
+    usage: usageService.status(context),
     contextTokens,
     maxContextTokens,
-    model: displayModelAlias(agent, profile.getModel()),
-  } as unknown as DomainEvent;
-}
-
-/**
- * The wire `model` is normally the bound alias, which clients resolve against
- * the model listing into a display name. The secondary-model derived entry is
- * synthesized runtime state hidden from that listing, so resolve it here to
- * the pointed entry's display string (the client's own
- * `displayName ?? wireName` priority) instead of leaking the reserved id.
- * Mirrors kap-server's `displayModelAlias`.
- */
-function displayModelAlias(agent: IAgentScopeHandle, alias: string): string {
-  if (alias !== SECONDARY_DERIVED_MODEL_ID) return alias;
-  const catalog = agent.accessor.get(IModelCatalog) as IModelCatalog | undefined;
-  if (catalog === undefined) return alias;
-  try {
-    const model = catalog.get(alias);
-    return model.displayName ?? model.name;
-  } catch {
-    return alias;
-  }
+    model: profile.getModel(),
+  }) as unknown as Event2<any>;
 }

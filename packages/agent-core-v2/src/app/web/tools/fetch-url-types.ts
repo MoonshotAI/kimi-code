@@ -1,7 +1,3 @@
-/**
- * `web` domain — host-injected `UrlFetcher` contract.
- */
-
 import { Error2 } from '#/_base/errors/errors';
 
 import { WebErrors } from '../errors';

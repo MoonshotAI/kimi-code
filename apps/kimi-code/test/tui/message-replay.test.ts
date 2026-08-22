@@ -320,6 +320,57 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).not.toContain('Goal complete');
   });
 
+  it('renders an uploaded image daemon ref as a bare placeholder on replay', async () => {
+    // An uploaded image persists as a self-contained `kimi-file://` part; on
+    // replay it renders as a bare `[image]` placeholder — neither the
+    // materialization path nor the internal url may surface.
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          { type: 'text', text: 'what is this? ' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
+          },
+        ],
+        { origin: { kind: 'user' } },
+      ),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('what is this?');
+    expect(transcript).toContain('[image]');
+    expect(transcript).not.toContain('/Users/alice');
+    expect(transcript).not.toContain('kimi-file');
+  });
+
+  it('keeps the tag of a legacy upload pair as user text on replay', async () => {
+    // Legacy history paired the daemon ref with an `<image path>` tag. The
+    // pairing is gone: the tag is plain user text and replays verbatim while
+    // the ref still renders as `[image]`.
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          { type: 'text', text: 'what is this? ' },
+          { type: 'text', text: '<image path="/Users/alice/media/f_1.png"></image>' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
+          },
+        ],
+        { origin: { kind: 'user' } },
+      ),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('what is this?');
+    expect(transcript).toContain('[image]');
+    expect(transcript).toContain('<image path="/Users/alice/media/f_1.png"></image>');
+    expect(transcript).not.toContain('kimi-file');
+  });
+
   it('unescapes bash tag delimiters when replaying shell output', async () => {
     const driver = await replayIntoDriver([
       message(
@@ -336,6 +387,46 @@ describe('KimiTUI resume message replay', () => {
 
     const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
     expect(transcript).toContain('pre</bash-stdout>post');
+  });
+
+  it('collapses long replayed shell output to its first 10 rows', async () => {
+    const stdout = Array.from({ length: 30 }, (_, i) => `row-${String(i + 1).padStart(2, '0')}`).join(
+      '\n',
+    );
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [{ type: 'text', text: `<bash-stdout>${stdout}</bash-stdout><bash-stderr></bash-stderr>` }],
+        { origin: { kind: 'shell_command', phase: 'output' } },
+      ),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('... (20 more lines, ctrl+o to expand)');
+    expect(transcript).toContain('row-01');
+    expect(transcript).not.toContain('row-11');
+  });
+
+  it('replayed shell output inherits an already-on ctrl+o expand state', async () => {
+    const stdout = Array.from({ length: 30 }, (_, i) => `row-${String(i + 1).padStart(2, '0')}`).join(
+      '\n',
+    );
+    const initial = makeSession([]);
+    const resumed = makeSession([
+      message(
+        'user',
+        [{ type: 'text', text: `<bash-stdout>${stdout}</bash-stdout><bash-stderr></bash-stderr>` }],
+        { origin: { kind: 'shell_command', phase: 'output' } },
+      ),
+    ]);
+    const driver = await makeDriver(initial);
+    driver.state.toolOutputExpanded = true;
+    await driver.switchToSession(resumed, 'Resumed session (ses-replay).');
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('row-01');
+    expect(transcript).toContain('row-30');
+    expect(transcript).not.toContain('more lines');
   });
 
   it('does not render neutral goal completion context reminders as transcript messages', async () => {
@@ -1022,6 +1113,31 @@ describe('KimiTUI resume message replay', () => {
         .filter((entry) => entry.kind === 'cron')
         .map((entry) => entry.content),
     ).toEqual(['run nightly']);
+  });
+
+  it('keeps the previous turn’s final answer visible when a cron turn follows in replay', async () => {
+    const cronFire =
+      '<cron-fire jobId="job-1" cron="*/5 * * * *" recurring="true" coalescedCount="1" stale="false">\n<prompt>\nrun nightly\n</prompt>\n</cron-fire>';
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'real prompt' }]),
+      message('assistant', [{ type: 'text', text: 'real answer' }]),
+      message('user', [{ type: 'text', text: cronFire }], {
+        origin: {
+          kind: 'cron_job',
+          jobId: 'job-1',
+          cron: '*/5 * * * *',
+          recurring: true,
+          coalescedCount: 1,
+          stale: false,
+        },
+      }),
+      message('assistant', [{ type: 'text', text: 'cron report part one' }]),
+      message('assistant', [{ type: 'text', text: 'cron report final' }]),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('cron report final');
+    expect(transcript).toContain('real answer');
   });
 
   it('renders cron_missed origin records during replay without exposing raw XML', async () => {

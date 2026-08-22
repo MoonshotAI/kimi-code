@@ -1,12 +1,3 @@
-/**
- * OpenAPI smoke test for server-v2.
- *
- * Boots the server, fetches `/openapi.json`, and asserts that `@fastify/swagger`
- * is wired and that the v2-specific post-processing transforms ran (as opposed
- * to a verbatim copy of v1's transforms, which would fabricate endpoints v2
- * does not register).
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -73,8 +64,6 @@ describe('server-v2 OpenAPI', () => {
     const doc = await fetchOpenApi();
     const paths = asRecord(doc['paths']);
 
-    // v2 only registers ::archive — the generic `{tail}` path must be gone and
-    // the v1-only actions must not be fabricated.
     expect(paths['/api/v1/sessions/{tail}']).toBeUndefined();
     expect(paths['/api/v1/sessions/{session_id}:archive']).toBeDefined();
     expect(paths['/api/v1/sessions/{session_id}:fork']).toBeUndefined();

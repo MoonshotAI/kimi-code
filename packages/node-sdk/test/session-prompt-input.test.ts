@@ -82,6 +82,37 @@ describe('Session.prompt input normalization', () => {
     });
   });
 
+  it('forwards a caller-chosen promptId to the core RPC client', async () => {
+    const prompt = vi.fn(async () => {});
+    const session = new Session({
+      id: 'ses_prompt_id',
+      workDir: '/tmp/work',
+      rpc: { prompt } as unknown as SDKRpcClientBase,
+    });
+
+    await session.prompt('hello', { promptId: 'sub-1' });
+
+    expect(prompt).toHaveBeenCalledWith({
+      sessionId: 'ses_prompt_id',
+      input: [{ type: 'text', text: 'hello' }],
+      promptId: 'sub-1',
+    });
+  });
+
+  it('rejects an empty caller-chosen promptId before calling RPC', async () => {
+    const prompt = vi.fn(async () => {});
+    const session = new Session({
+      id: 'ses_prompt_id',
+      workDir: '/tmp/work',
+      rpc: { prompt } as unknown as SDKRpcClientBase,
+    });
+
+    await expect(session.prompt('hello', { promptId: '' })).rejects.toThrow(
+      'promptId must not be empty',
+    );
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
   it('starts btw and returns the forked agent id', async () => {
     const startBtw = vi.fn(async () => 'agent-btw');
     const session = new Session({

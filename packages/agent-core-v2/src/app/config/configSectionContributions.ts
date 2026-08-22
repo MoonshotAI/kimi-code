@@ -1,15 +1,3 @@
-/**
- * `config` domain — module-level config-section contribution collector.
- *
- * Lets each owning domain self-register its config section at module load time
- * ("import = register"). An owner domain calls `registerConfigSection(...)`
- * at the top level of its config-section module; `ConfigRegistry` drains the
- * collected contributions when it is constructed. Pure data — no DI, no
- * container — so `config` never imports any owner domain, and a section
- * becomes available as soon as its domain barrel is imported, regardless of
- * whether the consuming Service is instantiated.
- */
-
 import { collection } from '#/_base/di/collection';
 import type { ConfigSchema, RegisterSectionOptions } from './config';
 

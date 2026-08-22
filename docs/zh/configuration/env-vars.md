@@ -36,6 +36,22 @@ export KIMI_DISABLE_TELEMETRY=1
 
 不修改 `config.toml` 临时切换模型——设置 `KIMI_MODEL_NAME` 后，CLI 在内存里合成一个临时供应商，重启后失效。详见[用环境变量定义模型](#用环境变量定义模型-kimi-model)。
 
+### `KIMI_CODE_CUSTOM_HEADERS`
+
+为所有出站的模型请求附加自定义 HTTP 请求头——LLM 聊天请求（所有供应商协议）和 `/models` 模型列表请求都会携带。适合网关按请求头路由的场景，例如指定集群：
+
+```sh
+export KIMI_CODE_CUSTOM_HEADERS=$'X-Gateway-Cluster: my-cluster\nX-Custom-Tag: debug'
+```
+
+格式与 `ANTHROPIC_CUSTOM_HEADERS` 一致：由换行分隔的 `Name: Value` 行，键名和值两端的空白会被去除，不含冒号的行会被忽略。
+
+::: info 新增
+新增于 0.20.2。
+:::
+
+> 优先级：Kimi 身份头（`User-Agent`、`X-Msh-*`）和 `config.toml` 里供应商的 `custom_headers`（见 [配置文件](./config-files.md#providers)）会覆盖这里的同名条目。认证头的行为因协议而异：在 `kimi`、`openai`、`openai_responses` 协议上，`Authorization` 条目会替换生成的 bearer token；`/models` 列表请求始终使用自己的认证头。`authorization` 这类大小写变体不会被当作同名头——它会与真正的头合并，可能导致请求失败。不要用它设置认证等保留头。需要按供应商区分请求头时，请改用 `custom_headers`。
+
 ## 供应商凭证键（写在 config.toml 里）
 
 下面这些键名不是直接从 shell 读取的——它们是写在 `config.toml` 的 `[providers.<name>.env]` 子表里、作为 `api_key` / `base_url` 备用来源的键名。CLI 只从配置文件读取，不从 `process.env` 读取。
@@ -121,19 +137,20 @@ kimi
 | 环境变量 | 用途 | 合法值 |
 | --- | --- | --- |
 | `KIMI_DISABLE_TELEMETRY` | 关闭匿名遥测上报 | `1`、`true`、`yes`、`y`（不区分大小写） |
+| `KIMI_CODE_PASSWORD` | 为 `kimi web` 本地服务设置并列鉴权密码，与 bearer token 同时有效；把服务绑定到非本机地址时建议设置，见[本地服务与 API](../guides/server.md#鉴权) | 任意非空字符串；未设置时仅 token 有效 |
 | `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` | 会话关闭时是否保留后台任务，优先级高于 `config.toml`。默认会在退出时停止后台任务 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` | 同时运行的后台任务数上限，优先级高于 `config.toml` 的 `[background] max_running_tasks`（不设置表示无上限） | 正整数；非法值被忽略 |
 | `KIMI_IMAGE_MAX_EDGE_PX` | 图片压缩的最长边上限（像素），优先级高于 `config.toml` 的 `[image] max_edge_px`（默认 `2000`） | 正整数；非法值被忽略 |
 | `KIMI_IMAGE_READ_BYTE_BUDGET` | 模型自行读图（`ReadMediaFile` 默认读取）的单图字节预算，优先级高于 `config.toml` 的 `[image] read_byte_budget`（默认 `262144`，即 256 KB） | 正整数；非法值被忽略 |
 | `KIMI_CODE_PLUGIN_MARKETPLACE_URL` | 覆盖 `/plugins` 加载的 plugin marketplace JSON，适合 dev loopback server、测试 CDN 文件或替换 marketplace 目录 | `https://code.kimi.com/kimi-code/plugins/marketplace.json`；也接受 `http://`、`file://` URL 和本地路径 |
-| `KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY` | 限制 AgentSwarm 初始提升并发阶段可同时运行的子 Agent 数量；不设置表示不限制 | 正整数；非法值会立即失败 |
-| `KIMI_SUBAGENT_TIMEOUT_MS` | 单个子 Agent（`Agent` / `AgentSwarm`）可运行的最长时间（毫秒）；优先级高于 `config.toml` 的 `[subagent] timeout_ms`（默认 `7200000`，即 2 小时） | 正整数；非法值回退到配置或默认值 |
+| `KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY` | 限制 AgentSwarm 初始提升并发阶段可同时运行的 subagent 数量；不设置表示不限制 | 正整数；非法值会立即失败 |
+| `KIMI_SUBAGENT_TIMEOUT_MS` | 单个 subagent（`Agent` / `AgentSwarm`）可运行的最长时间（毫秒）；优先级高于 `config.toml` 的 `[subagent] timeout_ms`（默认 `7200000`，即 2 小时） | 正整数；非法值回退到配置或默认值 |
 | `KIMI_CODE_IDENTITY_NAME` | Agent 在系统提示词中的自称，优先级高于 `config.toml` 的 `[identity] name`，且不会被写回配置文件 | 任意非空字符串；空值视为未设置 |
 | `KIMI_CODE_IDENTITY_SLUG` | 协议标识，用于发给第三方 provider 的 `User-Agent` 产品名和 MCP 客户端名，优先级高于 `[identity] slug`。未设置时由名称派生 | 任意非空字符串；会转小写并将连续非字母数字字符折叠为 `-` |
 | `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` | 是否向模型提供介绍 Kimi Code 自身的内置 Skills，优先级高于 `config.toml` 的 `builtin_product_skills`（默认开启） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
-| `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL` | 在包括交互式 TUI 在内的所有启动方式下启用实验性的次主力模型功能；master `KIMI_CODE_EXPERIMENTAL_FLAG=1` 也会启用本功能 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
-| `KIMI_SECONDARY_MODEL` | 次主力模型；优先级高于 `config.toml` 的 [`[secondary_model] model`](./config-files.md#secondary-model)。次主力模型实验功能启用后，新派生的子 Agent 默认绑定该模型，而不再继承主 Agent 的模型 | `[models]` 中已配置条目的别名，如 `kimi-code/kimi-k2.5`；空白值被忽略 |
-| `KIMI_SECONDARY_EFFORT` | 次主力模型的 thinking effort；优先级高于 `config.toml` 的 `[secondary_model] default_effort`，仅在次主力模型及其实验功能均启用时生效 | effort 取值，如 `low`；空白值被忽略 |
+| `KIMI_CODE_TUI_FULL_SCREEN` | 启用实验性的 fullscreen alternate-screen 界面：可滚动的 transcript 视口、鼠标选择文本、可点击链接、Ctrl-Shift-F 搜索 | `1` 开启；其他值保持常规内联界面 |
+| `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL` | 在包括交互式 TUI 在内的所有启动方式下启用实验性的[subagent 模型池](./config-files.md#subagent-模型池)；master `KIMI_CODE_EXPERIMENTAL_FLAG=1` 也会启用本功能 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK` | 在 `Agent` 和 `AgentSwarm` 工具上启用实验性的 `fork` 参数，让模型可以以调用方 Agent 对话历史的快照而不是空上下文启动 subagent；master `KIMI_CODE_EXPERIMENTAL_FLAG=1` 也会启用本功能 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_MCP_STARTUP_TIMEOUT_MS` | 所有 MCP server 的全局默认连接超时（毫秒）；优先级高于 `config.toml` 的 `[mcp] startup_timeout_ms`，但低于 `mcp.json` 中单个 server 的 `startupTimeoutMs`（默认 `30000`） | `1` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_MCP_TOOL_TIMEOUT_MS` | 所有 MCP server 的全局默认单次工具调用超时（毫秒）；优先级高于 `config.toml` 的 `[mcp] tool_timeout_ms`，但低于 `mcp.json` 中单个 server 的 `toolTimeoutMs`（默认 `60000`） | `1` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_LOOP_MAX_STEPS_PER_TURN` | Agent 单轮最大步数；优先级高于 `config.toml` 的 `[loop_control] max_steps_per_turn`（不设或 `0` 表示无上限） | 非负整数；非法值被忽略 |

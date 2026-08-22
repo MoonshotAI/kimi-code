@@ -1,13 +1,3 @@
-/**
- * `persistence/interface` — `IAtomicDocumentStore` contract.
- *
- * The atomic-document access-pattern store: one typed value per `(scope,
- * key)`, replaced atomically on every write. Serialization is delegated to a
- * `DocumentCodec` so the same access pattern serves different on-disk formats.
- *
- * This file ships the interface, codec contract, and DI tokens only.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { type IDisposable } from '#/_base/di/lifecycle';
 import { type Event } from '#/_base/event';

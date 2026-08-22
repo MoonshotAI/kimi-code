@@ -1,13 +1,3 @@
-/**
- * server-v2 `--dangerous-bypass-auth` (`disableAuth`) wiring.
- *
- * When the operator opts out of the bearer-token gate, every REST and
- * WebSocket route accepts unauthenticated requests, and `/api/v1/meta`
- * advertises `dangerous_bypass_auth: true` so the web UI can connect without a
- * token. The default (hardened) boot keeps the gate closed and reports
- * `dangerous_bypass_auth: false`.
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,7 +18,6 @@ function rawToString(data: RawData): string {
   return Buffer.from(data as ArrayBuffer).toString('utf8');
 }
 
-/** Resolve when the socket opens and the server's first frame arrives. */
 function openConn(url: string): Promise<{ ws: WebSocket; firstFrame: unknown }> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
@@ -53,7 +42,6 @@ describe('server-v2 disableAuth (--dangerous-bypass-auth)', () => {
       try {
         ws.close();
       } catch {
-        // ignore
       }
     }
     if (server !== undefined) {
@@ -83,7 +71,7 @@ describe('server-v2 disableAuth (--dangerous-bypass-auth)', () => {
   it('disableAuth:true lets REST through without a token and advertises it in /meta', async () => {
     const { base } = await boot(true);
 
-    const meta = await fetch(`${base}/api/v1/meta`); // no Authorization header
+    const meta = await fetch(`${base}/api/v1/meta`);
     expect(meta.status).toBe(200);
     const metaBody = (await meta.json()) as {
       code: number;
@@ -92,7 +80,6 @@ describe('server-v2 disableAuth (--dangerous-bypass-auth)', () => {
     expect(metaBody.code).toBe(0);
     expect(metaBody.data.dangerous_bypass_auth).toBe(true);
 
-    // A normally-protected route is also open without a credential.
     const auth = await fetch(`${base}/api/v1/auth`);
     expect(auth.status).toBe(200);
   });
@@ -108,7 +95,7 @@ describe('server-v2 disableAuth (--dangerous-bypass-auth)', () => {
   it('default boot keeps the gate closed and reports dangerous_bypass_auth: false', async () => {
     const { base } = await boot(undefined);
 
-    const unauthed = await fetch(`${base}/api/v1/meta`); // no token
+    const unauthed = await fetch(`${base}/api/v1/meta`);
     expect(unauthed.status).toBe(401);
 
     const meta = await fetch(`${base}/api/v1/meta`, {

@@ -1,19 +1,3 @@
-/**
- * `search/worker` — the RPC protocol between the main-process search worker
- * host (`host.ts`) and the worker thread entry (`entry.ts`).
- *
- * One long-lived worker exclusively owns the `<homeDir>/search-index` MiniDb
- * handle (open/replay, sync, refresh, queries, reindex, close). The protocol
- * is a small request/response envelope over `postMessage` with a versioned
- * ready handshake — deliberately NOT an extension of minidb's bounded
- * text-build worker (a one-shot build runner), which has a different
- * lifecycle.
- *
- * Pure types + constants; safe to import from both sides. The worker entry's
- * import closure runs under Node's native type stripping, so relative
- * imports in this file's closure use explicit `.ts` specifiers.
- */
-
 import type { GlobalSearchErrorReason } from '../contract.ts';
 import type {
   CoreLifecycleReport,
@@ -50,8 +34,6 @@ export interface SearchWorkerData {
   readonly textBuildWorkerPath?: string;
 }
 
-// -- requests (main → worker) -------------------------------------------------
-
 /** RPC calls: carry a request id and always produce a response. */
 export type SearchWorkerCall =
   | { readonly id: number; readonly v: number; readonly type: 'open' }
@@ -77,8 +59,6 @@ export interface SearchWorkerControlMessage {
 
 /** Everything the host may post to the worker. */
 export type SearchWorkerRequest = SearchWorkerCall | SearchWorkerControlMessage;
-
-// -- responses & events (worker → main) ----------------------------------------
 
 /** Response payload of the `open` / `refresh` / `reindex` requests. */
 export interface SearchWorkerOpenResult {

@@ -1,7 +1,3 @@
-/**
- * `di` domain — service identifiers, `createDecorator`, and the `IInstantiationService` contract.
- */
-
 import type { SyncDescriptor, SyncDescriptor0 } from './descriptors';
 import type { CascadeEngine } from './cascadeEngine';
 import type { Event } from '../event';
@@ -10,15 +6,12 @@ import type { ServiceCollection } from './serviceCollection';
 
 export type DependencyKind = 'instance' | 'collection' | 'ref';
 
-// eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace _util {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   export const serviceIds = new Map<string, ServiceIdentifier<any>>();
   export const DI_TARGET = '$di$target';
   export const DI_DEPENDENCIES = '$di$dependencies';
 
   export interface ServiceDependency {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     readonly id: ServiceIdentifier<any>;
     readonly index: number;
     readonly kind: DependencyKind;
@@ -38,11 +31,8 @@ export namespace _util {
     );
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
   export interface DI_TARGET_OBJ extends Function {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
     [DI_TARGET]: Function;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     [DI_DEPENDENCIES]: { id: ServiceIdentifier<any>; index: number; kind: DependencyKind }[];
   }
 }
@@ -53,14 +43,12 @@ export interface IConstructorSignature<T, Args extends any[] = []> {
   new <Services extends BrandedService[]>(...args: [...Args, ...Services]): T;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type GetLeadingNonServiceArgs<TArgs extends any[]> =
   TArgs extends [] ? []
   : TArgs extends [...infer TFirst, BrandedService] ? GetLeadingNonServiceArgs<TFirst>
   : TArgs;
 
 export interface ServiceIdentifier<T> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (target: any, key: string | symbol | undefined, index: number): void;
 
   readonly type: T;
@@ -69,9 +57,7 @@ export interface ServiceIdentifier<T> {
 }
 
 function storeServiceDependency(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   id: ServiceIdentifier<any>,
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
   target: Function,
   index: number,
   kind: DependencyKind = 'instance',
@@ -86,10 +72,8 @@ function storeServiceDependency(
 }
 
 export function storeCustomDependency(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   id: ServiceIdentifier<any>,
   kind: DependencyKind,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   target: any,
   index: number,
 ): void {
@@ -103,7 +87,6 @@ export function createDecorator<T>(name: string): ServiceIdentifier<T> {
   }
 
   const id = function serviceDecorator(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     target: any,
     _key: string | symbol | undefined,
     index: number,
@@ -158,7 +141,6 @@ export interface LiveRef<T> {
 export function ref<T>(
   id: ServiceIdentifier<T>,
 ): (target: object, key: string | symbol | undefined, index: number) => void {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return function refDecorator(target: any, _key: string | symbol | undefined, index: number): void {
     if (arguments.length !== 3) {
       throw new Error('@ref-decorator can only be used to decorate a parameter');
@@ -195,11 +177,9 @@ export interface IInstantiationService {
     fn: (accessor: ServicesAccessor, ...args: TS) => R,
     ...args: TS
   ): R;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   createInstance<T>(descriptor: SyncDescriptor0<T>): T;
   createInstance<
     Ctor extends new (
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ...args: any[]
     ) => unknown,
     R extends InstanceType<Ctor>,
@@ -222,14 +202,10 @@ export const IInstantiationService: ServiceIdentifier<IInstantiationService> =
   createDecorator<IInstantiationService>('instantiationService');
 
 export interface ServiceCollectionLike {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   set<T>(id: ServiceIdentifier<T>, instanceOrDescriptor: any): unknown;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   get<T>(id: ServiceIdentifier<T>): any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   has(id: ServiceIdentifier<any>): boolean;
   forEach(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     callback: (id: ServiceIdentifier<any>, value: any) => void,
   ): void;
 }

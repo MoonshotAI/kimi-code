@@ -1,59 +1,3 @@
-/**
- * `kosong/model` domain — `ModelCatalog`, the single place that builds
- * Models.
- *
- * Reads Model / Provider config, resolves the auth closure (provider-level
- * credential or Model-inline override), and assembles the pure-data
- * `Model` plus its `ModelRequester` — cached together by model id. Bound at
- * App scope; resolution is shared across sessions.
- *
- * Two config-driven paths (unchanged from the legacy resolver):
- *   - **Structured** — `Model.providerId` points at a `[providers.*]` entry.
- *     Auth comes from the Provider unless the Model carries an override
- *     (`apiKey` / `oauth`).
- *   - **Flat** — `Model.baseUrl` is inline; the catalog synthesizes a
- *     Provider record keyed by the URL's origin so multiple Models on the
- *     same host converge on the same Provider metadata. Auth comes from the
- *     Model itself.
- *
- * Everything vendor-shaped goes through the registries, never a hardcoded
- * switch: the wire protocol falls back from an explicit `protocol` to the
- * referenced provider vendor's declared `baseProtocol`; endpoint and
- * credential env fallbacks resolve through `resolveProviderEndpoint` against
- * the config env bag; host-header forwarding follows the vendor definition's
- * `hostHeaders`; capability detection is `resolveCapability(protocol, name,
- * providerType)`.
- *
- * Caching (load-bearing): assembled entries are invalidated ONLY by the
- * model/provider config-change events. Tests that mutate config
- * behind the services' backs (bypassing those events) must call
- * `notifyConfigChanged()` to drop the cache — otherwise `get` keeps serving
- * the previous generation's Model. The host-header layers baked into an
- * entry need no invalidation: both are frozen for the process (bootstrap
- * args, and the identity snapshot behind the third-party layer).
- *
- * Inspection: every assembly also captures a `ResolutionTraceCollector`
- * (provenance records + intermediate artifacts, reference-only) alongside the
- * Model in the same cache entry. `inspect(id)` assembles the god object from
- * that trace on demand — same pass, same generation, never a re-resolution.
- *
- * Enumeration & default pointer: `listModels` projects every configured
- * model from the SAME materialization `get` serves (falling back to the
- * config-only projection for models that fail to materialize, so broken
- * config stays visible); `listProviders` / `getProvider` project the
- * provider registry plus credential state. `setDefaultModel` writes the
- * global default-model pointer (through `IModelService`) after a
- * materialization gate — the catalog's only write.
- *
- * Outbound headers: vendors declaring `hostHeaders: 'full'` receive the host
- * headers port's complete set and stay consistent with it — that set is the
- * host's to define, and backends key on the product token it carries (log
- * filtering, rollout gating). Everyone else receives the port's third-party
- * layer, already finished on the app side (at most a `User-Agent`, product
- * token per the configured identity) — this catalog picks a layer, it never
- * edits one.
- */
-
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -133,7 +77,6 @@ interface CatalogEntry {
   readonly trace: ResolutionTraceCollector;
 }
 
-// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class ModelCatalog extends Disposable implements IModelCatalog {
   declare readonly _serviceBrand: undefined;
 

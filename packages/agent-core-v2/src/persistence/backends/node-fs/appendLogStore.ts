@@ -1,19 +1,3 @@
-/**
- * `storage` domain — node-fs backend for `IAppendLogStore`.
- *
- * Sits on top of `IFileSystemStorageService` and turns a byte stream into an ordered
- * sequence of typed JSON records. Owns the concerns the storage service
- * deliberately ignores: line framing (one JSON value per line, a.k.a. JSONL),
- * batching of appends into a single durable `append`, and crash-tolerant
- * decoding (a torn final line is dropped; corruption anywhere else throws).
- * Serializes whole-log rewrites with live appends, preserves queued or
- * in-flight records across the atomic replacement, keeps ambiguous append and
- * rewrite failures sticky, keeps the shared flush pending until the
- * post-rewrite drain is durable, waits every key before a global flush reports
- * an error, and preserves per-key storage ordering while acquired buffers
- * retire and hand off to replacement owners. Bound at App scope.
- */
-
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -26,6 +10,14 @@ import {
 } from '#/persistence/interface/appendLogStore';
 
 const textEncoder = new TextEncoder();
+
+const pendingRetirements = new Set<Promise<void>>();
+
+export async function drainAppendLogRetirements(): Promise<void> {
+  while (pendingRetirements.size > 0) {
+    await Promise.all(pendingRetirements);
+  }
+}
 
 interface LogState {
   pending: unknown[];
@@ -134,6 +126,10 @@ export class AppendLogStore implements IAppendLogStore {
     await this.flush();
   }
 
+  drainRetirements(): Promise<void> {
+    return drainAppendLogRetirements();
+  }
+
   acquire(scope: string, key: string): IDisposable {
     const state = this.state(scope, key);
     state.refCount++;
@@ -187,7 +183,10 @@ export class AppendLogStore implements IAppendLogStore {
     state.refCount--;
     if (state.refCount > 0) return;
     state.retired = true;
-    state.retirement = this.settleRetiredState(scope, key, state).catch(() => undefined);
+    const retirement = this.settleRetiredState(scope, key, state).catch(() => undefined);
+    state.retirement = retirement;
+    pendingRetirements.add(retirement);
+    void retirement.finally(() => pendingRetirements.delete(retirement));
   }
 
   private async settleRetiredState(scope: string, key: string, state: LogState): Promise<void> {

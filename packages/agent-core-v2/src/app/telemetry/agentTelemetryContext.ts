@@ -1,11 +1,3 @@
-/**
- * `telemetry` domain — `IAgentTelemetryContextService` contract.
- *
- * Agent-scoped mutable request context holding `mode`, `provider_type` /
- * `protocol`, `turn_id`, and `trace_id`, snapshotted by turn telemetry at
- * launch. Bound at Agent scope.
- */
-
 import { createDecorator } from '#/_base/di/instantiation';
 
 export type AgentTelemetryContext = {

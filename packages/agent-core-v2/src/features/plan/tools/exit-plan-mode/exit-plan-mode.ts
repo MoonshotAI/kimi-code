@@ -1,14 +1,3 @@
-/**
- * `plan` domain — `IExitPlanModeTool` contract.
- *
- * Public contract of the ExitPlanMode tool — the plan-mode exit tool the LLM
- * calls to surface a finalised plan to the user and exit plan mode: the input
- * schema (including the alternative-approach options, whose labels must be
- * unique and must not reuse the reserved approval labels) and the Agent-scope
- * identifier used to resolve the implementation through the container. Bound
- * at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

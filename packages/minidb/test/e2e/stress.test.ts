@@ -22,6 +22,7 @@ import { MiniDb } from '../../src/index.js';
 import { startServer } from '../../src/server.js';
 import { tmpDir, rmrf } from './helpers/tmp.js';
 import { mulberry32 } from './helpers/prng.js';
+import { waitFor } from '../helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -570,7 +571,11 @@ test(
         await db.set(`ek${i}`, { i, pad: 'e'.repeat(1100) });
         if (i % 7 === 0) db.get(`ek${Math.max(0, i - 3)}`);
       }
-      expect(db.stats.compactions).toBeGreaterThan(0);
+      // Auto-compaction is fire-and-forget through the maintenance scheduler,
+      // so the write loop finishing does not imply a run has completed yet —
+      // wait for the churn this scenario requires instead of assuming the
+      // loop outlasted it (flakes on loaded CI runners).
+      await waitFor(() => db.stats.compactions > 0, 'auto compaction under churn');
       expect(db.store.bytes).toBeLessThanOrEqual(Math.ceil(budget * 1.05));
       expect(db.stats.evictions).toBeGreaterThan(0);
     } catch (err) {

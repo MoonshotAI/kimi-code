@@ -1,13 +1,3 @@
-/**
- * `mcpCore` domain — MCP OAuth credential store port and key addressing.
- *
- * Defines the {@link McpOAuthStore} port for reading and writing OAuth
- * credentials, plus the store-key scheme: one logical record per
- * `(serverName, serverUrl)` identity, addressed by {@link mcpOAuthStoreKey}
- * (sanitized name prefix + a digest of name and canonicalized URL). This file
- * holds no IO.
- */
-
 import { createHash } from 'node:crypto';
 
 import { basename } from 'pathe';

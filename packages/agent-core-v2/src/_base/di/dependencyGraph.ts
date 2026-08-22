@@ -1,23 +1,7 @@
-/**
- * `di` domain — persistent dependency graph (L2 substrate), tree-global.
- *
- * One graph is shared by every container of a scope tree. Edges are recorded
- * when a service's constructor dependencies are resolved and removed when the
- * consumer is torn down, so the graph always mirrors the live containers.
- * Both ends of an edge are scope-tagged: a consumer in a child scope may bind
- * a token owned by an ancestor scope (child → parent only — a parent can never
- * resolve a child's token, so cross-tree cycles are impossible by
- * construction). Instance edges bind a consumer to its dependency's
- * generation (the dependency changes → the consumer is torn down and rebuilt,
- * across scopes); collection edges (Phase 3) are recorded for introspection
- * but never join a cascade contagion set.
- */
-
 import type { ServiceIdentifier } from './instantiation';
 
 export interface ScopedToken {
   readonly scope: object;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly token: ServiceIdentifier<any>;
 }
 
@@ -31,7 +15,6 @@ export interface DependencyEdge {
 
 export class PairIndex<V> {
   private readonly _map = new Map<object, Map<
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ServiceIdentifier<any>,
     V
   >>();
@@ -82,7 +65,6 @@ export class DependencyGraph {
   addInstance(
     instance: object,
     scope: object,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     token: ServiceIdentifier<any>,
   ): void {
     const ref: ScopedToken = { scope, token };

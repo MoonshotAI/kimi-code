@@ -1,19 +1,3 @@
-/**
- * Cron fire steer-turn context e2e: when a scheduled cron task fires and
- * steers a NEW turn on the idle main agent, the provider request must carry
- * the full conversation context — in particular the earlier CronCreate tool
- * result (which holds the `id: <ULID>` line the model was told about).
- *
- * Wiring: testAgent harness with a scripted provider. The harness builds the
- * Session scope with a stub `IAgentLifecycleService` (no `create`), so this
- * test overrides it with a registry stub that resolves `main` to the harness
- * agent and fires `onDidCreate` the way production does — that is what binds
- * `SessionCronServiceImpl` to the main agent (cron tools + wire restore
- * hook). The cron clock is file-driven (`clock: file:...`) and ticking is
- * manual (`manualTick: true`) so the fire is deterministic.
- *
- * Run: ../../node_modules/.bin/vitest run test/session/cron/cron-fire-steer.e2e.test.ts
- */
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,10 +11,12 @@ import { type IAgentScopeHandle } from '#/_base/di/scope';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { CronConfig } from '#/app/cron/configSection';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { IAgentLifecycleService, type AgentScopeCreatedEvent } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 
 import { createTestAgent, sessionService, type TestAgentContext } from '../../harness';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 function textOf(message: ContextMessage): string {
   return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
@@ -39,7 +25,8 @@ function textOf(message: ContextMessage): string {
 describe('cron-fired steer turn context', () => {
   let ctx: TestAgentContext;
   let clockFile: string;
-  let onDidCreate: Emitter<IAgentScopeHandle>;
+  let onDidCreate: Emitter<AgentContext>;
+  let onDidCreateScope: Emitter<AgentScopeCreatedEvent>;
   let mainHandle: IAgentScopeHandle | undefined;
 
   beforeEach(async () => {
@@ -47,14 +34,17 @@ describe('cron-fired steer turn context', () => {
     clockFile = join(dir, 'clock.txt');
     writeFileSync(clockFile, String(Date.now()));
 
-    onDidCreate = new Emitter<IAgentScopeHandle>();
+    onDidCreate = new Emitter<AgentContext>();
+    onDidCreateScope = new Emitter<AgentScopeCreatedEvent>();
     const lifecycleStub: IAgentLifecycleService = {
       _serviceBrand: undefined,
       onDidCreate: onDidCreate.event,
-      onDidDispose: Event.None as Event<string>,
+      onDidCreateScope: onDidCreateScope.event,
+      onDidDispose: Event.None as Event<AgentContext>,
       create: () => Promise.reject(new Error('not supported in this test')),
       fork: () => Promise.reject(new Error('not supported in this test')),
-      get: (agentId) => (agentId === 'main' ? mainHandle : undefined),
+      get: (context: AgentContext) => (context.agentId === 'main' ? mainHandle : undefined),
+      findAgentHandle: (agentId: string) => (agentId === 'main' ? mainHandle : undefined),
       list: () => (mainHandle === undefined ? [] : [mainHandle]),
       broadcastPermissionMode: () => {},
       remove: () => Promise.resolve(),
@@ -65,7 +55,9 @@ describe('cron-fired steer turn context', () => {
       get: <T,>(id: ServiceIdentifier<T>): T => ctx.get(id),
     };
     mainHandle = { id: 'main', kind: LifecycleScope.Agent, accessor, dispose: () => {} };
-    onDidCreate.fire(mainHandle);
+    const agent = stubAgentContext('main', 1);
+    onDidCreate.fire(agent);
+    onDidCreateScope.fire({ context: agent, handle: mainHandle });
 
     const cronConfig: CronConfig = {
       debug: false,

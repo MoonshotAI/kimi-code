@@ -25,12 +25,14 @@ import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/kosong/provider/
 import type {
   AuthStatus,
   IOAuthService,
+  OAuthLoginOptions,
 } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 import type { ExperimentalFeatureState } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import type {
   FsBrowseResponse,
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
+import type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
 import type { ModelRecord } from '@moonshot-ai/agent-core-v2/kosong/model/model';
 import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
@@ -178,7 +180,7 @@ export interface GlobalAuthFacade {
    * model usage does not depend on the OAuth-only {@link summarize} view.
    */
   ensureReady(modelOverride?: string): Promise<void>;
-  startLogin(provider?: string): Promise<OAuthFlowStart>;
+  startLogin(provider?: string, options?: OAuthLoginOptions): Promise<OAuthFlowStart>;
   flow(provider?: string): Promise<OAuthFlowSnapshot | undefined>;
   cancelLogin(provider?: string): Promise<OAuthLoginCancelResponse>;
   logout(provider?: string): Promise<OAuthLogoutResponse>;
@@ -221,6 +223,30 @@ export interface GlobalHostFsFacade {
   home(): Promise<FsHomeResponse>;
 }
 
+/** One downloaded upload: its metadata plus the buffered bytes. */
+export interface FileDownload {
+  readonly meta: FileMeta;
+  readonly data: Uint8Array;
+}
+
+export interface GlobalFilesFacade {
+  /**
+   * Upload buffered bytes to the daemon's file store. Bytes cross the wire
+   * base64-encoded (JSON cannot carry them), so very large uploads pay one
+   * encode here and one decode in the dispatcher.
+   */
+  save(input: {
+    data: Uint8Array;
+    filename: string;
+    name?: string;
+    mimeType?: string;
+    expiresInSec?: number;
+  }): Promise<FileMeta>;
+  /** Download one upload back into memory. */
+  get(fileId: string): Promise<FileDownload>;
+  delete(fileId: string): Promise<void>;
+}
+
 /** Aggregated host/environment snapshot (`bootstrapService` properties). */
 export interface KlientEnvInfo {
   readonly platform: string;
@@ -247,6 +273,7 @@ export interface GlobalFacade {
   readonly plugins: GlobalPluginsFacade;
   readonly capabilities: GlobalCapabilitiesFacade;
   readonly hostFs: GlobalHostFsFacade;
+  readonly files: GlobalFilesFacade;
   env(): Promise<KlientEnvInfo>;
 }
 
@@ -301,12 +328,7 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       countActive: (workspaceIds) =>
         call('sessionIndex', 'count', [{ workspaceIds }]) as Promise<number>,
       create: async ({ workDir, additionalDirs, title, mcpServers }) => {
-        // The workspace handler owns session creation: materialize (or reuse)
-        // the handler for the root, then create under it.
-        const handler = (await scoped({}, 'workspaceLifecycleService', 'handlerFor', [
-          { root: workDir },
-        ])) as { id: string };
-        const handle = (await scoped({ workspaceId: handler.id }, 'sessionLifecycleService', 'create', [
+        const handle = (await scoped({}, 'sessionManager', 'create', [
           { workDir, additionalDirs, mcpServers },
         ])) as { id: string };
         const scope = { sessionId: handle.id };
@@ -420,8 +442,8 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       summarize: () => call('authSummaryService', 'summarize', []) as Promise<readonly AuthStatus[]>,
       ensureReady: (modelOverride) =>
         call('authSummaryService', 'ensureReady', [modelOverride]) as Promise<void>,
-      startLogin: (provider) =>
-        call('oauthService', 'startLogin', [provider]) as Promise<OAuthFlowStart>,
+      startLogin: (provider, options) =>
+        call('oauthService', 'startLogin', [provider, options]) as Promise<OAuthFlowStart>,
       flow: (provider) =>
         call('oauthService', 'getFlow', [provider]) as Promise<OAuthFlowSnapshot | undefined>,
       cancelLogin: (provider) =>
@@ -468,6 +490,23 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       browse: (absPath) =>
         call('hostFolderBrowser', 'browse', [absPath]) as Promise<FsBrowseResponse>,
       home: () => call('hostFolderBrowser', 'home', []) as Promise<FsHomeResponse>,
+    },
+
+    files: {
+      save: ({ data, filename, name, mimeType, expiresInSec }) =>
+        call('fileService', 'save', [
+          Buffer.from(data).toString('base64'),
+          filename,
+          { name, mimeType, expiresInSec },
+        ]) as Promise<FileMeta>,
+      get: async (fileId) => {
+        const wire = (await call('fileService', 'get', [fileId])) as {
+          meta: FileMeta;
+          data: string;
+        };
+        return { meta: wire.meta, data: Buffer.from(wire.data, 'base64') };
+      },
+      delete: (fileId) => call('fileService', 'delete', [fileId]) as Promise<void>,
     },
 
     env,
