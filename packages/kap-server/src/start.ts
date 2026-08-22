@@ -3,18 +3,20 @@ import {
   drainQueryStoreDisposals,
   drainSessionMetadataWrites,
   drainSessionIndexMirror,
+  drainLogCloses,
   ConfigWarning,
   CapabilityChanged,
+  IAppendLogStore,
   IConfigService,
   IEventService,
   IMcpOAuthService,
+  IOAuthService,
   IProviderDiscoveryService,
   ISessionIndex,
   ISessionIndexMirror,
   ICapabilityService,
   IPluginService,
   IWorkspaceService,
-  KIMI_CODE_PLUGIN_MARKETPLACE_URL,
   PluginChanged,
   logSeed,
   resolveConfigPath,
@@ -26,6 +28,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import {
   createKimiDefaultHeaders,
+  kimiRegionProfile,
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
 import { createAsyncApiDocument } from './protocol/asyncapi';
@@ -98,6 +101,14 @@ export interface ServerStartOptions {
   readonly host?: string;
   readonly port?: number;
   readonly homeDir?: string;
+  /**
+   * Environment bag handed to the engine bootstrap (`IBootstrapService.getEnv`).
+   * Defaults to `process.env`; hosts that need to override engine-level env
+   * reads (e.g. an embedded server pinning `KIMI_CODE_REGION_MARKER=off`)
+   * pass a merged bag here instead of mutating the host process's env, which
+   * would leak the override into every child process the host spawns.
+   */
+  readonly env?: NodeJS.ProcessEnv;
   /**
    * Plugin marketplace catalog URL for `GET /api/v1/plugins/marketplace`.
    * Defaults to the `KIMI_CODE_PLUGIN_MARKETPLACE_URL` env var, then the
@@ -238,6 +249,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     {
       homeDir,
       configPath,
+      env: opts.env,
       clientIdentity: opts.hostIdentity,
       args: {
         requestHeaders: createKimiDefaultHeaders({ homeDir, ...opts.hostIdentity }),
@@ -350,11 +362,14 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await core.accessor.get(ISessionIndexMirror).drain();
       await core.accessor.get(IMcpOAuthService).shutdown();
       fsWatchBridge.dispose();
+      const appendLogStore = core.accessor.get(IAppendLogStore);
       core.dispose();
+      await appendLogStore.drainRetirements();
       await drainSessionIndexMirror();
       await drainGlobalSearchDisposals();
       await drainQueryStoreDisposals();
       await drainSessionMetadataWrites();
+      await drainLogCloses();
     } finally {
       await registration.release();
     }
@@ -454,10 +469,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     enableShutdown,
     enableTerminals,
     guiStore,
-    pluginMarketplaceUrl:
-      opts.pluginMarketplaceUrl ??
-      process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] ??
-      KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+    pluginMarketplaceUrl: (() => {
+      const configured = opts.pluginMarketplaceUrl ?? process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'];
+      if (configured !== undefined) return () => configured;
+      return () =>
+        `${kimiRegionProfile(core.accessor.get(IOAuthService).getRegion()).cdnBase}/plugins/marketplace.json`;
+    })(),
     pluginMarketplaceIsDefault:
       opts.pluginMarketplaceUrl === undefined &&
       (process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] === undefined ||

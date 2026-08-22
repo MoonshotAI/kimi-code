@@ -292,7 +292,7 @@ async function resolveTrust(
   return workspace.program.trust;
 }
 
-async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWire> {
+export async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWire> {
   const sessionCount = await core.accessor.get(IWorkspaceSessions).count(ws.id);
   return {
     id: ws.id,

@@ -6,6 +6,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { loadAgentsMdDetailed } from '#/agent/profile/context';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
@@ -40,7 +41,7 @@ export class SessionInitService implements ISessionInitService {
   }
 
   async generateAgentsMd(): Promise<void> {
-    const main = this.lifecycle.get(MAIN_AGENT_ID);
+    const main = this.lifecycle.list().find((handle) => handle.id === MAIN_AGENT_ID);
     if (main === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
     }
@@ -72,7 +73,7 @@ export class SessionInitService implements ISessionInitService {
       });
 
       const run = await this.subagents.run(
-        child.id,
+        agentContextOf(child),
         { kind: 'prompt', prompt: DEFAULT_INIT_PROMPT },
         { signal: controller.signal },
       );

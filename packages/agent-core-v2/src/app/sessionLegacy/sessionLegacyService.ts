@@ -1,4 +1,4 @@
-import type { GoalSnapshot } from '#/agent/goal/types';
+import type { GoalSnapshot } from '#/features/goal/types';
 
 import type { SessionStatusResponse } from './sessionProtocol';
 import { LifecycleScope } from '#/app/scopes';
@@ -12,12 +12,14 @@ import {
   IInstantiationService,
   type ServicesAccessor,
 } from '#/_base/di/instantiation';
-import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
-import { IAgentGoalService } from '#/agent/goal/goal';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
+import { IAgentGoalService } from '#/features/goal/goal';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
+import { IAgentTowerService } from '#/features/tower/tower';
+import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import {
   getLiveSessionById,
   resumeSessionById,
@@ -64,10 +66,11 @@ export class SessionLegacyService implements ISessionLegacyService {
     agent: IAgentScopeHandle,
   ): Promise<SessionStatusResponse> {
     const profile = agent.accessor.get(IAgentProfileService);
-    const tokenCounting = agent.accessor.get(IAgentTokenCountingService);
+    const tokenCounting = agent.accessor.get(ISessionTokenCountingService);
     const permission = agent.accessor.get(IAgentPermissionModeService);
     const plan = agent.accessor.get(IAgentPlanService);
     const swarm = agent.accessor.get(IAgentSwarmService);
+    const tower = agent.accessor.get(IAgentTowerService);
 
     const model = profile.getModel();
     const capabilities = profile.getModelCapabilities();
@@ -75,7 +78,7 @@ export class SessionLegacyService implements ISessionLegacyService {
     if (maxTokens === 0 && model === '') {
       maxTokens = resolveDefaultModelContextTokens(agent) ?? 0;
     }
-    const tokens = tokenCounting.statusSize();
+    const tokens = tokenCounting.statusSize(agentContextOf(agent));
     const planData = await plan.status();
 
     return {
@@ -85,9 +88,10 @@ export class SessionLegacyService implements ISessionLegacyService {
       permission: permission.mode,
       plan_mode: planData !== null,
       swarm_mode: swarm.isActive,
+      tower_mode: tower.isActive,
       context_tokens: tokens,
       max_context_tokens: maxTokens > 0 ? maxTokens : undefined,
-      context_usage: maxTokens > 0 ? Math.min(1, tokens / maxTokens) : 0,
+      context_usage: maxTokens > 0 ? Math.min(1, tokens / maxTokens) : undefined,
     };
   }
 

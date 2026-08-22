@@ -58,9 +58,29 @@ export async function setColdSessionArchived(
     }),
   );
   if (archived) {
-    accessor.get(IEventService).publish(new SessionArchived({ payload: { sessionId } }));
+    accessor
+      .get(IEventService)
+      .publish(new SessionArchived({ payload: { sessionId, workspaceId: summary.workspaceId } }));
   }
   return 'updated';
+}
+
+export async function setSessionArchived(
+  accessor: ServicesAccessor,
+  sessionId: string,
+  archived: boolean,
+): Promise<ColdSessionArchiveOutcome> {
+  const manager = accessor.get(ISessionManager);
+  return manager.withLifecycleSerialization(sessionId, async (unguarded) => {
+    await manager.whenResumeSettled(sessionId).catch(() => undefined);
+    const live = getLiveSessionById(accessor, sessionId);
+    if (live !== undefined) {
+      if (archived) await unguarded.archive();
+      else await unguarded.restore();
+      return 'updated';
+    }
+    return setColdSessionArchived(accessor, sessionId, archived);
+  });
 }
 
 export type SessionArchiveBatchItemOutcome =
@@ -75,20 +95,10 @@ export async function setSessionArchivedBatch(
   const outcomes: (SessionArchiveBatchItemOutcome | undefined)[] = ids.map(() => undefined);
   const applyOne = async (id: string): Promise<SessionArchiveBatchItemOutcome> => {
     try {
-      const manager = accessor.get(ISessionManager);
-      return await manager.withLifecycleSerialization(id, async (unguarded) => {
-        await manager.whenResumeSettled(id);
-        const live = getLiveSessionById(accessor, id);
-        if (live !== undefined) {
-          if (archived) await unguarded.archive();
-          else await unguarded.restore();
-          return { id, ok: true };
-        }
-        const outcome = await setColdSessionArchived(accessor, id, archived);
-        return outcome === 'updated'
-          ? { id, ok: true }
-          : { id, ok: false, reason: 'not_found', message: `session ${id} does not exist` };
-      });
+      const outcome = await setSessionArchived(accessor, id, archived);
+      return outcome === 'updated'
+        ? { id, ok: true }
+        : { id, ok: false, reason: 'not_found', message: `session ${id} does not exist` };
     } catch (error) {
       return {
         id,

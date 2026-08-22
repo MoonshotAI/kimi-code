@@ -18,9 +18,13 @@ import {
   IAgentLifecycleService,
   IEventBus,
   IEventService,
+  ISessionCronService,
+  ISessionManager,
+  IWorkspaceService,
   MAIN_AGENT_ID,
   closeSessionById,
   getLiveSessionById,
+  resumeSessionById,
   sessionDirOf,
   type ServiceIdentifier,
   type ScopeSeed,
@@ -288,7 +292,7 @@ describe('server-v2 /api/v1/sessions', () => {
     });
     const session = getLiveSessionById((server as RunningServer).core.accessor, id);
     if (session === undefined) throw new Error('expected a live session');
-    const agent = session.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
+    const agent = session.accessor.get(IAgentLifecycleService).findAgentHandle(MAIN_AGENT_ID);
     if (agent === undefined) throw new Error('expected a live main agent');
 
     const eventBus = agent.accessor.get(IEventBus);
@@ -564,6 +568,7 @@ describe('server-v2 /api/v1/sessions', () => {
       getManagedUserInfo: async () => ({ kind: 'error', message: 'unused' }),
       resolveTokenProvider: () => ({ getAccessToken: async () => 'test-token' }),
       getCachedAccessToken: async () => 'test-token',
+      getRegion: () => 'mainland-cn',
     };
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -643,7 +648,7 @@ describe('server-v2 /api/v1/sessions', () => {
     });
     expect(digested.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
     expect(toolsRequest?.params.chat_content).toBe(
-      'user: first REST prompt\nuser: third REST prompt',
+      'user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt',
     );
   });
 
@@ -698,6 +703,36 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(after.body.data.permission).toBe('yolo');
   });
 
+  it('rejects tower_mode agent_config when the tower feature is unavailable', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+
+    const before = await getJson<{
+      tower_mode?: boolean;
+    }>(`/api/v1/sessions/${id}/status`);
+    expect(before.body.data.tower_mode).toBe(false);
+
+    const on = await postJson(`/api/v1/sessions/${id}/profile`, {
+      agent_config: { tower_mode: true },
+    });
+    expect(on.body.code).not.toBe(0);
+    expect(on.body.msg).toContain('tower mode could not be enabled');
+    const after = await getJson<{
+      tower_mode?: boolean;
+    }>(`/api/v1/sessions/${id}/status`);
+    expect(after.body.data.tower_mode).toBe(false);
+
+    const off = await postJson(`/api/v1/sessions/${id}/profile`, {
+      agent_config: { tower_mode: false },
+    });
+    expect(off.body.code).toBe(0);
+    const settled = await getJson<{
+      tower_mode?: boolean;
+    }>(`/api/v1/sessions/${id}/status`);
+    expect(settled.body.data.tower_mode).toBe(false);
+  });
+
   it('returns the current goal via GET /goal', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
@@ -748,7 +783,9 @@ describe('server-v2 /api/v1/sessions', () => {
   it('returns the active goal when the Web refreshes after blocked-goal resume', async () => {
     const rig = await createBlockedGoalRig();
     try {
-      rig.eventBus.publish(new TurnStarted({ turnId: 999, origin: { kind: 'user' } }));
+      rig.eventBus.publish(
+        new TurnStarted({ agentId: 'main', turnId: 999, origin: { kind: 'user' } }),
+      );
       await postJson<SessionWire>(`/api/v1/sessions/${rig.id}/profile`, {
         agent_config: { goal_control: 'resume' },
       });
@@ -767,6 +804,30 @@ describe('server-v2 /api/v1/sessions', () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
+
+    const archived = await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
+    expect(archived.body.code).toBe(0);
+    expect(archived.body.data).toEqual({ archived: true });
+
+    const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
+    expect(got.body.code).toBe(0);
+    expect(got.body.data.archived).toBe(true);
+  });
+
+  it('archives a cold session after a failed resume when the workspace root is gone', async () => {
+    const cwd = join(home as string, 'gone-ws');
+    await mkdir(cwd);
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+    await closeSessionById((server as RunningServer).core.accessor, id);
+    await (server as RunningServer).core.accessor
+      .get(IWorkspaceService)
+      .delete(encodeWorkDirKey(cwd));
+    await rm(cwd, { recursive: true, force: true });
+
+    await expect(
+      resumeSessionById((server as RunningServer).core.accessor, id),
+    ).rejects.toThrow(/does not exist/);
 
     const archived = await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
     expect(archived.body.code).toBe(0);
@@ -911,6 +972,62 @@ describe('server-v2 /api/v1/sessions', () => {
     const children = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children`);
     expect(children.body.code).toBe(0);
     expect(children.body.data.items.some((s) => s.id === forked.body.data.id)).toBe(false);
+  });
+
+  it('fork inherits cron tasks through the copied wire', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
+    expect(session).toBeDefined();
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const cron = session!.accessor.get(ISessionCronService);
+    const task = cron.addTask({ cron: '0 9 * * *', prompt: 'fork me', recurring: true });
+
+    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
+    expect(forked.body.code).toBe(0);
+
+    const forkedSession = getLiveSessionById(
+      (server as RunningServer).core.accessor,
+      forked.body.data.id,
+    );
+    expect(forkedSession).toBeDefined();
+    const forkedCron = forkedSession!.accessor.get(ISessionCronService);
+    expect(forkedCron.list().map((t) => ({ id: t.id, prompt: t.prompt }))).toEqual([
+      { id: task.id, prompt: 'fork me' },
+    ]);
+  });
+
+  it('keeps cron tasks across a server restart through the wire', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
+    expect(session).toBeDefined();
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const task = session!.accessor
+      .get(ISessionCronService)
+      .addTask({ cron: '0 9 * * *', prompt: 'restart me', recurring: true });
+
+    await (server as RunningServer).close();
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      debugEndpoints: true,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+
+    const resumed = await (server as RunningServer).core.accessor
+      .get(ISessionManager)
+      .resume(parentId);
+    expect(resumed).toBeDefined();
+    const cron = resumed!.accessor.get(ISessionCronService);
+    expect(cron.list().map((t) => ({ id: t.id, prompt: t.prompt }))).toEqual([
+      { id: task.id, prompt: 'restart me' },
+    ]);
   });
 
   it('returns 40401 when listing children of a missing parent', async () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { type ISessionTodoService } from '#/session/todo/sessionTodo';
 import { TODO_LIST_TOOL_NAME, type TodoItem } from '#/session/todo/todoItem';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { TodoListInputSchema } from '#/agent/tools/todo-list/todo-list';
 import { TodoListTool } from '#/agent/tools/todo-list/todoListTool';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
@@ -16,11 +17,11 @@ function makeTodoService(initial: readonly TodoItem[] = []): {
   return {
     service: {
       _serviceBrand: undefined,
-      getTodos: () => todos,
-      setTodos: (next: readonly TodoItem[]) => {
+      getTodos: async () => todos,
+      setTodos: async (_agent, next: readonly TodoItem[]) => {
         todos = next.map((todo) => ({ title: todo.title, status: todo.status }));
       },
-      clear: () => {
+      clear: async () => {
         todos = [];
       },
       onDidChange: () => ({ dispose: () => {} }),
@@ -34,7 +35,8 @@ function makeTool(initial: readonly TodoItem[] = []): {
   readonly getTodos: () => readonly TodoItem[];
 } {
   const { service, getTodos } = makeTodoService(initial);
-  return { tool: new TodoListTool(service), getTodos };
+  const agent = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' });
+  return { tool: new TodoListTool(service, agent), getTodos };
 }
 
 describe('TodoListTool', () => {

@@ -122,7 +122,9 @@
  *   scope's `ISessionSkillCatalog`; `startBtw` → the session scope's
  *   `ISessionBtwService`; `setSwarmMode` / `swarm` → the agent scope's
  *   `IAgentSwarmService` (the v2 port of v1's `SwarmMode`), with `swarm()`
- *   recomposed over the `setSwarmMode` + `prompt` overrides.
+ *   recomposed over the `setSwarmMode` + `prompt` overrides; `setTowerMode` →
+ *   the agent scope's `IAgentTowerService` (v2-only — the base class throws
+ *   `not_implemented`).
  *   `createSessionWithKaos` / `resumeSessionWithKaos` deliberately keep the
  *   base class's kaos-ignoring degradation (the v2 engine has no kaos
  *   injection point — see the session-lifecycle section header), and
@@ -148,14 +150,17 @@ import {
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
+import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
 import type { McpServerConfig as WorkspaceMcpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
 import {
   bootstrap,
   DEFAULT_AGENT_PROFILE_NAME,
+  drainLogCloses,
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
   ensureKimiHome,
   ensureMainAgent,
+  agentContextOf,
   IAgentActivityView,
   IAgentContextInjectorService,
   IAgentContextMemoryService,
@@ -172,9 +177,10 @@ import {
   IAgentSkillService,
   IAgentSwarmService,
   IAgentTaskService,
-  IAgentTokenCountingService,
+  ISessionTokenCountingService,
   IAgentToolPolicyService,
   IAgentToolRegistryService,
+  IAgentTowerService,
   IBootstrapService,
   IConfigService,
   IEventService,
@@ -216,6 +222,8 @@ import {
   PRINT_WAIT_CEILING_S_DEFAULT,
   ProfileError,
   ProfileErrors,
+  Error2 as V2Error2,
+  ErrorCodes as V2ErrorCodes,
   resolveAgentTaskConfig,
   resolveConfigPath,
   resolveKimiHome,
@@ -254,6 +262,7 @@ import {
   type SetSessionPlanModeRpcInput,
   type SetSessionSwarmModeRpcInput,
   type SetSessionThinkingRpcInput,
+  type SetSessionTowerModeRpcInput,
   type UpdateSessionMetadataRpcInput,
 } from '#/rpc';
 import type {
@@ -509,9 +518,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // the accessor throws once the scope is disposed. shutdown() is
     // idempotent, so the ledger's own teardown turns into a no-op.
     await this.app.accessor.get(IMcpOAuthService).shutdown();
+    const appendLogStore = this.app.accessor.get(IAppendLogStore);
     this.app.dispose();
+    await appendLogStore.drainRetirements();
     await drainSessionIndexMirror();
     await drainQueryStoreDisposals();
+    await drainLogCloses();
   }
 
   /**
@@ -1446,7 +1458,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       }
       const handle = await resumeSessionById(this.engineAccessor, sessionId);
       if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
-      const main = handle.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
+      const main = handle.accessor.get(IAgentLifecycleService).findAgentHandle(MAIN_AGENT_ID);
       await main?.accessor.get(IAgentPluginService).refreshSessionStart();
       this.wireSession(handle);
       return this.resumedSessionSummary(handle);
@@ -1467,7 +1479,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         await Promise.all(
           sessions.map(async (session) => {
             if (session.id === excludedSessionId) return;
-            const main = session.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
+            const main = session.accessor
+              .get(IAgentLifecycleService)
+              .findAgentHandle(MAIN_AGENT_ID);
             if (main === undefined) return;
             await main.accessor.get(IAgentPluginService).refreshSessionStart();
           }),
@@ -1605,7 +1619,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const session = this.requireLiveSession(sessionId);
     const agentId = this.interactiveAgentId;
     if (agentId === MAIN_AGENT_ID) return this.materializeMainAgent(session);
-    const agent = session.accessor.get(IAgentLifecycleService).get(agentId);
+    const agent = session.accessor.get(IAgentLifecycleService).findAgentHandle(agentId);
     if (agent === undefined) {
       throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agentId}" was not found`);
     }
@@ -1740,6 +1754,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       permission: agent.accessor.get(IAgentPermissionModeService).mode,
       planMode: plan !== null,
       swarmMode: agent.accessor.get(IAgentSwarmService).isActive,
+      towerMode: agent.accessor.get(IAgentTowerService).isActive,
       contextTokens,
       maxContextTokens,
       contextUsage,
@@ -1796,10 +1811,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async getTodos(input: SessionIdRpcInput): Promise<readonly SessionTodoItem[]> {
     const session = this.requireLiveSession(input.sessionId);
-    return session.accessor
+    const main = session.accessor.get(IAgentLifecycleService).findAgentHandle(MAIN_AGENT_ID);
+    if (main === undefined) return [];
+    const todos = await session.accessor
       .get(ISessionTodoService)
-      .getTodos()
-      .map((todo) => ({ title: todo.title, status: todo.status }));
+      .getTodos(agentContextOf(main));
+    return todos.map((todo) => ({ title: todo.title, status: todo.status }));
   }
 
   override async undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void> {
@@ -1842,7 +1859,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     }
     const message = buildImportContextMessage(input.content, input.source);
     const capability = agent.accessor.get(IAgentProfileService).data().modelCapabilities;
-    const currentTokenCount = agent.accessor.get(IAgentTokenCountingService).get().size;
+    const currentTokenCount = agent.accessor
+      .get(ISessionTokenCountingService)
+      .get(agentContextOf(agent)).size;
     assertImportFits(
       message,
       currentTokenCount,
@@ -2047,6 +2066,24 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async swarm(input: SessionPromptRpcInput): Promise<void> {
     await this.setSwarmMode({ sessionId: input.sessionId, enabled: true, trigger: 'task' });
     return this.prompt(input);
+  }
+
+  /** Through the agent scope (`IAgentTowerService.enter` / `.exit`) — no klient facade exists. */
+  override async setTowerMode(input: SetSessionTowerModeRpcInput): Promise<void> {
+    const agent = await this.agentScope(input.sessionId);
+    const tower = agent.accessor.get(IAgentTowerService);
+    if (input.enabled) {
+      await tower.enter();
+      if (!tower.isActive) {
+        throw new V2Error2(
+          V2ErrorCodes.SESSION_TOWER_MODE_INVALID,
+          'tower mode could not be enabled — the tower feature is unavailable in this process, or another live session owns the workspace tower',
+        );
+      }
+    } else {
+      tower.exit();
+    }
+    await agent.accessor.get(IAgentContextInjectorService).reconcileWhenIdle('tower_mode');
   }
 
   // -----------------------------------------------------------------------

@@ -96,7 +96,7 @@ export function bindSessionTranscript(
           return undefined;
         },
         stepOrdinal: (turnId) => {
-          const agentHandle = agents.get(agentId);
+          const agentHandle = agents.findAgentHandle(agentId);
           if (agentHandle === undefined) return undefined;
           const view: IAgentActivityView | undefined = agentHandle.accessor.get(IAgentActivityView);
           const turn = view?.state().turn;
@@ -179,12 +179,14 @@ export function bindSessionTranscript(
 
   for (const handle of agents.list()) subscribeAgent(handle);
   disposables.push(
-    agents.onDidCreate((handle) => {
-      subscribeAgent(handle);
-      seededAgents.add(handle.id);
+    agents.onDidCreate((context) => {
+      const handle = agents.get(context);
+      if (handle !== undefined) subscribeAgent(handle);
+      seededAgents.add(context.agentId);
       refreshDescriptors();
     }),
-    agents.onDidDispose((agentId) => {
+    agents.onDidDispose((context) => {
+      const agentId = context.agentId;
       for (const d of agentDisposables.get(agentId) ?? []) d.dispose();
       agentDisposables.delete(agentId);
       subscribedAgents.delete(agentId);

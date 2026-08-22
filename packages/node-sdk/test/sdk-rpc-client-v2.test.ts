@@ -38,8 +38,10 @@ import {
   drainSessionIndexMirror,
   Error2,
   getLiveSessionById,
+  agentContextOf,
   HostProcessError,
   IAgentLifecycleService,
+  IAgentTowerService,
   IHostRequestHeaders,
   IMcpManagementService,
   IMcpOAuthService,
@@ -648,8 +650,14 @@ key = "${titleOAuthRef.key}"
       // The resumed session is a fresh, fully usable scope — not the handle
       // the temporary path just tore down.
       await client.renameSession({ id: 'ses_title_race', title: 'Resumed title' });
-      const sessions = await client.listSessions({ workDir });
-      expect(sessions.find((item) => item.id === 'ses_title_race')?.title).toBe('Resumed title');
+      await expect
+        .poll(
+          async () =>
+            (await client.listSessions({ workDir })).find((item) => item.id === 'ses_title_race')
+              ?.title,
+          { interval: 50, timeout: 4000 },
+        )
+        .toBe('Resumed title');
     } finally {
       await client.close();
       fetchSpy.mockRestore();
@@ -997,8 +1005,8 @@ key = "${titleOAuthRef.key}"
 
       const handle = getLiveSessionById(client.engineAccessor, 'ses_todos');
       expect(handle).toBeDefined();
-      await handle!.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
-      handle!.accessor.get(ISessionTodoService).setTodos([
+      const main = await handle!.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+      await handle!.accessor.get(ISessionTodoService).setTodos(agentContextOf(main), [
         { title: 'write tests', status: 'in_progress' },
         { title: 'ship it', status: 'pending' },
       ]);
@@ -1009,7 +1017,9 @@ key = "${titleOAuthRef.key}"
       ]);
 
       const served = await client.getTodos({ sessionId: 'ses_todos' });
-      const stored = handle!.accessor.get(ISessionTodoService).getTodos();
+      const stored = await handle!
+        .accessor.get(ISessionTodoService)
+        .getTodos(agentContextOf(main));
       expect(served).not.toBe(stored);
       expect(served[0]).not.toBe(stored[0]);
       await expect(client.getTodos({ sessionId: 'ses_missing' })).rejects.toMatchObject({
@@ -1017,6 +1027,91 @@ key = "${titleOAuthRef.key}"
       });
     } finally {
       await client.close();
+    }
+  });
+
+  it('serves setTowerMode and getStatus towerMode through the agent scope tower service', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '1');
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_tower', workDir });
+      expect((await client.getStatus({ sessionId: 'ses_tower' })).towerMode).toBe(false);
+
+      const mainTower = () => {
+        const handle = getLiveSessionById(client.engineAccessor, 'ses_tower');
+        expect(handle).toBeDefined();
+        const agent = handle!.accessor.get(IAgentLifecycleService).findAgentHandle('main');
+        expect(agent).toBeDefined();
+        return agent!.accessor.get(IAgentTowerService);
+      };
+
+      await client.setTowerMode({ sessionId: 'ses_tower', enabled: true });
+      // The tower feature is flag-gated engine-side, so enter() may be a
+      // no-op; the wire must always mirror the engine truth.
+      expect((await client.getStatus({ sessionId: 'ses_tower' })).towerMode).toBe(
+        mainTower().isActive,
+      );
+
+      await client.setTowerMode({ sessionId: 'ses_tower', enabled: false });
+      expect((await client.getStatus({ sessionId: 'ses_tower' })).towerMode).toBe(false);
+
+      await expect(client.setTowerMode({ sessionId: 'ses_missing', enabled: true }))
+        .rejects.toMatchObject({
+          code: ErrorCodes.SESSION_NOT_FOUND,
+        });
+    } finally {
+      vi.unstubAllEnvs();
+      await client.close();
+    }
+  });
+
+  it('rejects setTowerMode when the tower feature is unavailable', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_tower_off', workDir });
+
+      await expect(client.setTowerMode({ sessionId: 'ses_tower_off', enabled: true }))
+        .rejects.toMatchObject({ code: 'session.tower_mode_invalid' });
+      expect((await client.getStatus({ sessionId: 'ses_tower_off' })).towerMode).toBe(false);
+
+      await client.setTowerMode({ sessionId: 'ses_tower_off', enabled: false });
+      expect((await client.getStatus({ sessionId: 'ses_tower_off' })).towerMode).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      await client.close();
+    }
+  });
+
+  it('exposes Session.setTowerMode and getStatus().towerMode on the v2 harness', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '1');
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    try {
+      const session = await harness.createSession({ workDir });
+      expect((await session.getStatus()).towerMode).toBe(false);
+
+      await expect(session.setTowerMode(true)).resolves.toBeUndefined();
+      expect(typeof (await session.getStatus()).towerMode).toBe('boolean');
+
+      await expect(session.setTowerMode(false)).resolves.toBeUndefined();
+      expect((await session.getStatus()).towerMode).toBe(false);
+
+      await expect(session.setTowerMode('yes' as unknown as boolean)).rejects.toMatchObject({
+        code: ErrorCodes.REQUEST_INVALID,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+      await harness.close();
     }
   });
 });

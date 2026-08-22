@@ -216,6 +216,54 @@ describe('loop-event fold parity', () => {
     expect(folded).toEqual([]);
   });
 
+  it('keeps the open assistant untouched when step.end reports an interruption', () => {
+    const folded = foldAll([], [
+      { type: 'step.begin', uuid: 's1' },
+      {
+        type: 'content.part',
+        stepUuid: 's1',
+        part: { type: 'text', text: 'partial' },
+      },
+      { type: 'step.end', uuid: 's1', finishReason: 'interrupted' },
+    ]);
+
+    expect(shapes(folded)).toEqual([
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'partial' }],
+        toolCalls: [],
+        toolCallId: undefined,
+        isError: undefined,
+        partial: true,
+      },
+    ]);
+  });
+
+  it('settles a failed step at the next step.begin as before', () => {
+    const folded = foldAll([], [
+      { type: 'step.begin', uuid: 's1' },
+      { type: 'step.end', uuid: 's1', finishReason: 'error' },
+      { type: 'step.begin', uuid: 's2' },
+      {
+        type: 'content.part',
+        stepUuid: 's2',
+        part: { type: 'text', text: 'recovered' },
+      },
+      { type: 'step.end', uuid: 's2' },
+    ]);
+
+    expect(shapes(folded)).toEqual([
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'recovered' }],
+        toolCalls: [],
+        toolCallId: undefined,
+        isError: undefined,
+        partial: undefined,
+      },
+    ]);
+  });
+
   it('drops an assistant whose only recorded part is an empty thinking block at step.end', () => {
     const folded = foldAll([], [
       { type: 'step.begin', uuid: 's1' },

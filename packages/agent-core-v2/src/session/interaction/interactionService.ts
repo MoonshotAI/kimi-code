@@ -153,10 +153,10 @@ export class SessionInteractionService extends Service implements ISessionIntera
     if (dispatcher === undefined) return;
     void dispatcher.dispatch(
       new InteractionRequestEvent({
+        agentId: interaction.origin.agentId ?? MAIN_AGENT_ID,
         id: interaction.id,
         kind: interaction.kind,
         toolCallId: readPayloadToolCallId(interaction.payload),
-        agentId: interaction.origin.agentId,
         request: interaction.payload,
       }),
     );
@@ -165,17 +165,24 @@ export class SessionInteractionService extends Service implements ISessionIntera
   private recordResolved(id: string, response: unknown, origin: InteractionOrigin): void {
     const dispatcher = this.originDispatcher(origin);
     if (dispatcher === undefined) return;
-    void dispatcher.dispatch(new InteractionResolvedEvent({ id, response }));
+    void dispatcher.dispatch(
+      new InteractionResolvedEvent({
+        agentId: origin.agentId ?? MAIN_AGENT_ID,
+        id,
+        response,
+      }),
+    );
   }
 
   private originDispatcher(origin: InteractionOrigin): IEventDispatcher | undefined {
     if (this.instantiation === undefined) return undefined;
     const agentId = origin.agentId ?? MAIN_AGENT_ID;
     try {
-      return this.instantiation.invokeFunction(
-        (accessor) =>
-          accessor.get(IAgentLifecycleService).get(agentId)?.accessor.get(IEventDispatcher),
-      );
+      return this.instantiation.invokeFunction((accessor) => {
+        const lifecycle = accessor.get(IAgentLifecycleService);
+        const handle = lifecycle.findAgentHandle(agentId);
+        return handle?.accessor.get(IEventDispatcher);
+      });
     } catch {
       return undefined;
     }

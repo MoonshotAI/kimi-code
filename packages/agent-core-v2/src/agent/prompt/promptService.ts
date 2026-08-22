@@ -20,7 +20,7 @@ import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IFileService } from '#/app/file/fileService';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IEventService } from '#/app/event/event';
-import { Event2 } from '#/app/event/event2';
+import { AgentEvent2 } from '#/app/event/event2';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -54,48 +54,52 @@ import { materializePromptDaemonRefs } from '#/agent/media/promptMediaIntake';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 
 export interface PromptCompletedPayload {
+  readonly agentId: string;
   readonly promptId: string;
   readonly finishedAt: string;
   readonly reason: 'completed' | 'failed' | 'blocked';
 }
 
-export class PromptCompleted extends Event2<PromptCompletedPayload> {
+export class PromptCompleted extends AgentEvent2<PromptCompletedPayload> {
   static override readonly type = 'prompt.completed';
   static override readonly observable = true;
 }
 export interface PromptCompleted extends PromptCompletedPayload {}
 
 export interface PromptAbortedPayload {
+  readonly agentId: string;
   readonly promptId: string;
   readonly abortedAt: string;
 }
 
-export class PromptAborted extends Event2<PromptAbortedPayload> {
+export class PromptAborted extends AgentEvent2<PromptAbortedPayload> {
   static override readonly type = 'prompt.aborted';
   static override readonly observable = true;
 }
 export interface PromptAborted extends PromptAbortedPayload {}
 
 export interface PromptSteeredPayload {
+  readonly agentId: string;
   readonly activePromptId: string;
   readonly promptIds: string[];
   readonly content: ContentPart[];
   readonly steeredAt: string;
 }
 
-export class PromptSteered extends Event2<PromptSteeredPayload> {
+export class PromptSteered extends AgentEvent2<PromptSteeredPayload> {
   static override readonly type = 'prompt.steered';
   static override readonly observable = true;
 }
 export interface PromptSteered extends PromptSteeredPayload {}
 
 export interface PromptQueuedPayload {
+  readonly agentId: string;
   readonly promptId: string;
   readonly content: ContentPart[];
   readonly queueLength: number;
 }
 
-export class PromptQueued extends Event2<PromptQueuedPayload> {
+export class PromptQueued extends AgentEvent2<PromptQueuedPayload> {
   static override readonly type = 'prompt.queued';
   static override readonly observable = true;
 }
@@ -195,7 +199,9 @@ export class AgentPromptService implements IAgentPromptService {
         if (submitted) throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt reservation already submitted');
         submitted = true;
         this.reservedPromptIds.delete(id);
-        await this.dispatcher.dispatch(new PromptAccepted({ promptId: id }));
+        await this.dispatcher.dispatch(
+          new PromptAccepted({ agentId: this.scopeContext.agentId, promptId: id }),
+        );
         return this.enqueue({ id, message });
       },
       dispose: () => {
@@ -323,7 +329,11 @@ export class AgentPromptService implements IAgentPromptService {
     }
     const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
       void this.dispatcher.dispatch(
-        new TurnSteer({ input: materialized.content, origin: materialized.origin ?? USER_PROMPT_ORIGIN }),
+        new TurnSteer({
+          agentId: this.scopeContext.agentId,
+          input: materialized.content,
+          origin: materialized.origin ?? USER_PROMPT_ORIGIN,
+        }),
       );
     }, () => {});
     let turn: Turn | undefined;
@@ -342,7 +352,7 @@ export class AgentPromptService implements IAgentPromptService {
     for (const item of selected) { item.state = 'steered'; item.launchedDeferred.resolve(turn); }
     this.steered.set(this.active.id, [...(this.steered.get(this.active.id) ?? []), ...selected]);
     void this.dispatcher.dispatch(
-      new PromptSteered({ activePromptId: this.active.id, promptIds: selected.map((x) => x.id), content: selected.flatMap((item) => stripBundledSkillBlocks(item.message)), steeredAt: new Date().toISOString() }),
+      new PromptSteered({ agentId: this.scopeContext.agentId, activePromptId: this.active.id, promptIds: selected.map((x) => x.id), content: selected.flatMap((item) => stripBundledSkillBlocks(item.message)), steeredAt: new Date().toISOString() }),
     );
     return selected.map((item) => item.handle);
   }
@@ -368,7 +378,11 @@ export class AgentPromptService implements IAgentPromptService {
     await this.materializeDaemonRefs(rerouted);
     const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
       void this.dispatcher.dispatch(
-        new TurnSteer({ input: materialized.content, origin: materialized.origin ?? USER_PROMPT_ORIGIN }),
+        new TurnSteer({
+          agentId: this.scopeContext.agentId,
+          input: materialized.content,
+          origin: materialized.origin ?? USER_PROMPT_ORIGIN,
+        }),
       );
     }, () => {}, 'activeOrNewTurn');
     return (await this.loop.enqueue(request).assigned).turn;
@@ -464,12 +478,12 @@ export class AgentPromptService implements IAgentPromptService {
     const { delivery: _delivery, ...rest } = ctx.result; ctx.result = rest as ExecutableToolResult;
     if (delivery.kind === 'steer') await this.inject(delivery.message as ContextMessage);
   }
-  private publishCompleted(promptId: string, reason: 'completed' | 'failed' | 'blocked'): void { void this.dispatcher.dispatch(new PromptCompleted({ promptId, finishedAt: new Date().toISOString(), reason })); }
+  private publishCompleted(promptId: string, reason: 'completed' | 'failed' | 'blocked'): void { void this.dispatcher.dispatch(new PromptCompleted({ agentId: this.scopeContext.agentId, promptId, finishedAt: new Date().toISOString(), reason })); }
   private publishQueued(record: Record): void {
     if ((record.message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return;
-    void this.dispatcher.dispatch(new PromptQueued({ promptId: record.id, content: stripBundledSkillBlocks(record.message), queueLength: this.pending.length }));
+    void this.dispatcher.dispatch(new PromptQueued({ agentId: this.scopeContext.agentId, promptId: record.id, content: stripBundledSkillBlocks(record.message), queueLength: this.pending.length }));
   }
-  private publishAborted(promptId: string): void { void this.dispatcher.dispatch(new PromptAborted({ promptId, abortedAt: new Date().toISOString() })); }
+  private publishAborted(promptId: string): void { void this.dispatcher.dispatch(new PromptAborted({ agentId: this.scopeContext.agentId, promptId, abortedAt: new Date().toISOString() })); }
 }
 
 function snapshot(item: Record): PromptSnapshot { return { id: item.id, userMessageId: item.userMessageId, createdAt: item.createdAt, state: item.state, message: item.message }; }

@@ -1,12 +1,16 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 import {
   IAgentLifecycleService,
   IAgentLoopService,
+  IAgentScopeContext,
   IAgentTaskService,
   IEventBus,
+  IFlagService,
   ISessionIndex,
   ISessionInteractionService,
   ISessionMetadata,
@@ -14,13 +18,18 @@ import {
   ISessionManager,
   IWorkspaceInstanceManager,
   LifecycleScope,
+  makeAgentScopeContext,
   SessionInteractionService,
   StateRegistry,
+  TOWER_FLAG_ID,
+  _setTowerFeatureAssembledForTests,
+  type AgentContext,
   type Event2,
   type ISessionScopeHandle,
   type ISessionStateService,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { TowerStore } from '@moonshot-ai/agent-core-v2/features/tower/protocol/index';
 import {
   AgentTranscript,
   TranscriptStore,
@@ -46,6 +55,10 @@ import {
   snapshotToOps,
   TRANSCRIPT_OPS_JOURNAL_CAPACITY,
 } from '../../src/services/transcript/transcriptService';
+
+_setTowerFeatureAssembledForTests(true);
+
+const execFileAsync = promisify(execFile);
 
 function ev(payload: Record<string, unknown>): ProjectorBusEvent {
   return payload as unknown as ProjectorBusEvent;
@@ -1116,7 +1129,9 @@ describe('AgentTranscriptProjector', () => {
     expect(marker).toMatchObject({ marker: 'goal', payload: { snapshot } });
 
     const clearedOps = projector.map(ev({ type: 'goal.updated', snapshot: null }));
-    expect(clearedOps.every((op) => op.op === 'marker.upsert')).toBe(true);
+    expect(clearedOps[0]).toEqual({ op: 'meta.merge', meta: { goal: null } });
+    tx.apply(clearedOps);
+    expect(tx.getMeta().goal).toBeUndefined();
   });
 
   it('mirrors plan / swarm mode slices into meta.modes (only when provided)', () => {
@@ -1130,6 +1145,17 @@ describe('AgentTranscriptProjector', () => {
     tx.apply(projector.map(ev({ type: 'agent.status.updated', planMode: false })));
     expect(tx.getMeta().modes).toEqual({ swarm: {} });
     tx.apply(projector.map(ev({ type: 'agent.status.updated', swarmMode: false })));
+    expect(tx.getMeta().modes).toBeUndefined();
+  });
+
+  it('mirrors the tower mode slice into meta.modes', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+
+    tx.apply(projector.map(ev({ type: 'agent.status.updated', towerMode: true })));
+    expect(tx.getMeta().modes).toEqual({ tower: {} });
+
+    tx.apply(projector.map(ev({ type: 'agent.status.updated', towerMode: false })));
     expect(tx.getMeta().modes).toBeUndefined();
   });
 
@@ -1812,6 +1838,105 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
+  it('gates the cold tower mode badge behind the tower experiment flag', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-tower-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'hi' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: 1000,
+        },
+        { type: 'tower_mode.enter', time: 2000 },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      const serviceWith = (
+        flagOn: boolean,
+        opts: { cwd?: string; liveSessionIds?: string[] } = {},
+      ) =>
+        new TranscriptService({
+          homeDir: home,
+          core: {
+            accessor: {
+              get: (token: unknown) => {
+                if (token === ISessionManager) {
+                  return {
+                    get: (id: string) => (opts.liveSessionIds?.includes(id) ? {} : undefined),
+                    list: () => [],
+                  };
+                }
+                if (token === IWorkspaceInstanceManager) {
+                  return { list: () => [], onDidChange: () => ({ dispose: () => undefined }) };
+                }
+                if (token === ISessionIndex) {
+                  return { get: async () => ({ workspaceId: 'ws', cwd: opts.cwd }) };
+                }
+                if (token === IFlagService) {
+                  return { enabled: (id: string) => flagOn && id === TOWER_FLAG_ID };
+                }
+                return undefined;
+              },
+            },
+          } as unknown as Scope,
+        });
+
+      const withFlag = await serviceWith(true).readColdSnapshot('s1', 'main');
+      expect(withFlag!.meta.modes).toEqual({ tower: {} });
+
+      const withoutFlag = await serviceWith(false).readColdSnapshot('s1', 'main');
+      expect(withoutFlag!.meta.modes).toBeUndefined();
+
+      _setTowerFeatureAssembledForTests(false);
+      try {
+        const notAssembled = await serviceWith(true).readColdSnapshot('s1', 'main');
+        expect(notAssembled!.meta.modes).toBeUndefined();
+      } finally {
+        _setTowerFeatureAssembledForTests(true);
+      }
+
+      const repo = await mkdtemp(join(tmpdir(), 'tower-cold-owner-'));
+      try {
+        await execFileAsync('git', ['init', '-b', 'main'], { cwd: repo });
+        await execFileAsync('git', ['config', 'user.email', 'tower-test@example.com'], { cwd: repo });
+        await execFileAsync('git', ['config', 'user.name', 'Tower Test'], { cwd: repo });
+        await writeFile(join(repo, 'README.md'), '# fixture\n');
+        await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+        await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+        await new TowerStore(repo).init('session-b');
+
+        const adoptedByLive = await serviceWith(true, {
+          cwd: repo,
+          liveSessionIds: ['session-b'],
+        }).readColdSnapshot('s1', 'main');
+        expect(adoptedByLive!.meta.modes).toBeUndefined();
+
+        const adoptedByDead = await serviceWith(true, { cwd: repo }).readColdSnapshot('s1', 'main');
+        expect(adoptedByDead!.meta.modes).toEqual({ tower: {} });
+      } finally {
+        await rm(repo, { recursive: true, force: true });
+      }
+
+      const childDir = join(home, 'sessions', 'ws', 's1', 'agents', 'worker-1');
+      await mkdir(childDir, { recursive: true });
+      await writeFile(
+        join(childDir, 'wire.jsonl'),
+        `${records.map((r) => JSON.stringify(r)).join('\n')}\n`,
+      );
+      const child = await serviceWith(true).readColdSnapshot('s1', 'worker-1');
+      expect(child!.meta.modes).toBeUndefined();
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('folds blocked turn endings into failed (engine wire contract)', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
@@ -1908,35 +2033,49 @@ describe('bindSessionTranscript', () => {
 
   interface FakeAgentHandle {
     readonly id: string;
+    readonly context: AgentContext;
     readonly bus: FakeBus;
     readonly accessor: { get: (token: unknown) => unknown };
   }
 
   class FakeAgents {
     private readonly handles = new Map<string, FakeAgentHandle>();
-    private readonly createHandlers = new Set<(handle: FakeAgentHandle) => void>();
-    private readonly disposeHandlers = new Set<(agentId: string) => void>();
+    private readonly createHandlers = new Set<(context: AgentContext) => void>();
+    private readonly disposeHandlers = new Set<(context: AgentContext) => void>();
     list(): FakeAgentHandle[] {
       return [...this.handles.values()];
     }
-    get(id: string): FakeAgentHandle | undefined {
+    get(context: AgentContext): FakeAgentHandle | undefined {
+      return this.handles.get(context.agentId);
+    }
+    findAgentHandle(agentId: string): FakeAgentHandle | undefined {
+      return this.handles.get(agentId);
+    }
+    byId(id: string): FakeAgentHandle | undefined {
       return this.handles.get(id);
     }
-    onDidCreate(cb: (handle: FakeAgentHandle) => void): { dispose: () => void } {
+    onDidCreate(cb: (context: AgentContext) => void): { dispose: () => void } {
       this.createHandlers.add(cb);
       return { dispose: () => this.createHandlers.delete(cb) };
     }
-    onDidDispose(cb: (agentId: string) => void): { dispose: () => void } {
+    onDidDispose(cb: (context: AgentContext) => void): { dispose: () => void } {
       this.disposeHandlers.add(cb);
       return { dispose: () => this.disposeHandlers.delete(cb) };
     }
     add(id: string, opts?: { loopStatus?: unknown; tasks?: readonly unknown[] }): FakeAgentHandle {
       const bus = new FakeBus();
+      const scope = makeAgentScopeContext({
+        agentId: id,
+        agentScope: `agents/${id}`,
+        generation: 1,
+      });
       const handle: FakeAgentHandle = {
         id,
+        context: scope.agentContext,
         bus,
         accessor: {
           get: (token: unknown) => {
+            if (token === IAgentScopeContext) return scope;
             if (token === IEventBus) return bus;
             if (token === IAgentLoopService) {
               return { status: () => opts?.loopStatus ?? { state: 'idle' } };
@@ -1949,12 +2088,15 @@ describe('bindSessionTranscript', () => {
         },
       };
       this.handles.set(id, handle);
-      for (const cb of this.createHandlers) cb(handle);
+      for (const cb of this.createHandlers) cb(handle.context);
       return handle;
     }
     remove(id: string): void {
+      const removed = this.handles.get(id);
       this.handles.delete(id);
-      for (const cb of this.disposeHandlers) cb(id);
+      if (removed !== undefined) {
+        for (const cb of this.disposeHandlers) cb(removed.context);
+      }
     }
   }
 
@@ -1969,6 +2111,7 @@ describe('bindSessionTranscript', () => {
             return (
               agents ?? {
                 list: () => [],
+                findAgentHandle: () => undefined,
                 onDidCreate: () => ({ dispose: () => undefined }),
                 onDidDispose: () => ({ dispose: () => undefined }),
               }
@@ -2062,7 +2205,7 @@ describe('bindSessionTranscript', () => {
       agentId: 'agent-1',
     });
 
-    agents.get('main')!.bus.emit(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
+    agents.byId('main')!.bus.emit(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
 
     expect(store.getAgent('main')?.getTask('task-9')).toMatchObject({
       state: 'completed',
@@ -2476,7 +2619,7 @@ describe('bindSessionTranscript', () => {
         core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
       });
       const store = service.forSessionLive('s1');
-      const bus = agents.get('main')!.bus;
+      const bus = agents.byId('main')!.bus;
       bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'hi' }));
       bus.emit(ev({ type: 'turn.step.started', turnId: 0, step: 1 }));
       bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: 'Hello world' }));
@@ -2519,7 +2662,7 @@ describe('bindSessionTranscript', () => {
       });
       const store = service.forSessionLive('s1');
       agents
-        .get('main')!
+        .byId('main')!
         .bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'live hi' }));
       await service.whenReady('s1');
       expect(store?.getAgent('main')?.getTurn('t0')).toMatchObject({
@@ -2542,7 +2685,7 @@ describe('bindSessionTranscript', () => {
         core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
       });
       const store = service.forSessionLive('s1');
-      agents.get('main')!.bus.emit(
+      agents.byId('main')!.bus.emit(
         ev({
           type: 'turn.started',
           turnId: 0,
@@ -2581,7 +2724,7 @@ describe('bindSessionTranscript', () => {
       service.onSessionOps('s1', (event) => {
         if (event.agentId === 'main') batches.push([...event.ops]);
       });
-      const bus = agents.get('main')!.bus;
+      const bus = agents.byId('main')!.bus;
       bus.emit(
         ev({
           type: 'turn.started',

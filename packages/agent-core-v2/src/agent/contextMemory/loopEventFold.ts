@@ -152,6 +152,7 @@ function createLoopEventFoldWithState(
           return;
         }
         case 'step.end': {
+          if (event.finishReason === 'interrupted' || event.finishReason === 'error') return;
           settleOpen(time);
           flushDeferred();
           return;

@@ -10,6 +10,7 @@ export const SessionErrors = {
     SESSION_UNDO_UNAVAILABLE: 'session.undo_unavailable',
     SESSION_INIT_FAILED: 'session.init_failed',
     SESSION_PLAN_MODE_INVALID: 'session.plan_mode_invalid',
+    SESSION_TOWER_MODE_INVALID: 'session.tower_mode_invalid',
   },
   retryable: ['session.fork_active_turn'],
 } as const satisfies ErrorDomain;

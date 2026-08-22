@@ -10,10 +10,11 @@ export interface GoalMeta {
   readonly budgetLimit?: number;
 }
 
-/** Mode badges (plan mode, swarm mode) mirrored at session level. */
+/** Mode badges (plan mode, swarm mode, tower mode) mirrored at session level. */
 export interface ModesMeta {
   readonly plan?: { readonly reviewPath?: string; readonly version?: number };
   readonly swarm?: { readonly trigger?: string };
+  readonly tower?: Record<string, never>;
 }
 
 /**
@@ -24,6 +25,7 @@ export interface ModesMeta {
 export interface ModesMetaMerge {
   readonly plan?: { readonly reviewPath?: string; readonly version?: number } | null;
   readonly swarm?: { readonly trigger?: string } | null;
+  readonly tower?: Record<string, never> | null;
 }
 
 export type ActivityMeta = 'idle' | 'turn' | 'disposing' | 'unknown';
@@ -130,7 +132,8 @@ export interface TranscriptMeta {
   readonly agent?: AgentStatusMeta;
 }
 
-/** Contract shape of a `meta.merge` payload — like {@link TranscriptMeta}, but mode keys may be `null` to clear. */
-export type TranscriptMetaMerge = Omit<TranscriptMeta, 'modes'> & {
+/** Contract shape of a `meta.merge` payload — like {@link TranscriptMeta}, but mode keys and `goal` may be `null` to clear. */
+export type TranscriptMetaMerge = Omit<TranscriptMeta, 'modes' | 'goal'> & {
   readonly modes?: ModesMetaMerge;
+  readonly goal?: GoalMeta | null;
 };

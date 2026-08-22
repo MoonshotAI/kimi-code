@@ -6,6 +6,7 @@ import {
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
   kimiCodeBaseUrl,
+  kimiRegionLoginHosts,
   OAuthError,
   applyManagedKimiCodeConfig,
   clearManagedKimiCodeConfig,
@@ -13,10 +14,12 @@ import {
   resolveKimiCodeLoginAuth,
   resolveKimiCodeOAuthRef,
   resolveKimiCodeRuntimeAuth,
+  resolveKimiRegion,
   type AuthManagedUserInfoResult,
   type AuthManagedUsageResult,
   type BearerTokenProvider,
   type DeviceAuthorization,
+  type KimiRegion,
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
 import type {
@@ -68,6 +71,7 @@ import {
   IAuthSummaryService,
   IOAuthService,
   IOAuthToolkit,
+  type OAuthLoginOptions,
 } from './auth';
 
 const TERMINAL_RETENTION_MS = 5 * 60 * 1000;
@@ -101,6 +105,7 @@ export class OAuthService extends Disposable implements IOAuthService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
     @IEventService private readonly events: IEventService,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {
     super();
     this._register(providerService.onDidChangeProviders((event) => {
@@ -108,9 +113,12 @@ export class OAuthService extends Disposable implements IOAuthService {
     }));
   }
 
-  async startLogin(provider = KIMI_CODE_PROVIDER_NAME): Promise<OAuthFlowStart> {
+  async startLogin(
+    provider = KIMI_CODE_PROVIDER_NAME,
+    options: OAuthLoginOptions = {},
+  ): Promise<OAuthFlowStart> {
     this.log.info('oauth startLogin: enter', { provider });
-    const loginAuth = this.resolveLoginAuth(provider);
+    const loginAuth = this.resolveLoginAuth(provider, options.region);
     this.log.info('oauth startLogin: resolved login auth', {
       provider,
       hasOAuthRef: loginAuth.oauthRef !== undefined,
@@ -390,7 +398,22 @@ export class OAuthService extends Disposable implements IOAuthService {
     };
   }
 
-  private resolveLoginAuth(provider: string): {
+  getRegion(): KimiRegion {
+    const oauth = this.providerService.get(KIMI_CODE_PROVIDER_NAME)?.oauth;
+    return resolveKimiRegion({
+      configuredOAuthHost: oauth?.oauthHost,
+      configuredOAuthKey: oauth?.key,
+      readMarker:
+        (this.bootstrap.getEnv('KIMI_CODE_REGION_MARKER') ??
+          process.env['KIMI_CODE_REGION_MARKER']) !== 'off',
+      homeDir: this.bootstrap.homeDir,
+    });
+  }
+
+  private resolveLoginAuth(
+    provider: string,
+    region?: KimiRegion,
+  ): {
     readonly oauthRef: OAuthRef | undefined;
     readonly baseUrl: string | undefined;
     readonly oauthHost: string | undefined;
@@ -399,9 +422,12 @@ export class OAuthService extends Disposable implements IOAuthService {
     if (provider !== KIMI_CODE_PROVIDER_NAME) {
       return { oauthRef: config?.oauth, baseUrl: undefined, oauthHost: undefined };
     }
+    const hosts = region === undefined ? undefined : kimiRegionLoginHosts(region);
     const loginAuth = resolveKimiCodeLoginAuth({
       configuredBaseUrl: config?.baseUrl,
       configuredOAuthRef: config?.oauth,
+      requestedBaseUrl: hosts?.baseUrl,
+      requestedOAuthHost: hosts?.oauthHost,
     });
     const oauthRef =
       loginAuth.oauthRef ??

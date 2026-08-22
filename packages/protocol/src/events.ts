@@ -229,6 +229,7 @@ export interface GoalChange {
 
 export type KimiErrorCode =
   | 'config.invalid'
+  | 'config.persist_blocked'
   | 'session.not_found'
   | 'session.already_exists'
   | 'session.id_invalid'
@@ -547,6 +548,7 @@ export interface AgentStatusUpdatedEvent {
   readonly contextUsage?: number;
   readonly planMode?: boolean;
   readonly swarmMode?: boolean;
+  readonly towerMode?: boolean;
   readonly permission?: PermissionMode;
   readonly usage?: UsageStatus;
   readonly phase?: AgentPhase;
@@ -688,6 +690,8 @@ export interface TurnStartedEvent {
   readonly prompt?: string;
   /** The prompt record id when the turn was opened by a prompt submission. */
   readonly promptId?: string;
+  /** Session-media references carried by the prompt (transcript attachments). */
+  readonly promptAttachments?: readonly { kind: 'image' | 'video' | 'audio'; fileId: string }[];
 }
 
 export interface TurnEndedEvent {
@@ -1257,6 +1261,7 @@ export const goalChangeSchema = z.object({
 
 export const kimiErrorCodeSchema = z.enum([
   'config.invalid',
+  'config.persist_blocked',
   'session.not_found',
   'session.already_exists',
   'session.id_invalid',
@@ -1541,6 +1546,7 @@ export const agentStatusUpdatedEventSchema = z.object({
   contextUsage: z.number().optional(),
   planMode: z.boolean().optional(),
   swarmMode: z.boolean().optional(),
+  towerMode: z.boolean().optional(),
   permission: permissionModeSchema.optional(),
   usage: usageStatusSchema.optional(),
   phase: agentPhaseSchema.optional(),
@@ -1659,6 +1665,9 @@ export const turnStartedEventSchema = z.object({
   origin: promptOriginSchema,
   prompt: z.string().optional(),
   promptId: z.string().optional(),
+  promptAttachments: z
+    .array(z.object({ kind: z.enum(['image', 'video', 'audio']), fileId: z.string() }))
+    .optional(),
 }) satisfies z.ZodType<TurnStartedEvent>;
 
 export const turnEndedEventSchema = z.object({

@@ -12,6 +12,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
 import { TowerStore } from '#/features/tower/protocol/index';
@@ -39,6 +40,7 @@ import {
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
+import { stubAgentContext } from '../../../agent/agentContext/stubs';
 
 const execFileAsync = promisify(execFile);
 const signal = new AbortController().signal;
@@ -104,16 +106,28 @@ describe('TowerSpawnTool', () => {
         ({
           id: 'agent-7',
           accessor: {
-            get: (id: unknown) =>
-              id === (IAgentPermissionModeService as unknown)
-                ? { setMode: createdSetMode }
-                : undefined,
+            get: (id: unknown) => {
+              if (id === (IAgentPermissionModeService as unknown)) {
+                return { setMode: createdSetMode };
+              }
+              if (id === (IAgentScopeContext as unknown)) {
+                return {
+                  agentId: 'agent-7',
+                  agentContext: stubAgentContext('agent-7', 1),
+                };
+              }
+              return undefined;
+            },
           },
         }) as never,
     );
     runAgent = vi.fn(
-      async (agentId: string) =>
-        ({ agentId, turn: undefined, completion: completion.promise }) as unknown as AgentRunHandle,
+      async (agent: AgentContext) =>
+        ({
+          agentId: agent.agentId,
+          turn: undefined,
+          completion: completion.promise,
+        }) as unknown as AgentRunHandle,
     );
     registerTask = vi.fn(() => 'task-1');
 
@@ -133,21 +147,21 @@ describe('TowerSpawnTool', () => {
     } as unknown as ITowerRateLimitService);
     ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-spawn-test' } as unknown as ISessionContext);
     ix.stub(IAgentScopeContext, { agentId: 'main', scope: (subKey?: string) => subKey ?? '' });
+    const mainHandle = {
+      id: 'main',
+      accessor: {
+        get: (id: unknown) =>
+          id === (IEventBus as unknown)
+            ? ix.get(IEventBus)
+            : id === (IAgentLifecycleService as unknown)
+              ? { list: () => [], findAgentHandle: () => undefined }
+              : undefined,
+      },
+    } as never;
     ix.stub(IAgentLifecycleService, {
-      get: (agentId: string) =>
-        agentId === 'main'
-          ? ({
-              id: 'main',
-              accessor: {
-                get: (id: unknown) =>
-                  id === (IEventBus as unknown)
-                    ? ix.get(IEventBus)
-                    : id === (IAgentLifecycleService as unknown)
-                      ? { get: () => undefined }
-                      : undefined,
-              },
-            } as never)
-          : undefined,
+      get: (context: AgentContext) => (context.agentId === 'main' ? mainHandle : undefined),
+      findAgentHandle: (agentId: string) => (agentId === 'main' ? mainHandle : undefined),
+      list: () => [mainHandle],
       create: createAgent,
     } as unknown as IAgentLifecycleService);
     ix.stub(ISessionSubagentService, { run: runAgent } as unknown as ISessionSubagentService);
@@ -198,6 +212,19 @@ describe('TowerSpawnTool', () => {
     expect(createAgent).not.toHaveBeenCalled();
   });
 
+  it('rejects non-main callers with the main-agent-only error before any work', async () => {
+    ix.stub(IAgentScopeContext, { agentId: 'agent-w1', scope: (subKey?: string) => subKey ?? '' });
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result).toEqual({
+      output: 'Tower orchestration tools are only supported by the main agent.',
+      isError: true,
+    });
+    expect(createAgent).not.toHaveBeenCalled();
+    expect(registerTask).not.toHaveBeenCalled();
+  });
+
   it('surfaces the rate-limit reason as an error result', async () => {
     gate = { ok: false, reason: 'tower spawn paused: provider is rate-limiting' };
 
@@ -240,7 +267,7 @@ describe('TowerSpawnTool', () => {
       labels: { parentAgentId: 'main' },
     });
     expect(runAgent).toHaveBeenCalledWith(
-      'agent-7',
+      expect.objectContaining({ agentId: 'agent-7' }),
       { kind: 'prompt', prompt: expect.stringContaining(worktreeAbs) },
       { signal: expect.any(AbortSignal) },
     );

@@ -3,7 +3,7 @@ import { nothing, original } from 'immer';
 import { z } from 'zod';
 
 import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { Event2 } from '#/app/event/event2';
+import { AgentEvent2 } from '#/app/event/event2';
 import type { ThinkingEffort } from '#/kosong/contract/provider';
 import { defineState } from '#/state/state';
 
@@ -22,6 +22,7 @@ export interface ProfileModelState {
 }
 
 const profileBindSchema = z.object({
+  agentId: z.string(),
   modelAlias: z.string().optional(),
   profileName: z.string().optional(),
   thinkingEffort: z.custom<ThinkingEffort>(),
@@ -34,14 +35,27 @@ const profileBindSchema = z.object({
   subagents: z.array(z.string()).readonly().optional(),
 });
 
-export class ProfileBind extends Event2<z.infer<typeof profileBindSchema>> {
+export class ProfileBind extends AgentEvent2<z.infer<typeof profileBindSchema>> {
   static override readonly type = 'profile.bind';
   static override readonly durable = true;
   static override readonly schema = profileBindSchema;
 }
-export interface ProfileBind extends z.infer<typeof profileBindSchema> {}
+export interface ProfileBind {
+  readonly agentId: string;
+  readonly modelAlias?: string;
+  readonly profileName?: string;
+  readonly thinkingEffort: ThinkingEffort;
+  readonly systemPrompt: string;
+  readonly environmentDisclosure?: EnvironmentDisclosureSnapshot;
+  readonly renderGeneration?: number;
+  readonly agentsMdPaths?: readonly string[];
+  readonly activeToolNames?: readonly string[];
+  readonly disallowedTools: readonly string[];
+  readonly subagents?: readonly string[];
+}
 
 const configUpdateSchema = z.object({
+  agentId: z.string(),
   modelAlias: z.string().optional(),
   profileName: z.string().optional(),
   thinkingEffort: z.custom<ThinkingEffort>().optional(),
@@ -55,37 +69,59 @@ const configUpdateSchema = z.object({
 
 export type ConfigUpdatePayload = z.infer<typeof configUpdateSchema>;
 
-export class ConfigUpdate extends Event2<ConfigUpdatePayload> {
+export class ConfigUpdate extends AgentEvent2<ConfigUpdatePayload> {
   static override readonly type = 'config.update';
   static override readonly durable = true;
   static override readonly schema = configUpdateSchema;
 }
-export interface ConfigUpdate extends ConfigUpdatePayload {}
+export interface ConfigUpdate {
+  readonly agentId: string;
+  readonly modelAlias?: string;
+  readonly profileName?: string;
+  readonly thinkingEffort?: ThinkingEffort;
+  readonly thinkingLevel?: ThinkingEffort;
+  readonly systemPrompt?: string;
+  readonly environmentDisclosure?: EnvironmentDisclosureSnapshot;
+  readonly renderGeneration?: number;
+  readonly agentsMdPaths?: readonly string[];
+  readonly disallowedTools?: readonly string[];
+}
 
-const toolsSetActiveToolsSchema = z.object({ names: z.array(z.string()).readonly() });
+const toolsSetActiveToolsSchema = z.object({
+  agentId: z.string(),
+  names: z.array(z.string()).readonly(),
+});
 
-export class ToolsSetActiveTools extends Event2<z.infer<typeof toolsSetActiveToolsSchema>> {
+export class ToolsSetActiveTools extends AgentEvent2<z.infer<typeof toolsSetActiveToolsSchema>> {
   static override readonly type = 'tools.set_active_tools';
   static override readonly durable = true;
   static override readonly schema = toolsSetActiveToolsSchema;
 }
-export interface ToolsSetActiveTools extends z.infer<typeof toolsSetActiveToolsSchema> {}
+export interface ToolsSetActiveTools {
+  readonly agentId: string;
+  readonly names: readonly string[];
+}
 
-const toolsResetActiveToolsSchema = z.object({});
+const toolsResetActiveToolsSchema = z.object({ agentId: z.string() });
 
-export class ToolsResetActiveTools extends Event2<z.infer<typeof toolsResetActiveToolsSchema>> {
+export class ToolsResetActiveTools extends AgentEvent2<
+  z.infer<typeof toolsResetActiveToolsSchema>
+> {
   static override readonly type = 'tools.reset_active_tools';
   static override readonly durable = true;
   static override readonly schema = toolsResetActiveToolsSchema;
 }
-export interface ToolsResetActiveTools extends z.infer<typeof toolsResetActiveToolsSchema> {}
+export interface ToolsResetActiveTools {
+  readonly agentId: string;
+}
 
 export interface WarningIssuedPayload {
+  readonly agentId: string;
   readonly message: string;
   readonly code?: string;
 }
 
-export class WarningIssued extends Event2<WarningIssuedPayload> {
+export class WarningIssued extends AgentEvent2<WarningIssuedPayload> {
   static override readonly type = 'warning';
   static override readonly observable = true;
 }

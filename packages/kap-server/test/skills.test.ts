@@ -85,7 +85,7 @@ describe('server-v2 /api/v1 skills', () => {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     const agents = session.accessor.get(IAgentLifecycleService);
-    if (agents.get('main') === undefined) await agents.create({ agentId: 'main' });
+    if (agents.findAgentHandle('main') === undefined) await agents.create({ agentId: 'main' });
   }
 
   async function registerWorkspace(root: string): Promise<string> {
@@ -268,7 +268,11 @@ describe('server-v2 /api/v1 skills', () => {
       const messages = await getJson<{
         items: Array<{ role: string; content: Array<{ type: string; text?: string }> }>;
       }>(`/api/v1/sessions/${id}/messages`);
-      const userMsg = messages.body.data.items.find((m) => m.role === 'user');
+      const userMsg = messages.body.data.items.find(
+        (m) =>
+          m.role === 'user' &&
+          m.content.some((part) => part.text?.includes('User activated the skill')),
+      );
       expect(userMsg).toBeDefined();
       expect(userMsg!.content[0]?.type).toBe('text');
       expect(userMsg!.content[0]?.text).toContain('User activated the skill "update-config"');

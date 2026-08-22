@@ -29,7 +29,8 @@ import {
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { subagentLabels } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
@@ -42,6 +43,7 @@ import { ISessionSubagentService } from '#/session/subagent/subagent';
 
 import { SubagentTask, type SubagentHandle } from '#/agent/tools/agent/subagent-task';
 
+import { TOWER_MAIN_AGENT_ONLY } from '../support';
 import { ITowerSpawnTool, TowerSpawnToolInputSchema, type TowerSpawnToolInput } from './spawn';
 import DESCRIPTION from './spawn.md?raw';
 
@@ -72,6 +74,12 @@ export class TowerSpawnTool implements ITowerSpawnTool {
   }
 
   resolveExecution(args: TowerSpawnToolInput): ToolExecution {
+    if (this.callerAgentId !== MAIN_AGENT_ID) {
+      return {
+        isError: true,
+        output: TOWER_MAIN_AGENT_ONLY,
+      };
+    }
     return {
       description: `Spawning tower ${args.kind} "${args.name}"`,
       approvalRule: this.name,
@@ -265,7 +273,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     controller: AbortController,
     binding: SubagentBinding | undefined,
   ): Promise<SubagentHandle> {
-    const requester = this.lifecycle.get(this.callerAgentId);
+    const requester = this.lifecycle.findAgentHandle(this.callerAgentId);
     if (requester === undefined) {
       throw new Error(`Caller agent "${this.callerAgentId}" does not exist`);
     }
@@ -297,7 +305,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     });
 
     const run = await this.subagents.run(
-      agentId,
+      agentContextOf(created),
       { kind: 'prompt', prompt },
       { signal: controller.signal },
     );

@@ -30,7 +30,7 @@ export class RestGateway implements IRestGateway {
       });
     }
     const agents = session.accessor.get(IAgentLifecycleService);
-    const agent = agents.get(agentId);
+    const agent = agents.list().find((handle) => handle.id === agentId);
     if (agent === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `unknown agent '${agentId}'`, {
         details: { agentId, sessionId },

@@ -57,7 +57,7 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { createKimiDefaultHeaders, createKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
-import type { GoalUpdated } from '@moonshot-ai/agent-core-v2/agent/goal/goalOps';
+import type { GoalUpdated } from '@moonshot-ai/agent-core-v2';
 import type { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type {
   AssistantDelta,

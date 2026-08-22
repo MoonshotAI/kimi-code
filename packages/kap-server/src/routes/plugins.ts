@@ -28,7 +28,7 @@ import {
   pluginSummarySchema,
   type PluginMarketplaceEntryWire,
 } from '../protocol/rest-plugin';
-import { parseActionSuffix } from './action-suffix';
+import { type ActionTable, dispatchAction } from './action-dispatch';
 
 interface PluginsRouteHost {
   get(
@@ -49,7 +49,29 @@ interface PluginsRouteHost {
   ): unknown;
 }
 
-const PLUGIN_ACTIONS = ['enable', 'disable', 'remove'] as const;
+const pluginActions: ActionTable<'enable' | 'disable' | 'remove', PluginActionExtra> = {
+  enable: { handle: enablePluginAction },
+  disable: { handle: disablePluginAction },
+  remove: { handle: removePluginAction },
+};
+
+type PluginActionExtra = {
+  readonly plugins: IPluginService;
+};
+
+type PluginActionCtx = PluginActionExtra & { readonly id: string; readonly body: unknown };
+
+async function enablePluginAction(ctx: PluginActionCtx): Promise<void> {
+  await ctx.plugins.setPluginEnabled({ id: ctx.id, enabled: true });
+}
+
+async function disablePluginAction(ctx: PluginActionCtx): Promise<void> {
+  await ctx.plugins.setPluginEnabled({ id: ctx.id, enabled: false });
+}
+
+async function removePluginAction(ctx: PluginActionCtx): Promise<void> {
+  await ctx.plugins.removePlugin({ id: ctx.id });
+}
 
 const CAPABILITY_ROW_IDS: Readonly<
   Record<string, { capabilityId: string; wiringPluginIds: readonly string[] }>
@@ -81,8 +103,10 @@ async function getSourceCheckoutLocation(): Promise<MarketplaceLocation | undefi
 }
 
 export interface PluginsRouteOptions {
-  /** Resolved catalog URL (server option / env already applied by start.ts). */
-  readonly marketplaceUrl: string;
+  /** Catalog URL resolver, invoked per request so a login region switch is
+      reflected without a restart (an explicitly configured URL from the
+      server option or env stays static). */
+  readonly marketplaceUrl: () => string;
   /**
    * True when the catalog location is the built-in default (neither the
    * server option nor the env var set) — only then does a failed remote read
@@ -113,7 +137,7 @@ export function registerPluginsRoutes(
       let read: { raw: string; location: MarketplaceLocation };
       try {
         read = await readPluginMarketplace({
-          source: opts.marketplaceUrl,
+          source: opts.marketplaceUrl(),
           workDir: process.cwd(),
           fetchImpl,
           sourceCheckoutLocation:
@@ -281,31 +305,20 @@ export function registerPluginsRoutes(
       operationId: 'pluginAction',
     },
     async (req, reply) => {
-      const parsed = parseActionSuffix({
-        tail: req.params.tail,
-        allowedActions: PLUGIN_ACTIONS,
-        resourceLabel: 'plugin',
-      });
-      if (parsed.kind !== 'action') {
-        const message =
-          parsed.kind === 'invalid' ? parsed.reason : `unsupported action: ${req.params.tail}`;
-        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, message, req.id));
-        return;
-      }
       const plugins = core.accessor.get(IPluginService);
       try {
-        switch (parsed.action) {
-          case 'enable':
-            await plugins.setPluginEnabled({ id: parsed.id, enabled: true });
-            break;
-          case 'disable':
-            await plugins.setPluginEnabled({ id: parsed.id, enabled: false });
-            break;
-          case 'remove':
-            await plugins.removePlugin({ id: parsed.id });
-            break;
+        const handled = await dispatchAction({
+          tail: req.params.tail,
+          actions: pluginActions,
+          resourceLabel: 'plugin',
+          extra: { plugins },
+          onUnsupported: (message) => {
+            reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, message, req.id));
+          },
+        });
+        if (handled) {
+          reply.send(okEnvelope({ ok: true as const }, req.id));
         }
-        reply.send(okEnvelope({ ok: true as const }, req.id));
       } catch (error) {
         reply.send(mapPluginError(error, req.id));
       }
