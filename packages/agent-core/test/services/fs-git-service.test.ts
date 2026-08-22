@@ -31,7 +31,7 @@ interface FakeChild extends EventEmitter {
   kill: ReturnType<typeof vi.fn>;
   cmd: string;
   args: readonly string[];
-  finish(out: string, code: number): void;
+  finish(out: string | readonly string[], code: number): void;
 }
 
 const spawned: FakeChild[] = [];
@@ -51,8 +51,11 @@ function createFakeChild(cmd: string, args: readonly string[]): FakeChild {
   child.kill = vi.fn();
   child.cmd = cmd;
   child.args = args;
-  child.finish = (out: string, code: number) => {
-    if (out.length > 0) stdout.emit('data', out);
+  child.finish = (out: string | readonly string[], code: number) => {
+    const chunks = typeof out === 'string' ? [out] : out;
+    for (const chunk of chunks) {
+      if (chunk.length > 0) stdout.emit('data', chunk);
+    }
     child.emit('close', code);
   };
   return child;
@@ -93,7 +96,7 @@ async function waitForSpawn(n: number): Promise<void> {
   }
 }
 
-function finishLatest(out: string, code: number): void {
+function finishLatest(out: string | readonly string[], code: number): void {
   const child = spawned[spawned.length - 1];
   if (child === undefined) throw new Error('no child to finish');
   child.finish(out, code);
@@ -115,6 +118,19 @@ async function driveStatus(service: FsGitService) {
     }
   }
   if (ghSpawned) finishLatest(ghResponse.out, ghResponse.code);
+  return p;
+}
+
+async function driveDiff(service: FsGitService, diff: string | readonly string[]) {
+  const p = service.diff('sid', { path: 'large.txt' });
+  await waitForSpawn(1);
+  finishLatest('true\n', 0);
+  await waitForSpawn(2);
+  finishLatest('?? large.txt\n', 0);
+  await waitForSpawn(3);
+  finishLatest('', 1);
+  await waitForSpawn(4);
+  finishLatest(diff, 1);
   return p;
 }
 
@@ -191,5 +207,29 @@ describe('FsGitService pull request lookup', () => {
     const result = await p;
     expect(result.pullRequest).toBeNull();
     expect(spawned[2]?.kill).toHaveBeenCalled();
+  });
+});
+
+describe('FsGitService diff output', () => {
+  it('limits a large UTF-8 diff to one MiB', async () => {
+    const service = new FsGitService(sessions);
+
+    const result = await driveDiff(service, '界'.repeat(400_000));
+
+    expect(result.truncated).toBe(true);
+    expect(Buffer.byteLength(result.diff, 'utf8')).toBeLessThanOrEqual(1_048_576);
+  });
+
+  it('stops after the first discarded character across stdout chunks', async () => {
+    const service = new FsGitService(sessions);
+    const prefix = 'a'.repeat(1_048_574);
+
+    const result = await driveDiff(service, [`${prefix}界`, 'AB']);
+
+    expect(result).toEqual({
+      path: 'large.txt',
+      diff: prefix,
+      truncated: true,
+    });
   });
 });

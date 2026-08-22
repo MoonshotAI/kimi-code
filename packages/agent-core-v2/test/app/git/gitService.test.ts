@@ -143,6 +143,15 @@ describe('GitService', () => {
       expect(result.diff).toContain('+brand new');
     });
 
+    it('limits a large UTF-8 diff to one MiB', async () => {
+      writeFileSync(join(repo, 'large.txt'), '界'.repeat(400_000));
+
+      const result = await service.diff(repo, 'large.txt', join(repo, 'large.txt'));
+
+      expect(result.truncated).toBe(true);
+      expect(Buffer.byteLength(result.diff, 'utf8')).toBeLessThanOrEqual(1_048_576);
+    });
+
     it('throws FS_PATH_NOT_FOUND for a missing path', async () => {
       writeFileSync(join(repo, 'a.txt'), 'hello\n');
       commitAll('init');

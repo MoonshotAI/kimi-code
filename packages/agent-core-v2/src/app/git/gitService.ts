@@ -76,18 +76,23 @@ export class GitService implements IGitService {
     const hasHead = headRes.exitCode === 0;
 
     let diffStdout: string;
+    let diffTruncated: boolean;
     if (untracked || !hasHead) {
       const res = await this.runCommand(
         'git',
         ['diff', '--no-color', '--no-index', '--', '/dev/null', relPath],
         cwd,
+        { stdoutMaxBytes: DIFF_MAX_BYTES },
       );
       if (res.exitCode !== 0 && res.exitCode !== 1) {
         throw this.gitUnavailable(cwd, res.stderr.trim() || `git diff exit ${res.exitCode}`);
       }
       diffStdout = res.stdout;
+      diffTruncated = res.stdoutTruncated;
     } else {
-      const res = await this.runCommand('git', ['diff', '--no-color', 'HEAD', '--', relPath], cwd);
+      const res = await this.runCommand('git', ['diff', '--no-color', 'HEAD', '--', relPath], cwd, {
+        stdoutMaxBytes: DIFF_MAX_BYTES,
+      });
       if (res.exitCode !== 0) {
         throw this.gitUnavailable(cwd, res.stderr.trim() || `git diff exit ${res.exitCode}`);
       }
@@ -103,13 +108,13 @@ export class GitService implements IGitService {
         }
       }
       diffStdout = res.stdout;
+      diffTruncated = res.stdoutTruncated;
     }
 
-    const truncated = diffStdout.length > DIFF_MAX_BYTES;
     return {
       path: relPath,
-      diff: truncated ? diffStdout.slice(0, DIFF_MAX_BYTES) : diffStdout,
-      truncated,
+      diff: diffStdout,
+      truncated: diffTruncated,
     };
   }
 
@@ -153,12 +158,12 @@ export class GitService implements IGitService {
         () => ({ ok: false as const }),
       );
     if (!spawned.ok) {
-      return { exitCode: -1, stdout: '', stderr: '' };
+      return { exitCode: -1, stdout: '', stdoutTruncated: false, stderr: '' };
     }
     const { proc } = spawned;
 
     const work = Promise.all([
-      collect(proc.stdout),
+      collect(proc.stdout, options.stdoutMaxBytes),
       collect(proc.stderr),
       proc.wait().catch(() => -1),
     ] as const);
@@ -168,7 +173,12 @@ export class GitService implements IGitService {
     try {
       if (options.timeoutMs === undefined) {
         const [stdout, stderr, exitCode] = await work;
-        return { exitCode, stdout, stderr };
+        return {
+          exitCode,
+          stdout: stdout.value,
+          stdoutTruncated: stdout.truncated,
+          stderr: stderr.value,
+        };
       }
       const timeout = new Promise<'timeout'>((resolve) => {
         timer = setTimeout(() => resolve('timeout'), options.timeoutMs);
@@ -176,19 +186,28 @@ export class GitService implements IGitService {
       });
       const result = await Promise.race([
         work.then(
-          ([stdout, stderr, exitCode]) =>
-            ({ kind: 'done' as const, stdout, stderr, exitCode }),
+          ([stdout, stderr, exitCode]) => ({ kind: 'done' as const, stdout, stderr, exitCode }),
         ),
         timeout.then((kind) => ({ kind })),
       ]);
       if (result.kind === 'done') {
-        return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
+        return {
+          exitCode: result.exitCode,
+          stdout: result.stdout.value,
+          stdoutTruncated: result.stdout.truncated,
+          stderr: result.stderr.value,
+        };
       }
       await proc.kill('SIGKILL').catch(() => {});
       const [stdout, stderr] = await work
         .then(([so, se]) => [so, se] as const)
-        .catch(() => ['', ''] as const);
-      return { exitCode: -1, stdout, stderr };
+        .catch(() => [createTextCapture(), createTextCapture()] as const);
+      return {
+        exitCode: -1,
+        stdout: stdout.value,
+        stdoutTruncated: stdout.truncated,
+        stderr: stderr.value,
+      };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       void proc.dispose();
@@ -214,22 +233,63 @@ export class GitService implements IGitService {
 interface RunResult {
   readonly exitCode: number;
   readonly stdout: string;
+  readonly stdoutTruncated: boolean;
   readonly stderr: string;
 }
 
 interface RunOptions {
   readonly timeoutMs?: number;
   readonly env?: Record<string, string>;
+  readonly stdoutMaxBytes?: number;
 }
 
-async function collect(stream: AsyncIterable<Uint8Array | string>): Promise<string> {
-  const decoder = new TextDecoder();
-  let out = '';
-  for await (const chunk of stream) {
-    out += typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true });
+interface TextCapture {
+  value: string;
+  bytes: number;
+  truncated: boolean;
+}
+
+const UTF8_ENCODER = new TextEncoder();
+
+function createTextCapture(): TextCapture {
+  return { value: '', bytes: 0, truncated: false };
+}
+
+function appendText(capture: TextCapture, chunk: string, maxBytes?: number): void {
+  if (maxBytes === undefined) {
+    capture.value += chunk;
+    return;
   }
-  out += decoder.decode();
-  return out;
+  if (capture.truncated) return;
+
+  const remaining = maxBytes - capture.bytes;
+  if (remaining <= 0) {
+    capture.truncated ||= chunk.length > 0;
+    return;
+  }
+
+  const destination = new Uint8Array(Math.min(remaining, chunk.length * 3));
+  const { read, written } = UTF8_ENCODER.encodeInto(chunk, destination);
+  capture.value += chunk.slice(0, read);
+  capture.bytes += written;
+  capture.truncated ||= read < chunk.length;
+}
+
+async function collect(
+  stream: AsyncIterable<Uint8Array | string>,
+  maxBytes?: number,
+): Promise<TextCapture> {
+  const decoder = new TextDecoder();
+  const capture = createTextCapture();
+  for await (const chunk of stream) {
+    appendText(
+      capture,
+      typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true }),
+      maxBytes,
+    );
+  }
+  appendText(capture, decoder.decode(), maxBytes);
+  return capture;
 }
 
 registerScopedService(LifecycleScope.App, IGitService, GitService, ScopeActivation.OnScopeCreated, 'git');
