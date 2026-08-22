@@ -78,7 +78,7 @@ describe('McpManagementService', () => {
   let identitySnapshot: AgentIdentitySnapshot;
   let trusted: boolean;
   let getOrCreate: Mock<IWorkspaceInstanceManager['getOrCreate']>;
-  let findByRoot: Mock<IWorkspaceInstanceManager['findByRoot']>;
+  let findContaining: Mock<IWorkspaceInstanceManager['findContaining']>;
   let management: IMcpManagementService;
 
   beforeEach(() => {
@@ -98,7 +98,7 @@ describe('McpManagementService', () => {
     getOrCreate = vi.fn<IWorkspaceInstanceManager['getOrCreate']>(async () =>
       ({ id: 'test-workspace' }) as unknown as WorkspaceInstance,
     );
-    findByRoot = vi.fn<IWorkspaceInstanceManager['findByRoot']>(() => undefined);
+    findContaining = vi.fn<IWorkspaceInstanceManager['findContaining']>(() => undefined);
     const hostProcess = new HostProcessService();
     const runtime = Object.assign(
       new FakeRuntime(
@@ -152,7 +152,7 @@ describe('McpManagementService', () => {
           inspect: () => runtime,
           acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
         });
-        reg.definePartialInstance(IWorkspaceInstanceManager, { findByRoot, getOrCreate });
+        reg.definePartialInstance(IWorkspaceInstanceManager, { findContaining, getOrCreate });
         reg.defineInstance(ILogService, stubLog());
         reg.define(IMcpManagementService, McpManagementService);
       },
@@ -705,7 +705,92 @@ describe('McpManagementService', () => {
       expect(result.success).toBe(true);
       expect(result.output).toContain('Available tools: 4');
       expect(result.output).toContain('- echo: Echoes input text');
-      expect(findByRoot).toHaveBeenCalledWith(cwd);
+      expect(findContaining).toHaveBeenCalledWith(cwd);
+      expect(getOrCreate).not.toHaveBeenCalled();
+    }, 20000);
+
+    it('probes a nested cwd against the containing workspace runtimes', async () => {
+      const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-nested-'));
+      tempDirs.push(cwd);
+      findContaining.mockReturnValue({ id: 'test-workspace' } as unknown as WorkspaceInstance);
+
+      const result = await management.testServer({
+        server: {
+          name: 'stdio-probe',
+          transport: 'stdio',
+          command: process.execPath,
+          args: [stdioFixture],
+        },
+        cwd,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain('Available tools: 4');
+      expect(findContaining).toHaveBeenCalledWith(cwd);
+      expect(getOrCreate).not.toHaveBeenCalled();
+    }, 20000);
+
+    it('rejects a non-local runtime_id probe when no workspace contains the cwd', async () => {
+      const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-remote-miss-'));
+      tempDirs.push(cwd);
+
+      await expect(
+        management.testServer({
+          server: {
+            name: 'stdio-probe',
+            transport: 'stdio',
+            command: process.execPath,
+            args: [stdioFixture],
+            runtime_id: 'remote',
+          },
+          cwd,
+        }),
+      ).rejects.toMatchObject({
+        code: ErrorCodes.REQUEST_INVALID,
+        message: expect.stringContaining('runtime_id "remote"'),
+      });
+      expect(findContaining).toHaveBeenCalledWith(cwd);
+      expect(getOrCreate).not.toHaveBeenCalled();
+    });
+
+    it('probes a non-local runtime_id through the containing workspace', async () => {
+      const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-remote-hit-'));
+      tempDirs.push(cwd);
+      findContaining.mockReturnValue({ id: 'test-workspace' } as unknown as WorkspaceInstance);
+
+      const result = await management.testServer({
+        server: {
+          name: 'stdio-probe',
+          transport: 'stdio',
+          command: process.execPath,
+          args: [stdioFixture],
+          runtime_id: 'remote',
+        },
+        cwd,
+      });
+
+      expect(result.success).toBe(true);
+      expect(findContaining).toHaveBeenCalledWith(cwd);
+      expect(getOrCreate).not.toHaveBeenCalled();
+    }, 20000);
+
+    it('keeps the transient local probe for an explicit local runtime_id', async () => {
+      const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-local-explicit-'));
+      tempDirs.push(cwd);
+
+      const result = await management.testServer({
+        server: {
+          name: 'stdio-probe',
+          transport: 'stdio',
+          command: process.execPath,
+          args: [stdioFixture],
+          runtime_id: 'local',
+        },
+        cwd,
+      });
+
+      expect(result.success).toBe(true);
+      expect(findContaining).toHaveBeenCalledWith(cwd);
       expect(getOrCreate).not.toHaveBeenCalled();
     }, 20000);
 
@@ -771,15 +856,15 @@ describe('McpManagementService', () => {
         cwd,
       });
       await Promise.resolve();
-      expect(findByRoot).not.toHaveBeenCalled();
+      expect(findContaining).not.toHaveBeenCalled();
 
       releaseConfig();
       await Promise.resolve();
-      expect(findByRoot).not.toHaveBeenCalled();
+      expect(findContaining).not.toHaveBeenCalled();
 
       releaseIdentity();
       await expect(probe).resolves.toMatchObject({ success: true });
-      expect(findByRoot).toHaveBeenCalledWith(cwd);
+      expect(findContaining).toHaveBeenCalledWith(cwd);
       expect(getOrCreate).not.toHaveBeenCalled();
     }, 20000);
 
@@ -1517,6 +1602,21 @@ describe('McpManagementService', () => {
         },
       );
       await expect(management.cancelServerAuth({ flowId: 'unknown-flow' })).resolves.toBeUndefined();
+    });
+
+    it('complete rejects a timeoutMs outside the setTimeout range', async () => {
+      await expect(
+        management.completeServerAuth({ flowId: 'unknown-flow', timeoutMs: 2 ** 31 }),
+      ).rejects.toMatchObject({
+        code: ErrorCodes.REQUEST_INVALID,
+        message: 'MCP OAuth timeoutMs must be an integer between 1 and 2147483647',
+      });
+      await expect(
+        management.completeServerAuth({ flowId: 'unknown-flow', timeoutMs: 0 }),
+      ).rejects.toMatchObject({ code: ErrorCodes.REQUEST_INVALID });
+      await expect(
+        management.completeServerAuth({ flowId: 'unknown-flow', timeoutMs: 1.5 }),
+      ).rejects.toMatchObject({ code: ErrorCodes.REQUEST_INVALID });
     });
 
     it('reset invalidates stored credentials and broadcasts the event', async () => {

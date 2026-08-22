@@ -1,7 +1,6 @@
-import { resolve } from 'pathe';
-
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
 
 import { ErrorCodes, Error2 } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -45,7 +44,7 @@ export class McpRegistryService implements IMcpRegistryService {
         });
       }
     } else {
-      const cwd = resolve(query.cwd);
+      const cwd = canonicalWorkspaceRoot(query.cwd);
       if (!(await readWorkspaceTrust(this.docs, cwd))) {
         const userEntries = await this.store.list();
         for (const server of userEntries) {

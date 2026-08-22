@@ -129,6 +129,16 @@ describe('WorkspaceTrustService', () => {
     ).resolves.toEqual(record);
   });
 
+  it('shares one trust key across UNC and drive-letter spelling variants', async () => {
+    const docs = new JsonAtomicDocumentStore(new FileStorageService(homeDir));
+    await writeWorkspaceTrust(docs, '//server/share/repo', 1);
+    expect(await readWorkspaceTrust(docs, '\\\\SERVER\\SHARE\\REPO')).toBe(true);
+    expect(await readWorkspaceTrust(docs, '//Server/Share/Repo')).toBe(true);
+
+    await writeWorkspaceTrust(docs, 'C:\\Users\\Foo\\Repo', 2);
+    expect(await readWorkspaceTrust(docs, 'c:/users/foo/repo')).toBe(true);
+  });
+
   it('deletes both canonical and legacy trust markers', async () => {
     const docs = new JsonAtomicDocumentStore(new FileStorageService(homeDir));
     const root = 'C:\\Users\\Foo\\Repo';

@@ -55,6 +55,7 @@ import {
 
 const DEFAULT_AUTH_TIMEOUT_MS = 15 * 60_000;
 const AUTH_FLOW_IDLE_TIMEOUT_MS = 15 * 60_000;
+const MAX_AUTH_TIMEOUT_MS = 2 ** 31 - 1;
 
 export class McpManagementService extends Disposable implements IMcpManagementService {
   declare readonly _serviceBrand: undefined;
@@ -183,10 +184,17 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     let transientRuntimes: RuntimeRegistry | undefined;
     if (server.transport === 'stdio') {
       stdioCwd = normalize(cwd ?? process.cwd());
-      const workspace = this.workspaceInstances.findByRoot(stdioCwd);
+      const workspace = this.workspaceInstances.findContaining(stdioCwd);
       if (workspace !== undefined) {
         workspaceId = workspace.id;
       } else {
+        const runtimeId = server.runtime_id;
+        if (runtimeId !== undefined && runtimeId !== 'local') {
+          throw new Error2(
+            ErrorCodes.REQUEST_INVALID,
+            `Cannot probe MCP server "${server.name}" with runtime_id "${runtimeId}": no materialized workspace contains ${stdioCwd}, and an out-of-workspace probe only supports the local runtime`,
+          );
+        }
         await this.hostEnvironment.ready;
         workspaceId = `mcp-probe-${randomUUID()}`;
         transientRuntimes = new RuntimeRegistry(workspaceId);
@@ -300,6 +308,17 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     handle: McpServerAuthFlowHandle,
     options?: { readonly signal?: AbortSignal },
   ): Promise<void> {
+    if (
+      handle.timeoutMs !== undefined &&
+      (!Number.isInteger(handle.timeoutMs) ||
+        handle.timeoutMs < 1 ||
+        handle.timeoutMs > MAX_AUTH_TIMEOUT_MS)
+    ) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        `MCP OAuth timeoutMs must be an integer between 1 and ${MAX_AUTH_TIMEOUT_MS}`,
+      );
+    }
     const active = this.authFlows.get(handle.flowId);
     if (active === undefined) {
       throw new Error2(ErrorCodes.REQUEST_INVALID, `Unknown MCP OAuth flow: ${handle.flowId}`);

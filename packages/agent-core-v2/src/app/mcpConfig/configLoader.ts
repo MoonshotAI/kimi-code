@@ -1,7 +1,8 @@
-import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
+import { dirname, join, normalize } from 'pathe';
 
 import { resolveKimiHome } from '#/app/bootstrap/bootstrap';
 import { findGitWorkTree } from '#/app/git/workTree';
+import { resolvePath } from '#/_base/utils/paths';
 import { ErrorCodes, Error2 } from '#/errors';
 import { McpServerConfigSchema, type McpServerConfig } from '#/mcpCore/config-schema';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -178,10 +179,6 @@ function mapValuesToPath(
     origins[name] = path;
   }
   return origins;
-}
-
-function resolvePath(base: string, value: string): string {
-  return isAbsolute(value) ? normalize(value) : resolve(base, value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

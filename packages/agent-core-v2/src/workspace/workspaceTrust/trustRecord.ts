@@ -1,6 +1,5 @@
-import { normalize } from 'pathe';
-
-import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
+import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
+import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
 const TRUST_SCOPE = 'workspace-trust';
@@ -53,5 +52,5 @@ export function deleteWorkspaceTrust(
 }
 
 function trustKey(root: string): string {
-  return encodeWorkDirKey(workspaceRootKey(normalize(root)));
+  return encodeWorkDirKey(canonicalWorkspaceRoot(root));
 }

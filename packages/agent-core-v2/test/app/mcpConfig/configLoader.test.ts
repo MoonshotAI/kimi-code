@@ -227,6 +227,28 @@ describe('loadMcpServers', () => {
     });
   });
 
+  it('keeps Windows drive-letter and UNC stdio cwd values resolved on any host', async () => {
+    const home = makeTempDir();
+    const repoRoot = makeTempDir();
+    const cwd = join(repoRoot, 'packages', 'agent-core');
+    await mkdir(join(repoRoot, '.git'), { recursive: true });
+    await mkdir(cwd, { recursive: true });
+
+    await writeJson(join(repoRoot, '.mcp.json'), {
+      mcpServers: {
+        drive: { command: 'node', cwd: 'C:/tools' },
+        driveBackslash: { command: 'node', cwd: 'C:\\tools\\bin' },
+        unc: { command: 'node', cwd: '//server/share/tools' },
+      },
+    });
+
+    const servers = await loadMcpServers({ fs, cwd, homeDir: home });
+
+    expect(servers['drive']).toMatchObject({ cwd: 'C:/tools' });
+    expect(servers['driveBackslash']).toMatchObject({ cwd: 'C:/tools/bin' });
+    expect(servers['unc']).toMatchObject({ cwd: '//server/share/tools' });
+  });
+
   it('throws Error2(config.invalid) on invalid JSON', async () => {
     const home = makeTempDir();
     const cwd = makeTempDir();

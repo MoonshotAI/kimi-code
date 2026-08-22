@@ -38,7 +38,7 @@ const CONFIG_SCOPE = '';
 const MCP_CONFIG_KEY = 'mcp.json';
 
 const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
+const textDecoder = new TextDecoder('utf-8', { ignoreBOM: true });
 
 export class McpConfigStore extends Disposable implements IMcpConfigStore {
   declare readonly _serviceBrand: undefined;

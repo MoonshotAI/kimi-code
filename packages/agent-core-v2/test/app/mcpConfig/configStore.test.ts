@@ -200,6 +200,12 @@ describe('McpConfigStore', () => {
       await expect(store.list()).rejects.toThrow(/^Invalid JSON in /);
     });
 
+    it('rejects a BOM-prefixed file as malformed JSON', async () => {
+      await seedRaw('\uFEFF{"mcpServers":{}}');
+      await expect(store.list()).rejects.toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
+      await expect(store.list()).rejects.toThrow(/^Invalid JSON in /);
+    });
+
     it('rejects a non-object top level', async () => {
       await seedRaw('["alpha"]');
       await expect(store.list()).rejects.toMatchObject({

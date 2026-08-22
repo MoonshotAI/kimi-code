@@ -30,6 +30,7 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { Error2, ErrorCodes } from '#/errors';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { LocalRuntimeProviderFactory } from '#/runtime/localRuntime';
+import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
 import type { Runtime, RuntimeBinding, RuntimeCapability, RuntimeLease } from '#/runtime/runtime';
 import { RuntimeError, RuntimeRegistry } from '#/runtime/runtimeRegistry';
 import type { RuntimeProviderFactory } from '#/runtime/runtimeProvider';
@@ -89,6 +90,20 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
   findByRoot(root: string): WorkspaceInstance | undefined {
     const normalized = root.replace(/[\\/]$/, '');
     return [...this.instances.values()].find((instance) => instance.root.replace(/[\\/]$/, '') === normalized);
+  }
+
+  findContaining(cwd: string): WorkspaceInstance | undefined {
+    const probe = canonicalWorkspaceRoot(cwd);
+    let best: { readonly instance: WorkspaceInstance; readonly rootLength: number } | undefined;
+    for (const instance of this.instances.values()) {
+      const root = canonicalWorkspaceRoot(instance.root);
+      const prefix = root.endsWith('/') ? root : `${root}/`;
+      if (probe !== root && !probe.startsWith(prefix)) continue;
+      if (best === undefined || root.length > best.rootLength) {
+        best = { instance, rootLength: root.length };
+      }
+    }
+    return best?.instance;
   }
 
   list(): readonly WorkspaceInstance[] {
