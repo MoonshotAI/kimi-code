@@ -20,9 +20,10 @@ const signal = new AbortController().signal;
 
 function fakeFetcher(
   content = '',
-  kind: 'passthrough' | 'extracted' = 'extracted',
+  kind: 'passthrough' | 'extracted' | 'image' = 'extracted',
+  imageData?: { mimeType: string; base64: string },
 ): UrlFetcher {
-  return { fetch: vi.fn().mockResolvedValue({ content, kind }) };
+  return { fetch: vi.fn().mockResolvedValue({ content, kind, imageData }) };
 }
 
 describe('FetchURLTool', () => {
@@ -289,6 +290,24 @@ describe('FetchURLTool', () => {
     // ...and the passthrough mode is signalled in the model-visible output
     // (py wording was "full content"; main #238 uses "full response body").
     expect(out).toContain('full response body');
+  });
+
+  it('returns image content parts when fetcher returns image data', async () => {
+    const imageData = { mimeType: 'image/png', base64: 'fakebase64' };
+    const tool = new FetchURLTool(fakeFetcher('', 'image', imageData));
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_img',
+      args: { url: 'https://example.com/image.png' },
+      signal,
+    });
+
+    expect(result.isError).toBe(false);
+    expect(Array.isArray(result.output)).toBe(true);
+    const parts = result.output as unknown as Array<{ type: string } & Record<string, unknown>>;
+    expect(parts.length).toBe(2);
+    expect(parts[0]).toMatchObject({ type: 'text', text: 'Fetched image from https://example.com/image.png' });
+    expect(parts[1]).toMatchObject({ type: 'image_url', imageUrl: { url: 'data:image/png;base64,fakebase64' } });
   });
 });
 
