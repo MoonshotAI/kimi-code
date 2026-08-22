@@ -2695,7 +2695,12 @@ function selectModel(modelId: string): void {
   padding: 0 calc((var(--content-font-size) * 1.5 - var(--wm-x-size)) / 2) 0 var(--space-2);
   border: none;
   border-radius: var(--radius-full);
-  background: var(--color-surface);
+  /* The fills ladder's --color-selected rung (same fill as the dock's work
+     pills): dark's --color-surface equals --color-composer-bg, so a surface
+     chip vanished into the composer card there — the translucent fill reads
+     on both themes. The mobile / touch-lane rules below only re-lay the
+     pill, so this one fill covers every state. */
+  background: var(--color-selected);
   color: var(--color-text);
   font-family: var(--font-ui);
   font-size: var(--ui-font-size-sm);
