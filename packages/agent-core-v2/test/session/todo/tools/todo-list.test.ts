@@ -152,4 +152,48 @@ describe('TodoListTool', () => {
     expect(clearExecution.description).toBe('Clearing todo list');
     expect(updateExecution.description).toBe('Updating todo list');
   });
+
+  it('resolveExecution attaches a todo_list display block so ACP can emit a plan update', () => {
+    const { tool } = makeTool([{ title: 'existing', status: 'in_progress' }]);
+
+    const updateExecution = tool.resolveExecution({
+      todos: [
+        { title: 'first', status: 'pending' },
+        { title: 'second', status: 'done' },
+      ],
+    });
+    if (updateExecution.isError === true) {
+      throw new TypeError('expected a runnable execution');
+    }
+    expect(updateExecution.display).toEqual({
+      kind: 'todo_list',
+      items: [
+        { title: 'first', status: 'pending' },
+        { title: 'second', status: 'done' },
+      ],
+    });
+  });
+
+  it('query mode display reflects the current stored list', () => {
+    const { tool } = makeTool([{ title: 'existing', status: 'in_progress' }]);
+
+    const readExecution = tool.resolveExecution({});
+    if (readExecution.isError === true) {
+      throw new TypeError('expected a runnable execution');
+    }
+    expect(readExecution.display).toEqual({
+      kind: 'todo_list',
+      items: [{ title: 'existing', status: 'in_progress' }],
+    });
+  });
+
+  it('clear mode display carries an empty items array', () => {
+    const { tool } = makeTool([{ title: 'existing', status: 'pending' }]);
+
+    const clearExecution = tool.resolveExecution({ todos: [] });
+    if (clearExecution.isError === true) {
+      throw new TypeError('expected a runnable execution');
+    }
+    expect(clearExecution.display).toEqual({ kind: 'todo_list', items: [] });
+  });
 });
