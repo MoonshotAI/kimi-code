@@ -420,6 +420,23 @@ export class SessionEventHandler {
     });
   }
 
+  private handleStepRetrying(event: TurnStepRetryingEvent): void {
+    const { failedAttempt, nextAttempt, maxAttempts, delayMs, statusCode } = event;
+    const delaySec = Math.round(delayMs / 1000);
+    const attemptLabel = `(${nextAttempt}/${maxAttempts})`;
+    if (statusCode === 429) {
+      this.host.showStatus(
+        `Rate limited (429), retrying in ${delaySec}s… ${attemptLabel}`,
+        'warning',
+      );
+    } else {
+      this.host.showStatus(
+        `Request failed, retrying in ${delaySec}s… ${attemptLabel}`,
+        'warning',
+      );
+    }
+  }
+
   private handleStepCompleted(event: TurnStepCompletedEvent): void {
     this.host.streamingUI.flushNow();
     this.clearStepRetry();
