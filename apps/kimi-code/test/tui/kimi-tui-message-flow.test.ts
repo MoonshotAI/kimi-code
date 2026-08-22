@@ -8235,7 +8235,9 @@ describe('/model status displayName override', () => {
 });
 
 describe('/effort support_efforts override', () => {
-  it('warns and applies efforts hidden by an Anthropic support_efforts override', async () => {
+  it('rejects efforts hidden by an Anthropic support_efforts override', async () => {
+    // The engine falls back to the declared default for unlisted efforts on
+    // every protocol, so the TUI rejects them like any other invalid value.
     const session = makeSession();
     const { driver } = await makeDriver(session, {
       getConfig: vi.fn(async () => ({
@@ -8262,6 +8264,265 @@ describe('/effort support_efforts override', () => {
     driver.handleUserInput('/effort max');
 
     await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain(
+        'Unsupported thinking effort "max" for k2. Available: off, low, high',
+      );
+    });
+    expect(session.setThinking).not.toHaveBeenCalled();
+  });
+
+  it('accepts /effort on for a declared-list model and shows the mapped default', async () => {
+    // 'on' never appears in the segment list of an effort-declaring model,
+    // but the engine maps it to the declared default — keep it a valid
+    // command and display the resolved effort the engine reports.
+    const session = makeSession();
+    let effort = 'low';
+    Object.assign(session, {
+      setThinking: vi.fn(async (value: string) => {
+        effort = value === 'on' ? 'high' : value;
+      }),
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingEffort: effort,
+        permission: 'manual',
+        planMode: false,
+        contextTokens: 0,
+        maxContextTokens: 100,
+        contextUsage: 0,
+      })),
+    });
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'kimi', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 100,
+            displayName: 'Compatible Model',
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high'],
+            defaultEffort: 'high',
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true, effort: 'low' },
+      })),
+    });
+
+    driver.handleUserInput('/effort on');
+
+    await vi.waitFor(() => {
+      expect(session.setThinking).toHaveBeenCalledWith('on');
+    });
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain('Thinking set to high.');
+    });
+    expect(renderTranscript(driver)).not.toContain('Unsupported thinking effort');
+  });
+
+  it('resolves /effort on to the declared default before a session exists (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(
+      session,
+      {
+        getConfig: vi.fn(async () => ({
+          providers: {
+            compatible: { type: 'kimi', apiKey: 'test-key' },
+          },
+          models: {
+            k2: {
+              provider: 'compatible',
+              model: 'compatible-model',
+              protocol: 'anthropic',
+              maxContextSize: 100,
+              displayName: 'Compatible Model',
+              capabilities: ['thinking'],
+              supportEfforts: ['low', 'high'],
+              defaultEffort: 'high',
+            },
+          },
+          defaultModel: 'k2',
+          thinking: { enabled: true, effort: 'low' },
+        })),
+      },
+      startupInput,
+    );
+    expect(driver.state.appState.sessionId).toBe('');
+
+    driver.handleUserInput('/effort on');
+
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain('Thinking set to high.');
+    });
+    expect(driver.state.appState.thinkingEffort).toBe('high');
+    expect(driver.state.appState.lazySessionThinking).toBe('high');
+
+    driver.handleUserInput('hello');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalled();
+    });
+    expect(harness.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'k2', thinking: 'high' }),
+    );
+  });
+
+  it('hydrates an unlisted configured effort to the declared default (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const setConfig = vi.fn(async () => ({}));
+    const { driver } = await makeDriver(
+      session,
+      {
+        getConfig: vi.fn(async () => ({
+          providers: {
+            compatible: { type: 'kimi', apiKey: 'test-key' },
+          },
+          models: {
+            k2: {
+              provider: 'compatible',
+              model: 'compatible-model',
+              protocol: 'anthropic',
+              maxContextSize: 100,
+              displayName: 'Compatible Model',
+              capabilities: ['thinking'],
+              supportEfforts: ['low', 'xhigh'],
+              defaultEffort: 'xhigh',
+            },
+          },
+          defaultModel: 'k2',
+          thinking: { enabled: true, effort: 'high' },
+        })),
+        setConfig,
+      },
+      startupInput,
+    );
+
+    // "high" is outside the declared list: hydration mirrors the engine
+    // fallback instead of copying the configured value verbatim.
+    expect(driver.state.appState.thinkingEffort).toBe('xhigh');
+
+    // Confirming the current model in the picker must not turn thinking off.
+    driver.handleUserInput('/model');
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as TabbedModelSelectorComponent).handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain(
+        'Already using Compatible Model with thinking xhigh.',
+      );
+    });
+    expect(setConfig).not.toHaveBeenCalled();
+  });
+
+  it('accepts a case-insensitive /effort match and applies the declared casing', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'kimi', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 100,
+            displayName: 'Compatible Model',
+            capabilities: ['thinking'],
+            supportEfforts: ['Low', 'High'],
+            defaultEffort: 'High',
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true, effort: 'low' },
+      })),
+    });
+
+    driver.handleUserInput('/effort low');
+
+    await vi.waitFor(() => {
+      expect(session.setThinking).toHaveBeenCalledWith('Low');
+    });
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain('Thinking set to Low.');
+    });
+  });
+
+  it('persists only the enabled flag when a padded list top tier is selected', async () => {
+    const session = makeSession();
+    const setConfig = vi.fn(async () => ({}));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'kimi', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 100,
+            displayName: 'Compatible Model',
+            capabilities: ['thinking'],
+            supportEfforts: [' low ', ' max '],
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true, effort: 'low' },
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/effort max');
+
+    await vi.waitFor(() => {
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'k2',
+        thinking: { enabled: true },
+      });
+    });
+  });
+
+  it('still sends unlisted efforts unchanged for Anthropic models without a declared list', async () => {    const session = makeSession();
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'kimi', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 100,
+            displayName: 'Compatible Model',
+            capabilities: ['thinking'],
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true },
+      })),
+    });
+
+    driver.handleUserInput('/effort max');
+
+    await vi.waitFor(() => {
       expect(session.setThinking).toHaveBeenCalledWith('max');
     });
     await vi.waitFor(() => {
@@ -8269,9 +8530,78 @@ describe('/effort support_efforts override', () => {
     });
     const transcript = renderTranscript(driver).replaceAll(/\s+/g, ' ');
     expect(transcript).toContain(
-      'Thinking effort "max" is not listed for k2 (known: low, high). Sending "max" unchanged; the configured provider will validate it.',
+      'Thinking effort "max" is not declared for k2. Sending "max" unchanged; the configured provider will validate it.',
     );
     expect(transcript).toContain('Thinking set to max.');
+  });
+
+  it('treats a blank-only support_efforts list as no declared list', async () => {
+    // The engine resolvers discard empty entries, so support_efforts: [""]
+    // means "no declared list" and the Anthropic escape hatch still applies.
+    const session = makeSession();
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'kimi', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 100,
+            displayName: 'Compatible Model',
+            capabilities: ['thinking'],
+            supportEfforts: [''],
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true },
+      })),
+    });
+
+    driver.handleUserInput('/effort max');
+
+    await vi.waitFor(() => {
+      expect(session.setThinking).toHaveBeenCalledWith('max');
+    });
+    const transcript = renderTranscript(driver).replaceAll(/\s+/g, ' ');
+    expect(transcript).toContain('Sending "max" unchanged');
+  });
+
+  it('matches /effort against trimmed padded support_efforts entries', async () => {
+    // Padded declarations like [" low ", " high "] are normalized by the
+    // engine; the TUI must match /effort input against the trimmed values.
+    const session = makeSession();
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'kimi', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 100,
+            displayName: 'Compatible Model',
+            capabilities: ['thinking'],
+            supportEfforts: [' low ', ' high '],
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true },
+      })),
+    });
+
+    driver.handleUserInput('/effort high');
+
+    await vi.waitFor(() => {
+      expect(session.setThinking).toHaveBeenCalledWith('high');
+    });
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain('Thinking set to high.');
+    });
   });
 
   it('offers the latest Opus efforts for an unknown Claude-marked Anthropic-compatible model', async () => {

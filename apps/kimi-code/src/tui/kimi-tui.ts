@@ -74,7 +74,10 @@ import {
 } from './components/dialogs/approval-preview';
 import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
-import { defaultThinkingEffortFor } from './components/dialogs/model-selector';
+import {
+  defaultThinkingEffortFor,
+  resolveConfiguredEffortForModel,
+} from './components/dialogs/model-selector';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
 import { TrustPromptComponent, type TrustPromptChoice } from './components/dialogs/trust-prompt';
@@ -2157,16 +2160,29 @@ export class KimiTUI {
       patch.planMode = config.defaultPlanMode === true;
     }
     const effort = thinkingEffortFromConfig(config.thinking);
+    const startupModelConfig =
+      startupModel === undefined ? undefined : config.models?.[startupModel];
+    const startupProviderType =
+      startupModelConfig === undefined
+        ? undefined
+        : (config.providers?.[startupModelConfig.provider]?.type ?? startupModelConfig.protocol);
     if (effort !== undefined) {
-      patch.thinkingEffort = effort;
+      // A configured effort outside the model's declared list falls back to
+      // the declared default at session creation — hydrate the same way so
+      // the footer and the picker never coerce it to 'off'.
+      patch.thinkingEffort =
+        startupModelConfig === undefined
+          ? effort
+          : resolveConfiguredEffortForModel(
+              effort,
+              effectiveModelAlias(startupModelConfig, startupProviderType),
+            );
     } else if (startupModel !== undefined) {
       // No concrete effort configured: mirror the engine, which resolves the
       // model's default effort at createSession time.
-      const raw = config.models?.[startupModel];
-      if (raw !== undefined) {
-        const providerType = config.providers?.[raw.provider]?.type;
+      if (startupModelConfig !== undefined) {
         patch.thinkingEffort = defaultThinkingEffortFor(
-          effectiveModelAlias(raw, providerType ?? raw.protocol),
+          effectiveModelAlias(startupModelConfig, startupProviderType),
         );
       }
     }

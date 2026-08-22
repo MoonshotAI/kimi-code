@@ -107,7 +107,12 @@ export function thinkingAvailability(model: ModelAlias): ThinkingAvailability {
 }
 
 export function effortsOf(model: ModelAlias): readonly string[] {
-  return model.supportEfforts ?? [];
+  // Blank entries are not real efforts: the engine resolvers discard them
+  // (effortsFor), so a list like [""] must not count as a declared list here.
+  // Entries are trimmed so padded declarations match normalized /effort input.
+  return (model.supportEfforts ?? [])
+    .map((effort) => effort.trim())
+    .filter((effort) => effort.length > 0);
 }
 
 /**
@@ -138,12 +143,48 @@ export function effortLabel(effort: string): string {
  * thinking is unsupported.
  */
 export function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
-  if (thinkingAvailability(model) === 'unsupported') return 'off';
   const efforts = effortsOf(model);
   if (efforts.length > 0) {
-    return model.defaultEffort ?? efforts[Math.floor(efforts.length / 2)]!;
+    const declared = model.defaultEffort?.trim();
+    const matched = declared === undefined ? undefined : matchDeclaredEffort(efforts, declared);
+    return (matched ?? efforts[Math.floor(efforts.length / 2)]!) as ThinkingEffort;
   }
+  if (thinkingAvailability(model) === 'unsupported') return 'off';
   return 'on';
+}
+
+/**
+ * Case-insensitive membership against the declared list, returning the
+ * declared (canonical) entry — the backend recognizes the declared casing.
+ */
+function matchDeclaredEffort(
+  efforts: readonly string[],
+  effort: string,
+): string | undefined {
+  return efforts.find((candidate) => candidate.toLowerCase() === effort.toLowerCase());
+}
+
+/**
+ * Mirror of the engine's configured-effort resolution, for session-less
+ * display state: with a declared effort list, `'on'` or an unlisted value
+ * becomes the model's default effort; listed values (and anything, when no
+ * list is declared) pass through. `'off'` always stays `'off'`.
+ */
+export function resolveConfiguredEffortForModel(
+  effort: ThinkingEffort,
+  model: ModelAlias,
+): ThinkingEffort {
+  // Normalize like the engine does before any comparison (trim + lowercase);
+  // a blank value reads as unconfigured and resolves to the model default.
+  const normalized = effort.trim().toLowerCase();
+  if (normalized.length === 0) return defaultThinkingEffortFor(model);
+  const efforts = effortsOf(model);
+  if (efforts.length === 0 || normalized === 'off') return normalized;
+  if (normalized !== 'on') {
+    const matched = matchDeclaredEffort(efforts, normalized);
+    if (matched !== undefined) return matched as ThinkingEffort;
+  }
+  return defaultThinkingEffortFor(model);
 }
 
 /**
@@ -196,15 +237,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
     const override = this.thinkingOverrides.get(choice.alias);
     if (override !== undefined) return override;
     if (choice.alias === this.opts.currentValue) return this.opts.currentThinkingEffort;
-    const efforts = effortsOf(choice.model);
-    if (efforts.length > 0) {
-      // A model with support_efforts but no default_effort defaults to the
-      // middle entry of its supported efforts.
-      const def = choice.model.defaultEffort ?? efforts[Math.floor(efforts.length / 2)];
-      if (def !== undefined && efforts.includes(def)) return def;
-      return efforts[0]!;
-    }
-    return thinkingAvailability(choice.model) !== 'unsupported' ? 'on' : 'off';
+    return defaultThinkingEffortFor(choice.model);
   }
 
   /** Draft coerced onto the model's segment list so rendering/selection never

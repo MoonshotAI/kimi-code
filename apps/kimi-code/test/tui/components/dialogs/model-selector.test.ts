@@ -2,7 +2,11 @@ import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import { visibleWidth } from '@moonshot-ai/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
+import {
+  ModelSelectorComponent,
+  defaultThinkingEffortFor,
+  resolveConfiguredEffortForModel,
+} from '#/tui/components/dialogs/model-selector';
 import { currentTheme } from '#/tui/theme';
 import { darkColors } from '#/tui/theme/colors';
 
@@ -502,6 +506,72 @@ describe('ModelSelectorComponent', () => {
     // support_efforts present but default_effort absent -> default to the
     // middle entry (medium), not a hardcoded level.
     expect(text(picker)).toContain('[ Medium ]');
+  });
+
+  it('falls back to the middle effort when the declared defaultEffort is unlisted', () => {
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: {
+        other: effortModel('Kimi Other', ['low', 'high'], 'max'),
+      },
+      currentValue: 'current',
+      currentThinkingEffort: 'off',
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    // An unlisted default_effort is not selectable: the middle entry wins,
+    // matching the engine resolvers.
+    expect(text(picker)).toContain('[ High ]');
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({ alias: 'other', thinking: 'high' });
+  });
+
+  it('trims a padded defaultEffort before matching the declared efforts', () => {
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: {
+        other: effortModel('Kimi Other', [' low ', ' medium ', ' xhigh '], ' xhigh '),
+      },
+      currentValue: 'current',
+      currentThinkingEffort: 'off',
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    // The padded declared default wins over the first/middle entry.
+    expect(text(picker)).toContain('[ Xhigh ]');
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({ alias: 'other', thinking: 'xhigh' });
+  });
+
+  it('prefers the declared default effort when the model omits the thinking capability', () => {
+    expect(defaultThinkingEffortFor(effortModel('Kimi Other', ['low', 'high', 'max'], 'max', []))).toBe(
+      'max',
+    );
+    expect(defaultThinkingEffortFor(effortModel('Kimi Other', ['low', 'high', 'max'], undefined, []))).toBe(
+      'high',
+    );
+  });
+
+  it('normalizes a padded configured effort before matching the declared list', () => {
+    const declared = effortModel('Kimi Other', ['low', 'high', 'max'], 'high');
+    expect(resolveConfiguredEffortForModel(' LOW ', declared)).toBe('low');
+    expect(resolveConfiguredEffortForModel('  ', declared)).toBe('high');
+    expect(resolveConfiguredEffortForModel(' ULTRA ', declared)).toBe('high');
+  });
+
+  it('matches declared efforts case-insensitively and resolves the declared casing', () => {
+    const declared = effortModel('Kimi Other', ['Low', 'High', 'Max'], 'max');
+    expect(resolveConfiguredEffortForModel('low', declared)).toBe('Low');
+    expect(defaultThinkingEffortFor(declared)).toBe('Max');
+  });
+
+  it('falls back to the middle entry when the declared default is not listed', () => {
+    // Matches the engine resolvers: an unlisted default_effort is rejected.
+    expect(defaultThinkingEffortFor(effortModel('Kimi Other', ['low', 'high'], 'max', []))).toBe(
+      'high',
+    );
   });
 
   it('renders the warning line directly below the key-hint line when provided', () => {

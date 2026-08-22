@@ -115,6 +115,16 @@ describe('effectiveModelConfig', () => {
     expect(effective.defaultEffort).toBeUndefined();
   });
 
+  it('keeps an inherited defaultEffort covered by the override list after normalization', () => {
+    const effective = effectiveModelConfig({
+      model: 'm',
+      supportEfforts: ['low', 'high'],
+      defaultEffort: 'high',
+      overrides: { supportEfforts: [' High ', 'max'] },
+    });
+    expect(effective.defaultEffort).toBe('high');
+  });
+
   it('infers the Anthropic profile for non-trait-driven vendors only', () => {
     const record: ModelRecord = { model: 'claude-sonnet-4-5', protocol: 'anthropic' };
     const inferred = effectiveModelConfig(record, 'anthropic');

@@ -19,16 +19,72 @@ function middleOf(efforts: readonly string[]): string {
   return efforts[Math.floor(efforts.length / 2)]!;
 }
 
+/**
+ * Normalize a declared `support_efforts` list: trim entries and drop blanks.
+ * Shared by resolution and diagnostics so a padded declaration means the same
+ * thing everywhere.
+ */
+export function normalizeDeclaredEfforts(
+  efforts: readonly string[] | undefined,
+): readonly string[] {
+  return (
+    efforts?.map((effort) => effort.trim()).filter((effort) => effort.length > 0) ?? []
+  );
+}
+
 function effortsFor(model: ModelAlias | undefined): readonly string[] {
   const effective = model === undefined ? undefined : effectiveModelAlias(model);
-  return effective?.supportEfforts?.filter((effort) => effort.length > 0) ?? [];
+  return normalizeDeclaredEfforts(effective?.supportEfforts);
+}
+
+/**
+ * Pick the fallback effort straight from the declared list: the declared
+ * `default_effort` when it is listed, else the middle entry. Unlike
+ * {@link defaultThinkingEffortFor} this skips the thinking-capability gate —
+ * a model that declares `support_efforts` without declaring the `thinking`
+ * capability still has a meaningful declared default to fall back to.
+ */
+function declaredDefaultEffortFor(
+  model: ModelAlias | undefined,
+  efforts: readonly string[],
+): ThinkingEffort {
+  const declaredDefault = model?.defaultEffort?.trim();
+  if (declaredDefault !== undefined && declaredDefault.length > 0) {
+    const matched = matchDeclaredEffort(efforts, declaredDefault);
+    if (matched !== undefined) return matched;
+  }
+  return middleOf(efforts);
+}
+
+/**
+ * Case-insensitive membership against the declared list, returning the
+ * declared (canonical) entry — backends recognize the declared casing, so the
+ * canonical form is what goes on the wire.
+ */
+function matchDeclaredEffort(
+  efforts: readonly string[],
+  effort: string,
+): string | undefined {
+  return efforts.find((candidate) => candidate.toLowerCase() === effort.toLowerCase());
+}
+
+/**
+ * Whether a raw declared `support_efforts` list covers `effort`, using the
+ * resolvers' normalization: trimmed, case-insensitive comparison.
+ */
+export function isDeclaredThinkingEffort(
+  supportEfforts: readonly string[] | undefined,
+  effort: string,
+): boolean {
+  return matchDeclaredEffort(normalizeDeclaredEfforts(supportEfforts), effort) !== undefined;
 }
 
 /**
  * Resolve the default thinking effort for a model from its declared metadata:
+ *   - models declaring `support_efforts` -> `default_effort`, else the middle
+ *     entry of the list (a declared list is itself a thinking declaration, so
+ *     the capability gate does not apply to it)
  *   - models that do not support thinking (or an unknown model) -> `'off'`
- *   - effort-capable models -> `default_effort`, else the middle entry of
- *     `support_efforts` (so we never pick an effort the model does not support)
  *   - boolean models (thinking support without `support_efforts`) -> `'on'`
  *
  * `support_efforts` is the single source of truth for efforts; the returned
@@ -36,14 +92,9 @@ function effortsFor(model: ModelAlias | undefined): readonly string[] {
  */
 export function defaultThinkingEffortFor(model: ModelAlias | undefined): ThinkingEffort {
   const effective = model === undefined ? undefined : effectiveModelAlias(model);
-  if (!supportsThinking(effective)) return 'off';
   const efforts = effortsFor(effective);
-  if (efforts.length > 0) {
-    const declaredDefault = effective?.defaultEffort;
-    return declaredDefault !== undefined && efforts.includes(declaredDefault)
-      ? declaredDefault
-      : middleOf(efforts);
-  }
+  if (efforts.length > 0) return declaredDefaultEffortFor(effective, efforts);
+  if (!supportsThinking(effective)) return 'off';
   return 'on';
 }
 
@@ -54,9 +105,11 @@ export function supportsThinkingEffort(
 ): boolean {
   if (!kimiProtocol || effort === 'off') return true;
   const effective = model === undefined ? undefined : effectiveModelAlias(model);
-  if (!supportsThinking(effective)) return false;
   const efforts = effortsFor(effective);
-  return efforts.length === 0 || effort === 'on' || efforts.includes(effort);
+  // A declared effort list is itself a declaration of thinking support: list
+  // membership decides, even when the thinking capability was omitted.
+  if (efforts.length > 0) return effort === 'on' || matchDeclaredEffort(efforts, effort) !== undefined;
+  return supportsThinking(effective);
 }
 
 function normalizeThinkingEffortForModel(
@@ -71,38 +124,44 @@ function normalizeThinkingEffortForModel(
 
   const efforts = effortsFor(effective);
   if (!kimiProtocol) {
-    return effort === 'on' && efforts.length > 0
-      ? defaultThinkingEffortFor(effective)
-      : effort;
+    // Compatible protocols pass values through only while the model declares
+    // no effort list — with a declared list, an unlisted effort is a config
+    // mistake the backend would reject, so fall back like the Kimi wire does.
+    if (efforts.length === 0) return effort;
+    if (effort === 'on') return declaredDefaultEffortFor(effective, efforts);
+    return matchDeclaredEffort(efforts, effort) ?? declaredDefaultEffortFor(effective, efforts);
+  }
+  if (efforts.length > 0) {
+    if (effort === 'on') return declaredDefaultEffortFor(effective, efforts);
+    return matchDeclaredEffort(efforts, effort) ?? declaredDefaultEffortFor(effective, efforts);
   }
   if (!supportsThinking(effective)) return 'off';
-  if (efforts.length === 0) return 'on';
-  if (effort === 'on' || !efforts.includes(effort)) {
-    return defaultThinkingEffortFor(effective);
-  }
-  return effort;
+  return 'on';
 }
 
 /**
- * Resolve the effective thinking effort for a session.
- *
- * Precedence:
- *   1. an explicit `requested` effort (per-session override) wins;
- *   2. `thinking.enabled === false` forces `'off'`;
- *   3. otherwise `thinking.effort` when set, else the model's default effort.
- *
- * A model that declares `always_thinking` can never resolve to `'off'`, on
- * any wire — a claimed off state would be a lie, since upstream keeps
- * reasoning at its default when no off encoding exists. (Compatible
- * protocols still receive every other requested value unchanged so their
- * backend can make the final capability decision.)
+ * A thinking-effort fallback: the configured value is not in the model's
+ * declared `support_efforts` list, so `resolved` (the model's default effort)
+ * is applied instead.
  */
-export function resolveThinkingEffort(
+export interface ThinkingEffortFallback {
+  readonly configured: ThinkingEffort;
+  readonly resolved: ThinkingEffort;
+}
+
+/**
+ * Resolve the effective thinking effort for a session, and report whether the
+ * resolution had to fall back to the model's default effort because the
+ * configured value is not in the model's declared `support_efforts` list.
+ * `'on'`/`'off'` are protocol encodings, not list members, so they never
+ * count as a fallback.
+ */
+export function resolveThinkingEffortWithFallback(
   requested: ThinkingEffort | undefined,
   config: ThinkingConfig | undefined,
   model: ModelAlias | undefined,
   kimiProtocol = false,
-): ThinkingEffort {
+): { readonly effort: ThinkingEffort; readonly fallback: ThinkingEffortFallback | undefined } {
   const effectiveModel = model === undefined ? undefined : effectiveModelAlias(model);
   // Normalize the configured value once: 'OFF' / ' off ' must be read as off
   // on every path, not passed upstream as a concrete effort; whitespace-only
@@ -132,5 +191,35 @@ export function resolveThinkingEffort(
         : defaultThinkingEffortFor(effectiveModel);
   }
 
-  return normalizeThinkingEffortForModel(effort, effectiveModel, kimiProtocol);
+  const resolved = normalizeThinkingEffortForModel(effort, effectiveModel, kimiProtocol);
+  const efforts = effortsFor(effectiveModel);
+  const fallback: ThinkingEffortFallback | undefined =
+    effort !== 'on' &&
+    effort !== 'off' &&
+    efforts.length > 0 &&
+    matchDeclaredEffort(efforts, effort) === undefined
+      ? { configured: effort, resolved }
+      : undefined;
+  return { effort: resolved, fallback };
+}
+
+/**
+ * Resolve the effective thinking effort for a session.
+ *
+ * Precedence:
+ *   1. an explicit `requested` effort (per-session override) wins;
+ *   2. `thinking.enabled === false` forces `'off'`;
+ *   3. otherwise `thinking.effort` when set, else the model's default effort.
+ *
+ * A model that declares `always_thinking` can never resolve to `'off'`, on
+ * any wire — a claimed off state would be a lie, since upstream keeps
+ * reasoning at its default when no off encoding exists.
+ */
+export function resolveThinkingEffort(
+  requested: ThinkingEffort | undefined,
+  config: ThinkingConfig | undefined,
+  model: ModelAlias | undefined,
+  kimiProtocol = false,
+): ThinkingEffort {
+  return resolveThinkingEffortWithFallback(requested, config, model, kimiProtocol).effort;
 }

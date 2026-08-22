@@ -187,6 +187,29 @@ describe('resolveThinkingEffortForModel', () => {
     );
   });
 
+  it('falls back to the declared default for an unlisted effort on non-strict protocols', () => {
+    const declared = {
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'xhigh'],
+      defaultEffort: 'xhigh',
+      protocol: 'openai',
+      providerType: 'openai',
+    };
+    expect(resolveThinkingEffortForModel(undefined, { effort: 'high' }, declared, false)).toBe(
+      'xhigh',
+    );
+    expect(resolveThinkingEffortForModel('high', undefined, declared, false)).toBe('xhigh');
+    expect(resolveThinkingEffortForModel('medium', undefined, declared, false)).toBe('medium');
+    expect(resolveThinkingEffortForModel('xhigh', undefined, declared, false)).toBe('xhigh');
+  });
+
+  it('still passes unlisted efforts through when the model declares no list', () => {
+    expect(resolveThinkingEffortForModel('ultra', undefined, booleanModel, false)).toBe('ultra');
+    expect(resolveThinkingEffortForModel(undefined, { effort: 'ultra' }, booleanModel, false)).toBe(
+      'ultra',
+    );
+  });
+
   it('projects a concrete effort to on for a boolean-only Kimi model', () => {
     expect(resolveThinkingEffortForModel('ultra', undefined, kimiBooleanModel, true)).toBe('on');
   });

@@ -15,7 +15,12 @@ import {
   ExperimentsSelectorComponent,
   type ExperimentalFeatureDraftChange,
 } from '../components/dialogs/experiments-selector';
-import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selector';
+import {
+  defaultThinkingEffortFor,
+  modelDisplayName,
+  segmentsFor,
+  effortsOf,
+} from '../components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
@@ -311,22 +316,35 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
     showEffortPicker(host, effective, segments);
     return;
   }
-  if (!segments.includes(arg)) {
+  const canonical = segments.find((segment) => segment.toLowerCase() === arg);
+  if (canonical === undefined) {
+    const declared = effortsOf(effective);
+    // 'on' is the generic enable signal: with a declared effort list the
+    // engine maps it to the declared default effort, so it stays a valid
+    // command even though it never appears in the segment list.
+    if (arg === 'on' && declared.length > 0) {
+      await performModelSwitch(host, alias, arg, true);
+      return;
+    }
     const providerType = host.state.appState.availableProviders[effective.provider]?.type;
     const protocol = effective.protocol ?? providerType;
-    if (protocol !== 'anthropic') {
+    // With a declared effort list the engine falls back to the model default
+    // for every protocol, so an unlisted value is rejected like any invalid
+    // input. Only Anthropic-compatible models WITHOUT a declared list keep
+    // the warn-and-send escape hatch — there the engine passes the value
+    // through for the backend to judge.
+    if (protocol !== 'anthropic' || declared.length > 0) {
       host.showError(
         `Unsupported thinking effort "${arg}" for ${alias}. Available: ${segments.join(', ')}`,
       );
       return;
     }
-    const knownEfforts = effective.supportEfforts?.join(', ') ?? 'none declared';
     host.showStatus(
-      `Thinking effort "${arg}" is not listed for ${alias} (known: ${knownEfforts}). Sending "${arg}" unchanged; the configured provider will validate it.`,
+      `Thinking effort "${arg}" is not declared for ${alias}. Sending "${arg}" unchanged; the configured provider will validate it.`,
       'warning',
     );
   }
-  await performModelSwitch(host, alias, arg, true);
+  await performModelSwitch(host, alias, canonical ?? arg, true);
 }
 
 function showEffortPicker(
@@ -512,7 +530,17 @@ async function performModelSwitch(
 
   try {
     if (session === undefined && runtimeChanged) {
-      await host.authFlow.activateModelAfterLogin(alias, effort);
+      // Session-less (lazy creation): no engine is around to map the generic
+      // 'on' onto the model's declared default yet, so resolve it here — the
+      // carried state and the status line should show the effort the first
+      // session will actually use. The engine re-resolves the concrete value
+      // at creation, which is in-list and therefore unchanged.
+      const selectedModel = host.state.appState.availableModels[alias];
+      const sessionlessEffort =
+        effort === 'on' && selectedModel !== undefined
+          ? defaultThinkingEffortFor(effectiveModelForHost(host, selectedModel))
+          : effort;
+      await host.authFlow.activateModelAfterLogin(alias, sessionlessEffort);
     } else if (session !== undefined) {
       if (alias !== prevModel) {
         await session.setModel(alias);

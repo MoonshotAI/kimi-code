@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { ModelRecord } from '#/kosong/model/model';
+import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import {
   configServices,
   createTestAgent,
@@ -395,6 +397,304 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     expect(profile.data().thinkingLevel).toBe('max');
   });
 
+  it('warns once when a model metadata reload strands the stored effort', async () => {
+    const scheduled: Array<() => void> = [];
+    profile.configure({
+      scheduleThinkingEffortRevalidation: (run) => {
+        scheduled.push(run);
+      },
+    });
+    profile.update({ modelAlias: 'kimi-code/ultra', thinkingLevel: 'high' });
+    expect(profile.data().thinkingLevel).toBe('high');
+    expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+
+    kimiConfig = {
+      ...kimiConfig,
+      models: {
+        ...kimiConfig.models,
+        'kimi-code/ultra': {
+          provider: 'kimi',
+          model: 'kimi-ultra',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'ultra'],
+          defaultEffort: 'ultra',
+        },
+      },
+    };
+    profile.data();
+    await vi.waitFor(() => {
+      expect(scheduled.length).toBeGreaterThan(0);
+    });
+    for (const run of scheduled.splice(0)) run();
+
+    expect(profile.data().thinkingLevel).toBe('ultra');
+    await vi.waitFor(() => {
+      expect(ctx.allEvents).toContainEqual({
+        type: '[rpc]',
+        event: 'warning',
+        args: expect.objectContaining({
+          code: 'thinking-effort-not-listed',
+          message:
+            'Thinking effort "high" is not listed for model "kimi-ultra" (known: low, ultra). Falling back to the model\'s default effort "ultra".',
+        }),
+      });
+    });
+    await vi.waitFor(() => {
+      const statuses = ctx.allEvents.filter((event) => event.event === 'agent.status.updated');
+      expect(statuses.at(-1)?.args).toMatchObject({ thinkingEffort: 'ultra' });
+    });
+  });
+
+  it('warns again when a default_effort-only reload changes the fallback target', async () => {
+    const scheduled: Array<() => void> = [];
+    profile.configure({
+      scheduleThinkingEffortRevalidation: (run) => {
+        scheduled.push(run);
+      },
+    });
+    profile.update({ modelAlias: 'kimi-code/ultra', thinkingLevel: 'high' });
+    expect(profile.data().thinkingLevel).toBe('high');
+
+    const withUltraDefault = (defaultEffort: string) => ({
+      ...kimiConfig,
+      models: {
+        ...kimiConfig.models,
+        'kimi-code/ultra': {
+          provider: 'kimi',
+          model: 'kimi-ultra',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'ultra'],
+          defaultEffort,
+        },
+      },
+    });
+    const revalidate = async (): Promise<void> => {
+      profile.data();
+      await vi.waitFor(() => {
+        expect(scheduled.length).toBeGreaterThan(0);
+      });
+      for (const run of scheduled.splice(0)) run();
+    };
+    const fallbackWarnings = () =>
+      ctx.allEvents.filter(
+        (event) =>
+          event.event === 'warning' &&
+          (event.args as { code?: string }).code === 'thinking-effort-not-listed',
+      );
+
+    kimiConfig = withUltraDefault('ultra');
+    await revalidate();
+    expect(profile.data().thinkingLevel).toBe('ultra');
+    await vi.waitFor(() => {
+      expect(fallbackWarnings()).toHaveLength(1);
+    });
+
+    kimiConfig = withUltraDefault('low');
+    await revalidate();
+    expect(profile.data().thinkingLevel).toBe('low');
+    await vi.waitFor(() => {
+      expect(fallbackWarnings()).toHaveLength(2);
+    });
+    expect(fallbackWarnings().at(-1)?.args).toMatchObject({
+      message:
+        'Thinking effort "high" is not listed for model "kimi-ultra" (known: low, ultra). Falling back to the model\'s default effort "low".',
+    });
+  });
+
+  it('republishes the status when a reload makes a stranded effort valid again', async () => {
+    const scheduled: Array<() => void> = [];
+    profile.configure({
+      scheduleThinkingEffortRevalidation: (run) => {
+        scheduled.push(run);
+      },
+    });
+    profile.update({ modelAlias: 'kimi-code/ultra', thinkingLevel: 'high' });
+    expect(profile.data().thinkingLevel).toBe('high');
+
+    const withUltraEfforts = (supportEfforts: string[]) => ({
+      ...kimiConfig,
+      models: {
+        ...kimiConfig.models,
+        'kimi-code/ultra': {
+          provider: 'kimi',
+          model: 'kimi-ultra',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts,
+          defaultEffort: 'ultra',
+        },
+      },
+    });
+    const revalidate = async (): Promise<void> => {
+      profile.data();
+      await vi.waitFor(() => {
+      expect(scheduled.length).toBeGreaterThan(0);
+    });
+      for (const run of scheduled.splice(0)) run();
+    };
+
+    kimiConfig = withUltraEfforts(['low', 'ultra']);
+    await revalidate();
+    expect(profile.data().thinkingLevel).toBe('ultra');
+    await vi.waitFor(() => {
+      expect(ctx.allEvents).toContainEqual(
+        expect.objectContaining({
+          event: 'warning',
+          args: expect.objectContaining({ code: 'thinking-effort-not-listed' }),
+        }),
+      );
+    });
+    await vi.waitFor(() => {
+      const statuses = ctx.allEvents.filter((event) => event.event === 'agent.status.updated');
+      expect(statuses.at(-1)?.args).toMatchObject({ thinkingEffort: 'ultra' });
+    });
+
+    kimiConfig = withUltraEfforts(['low', 'high', 'ultra']);
+    await revalidate();
+    expect(profile.data().thinkingLevel).toBe('high');
+    await vi.waitFor(() => {
+      const statuses = ctx.allEvents.filter((event) => event.event === 'agent.status.updated');
+      expect(statuses.at(-1)?.args).toMatchObject({ thinkingEffort: 'high' });
+    });
+    expect(
+      ctx.allEvents.filter(
+        (event) =>
+          event.event === 'warning' &&
+          (event.args as { code?: string }).code === 'thinking-effort-not-listed',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('republishes the status even when a read happens before the revalidation runs', async () => {
+    const scheduled: Array<() => void> = [];
+    profile.configure({
+      scheduleThinkingEffortRevalidation: (run) => {
+        scheduled.push(run);
+      },
+    });
+    profile.update({ modelAlias: 'kimi-code/ultra', thinkingLevel: 'high' });
+    expect(profile.data().thinkingLevel).toBe('high');
+
+    kimiConfig = {
+      ...kimiConfig,
+      models: {
+        ...kimiConfig.models,
+        'kimi-code/ultra': {
+          provider: 'kimi',
+          model: 'kimi-ultra',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'ultra'],
+          defaultEffort: 'ultra',
+        },
+      },
+    };
+    profile.data();
+    await vi.waitFor(() => {
+      expect(scheduled.length).toBeGreaterThan(0);
+    });
+
+    expect(profile.getEffectiveThinkingLevel()).toBe('ultra');
+
+    for (const run of scheduled.splice(0)) run();
+
+    await vi.waitFor(() => {
+      const statuses = ctx.allEvents.filter((event) => event.event === 'agent.status.updated');
+      expect(statuses.at(-1)?.args).toMatchObject({ thinkingEffort: 'ultra' });
+    });
+  });
+
+  it('warns once when a provider-only reload changes the inferred effort list', async () => {
+    const scheduled: Array<() => void> = [];
+    profile.configure({
+      scheduleThinkingEffortRevalidation: (run) => {
+        scheduled.push(run);
+      },
+    });
+    kimiConfig = {
+      providers: {
+        compat: { type: 'openai', apiKey: 'test-key', baseUrl: 'https://api.example.test/v1' },
+      },
+      models: {
+        'compat/claude': {
+          provider: 'compat',
+          model: 'joint-claude-custom',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+        },
+      },
+    };
+    profile.update({ modelAlias: 'compat/claude', thinkingLevel: 'ultra' });
+    expect(profile.data().thinkingLevel).toBe('ultra');
+    expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+
+    kimiConfig = {
+      ...kimiConfig,
+      providers: {
+        compat: { type: 'anthropic', apiKey: 'test-key', baseUrl: 'https://api.example.test/v1' },
+      },
+    };
+    profile.data();
+    await vi.waitFor(() => {
+      expect(scheduled.length).toBeGreaterThan(0);
+    });
+    for (const run of scheduled.splice(0)) run();
+
+    expect(profile.data().thinkingLevel).toBe('high');
+    await vi.waitFor(() => {
+      expect(ctx.allEvents).toContainEqual({
+        type: '[rpc]',
+        event: 'warning',
+        args: expect.objectContaining({
+          code: 'thinking-effort-not-listed',
+          message:
+            'Thinking effort "ultra" is not listed for model "joint-claude-custom" (known: low, medium, high, xhigh, max). Falling back to the model\'s default effort "high".',
+        }),
+      });
+    });
+
+    kimiConfig = {
+      providers: {
+        compat: { type: 'anthropic', apiKey: 'test-key', baseUrl: 'https://api.example.test/v2' },
+      },
+      models: {
+        'compat/claude': {
+          provider: 'compat',
+          model: 'joint-claude-custom',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high'],
+        },
+      },
+    };
+    profile.data();
+    await vi.waitFor(() => {
+      expect(scheduled.length).toBeGreaterThan(0);
+    });
+    for (const run of scheduled.splice(0)) run();
+
+    await vi.waitFor(() => {
+      expect(ctx.allEvents).toContainEqual({
+        type: '[rpc]',
+        event: 'warning',
+        args: expect.objectContaining({
+          code: 'thinking-effort-not-listed',
+          message:
+            'Thinking effort "ultra" is not listed for model "joint-claude-custom" (known: low, high). Falling back to the model\'s default effort "high".',
+        }),
+      });
+    });
+    expect(
+      ctx.allEvents.filter(
+        (event) =>
+          event.event === 'warning' &&
+          (event.args as { code?: string }).code === 'thinking-effort-not-listed',
+      ),
+    ).toHaveLength(2);
+  });
+
   it('projects an inherited concrete effort to on when switching to a boolean model', () => {
     profile.update({ modelAlias: 'kimi-code/ultra', thinkingLevel: 'ultra' });
 
@@ -432,20 +732,126 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     expect(profile.data().thinkingLevel).toBe('max');
   });
 
-  it('preserves unlisted efforts with a warning for Kimi-managed Anthropic models', () => {
+  it('falls back to the model default with a warning for an unlisted effort', () => {
     profile.update({ modelAlias: 'kimi-code/compatible', thinkingLevel: 'max' });
 
     expect(() => {
       profile.setThinking('high');
     }).not.toThrow();
-    expect(profile.data().thinkingLevel).toBe('high');
+    expect(profile.data().thinkingLevel).toBe('max');
     expect(ctx.allEvents).toContainEqual({
       type: '[rpc]',
       event: 'warning',
       args: expect.objectContaining({
-        code: 'anthropic-thinking-effort-not-listed',
+        code: 'thinking-effort-not-listed',
         message:
-          'Thinking effort "high" is not listed for model "compatible-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
+          'Thinking effort "high" is not listed for model "compatible-model" (known: max). Falling back to the model\'s default effort "max".',
+      }),
+    });
+  });
+
+  it('normalizes a persisted unlisted effort to the declared default on resume', async () => {
+    await ctx.restore([
+      {
+        type: 'metadata',
+        protocol_version: WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+      },
+      {
+        type: 'profile.bind',
+        modelAlias: 'kimi-code/compatible',
+        profileName: 'restored-profile',
+        thinkingEffort: 'high',
+        systemPrompt: 'restored prompt',
+        disallowedTools: [],
+      },
+    ]);
+
+    expect(profile.data().thinkingLevel).toBe('max');
+    expect(ctx.allEvents).toContainEqual({
+      type: '[rpc]',
+      event: 'warning',
+      args: expect.objectContaining({
+        code: 'thinking-effort-not-listed',
+        message:
+          'Thinking effort "high" is not listed for model "compatible-model" (known: max). Falling back to the model\'s default effort "max".',
+      }),
+    });
+
+    await requester.request({}, undefined, new AbortController().signal);
+
+    expect(capturedThinking).toMatchObject({ effort: 'max' });
+  });
+
+  it('suppresses the fallback warning when a forced effort decides the final effort', async () => {
+    kimiConfig = {
+      providers: { kimi: { type: 'kimi', apiKey: 'test-key', baseUrl: 'https://api.example.test/v1' } },
+      models: {
+        'kimi-code/custom': {
+          provider: 'kimi',
+          model: 'kimi-custom-coder',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'medium', 'max'],
+          defaultEffort: 'max',
+        },
+      },
+      thinking: { effort: 'high', forcedEffort: 'low' },
+    };
+
+    await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: 'kimi-code/custom' });
+
+    expect(profile.data().thinkingLevel).toBe('max');
+    expect(
+      ctx.allEvents.filter(
+        (event) =>
+          event.event === 'warning' &&
+          String((event.args as { code?: string }).code).startsWith('thinking-effort'),
+      ),
+    ).toEqual([]);
+
+    await requester.request({}, undefined, new AbortController().signal);
+
+    expect(capturedThinking).toMatchObject({ effort: 'low' });
+  });
+
+  it('warns only about an unlisted forced effort sent unchanged', async () => {
+    kimiConfig = {
+      providers: { kimi: { type: 'kimi', apiKey: 'test-key', baseUrl: 'https://api.example.test/v1' } },
+      models: {
+        'kimi-code/custom': {
+          provider: 'kimi',
+          model: 'kimi-custom-coder',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'medium', 'max'],
+          defaultEffort: 'max',
+        },
+      },
+      thinking: { effort: 'high', forcedEffort: 'extreme' },
+    };
+
+    await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: 'kimi-code/custom' });
+
+    expect(profile.data().thinkingLevel).toBe('max');
+    expect(
+      ctx.allEvents.filter(
+        (event) =>
+          event.event === 'warning' &&
+          String((event.args as { code?: string }).code).startsWith('thinking-effort'),
+      ),
+    ).toEqual([]);
+
+    await requester.request({}, undefined, new AbortController().signal);
+
+    expect(capturedThinking).toMatchObject({ effort: 'extreme' });
+    expect(ctx.allEvents).toContainEqual({
+      type: '[rpc]',
+      event: 'warning',
+      args: expect.objectContaining({
+        code: 'thinking-effort-not-listed',
+        message:
+          'Thinking effort "extreme" is not listed for model "kimi-custom-coder" (known: low, medium, max). The value will be sent unchanged to the backend.',
       }),
     });
   });

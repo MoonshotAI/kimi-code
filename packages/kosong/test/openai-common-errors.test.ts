@@ -405,7 +405,10 @@ describe('normalizeAPIStatusError thinking effort guidance', () => {
   it('adds configuration guidance when a provider rejects reasoning_effort', () => {
     const error = normalizeAPIStatusError(400, 'Invalid reasoning_effort: xhigh');
 
-    expect(error.message).toContain('Non-Kimi providers receive effort strings');
+    expect(error.message).toContain(
+      "Efforts outside a model's declared support_efforts fall back to the model default",
+    );
+    expect(error.message).toContain('locked in before a config reload');
     expect(error.message).toContain(
       'https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#thinking',
     );

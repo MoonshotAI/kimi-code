@@ -152,7 +152,7 @@ describe('ConfigState model capabilities', () => {
     expect(requestMaxTokens).toBe(131072);
   });
 
-  it('warns and sends when an Anthropic effort is not listed by the model', async () => {
+  it('warns and falls back when an Anthropic effort is not listed by the model', async () => {
     let requests = 0;
     const config: KimiConfig = {
       providers: {
@@ -170,6 +170,177 @@ describe('ConfigState model capabilities', () => {
           maxContextSize: 128_000,
           capabilities: ['thinking'],
           supportEfforts: ['max'],
+        },
+      },
+    };
+    const ctx = testAgent({
+      initialConfig: config,
+      providerManager: new ProviderManager({ config }),
+      generate: async (provider) => {
+        requests += 1;
+        expect(provider.thinkingEffort).toBe('max');
+        return {
+          id: 'response-1',
+          message: { role: 'assistant', content: [], toolCalls: [] },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      },
+    });
+    ctx.agent.config.update({
+      modelAlias: 'compatible',
+      systemPrompt: 'system',
+    });
+    ctx.agent.config.setThinkingEffort('high');
+
+    await ctx.agent.llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(requests).toBe(1);
+    expect(ctx.allEvents).toContainEqual({
+      type: '[rpc]',
+      event: 'warning',
+      args: {
+        code: 'thinking-effort-not-listed',
+        message:
+          'Thinking effort "high" is not listed for model "compatible-model" (known: max). Falling back to the model\'s default effort "max".',
+      },
+    });
+  });
+
+  it('warns when a Kimi env effort override is not listed by the model', async () => {
+    // A Kimi provider routed through the Anthropic protocol still honors
+    // KIMI_MODEL_THINKING_EFFORT; the override is an explicit pin applied
+    // after resolution, so an unlisted value is sent unchanged — with a
+    // one-time warning instead of a fallback.
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'high');
+    try {
+      let requests = 0;
+      const config: KimiConfig = {
+        providers: {
+          compatible: {
+            type: 'kimi',
+            apiKey: 'test-key',
+            baseUrl: 'https://api.example.test',
+          },
+        },
+        models: {
+          compatible: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 128_000,
+            capabilities: ['thinking'],
+            supportEfforts: ['max'],
+          },
+        },
+      };
+      const ctx = testAgent({
+        initialConfig: config,
+        providerManager: new ProviderManager({ config }),
+        generate: async (provider) => {
+          requests += 1;
+          expect(provider.thinkingEffort).toBe('high');
+          return {
+            id: 'response-1',
+            message: { role: 'assistant', content: [], toolCalls: [] },
+            usage: emptyUsage(),
+            finishReason: 'completed',
+            rawFinishReason: 'stop',
+          };
+        },
+      });
+      ctx.agent.config.update({
+        modelAlias: 'compatible',
+        systemPrompt: 'system',
+      });
+
+      await ctx.agent.llm.chat({
+        messages: [],
+        tools: [],
+        signal: new AbortController().signal,
+      });
+
+      expect(requests).toBe(1);
+      // The apply-time override warning is the single diagnostic for the
+      // pinned value — the request-time stale check must not repeat it.
+      expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([
+        {
+          type: '[rpc]',
+          event: 'warning',
+          args: {
+            code: 'thinking-effort-override-not-listed',
+            message:
+              'Thinking effort "high" is not listed for model "compatible-model" (known: max). The value will be sent unchanged to the backend.',
+          },
+        },
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('does not warn when the env effort override is listed by the model', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+    try {
+      const config: KimiConfig = {
+        providers: {
+          compatible: {
+            type: 'kimi',
+            apiKey: 'test-key',
+            baseUrl: 'https://api.example.test',
+          },
+        },
+        models: {
+          compatible: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 128_000,
+            capabilities: ['thinking'],
+            supportEfforts: ['max'],
+          },
+        },
+      };
+      const ctx = testAgent({
+        initialConfig: config,
+        providerManager: new ProviderManager({ config }),
+      });
+
+      ctx.agent.config.update({
+        modelAlias: 'compatible',
+        systemPrompt: 'system',
+      });
+
+      expect(ctx.agent.config.thinkingEffort).toBe('max');
+      expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('does not warn when the effort matches a padded declared list entry', async () => {
+    let requests = 0;
+    const config: KimiConfig = {
+      providers: {
+        compatible: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test',
+        },
+      },
+      models: {
+        compatible: {
+          provider: 'compatible',
+          model: 'compatible-model',
+          protocol: 'anthropic',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: [' high ', ' max '],
         },
       },
     };
@@ -201,15 +372,459 @@ describe('ConfigState model capabilities', () => {
     });
 
     expect(requests).toBe(1);
+    expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+  });
+
+  it('does not warn when the env override matches a padded declared list entry', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'low');
+    try {
+      const config: KimiConfig = {
+        providers: {
+          compatible: {
+            type: 'kimi',
+            apiKey: 'test-key',
+            baseUrl: 'https://api.example.test',
+          },
+        },
+        models: {
+          compatible: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 128_000,
+            capabilities: ['thinking'],
+            supportEfforts: [' low ', ' high '],
+          },
+        },
+      };
+      const ctx = testAgent({
+        initialConfig: config,
+        providerManager: new ProviderManager({ config }),
+      });
+
+      ctx.agent.config.update({
+        modelAlias: 'compatible',
+        systemPrompt: 'system',
+      });
+
+      expect(ctx.agent.config.thinkingEffort).toBe('low');
+      expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('does not warn when the env override matches a mixed-case declared entry', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'high');
+    try {
+      const config: KimiConfig = {
+        providers: {
+          compatible: {
+            type: 'kimi',
+            apiKey: 'test-key',
+            baseUrl: 'https://api.example.test',
+          },
+        },
+        models: {
+          compatible: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 128_000,
+            capabilities: ['thinking'],
+            supportEfforts: [' High '],
+          },
+        },
+      };
+      const ctx = testAgent({
+        initialConfig: config,
+        providerManager: new ProviderManager({ config }),
+      });
+
+      ctx.agent.config.update({
+        modelAlias: 'compatible',
+        systemPrompt: 'system',
+      });
+
+      expect(ctx.agent.config.thinkingEffort).toBe('high');
+      expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('does not warn when a reloaded list matches the current effort case-insensitively', async () => {
+    const compatibleModel = (supportEfforts: string[]) => ({
+      provider: 'compatible',
+      model: 'compatible-model',
+      protocol: 'anthropic' as const,
+      maxContextSize: 128_000,
+      capabilities: ['thinking'],
+      supportEfforts,
+    });
+    let current: KimiConfig = {
+      providers: {
+        compatible: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test',
+        },
+      },
+      models: { compatible: compatibleModel(['high']) },
+    };
+    let requests = 0;
+    const ctx = testAgent({
+      initialConfig: current,
+      providerManager: new ProviderManager({ config: () => current }),
+      generate: async (provider) => {
+        requests += 1;
+        expect(provider.thinkingEffort).toBe('high');
+        return {
+          id: 'response-1',
+          message: { role: 'assistant', content: [], toolCalls: [] },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      },
+    });
+    ctx.agent.config.update({
+      modelAlias: 'compatible',
+      systemPrompt: 'system',
+    });
+    ctx.agent.config.setThinkingEffort('high');
+
+    current = {
+      ...current,
+      models: { compatible: compatibleModel([' High ']) },
+    };
+
+    await ctx.agent.llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(requests).toBe(1);
+    expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+  });
+
+  it('suppresses the fallback warning when the env override decides the final effort', () => {
+    // The configured "high" is unlisted and would fall back to "xhigh", but
+    // the env pin "low" decides what actually goes on the wire — warning
+    // about a fallback to "xhigh" would be a lie, and "low" is listed, so no
+    // warning fires at all.
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'low');
+    try {
+      const config: KimiConfig = {
+        providers: {
+          compatible: {
+            type: 'kimi',
+            apiKey: 'test-key',
+            baseUrl: 'https://api.example.test',
+          },
+        },
+        models: {
+          compatible: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 128_000,
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'xhigh'],
+            defaultEffort: 'xhigh',
+          },
+        },
+        thinking: { effort: 'high' },
+      };
+      const ctx = testAgent({
+        initialConfig: config,
+        providerManager: new ProviderManager({ config }),
+      });
+
+      ctx.agent.config.update({
+        modelAlias: 'compatible',
+        systemPrompt: 'system',
+      });
+
+      expect(ctx.agent.config.thinkingEffort).toBe('low');
+      expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('warns only about the override when both the configured effort and the override are unlisted', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'extreme');
+    try {
+      const config: KimiConfig = {
+        providers: {
+          compatible: {
+            type: 'kimi',
+            apiKey: 'test-key',
+            baseUrl: 'https://api.example.test',
+          },
+        },
+        models: {
+          compatible: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 128_000,
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'xhigh'],
+            defaultEffort: 'xhigh',
+          },
+        },
+        thinking: { effort: 'high' },
+      };
+      const ctx = testAgent({
+        initialConfig: config,
+        providerManager: new ProviderManager({ config }),
+      });
+
+      ctx.agent.config.update({
+        modelAlias: 'compatible',
+        systemPrompt: 'system',
+      });
+
+      expect(ctx.agent.config.thinkingEffort).toBe('extreme');
+      expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([
+        {
+          type: '[rpc]',
+          event: 'warning',
+          args: {
+            code: 'thinking-effort-override-not-listed',
+            message:
+              'Thinking effort "extreme" is not listed for model "compatible-model" (known: low, xhigh). The value will be sent unchanged to the backend.',
+          },
+        },
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('warns on the next request when a config reload drops the current effort from the list', async () => {
+    // The session resolved "high" while the model declared ["high", "max"];
+    // a reload then narrows the list to ["max"]. Live sessions never
+    // re-resolve mid-flight, so the stale value keeps going out — the
+    // request-time check is the diagnostic for that drift.
+    const compatibleModel = (supportEfforts: string[]) => ({
+      provider: 'compatible',
+      model: 'compatible-model',
+      protocol: 'anthropic' as const,
+      maxContextSize: 128_000,
+      capabilities: ['thinking'],
+      supportEfforts,
+    });
+    let current: KimiConfig = {
+      providers: {
+        compatible: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test',
+        },
+      },
+      models: { compatible: compatibleModel(['high', 'max']) },
+    };
+    let requests = 0;
+    const ctx = testAgent({
+      initialConfig: current,
+      providerManager: new ProviderManager({ config: () => current }),
+      generate: async (provider) => {
+        requests += 1;
+        expect(provider.thinkingEffort).toBe('high');
+        return {
+          id: 'response-1',
+          message: { role: 'assistant', content: [], toolCalls: [] },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      },
+    });
+    ctx.agent.config.update({
+      modelAlias: 'compatible',
+      systemPrompt: 'system',
+    });
+    ctx.agent.config.setThinkingEffort('high');
+
+    await ctx.agent.llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(requests).toBe(1);
+    expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+
+    current = {
+      ...current,
+      models: { compatible: compatibleModel(['max']) },
+    };
+
+    await ctx.agent.llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(requests).toBe(2);
     expect(ctx.allEvents).toContainEqual({
       type: '[rpc]',
       event: 'warning',
       args: {
-        code: 'anthropic-thinking-effort-not-listed',
+        code: 'thinking-effort-not-listed',
         message:
-          'Thinking effort "high" is not listed for model "compatible-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
+          'Thinking effort "high" is not listed for model "compatible-model" (known: max). The value will be sent unchanged to the backend.',
       },
     });
+  });
+
+  it('warns once when a reload drops the env-pinned effort from the declared list', async () => {
+    // The pin was listed when applied (no apply-time warning); the reload
+    // narrows the list to ["max"], so the next request must surface the
+    // override diagnostic against the new list — exactly once.
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'high');
+    try {
+      const compatibleModel = (supportEfforts: string[]) => ({
+        provider: 'compatible',
+        model: 'compatible-model',
+        protocol: 'anthropic' as const,
+        maxContextSize: 128_000,
+        capabilities: ['thinking'],
+        supportEfforts,
+      });
+      let current: KimiConfig = {
+        providers: {
+          compatible: {
+            type: 'kimi',
+            apiKey: 'test-key',
+            baseUrl: 'https://api.example.test',
+          },
+        },
+        models: { compatible: compatibleModel(['high', 'max']) },
+      };
+      let requests = 0;
+      const ctx = testAgent({
+        initialConfig: current,
+        providerManager: new ProviderManager({ config: () => current }),
+        generate: async (provider) => {
+          requests += 1;
+          expect(provider.thinkingEffort).toBe('high');
+          return {
+            id: 'response-1',
+            message: { role: 'assistant', content: [], toolCalls: [] },
+            usage: emptyUsage(),
+            finishReason: 'completed',
+            rawFinishReason: 'stop',
+          };
+        },
+      });
+      ctx.agent.config.update({
+        modelAlias: 'compatible',
+        systemPrompt: 'system',
+      });
+
+      await ctx.agent.llm.chat({
+        messages: [],
+        tools: [],
+        signal: new AbortController().signal,
+      });
+
+      expect(requests).toBe(1);
+      expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+
+      current = {
+        ...current,
+        models: { compatible: compatibleModel(['max']) },
+      };
+
+      await ctx.agent.llm.chat({
+        messages: [],
+        tools: [],
+        signal: new AbortController().signal,
+      });
+
+      expect(requests).toBe(2);
+      expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([
+        {
+          type: '[rpc]',
+          event: 'warning',
+          args: {
+            code: 'thinking-effort-override-not-listed',
+            message:
+              'Thinking effort "high" is not listed for model "compatible-model" (known: max). The value will be sent unchanged to the backend.',
+          },
+        },
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('stays silent when the env-pinned effort survives a config reload', async () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'high');
+    try {
+      const compatibleModel = (supportEfforts: string[]) => ({
+        provider: 'compatible',
+        model: 'compatible-model',
+        protocol: 'anthropic' as const,
+        maxContextSize: 128_000,
+        capabilities: ['thinking'],
+        supportEfforts,
+      });
+      let current: KimiConfig = {
+        providers: {
+          compatible: {
+            type: 'kimi',
+            apiKey: 'test-key',
+            baseUrl: 'https://api.example.test',
+          },
+        },
+        models: { compatible: compatibleModel(['high', 'max']) },
+      };
+      const ctx = testAgent({
+        initialConfig: current,
+        providerManager: new ProviderManager({ config: () => current }),
+        generate: async (provider) => {
+          expect(provider.thinkingEffort).toBe('high');
+          return {
+            id: 'response-1',
+            message: { role: 'assistant', content: [], toolCalls: [] },
+            usage: emptyUsage(),
+            finishReason: 'completed',
+            rawFinishReason: 'stop',
+          };
+        },
+      });
+      ctx.agent.config.update({
+        modelAlias: 'compatible',
+        systemPrompt: 'system',
+      });
+
+      await ctx.agent.llm.chat({
+        messages: [],
+        tools: [],
+        signal: new AbortController().signal,
+      });
+
+      current = {
+        ...current,
+        models: { compatible: compatibleModel(['low', 'high']) },
+      };
+
+      await ctx.agent.llm.chat({
+        messages: [],
+        tools: [],
+        signal: new AbortController().signal,
+      });
+
+      expect(ctx.allEvents.filter((event) => event.event === 'warning')).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('uses session id as a provider prompt cache hint without storing it on Agent', () => {

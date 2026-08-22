@@ -1,7 +1,8 @@
 import { join } from 'pathe';
 import { randomUUID } from 'node:crypto';
 
-import { normalizeAdditionalDirs } from '../config';
+import { effectiveModelAlias, normalizeAdditionalDirs } from '../config';
+import type { ModelAlias } from '../config/schema';
 import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import { log } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
@@ -34,6 +35,12 @@ import {
 } from './compaction';
 import { CronManager } from './cron';
 import { ConfigState } from './config';
+import {
+  isDeclaredThinkingEffort,
+  normalizeDeclaredEfforts,
+  type ThinkingEffort,
+  type ThinkingEffortFallback,
+} from './config/thinking';
 import { ContextMemory } from './context';
 import { GoalMode } from './goal';
 import { HookEngine } from '../session/hooks';
@@ -186,6 +193,7 @@ export class Agent {
     readonly model: string;
     readonly effort: string;
     readonly knownEfforts: string | undefined;
+    readonly fallbackEffort?: string;
   }> = [];
   private readonly systemPromptContextProvider?: (() => Promise<PreparedSystemPromptContext>) | undefined;
 
@@ -295,7 +303,7 @@ export class Agent {
         // before dispatching), so it must not leave a request trace or a
         // diagnostic log line claiming a request was sent.
         if (requestOptions?.signal?.aborted !== true) {
-          this.warnAboutAnthropicThinkingEffort(provider, modelAlias);
+          this.warnAboutStaleThinkingEffort(provider, modelAlias);
           this.llmRequestLogger.logRequest({
             provider,
             modelAlias,
@@ -330,60 +338,148 @@ export class Agent {
     };
   }
 
-  private warnAboutAnthropicThinkingEffort(
+  /**
+   * One-shot warning for a configured thinking effort that is not in the
+   * model's declared support list: the effective effort falls back to the
+   * model's default instead of being sent upstream as-is. Emitted at config
+   * resolution time, where the pre-fallback value is still known; during
+   * record replay the warning is queued and flushed by {@link resume}.
+   */
+  warnAboutThinkingEffortFallback(
+    modelAlias: string | undefined,
+    model: ModelAlias | undefined,
+    fallback: ThinkingEffortFallback,
+  ): void {
+    const effective = model === undefined ? undefined : effectiveModelAlias(model);
+    const supportEfforts = normalizeDeclaredEfforts(effective?.supportEfforts);
+    const modelName = effective?.model ?? modelAlias ?? 'unknown';
+    this.emitThinkingEffortWarning({
+      code: 'thinking-effort-not-listed',
+      message: `Thinking effort "${fallback.configured}" is not listed for model "${modelName}" (known: ${supportEfforts.join(', ')}). Falling back to the model's default effort "${fallback.resolved}".`,
+      modelAlias,
+      model: modelName,
+      effort: fallback.configured,
+      knownEfforts: supportEfforts.join(','),
+      fallbackEffort: fallback.resolved,
+    });
+  }
+
+  /**
+   * One-shot warning for a `KIMI_MODEL_THINKING_EFFORT` override that is not
+   * in the model's declared support list. The override is an explicit pin
+   * applied after resolution: it bypasses the declared list by design and is
+   * sent upstream unchanged, so the warning says so instead of promising a
+   * fallback.
+   */
+  warnAboutUnlistedThinkingEffortOverride(
+    modelAlias: string | undefined,
+    model: ModelAlias | undefined,
+    effort: ThinkingEffort,
+  ): void {
+    if (effort === 'on' || effort === 'off') return;
+    const effective = model === undefined ? undefined : effectiveModelAlias(model);
+    const supportEfforts = normalizeDeclaredEfforts(effective?.supportEfforts);
+    if (supportEfforts.length === 0 || isDeclaredThinkingEffort(effective?.supportEfforts, effort))
+      return;
+    const modelName = effective?.model ?? modelAlias ?? 'unknown';
+    this.emitThinkingEffortWarning({
+      code: 'thinking-effort-override-not-listed',
+      message: `Thinking effort "${effort}" is not listed for model "${modelName}" (known: ${supportEfforts.join(', ')}). The value will be sent unchanged to the backend.`,
+      modelAlias,
+      model: modelName,
+      effort,
+      knownEfforts: supportEfforts.join(','),
+      fallbackEffort: undefined,
+    });
+  }
+
+  /**
+   * Request-time safety net for an effort resolved against older model
+   * metadata: a config reload swaps the declared effort list without
+   * re-running config resolution, leaving the cached effort outside the new
+   * list. The cached value is still sent unchanged (live sessions never
+   * re-resolve mid-flight); this restores the one-time diagnostic for that
+   * drift, on every protocol.
+   */
+  private warnAboutStaleThinkingEffort(
     provider: ChatProvider,
     modelAlias: string | undefined,
   ): void {
-    if (provider.name !== 'anthropic') return;
-    const effort = provider.thinkingEffort;
-    if (effort === null || effort === 'on' || effort === 'off') return;
-
-    let warning:
-      | { readonly code: string; readonly message: string; readonly knownEfforts?: string }
-      | undefined;
     try {
+      const effort = provider.thinkingEffort;
+      if (effort === null || effort === 'on' || effort === 'off') return;
       const resolved =
         modelAlias === undefined
           ? undefined
           : this.modelProvider?.resolveProviderConfig(modelAlias);
       if (resolved === undefined) return;
-
-      const supportEfforts = resolved.supportEfforts?.filter((value) => value.length > 0);
-      if (supportEfforts === undefined || supportEfforts.length === 0) return;
-      if (supportEfforts.includes(effort)) return;
-      warning = {
-        code: 'anthropic-thinking-effort-not-listed',
-        message: `Thinking effort "${effort}" is not listed for model "${provider.modelName}" (known: ${supportEfforts.join(', ')}). The configured value will be sent unchanged to the Anthropic-compatible backend.`,
+      if (this.config.thinkingEffortOverridden) {
+        // The pin may have been listed when applied (no warning then) and
+        // dropped by a later reload: re-check it against the current list
+        // and emit the override warning. Its dedup key carries the list, so
+        // an unchanged list dedups against the apply-time warning.
+        this.warnAboutUnlistedThinkingEffortOverride(
+          modelAlias,
+          {
+            provider: resolved.providerName,
+            model: resolved.provider.model,
+            maxContextSize: Math.max(resolved.modelCapabilities.max_context_tokens, 1),
+            supportEfforts:
+              resolved.supportEfforts === undefined ? undefined : [...resolved.supportEfforts],
+            defaultEffort: resolved.defaultEffort,
+          },
+          effort,
+        );
+        return;
+      }
+      const supportEfforts = normalizeDeclaredEfforts(resolved.supportEfforts);
+      if (supportEfforts.length === 0) return;
+      if (isDeclaredThinkingEffort(resolved.supportEfforts, effort)) return;
+      this.emitThinkingEffortWarning({
+        code: 'thinking-effort-not-listed',
+        message: `Thinking effort "${effort}" is not listed for model "${provider.modelName}" (known: ${supportEfforts.join(', ')}). The value will be sent unchanged to the backend.`,
+        modelAlias,
+        model: provider.modelName,
+        effort,
         knownEfforts: supportEfforts.join(','),
-      };
+        fallbackEffort: undefined,
+      });
     } catch {
-      // Capability diagnostics must never turn an otherwise sendable request
-      // into a client-side failure.
-      return;
+      // Capability diagnostics must never turn a sendable request into a failure.
     }
-
-    if (warning === undefined) return;
-    const key = [warning.code, modelAlias, provider.modelName, effort, warning.knownEfforts].join(
-      '\u0000',
-    );
-    if (this.emittedThinkingEffortWarnings.has(key)) return;
-    this.emittedThinkingEffortWarnings.add(key);
-    const pending = {
-      code: warning.code,
-      message: warning.message,
-      modelAlias,
-      model: provider.modelName,
-      effort,
-      knownEfforts: warning.knownEfforts,
-    };
-    if (this.records.restoring) {
-      this.pendingThinkingEffortWarnings.push(pending);
-      return;
-    }
-    this.publishAnthropicThinkingEffortWarning(pending);
   }
 
-  private publishAnthropicThinkingEffortWarning(
+  private emitThinkingEffortWarning(warning: {
+    readonly code: string;
+    readonly message: string;
+    readonly modelAlias: string | undefined;
+    readonly model: string;
+    readonly effort: string;
+    readonly knownEfforts: string;
+    readonly fallbackEffort?: string;
+  }): void {
+    try {
+      const key = [
+        warning.code,
+        warning.modelAlias,
+        warning.model,
+        warning.effort,
+        warning.fallbackEffort,
+        warning.knownEfforts,
+      ].join('\u0000');
+      if (this.emittedThinkingEffortWarnings.has(key)) return;
+      this.emittedThinkingEffortWarnings.add(key);
+      if (this.records.restoring) {
+        this.pendingThinkingEffortWarnings.push(warning);
+        return;
+      }
+      this.publishThinkingEffortWarning(warning);
+    } catch {
+      // A capability warning must never make config replay or session resume fail.
+    }
+  }
+
+  private publishThinkingEffortWarning(
     warning: (typeof this.pendingThinkingEffortWarnings)[number],
   ): void {
     try {
@@ -392,6 +488,7 @@ export class Agent {
         model: warning.model,
         effort: warning.effort,
         knownEfforts: warning.knownEfforts,
+        fallbackEffort: warning.fallbackEffort,
       });
     } catch {
       // Diagnostics must never block resume or request dispatch.
@@ -408,18 +505,9 @@ export class Agent {
     }
   }
 
-  private flushPendingAnthropicThinkingEffortWarnings(): void {
+  private flushPendingThinkingEffortWarnings(): void {
     for (const warning of this.pendingThinkingEffortWarnings.splice(0)) {
-      this.publishAnthropicThinkingEffortWarning(warning);
-    }
-  }
-
-  warnAboutCurrentAnthropicThinkingEffort(): void {
-    try {
-      if (!this.config.hasProvider) return;
-      this.warnAboutAnthropicThinkingEffort(this.config.provider, this.config.modelAlias);
-    } catch {
-      // A capability warning must never make config replay or session resume fail.
+      this.publishThinkingEffortWarning(warning);
     }
   }
 
@@ -532,7 +620,7 @@ export class Agent {
 
   async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {
     const result = await this.records.replay(options);
-    this.flushPendingAnthropicThinkingEffortWarnings();
+    this.flushPendingThinkingEffortWarnings();
     try {
       this.replayBuilder.postRestoring = true;
       this.goal.normalizeAfterReplay();

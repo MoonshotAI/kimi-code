@@ -298,7 +298,7 @@ describe('AgentLLMRequesterService measured anchors', () => {
   });
 });
 
-describe('AgentLLMRequesterService Anthropic effort diagnostics', () => {
+describe('AgentLLMRequesterService thinking effort diagnostics', () => {
   it('warns and sends when the effort is not listed by the model', async () => {
     const calls = { value: 0 };
     const requester = createRequester(calls, null);
@@ -312,11 +312,52 @@ describe('AgentLLMRequesterService Anthropic effort diagnostics', () => {
     expect(events.filter((event) => event.type === 'warning')).toEqual([
       expect.objectContaining({
         type: 'warning',
-        code: 'anthropic-thinking-effort-not-listed',
+        code: 'thinking-effort-not-listed',
         message:
-          'Thinking effort "high" is not listed for model "wire-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
+          'Thinking effort "high" is not listed for model "wire-model" (known: max). The value will be sent unchanged to the backend.',
       }),
     ]);
+  });
+
+  it('warns for unlisted efforts on any protocol', async () => {
+    const calls = { value: 0 };
+    const requester = createRequester(calls, null);
+    Object.defineProperty(requester.model, 'protocol', { value: 'openai' });
+    Object.defineProperty(requester.model, 'supportEfforts', { value: ['max'] });
+    const { service, events } = createService(requester, undefined, { thinkingLevel: 'high' });
+
+    await service.request();
+
+    expect(events.filter((event) => event.type === 'warning')).toEqual([
+      expect.objectContaining({
+        type: 'warning',
+        code: 'thinking-effort-not-listed',
+        message:
+          'Thinking effort "high" is not listed for model "wire-model" (known: max). The value will be sent unchanged to the backend.',
+      }),
+    ]);
+  });
+
+  it('does not warn when the effort matches a padded declared list entry', async () => {
+    const calls = { value: 0 };
+    const requester = createRequester(calls, null);
+    Object.defineProperty(requester.model, 'supportEfforts', { value: [' max '] });
+    const { service, events } = createService(requester, undefined, { thinkingLevel: 'max' });
+
+    await service.request();
+
+    expect(events.filter((event) => event.type === 'warning')).toEqual([]);
+  });
+
+  it('does not warn when the effort matches a declared entry case-insensitively', async () => {
+    const calls = { value: 0 };
+    const requester = createRequester(calls, null);
+    Object.defineProperty(requester.model, 'supportEfforts', { value: [' High '] });
+    const { service, events } = createService(requester, undefined, { thinkingLevel: 'high' });
+
+    await service.request();
+
+    expect(events.filter((event) => event.type === 'warning')).toEqual([]);
   });
 });
 

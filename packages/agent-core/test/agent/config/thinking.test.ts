@@ -4,6 +4,7 @@ import type { ModelAlias } from '../../../src/config';
 import {
   defaultThinkingEffortFor,
   resolveThinkingEffort,
+  resolveThinkingEffortWithFallback,
   supportsThinkingEffort,
 } from '../../../src/agent/config/thinking';
 
@@ -156,7 +157,7 @@ describe('resolveThinkingEffort', () => {
 
   it('normalizes the requested effort (case/whitespace) on every wire', () => {
     expect(resolveThinkingEffort(' OFF ', undefined, effortModel, false)).toBe('off');
-    expect(resolveThinkingEffort(' Max ', undefined, effortModel, false)).toBe('max');
+    expect(resolveThinkingEffort(' High ', undefined, effortModel, false)).toBe('high');
     expect(resolveThinkingEffort('  ', undefined, effortModel, false)).toBe('medium');
   });
 
@@ -183,6 +184,130 @@ describe('resolveThinkingEffort', () => {
 
   it('falls back to the model default for an unsupported Kimi effort', () => {
     expect(resolveThinkingEffort('ultra', undefined, effortModel, true)).toBe('medium');
+  });
+
+  it('falls back to the model default for an unlisted effort on any protocol', () => {
+    // A declared supportEfforts list is authoritative on every wire: an
+    // unlisted configured or requested effort resolves to the model default
+    // instead of being sent upstream as-is.
+    const declared = model({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'xhigh'],
+      defaultEffort: 'xhigh',
+    });
+    expect(resolveThinkingEffort(undefined, { effort: 'high' }, declared, false)).toBe('xhigh');
+    expect(resolveThinkingEffort('high', undefined, declared, false)).toBe('xhigh');
+    expect(resolveThinkingEffort('medium', undefined, declared, false)).toBe('medium');
+    expect(resolveThinkingEffort('xhigh', undefined, declared, false)).toBe('xhigh');
+    // no declared defaultEffort -> middle entry of the list.
+    expect(resolveThinkingEffort('ultra', undefined, effortModel, false)).toBe('medium');
+  });
+
+  it('passes concrete efforts through unchanged when no effort list is declared', () => {
+    expect(resolveThinkingEffort('ultra', undefined, booleanModel, false)).toBe('ultra');
+    expect(resolveThinkingEffort(undefined, { effort: 'ultra' }, booleanModel, false)).toBe(
+      'ultra',
+    );
+  });
+
+  it('ignores whitespace-only supportEfforts entries on every protocol', () => {
+    // A whitespace-only entry is not a real effort: the list must not count as
+    // declared, and a trimmed declared list must match against trimmed values.
+    const blankOnly = model({ capabilities: ['thinking'], supportEfforts: ['   '] });
+    expect(resolveThinkingEffort('ultra', undefined, blankOnly, false)).toBe('ultra');
+    expect(resolveThinkingEffort('ultra', undefined, blankOnly, true)).toBe('on');
+    const padded = model({
+      capabilities: ['thinking'],
+      supportEfforts: [' low ', ' xhigh '],
+      defaultEffort: 'xhigh',
+    });
+    expect(resolveThinkingEffort('high', undefined, padded, false)).toBe('xhigh');
+    expect(resolveThinkingEffort('low', undefined, padded, false)).toBe('low');
+  });
+
+  it('falls back to the declared default when the model omits the thinking capability', () => {
+    // A model may declare support_efforts/default_effort without declaring
+    // the thinking capability; the declared list is still authoritative for
+    // the fallback — the unlisted value must not silently become 'off'.
+    const declared = model({
+      supportEfforts: ['low', 'medium', 'xhigh'],
+      defaultEffort: 'xhigh',
+    });
+    expect(resolveThinkingEffort(undefined, { effort: 'high' }, declared, false)).toBe('xhigh');
+    expect(resolveThinkingEffort('high', undefined, declared, false)).toBe('xhigh');
+    const withFallback = resolveThinkingEffortWithFallback('high', undefined, declared, false);
+    expect(withFallback.effort).toBe('xhigh');
+    expect(withFallback.fallback).toEqual({ configured: 'high', resolved: 'xhigh' });
+    // no declared defaultEffort -> middle entry of the list.
+    expect(
+      resolveThinkingEffort(
+        'high',
+        undefined,
+        model({ supportEfforts: ['low', 'medium', 'xhigh'] }),
+        false,
+      ),
+    ).toBe('medium');
+  });
+
+  it('treats a declared effort list as thinking support on the Kimi wire', () => {
+    // support_efforts without the thinking capability: list membership takes
+    // precedence over the capability gate on the strict path too.
+    const declared = model({
+      supportEfforts: ['low', 'medium', 'xhigh'],
+      defaultEffort: 'xhigh',
+    });
+    expect(resolveThinkingEffort(undefined, { effort: 'high' }, declared, true)).toBe('xhigh');
+    expect(resolveThinkingEffort('high', undefined, declared, true)).toBe('xhigh');
+    expect(resolveThinkingEffort('on', undefined, declared, true)).toBe('xhigh');
+    expect(resolveThinkingEffort('medium', undefined, declared, true)).toBe('medium');
+    expect(supportsThinkingEffort('low', declared, true)).toBe(true);
+    expect(supportsThinkingEffort('bogus', declared, true)).toBe(false);
+    expect(resolveThinkingEffortWithFallback('high', undefined, declared, true)).toEqual({
+      effort: 'xhigh',
+      fallback: { configured: 'high', resolved: 'xhigh' },
+    });
+  });
+
+  it('resolves the declared default when nothing is configured and the capability is omitted', () => {
+    const declared = model({
+      supportEfforts: ['low', 'medium', 'xhigh'],
+      defaultEffort: 'xhigh',
+    });
+    expect(defaultThinkingEffortFor(declared)).toBe('xhigh');
+    expect(resolveThinkingEffort(undefined, undefined, declared, false)).toBe('xhigh');
+    expect(resolveThinkingEffort(undefined, undefined, declared, true)).toBe('xhigh');
+  });
+
+  it('trims a padded default_effort before matching the declared list', () => {
+    const declared = model({
+      supportEfforts: [' low ', ' medium ', ' xhigh '],
+      defaultEffort: ' xhigh ',
+    });
+    expect(defaultThinkingEffortFor(declared)).toBe('xhigh');
+    expect(resolveThinkingEffort('high', undefined, declared, false)).toBe('xhigh');
+  });
+
+  it('resolves the inherited default when a padded override list covers it', () => {
+    const declared = model({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'high', 'max'],
+      defaultEffort: 'max',
+      overrides: { supportEfforts: [' max ', 'high'] },
+    });
+    expect(resolveThinkingEffort(undefined, undefined, declared)).toBe('max');
+  });
+
+  it('matches declared efforts case-insensitively and resolves the declared casing', () => {
+    const declared = model({
+      capabilities: ['thinking'],
+      supportEfforts: ['Low', 'High', 'Max'],
+      defaultEffort: 'max',
+    });
+    expect(resolveThinkingEffort('low', undefined, declared, true)).toBe('Low');
+    expect(resolveThinkingEffort(undefined, { effort: 'high' }, declared, false)).toBe('High');
+    expect(defaultThinkingEffortFor(declared)).toBe('Max');
+    expect(supportsThinkingEffort('low', declared, true)).toBe(true);
+    expect(resolveThinkingEffort('ultra', undefined, declared, false)).toBe('Max');
   });
 
   it('projects a concrete effort to on for a boolean-only Kimi model', () => {

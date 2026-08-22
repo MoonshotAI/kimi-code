@@ -1,12 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { Event } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { AgentProfileService } from '#/agent/profile/profileService';
-import { profileActiveToolsKey, profileKey } from '#/agent/profile/profileOps';
+import { profileActiveToolsKey, profileKey, WarningIssued } from '#/agent/profile/profileOps';
 import {
   DEFAULT_AGENT_PROFILE_NAME,
   type EnvironmentDisclosureSnapshot,
@@ -16,6 +16,8 @@ import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalo
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { IModelService, type ModelsChangedEvent } from '#/kosong/model/model';
+import { IProviderService, type ProvidersChangedEvent } from '#/kosong/provider/provider';
 import { IProtocolAdapterRegistry, type Protocol } from '#/kosong/protocol/protocol';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
@@ -186,6 +188,8 @@ let agentState: IAgentStateService;
 let svc: IAgentProfileService;
 let configValues: Record<string, unknown>;
 let modelCatalog: IModelCatalog;
+let modelChangeEvents: Emitter<ModelsChangedEvent>;
+let providerChangeEvents: Emitter<ProvidersChangedEvent>;
 
 function buildHost(key: string): {
   ix: TestInstantiationService;
@@ -205,6 +209,15 @@ function buildHost(key: string): {
   );
   host.stub(IConfigService, createConfigStub());
   host.stub(IModelCatalog, modelCatalog);
+  host.stub(IModelService, {
+    _serviceBrand: undefined,
+    onDidChangeModels: modelChangeEvents.event,
+    onDidChangeDefaultModel: Event.None,
+  } as unknown as IModelService);
+  host.stub(IProviderService, {
+    _serviceBrand: undefined,
+    onDidChangeProviders: providerChangeEvents.event,
+  } as unknown as IProviderService);
   host.stub(IProtocolAdapterRegistry, createProtocolRegistryStub());
   host.stub(IHostEnvironment, stubUnused());
   host.stub(IHostFileSystem, stubUnused());
@@ -266,6 +279,8 @@ beforeEach(() => {
   disposables = new DisposableStore();
   configValues = {};
   modelCatalog = createModelCatalogStub();
+  modelChangeEvents = disposables.add(new Emitter<ModelsChangedEvent>());
+  providerChangeEvents = disposables.add(new Emitter<ProvidersChangedEvent>());
   const host = buildHost(KEY);
   ix = host.ix;
   dispatcher = host.dispatcher;
@@ -736,5 +751,40 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     host.svc.update({ modelAlias: 'claude-sonnet', thinkingLevel: 'high' });
 
     expect(host.svc.resolveRequestParams().cacheKey).toBe('session-test');
+  });
+
+  it('coalesces a combined provider and model reload into one revalidation', () => {
+    const catalogModels: Record<string, Model> = {
+      'kimi-code': createTestModel({ providerType: 'openai' }),
+    };
+    modelCatalog = createModelCatalogStub(catalogModels);
+    const host = buildHost('profile-reload-coalesce');
+    const scheduled: Array<() => void> = [];
+    host.svc.configure({
+      scheduleThinkingEffortRevalidation: (run) => {
+        scheduled.push(run);
+      },
+    });
+    const dispatched = vi.spyOn(host.dispatcher, 'dispatch');
+
+    host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'ultra' });
+    expect(host.svc.data().thinkingLevel).toBe('ultra');
+
+    catalogModels['kimi-code'] = {
+      ...createTestModel({ providerType: 'openai' }),
+      supportEfforts: ['low', 'high'],
+    };
+    providerChangeEvents.fire({ added: [], removed: [], changed: ['compat'] });
+    catalogModels['kimi-code'] = {
+      ...createTestModel({ providerType: 'openai' }),
+      supportEfforts: ['ultra'],
+    };
+    modelChangeEvents.fire({ added: [], removed: [], changed: ['kimi-code'] });
+
+    expect(scheduled).toHaveLength(1);
+    for (const run of scheduled.splice(0)) run();
+
+    expect(host.svc.data().thinkingLevel).toBe('ultra');
+    expect(dispatched.mock.calls.filter(([event]) => event instanceof WarningIssued)).toEqual([]);
   });
 });

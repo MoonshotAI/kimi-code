@@ -1,19 +1,23 @@
-import { Disposable } from '#/_base/di/lifecycle';
+import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/kosong/contract/capability';
 import { type SamplingOptions, type ThinkingEffort } from '#/kosong/contract/provider';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { IModelService } from '#/kosong/model/model';
+import { IProviderService } from '#/kosong/provider/provider';
 import { type ModelOverrides } from '#/kosong/model/model.types';
 import { type ModelRequestParams } from '#/kosong/model/modelRequester';
 import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
 import {
+  declaredThinkingEfforts,
   drivesThinkingThroughTraits,
   modelSupportsThinkingEffort,
   normalizeRequestedThinkingEffort,
   resolveForcedThinkingEffort,
   resolveThinkingEffortForModel,
+  resolveThinkingEffortForModelWithFallback,
   resolveThinkingKeep,
   requiresStrictThinkingValidation,
   type ThinkingConfig,
@@ -149,6 +153,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
     @IConfigService private readonly config: IConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IModelService private readonly models: IModelService,
+    @IProviderService private readonly providers: IProviderService,
     @IProtocolAdapterRegistry private readonly protocolAdapters: IProtocolAdapterRegistry,
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @IHostClock private readonly clock: IHostClock,
@@ -196,10 +202,33 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       }),
     );
     this._register(
+      this.models.onDidChangeModels(() => {
+        this.scheduleThinkingEffortRevalidation();
+      }),
+    );
+    this._register(
+      this.providers.onDidChangeProviders(() => {
+        this.scheduleThinkingEffortRevalidation();
+      }),
+    );
+    this._register(
+      toDisposable(() => {
+        if (this.thinkingEffortRevalidationTimer !== undefined) {
+          clearTimeout(this.thinkingEffortRevalidationTimer);
+        }
+      }),
+    );
+    this._register(
       this.skillCatalog.onDidChange((sourceId) => {
         if (sourceId === BUILTIN_SKILL_SOURCE_ID) {
           void this.refreshSystemPrompt();
         }
+      }),
+    );
+    this._register(
+      this.dispatcher.hooks.onDidRestore.register('profile', async (_ctx, next) => {
+        this.warnAboutThinkingEffortFallback(this.profileState.thinkingLevel);
+        await next();
       }),
     );
   }
@@ -235,6 +264,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   configure(options: ProfileServiceOptions): void {
     this.optionsValue = {
       emitStatusUpdated: options.emitStatusUpdated ?? this.optionsValue.emitStatusUpdated,
+      scheduleThinkingEffortRevalidation:
+        options.scheduleThinkingEffortRevalidation ??
+        this.optionsValue.scheduleThinkingEffortRevalidation,
     };
   }
 
@@ -247,8 +279,13 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       this.activeProfile = undefined;
     }
     if (Object.keys(configChanged).length > 0) {
-      void this.dispatcher.dispatch(new ConfigUpdate(this.resolveConfigPayload(configChanged)));
-      this.afterConfigDispatch(configChanged);
+      const thinkingRequested =
+        configChanged.thinkingLevel ??
+        (this.modelAlias === undefined ? undefined : this.thinkingLevel);
+      void this.dispatcher.dispatch(
+        new ConfigUpdate(this.resolveConfigPayload(configChanged, thinkingRequested)),
+      );
+      this.afterConfigDispatch(configChanged, thinkingRequested);
     }
     if (activeToolNames !== undefined) {
       this.setActiveTools(activeToolNames);
@@ -283,7 +320,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       environmentDisclosure: snapshot.environmentDisclosure,
       agentsMdPaths,
       disallowedTools: snapshot.disallowedTools ?? [],
-    });
+    }, snapshot.thinkingLevel);
     this.agentsMdReminder.seedInjected(agentsMdPaths, this.sessionContext.cwd);
   }
 
@@ -324,10 +361,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.activeProfile = profile;
     this.cacheAgentsMdWarning(context);
 
-    const thinkingLevel = this.resolveThinkingEffort(
-      input.thinking ?? (currentProfileName !== undefined ? this.thinkingLevel : undefined),
-      model,
-    );
+    const thinkingRequested =
+      input.thinking ?? (currentProfileName !== undefined ? this.thinkingLevel : undefined);
+    const thinkingLevel = this.resolveThinkingEffort(thinkingRequested, model);
 
     this.activeToolNamesOverlay = undefined;
     await this.dispatcher.dispatch(new ProfileBind({
@@ -348,7 +384,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       thinkingLevel,
       systemPrompt: rendered.text,
       disallowedTools: profile.disallowedTools ?? [],
-    });
+    }, thinkingRequested);
     this.seedAgentsMdReminder(context);
 
     this.publishAgentsMdWarning();
@@ -568,15 +604,14 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private resolveConfigPayload(
     changed: Omit<ProfileUpdateData, 'activeToolNames'>,
+    thinkingRequested: string | undefined,
   ): ConfigUpdatePayload {
     const payload: ConfigUpdatePayload = { agentId: this.scopeContext.agentId };
     if (changed.modelAlias !== undefined) payload.modelAlias = changed.modelAlias;
     if (changed.profileName !== undefined) payload.profileName = changed.profileName;
     if (changed.thinkingLevel !== undefined || changed.modelAlias !== undefined) {
       const model = this.resolveModelForThinking(changed.modelAlias ?? this.modelAlias);
-      const requested =
-        changed.thinkingLevel ?? (this.modelAlias === undefined ? undefined : this.thinkingLevel);
-      payload.thinkingEffort = this.resolveThinkingEffort(requested, model);
+      payload.thinkingEffort = this.resolveThinkingEffort(thinkingRequested, model);
     }
     if (changed.systemPrompt !== undefined) {
       payload.systemPrompt = changed.systemPrompt;
@@ -593,7 +628,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     return payload;
   }
 
-  private afterConfigDispatch(changed: Omit<ProfileUpdateData, 'activeToolNames'>): void {
+  private afterConfigDispatch(
+    changed: Omit<ProfileUpdateData, 'activeToolNames'>,
+    thinkingRequested: string | undefined,
+  ): void {
     if (changed.modelAlias !== undefined) {
       const model = this.tryResolveRawModel();
       this.telemetryContext.set({
@@ -602,30 +640,64 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       });
     }
     if (changed.modelAlias !== undefined || changed.thinkingLevel !== undefined) {
-      this.warnAboutAnthropicThinkingEffort();
+      this.warnAboutThinkingEffortFallback(thinkingRequested);
     }
     this.emitStatusUpdated(
       changed.modelAlias !== undefined || changed.thinkingLevel !== undefined,
     );
   }
 
-  private warnAboutAnthropicThinkingEffort(): void {
+  private thinkingEffortRevalidationScheduled = false;
+  private thinkingEffortRevalidationTimer: ReturnType<typeof setTimeout> | undefined;
+
+  private scheduleThinkingEffortRevalidation(): void {
+    if (this.thinkingEffortRevalidationScheduled) return;
+    this.thinkingEffortRevalidationScheduled = true;
+    const run = () => {
+      this.thinkingEffortRevalidationScheduled = false;
+      this.thinkingEffortRevalidationTimer = undefined;
+      this.revalidateStoredThinkingEffort();
+    };
+    const custom = this.optionsValue.scheduleThinkingEffortRevalidation;
+    if (custom !== undefined) {
+      custom(run);
+      return;
+    }
+    this.thinkingEffortRevalidationTimer = setTimeout(run, 0);
+  }
+
+  private revalidateStoredThinkingEffort(): void {
+    const before = this.lastPublishedThinkingEffort;
+    this.warnAboutThinkingEffortFallback(this.profileState.thinkingLevel);
+    const after = this.getEffectiveThinkingLevel();
+    if (before !== undefined && after !== before) {
+      this.emitStatusUpdated(true);
+    }
+  }
+
+  private warnAboutThinkingEffortFallback(requested: string | undefined): void {
     try {
       const model = this.tryResolveRawModel();
-      if (model?.protocol !== 'anthropic') return;
-      const effort = this.getEffectiveThinkingLevel();
-      if (effort === 'on' || effort === 'off') return;
-
-      let code: string;
-      let message: string;
-      let knownEfforts = '';
-      const efforts = model.supportEfforts?.filter((value) => value.length > 0);
-      if (efforts === undefined || efforts.length === 0 || efforts.includes(effort)) return;
-      knownEfforts = efforts.join(',');
-      code = 'anthropic-thinking-effort-not-listed';
-      message = `Thinking effort "${effort}" is not listed for model "${model.name}" (known: ${efforts.join(', ')}). The configured value will be sent unchanged to the Anthropic-compatible backend.`;
-
-      const key = [code, model.id, model.name, effort, knownEfforts].join('\u0000');
+      if (model === undefined) return;
+      const thinking = this.config.get<ThinkingConfig>(THINKING_SECTION);
+      const { effort, fallback } = resolveThinkingEffortForModelWithFallback(
+        requested,
+        thinking,
+        model,
+        this.strictThinkingValidation(model),
+      );
+      if (fallback === undefined) return;
+      const forced = resolveForcedThinkingEffort(
+        thinking?.forcedEffort,
+        effort,
+        drivesThinkingThroughTraits(model.providerType),
+      );
+      if (forced !== undefined) return;
+      const efforts = declaredThinkingEfforts(model);
+      const knownEfforts = efforts.join(',');
+      const code = 'thinking-effort-not-listed';
+      const message = `Thinking effort "${fallback.configured}" is not listed for model "${model.name}" (known: ${efforts.join(', ')}). Falling back to the model's default effort "${fallback.resolved}".`;
+      const key = [code, model.id, model.name, fallback.configured, fallback.resolved, knownEfforts].join('\u0000');
       if (this.emittedThinkingEffortWarnings.has(key)) return;
       this.emittedThinkingEffortWarnings.add(key);
       void this.dispatcher.dispatch(new WarningIssued({ agentId: this.scopeContext.agentId, code, message }));
@@ -647,6 +719,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   private emitStatusUpdated(includeThinkingEffort = false): void {
     const custom = this.optionsValue.emitStatusUpdated;
     if (custom !== undefined) {
+      if (includeThinkingEffort) {
+        this.lastPublishedThinkingEffort = this.getEffectiveThinkingLevel();
+      }
       custom();
       return;
     }
@@ -654,13 +729,15 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     if (modelAlias === undefined) return;
     const capabilities = this.tryResolveRawModel()?.capabilities;
     const maxContextTokens = capabilities?.max_input_tokens ?? capabilities?.max_context_tokens;
+    const thinkingEffort = includeThinkingEffort ? this.getEffectiveThinkingLevel() : undefined;
+    if (thinkingEffort !== undefined) {
+      this.lastPublishedThinkingEffort = thinkingEffort;
+    }
     void this.dispatcher.dispatch(
       new AgentStatusUpdated({
         agentId: this.scopeContext.agentId,
         model: modelAlias,
-        thinkingEffort: includeThinkingEffort
-          ? this.getEffectiveThinkingLevel()
-          : undefined,
+        thinkingEffort,
         maxContextTokens:
           maxContextTokens !== undefined && maxContextTokens > 0 ? maxContextTokens : undefined,
       }),
@@ -696,12 +773,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private get thinkingLevel(): ThinkingEffort {
-    const stored = this.profileState.thinkingLevel;
-    if (stored === 'off' && this.alwaysThinkingModel) {
-      return this.resolveThinkingEffort(stored, this.tryResolveRawModel());
-    }
-    return stored;
+    return this.resolveThinkingEffort(this.profileState.thinkingLevel, this.tryResolveRawModel());
   }
+
+  private lastPublishedThinkingEffort: ThinkingEffort | undefined;
 
   private resolveThinkingState(model: Model | undefined): {
     readonly effective: ThinkingEffort;
@@ -739,10 +814,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private supportsThinkingEffort(effort: ThinkingEffort, model: Model | undefined): boolean {
     return modelSupportsThinkingEffort(effort, model, this.strictThinkingValidation(model));
-  }
-
-  private get alwaysThinkingModel(): boolean {
-    return this.tryResolveRawModel()?.alwaysThinking === true;
   }
 
   private tryResolveRawModel(): Model | undefined {

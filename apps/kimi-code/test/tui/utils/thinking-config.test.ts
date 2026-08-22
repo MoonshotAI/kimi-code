@@ -35,6 +35,20 @@ describe('thinkingEffortToConfig', () => {
   it('treats a single declared level as the top tier', () => {
     expect(thinkingEffortToConfig('max', ['max'])).toEqual({ enabled: true });
   });
+
+  it('matches the top tier against a padded declared list', () => {
+    expect(thinkingEffortToConfig('max', [' low ', ' high ', ' max '])).toEqual({
+      enabled: true,
+    });
+    expect(thinkingEffortToConfig('high', [' low ', ' high ', ' max '])).toEqual({
+      enabled: true,
+      effort: 'high',
+    });
+    expect(thinkingEffortToConfig('max', ['', '  '])).toEqual({
+      enabled: true,
+      effort: 'max',
+    });
+  });
 });
 
 describe('isThinkingOn', () => {

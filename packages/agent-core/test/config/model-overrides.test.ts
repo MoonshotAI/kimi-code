@@ -64,6 +64,15 @@ describe('effectiveModelAlias', () => {
     expect(effectiveModelAlias(model).defaultEffort).toBeUndefined();
   });
 
+  it('keeps an inherited defaultEffort covered by the override list after normalization', () => {
+    expect(effectiveModelAlias(alias({ supportEfforts: [' max ', 'high'] })).defaultEffort).toBe(
+      'max',
+    );
+    expect(effectiveModelAlias(alias({ supportEfforts: [' MAX ', 'high'] })).defaultEffort).toBe(
+      'max',
+    );
+  });
+
   it('keeps an explicit defaultEffort override when it is valid', () => {
     const model = alias({ supportEfforts: ['low', 'high'], defaultEffort: 'high' });
 

@@ -10,6 +10,7 @@ import {
   requiresStrictThinkingValidation,
   resolveForcedThinkingEffort,
   resolveThinkingEffortForModel,
+  resolveThinkingEffortForModelWithFallback,
   resolveThinkingKeep,
   usesTraitDrivenThinking,
 } from '#/kosong/model/thinking';
@@ -65,10 +66,118 @@ describe('resolveThinkingEffortForModel', () => {
     expect(defaultThinkingEffortForModel(undefined)).toBe('off');
   });
 
-  it('normalizes unknown efforts back to the model default under kimi semantics', () => {
+  it('normalizes unknown efforts back to the model default on any wire', () => {
     expect(resolveThinkingEffortForModel('extreme', undefined, thinkingModel, true)).toBe('high');
-    expect(resolveThinkingEffortForModel('extreme', undefined, thinkingModel, false)).toBe('extreme');
+    expect(resolveThinkingEffortForModel('extreme', undefined, thinkingModel, false)).toBe('high');
     expect(resolveThinkingEffortForModel('on', undefined, thinkingModel, true)).toBe('high');
+    expect(resolveThinkingEffortForModel('on', undefined, thinkingModel, false)).toBe('high');
+  });
+
+  it('falls back to the declared default for an unlisted effort without strict validation', () => {
+    const declared = {
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'xhigh'],
+      defaultEffort: 'xhigh',
+    };
+    expect(resolveThinkingEffortForModel(undefined, { effort: 'high' }, declared, false)).toBe(
+      'xhigh',
+    );
+    expect(resolveThinkingEffortForModel('high', undefined, declared, false)).toBe('xhigh');
+    expect(resolveThinkingEffortForModel('medium', undefined, declared, false)).toBe('medium');
+  });
+
+  it('passes concrete efforts through when the model declares no effort list', () => {
+    expect(
+      resolveThinkingEffortForModel('extreme', undefined, { capabilities: ['thinking'] }, false),
+    ).toBe('extreme');
+    expect(
+      resolveThinkingEffortForModel(
+        undefined,
+        { effort: 'extreme' },
+        { capabilities: ['thinking'] },
+        false,
+      ),
+    ).toBe('extreme');
+  });
+
+  it('falls back to the declared default when the model omits the thinking capability', () => {
+    const declared = {
+      supportEfforts: ['low', 'medium', 'xhigh'],
+      defaultEffort: 'xhigh',
+    };
+    expect(resolveThinkingEffortForModel(undefined, { effort: 'high' }, declared, false)).toBe(
+      'xhigh',
+    );
+    expect(resolveThinkingEffortForModel('high', undefined, declared, false)).toBe('xhigh');
+    const withFallback = resolveThinkingEffortForModelWithFallback(
+      'high',
+      undefined,
+      declared,
+      false,
+    );
+    expect(withFallback.effort).toBe('xhigh');
+    expect(withFallback.fallback).toEqual({ configured: 'high', resolved: 'xhigh' });
+    expect(
+      resolveThinkingEffortForModel(
+        'high',
+        undefined,
+        { supportEfforts: ['low', 'medium', 'xhigh'] },
+        false,
+      ),
+    ).toBe('medium');
+  });
+
+  it('treats a declared effort list as thinking support under strict validation', () => {
+    const declared = {
+      supportEfforts: ['low', 'medium', 'xhigh'],
+      defaultEffort: 'xhigh',
+    };
+    expect(resolveThinkingEffortForModel(undefined, { effort: 'high' }, declared, true)).toBe(
+      'xhigh',
+    );
+    expect(resolveThinkingEffortForModel('high', undefined, declared, true)).toBe('xhigh');
+    expect(resolveThinkingEffortForModel('on', undefined, declared, true)).toBe('xhigh');
+    expect(resolveThinkingEffortForModel('medium', undefined, declared, true)).toBe('medium');
+    expect(modelSupportsThinkingEffort('low', declared, true)).toBe(true);
+    expect(modelSupportsThinkingEffort('bogus', declared, true)).toBe(false);
+    expect(resolveThinkingEffortForModelWithFallback('high', undefined, declared, true)).toEqual({
+      effort: 'xhigh',
+      fallback: { configured: 'high', resolved: 'xhigh' },
+    });
+  });
+
+  it('resolves the declared default when nothing is configured and the capability is omitted', () => {
+    const declared = {
+      supportEfforts: ['low', 'medium', 'xhigh'],
+      defaultEffort: 'xhigh',
+    };
+    expect(defaultThinkingEffortForModel(declared)).toBe('xhigh');
+    expect(resolveThinkingEffortForModel(undefined, undefined, declared, false)).toBe('xhigh');
+    expect(resolveThinkingEffortForModel(undefined, undefined, declared, true)).toBe('xhigh');
+  });
+
+  it('trims a padded default_effort before matching the declared list', () => {
+    expect(
+      defaultThinkingEffortForModel({
+        supportEfforts: [' low ', ' medium ', ' xhigh '],
+        defaultEffort: ' xhigh ',
+      }),
+    ).toBe('xhigh');
+  });
+
+  it('matches declared efforts case-insensitively and resolves the declared casing', () => {
+    const declared = {
+      capabilities: ['thinking'],
+      supportEfforts: ['Low', 'High', 'Max'],
+      defaultEffort: 'max',
+    };
+    expect(resolveThinkingEffortForModel('low', undefined, declared, true)).toBe('Low');
+    expect(resolveThinkingEffortForModel(undefined, { effort: 'high' }, declared, false)).toBe(
+      'High',
+    );
+    expect(defaultThinkingEffortForModel(declared)).toBe('Max');
+    expect(modelSupportsThinkingEffort('low', declared, true)).toBe(true);
+    expect(resolveThinkingEffortForModel('ultra', undefined, declared, false)).toBe('Max');
   });
 
   it('keeps always-thinking models on under kimi semantics', () => {
