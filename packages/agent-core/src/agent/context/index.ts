@@ -56,6 +56,8 @@ export class ContextMemory {
   private openSteps: Map<string, ContextMessage> = new Map();
   private pendingToolResultIds = new Set<string>();
   private deferredMessages: ContextMessage[] = [];
+  private interruptedSteps = new WeakSet<ContextMessage>();
+  private hasInterruptedSteps = false;
   private _lastAssistantAt: number | null = null;
   // Signature of the last logged set of projection repairs, so a repair that
   // recurs identically on every send is logged once rather than per step.
@@ -177,6 +179,8 @@ export class ContextMemory {
     this.openSteps.clear();
     this.pendingToolResultIds.clear();
     this.deferredMessages = [];
+    this.interruptedSteps = new WeakSet();
+    this.hasInterruptedSteps = false;
     this._lastAssistantAt = null;
     this.agent.microCompaction.reset();
     this.agent.injection.onContextClear();
@@ -450,6 +454,11 @@ export class ContextMemory {
   }
 
   project(messages: readonly ContextMessage[], options?: ProjectOptions): Message[] {
+    const resumableMessages = this.hasInterruptedSteps
+      ? messages.map((message) =>
+          this.interruptedSteps.has(message) ? { ...message, partial: true } : message,
+        )
+      : messages;
     // Shape for the current model BEFORE projecting: a model without the
     // dynamically-loaded-tools capability must not see dynamic-tool schema
     // messages or loadable-tools announcements (the canonical history keeps
@@ -458,8 +467,8 @@ export class ContextMemory {
     // setModel never rewrites history, so a mid-session switch
     // degrades/upgrades losslessly.
     const shaped = this.agent.toolSelectEnabled
-      ? this.agent.tools.shapeDynamicToolHistory(messages)
-      : stripDynamicToolContext(messages);
+      ? this.agent.tools.shapeDynamicToolHistory(resumableMessages)
+      : stripDynamicToolContext(resumableMessages);
     const anomalies: ProjectionAnomaly[] = [];
     const result = project(this.agent.microCompaction.compact(shaped), {
       ...options,
@@ -597,6 +606,14 @@ export class ContextMemory {
   }
 
   finishResume(): void {
+    for (const message of this.openSteps.values()) {
+      if (message.toolCalls.length > 0) continue;
+      // A replayed step without step.end is an incomplete model response. Keep
+      // it in canonical history for diagnostics, but exclude it from provider
+      // projections just like the v2 context fold does with open steps.
+      this.interruptedSteps.add(message);
+      this.hasInterruptedSteps = true;
+    }
     this.openSteps.clear();
     const closed = this.closePendingToolResults();
     if (closed.length > 0) {
