@@ -1461,4 +1461,52 @@ describe('runPrompt', () => {
     expect(stdout.text()).toBe('• hello world\n\n');
     expect(mocks.harnessClose).toHaveBeenCalled();
   });
+
+  it('does not wait for cron tasks while the goal is paused', async () => {
+    mocks.session.getGoal.mockResolvedValue({
+      goal: { status: 'paused' },
+    } as never);
+    mocks.session.getCronTasks
+      .mockResolvedValueOnce({
+        tasks: [
+          {
+            id: '3f9a1c2e',
+            cron: '*/5 * * * *',
+            recurring: true,
+            createdAt: 1,
+            lastFiredAt: undefined,
+            nextFireAt: Date.now() + 60_000,
+          },
+        ],
+      } as never)
+      .mockResolvedValue({ tasks: [] } as never);
+
+    let settled = false;
+    const run = runPrompt(opts(), '1.2.3-test', {
+      stdout: writer(),
+      stderr: writer(),
+    }).then(() => {
+      settled = true;
+    });
+
+    await waitForAssertion(() => {
+      expect(mocks.session.getCronTasks).toHaveBeenCalledTimes(1);
+    });
+    const settledWhilePaused = settled;
+
+    // Let the pre-fix implementation clean up instead of leaving its ref'ed
+    // keep-alive interval behind after the RED assertion.
+    for (const handler of mocks.eventHandlers) {
+      handler(
+        mocks.mainEvent({
+          type: 'goal.updated',
+          snapshot: { status: 'paused' },
+          change: { kind: 'paused' },
+        }),
+      );
+    }
+    await run;
+
+    expect(settledWhilePaused).toBe(true);
+  });
 });
