@@ -1,5 +1,5 @@
 /**
- * `kimi login` — drive the OAuth device-code flow non-interactively.
+ * `kimi login` — open the interactive authentication selector.
  * The `authMethods.terminal-auth.args=['login']` (legacy `_meta` path)
  * advertised by the ACP server points clients at this entry point. The
  * first-class ACP `args=['--login']` path enters the same flow via
@@ -13,7 +13,7 @@ import { parseRegionFlag, runLoginFlow } from './login-flow';
 export function registerLoginCommand(parent: Command): void {
   parent
     .command('login')
-    .description('Authenticate with Kimi Code CLI via the device-code flow.')
+    .description('Choose Kimi Code OAuth or a Kimi Platform API key.')
     .option(
       '--region <region>',
       'Login region: "mainland-cn" (kimi.com) or "global" (kimi.ai).',

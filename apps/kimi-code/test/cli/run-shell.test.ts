@@ -371,6 +371,20 @@ describe('runShell', () => {
     });
   });
 
+  it('starts login-only TUI without running migration discovery', async () => {
+    stubTuiStartup();
+
+    await runShell(minimalCliOptions, '1.2.3-test', { loginOnly: true });
+
+    expect(mocks.detectPendingMigration).not.toHaveBeenCalled();
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput).toMatchObject({
+      loginOnly: true,
+      migrationPlan: null,
+    });
+    expect(mocks.tuiStart).toHaveBeenCalledOnce();
+  });
+
   it('never runs stty on Windows, where it would resolve into the untrusted cwd', async () => {
     stubTuiStartup();
     const originalPlatform = process.platform;

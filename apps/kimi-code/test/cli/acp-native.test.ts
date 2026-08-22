@@ -11,15 +11,17 @@
 import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@moonshot-ai/acp-server', () => ({
-  runAcpServer: vi.fn(async () => undefined),
-}));
-
 import { runAcpServer } from '@moonshot-ai/acp-server';
 
+import { runLoginFlow } from '#/cli/sub/login-flow';
 import { registerAcpCommand } from '#/cli/sub/acp';
 import { registerNativeAcpCommand } from '#/cli/sub/acp-native';
 import { getDataDir } from '#/utils/paths';
+
+vi.mock('@moonshot-ai/acp-server', () => ({
+  runAcpServer: vi.fn(async () => undefined),
+}));
+vi.mock('#/cli/sub/login-flow', () => ({ runLoginFlow: vi.fn(async () => undefined) }));
 
 class ExitCalled extends Error {
   constructor(public code: number | string | null | undefined) {
@@ -34,6 +36,7 @@ describe('kimi acp', () => {
   beforeEach(() => {
     vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '');
     vi.mocked(runAcpServer).mockClear();
+    vi.mocked(runLoginFlow).mockClear();
     exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number | string | null) => {
       throw new ExitCalled(code);
     }) as never);
@@ -147,35 +150,13 @@ describe('kimi acp', () => {
   });
 
   it('exits without starting the ACP server when --login is passed', async () => {
-    // Stub the SDK harness so runLoginFlow doesn't hit a real OAuth endpoint:
-    // harness.auth.login resolves immediately and triggers exit 0.
-    const loginStub = vi.fn(async () => ({ providerName: 'kimi-code' }));
-    vi.doMock(import('@moonshot-ai/kimi-code-sdk'), async (importOriginal) => {
-      const actual = await importOriginal();
-      return {
-        ...actual,
-        createKimiHarness: () =>
-          ({
-            auth: { login: loginStub },
-          }) as unknown as ReturnType<typeof actual.createKimiHarness>,
-      };
-    });
-    vi.resetModules();
-    const { registerNativeAcpCommand: freshRegister } = await import('#/cli/sub/acp-native');
-    try {
-      const program = new Command('kimi').exitOverride();
-      freshRegister(program);
+    const program = new Command('kimi').exitOverride();
+    registerNativeAcpCommand(program);
 
-      await expect(program.parseAsync(['node', 'kimi', 'acp', '--login'])).rejects.toThrow(
-        ExitCalled,
-      );
+    await expect(program.parseAsync(['node', 'kimi', 'acp', '--login'])).resolves.toBe(program);
 
-      expect(loginStub).toHaveBeenCalledTimes(1);
-      expect(runAcpServer).not.toHaveBeenCalled();
-      expect(exitSpy).toHaveBeenCalledWith(0);
-    } finally {
-      vi.doUnmock('@moonshot-ai/kimi-code-sdk');
-      vi.resetModules();
-    }
+    expect(runLoginFlow).toHaveBeenCalledOnce();
+    expect(runAcpServer).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 });

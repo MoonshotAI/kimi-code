@@ -219,6 +219,8 @@ export interface KimiTUIStartupInput {
   readonly migrationPlan?: MigrationPlan | null;
   /** When true, run only the migration screen, then exit (the `kimi migrate` command). */
   readonly migrateOnly?: boolean;
+  /** When true, open the existing authentication selector, then exit. */
+  readonly loginOnly?: boolean;
   /** agent-core-v2 engine; enables the startup workspace-trust prompt. */
   readonly engineV2?: boolean;
 }
@@ -425,6 +427,7 @@ export class KimiTUI {
         agentProfile: startupInput.agentProfile,
         agentFiles: startupInput.cliOptions.agentFiles,
         startupNotice: startupInput.startupNotice,
+        loginOnly: startupInput.loginOnly,
       },
     };
     this.options = tuiOptions;
@@ -608,7 +611,9 @@ export class KimiTUI {
       // including the migration branch: a workspace that needs migration is
       // not implicitly trusted, and later startup steps spawn child processes.
       startupTrace('trustPrompt:begin');
-      const trustPromptStartedLoop = await this.maybeRunWorkspaceTrustPrompt();
+      const trustPromptStartedLoop = this.options.startup.loginOnly
+        ? false
+        : await this.maybeRunWorkspaceTrustPrompt();
       startupTrace('trustPrompt:end');
 
       if (this.migrationPlan !== null) {
@@ -649,7 +654,7 @@ export class KimiTUI {
       if (!trustPromptStartedLoop) this.startEventLoop();
       startupTrace('eventLoop:started');
       try {
-        this.startBackgroundFdAutocomplete();
+        if (!this.options.startup.loginOnly) this.startBackgroundFdAutocomplete();
         startupTrace('finishStartup:begin');
         await this.finishStartup(shouldReplayHistory);
         startupTrace('finishStartup:end');
@@ -794,6 +799,11 @@ export class KimiTUI {
     // warning yellow at boot; `run-prompt`/`run-v2-print` print them to
     // stderr for non-interactive runs.
     void this.showConfigWarningsIfAny();
+    if (this.options.startup.loginOnly) {
+      const outcome = await slashCommands.handleLoginCommand(this);
+      await this.stop(outcome === 'success' ? 0 : 1);
+      return;
+    }
     if (this.state.startupState === 'picker') {
       void this.bootstrapFromPicker();
       return;
@@ -843,9 +853,14 @@ export class KimiTUI {
   private async init(): Promise<boolean> {
     setExperimentalFeatures(await this.harness.getExperimentalFeatures());
     await this.authFlow.refreshAvailableModels();
-    this.backgroundRefreshPromise = this.refreshProviderModelsInBackground();
 
     const { startup } = this.options;
+    if (startup.loginOnly) {
+      this.state.startupState = 'ready';
+      return false;
+    }
+    this.backgroundRefreshPromise = this.refreshProviderModelsInBackground();
+
     const { workDir } = this.state.appState;
     let session: Session | undefined;
     let shouldReplayHistory = false;

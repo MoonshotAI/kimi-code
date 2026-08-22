@@ -154,6 +154,11 @@ export class AuthFlowController {
     const defaultModel = host.options.startup.model ?? config.defaultModel;
     const selected = defaultModel !== undefined ? availableModels[defaultModel] : undefined;
 
+    if (host.options.startup.loginOnly) {
+      host.setAppState({ availableModels, availableProviders });
+      return;
+    }
+
     if (defaultModel === undefined || selected === undefined) {
       if (host.session === undefined && host.engineV2) {
         // Session-less v2: hydrate permission/plan defaults even without a

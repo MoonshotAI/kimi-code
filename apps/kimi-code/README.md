@@ -57,7 +57,7 @@ cd your-project
 kimi
 ```
 
-On first launch, run `/login` inside Kimi Code CLI and choose either Kimi Code OAuth or a Kimi Platform API key. After login, try a first task:
+On first launch, run `/login` inside Kimi Code CLI, or run `kimi login` directly, and choose either Kimi Code OAuth or a Kimi Platform API key. After login, try a first task:
 
 ```
 Take a look at this project and explain the main directories.

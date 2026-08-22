@@ -133,17 +133,17 @@ In `stream-json` mode, regular replies produce an Assistant message; when the mo
 
 ## Subcommands
 
-`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
+`kimi` provides the following subcommands: `login` (interactive authentication), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
 
 ### `kimi login`
 
-Log in to Kimi Code OAuth via the RFC 8628 device-code flow, without entering the TUI. The command issues a device authorization request, prints the verification URL and user code to stderr, then polls until the browser-side authorization is complete. The generated token is written to the same local location as TUI `/login` and is loaded automatically the next time `kimi` starts.
+Open the same authentication selector as TUI `/login`, without creating a chat session. Choose Kimi Code OAuth to continue through the device-code flow, or choose a Kimi Platform region to enter an API key, verify the available models, and select a default model. The resulting credentials and model configuration are stored in the same local locations used by the TUI and are loaded automatically the next time `kimi` starts.
 
 ```sh
 kimi login
 ```
 
-This subcommand has no flags. Press `Ctrl-C` at any time during polling to cancel; the exit code is `1` on cancellation or failure, and `0` on success.
+This subcommand has no flags. Cancel the selector or an active login to exit with code `1`; a completed OAuth or API key setup exits with code `0`.
 
 ### `kimi acp`
 

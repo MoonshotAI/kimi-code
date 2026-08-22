@@ -378,7 +378,7 @@ export class AcpServer {
     }
     // Re-check the gate; clients spawn `kimi login` themselves via the
     // terminal-auth method and re-invoke `authenticate('login')` to confirm the
-    // token landed. `void` = empty success body.
+    // selected authentication method was persisted. `void` = empty success body.
     await this.ensureAuthed();
   }
 

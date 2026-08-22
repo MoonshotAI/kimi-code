@@ -320,6 +320,8 @@ export interface TUIStartupOptions {
   /** Raw --agent-file paths, passed to session creation alongside `agentProfile`. */
   readonly agentFiles?: readonly string[];
   readonly startupNotice?: string;
+  /** Open the existing authentication selector without creating a chat session. */
+  readonly loginOnly?: boolean;
 }
 
 export type TUIStartupState = 'pending' | 'ready' | 'picker';

@@ -1,16 +1,33 @@
 /**
- * Shared device-code login flow used by both `kimi login` (top-level
- * subcommand) and `kimi acp --login` (the first-class ACP terminal-auth
- * entry point). Exiting the process is part of the contract — callers
- * MUST treat the returned promise as `Promise<never>`.
+ * Shared interactive authentication flow used by both `kimi login`
+ * (top-level subcommand) and `kimi acp --login` (the first-class ACP
+ * terminal-auth entry point).
+ *
+ * The login-only shell opens the same platform selector as `/login`, so
+ * account OAuth and Kimi Platform API-key setup keep one implementation.
  */
 
-import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
 import type { KimiRegion } from '@moonshot-ai/kimi-code-oauth';
+import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
-import { createKimiCodeHostIdentity } from '#/cli/version';
+import type { CLIOptions } from '#/cli/options';
+import { runShell } from '#/cli/run-shell';
+import { createKimiCodeHostIdentity, getVersion } from '#/cli/version';
 import { openUrl } from '#/utils/open-url';
-import { persistedKimiOAuthRef, regionForBareLogin } from '#/utils/region';
+
+const LOGIN_CLI_OPTIONS: CLIOptions = {
+  session: undefined,
+  continue: false,
+  yolo: false,
+  auto: false,
+  plan: false,
+  model: undefined,
+  outputFormat: undefined,
+  prompt: undefined,
+  skillsDirs: [],
+  agent: undefined,
+  agentFiles: [],
+};
 
 /** Parse a `--region` CLI flag; exits with an actionable message on bad input. */
 export function parseRegionFlag(value: string): KimiRegion {
@@ -21,12 +38,20 @@ export function parseRegionFlag(value: string): KimiRegion {
   return value;
 }
 
-export async function runLoginFlow(options: { region?: KimiRegion } = {}): Promise<never> {
-  // No flag: a fresh install follows the resolved region (env/marker/
-  // default); an existing login keeps its own environment (see
-  // regionForBareLogin — the default slot re-pins mainland-cn, a scoped slot
-  // keeps its configured hosts).
-  const region = options.region ?? regionForBareLogin(persistedKimiOAuthRef());
+export async function runLoginFlow(options: { region?: KimiRegion } = {}): Promise<void> {
+  // When a region is requested explicitly (e.g. `kimi login --region global`
+  // or ACP passes it), drive the OAuth device-code flow directly without
+  // starting the full TUI. Otherwise open the same interactive selector as
+  // `/login` so the user can choose OAuth vs. Kimi Platform API key.
+  if (options.region !== undefined) {
+    await runDirectOAuthLoginFlow(options.region);
+    return;
+  }
+
+  await runShell(LOGIN_CLI_OPTIONS, getVersion(), { loginOnly: true });
+}
+
+async function runDirectOAuthLoginFlow(region: KimiRegion): Promise<never> {
   const identity = createKimiCodeHostIdentity();
   const harness = createKimiHarness({
     identity,

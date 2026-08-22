@@ -11,7 +11,7 @@
  *    distinguish ACP sessions from the TUI.
  *  - {@link runAcpServer} owns the JSON-RPC stdio bridge and redirects
  *    rogue `console.*` traffic to stderr.
- *  - `--login` pivots into the device-code login flow instead of
+ *  - `--login` pivots into the interactive authentication flow instead of
  *    starting the server. This is the entry point ACP clients hit
  *    via the first-class `AuthMethodTerminal` path when they re-invoke
  *    the agent binary with the advertised `args:['--login']` appended.
@@ -48,7 +48,7 @@ export function registerAcpCommand(parent: Command): void {
     .description('Run kimi-code as an Agent Client Protocol (ACP) server over stdio.')
     .option(
       '--login',
-      'Run the device-code login flow then exit (entry point for ACP terminal-auth).',
+      'Choose Kimi Code OAuth or a Kimi Platform API key, then exit.',
       false,
     )
     .option('--region <region>', 'Login region used together with --login: "mainland-cn" (kimi.com) or "global" (kimi.ai).')

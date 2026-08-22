@@ -648,14 +648,12 @@ export class AcpServer implements Agent {
   }
 
   /**
-   * Re-check whether the on-disk token is usable; does NOT trigger an
-   * actual OAuth flow. The stdio JSON-RPC channel has no TTY to render
-   * the device-code prompt — clients are expected to spawn
-   * `kimi login` themselves via the terminal-auth method advertised in
-   * `initialize.authMethods` (`args:['login']`, see {@link TERMINAL_AUTH_METHOD})
-   * and then re-invoke `authenticate('login')` to confirm the token
-   * landed on disk. Mirrors kimi-cli `acp/server.py:374-398` semantics
-   * (plan G3, lines 68-104).
+   * Re-check whether the on-disk OAuth credentials or configured default
+   * model are usable; does NOT trigger an authentication flow. The stdio
+   * JSON-RPC channel has no TTY to render the selector, so clients spawn
+   * `kimi login` through the terminal-auth method advertised in
+   * `initialize.authMethods` and then re-invoke `authenticate('login')` to
+   * confirm the selected authentication method was persisted.
    */
   async authenticate(params: AuthenticateRequest): Promise<AuthenticateResponse | void> {
     if (params.methodId !== 'login') {

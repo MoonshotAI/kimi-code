@@ -6,7 +6,7 @@
  * clients can drive a kimi-code session on the default engine.
  *
  * Wire-up mirrors `kimi acp` for the parts that are host-independent:
- *  - `--login` pivots into the shared device-code login flow (the entry point
+ *  - `--login` pivots into the shared interactive authentication flow (the entry point
  *    ACP clients hit via the first-class `AuthMethodTerminal` path, re-invoking
  *    the agent binary with the advertised `args:['--login']`).
  *  - `KIMI_CODE_HOME` (if set) is forwarded into `authMethods[0].env` so the
@@ -33,7 +33,7 @@ export function registerNativeAcpCommand(parent: Command): void {
     .description('Run kimi-code as an Agent Client Protocol (ACP) server over stdio.')
     .option(
       '--login',
-      'Run the device-code login flow then exit (entry point for ACP terminal-auth).',
+      'Choose Kimi Code OAuth or a Kimi Platform API key, then exit.',
       false,
     )
     .option('--region <region>', 'Login region used together with --login: "mainland-cn" (kimi.com) or "global" (kimi.ai).')
