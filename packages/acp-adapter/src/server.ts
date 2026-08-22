@@ -67,6 +67,15 @@ import { DEFAULT_MODE_ID } from './modes';
 import { negotiateVersion, type AcpVersionSpec } from './version';
 
 /**
+ * Custom ACP request method for mid-turn steering. Underscore-prefixed
+ * per the agreed ACP steering wire protocol (claude-agent-acp /
+ * codex-acp). Advertised via `InitializeResponse._meta.steering.supported`
+ * and routed through {@link AcpServer.extMethod} by the ACP SDK's
+ * unknown-method fallthrough.
+ */
+const STEER_METHOD = '_session/steering';
+
+/**
  * Per-session snapshot returned by the {@link AcpServer} caller's
  * `slashCommands` resolver. Carries both what gets advertised in the
  * `available_commands_update` push and the `skillCommandMap` that
@@ -335,6 +344,14 @@ export class AcpServer implements Agent {
           : TERMINAL_AUTH_METHOD,
       ],
       ...(this.agentInfo ? { agentInfo: this.agentInfo } : {}),
+      // Advertise mid-turn steering so ACP hosts can inject follow-ups into a
+      // running turn via `_session/steering` (see {@link AcpServer.extMethod}).
+      // Matches the wire shape shipped by claude-agent-acp / codex-acp.
+      _meta: {
+        steering: {
+          supported: true,
+        },
+      },
     };
   }
 
@@ -834,23 +851,57 @@ export class AcpServer implements Agent {
   }
 
   /**
-   * Stub the ACP `ext/<method>` extension surface. The interface
-   * declares both `extMethod` and `extNotification` as optional, but
-   * implementing them explicitly with a structured `MethodNotFound`
-   * response gives clients a uniform failure shape (mirrors the
-   * `authenticate` pattern at {@link AcpServer.authenticate}) — some
-   * clients treat "method absent on the agent" differently from an
-   * explicit error reply.
+   * ACP extension / unknown-method surface. The SDK routes any request
+   * method that is not a built-in Agent method (including underscore-
+   * prefixed custom methods such as `_session/steering`) into
+   * {@link Agent.extMethod}.
    *
-   * Future work (PLAN D9): route slash-command bridge / model-list /
-   * mode-list extensions through here once the adapter has access to
-   * the kimi-code app's registry. Phase 11 keeps it as a no-op stub.
+   * Handled here:
+   *  - `_session/steering` — thin map onto {@link AcpSession.steer} /
+   *    SDK `Session.steer()`. Returns `{ outcome: "injected" }` when a
+   *    turn is in flight. When idle, rejects with `invalidRequest` so
+   *    the host keeps ownership and submits via `session/prompt`
+   *    (Kimi does not ship claude-agent-acp's detached `startedNewTurn`
+   *    path — see issue #2370).
+   *
+   * Everything else gets a structured `MethodNotFound` so clients see
+   * a uniform failure shape (mirrors {@link AcpServer.authenticate}).
    */
   async extMethod(
     method: string,
-    _params: Record<string, unknown>,
+    params: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
+    if (method === STEER_METHOD) {
+      return this.handleSteering(params);
+    }
     throw RequestError.methodNotFound(method);
+  }
+
+  /**
+   * Handle `_session/steering`: validate the wire body, look up the
+   * session, and forward to {@link AcpSession.steer}.
+   */
+  private async handleSteering(
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const sessionId = params['sessionId'];
+    const prompt = params['prompt'];
+    if (typeof sessionId !== 'string' || sessionId.length === 0) {
+      throw RequestError.invalidParams(undefined, 'sessionId is required');
+    }
+    if (!Array.isArray(prompt) || prompt.length === 0) {
+      throw RequestError.invalidParams(
+        undefined,
+        'prompt must be a non-empty ContentBlock array',
+      );
+    }
+    const acpSession = this.sessions.get(sessionId);
+    if (!acpSession) {
+      throw RequestError.invalidParams(undefined, `Unknown sessionId: ${sessionId}`);
+    }
+    // ContentBlock shape is validated loosely — unknown block kinds are
+    // dropped inside `acpBlocksToPromptParts`, matching `session/prompt`.
+    return acpSession.steer(prompt as Parameters<AcpSession['steer']>[0]);
   }
 
   /**
