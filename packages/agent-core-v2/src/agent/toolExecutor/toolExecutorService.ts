@@ -15,6 +15,7 @@ import {
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { PathSecurityError } from '#/tool/path-access';
 import { isAbortError, isUserCancellation } from '#/_base/utils/abort';
+import { BugIndicatingError } from '#/errors';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   ToolAccesses,
@@ -29,7 +30,9 @@ import type {
   BeforeToolExecuteEvent,
   ResolvedToolExecutionHookContext,
   ToolDidExecuteContext,
+  ToolExecuteContext,
   ToolExecutionOutcome,
+  ToolExecutionRunResult,
   WillExecuteToolEvent,
 } from '#/agent/toolExecutor/toolHooks';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -65,11 +68,6 @@ const validators = new WeakMap<
 export interface ToolExecutionTask {
   readonly accesses: ToolAccesses;
   readonly execute: (signal: AbortSignal) => Promise<ToolExecutionRunResult>;
-}
-
-export interface ToolExecutionRunResult {
-  readonly result: ToolResult;
-  readonly outcome: ToolExecutionOutcome;
 }
 
 interface TimedToolResult {
@@ -116,6 +114,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
   readonly onWillExecuteTool: Event<WillExecuteToolEvent> = this.willExecuteEmitter.event;
 
   readonly hooks = {
+    onExecuteTool: new OrderedHookSlot<ToolExecuteContext>(),
     onDidExecuteTool: new OrderedHookSlot<ToolDidExecuteContext>(),
   };
 
@@ -518,6 +517,34 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       };
     }
 
+    const ctx: ToolExecuteContext = {
+      turnId: options.turnId,
+      signal,
+      trace: options.trace,
+      toolCall: call.toolCall,
+      tool: call.tool,
+      args: call.args,
+      execution,
+      metadata,
+    };
+    await this.hooks.onExecuteTool.run(ctx, async (c) => {
+      c.result = await this.executeResolvedTool(call, execution, metadata, options, signal);
+    });
+    if (ctx.result === undefined) {
+      throw new BugIndicatingError(
+        `onExecuteTool hook chain for tool "${call.toolName}" completed without producing a result`,
+      );
+    }
+    return ctx.result;
+  }
+
+  private async executeResolvedTool(
+    call: RunnableToolCall,
+    execution: RunnableToolExecution,
+    metadata: unknown,
+    options: ToolExecutorExecuteOptions,
+    signal: AbortSignal,
+  ): Promise<ToolExecutionRunResult> {
     let rawResult: ExecutableToolResult;
     try {
       const executePromise = execution.execute({

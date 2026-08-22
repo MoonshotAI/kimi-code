@@ -5,6 +5,7 @@ import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
   ToolDidExecuteContext,
+  ToolExecuteContext,
   WillExecuteToolEvent,
 } from '#/agent/toolExecutor/toolHooks';
 import { OrderedHookSlot } from '#/hooks';
@@ -25,12 +26,13 @@ export function stubToolExecutorEvents(): ToolExecutorEventStubs {
   const beforeEmitter = new BeforeToolExecuteEmitter();
   const willEmitter = new AsyncEmitter<WillExecuteToolEvent>();
   const didExecuteSlot = new OrderedHookSlot<ToolDidExecuteContext>();
+  const executeSlot = new OrderedHookSlot<ToolExecuteContext>();
   const executor: IAgentToolExecutorService = {
     _serviceBrand: undefined,
     execute: async function* () {},
     onBeforeExecuteTool: beforeEmitter.event,
     onWillExecuteTool: willEmitter.event,
-    hooks: { onDidExecuteTool: didExecuteSlot },
+    hooks: { onExecuteTool: executeSlot, onDidExecuteTool: didExecuteSlot },
     recordDupType: () => {},
     registerToolCallGuard: () => ({ dispose() {} }),
     registerUnavailableToolDescriber: () => ({ dispose() {} }),

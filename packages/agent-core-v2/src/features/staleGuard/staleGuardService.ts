@@ -5,7 +5,7 @@ import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
   BeforeToolExecuteEvent,
-  ToolDidExecuteContext,
+  ToolExecuteContext,
 } from '#/agent/toolExecutor/toolHooks';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { HostFileStat } from '#/os/interface/hostFileSystem';
@@ -56,9 +56,8 @@ export class StaleGuardService extends Disposable implements IStaleGuardService 
     this.states.contributeState(staleGuardKey);
     this._register(toolExecutor.onBeforeExecuteTool((event) => this.guardWrite(event)));
     this._register(
-      toolExecutor.hooks.onDidExecuteTool.register('staleGuard', async (ctx, next) => {
-        await this.observeExecution(ctx);
-        await next();
+      toolExecutor.hooks.onExecuteTool.register('staleGuard', async (ctx, next) => {
+        await this.executeWithGuard(ctx, next);
       }),
     );
     this._register(
@@ -85,18 +84,40 @@ export class StaleGuardService extends Disposable implements IStaleGuardService 
     });
   }
 
-  private async observeExecution(ctx: ToolDidExecuteContext): Promise<void> {
-    if (ctx.outcome !== 'executed' || ctx.result.isError === true) return;
+  private async executeWithGuard(
+    ctx: ToolExecuteContext,
+    next: () => Promise<void>,
+  ): Promise<void> {
     const name = ctx.toolCall.name;
-    if (name === 'Read') {
-      const path = accessedFilePath(ctx.accesses, READ_OPERATIONS);
-      if (path !== undefined) await this.recordCurrentMtime(path);
+    if (name === 'Edit' || name === 'Write') {
+      const path = accessedFilePath(ctx.execution.accesses, WRITE_OPERATIONS);
+      if (path !== undefined) {
+        const displayPath = stringArg(ctx.args, 'path') ?? path;
+        const error = await this.checkWritable(path, displayPath);
+        if (error !== undefined) {
+          ctx.result = { result: denyToolExecution(error), outcome: 'vetoed' };
+          return;
+        }
+      }
+      await next();
+      await this.observeExecuted(ctx, WRITE_OPERATIONS);
       return;
     }
-    if (name === 'Edit' || name === 'Write') {
-      const path = accessedFilePath(ctx.accesses, WRITE_OPERATIONS);
-      if (path !== undefined) await this.recordCurrentMtime(path);
+    if (name === 'Read') {
+      await next();
+      await this.observeExecuted(ctx, READ_OPERATIONS);
+      return;
     }
+    await next();
+  }
+
+  private async observeExecuted(
+    ctx: ToolExecuteContext,
+    operations: readonly ToolFileAccessOperation[],
+  ): Promise<void> {
+    if (ctx.result?.outcome !== 'executed' || ctx.result.result.isError === true) return;
+    const path = accessedFilePath(ctx.execution.accesses, operations);
+    if (path !== undefined) await this.recordCurrentMtime(path);
   }
 
   private async checkWritable(path: string, displayPath: string): Promise<string | undefined> {

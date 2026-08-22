@@ -15,10 +15,11 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
   BeforeExecuteDecision,
   BeforeToolExecuteEvent,
-  ToolDidExecuteContext,
+  ToolExecuteContext,
 } from '#/agent/toolExecutor/toolHooks';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { OrderedHookSlot } from '#/hooks';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IStaleGuardService } from '#/features/staleGuard/staleGuard';
 import { StaleGuardService } from '#/features/staleGuard/staleGuardService';
@@ -42,7 +43,7 @@ const noopBlob: IAgentBlobService = {
 
 interface CapturedHooks {
   readonly before: ((event: BeforeToolExecuteEvent) => unknown)[];
-  readonly did: ((ctx: ToolDidExecuteContext, next: () => Promise<void>) => Promise<void>)[];
+  readonly executeSlot: OrderedHookSlot<ToolExecuteContext>;
 }
 
 function stubToolExecutor(captured: CapturedHooks): IAgentToolExecutorService {
@@ -53,15 +54,7 @@ function stubToolExecutor(captured: CapturedHooks): IAgentToolExecutorService {
       return toDisposable(() => {});
     },
     hooks: {
-      onDidExecuteTool: {
-        register: (
-          _name: string,
-          handler: (ctx: ToolDidExecuteContext, next: () => Promise<void>) => Promise<void>,
-        ) => {
-          captured.did.push(handler);
-          return toDisposable(() => {});
-        },
-      },
+      onExecuteTool: captured.executeSlot,
     },
   } as unknown as IAgentToolExecutorService;
 }
@@ -140,21 +133,38 @@ async function runBeforeExecute(
   return veto;
 }
 
-async function runDidExecute(
+async function runExecute(
   captured: CapturedHooks,
-  input: { name: string; accesses?: ToolAccesses; isError?: boolean },
-): Promise<void> {
+  input: {
+    name: string;
+    args?: unknown;
+    accesses?: ToolAccesses;
+    isError?: boolean;
+    during?: () => void | Promise<void>;
+  },
+): Promise<ToolExecuteContext> {
+  const toolCall = {
+    type: 'function',
+    id: 'call_1',
+    name: input.name,
+    arguments: JSON.stringify(input.args ?? {}),
+  } as ToolCall;
   const ctx = {
     turnId: 0,
     signal: new AbortController().signal,
-    toolCall: { id: 'call_1', name: input.name },
-    toolCalls: [],
-    args: {},
-    outcome: 'executed',
-    accesses: input.accesses,
-    result: input.isError === true ? { output: 'failed', isError: true } : { output: 'ok' },
-  } as unknown as ToolDidExecuteContext;
-  for (const handler of captured.did) await handler(ctx, async () => {});
+    toolCall,
+    args: input.args ?? {},
+    execution: { accesses: input.accesses },
+    metadata: undefined,
+  } as unknown as ToolExecuteContext;
+  await captured.executeSlot.run(ctx, async (c) => {
+    await input.during?.();
+    c.result = {
+      result: input.isError === true ? { output: 'failed', isError: true } : { output: 'ok' },
+      outcome: 'executed',
+    };
+  });
+  return ctx;
 }
 
 describe('StaleGuardService', () => {
@@ -168,7 +178,7 @@ describe('StaleGuardService', () => {
     dispatcher: IEventDispatcher;
     hooks: CapturedHooks;
   } {
-    const captured: CapturedHooks = { before: [], did: [] };
+    const captured: CapturedHooks = { before: [], executeSlot: new OrderedHookSlot() };
     const ix = disposables.add(new TestInstantiationService());
     ix.set(IEventBus, new SyncDescriptor(EventBusService));
     ix.set(IAgentBlobService, noopBlob);
@@ -201,7 +211,7 @@ describe('StaleGuardService', () => {
   it('records the mtime of a successfully read file into state and the wire journal', async () => {
     activeFs = stubFs({ mtimeMs: 111 });
 
-    await runDidExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile('/tmp/a.txt') });
+    await runExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile('/tmp/a.txt') });
 
     expect(freshness.recordedMtimeMs('/tmp/a.txt')).toBe(111);
     expect(records).toEqual([
@@ -212,7 +222,7 @@ describe('StaleGuardService', () => {
   it('does not record when the read failed', async () => {
     activeFs = stubFs({ mtimeMs: 111 });
 
-    await runDidExecute(hooks, {
+    await runExecute(hooks, {
       name: 'Read',
       accesses: ToolAccesses.readFile('/tmp/a.txt'),
       isError: true,
@@ -227,7 +237,8 @@ describe('StaleGuardService', () => {
     expect(veto).toBeUndefined();
 
     activeFs = stubFs({ mtimeMs: 111 });
-    await runDidExecute(hooks, { name: 'Bash' });
+    const ctx = await runExecute(hooks, { name: 'Bash' });
+    expect(ctx.result?.outcome).toBe('executed');
     expect(records).toEqual([]);
   });
 
@@ -243,24 +254,38 @@ describe('StaleGuardService', () => {
     expect(veto?.isError).toBe(true);
     expect(outputText(veto)).toContain('has not been read');
     expect(outputText(veto)).toContain('/tmp/a.txt');
+
+    const ctx = await runExecute(hooks, {
+      name: 'Edit',
+      args: { path: '/tmp/a.txt', old_string: 'a', new_string: 'b' },
+      accesses: ToolAccesses.readWriteFile('/tmp/a.txt'),
+    });
+    expect(ctx.result?.outcome).toBe('vetoed');
+    expect(outputText(ctx.result?.result)).toContain('has not been read');
   });
 
   it('allows the write when the on-disk mtime matches the last read', async () => {
     activeFs = stubFs({ mtimeMs: 111 });
-    await runDidExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile('/tmp/a.txt') });
+    await runExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile('/tmp/a.txt') });
 
     const veto = await runBeforeExecute(hooks, {
       name: 'Write',
       args: { path: '/tmp/a.txt', content: 'x' },
       accesses: ToolAccesses.writeFile('/tmp/a.txt'),
     });
-
     expect(veto).toBeUndefined();
+
+    const ctx = await runExecute(hooks, {
+      name: 'Write',
+      args: { path: '/tmp/a.txt', content: 'x' },
+      accesses: ToolAccesses.writeFile('/tmp/a.txt'),
+    });
+    expect(ctx.result?.outcome).toBe('executed');
   });
 
   it('vetoes the write when the file changed on disk since the last read', async () => {
     activeFs = stubFs({ mtimeMs: 111 });
-    await runDidExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile('/tmp/a.txt') });
+    await runExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile('/tmp/a.txt') });
     activeFs = stubFs({ mtimeMs: 222 });
 
     const veto = await runBeforeExecute(hooks, {
@@ -271,6 +296,68 @@ describe('StaleGuardService', () => {
 
     expect(veto?.isError).toBe(true);
     expect(outputText(veto)).toContain('modified on disk');
+  });
+
+  it('vetoes at execution time when the file changes after the prepare-time check passed', async () => {
+    activeFs = stubFs({ mtimeMs: 111 });
+    await runExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile('/tmp/a.txt') });
+
+    const veto = await runBeforeExecute(hooks, {
+      name: 'Edit',
+      args: { path: '/tmp/a.txt', old_string: 'a', new_string: 'b' },
+      accesses: ToolAccesses.readWriteFile('/tmp/a.txt'),
+    });
+    expect(veto).toBeUndefined();
+
+    activeFs = stubFs({ mtimeMs: 222 });
+    const ctx = await runExecute(hooks, {
+      name: 'Edit',
+      args: { path: '/tmp/a.txt', old_string: 'a', new_string: 'b' },
+      accesses: ToolAccesses.readWriteFile('/tmp/a.txt'),
+    });
+
+    expect(ctx.result?.outcome).toBe('vetoed');
+    expect(outputText(ctx.result?.result)).toContain('modified on disk');
+    expect(freshness.recordedMtimeMs('/tmp/a.txt')).toBe(111);
+    expect(
+      records.filter((record) => record.type === 'staleGuard.recorded'),
+    ).toHaveLength(1);
+  });
+
+  it('passes the execution-time recheck for a same-batch Read followed by a Write', async () => {
+    activeFs = stubFs({ mtimeMs: 5 });
+    await runExecute(hooks, {
+      name: 'Read',
+      args: { path: '/tmp/a.txt' },
+      accesses: ToolAccesses.readFile('/tmp/a.txt'),
+    });
+
+    const ctx = await runExecute(hooks, {
+      name: 'Write',
+      args: { path: '/tmp/a.txt', content: 'x' },
+      accesses: ToolAccesses.writeFile('/tmp/a.txt'),
+    });
+
+    expect(ctx.result?.outcome).toBe('executed');
+  });
+
+  it('vetoes at execution time when the earlier same-batch Read failed', async () => {
+    activeFs = stubFs({ mtimeMs: 5 });
+    await runExecute(hooks, {
+      name: 'Read',
+      args: { path: '/tmp/a.txt' },
+      accesses: ToolAccesses.readFile('/tmp/a.txt'),
+      isError: true,
+    });
+
+    const ctx = await runExecute(hooks, {
+      name: 'Write',
+      args: { path: '/tmp/a.txt', content: 'x' },
+      accesses: ToolAccesses.writeFile('/tmp/a.txt'),
+    });
+
+    expect(ctx.result?.outcome).toBe('vetoed');
+    expect(outputText(ctx.result?.result)).toContain('has not been read');
   });
 
   it('allows a write covered by an earlier Read of the same path in the same batch', async () => {
@@ -326,7 +413,7 @@ describe('StaleGuardService', () => {
 
   it('clears recorded mtimes when the runtime changes', async () => {
     activeFs = stubFs({ mtimeMs: 111 });
-    await runDidExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile('/tmp/a.txt') });
+    await runExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile('/tmp/a.txt') });
     expect(freshness.recordedMtimeMs('/tmp/a.txt')).toBe(111);
 
     fireRuntimeChange();
@@ -336,12 +423,13 @@ describe('StaleGuardService', () => {
       type: 'staleGuard.cleared',
       time: expect.any(Number),
     });
-    const veto = await runBeforeExecute(hooks, {
+    const ctx = await runExecute(hooks, {
       name: 'Edit',
       args: { path: '/tmp/a.txt', old_string: 'a', new_string: 'b' },
       accesses: ToolAccesses.readWriteFile('/tmp/a.txt'),
     });
-    expect(outputText(veto)).toContain('has not been read');
+    expect(ctx.result?.outcome).toBe('vetoed');
+    expect(outputText(ctx.result?.result)).toContain('has not been read');
   });
 
   it('allows writing a file that does not exist yet', async () => {
@@ -352,8 +440,14 @@ describe('StaleGuardService', () => {
       args: { path: '/tmp/new.txt', content: 'x' },
       accesses: ToolAccesses.writeFile('/tmp/new.txt'),
     });
-
     expect(veto).toBeUndefined();
+
+    const ctx = await runExecute(hooks, {
+      name: 'Write',
+      args: { path: '/tmp/new.txt', content: 'x' },
+      accesses: ToolAccesses.writeFile('/tmp/new.txt'),
+    });
+    expect(ctx.result?.outcome).toBe('executed');
   });
 
   it('skips the check when the runtime stat carries no mtimeMs', async () => {
@@ -364,8 +458,14 @@ describe('StaleGuardService', () => {
       args: { path: '/tmp/a.txt', old_string: 'a', new_string: 'b' },
       accesses: ToolAccesses.readWriteFile('/tmp/a.txt'),
     });
-
     expect(veto).toBeUndefined();
+
+    const ctx = await runExecute(hooks, {
+      name: 'Edit',
+      args: { path: '/tmp/a.txt', old_string: 'a', new_string: 'b' },
+      accesses: ToolAccesses.readWriteFile('/tmp/a.txt'),
+    });
+    expect(ctx.result?.outcome).toBe('executed');
   });
 
   it('skips the check when the path is not a regular file', async () => {
@@ -376,56 +476,71 @@ describe('StaleGuardService', () => {
       args: { path: '/tmp/dir', content: 'x' },
       accesses: ToolAccesses.writeFile('/tmp/dir'),
     });
-
     expect(veto).toBeUndefined();
+
+    const ctx = await runExecute(hooks, {
+      name: 'Write',
+      args: { path: '/tmp/dir', content: 'x' },
+      accesses: ToolAccesses.writeFile('/tmp/dir'),
+    });
+    expect(ctx.result?.outcome).toBe('executed');
   });
 
   it('refreshes the record after a successful write so consecutive writes are not blocked', async () => {
     activeFs = stubFs({ mtimeMs: 111 });
-    await runDidExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile('/tmp/a.txt') });
+    await runExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile('/tmp/a.txt') });
 
-    activeFs = stubFs({ mtimeMs: 222 });
-    await runDidExecute(hooks, { name: 'Edit', accesses: ToolAccesses.readWriteFile('/tmp/a.txt') });
+    const first = await runExecute(hooks, {
+      name: 'Edit',
+      args: { path: '/tmp/a.txt', old_string: 'a', new_string: 'b' },
+      accesses: ToolAccesses.readWriteFile('/tmp/a.txt'),
+      during: () => {
+        activeFs = stubFs({ mtimeMs: 222 });
+      },
+    });
+    expect(first.result?.outcome).toBe('executed');
 
     expect(freshness.recordedMtimeMs('/tmp/a.txt')).toBe(222);
-    const veto = await runBeforeExecute(hooks, {
+    const second = await runExecute(hooks, {
       name: 'Edit',
       args: { path: '/tmp/a.txt', old_string: 'a', new_string: 'b' },
       accesses: ToolAccesses.readWriteFile('/tmp/a.txt'),
     });
-    expect(veto).toBeUndefined();
+    expect(second.result?.outcome).toBe('executed');
   });
 
   it('rebuilds recorded mtimes from the wire journal on restore', async () => {
     activeFs = stubFs({ mtimeMs: 111 });
-    await runDidExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile('/tmp/a.txt') });
+    await runExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile('/tmp/a.txt') });
 
     const replayed = buildStack([...records]);
     await replayed.dispatcher.restore();
 
     expect(replayed.freshness.recordedMtimeMs('/tmp/a.txt')).toBe(111);
     activeFs = stubFs({ mtimeMs: 999 });
-    const veto = await runBeforeExecute(replayed.hooks, {
+    const ctx = await runExecute(replayed.hooks, {
       name: 'Edit',
       args: { path: '/tmp/a.txt', old_string: 'a', new_string: 'b' },
       accesses: ToolAccesses.readWriteFile('/tmp/a.txt'),
     });
-    expect(outputText(veto)).toContain('modified on disk');
+    expect(ctx.result?.outcome).toBe('vetoed');
+    expect(outputText(ctx.result?.result)).toContain('modified on disk');
   });
 
   it('keeps records isolated between independent agent stacks', async () => {
     activeFs = stubFs({ mtimeMs: 111 });
-    await runDidExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile('/tmp/a.txt') });
+    await runExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile('/tmp/a.txt') });
 
     const other = buildStack([]);
 
     expect(other.freshness.recordedMtimeMs('/tmp/a.txt')).toBeUndefined();
-    const veto = await runBeforeExecute(other.hooks, {
+    const ctx = await runExecute(other.hooks, {
       name: 'Edit',
       args: { path: '/tmp/a.txt', old_string: 'a', new_string: 'b' },
       accesses: ToolAccesses.readWriteFile('/tmp/a.txt'),
     });
-    expect(outputText(veto)).toContain('has not been read');
+    expect(ctx.result?.outcome).toBe('vetoed');
+    expect(outputText(ctx.result?.result)).toContain('has not been read');
   });
 
   it('detects an external mtime change through the real filesystem', async () => {
@@ -434,25 +549,26 @@ describe('StaleGuardService', () => {
     await writeFile(file, 'one', 'utf8');
     try {
       activeFs = new HostFileSystem();
-      await runDidExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile(file) });
+      await runExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile(file) });
 
       const past = new Date(Date.now() - 60_000);
       await utimes(file, past, past);
 
-      const veto = await runBeforeExecute(hooks, {
+      const ctx = await runExecute(hooks, {
         name: 'Edit',
         args: { path: file, old_string: 'one', new_string: 'two' },
         accesses: ToolAccesses.readWriteFile(file),
       });
-      expect(outputText(veto)).toContain('modified on disk');
+      expect(ctx.result?.outcome).toBe('vetoed');
+      expect(outputText(ctx.result?.result)).toContain('modified on disk');
 
-      await runDidExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile(file) });
-      const allowed = await runBeforeExecute(hooks, {
+      await runExecute(hooks, { name: 'Read', accesses: ToolAccesses.readFile(file) });
+      const allowed = await runExecute(hooks, {
         name: 'Edit',
         args: { path: file, old_string: 'one', new_string: 'two' },
         accesses: ToolAccesses.readWriteFile(file),
       });
-      expect(allowed).toBeUndefined();
+      expect(allowed.result?.outcome).toBe('executed');
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
