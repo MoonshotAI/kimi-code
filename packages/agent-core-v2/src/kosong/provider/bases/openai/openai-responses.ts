@@ -33,6 +33,7 @@ import {
   convertOpenAIError,
   hasModelPrefix,
   isMediaPart,
+  isOfficialOpenAIBaseUrl,
   isOpenAIInsufficientQuotaCode,
   isOpenAIReasoningModel,
   OPENAI_REASONING_CAPABILITY,
@@ -1079,7 +1080,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
 
     let kwargs: Record<string, unknown> = { ...this._generationKwargs };
 
-    if (options?.cacheKey !== undefined) {
+    if (options?.cacheKey !== undefined && isOfficialOpenAIBaseUrl(this._baseUrl)) {
       kwargs = { ...kwargs, prompt_cache_key: options.cacheKey };
     }
     if (options?.sampling?.temperature !== undefined) {
