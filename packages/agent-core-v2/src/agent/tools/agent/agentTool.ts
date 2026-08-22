@@ -46,7 +46,12 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
-import { emitAgentRunSpawned, mirrorAgentRun, SubagentStarted } from '#/session/subagent/mirrorAgentRun';
+import {
+  emitAgentRunFailed,
+  emitAgentRunSpawned,
+  mirrorAgentRun,
+  SubagentStarted,
+} from '#/session/subagent/mirrorAgentRun';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { FORK_EXPERIMENTAL_UNAVAILABLE, forkIncompatibility } from '#/session/subagent/spawn';
@@ -442,14 +447,20 @@ export class SubagentTool implements ISubagentTool {
           subagentType: handle.profileName,
           error,
         });
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          output:
-            isError2(error) && error.code === ErrorCodes.TASK_LIMIT_EXCEEDED
-              ? 'Too many background tasks are already running.'
-              : message,
-          isError: true,
-        };
+        const message = registrationFailureMessage(error);
+        const requester = this.lifecycle.get(this.callerAgent);
+        if (requester !== undefined) {
+          emitAgentRunSpawned(requester, handle.agentId, {
+            profileName: handle.profileName,
+            parentToolCallId: toolCallId,
+            description: args.description,
+            runInBackground,
+            fork: args.fork === true,
+            model: handle.model,
+          });
+          emitAgentRunFailed(requester, handle.agentId, message);
+        }
+        return { output: message, isError: true };
       }
 
       const requester = this.lifecycle.get(this.callerAgent);
@@ -614,6 +625,13 @@ function formatForegroundAgentFailure(
 function launchErrorMessage(error: unknown, signal: AbortSignal): string {
   if (isUserCancellation(signal.reason)) return USER_INTERRUPTED_SUBAGENT_MESSAGE;
   if (isAbortError(error)) return formatSubagentStoppedMessage(errorMessage(signal.reason));
+  return error instanceof Error ? error.message : String(error);
+}
+
+function registrationFailureMessage(error: unknown): string {
+  if (isError2(error) && error.code === ErrorCodes.TASK_LIMIT_EXCEEDED) {
+    return 'Too many background tasks are already running.';
+  }
   return error instanceof Error ? error.message : String(error);
 }
 
