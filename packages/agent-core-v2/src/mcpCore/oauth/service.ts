@@ -72,6 +72,12 @@ interface SharedAuthorizationFlow {
   readonly cancelUnderlying: () => Promise<void>;
 }
 
+interface ActiveAuthorization {
+  readonly started: Promise<SharedAuthorizationFlow>;
+  readonly controller: AbortController;
+  readonly serverRef: { current: CallbackServer | undefined };
+}
+
 export type McpOAuthEvent =
   | {
       readonly type: 'tokens-saved';
@@ -128,7 +134,7 @@ export class McpOAuthService {
   private readonly listeners = new Set<McpOAuthEventListener>();
   private readonly refreshes = new Map<string, Promise<void>>();
   private readonly refreshTimers = new Map<string, McpOAuthScheduledTask>();
-  private readonly activeAuthorizations = new Map<string, Promise<SharedAuthorizationFlow>>();
+  private readonly activeAuthorizations = new Map<string, ActiveAuthorization>();
   private readonly backgroundTasks = new Set<Promise<unknown>>();
   private shuttingDown = false;
   private shutdownPromise: Promise<void> | undefined;
@@ -195,7 +201,6 @@ export class McpOAuthService {
   }
 
   protected trackBackgroundTask(task: Promise<unknown>): void {
-    if (this.shuttingDown) return;
     this.backgroundTasks.add(task);
     void task.then(
       () => this.backgroundTasks.delete(task),
@@ -269,24 +274,27 @@ export class McpOAuthService {
     this.stopProactiveRefresh();
     const authorizations = [...this.activeAuthorizations.values()];
     const refreshes = [...this.refreshes.values()];
-    const backgroundTasks = [...this.backgroundTasks];
     this.activeAuthorizations.clear();
+    const deadline = this.drainDeadline();
     this.shutdownPromise = (async () => {
       try {
         await Promise.race([
           Promise.all([
             Promise.all(
-              authorizations.map(async (started) => {
-                const flow = await started.catch(() => undefined);
+              authorizations.map(async (active) => {
+                active.controller.abort();
+                await active.serverRef.current?.close().catch(() => undefined);
+                const flow = await active.started.catch(() => undefined);
                 await flow?.cancelUnderlying();
               }),
             ),
             Promise.allSettled(refreshes),
-            Promise.allSettled(backgroundTasks),
+            this.drainBackgroundTasks(),
           ]),
-          this.drainDeadline(),
+          deadline.promise,
         ]);
       } finally {
+        deadline.cancel();
         this.listeners.clear();
         this.providers.clear();
       }
@@ -294,25 +302,37 @@ export class McpOAuthService {
     return this.shutdownPromise;
   }
 
-  private drainDeadline(): Promise<void> {
-    return new Promise<void>((resolve) => {
-      this.scheduler.schedule(this.shutdownDrainTimeoutMs, () => {
+  private async drainBackgroundTasks(): Promise<void> {
+    for (;;) {
+      await Promise.allSettled(this.backgroundTasks);
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+      if (this.backgroundTasks.size === 0) return;
+    }
+  }
+
+  private drainDeadline(): { readonly promise: Promise<void>; readonly cancel: () => void } {
+    let task: McpOAuthScheduledTask | undefined;
+    const promise = new Promise<void>((resolve) => {
+      task = this.scheduler.schedule(this.shutdownDrainTimeoutMs, () => {
         this.log.warn('mcp oauth shutdown drain timed out; continuing teardown');
         resolve();
       });
     });
+    return { promise, cancel: () => task?.cancel() };
   }
 
-  private authFetch(provider: McpOAuthClientProvider): typeof fetch {
+  private authFetch(
+    provider: McpOAuthClientProvider,
+    signals: readonly AbortSignal[] = [],
+  ): typeof fetch {
     const fetchFn = provider.createOAuthFetch();
     const timeoutMs = this.authRequestTimeoutMs;
     return (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-      const timeout = AbortSignal.timeout(timeoutMs);
-      const signal =
-        init?.signal === undefined || init.signal === null
-          ? timeout
-          : AbortSignal.any([init.signal, timeout]);
-      return fetchFn(input, { ...init, signal });
+      const combined: AbortSignal[] = [AbortSignal.timeout(timeoutMs), ...signals];
+      if (init?.signal !== undefined && init.signal !== null) combined.push(init.signal);
+      return fetchFn(input, { ...init, signal: AbortSignal.any(combined) });
     }) as typeof fetch;
   }
 
@@ -342,12 +362,20 @@ export class McpOAuthService {
     }
     const inFlight = this.activeAuthorizations.get(storeKey);
     if (inFlight !== undefined) {
-      const flow = await inFlight;
+      const flow = await inFlight.started;
       return flow.attach();
     }
 
-    const started = this.startAuthorizationFlow(serverName, serverUrl, options);
-    this.activeAuthorizations.set(storeKey, started);
+    const controller = new AbortController();
+    const serverRef: { current: CallbackServer | undefined } = { current: undefined };
+    const started = this.startAuthorizationFlow(
+      serverName,
+      serverUrl,
+      options,
+      controller.signal,
+      serverRef,
+    );
+    this.activeAuthorizations.set(storeKey, { started, controller, serverRef });
     let flow: SharedAuthorizationFlow;
     try {
       flow = await started;
@@ -362,6 +390,8 @@ export class McpOAuthService {
     serverName: string,
     serverUrl: string | URL,
     options: BeginAuthorizationOptions,
+    signal: AbortSignal,
+    serverRef: { current: CallbackServer | undefined },
   ): Promise<SharedAuthorizationFlow> {
     const storeKey = mcpOAuthStoreKey(serverName, serverUrl);
     const provider =
@@ -380,6 +410,7 @@ export class McpOAuthService {
     } catch (error) {
       throw wrapAuthError('failed to start OAuth callback listener', error);
     }
+    serverRef.current = callbackServer;
 
     let authorizationUrl: URL | undefined;
     try {
@@ -399,7 +430,7 @@ export class McpOAuthService {
       try {
         const result = await auth(provider as OAuthClientProvider, {
           serverUrl,
-          fetchFn: this.authFetch(provider),
+          fetchFn: this.authFetch(provider, [signal]),
         });
         if (result !== 'REDIRECT') {
           await callbackServer.close();
@@ -463,7 +494,10 @@ export class McpOAuthService {
           const finalResult = await auth(provider as OAuthClientProvider, {
             serverUrl,
             authorizationCode: code,
-            fetchFn: provider.createOAuthFetch(),
+            fetchFn: this.authFetch(
+              provider,
+              opts.signal === undefined ? [signal] : [signal, opts.signal],
+            ),
           });
           if (finalResult !== 'AUTHORIZED') {
             throw new Error2(
@@ -478,6 +512,7 @@ export class McpOAuthService {
         }
         await settle();
       })();
+      this.trackBackgroundTask(completion);
       return completion;
     };
 
@@ -550,6 +585,9 @@ export class McpOAuthService {
       clientLabel: clientLabel ?? this.clientLabel,
       clientName: this.resolveClientName?.(),
       now: () => this.scheduler.now(),
+      track: (task) => {
+        this.trackBackgroundTask(task);
+      },
       onTokensSaved: (tokens) => {
         this.emit({ type: 'tokens-saved', serverName, serverUrl: canonicalUrl });
         if (

@@ -48,6 +48,8 @@ export interface McpOAuthProviderOptions {
   readonly onCredentialsInvalidated?: (
     scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery',
   ) => void;
+  /** Receives every in-flight token-grant promise so shutdown can drain it. */
+  readonly track?: (operation: Promise<unknown>) => void;
 }
 
 export class McpOAuthClientProvider implements OAuthClientProvider {
@@ -81,6 +83,7 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
     this.onCredentialsInvalidated = options.onCredentialsInvalidated;
     this.now = options.now ?? Date.now;
     const tokensFile = `${this.storeKey}${TOKENS_SUFFIX}`;
+    const metaFile = `${this.storeKey}${META_SUFFIX}`;
     this.tokenTransaction = new OAuthTokenTransaction({
       key: this.storeKey,
       read: async () => this.store.read<OAuthTokens>(tokensFile),
@@ -95,6 +98,21 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
         await this.store.remove(tokensFile);
       },
       parse: (value) => OAuthTokensSchema.safeParse(value).data,
+      normalize: (tokens) => OAuthTokensSchema.safeParse(tokens).data ?? tokens,
+      track: options.track,
+      afterCommit: async (tokens) => {
+        if (tokens === undefined) {
+          await this.store.remove(metaFile);
+          return;
+        }
+        const meta: McpOAuthStoreMeta = { serverName: this.serverName, serverUrl: this.serverUrl };
+        await this.store.write(metaFile, meta);
+        const stamped: StoredMcpOAuthTokens = {
+          ...tokens,
+          obtained_at: (tokens as StoredMcpOAuthTokens).obtained_at ?? this.now(),
+        };
+        this.onTokensSaved?.(stamped);
+      },
     });
     this.ready = this.load();
   }
@@ -163,15 +181,7 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
-    const persisted = await this.tokenTransaction.save(tokens);
-    if (persisted === undefined) return;
-    const meta: McpOAuthStoreMeta = { serverName: this.serverName, serverUrl: this.serverUrl };
-    await this.store.write(`${this.storeKey}${META_SUFFIX}`, meta);
-    const stamped: StoredMcpOAuthTokens = {
-      ...persisted,
-      obtained_at: (persisted as StoredMcpOAuthTokens).obtained_at ?? this.now(),
-    };
-    this.onTokensSaved?.(stamped);
+    await this.tokenTransaction.save(tokens);
   }
 
   /**
@@ -247,7 +257,6 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
     }
     if (scope === 'tokens' || scope === 'all') {
       await this.tokenTransaction.clear();
-      await this.store.remove(`${this.storeKey}${META_SUFFIX}`);
     }
     if (scope === 'client' || scope === 'all') {
       await this.store.remove(`${this.storeKey}${CLIENT_SUFFIX}`);

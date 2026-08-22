@@ -4,6 +4,7 @@ import type { AddressInfo as HttpAddress } from 'node:net';
 import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { ILogger as Logger } from '#/_base/log/log';
 import * as callbackServerModule from '#/mcpCore/oauth/callback-server';
 import {
   META_SUFFIX,
@@ -32,7 +33,11 @@ interface Fixture {
 
 function makeFixture(
   store: McpOAuthStore = createMemoryMcpOAuthStore(),
-  options: { readonly authRequestTimeoutMs?: number; readonly shutdownDrainTimeoutMs?: number } = {},
+  options: {
+    readonly authRequestTimeoutMs?: number;
+    readonly shutdownDrainTimeoutMs?: number;
+    readonly log?: Logger;
+  } = {},
 ): Fixture {
   const events: McpOAuthEvent[] = [];
   const scheduler = new ManualMcpOAuthScheduler(1_000_000);
@@ -143,6 +148,73 @@ async function startHangingServer(): Promise<{ readonly url: string; readonly co
   return { url: `http://127.0.0.1:${port}`, counts };
 }
 
+interface GatedExchangeAuthServer {
+  readonly url: string;
+  readonly counts: { register: number; exchange: number };
+  readonly exchangeStarted: Promise<void>;
+  readonly releaseExchange: () => void;
+}
+
+async function startGatedExchangeAuthServer(): Promise<GatedExchangeAuthServer> {
+  const counts = { register: 0, exchange: 0 };
+  let signalExchangeStarted: () => void = () => undefined;
+  const exchangeStarted = new Promise<void>((resolve) => {
+    signalExchangeStarted = resolve;
+  });
+  let releaseExchange: () => void = () => undefined;
+  const exchangeReleased = new Promise<void>((resolve) => {
+    releaseExchange = resolve;
+  });
+  const httpServer: HttpServer = createHttpServer((req, res) => {
+    if (req.method !== 'POST' || (req.url !== '/token' && req.url !== '/register')) {
+      res.writeHead(404).end();
+      return;
+    }
+    let body = '';
+    req.on('data', (chunk: Buffer) => {
+      body += chunk.toString('utf-8');
+    });
+    req.on('end', () => {
+      if (req.url === '/register') {
+        counts.register += 1;
+        const metadata = JSON.parse(body) as Record<string, unknown>;
+        res.writeHead(201, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ...metadata, client_id: `test-client-${counts.register}` }));
+        return;
+      }
+      if (new URLSearchParams(body).get('grant_type') !== 'authorization_code') {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'unsupported_grant_type' }));
+        return;
+      }
+      counts.exchange += 1;
+      signalExchangeStarted();
+      res.on('error', () => undefined);
+      void exchangeReleased.then(() => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({ access_token: 'fresh-token', token_type: 'Bearer', expires_in: 3600 }),
+        );
+      });
+    });
+  });
+  await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+  cleanups.push(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        httpServer.close((err) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve();
+        });
+      }),
+  );
+  const port = (httpServer.address() as HttpAddress).port;
+  return { url: `http://127.0.0.1:${port}`, counts, exchangeStarted, releaseExchange };
+}
+
 function authServerState(authServerUrl: string) {
   return {
     discovery: {
@@ -174,6 +246,9 @@ async function blockedRefreshFixture(options?: {
   readonly authServer: FakeAuthServer;
   readonly writeStarted: Promise<void>;
   readonly releaseWrite: () => void;
+  readonly armMetaGate: () => void;
+  readonly metaWriteStarted: Promise<void>;
+  readonly releaseMetaWrite: () => void;
 }> {
   const memory = createMemoryMcpOAuthStore();
   let signalWriteStarted: () => void = () => undefined;
@@ -183,6 +258,15 @@ async function blockedRefreshFixture(options?: {
   let releaseWrite: () => void = () => undefined;
   const writeReleased = new Promise<void>((resolve) => {
     releaseWrite = resolve;
+  });
+  let gateMeta = false;
+  let signalMetaStarted: () => void = () => undefined;
+  const metaWriteStarted = new Promise<void>((resolve) => {
+    signalMetaStarted = resolve;
+  });
+  let releaseMetaWrite: () => void = () => undefined;
+  const metaReleased = new Promise<void>((resolve) => {
+    releaseMetaWrite = resolve;
   });
   const store: McpOAuthStore = {
     ...memory,
@@ -194,6 +278,10 @@ async function blockedRefreshFixture(options?: {
       if (accessToken === 'fresh-token') {
         signalWriteStarted();
         await writeReleased;
+      }
+      if (gateMeta && key.endsWith(META_SUFFIX)) {
+        signalMetaStarted();
+        await metaReleased;
       }
       await memory.write(key, value);
     },
@@ -210,7 +298,69 @@ async function blockedRefreshFixture(options?: {
     refresh_token: 'stale-refresh-token',
     token_type: 'Bearer',
   });
-  return { fixture, authServer, writeStarted, releaseWrite };
+  return {
+    fixture,
+    authServer,
+    writeStarted,
+    releaseWrite,
+    armMetaGate: () => {
+      gateMeta = true;
+    },
+    metaWriteStarted,
+    releaseMetaWrite,
+  };
+}
+
+async function metaGatedGrantFixture(): Promise<{
+  readonly fixture: Fixture;
+  readonly provider: McpOAuthClientProvider;
+  readonly tokenUrl: string;
+  readonly armMetaGate: () => void;
+  readonly metaWriteStarted: Promise<void>;
+  readonly releaseMetaWrite: () => void;
+}> {
+  const memory = createMemoryMcpOAuthStore();
+  let gateMeta = false;
+  let signalMetaStarted: () => void = () => undefined;
+  const metaWriteStarted = new Promise<void>((resolve) => {
+    signalMetaStarted = resolve;
+  });
+  let releaseMetaWrite: () => void = () => undefined;
+  const metaReleased = new Promise<void>((resolve) => {
+    releaseMetaWrite = resolve;
+  });
+  const store: McpOAuthStore = {
+    ...memory,
+    async write(key: string, value: unknown): Promise<void> {
+      if (gateMeta && key.endsWith(META_SUFFIX)) {
+        signalMetaStarted();
+        await metaReleased;
+      }
+      await memory.write(key, value);
+    },
+  };
+  const fixture = makeFixture(store);
+  cleanups.push(() => fixture.service.dispose());
+  const authServer = await startFakeAuthServer();
+  const provider = await readyProvider(fixture);
+  const state = authServerState(authServer.url);
+  await provider.saveDiscoveryState(state.discovery);
+  await provider.saveClientInformation(state.client);
+  await provider.saveTokens({
+    access_token: 'stale-access-token',
+    refresh_token: 'stale-refresh-token',
+    token_type: 'Bearer',
+  });
+  return {
+    fixture,
+    provider,
+    tokenUrl: `${authServer.url}/token`,
+    armMetaGate: () => {
+      gateMeta = true;
+    },
+    metaWriteStarted,
+    releaseMetaWrite,
+  };
 }
 
 async function deliverCallback(flow: BeginAuthorizationResult): Promise<void> {
@@ -305,6 +455,26 @@ describe('McpOAuthService credential bookkeeping', () => {
       serverUrl: SERVER_URL,
       scope: 'tokens',
     });
+  });
+
+  it('keeps the meta sidecar consistent with the final tokens when save and clear race', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    const provider = await readyProvider(fixture);
+
+    await Promise.all([
+      provider.saveTokens({ access_token: 'a', token_type: 'Bearer' }),
+      provider.clearCredentials('tokens'),
+    ]);
+    expect(await provider.tokens()).toBeUndefined();
+    expect(await listMetaKeys(fixture.store)).toHaveLength(0);
+
+    await Promise.all([
+      provider.clearCredentials('tokens'),
+      provider.saveTokens({ access_token: 'b', token_type: 'Bearer' }),
+    ]);
+    expect(await provider.tokens()).toMatchObject({ access_token: 'b' });
+    expect(await listMetaKeys(fixture.store)).toHaveLength(1);
   });
 });
 
@@ -751,6 +921,50 @@ describe('McpOAuthService interactive flow serialization', () => {
       tokensSavedBefore + 2,
     );
   }, 15000);
+
+  it('bounds a hanging protected-resource-metadata request during completion', async () => {
+    const hanging = await startHangingServer();
+    const authServer = await startFakeAuthServer();
+    const fixture = makeFixture(createMemoryMcpOAuthStore(), { authRequestTimeoutMs: 50 });
+    cleanups.push(() => fixture.service.dispose());
+    const provider = fixture.service.getProvider(SERVER_NAME, hanging.url);
+    await provider.ready;
+    const state = authServerState(authServer.url);
+    await provider.saveDiscoveryState(state.discovery);
+    await provider.saveClientInformation(state.client);
+
+    const flow = await fixture.service.beginAuthorization(SERVER_NAME, hanging.url);
+    const complete = flow.complete({ timeoutMs: 10_000 });
+    await deliverCallback(flow);
+    await complete;
+
+    expect(hanging.counts.requests).toBeGreaterThan(0);
+    expect(authServer.counts.exchange).toBe(1);
+    expect((await fixture.service.tokenState(SERVER_NAME, hanging.url)).hasTokens).toBe(true);
+  }, 15000);
+
+  it('rejects completion without writing tokens when the caller aborts after the callback', async () => {
+    const gated = await startGatedExchangeAuthServer();
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    cleanups.push(() => gated.releaseExchange());
+    const provider = fixture.service.getProvider(SERVER_NAME, gated.url);
+    await provider.ready;
+    const state = authServerState(gated.url);
+    await provider.saveDiscoveryState(state.discovery);
+    await provider.saveClientInformation(state.client);
+
+    const flow = await fixture.service.beginAuthorization(SERVER_NAME, gated.url);
+    const controller = new AbortController();
+    const complete = flow.complete({ signal: controller.signal, timeoutMs: 10_000 });
+    await deliverCallback(flow);
+    await gated.exchangeStarted;
+
+    controller.abort();
+    await expect(complete).rejects.toThrow(/OAuth flow for "notion" failed/);
+    expect(gated.counts.exchange).toBe(1);
+    expect((await fixture.service.tokenState(SERVER_NAME, gated.url)).hasTokens).toBe(false);
+  }, 15000);
 });
 
 describe('McpOAuthService sweepProactiveRefresh resilience', () => {
@@ -1012,5 +1226,177 @@ describe('McpOAuthService shutdown', () => {
     await fixture.service.shutdown();
     await fixture.scheduler.advanceBy(3600_000);
     expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it('waits for an in-flight transport-driven grant before completing shutdown', async () => {
+    const {
+      fixture,
+      authServer,
+      writeStarted,
+      releaseWrite,
+      armMetaGate,
+      metaWriteStarted,
+      releaseMetaWrite,
+    } = await blockedRefreshFixture();
+    cleanups.push(() => {
+      releaseWrite();
+      releaseMetaWrite();
+    });
+    const provider = fixture.service.getProvider(SERVER_NAME, SERVER_URL);
+
+    const grant = provider.createOAuthFetch()(`${authServer.url}/token`, {
+      method: 'POST',
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: 'stale-refresh-token',
+      }),
+    });
+    await writeStarted;
+    armMetaGate();
+    const save = provider.saveTokens({
+      access_token: 'fresh-token',
+      token_type: 'Bearer',
+      expires_in: 60,
+    });
+
+    const shutdown = fixture.service.shutdown();
+    let shutdownSettled = false;
+    void shutdown.then(() => {
+      shutdownSettled = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const pendingWhileGrantInFlight = !shutdownSettled;
+
+    releaseWrite();
+    const response = await grant;
+    await metaWriteStarted;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const pendingWhileMetaWriteInFlight = !shutdownSettled;
+
+    releaseMetaWrite();
+    await save;
+    await shutdown;
+
+    expect(response.status).toBe(200);
+    expect(pendingWhileGrantInFlight).toBe(true);
+    expect(pendingWhileMetaWriteInFlight).toBe(true);
+  }, 15000);
+
+  it('drains an SDK save continuation that starts after shutdown began', async () => {
+    const {
+      fixture,
+      provider,
+      tokenUrl,
+      armMetaGate,
+      metaWriteStarted,
+      releaseMetaWrite,
+    } = await metaGatedGrantFixture();
+    cleanups.push(() => {
+      releaseMetaWrite();
+    });
+
+    const grant = provider.createOAuthFetch()(tokenUrl, {
+      method: 'POST',
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: 'stale-refresh-token',
+      }),
+    });
+    const response = await grant;
+    armMetaGate();
+
+    const shutdown = fixture.service.shutdown();
+    let shutdownSettled = false;
+    void shutdown.then(() => {
+      shutdownSettled = true;
+    });
+    const save = (async () =>
+      provider.saveTokens((await response.json()) as Parameters<typeof provider.saveTokens>[0]))();
+
+    await metaWriteStarted;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const pendingWhileMetaWriteInFlight = !shutdownSettled;
+
+    releaseMetaWrite();
+    await save;
+    await shutdown;
+
+    expect(response.status).toBe(200);
+    expect(pendingWhileMetaWriteInFlight).toBe(true);
+    expect(await listMetaKeys(fixture.store)).toHaveLength(1);
+  }, 15000);
+
+  it('aborts a hung begin on shutdown and closes the callback listener', async () => {
+    const hanging = await startHangingServer();
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+
+    const callbackServer: callbackServerModule.CallbackServer = {
+      redirectUri: 'http://127.0.0.1:45679/callback',
+      waitForCode: vi.fn(),
+      close: vi.fn(async () => undefined),
+    };
+    const startSpy = vi
+      .spyOn(callbackServerModule, 'startCallbackServer')
+      .mockResolvedValue(callbackServer);
+    cleanups.push(() => startSpy.mockRestore());
+
+    const begin = fixture.service.beginAuthorization(SERVER_NAME, hanging.url);
+    await vi.waitFor(() => {
+      expect(hanging.counts.requests).toBeGreaterThan(0);
+    });
+
+    const beginRejected = expect(begin).rejects.toThrow(/failed to start OAuth flow/);
+    await fixture.service.shutdown();
+
+    await beginRejected;
+    expect(callbackServer.close).toHaveBeenCalled();
+  }, 15000);
+
+  it('writes no tokens when shutdown aborts an in-flight code exchange', async () => {
+    const gated = await startGatedExchangeAuthServer();
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    cleanups.push(() => gated.releaseExchange());
+    const provider = fixture.service.getProvider(SERVER_NAME, gated.url);
+    await provider.ready;
+    const state = authServerState(gated.url);
+    await provider.saveDiscoveryState(state.discovery);
+    await provider.saveClientInformation(state.client);
+
+    const flow = await fixture.service.beginAuthorization(SERVER_NAME, gated.url);
+    const complete = flow.complete({ timeoutMs: 10_000 });
+    await deliverCallback(flow);
+    await gated.exchangeStarted;
+
+    const shutdown = fixture.service.shutdown();
+    await expect(complete).rejects.toThrow(/OAuth flow for "notion" failed/);
+    await shutdown;
+
+    expect((await fixture.service.tokenState(SERVER_NAME, gated.url)).hasTokens).toBe(false);
+    expect(fixture.events.filter((event) => event.type === 'tokens-saved')).toHaveLength(0);
+  }, 15000);
+
+  it('does not log a drain timeout after a clean shutdown settles', async () => {
+    const warnings: string[] = [];
+    const log: Logger = {
+      error: () => {},
+      warn: (message) => {
+        warnings.push(message);
+      },
+      info: () => {},
+      debug: () => {},
+      child: () => log,
+    };
+    const fixture = makeFixture(createMemoryMcpOAuthStore(), {
+      shutdownDrainTimeoutMs: 50,
+      log,
+    });
+    cleanups.push(() => fixture.service.dispose());
+
+    await fixture.service.shutdown();
+    await fixture.scheduler.advanceBy(1_000);
+
+    expect(warnings).toHaveLength(0);
   });
 });

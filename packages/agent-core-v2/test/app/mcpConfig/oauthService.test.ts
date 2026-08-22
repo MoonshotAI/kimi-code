@@ -4,7 +4,10 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
-import { IMcpOAuthService, AppMcpOAuthService } from '#/app/mcpConfig/oauthService';
+import {
+  AppMcpOAuthService,
+  IMcpOAuthService,
+} from '#/app/mcpConfig/oauthService';
 import { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
 
 import { stubLog } from '../../_base/log/stubs';
