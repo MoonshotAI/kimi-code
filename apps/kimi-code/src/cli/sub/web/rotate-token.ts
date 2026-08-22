@@ -12,6 +12,7 @@ import type { Command } from 'commander';
 
 import { darkColors } from '#/tui/theme/colors';
 import { getDataDir } from '#/utils/paths';
+import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 
 import { accessUrlLines, splitTokenFragment } from './access-urls';
 
@@ -39,13 +40,15 @@ export function registerRotateTokenCommand(server: Command): void {
         const instance = await getLiveServerInstance();
         if (instance !== undefined) {
           for (const { label, url: href } of accessUrlLines(instance.host, instance.port, token)) {
-            // De-emphasize the `#token=…` fragment so the host/port stands out.
+            // De-emphasize the `#token=…` fragment so the host/port stands out,
+            // and wrap the whole URL in an OSC 8 terminal hyperlink for
+            // click-to-open support in supported terminals.
             const [base, frag] = splitTokenFragment(href);
-            const rendered =
+            const display =
               frag === ''
                 ? chalk.hex(darkColors.accent)(base)
                 : chalk.hex(darkColors.accent)(base) + chalk.hex(darkColors.textDim)(frag);
-            process.stdout.write(`  ${chalk.dim(label)}${rendered}\n`);
+            process.stdout.write(`  ${chalk.dim(label)}${toTerminalHyperlink(display, href)}\n`);
           }
         }
       } catch (error) {
