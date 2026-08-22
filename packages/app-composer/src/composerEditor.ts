@@ -15,6 +15,7 @@ import { baseKeymap, splitBlock } from 'prosemirror-commands';
 import { composerSchema, buildMentionInsertion, collectSkillMentions, docToText, inlineRunStartOffset, parseClipboardText, posToTextOffset, serializeClipboardSlice, textOffsetToPos, textToDoc } from './composerTextDoc';
 import type { MentionAttrs, SkillMentionRef } from './composerTextDoc';
 import { buildMentionPill } from './mentionPill';
+import { buildComposerDecorations, type ComposerDecoState, type WorkModePillSpec } from './workModePill';
 import { stashEditorState, takeEditorState } from './editorStateCache';
 import type { TextFieldLike } from './textField';
 
@@ -33,6 +34,10 @@ export interface ComposerEditorOptions {
   /** Editor lost focus — the composer closes its autocomplete menus (the
    *  menu rows use mousedown.prevent, so picking one never fires this). */
   onBlur?: (event: FocusEvent) => void;
+  /** Click on the work-mode pill's × — the composer disarms the mode. The
+   *  pill is a widget decoration, so dismissal travels as this callback, not
+   *  as a document edit. */
+  onWorkModeDismiss?: () => void;
   /** IME latch hooks — the composer keeps its per-field composition state and
    *  the document-level latch sees the same events via capture. */
   onCompositionStart?: () => void;
@@ -47,6 +52,15 @@ export interface ComposerEditorApi extends TextFieldLike {
    *  Matches textarea `.value =` semantics: does not fire onChange, is not
    *  undoable, and RESETS the undo stack; the caret lands at the end. */
   setText(text: string): void;
+  /** Show the armed work-mode pill at the document head (null hides it). The
+   *  pill is a widget decoration — NOT document content — so it never enters
+   *  the serialized text, the char offsets, or the undo stack, and it can only
+   *  ever sit at the head (see workModePill.ts). */
+  setWorkMode(spec: WorkModePillSpec | null): void;
+  /** The placeholder line drawn while the doc is empty. Rendered as a widget
+   *  decoration (a contenteditable has no native placeholder) so it can share
+   *  the first line with the work-mode pill. */
+  setPlaceholder(text: string): void;
   /** Insert a line break at the caret, replacing any selection (splitBlock).
    *  Goes through a normal transaction so it IS undoable via PM history. */
   insertNewlineAtCaret(): void;
@@ -155,6 +169,20 @@ export function getComposerEditorView(dom: HTMLElement): EditorView | undefined 
 export function createComposerEditor(host: HTMLElement, options: ComposerEditorOptions): ComposerEditorApi {
   let editable = true;
 
+  // The composer chrome (work-mode pill / placeholder) is NOT document
+  // content — see workModePill.ts. The deco state lives in this closure (not
+  // a plugin field) so setText()'s EditorState rebuild can't reset it; the
+  // setters below poke the view with a doc-unchanged transaction, which is
+  // enough to re-run the decorations prop.
+  const decoState: ComposerDecoState = { pill: null, placeholder: '' };
+  const composerChrome = new Plugin({
+    props: {
+      decorations(state) {
+        return buildComposerDecorations(state.doc, decoState, () => options.onWorkModeDismiss?.());
+      },
+    },
+  });
+
   const view = new EditorView(host, {
     state: EditorState.create({
       schema: composerSchema,
@@ -169,6 +197,7 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
         // and decides which keys ever reach these.
         keymap(baseKeymap),
         trailingPillCaretAnchor,
+        composerChrome,
       ],
     }),
     editable: () => editable,
@@ -312,6 +341,19 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
       splitBlock(view.state, (tr) => view.dispatch(tr.scrollIntoView()));
     },
 
+    setWorkMode(spec: WorkModePillSpec | null): void {
+      decoState.pill = spec;
+      // A doc-unchanged transaction re-runs the decorations prop without
+      // firing onChange (dispatchTransaction gates it on tr.docChanged) and
+      // without touching the undo stack (no steps).
+      view.dispatch(view.state.tr);
+    },
+
+    setPlaceholder(text: string): void {
+      decoState.placeholder = text;
+      view.dispatch(view.state.tr);
+    },
+
     insertMention(attrs: MentionAttrs, range: { start: number; end: number }): void {
       view.dispatch(buildMentionInsertion(view.state, attrs, range));
       view.focus();
@@ -349,7 +391,12 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
     restoreState(sessionId: string): boolean {
       const state = takeEditorState(sessionId);
       if (!state) return false;
-      view.updateState(state);
+      // The stash may come from ANOTHER editor instance (empty-session ↔
+      // docked composer swap) — its plugin objects close over that instance's
+      // chrome state (work-mode pill / placeholder deco) and callbacks.
+      // Reconfigure onto THIS instance's plugins so the pill keeps working;
+      // the undo stack survives because history() shares a fixed plugin key.
+      view.updateState(state.reconfigure({ plugins: view.state.plugins }));
       return true;
     },
 

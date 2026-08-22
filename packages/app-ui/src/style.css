@@ -375,8 +375,8 @@ html[data-color-scheme="dark"] {
   /* Workbar-mode pill close button: sized to the pill's right-end reserve —
      below the IconButton sm default so the hover wash never outgrows the
      pill's rounded end. The desktop hit ring reaches this far past the box on
-     each side, staying inside the textarea's indent reserve. Both track the
-     icon/spacing scales — no ad-hoc numbers. */
+     each side, staying inside the first-line reserve the pill makes. Both
+     track the icon/spacing scales — no ad-hoc numbers. */
   --wm-x-size: calc(var(--p-ic-sm) + var(--space-1)); /* 18px at the default scale */
   --wm-x-ring: var(--space-1-5);
 

@@ -178,6 +178,7 @@ onMounted(() => {
     },
     handleKeyDown: (e) => handleKeydown(e),
     onBlur: handleEditorBlur,
+    onWorkModeDismiss: clearWorkMode,
     onCompositionStart: handleCompositionStart,
     onCompositionEnd: handleCompositionEnd,
   });
@@ -186,6 +187,27 @@ onMounted(() => {
   // Browsers don't selection-paint an inline svg glyph — mark covered pills
   // with a class instead (see mentionSelectionSync).
   stopMentionSelectionSync = startMentionSelectionSync(() => editorHostRef.value);
+
+  // The armed work mode renders as the editor's leading pill (a widget
+  // decoration at the document head — never document content, so the wire
+  // text is untouched); the × calls back into clearWorkMode. Re-pushed on
+  // mode / locale changes so the pill's label follows the locale.
+  watchEffect(() => {
+    editor?.setWorkMode(
+      workMode.value
+        ? {
+            mode: workMode.value,
+            label: workMode.value === 'goal' ? t('status.goalLabel') : t('status.planLabel'),
+            dismissLabel: t('status.workModeDismiss'),
+          }
+        : null,
+    );
+  });
+  // The empty-doc placeholder is an editor decoration too, so it can share
+  // the first line with the work-mode pill.
+  watchEffect(() => {
+    editor?.setPlaceholder(placeholder.value);
+  });
 
   // Restore the session's stashed state, falling back to the persisted
   // draft. If the two ever diverge (e.g. localStorage lost the draft
@@ -1466,51 +1488,6 @@ function clearWorkMode(): void {
   else if (workMode.value === 'plan') emit('togglePlan');
 }
 
-// The pill floats over the textarea's first line — text-indent makes its
-// room, measured from the pill itself (label width varies by mode/locale).
-const wmPillRef = ref<HTMLElement | null>(null);
-const wmIndent = ref('');
-const wmHostStyle = computed(() => (wmIndent.value ? { '--wm-indent': wmIndent.value } : undefined));
-let wmResizeObserver: ResizeObserver | null = null;
-
-function syncWmIndent(): void {
-  const el = wmPillRef.value;
-  // On touch devices the pill gets its own lane above the text instead of
-  // floating over the first line (the hover:none rules reserve the ring's
-  // footprint on top of the input row), so no indent reserve is needed —
-  // the pill never overlaps a line box there.
-  const touchLane = typeof window.matchMedia === 'function' && window.matchMedia('(hover: none)').matches;
-  // Indent = pill width + the --space-1-5 gap − the --space-05 the pill is
-  // pulled left (.wm-pill's margin-left) — calc keeps the tokens in the
-  // geometry, so a scale change moves the first line's room with it.
-  wmIndent.value = el && !touchLane ? `calc(${el.offsetWidth}px + var(--space-1-5) - var(--space-05))` : '';
-}
-
-watch(
-  workMode,
-  async (mode) => {
-    wmResizeObserver?.disconnect();
-    wmResizeObserver = null;
-    if (!mode) {
-      wmIndent.value = '';
-      return;
-    }
-    await nextTick();
-    syncWmIndent();
-    // Width also moves with locale, font scale and responsive rules — track
-    // the element, not just the mode transition.
-    if (typeof ResizeObserver === 'function' && wmPillRef.value) {
-      wmResizeObserver = new ResizeObserver(syncWmIndent);
-      wmResizeObserver.observe(wmPillRef.value);
-    }
-  },
-  { immediate: true },
-);
-onUnmounted(() => {
-  wmResizeObserver?.disconnect();
-  wmResizeObserver = null;
-});
-
 // Permission modes
 const PERM_MODES: { mode: PermissionMode; icon: IconName; color: string; labelKey: string; descKey: string }[] = [
   { mode: 'manual', icon: 'hand', color: 'var(--color-text)', labelKey: 'status.permissionManual', descKey: 'status.permissionManualDesc' },
@@ -2097,27 +2074,18 @@ function selectModel(modelId: string): void {
           </div>
         </Transition>
 
-        <div class="input-row" :class="{ 'wm-armed': workMode }">
-          <!-- The primary work mode (plan XOR goal-armed) as a leading pill —
-               × disarms it; an active goal lives on the dock pill instead.
-               One text-line tall, floating over the editor's first line (the
-               first paragraph's text-indent makes the room). -->
-          <span v-if="workMode" ref="wmPillRef" class="wm-pill">
-            <Icon :name="workMode === 'goal' ? 'target' : 'file-edit'" size="sm" />
-            <span>{{ workMode === 'goal' ? t('status.goalLabel') : t('status.planLabel') }}</span>
-            <IconButton class="wm-x" size="sm" :label="t('status.workModeDismiss')" :tooltip="t('status.workModeDismiss')" @mousedown.prevent @click="clearWorkMode">
-              <Icon name="close" size="sm" />
-            </IconButton>
-          </span>
+        <div class="input-row">
           <!-- ProseMirror mounts inside this host (see script). The host keeps
-               the .ph styling + placeholder data attrs; combobox ARIA lives on
-               the PM root (the focusable element), set imperatively. -->
+               the .ph styling + the data-empty/data-wm flags; combobox ARIA
+               lives on the PM root (the focusable element), set imperatively.
+               The work-mode pill and the empty-doc placeholder are widget
+               decorations INSIDE the editor (see workModePill.ts) — in-flow
+               at the document head, never document content. -->
           <div
             ref="editorHostRef"
             class="ph"
-            :style="wmHostStyle"
-            :data-placeholder="placeholder"
             :data-empty="text.length === 0"
+            :data-wm="workMode ? 'true' : 'false'"
           ></div>
           <Tooltip :text="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')">
           <button
@@ -2651,8 +2619,6 @@ function selectModel(modelId: string): void {
      and an unset caret inherits that faint colour and nearly disappears. */
   caret-color: var(--color-text);
   flex: 1;
-  /* Anchor for the placeholder ::before overlay. */
-  position: relative;
   border: none;
   outline: none;
   font-family: var(--font-ui);
@@ -2670,19 +2636,6 @@ function selectModel(modelId: string): void {
 
 .ph::-webkit-scrollbar {
   display: none;
-}
-
-/* Placeholder: an overlay shown only while the doc is empty (a contenteditable
-   has no native `placeholder`); the text comes from the host's data attr. */
-.ph[data-empty='true']::before {
-  content: attr(data-placeholder);
-  position: absolute;
-  top: 0;
-  /* The mode pill floats over the first line — start after it (the same
-     reserve the first paragraph's text-indent makes). */
-  left: var(--wm-indent, 0px);
-  color: var(--muted);
-  pointer-events: none;
 }
 
 .ph:not([data-empty='true']) {
@@ -2722,11 +2675,97 @@ function selectModel(modelId: string): void {
   color: var(--color-text);
 }
 
-/* The mode pill's room: only the FIRST paragraph's first line indents (the
-   pill floats over it) — text-indent inherits, so target first-of-type
-   explicitly or every paragraph's first line would shift. */
-.ph :deep(.ProseMirror p:first-of-type) {
-  text-indent: var(--wm-indent, 0px);
+/* The work-mode pill and the empty-doc placeholder are widget decorations
+   inside the editor (built by app-composer's workModePill) — in-flow at the
+   document head, so they scroll with the text and need no measured indent.
+   The pill is exactly one line box tall (it shares the textarea's font-size
+   and line-height so its label sits on the first line's baseline), pulled
+   left --space-05 into the armed scrollport's padding-left reserve (see the
+   reserve rule below — without it the rounded cap would be clipped flat at
+   the .ph edge) to keep the inset concentric (14px on both sides), with a
+   --space-1-5 gap to the text. */
+.ph :deep(.wm-pill) {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  vertical-align: top;
+  height: calc(var(--content-font-size) * 1.5);
+  margin-left: calc(-1 * var(--space-05));
+  margin-right: var(--space-1-5);
+  padding: 0 calc((var(--content-font-size) * 1.5 - var(--wm-x-size)) / 2) 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--ui-font-size-sm);
+  font-weight: var(--weight-medium);
+  line-height: calc(var(--content-font-size) * 1.5);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.ph :deep(.wm-icon) {
+  display: inline-flex;
+}
+
+/* The × is a plain <button> on widget DOM, hand-built to the IconButton
+   contract (Vue primitives can't reach it — same exception as the mention
+   tooltip's buttons): muted idle ink deepening on a hover wash, --p-focus-ring
+   on keyboard focus. Sized to the pill's right-end reserve (--wm-x-size) —
+   below the sm default so the hover wash never outgrows the pill's rounded
+   end; the clickable area grows past its box via a transparent ring, which on
+   touch meets the --touch-target-min floor inside the pill's own lane (see
+   the hover:none lane rule at the end of this sheet). */
+.ph :deep(.wm-x) {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--wm-x-size);
+  height: var(--wm-x-size);
+  padding: 0;
+  border: 0.5px solid transparent;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition:
+    background var(--duration-base) var(--ease-out),
+    color var(--duration-base) var(--ease-out);
+}
+.ph :deep(.wm-x:hover) {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+.ph :deep(.wm-x:focus-visible) {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+}
+.ph :deep(.wm-x)::before {
+  content: '';
+  position: absolute;
+  inset: calc(-1 * var(--wm-x-ring));
+}
+
+/* The ×'s focus ring (--p-focus-ring, 3px) reaches past the button, which is
+   centered in the pill with only a couple px of air above — and the pill sits
+   flush at the top of the .ph scrollport, so the ring's upper half would be
+   clipped. Reserve real scrollport headroom while armed — and a --space-05
+   inline reserve too: the pill's negative left margin pulls its rounded cap
+   2px past the text column, which the scrollport would otherwise clip flat. */
+.ph[data-wm='true'] :deep(.ProseMirror) {
+  padding-top: var(--space-1);
+  padding-left: var(--space-05);
+}
+
+/* The placeholder line (widget decoration, empty docs only): muted, inert —
+   clicks fall through to the paragraph and focus the editor. */
+.ph :deep(.wm-placeholder) {
+  color: var(--muted);
+  pointer-events: none;
+  user-select: none;
 }
 
 /* Expanded editor: a tall composing area at ~70% of the viewport — clearly
@@ -3607,80 +3646,6 @@ function selectModel(modelId: string): void {
   line-height: var(--leading-tight);
 }
 
-/* The work-mode pill floats over the textarea's first line (text-indent
-   makes the room) — exactly one line box tall, so it never clips the second
-   line, and it borrows the textarea's font-size and line-height so its
-   label shares the first line's baseline. The negative --space-05 left
-   margin keeps the inset concentric (14px on both sides). */
-.wm-pill {
-  position: absolute;
-  top: 0;
-  left: 0;
-  margin-left: calc(-1 * var(--space-05));
-  z-index: var(--z-raised);
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: calc(var(--content-font-size) * 1.5);
-  padding: 0 calc((var(--content-font-size) * 1.5 - var(--wm-x-size)) / 2) 0 var(--space-2);
-  border: none;
-  border-radius: var(--radius-full);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
-  font-weight: var(--weight-medium);
-  line-height: calc(var(--content-font-size) * 1.5);
-  white-space: nowrap;
-  user-select: none;
-}
-/* The IconButton's own chrome handles hover/focus; the clickable area grows
-   past its box via a transparent ring — on desktop only, where the ring's
-   7px reach stays inside the textarea's indent reserve. On touch (the
-   hover:none rule below) the armed pill moves into its own lane above the
-   text and the ring meets the full 44×44 floor: horizontally the pill's
-   right padding grows to the ring's reach (its right edge lands exactly on
-   the pill's edge), vertically the ring spans a fixed footprint around the
-   pill that the lane reserves in full — so the hit area can never cover a
-   line of input text. */
-.wm-x {
-  position: relative;
-  /* Sized to the pill's right-end reserve (--wm-x-size) — below the sm
-     default so the hover wash never outgrows the pill's rounded end. */
-  width: var(--wm-x-size);
-  height: var(--wm-x-size);
-  border-radius: var(--radius-full);
-}
-.wm-x::before {
-  content: '';
-  position: absolute;
-  inset: calc(-1 * var(--wm-x-ring));
-}
-@media (hover: none) {
-  /* The armed pill's touch lane: the input row reserves the ring's whole
-     44px footprint on top — --space-2 + --space-1-5 of it above the pill
-     (landing in .cin-wrap's top padding, which holds no text and sits below
-     the attachment strip), the rest below the pill — plus --space-1
-     clearance, so no line box ever intersects the hit area. syncWmIndent
-     returns no first-line indent on touch to match. The pill's layout box
-     stays --wm-x-size; its right padding takes the ring's horizontal reach,
-     so the 44px-wide ring never extends past the pill either. (At ≤640px
-     the pill height pins to --composer-mobile-input-size — the mobile touch
-     block at the end re-expresses these insets with that token.) */
-  .input-row.wm-armed {
-    padding-top: calc(var(--touch-target-min) - var(--space-2) - var(--space-1-5) + var(--space-1));
-  }
-  .wm-pill {
-    padding-right: calc((var(--touch-target-min) - var(--wm-x-size)) / 2);
-  }
-  .wm-x::before {
-    inset:
-      calc(-1 * (var(--space-2) + var(--space-1-5)) - (var(--content-font-size) * 1.5 - var(--wm-x-size)) / 2)
-      calc((var(--wm-x-size) - var(--touch-target-min)) / 2)
-      calc((var(--content-font-size) * 1.5 + var(--wm-x-size)) / 2 - var(--touch-target-min) + var(--space-2) + var(--space-1-5));
-  }
-}
-
 /* ---- Narrow composer toolbar ----------------------------------------------
    Below a wide desktop the chat column can be narrower than the full toolbar
    needs — with the sidebar open on a small window, and on phones. Narrowing
@@ -3752,12 +3717,13 @@ function selectModel(modelId: string): void {
      narrowest rows, where the stage machine drops it first (it merely
      duplicates the slash command), then the model pill (its identity and
      picker live in the sheet too). */
-  /* The armed work-mode pill floats in the input row on mobile too — hiding
-     it left goal/plan arming with zero composer feedback. Its height pins to
-     the mobile input line box (see --composer-mobile-input-size) instead of
+  /* The armed work-mode pill shows on mobile too — hiding it left goal/plan
+     arming with zero composer feedback. Its height pins to the mobile input
+     line box (see --composer-mobile-input-size) instead of
      --content-font-size, which tracks the font scale and would outgrow the
-     pinned first line. */
-  .wm-pill {
+     pinned first line. On touch it takes its own lane (the hover:none rule
+     below the mobile block). */
+  .ph :deep(.wm-pill) {
     height: calc(var(--composer-mobile-input-size) * 1.5);
     line-height: calc(var(--composer-mobile-input-size) * 1.5);
     padding-right: calc((var(--composer-mobile-input-size) * 1.5 - var(--wm-x-size)) / 2);
@@ -3817,6 +3783,36 @@ function selectModel(modelId: string): void {
   }
 }
 
+/* On touch the armed pill takes its own lane above the text (the mobile
+   touch lane, adapted to the in-flow pill): the ×'s full 44px hit ring then
+   fits inside the pill's own footprint instead of covering editable lines —
+   the taller headroom and the lane's bottom margin absorb the ring's
+   vertical reach, the widened right padding lands the ring's right edge
+   exactly on the pill's edge, and the scrollport grows to hold the whole
+   lane. The same recipe covers every width: at the desktop 21px line the
+   ring clears the first text line by 0.5px, at the mobile pinned 24px line
+   by 2px. Expanded mode's taller min-height has the higher specificity and
+   always wins. Placed after the ≤640px block so its display / padding-right
+   outrank the mobile inline geometry on touch. */
+@media (hover: none) {
+  .ph[data-wm='true'] :deep(.ProseMirror) {
+    padding-top: var(--space-3);
+  }
+  .ph :deep(.wm-pill) {
+    display: flex;
+    width: max-content;
+    margin-right: 0;
+    margin-bottom: var(--space-3);
+    padding-right: calc((var(--touch-target-min) - var(--wm-x-size)) / 2);
+  }
+  .ph :deep(.wm-x)::before {
+    inset: calc((var(--wm-x-size) - var(--touch-target-min)) / 2);
+  }
+  .ph[data-wm='true'] {
+    min-height: calc(36px + var(--space-3));
+  }
+}
+
 /* Touch: invisible rings grow the round mobile controls' hit area toward the
    44px minimum, glyph and visual size unchanged. */
 @media (max-width: 640px) and (hover: none) {
@@ -3851,22 +3847,6 @@ function selectModel(modelId: string): void {
   .labels-collapsed .perm-pill {
     width: var(--touch-target-min);
     height: var(--touch-target-min);
-  }
-  /* The work-mode pill's touch geometry at ≤640px: the pill height pins to
-     --composer-mobile-input-size (not --content-font-size), so the ring's
-     vertical insets are re-expressed with that token — the footprint itself
-     (up reach into .cin-wrap's padding, bottom at the rest of the 44px) is
-     identical to the base hover:none rule's, and so are the lane reserve
-     and the horizontal reach; the padding-right repeat only outranks the
-     ≤640px block's unpadded rule above. */
-  .wm-pill {
-    padding-right: calc((var(--touch-target-min) - var(--wm-x-size)) / 2);
-  }
-  .wm-x::before {
-    inset:
-      calc(-1 * (var(--space-2) + var(--space-1-5)) - (var(--composer-mobile-input-size) * 1.5 - var(--wm-x-size)) / 2)
-      calc((var(--wm-x-size) - var(--touch-target-min)) / 2)
-      calc((var(--composer-mobile-input-size) * 1.5 + var(--wm-x-size)) / 2 - var(--touch-target-min) + var(--space-2) + var(--space-1-5));
   }
 }
 
