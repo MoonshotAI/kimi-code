@@ -60,6 +60,7 @@ function makeInMemoryStreamPair(): {
 function makeFakeSession(
   sessionId: string,
   script: readonly Event[],
+  getUsage?: () => Promise<unknown>,
 ): {
   session: Session;
   calls: {
@@ -89,6 +90,7 @@ function makeFakeSession(
       await emit();
     },
     cancel: async () => undefined,
+    getUsage,
     onEvent: (fn: (event: Event) => void) => {
       listeners.add(fn);
       return () => {
@@ -329,6 +331,40 @@ describe('AcpSession slash routing', () => {
     expect(text).toContain('Available ACP commands:');
     expect(text).toContain('/compact');
     expect(text).toContain('/help');
+  });
+
+  it('reports token usage on a built-in command PromptResponse (covers the /compact path)', async () => {
+    // The token-consuming built-in is `/compact`, but every built-in
+    // shares the same return path in `runBuiltInCommand`; exercising
+    // `/help` with a getUsage stub proves that path now carries usage,
+    // which is what a token-consuming compaction needs.
+    const sessionId = 'sess-slash-usage';
+    const { session } = makeFakeSession(sessionId, [endedTurn(sessionId)], async () => ({
+      total: { inputOther: 200, output: 30, inputCacheRead: 0, inputCacheCreation: 0 },
+    }));
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    const response = await client.prompt({ sessionId, prompt: [textBlock('/help')] });
+
+    expect(response.stopReason).toBe('end_turn');
+    expect(response.usage).toEqual({
+      inputTokens: 200,
+      outputTokens: 30,
+      cachedReadTokens: 0,
+      cachedWriteTokens: 0,
+      totalTokens: 230,
+    });
   });
 
   it('routes built-in `/status` locally and renders SDK status fields', async () => {
