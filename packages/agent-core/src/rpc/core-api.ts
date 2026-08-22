@@ -309,6 +309,12 @@ export interface SkillSummary {
   readonly type?: string | undefined;
   readonly disableModelInvocation?: boolean | undefined;
   readonly isSubSkill?: boolean | undefined;
+  readonly category?: string | undefined;
+  readonly categories?: readonly string[] | undefined;
+  readonly issuer?: string | undefined;
+  readonly collection?: string | undefined;
+  readonly groups?: readonly string[] | undefined;
+  readonly tags?: readonly string[] | undefined;
 }
 
 export interface ActivateSkillPayload {

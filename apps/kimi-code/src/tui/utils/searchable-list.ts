@@ -19,6 +19,8 @@ export interface SearchableListOptions<T> {
   readonly items: readonly T[];
   /** Text a list item is fuzzy-matched against. */
   readonly toSearchText: (item: T) => string;
+  /** Optional predicate to pre-filter items based on current query string. */
+  readonly filterItem?: (item: T, query: string) => boolean;
   /** Items per page; defaults to 8. */
   readonly pageSize?: number;
   /** Initial cursor position (clamped to >= 0). */
@@ -40,6 +42,7 @@ export interface SearchableListView<T> {
 export class SearchableList<T> {
   private items: readonly T[];
   private readonly toSearchText: (item: T) => string;
+  private readonly filterItem?: (item: T, query: string) => boolean;
   private readonly pageSize: number;
   private readonly searchable: boolean;
   private query = '';
@@ -48,6 +51,7 @@ export class SearchableList<T> {
   constructor(opts: SearchableListOptions<T>) {
     this.items = opts.items;
     this.toSearchText = opts.toSearchText;
+    this.filterItem = opts.filterItem;
     this.pageSize = opts.pageSize ?? DEFAULT_PAGE_SIZE;
     this.searchable = opts.searchable ?? false;
     this.cursor = Math.max(opts.initialIndex ?? 0, 0);
@@ -63,8 +67,12 @@ export class SearchableList<T> {
   }
 
   filtered(): readonly T[] {
-    if (this.query.length === 0) return this.items;
-    return fuzzyFilter([...this.items], this.query, this.toSearchText);
+    let pool = this.items;
+    if (this.filterItem) {
+      pool = pool.filter((item) => this.filterItem!(item, this.query));
+    }
+    if (this.query.length === 0) return pool;
+    return fuzzyFilter([...pool], this.query, this.toSearchText);
   }
 
   /** The item under the cursor, clamped into the filtered range. */
@@ -98,6 +106,15 @@ export class SearchableList<T> {
 
   pageDown(): void {
     this.cursor = Math.min(Math.max(0, this.filtered().length - 1), this.cursor + this.pageSize);
+  }
+
+  setSelectedIndex(index: number): void {
+    const len = this.filtered().length;
+    if (len === 0) {
+      this.cursor = 0;
+      return;
+    }
+    this.cursor = Math.max(0, Math.min(index, len - 1));
   }
 
   /** Clears the active query and resets the cursor. Returns whether a query was cleared. */
