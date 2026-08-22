@@ -1,4 +1,8 @@
-import type { BackgroundTaskInfo, Session } from '@moonshot-ai/kimi-code-sdk';
+import type {
+  BackgroundTaskInfo,
+  BackgroundTaskStatus,
+  Session,
+} from '@moonshot-ai/kimi-code-sdk';
 import type { ProcessTerminal, TUI } from '@moonshot-ai/pi-tui';
 
 import { AgentActivityViewer, formatSubagentActivityPreview } from '../components/dialogs/agent-activity-viewer';
@@ -36,7 +40,10 @@ export type TasksBrowserState = {
   selectedTaskId: string | undefined;
   tailOutput: string | undefined;
   tailLoading: boolean;
+  tailError: string | undefined;
   tailRequestId: number;
+  tailRequestInFlight: boolean;
+  tailTaskStatus: BackgroundTaskStatus | undefined;
   flashMessage: string | undefined;
   flashTimer: NodeJS.Timeout | undefined;
   pollTimer: NodeJS.Timeout | undefined;
@@ -78,13 +85,15 @@ export class TasksBrowserController {
 
     const filter: TasksFilter = 'all';
     const selectedTaskId = this.pickInitialSelection(tasks, filter);
+    const selectedTask = tasks.find((task) => task.taskId === selectedTaskId);
     const component = new TasksBrowserApp(
       {
         tasks,
         filter,
         selectedTaskId,
         tailOutput: undefined,
-        tailLoading: false,
+        tailLoading: selectedTaskId !== undefined,
+        tailError: undefined,
         flashMessage: undefined,
         ...this.buildCallbacks(),
       },
@@ -105,8 +114,11 @@ export class TasksBrowserController {
       filter,
       selectedTaskId,
       tailOutput: undefined,
-      tailLoading: false,
+      tailLoading: selectedTaskId !== undefined,
+      tailError: undefined,
       tailRequestId: 0,
+      tailRequestInFlight: false,
+      tailTaskStatus: selectedTask?.status,
       flashMessage: undefined,
       flashTimer: undefined,
       pollTimer,
@@ -114,7 +126,7 @@ export class TasksBrowserController {
     });
 
     if (selectedTaskId !== undefined) {
-      this.loadTail(selectedTaskId);
+      void this.loadTail(selectedTaskId, selectedTask);
     }
   }
 
@@ -200,7 +212,7 @@ export class TasksBrowserController {
     return candidates.find((t) => t.status === 'running')?.taskId ?? candidates[0]!.taskId;
   }
 
-  private async refresh(opts: { silent?: boolean } = {}): Promise<void> {
+  async refresh(opts: { silent?: boolean; forceTail?: boolean } = {}): Promise<void> {
     const { state } = this.host;
     const browser = state.tasksBrowser;
     if (browser === undefined) return;
@@ -208,7 +220,7 @@ export class TasksBrowserController {
     const session = this.host.session;
     if (session === undefined) return;
 
-    let tasks: readonly BackgroundTaskInfo[];
+    let tasks: readonly BackgroundTaskInfo[] | undefined;
     try {
       tasks = await session.listBackgroundTasks({ activeOnly: false });
     } catch (error) {
@@ -217,27 +229,49 @@ export class TasksBrowserController {
           `Refresh failed: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
-      return;
     }
     if (state.tasksBrowser !== browser) return;
-    this.syncAgentPreview();
-    this.pushProps(tasks);
+
+    const selectedTaskId = browser.selectedTaskId;
+    const selectedTask =
+      tasks?.find((task) => task.taskId === selectedTaskId) ??
+      (selectedTaskId === undefined ? undefined : this.host.backgroundTasks.get(selectedTaskId));
+    const previousStatus = browser.tailTaskStatus;
+    browser.tailTaskStatus = selectedTask?.status;
+
+    const hasAgentPreview = this.syncAgentPreview(selectedTask);
+    this.pushProps(tasks ?? [...this.host.backgroundTasks.values()]);
+
+    if (selectedTaskId === undefined || hasAgentPreview) return;
+    const reachedTerminalState =
+      selectedTask !== undefined &&
+      selectedTask.status !== 'running' &&
+      selectedTask.status !== previousStatus;
+    const forceTail = opts.forceTail === true || reachedTerminalState;
+    if (forceTail || selectedTask?.status === 'running') {
+      await this.loadTail(selectedTaskId, selectedTask, forceTail);
+    }
   }
 
   /** Agent tasks capture output only on completion, so while one is selected
    *  the Preview frame is fed from the in-memory activity store instead. */
-  private syncAgentPreview(): void {
+  private syncAgentPreview(info: BackgroundTaskInfo | undefined): boolean {
     const browser = this.host.state.tasksBrowser;
     const selectedTaskId = browser?.selectedTaskId;
-    if (browser === undefined || selectedTaskId === undefined) return;
-    const info = this.host.backgroundTasks.get(selectedTaskId);
-    if (info?.kind !== 'agent' || info.agentId === undefined) return;
+    if (browser === undefined || selectedTaskId === undefined) return false;
+    if (info?.kind !== 'agent' || info.agentId === undefined) return false;
     const record = this.host.sessionEventHandler.subAgentEventHandler.activityStore.get(
       info.agentId,
     );
-    if (record === undefined) return;
+    if (record === undefined) return false;
+    if (browser.tailRequestInFlight) {
+      browser.tailRequestId += 1;
+      browser.tailRequestInFlight = false;
+    }
     browser.tailOutput = formatSubagentActivityPreview(record);
     browser.tailLoading = false;
+    browser.tailError = undefined;
+    return true;
   }
 
   private pushProps(tasks: readonly BackgroundTaskInfo[]): void {
@@ -249,6 +283,7 @@ export class TasksBrowserController {
       selectedTaskId: browser.selectedTaskId,
       tailOutput: browser.tailOutput,
       tailLoading: browser.tailLoading,
+      tailError: browser.tailError,
       flashMessage: browser.flashMessage,
       ...this.buildCallbacks(),
     });
@@ -295,11 +330,16 @@ export class TasksBrowserController {
     const browser = this.host.state.tasksBrowser;
     if (browser === undefined) return;
     if (browser.selectedTaskId === taskId) return;
+    const info = this.host.backgroundTasks.get(taskId);
     browser.selectedTaskId = taskId;
     browser.tailOutput = undefined;
     browser.tailLoading = true;
+    browser.tailError = undefined;
+    browser.tailTaskStatus = info?.status;
+    browser.tailRequestId += 1;
+    browser.tailRequestInFlight = false;
     this.repaint();
-    this.loadTail(taskId);
+    void this.loadTail(taskId, info);
   }
 
   private handleToggleFilter(): void {
@@ -311,7 +351,13 @@ export class TasksBrowserController {
 
   private handleRefresh(): void {
     this.flash('Refreshing…', 600);
-    void this.refresh();
+    const browser = this.host.state.tasksBrowser;
+    if (browser?.selectedTaskId !== undefined) {
+      browser.tailLoading = true;
+      browser.tailError = undefined;
+      this.repaint();
+    }
+    void this.refresh({ forceTail: true });
   }
 
   private async handleStop(taskId: string): Promise<void> {
@@ -327,7 +373,7 @@ export class TasksBrowserController {
     this.flash(`Stopping ${taskId}…`, 1500);
     try {
       await session.stopBackgroundTask(taskId, { reason: 'User initiated stop' });
-      await this.refresh({ silent: true });
+      await this.refresh({ silent: true, forceTail: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.flash(`Stop failed: ${message}`);
@@ -463,54 +509,62 @@ export class TasksBrowserController {
     state.ui.requestRender();
   }
 
-  private loadTail(taskId: string): void {
+  private async loadTail(
+    taskId: string,
+    info: BackgroundTaskInfo | undefined,
+    force = false,
+  ): Promise<void> {
     const { state } = this.host;
     const browser = state.tasksBrowser;
     if (browser === undefined) return;
 
     // Agent tasks capture output only on completion — serve the preview from
     // the in-memory activity store instead of the RPC when a record exists.
-    const info = this.host.backgroundTasks.get(taskId);
-    if (info !== undefined && info.kind === 'agent' && info.agentId !== undefined) {
-      const record = this.host.sessionEventHandler.subAgentEventHandler.activityStore.get(
-        info.agentId,
-      );
-      if (record !== undefined) {
-        browser.tailOutput = formatSubagentActivityPreview(record);
-        browser.tailLoading = false;
-        this.repaint();
-        return;
-      }
+    if (this.syncAgentPreview(info)) {
+      this.repaint();
+      return;
     }
 
     const session = this.host.session;
     if (session === undefined) {
       browser.tailLoading = false;
+      browser.tailError = 'No active session.';
       this.repaint();
       return;
     }
 
+    if (browser.tailRequestInFlight) {
+      if (!force) return;
+      browser.tailRequestId += 1;
+      browser.tailRequestInFlight = false;
+    }
     const requestId = ++browser.tailRequestId;
-    void session
-      .getBackgroundTaskOutput(taskId, { tail: 4000 })
-      .then((output) => {
-        const current = state.tasksBrowser;
-        if (current === undefined) return;
-        if (current !== browser || current.tailRequestId !== requestId) return;
-        if (current.selectedTaskId !== taskId) return;
-        current.tailOutput = output;
-        current.tailLoading = false;
-        this.repaint();
-      })
-      .catch(() => {
-        const current = state.tasksBrowser;
-        if (current === undefined) return;
-        if (current !== browser || current.tailRequestId !== requestId) return;
-        if (current.selectedTaskId !== taskId) return;
-        current.tailOutput = '';
-        current.tailLoading = false;
-        this.repaint();
-      });
+    browser.tailRequestInFlight = true;
+    try {
+      const output = await session.getBackgroundTaskOutput(taskId, { tail: 4000 });
+      const current = state.tasksBrowser;
+      if (current === undefined) return;
+      if (current !== browser || current.tailRequestId !== requestId) return;
+      if (current.selectedTaskId !== taskId) return;
+      const changed =
+        current.tailOutput !== output || current.tailLoading || current.tailError !== undefined;
+      current.tailOutput = output;
+      current.tailLoading = false;
+      current.tailError = undefined;
+      current.tailRequestInFlight = false;
+      if (changed) this.repaint();
+    } catch (error) {
+      const current = state.tasksBrowser;
+      if (current === undefined) return;
+      if (current !== browser || current.tailRequestId !== requestId) return;
+      if (current.selectedTaskId !== taskId) return;
+      const message = error instanceof Error ? error.message : String(error);
+      const changed = current.tailError !== message || current.tailLoading;
+      current.tailLoading = false;
+      current.tailError = message;
+      current.tailRequestInFlight = false;
+      if (changed) this.repaint();
+    }
   }
 
   private flash(message: string, durationMs = 2500): void {
