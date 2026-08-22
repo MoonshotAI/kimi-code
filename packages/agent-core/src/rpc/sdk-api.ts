@@ -48,6 +48,7 @@ export type QuestionAnswers = Record<string, string | true>;
 export interface QuestionResponse {
   readonly answers: QuestionAnswers;
   readonly method?: QuestionAnswerMethod | undefined;
+  readonly note?: string | undefined;
 }
 
 export type QuestionResult = null | QuestionAnswers | QuestionResponse;
