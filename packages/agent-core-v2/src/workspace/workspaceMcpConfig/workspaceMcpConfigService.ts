@@ -116,7 +116,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   }
 
   private merged(): Record<string, McpServerConfig> {
-    return { ...Object.fromEntries(this.fileServers), ...Object.fromEntries(this.pluginServers) };
+    return { ...Object.fromEntries(this.pluginServers), ...Object.fromEntries(this.fileServers) };
   }
 
   private async watchConfigFiles(): Promise<void> {

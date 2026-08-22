@@ -48,6 +48,7 @@ export class McpConfigStore extends Disposable implements IMcpConfigStore {
   private readonly writeEmitter = this._register(new AsyncEmitter<McpConfigWriteEvent>());
   readonly onDidWrite: Event<McpConfigWriteEvent> = this.writeEmitter.event;
   private mutationTail: Promise<void> = Promise.resolve();
+  private writePending = false;
 
   constructor(
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
@@ -120,7 +121,12 @@ export class McpConfigStore extends Disposable implements IMcpConfigStore {
       () => undefined,
       () => undefined,
     );
-    return tail;
+    return tail.then(async (result) => {
+      if (!this.writePending) return result;
+      this.writePending = false;
+      await this.writeEmitter.fireAsyncConcurrent({}, NO_ABORT);
+      return result;
+    });
   }
 
   private async read(): Promise<McpConfigFile> {
@@ -162,7 +168,7 @@ export class McpConfigStore extends Disposable implements IMcpConfigStore {
     await this.storage.write(CONFIG_SCOPE, MCP_CONFIG_KEY, textEncoder.encode(text), {
       atomic: true,
     });
-    await this.writeEmitter.fireAsyncConcurrent({}, NO_ABORT);
+    this.writePending = true;
   }
 }
 

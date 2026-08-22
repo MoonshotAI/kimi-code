@@ -131,7 +131,7 @@ describe('WorkspaceMcpConfigService', () => {
     return file;
   }
 
-  it('merges file and plugin servers in the initial resolve (plugin wins name collisions)', async () => {
+  it('merges file and plugin servers in the initial resolve (file wins name collisions)', async () => {
     await writeProjectConfig({
       shared: stdioConfig('file-version'),
       fileOnly: stdioConfig('file'),
@@ -142,7 +142,7 @@ describe('WorkspaceMcpConfigService', () => {
     await service.ready;
 
     expect(service.servers()).toEqual({
-      shared: stdioConfig('plugin-version'),
+      shared: stdioConfig('file-version'),
       fileOnly: stdioConfig('file'),
       pluginOnly: stdioConfig('plugin'),
     });
@@ -226,12 +226,12 @@ describe('WorkspaceMcpConfigService', () => {
     expect(service.servers()).toEqual({ beta: stdioConfig('beta') });
   }, 20000);
 
-  it('keeps the winning plugin server when the same-named file entry vanishes', async () => {
+  it('revives the same-named plugin entry when the winning file entry vanishes', async () => {
     await writeProjectConfig({ shared: stdioConfig('file-version') });
     pluginServers = { shared: stdioConfig('plugin-version') };
     const service = createService();
     await service.ready;
-    expect(service.servers()).toEqual({ shared: stdioConfig('plugin-version') });
+    expect(service.servers()).toEqual({ shared: stdioConfig('file-version') });
 
     await writeProjectConfig({});
     await storeWrites.fireAsync({}, new AbortController().signal);
@@ -247,6 +247,7 @@ describe('WorkspaceMcpConfigService', () => {
     await vi.waitFor(
       () => {
         expect(changes).toEqual([
+          { upsert: { shared: stdioConfig('plugin-version') }, remove: [] },
           { upsert: { pluginOnly: stdioConfig('plugin') }, remove: [] },
         ]);
       },
@@ -310,12 +311,12 @@ describe('WorkspaceMcpConfigService', () => {
     );
   }, 20000);
 
-  it('revives the same-named file entry when the winning plugin server vanishes', async () => {
+  it('keeps the winning file server when the same-named plugin entry vanishes', async () => {
     await writeProjectConfig({ shared: stdioConfig('file-version') });
     pluginServers = { shared: stdioConfig('plugin-version') };
     const service = createService();
     await service.ready;
-    expect(service.servers()).toEqual({ shared: stdioConfig('plugin-version') });
+    expect(service.servers()).toEqual({ shared: stdioConfig('file-version') });
 
     pluginServers = {};
     await pluginReloads.fireAsyncConcurrent(
@@ -323,14 +324,9 @@ describe('WorkspaceMcpConfigService', () => {
       new AbortController().signal,
     );
 
-    await vi.waitFor(
-      () => {
-        expect(changes).toEqual([{ upsert: { shared: stdioConfig('file-version') }, remove: [] }]);
-      },
-      { timeout: 10000, interval: 50 },
-    );
+    expect(changes).toEqual([]);
     expect(service.servers()).toEqual({ shared: stdioConfig('file-version') });
-  }, 20000);
+  });
 
   it('reloads immediately on a management-plane write, without the watch debounce', async () => {
     const service = createService();

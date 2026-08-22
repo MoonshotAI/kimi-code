@@ -401,6 +401,9 @@ export function defineKlientConformance(
           name: 'conf-mcp',
         });
         expect(await mcp.inspect({ targets: [] })).toEqual([]);
+        // An omitted `targets` ahead of a present options arg must mean "the
+        // whole catalog" on every transport (ipc encodes it as `null`).
+        expect((await mcp.inspect({})).map((i) => i.runtimeName)).toContain('conf-mcp');
         await expect(
           mcp.inspect({ targets: [{ source: 'global', name: 'conf-missing' }] }),
         ).rejects.toMatchObject({ name: 'RPCError', code: 40408 });

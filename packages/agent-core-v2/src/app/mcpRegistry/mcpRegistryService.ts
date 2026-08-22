@@ -101,11 +101,9 @@ export class McpRegistryService implements IMcpRegistryService {
     query: McpRegistryQuery = {},
   ): Promise<McpRegistryEntry | undefined> {
     const matches = (await this.list(query)).filter((entry) => entry.name === name);
-    const plugin = matches.find(
-      (entry) => entry.source === 'plugin' && entry.config.enabled !== false,
-    );
-    if (plugin !== undefined) return plugin;
-    return matches.find((entry) => entry.source === 'global');
+    const file = matches.find((entry) => entry.source === 'global');
+    if (file !== undefined) return file;
+    return matches.find((entry) => entry.source === 'plugin' && entry.config.enabled !== false);
   }
 }
 

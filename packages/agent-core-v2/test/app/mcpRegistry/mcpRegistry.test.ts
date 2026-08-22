@@ -326,15 +326,27 @@ describe('McpRegistryService', () => {
   });
 
   describe('resolveRuntimeTarget', () => {
-    it('prefers an enabled plugin entry over the file layers', async () => {
+    it('prefers the file entry over an enabled plugin entry', async () => {
       await store.add(stdioServer('plugin-demo:api', 'user-version'));
       pluginEntries = [
         pluginEntry('demo', 'api', { transport: 'http', url: 'https://example.com/mcp' }),
       ];
 
       await expect(registry.resolveRuntimeTarget('plugin-demo:api')).resolves.toMatchObject({
-        source: 'plugin',
-        config: { url: 'https://example.com/mcp' },
+        source: 'global',
+        config: { command: 'user-version' },
+      });
+    });
+
+    it('lets a file entry win by presence even when the file entry is disabled', async () => {
+      await store.add({ ...stdioServer('plugin-demo:api', 'user-version'), enabled: false });
+      pluginEntries = [
+        pluginEntry('demo', 'api', { transport: 'http', url: 'https://example.com/mcp' }),
+      ];
+
+      await expect(registry.resolveRuntimeTarget('plugin-demo:api')).resolves.toMatchObject({
+        source: 'global',
+        config: { command: 'user-version', enabled: false },
       });
     });
 

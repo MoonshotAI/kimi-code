@@ -428,7 +428,7 @@ describe('McpManagementService', () => {
       await expect(store.list()).resolves.toEqual([]);
     });
 
-    it('rejects add/update/remove against an enabled plugin entry', async () => {
+    it('lets a file entry shadow an enabled plugin entry', async () => {
       pluginEntries = [
         {
           name: 'plugin-demo:docs',
@@ -443,20 +443,36 @@ describe('McpManagementService', () => {
         url: 'https://example.com/v2',
       };
 
-      await expect(management.addServer(server)).rejects.toMatchObject({
-        code: ErrorCodes.REQUEST_INVALID,
-        message:
-          'MCP server "plugin-demo:docs" is read-only: it is contributed by plugin "demo" — update the plugin manifest instead',
-      });
-      await expect(management.updateServer(server)).rejects.toMatchObject({
-        code: ErrorCodes.REQUEST_INVALID,
-        message: expect.stringContaining('read-only'),
-      });
-      await expect(management.removeServer('plugin-demo:docs')).rejects.toMatchObject({
-        code: ErrorCodes.REQUEST_INVALID,
-        message: expect.stringContaining('read-only'),
-      });
+      const added = await management.addServer(server);
+      const matches = added.filter((entry) => entry.name === 'plugin-demo:docs');
+      expect(matches).toHaveLength(2);
+      expect(matches[0]).toMatchObject({ source: 'global', mutable: true });
+      expect(matches[1]).toMatchObject({ source: 'plugin', mutable: false });
+
+      const remaining = await management.removeServer('plugin-demo:docs');
+      expect(remaining.filter((entry) => entry.name === 'plugin-demo:docs')).toEqual([
+        expect.objectContaining({ source: 'plugin', mutable: false }),
+      ]);
       await expect(store.list()).resolves.toEqual([]);
+    });
+
+    it('rejects update against an enabled plugin entry that has no file entry yet', async () => {
+      pluginEntries = [
+        {
+          name: 'plugin-demo:docs',
+          config: { transport: 'http', url: 'https://example.com/mcp' },
+          pluginId: 'demo',
+          serverName: 'docs',
+        },
+      ];
+
+      await expect(
+        management.updateServer({
+          name: 'plugin-demo:docs',
+          transport: 'http',
+          url: 'https://example.com/v2',
+        }),
+      ).rejects.toMatchObject({ code: ErrorCodes.MCP_SERVER_NOT_FOUND });
     });
 
     it('lets a mutable global entry be maintained past an enabled plugin collision', async () => {

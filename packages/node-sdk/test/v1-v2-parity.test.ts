@@ -4747,7 +4747,7 @@ describe('v1↔v2 session MCP parity', () => {
     }
   }, 20_000);
 
-  it('rejects a persisted session add when an enabled plugin owns the runtime name', async () => {
+  it('a persisted session add over an enabled plugin entry follows each engine\'s precedence', async () => {
     const restoreEnv = scrubConfigEnv();
     const pair = await makeSessionMcpPair();
     const pluginSource = await makeTempDir('kimi-sdk-parity-mcp-plugin-src-');
@@ -4766,24 +4766,25 @@ describe('v1↔v2 session MCP parity', () => {
         args: [MCP_STDIO_FIXTURE],
       };
 
-      // Both engines surface the SDK's public error class on the persisted
-      // add — the v2 persist branch restates the engine's Error2 into a
-      // KimiError instead of leaking it past the delegation.
-      const [v1Error, v2Error] = await Promise.all([
+      // Deliberate divergence: v1 ranks an enabled plugin above the file
+      // layers, so a persisted add could never take effect and rejects
+      // (`isKimiError` is the SDK's public error class on both engines). v2
+      // keeps the file layers above plugins, so the same add is a real
+      // override: the user-level write lands and shadows the plugin.
+      const [v1Error, v2Info] = await Promise.all([
         captureRejection(pair.v1.addSessionMcpServer({ ...input, server, persist: true })),
-        captureRejection(pair.v2.addSessionMcpServer({ ...input, server, persist: true })),
+        pair.v2.addSessionMcpServer({ ...input, server, persist: true }),
       ]);
       expect(isKimiError(v1Error)).toBe(true);
-      expect(isKimiError(v2Error)).toBe(true);
       expect(v1Error).toMatchObject({ code: 'request.invalid' });
-      expect(v2Error).toMatchObject({ code: 'request.invalid' });
+      expect(v2Info.name).toBe('plugin-parity-plugin:parity-stdio');
 
       const [v1File, v2File] = await Promise.all([
         readFile(join(pair.v1Home.raw, 'mcp.json'), 'utf-8').catch(() => ''),
         readFile(join(pair.v2Home.raw, 'mcp.json'), 'utf-8').catch(() => ''),
       ]);
       expect(v1File).not.toContain('plugin-parity-plugin:parity-stdio');
-      expect(v2File).not.toContain('plugin-parity-plugin:parity-stdio');
+      expect(v2File).toContain('plugin-parity-plugin:parity-stdio');
     } finally {
       await closeSessionPair(pair);
       restoreEnv();

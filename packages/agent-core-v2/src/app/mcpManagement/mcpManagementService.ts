@@ -128,8 +128,9 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
 
   private async guardMutation(name: string, query: McpRegistryQuery): Promise<void> {
     const matches = (await this.registry.list(query)).filter((entry) => entry.name === name);
-    if (matches.some((entry) => entry.source === 'global' && entry.mutable)) return;
-    for (const entry of matches) throwReadOnlyMcpServer(entry);
+    for (const entry of matches) {
+      if (entry.source === 'global' && !entry.mutable) throwReadOnlyMcpServer(entry);
+    }
   }
 
   private async resolveTestTarget(target: McpServerTestTarget): Promise<GlobalMcpServerConfig> {
@@ -507,15 +508,9 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
 }
 
 function throwReadOnlyMcpServer(entry: McpRegistryEntry): void {
-  if (entry.source === 'global' && entry.mutable) return;
-  if (entry.source === 'plugin' && entry.config.enabled === false) return;
-  const reason =
-    entry.source === 'plugin'
-      ? `it is contributed by plugin "${entry.origin}" — update the plugin manifest instead`
-      : `it is defined in ${entry.origin} — edit that file instead`;
   throw new Error2(
     ErrorCodes.REQUEST_INVALID,
-    `MCP server "${entry.name}" is read-only: ${reason}`,
+    `MCP server "${entry.name}" is read-only: it is defined in ${entry.origin} — edit that file instead`,
   );
 }
 
@@ -604,9 +599,10 @@ function selectServerDescriptors(
   catalog: readonly McpServerRuntimeDescriptor[],
   targets?: readonly McpServerLocator[],
 ): readonly McpServerRuntimeDescriptor[] {
-  if (targets === undefined) return catalog;
+  const effectiveTargets = targets === null ? undefined : targets;
+  if (effectiveTargets === undefined) return catalog;
   const byId = new Map(catalog.map((server) => [server.serverId, server]));
-  return targets.map((target) => {
+  return effectiveTargets.map((target) => {
     const server = byId.get(mcpServerId(target));
     if (server !== undefined) return server;
     throw new Error2(

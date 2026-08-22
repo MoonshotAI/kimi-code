@@ -351,5 +351,33 @@ describe('McpConfigStore', () => {
 
       expect(secondStartedBeforeRelease).toBe(true);
     });
+
+    it('serializes concurrent mutations so no entry is lost', async () => {
+      await Promise.all([store.add(stdioServer('alpha')), store.add(stdioServer('beta'))]);
+
+      await expect(store.list()).resolves.toEqual([
+        { name: 'alpha', transport: 'stdio', command: 'npx' },
+        { name: 'beta', transport: 'stdio', command: 'npx' },
+      ]);
+      expect(JSON.parse((await readRaw())!)).toMatchObject({
+        mcpServers: { alpha: {}, beta: {} },
+      });
+    });
+
+    it('lets a write listener mutate the store without wedging the mutation queue', async () => {
+      let reentered = false;
+      store.onDidWrite((event) => {
+        if (reentered) return;
+        reentered = true;
+        event.waitUntil(store.add(stdioServer('beta')).then(() => undefined));
+      });
+
+      await store.add(stdioServer('alpha'));
+
+      await expect(store.list()).resolves.toEqual([
+        { name: 'alpha', transport: 'stdio', command: 'npx' },
+        { name: 'beta', transport: 'stdio', command: 'npx' },
+      ]);
+    });
   });
 });
