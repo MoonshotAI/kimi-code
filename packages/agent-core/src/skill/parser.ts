@@ -105,11 +105,6 @@ export function parseFrontmatter(text: string): ParsedFrontmatter {
 }
 
 export function parseSkillText(options: ParseSkillTextOptions): SkillDefinition {
-  const isDirectorySkill = path.basename(options.skillMdPath) === 'SKILL.md';
-  if (isDirectorySkill && options.text.split(/\r?\n/, 1)[0]?.trim() !== FENCE) {
-    throw new SkillParseError(`Missing frontmatter in ${options.skillMdPath}`);
-  }
-
   let parsed;
   try {
     parsed = parseFrontmatter(options.text);
@@ -137,12 +132,6 @@ export function parseSkillText(options: ParseSkillTextOptions): SkillDefinition 
 
   const name = nonEmptyString(metadata.name);
   const description = nonEmptyString(metadata.description);
-  if (isDirectorySkill && (name === undefined || description === undefined)) {
-    const field = name === undefined ? '"name"' : '"description"';
-    throw new SkillParseError(
-      `Missing required frontmatter field ${field} in ${options.skillMdPath}`,
-    );
-  }
 
   const skillPath = path.resolve(options.skillMdPath);
   const content = parsed.body.trim();
