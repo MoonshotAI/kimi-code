@@ -1,20 +1,9 @@
-/**
- * Scenario: shared system-prompt rendering — the single `${var}` variable
- * table (`systemPromptVars`), user-template rendering with a lazily bound
- * `${base_prompt}` (`renderPromptTemplateResult`), and the builtin template
- * renderer (`renderSystemPromptResult`) including structured environment
- * disclosure metadata and its code-composed conditional sections (Windows
- * notes, additional directories, skills), plus `normalizeAgentProfile`
- * deriving the missing render entry at registration. Pure functions, no IO.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/agentProfileCatalog/profile-shared.test.ts`.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import {
   normalizeAgentProfile,
   type AgentProfileContext,
+  type AgentProfileInput,
   type SystemPromptRenderResult,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
@@ -23,10 +12,21 @@ import {
   registerAgentProfile,
 } from '#/app/agentProfileCatalog/contribution';
 import {
+  DEFAULT_REPLY_STYLE_GUIDE,
+  profileCanDelegate,
   renderPromptTemplateResult,
   renderSystemPromptResult,
+  rootDelegationExtras,
+  subagentAllowlistFor,
   systemPromptVars,
+  withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
+
+type AssertFalse<T extends false> = T;
+
+type RenderlessInputIsNotAssignable = AssertFalse<
+  [{ name: string }] extends [AgentProfileInput] ? true : false
+>;
 
 describe('systemPromptVars', () => {
   it('builds the full variable table from the context', () => {
@@ -109,7 +109,7 @@ describe('systemPromptVars', () => {
     const vars = systemPromptVars({}, { skillActive: true });
 
     expect(vars['product_name']).toBe('Kimi Code CLI');
-    expect(vars['reply_style_guide']).toContain("render as Markdown in the user's terminal");
+    expect(vars['reply_style_guide']).toBe(DEFAULT_REPLY_STYLE_GUIDE);
   });
 
   it('lets the context override host-identity variables', () => {
@@ -286,36 +286,33 @@ describe('renderSystemPromptResult', () => {
 
   it('renders the host identity from the context, defaulting to the CLI text', () => {
     const fallback = renderSystemPromptResult('', {}, { skillActive: true }).text;
-    expect(fallback).toContain('You are Kimi Code CLI,');
-    expect(fallback).toContain("render as Markdown in the user's terminal");
+    expect(fallback).toContain('Kimi Code CLI');
+    expect(fallback).toContain(DEFAULT_REPLY_STYLE_GUIDE);
 
     const overridden = renderSystemPromptResult(
       '',
       { productName: 'Kimi Desktop', replyStyleGuide: 'GUI_STYLE' },
       { skillActive: true },
     ).text;
-    expect(overridden).toContain('You are Kimi Desktop,');
+    expect(overridden).toContain('Kimi Desktop');
     expect(overridden).toContain('GUI_STYLE');
     expect(overridden).not.toContain('Kimi Code CLI');
   });
 
-  it('returns disclosure metadata for the builtin now section', () => {
-    const result = renderSystemPromptResult(
+  it('renders identical text regardless of the render-time clock', () => {
+    const earlier = renderSystemPromptResult(
       '',
-      {
-        cwd: '/work',
-        now: '2026-07-29T12:00:00',
-        agentsMd: 'AGENTS',
-      },
+      { cwd: '/work', now: '2026-07-29T12:00:00', timeZone: 'UTC' },
+      { skillActive: true },
+    );
+    const later = renderSystemPromptResult(
+      '',
+      { cwd: '/work', now: '2026-08-19T01:00:00', timeZone: 'UTC' },
       { skillActive: true },
     );
 
-    expect(result.text).toContain('AGENTS');
-    expect(result.environment.cwd).toBe('/work');
-    expect(result.environment.date).toMatchObject({
-      disclosed: true,
-      value: { localDate: '2026-07-29' },
-    });
+    expect(later.text).toBe(earlier.text);
+    expect(earlier.environment).toEqual({ cwd: '/work', date: { disclosed: false } });
   });
 });
 
@@ -377,10 +374,10 @@ describe('normalizeAgentProfile', () => {
   });
 
   it('rejects a profile without any render entry', () => {
-    expect(() =>
-      // @ts-expect-error runtime guard for inputs that escape the type union
-      normalizeAgentProfile({ name: 'empty' }),
-    ).toThrow(/must define systemPrompt or renderSystemPrompt/);
+    const renderless = { name: 'empty' } as unknown as AgentProfileInput;
+    expect(() => normalizeAgentProfile(renderless)).toThrow(
+      /must define systemPrompt or renderSystemPrompt/,
+    );
   });
 
   it('keeps the input object as receiver for a method-style text-only profile', () => {
@@ -413,9 +410,6 @@ describe('normalizeAgentProfile', () => {
   });
 
   it('prefers the structured entry when both are given and keeps cross-entry this calls working', () => {
-    // Declared standalone (not inline) so `this` is inferred from the literal
-    // itself: cross-entry calls are a runtime-binding contract, and TS cannot
-    // contextually type them through the input union.
     const input = {
       name: 'both',
       systemPrompt(_context: AgentProfileContext) {
@@ -441,13 +435,132 @@ describe('normalizeAgentProfile', () => {
     _clearAgentProfileContributionsForTests();
     try {
       registerAgentProfile({ name: 'kept', systemPrompt: () => 'text' });
-      expect(() =>
-        // @ts-expect-error runtime guard for inputs that escape the type union
-        registerAgentProfile({ name: 'empty' }),
-      ).toThrow(/must define systemPrompt or renderSystemPrompt/);
+      const renderless = { name: 'empty' } as unknown as AgentProfileInput;
+      expect(() => registerAgentProfile(renderless)).toThrow(
+        /must define systemPrompt or renderSystemPrompt/,
+      );
       expect(getAgentProfileContributions().map((profile) => profile.name)).toEqual(['kept']);
     } finally {
       _clearAgentProfileContributionsForTests();
     }
+  });
+});
+
+describe('subagentAllowlistFor', () => {
+  const catalogWithDefault = (subagents: readonly string[] | undefined) => ({
+    getDefault: () => ({ subagents }),
+  });
+
+  it('inherits the default profile allowlist when the caller declares none', () => {
+    expect(subagentAllowlistFor(catalogWithDefault(['coder']), { profileName: 'custom' })).toEqual([
+      'coder',
+    ]);
+  });
+
+  it('keeps an explicit empty caller allowlist instead of inheriting', () => {
+    expect(
+      subagentAllowlistFor(catalogWithDefault(['coder']), { profileName: 'custom', subagents: [] }),
+    ).toEqual([]);
+  });
+
+  it('treats a lone "*" allowlist as unrestricted', () => {
+    expect(
+      subagentAllowlistFor(catalogWithDefault(['coder']), {
+        profileName: 'custom',
+        subagents: ['*'],
+      }),
+    ).toBeUndefined();
+  });
+
+  it('unions root delegation extras over the declared allowlist', () => {
+    expect(
+      subagentAllowlistFor(
+        catalogWithDefault(['coder']),
+        { profileName: 'agent', subagents: ['coder'] },
+        ['reviewer'],
+      ),
+    ).toEqual(['coder', 'reviewer']);
+  });
+
+  it('stays unrestricted for a lone "*" even with root extras', () => {
+    expect(
+      subagentAllowlistFor(catalogWithDefault(['*']), { profileName: 'agent' }, ['reviewer']),
+    ).toBeUndefined();
+  });
+});
+
+describe('rootDelegationExtras', () => {
+  const catalog = {
+    inspect: (name: string) =>
+      name === 'ghost'
+        ? undefined
+        : name === 'agent' || name === 'coder'
+          ? { sourceId: 'builtin' }
+          : name === 'tower-worker'
+            ? { sourceId: 'feature:tower' }
+            : { sourceId: 'workspace' },
+  };
+  const profiles = [
+    { name: 'agent' },
+    { name: 'coder' },
+    { name: 'tower-worker' },
+    { name: 'reviewer' },
+  ];
+
+  it('collects discovered file-sourced profiles except the default itself', () => {
+    expect(
+      rootDelegationExtras(catalog, { profileName: 'agent', subagents: ['coder'] }, profiles),
+    ).toEqual(['reviewer']);
+  });
+
+  it('honors an explicit allowlist on a discovered main profile instead of unioning', () => {
+    expect(
+      rootDelegationExtras(catalog, { profileName: 'reviewer', subagents: ['coder'] }, profiles),
+    ).toBeUndefined();
+  });
+
+  it('honors an explicit allowlist even after the profile leaves the catalog', () => {
+    expect(
+      rootDelegationExtras(catalog, { profileName: 'ghost', subagents: ['coder'] }, profiles),
+    ).toBeUndefined();
+  });
+
+  it('unions for a discovered main profile that declares no allowlist', () => {
+    expect(rootDelegationExtras(catalog, { profileName: 'reviewer' }, profiles)).toEqual([
+      'reviewer',
+    ]);
+  });
+});
+
+describe('profileCanDelegate', () => {
+  it('treats an omitted tools list as delegation-capable', () => {
+    expect(profileCanDelegate({})).toBe(true);
+  });
+
+  it('treats a tools list without Agent and AgentSwarm as terminal', () => {
+    expect(profileCanDelegate({ tools: ['Read', 'Bash'] })).toBe(false);
+  });
+
+  it('honors disallowedTools over the tools allowlist', () => {
+    expect(profileCanDelegate({ tools: ['Agent'], disallowedTools: ['Agent'] })).toBe(false);
+    expect(profileCanDelegate({ tools: ['AgentSwarm'] })).toBe(true);
+  });
+});
+
+describe('withoutDelegatingTargets', () => {
+  it('drops delegation-capable targets and keeps terminal and unknown ones', () => {
+    const catalog = {
+      get: (name: string) =>
+        name === 'coder'
+          ? { tools: ['Agent', 'Read'] as readonly string[] }
+          : name === 'explore'
+            ? { tools: ['Read'] as readonly string[] }
+            : undefined,
+    };
+
+    expect(withoutDelegatingTargets(catalog, ['coder', 'explore', 'missing'])).toEqual([
+      'explore',
+      'missing',
+    ]);
   });
 });

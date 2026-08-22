@@ -149,6 +149,26 @@ export async function discoverSkills(
   ): Promise<void> {
     if (depth > MAX_SKILL_SCAN_DEPTH) return;
 
+    // A root-skill-only root (plugin manifest root SKILL.md fallback) is a
+    // single skill bundle: parse <root>/SKILL.md only, never sibling flat .md
+    // files or nested directories.
+    if (root.scanMode === 'root-skill-only') {
+      const rootSkillMd = path.join(dirPath, 'SKILL.md');
+      if (await isFile(rootSkillMd)) {
+        await parseAndRegister({
+          parse,
+          byName,
+          skillMdPath: rootSkillMd,
+          skillDirName: path.basename(dirPath),
+          root,
+          onDiscoveredSkill: options.onDiscoveredSkill,
+          warn,
+          skip,
+        });
+      }
+      return;
+    }
+
     let entries: readonly string[];
     try {
       // Sorted so first-wins collision resolution across sibling directories
@@ -354,7 +374,7 @@ async function pushProvidedRoot(
   }
   const existing = out[existingIndex];
   if (existing !== undefined && existing.plugin === undefined && root.plugin !== undefined) {
-    out[existingIndex] = { ...existing, plugin: root.plugin };
+    out[existingIndex] = { ...existing, plugin: root.plugin, scanMode: root.scanMode };
   }
   return true;
 }

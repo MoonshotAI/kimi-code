@@ -1,14 +1,3 @@
-/**
- * `_base/log` — `BoundLogger` base and the App-scope `ILogService`.
- *
- * `BoundLogger` filters entries by level, extracts the payload into ctx/error,
- * merges bound context, and writes to a plain `ILogWriter`. It extends
- * `Service` so scope implementations can flush synchronously when their
- * scope is disposed. `AppLogService` is the App-scope binding of the single
- * `ILogService` token: it owns the global rotating file sink and reads its
- * level from `ILogOptions`.
- */
-
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -26,6 +15,23 @@ import {
 } from './log';
 import { createFileLogWriter, type FileLogWriter } from './fileLog';
 import { ILogOptions } from './logConfig';
+
+const pendingLogCloses = new Set<Promise<void>>();
+
+export function trackLogClose(close: Promise<void>): void {
+  const tracked = close.then(
+    () => undefined,
+    () => undefined,
+  );
+  pendingLogCloses.add(tracked);
+  void tracked.finally(() => pendingLogCloses.delete(tracked));
+}
+
+export async function drainLogCloses(): Promise<void> {
+  while (pendingLogCloses.size > 0) {
+    await Promise.all(pendingLogCloses);
+  }
+}
 
 interface ExtractedPayload {
   readonly ctx?: LogContext;
@@ -161,7 +167,7 @@ export class AppLogService extends BoundLogger implements ILogService {
 
   override dispose(): void {
     this.sink.flushSync();
-    void this.sink.close();
+    trackLogClose(this.sink.close());
     super.dispose();
   }
 }

@@ -1,12 +1,3 @@
-/**
- * `kosong/contract` errors — abort shape and error classification authority.
- *
- * Locks the behavior-fix intent of the kosong refactor: a user cancellation
- * surfaces as the standard abort DOMException from `createAbortError`, the
- * `throwIfAbortError` guard throws (never returns) and wins over every other
- * classification branch, and `isRetryableGenerateError` never retries aborts.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -128,6 +119,16 @@ describe('isRetryableGenerateError', () => {
   it('does not retry deterministic client failures', () => {
     expect(isRetryableGenerateError(new APIStatusError(400, 'Bad request'))).toBe(false);
     expect(isRetryableGenerateError(new APIStatusError(401, 'Unauthorized'))).toBe(false);
+  });
+
+  it('does not retry provider-filtered empty responses', () => {
+    expect(
+      isRetryableGenerateError(new APIEmptyResponseError('filtered', { finishReason: 'filtered' })),
+    ).toBe(false);
+    expect(
+      isRetryableGenerateError(new APIEmptyResponseError('empty', { finishReason: 'completed' })),
+    ).toBe(true);
+    expect(isRetryableGenerateError(new APIEmptyResponseError('empty'))).toBe(true);
   });
 });
 

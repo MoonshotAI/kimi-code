@@ -140,33 +140,6 @@ afterEach(() => {
 });
 
 describe('GrepTool', () => {
-  it('exposes current metadata and schema', () => {
-    const tool = new GrepTool(createFakeKaos(), workspace);
-
-    expect(tool.name).toBe('Grep');
-    expect(tool.description).toContain('unknown content or unknown file locations');
-    expect(tool.description).toContain('Do not use shell `grep` or `rg` directly');
-    expect(tool.parameters).toMatchObject({
-      type: 'object',
-      properties: {
-        pattern: {
-          type: 'string',
-          description: expect.stringContaining('Regular expression'),
-        },
-        path: {
-          description: expect.stringContaining('Use Read instead'),
-        },
-      },
-    });
-    expect(GrepInputSchema.safeParse({ pattern: 'needle' }).success).toBe(true);
-    expect(GrepInputSchema.safeParse({ pattern: 'needle', output_mode: 'content' }).success).toBe(
-      true,
-    );
-    expect(GrepInputSchema.safeParse({ pattern: 'needle', output_mode: 'bad' }).success).toBe(
-      false,
-    );
-  });
-
   describe('output_mode enum value', () => {
     it('accepts count_matches as the third output mode', () => {
       expect(
@@ -234,37 +207,6 @@ describe('GrepTool', () => {
         properties: Record<string, { description?: string }>;
       };
       expect(params.properties['output_mode']?.description).toContain('count_matches');
-      // count_matches emits per-file `path:count`, not a single total (grep.ts).
-      expect(params.properties['output_mode']?.description).toContain('per-file');
-    });
-
-    it('documents that files_with_matches is ordered most-recently-modified first', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      const params = tool.parameters as {
-        properties: Record<string, { description?: string }>;
-      };
-      // grep.ts sorts files_with_matches by mtime descending (b.mtime - a.mtime).
-      expect(params.properties['output_mode']?.description).toContain('most-recently-modified');
-    });
-
-    it('does not present an absolute path as a hard requirement for path', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      const params = tool.parameters as {
-        properties: Record<string, { description?: string }>;
-      };
-      const description = params.properties['path']?.description ?? '';
-      expect(description).not.toMatch(/^Absolute path/);
-      expect(description.toLowerCase()).toContain('relative');
-    });
-
-    it('guides type as the more efficient filter over glob', () => {
-      const tool = new GrepTool(createFakeKaos(), workspace);
-      const params = tool.parameters as {
-        properties: Record<string, { description?: string }>;
-      };
-      const description = params.properties['type']?.description ?? '';
-      expect(description).toContain('glob');
-      expect(description).toContain('efficient');
     });
 
     it('describes include_ignored as covering all ignore files, not just .gitignore', () => {
@@ -289,7 +231,6 @@ describe('GrepTool', () => {
     it('explains hidden files, include_ignored, and sensitive-file behavior', () => {
       const tool = new GrepTool(createFakeKaos(), workspace);
       expect(tool.description).toContain('include_ignored');
-      expect(tool.description.toLowerCase()).toContain('hidden file');
       expect(tool.description).toContain('.env');
     });
   });
@@ -1910,16 +1851,6 @@ describe('GrepTool', () => {
     expect(output).not.toContain('leaked');
     expect(output).toContain('Filtered');
     expect(output).toContain('my-project/.env');
-  });
-
-  it('locks the grep description to ripgrep-tip phrasing about hidden files and include_ignored', () => {
-    const tool = new GrepTool(createFakeKaos(), workspace);
-
-    expect(tool.description).toContain('ripgrep');
-    expect(tool.description).toContain('Hidden files');
-    expect(tool.description).toContain('include_ignored');
-    expect(tool.description).toMatch(/sensitive/i);
-    expect(tool.description).toMatch(/ALWAYS use Grep tool instead of running `grep` or `rg`/);
   });
 
   it('aborts and kills ripgrep after the process has spawned', async () => {

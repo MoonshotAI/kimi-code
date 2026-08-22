@@ -11,6 +11,7 @@ import {
   applyManagedKimiCodeLogoutConfig,
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
+  kimiRegionLoginHosts,
   resolveKimiCodeLoginAuth,
   resolveKimiCodeRuntimeAuth,
   type AuthManagedUsageResult,
@@ -21,6 +22,7 @@ import {
   type FetchSubmitFeedbackResult,
   type KimiHostIdentity,
   type KimiOAuthLoginOptions,
+  type KimiRegion,
   type ManagedKimiConfigShape,
   type OAuthRefreshOutcome,
 } from '@moonshot-ai/kimi-code-oauth';
@@ -71,7 +73,16 @@ export type KimiAuthCreateFeedbackUploadUrlResult =
   | KimiAuthCreateFeedbackUploadUrlOk
   | FetchFeedbackUploadError;
 
-export type KimiAuthLoginOptions = Omit<KimiOAuthLoginOptions, 'provisionConfig'>;
+export type KimiAuthLoginOptions = Omit<KimiOAuthLoginOptions, 'provisionConfig'> & {
+  /**
+   * Explicit region choice from the login UI ('mainland-cn' / 'global'). Maps
+   * to the region profile's OAuth/API hosts — including for 'mainland-cn', so
+   * switching back overrides a persisted global login. Yields to
+   * `KIMI_CODE_OAUTH_HOST` / `KIMI_CODE_BASE_URL` env overrides and to
+   * explicit `oauthHost` / `baseUrl` options.
+   */
+  readonly region?: KimiRegion;
+};
 
 export interface KimiAuthLoginResult {
   readonly providerName: string;
@@ -126,18 +137,20 @@ export class KimiAuthFacade {
     providerName: string | undefined = KIMI_CODE_PROVIDER_NAME,
     options: KimiAuthLoginOptions = {},
   ): Promise<KimiAuthLoginResult> {
+    const { region, ...loginOptions } = options;
+    const regionHosts = region === undefined ? undefined : kimiRegionLoginHosts(region);
     const auth = this.resolveManagedAuth(providerName);
     const loginAuth = resolveKimiCodeLoginAuth({
       configuredBaseUrl: auth.baseUrl,
       configuredOAuthRef: auth.oauthRef,
-      requestedBaseUrl: options.baseUrl,
-      requestedOAuthHost: options.oauthHost,
+      requestedBaseUrl: loginOptions.baseUrl ?? regionHosts?.baseUrl,
+      requestedOAuthHost: loginOptions.oauthHost ?? regionHosts?.oauthHost,
     });
     const result = await this.toolkit.login(providerName, {
-      ...options,
+      ...loginOptions,
       baseUrl: loginAuth.baseUrl,
       oauthHost: loginAuth.oauthHost,
-      oauthRef: options.oauthRef ?? loginAuth.oauthRef,
+      oauthRef: loginOptions.oauthRef ?? loginAuth.oauthRef,
       provisionConfig: true,
     });
     if (result.provision === undefined) {

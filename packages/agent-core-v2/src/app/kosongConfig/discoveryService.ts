@@ -1,44 +1,3 @@
-/**
- * `kosongConfig` domain — `IProviderDiscoveryService` implementation.
- *
- * Owns the all-provider model refresh: delegates to the shared OAuth
- * orchestrator (managed OAuth + open platforms + custom registries), writes
- * the discovered providers/models into config through ONE atomic
- * `replaceSections` transition (the persistence bridge then syncs them into
- * kosong's in-memory registries), and publishes `event.model_catalog.changed`
- * on change. Bound at App scope.
- *
- * Custom registries are third-party endpoints, so the refresh User-Agent
- * carries the configured custom identity's product token, matching what chat
- * requests send.
- *
- * `modelSource: 'static'` short-circuits refresh: a provider whose effective
- * model source is `static` (config-declared, or declared by its vendor
- * definition) serves its models from the static `[models.*]` section, so
- * discovery must not touch it. A statically-sourced target of a scoped
- * refresh answers `unchanged` without any network I/O; for an unscoped
- * refresh the static entries are hidden from the orchestrator's config view
- * and merged back verbatim on every write, so the orchestrator can neither
- * refresh them nor drop them (or a default model pointing at them).
- *
- * Two write-path details preserve the legacy semantics exactly:
- *  - The orchestrator's two-phase host contract (removeProvider, then
- *    setConfig) is absorbed into a single atomic write: the removal is
- *    computed in memory only (`shapeWithoutProvider`), because the patch's
- *    full providers/models records already express it. The runtime
- *    registries therefore never pass through a halfway-removed state — that
- *    intermediate state was the source of the "provider/model not
- *    configured" startup race against profile binding.
- *  - The env-synthesized `__kimi_env__` slice is never written to config:
- *    it lives in the effective overlay, and the bridge's event-driven sync
- *    carries it into the registries on its own. `defaultModel` / `thinking`
- *    also go through config (like the OAuth flows), since the env overlay
- *    may pin the runtime default and only the config effective view knows.
- *
- * Credential detection goes through the provider-definition registry, not a
- * per-protocol env table.
- */
-
 import {
   refreshProviderModels,
   type ManagedKimiConfigShape,
@@ -71,7 +30,13 @@ import {
   THINKING_SECTION,
 } from './configSection';
 import {
+  SECONDARY_MODEL_SECTION,
+  cascadeSubagentModelPool,
+  type SecondaryModelConfig,
+} from '#/session/subagent/configSection';
+import {
   IProviderDiscoveryService,
+  ModelCatalogChanged,
   type RefreshProviderModelsOptions,
   type RefreshProviderModelsResponse,
 } from './discovery';
@@ -134,7 +99,7 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     });
     const response = mapRefreshResult(result);
     if (response.changed.length > 0) {
-      this.events.publish({ type: 'event.model_catalog.changed', payload: response });
+      this.events.publish(new ModelCatalogChanged({ payload: response }));
     }
     return response;
   }
@@ -253,6 +218,16 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     }
     if ('thinking' in patch) {
       sections[THINKING_SECTION] = restoreDefault ? exclusion.thinking : patch.thinking;
+    }
+    const nextModels = sections[MODELS_SECTION] as Record<string, ModelRecord> | undefined;
+    if (nextModels !== undefined) {
+      const cascadedPool = cascadeSubagentModelPool(
+        this.config.inspect<SecondaryModelConfig>(SECONDARY_MODEL_SECTION).userValue,
+        nextModels,
+      );
+      if (cascadedPool !== undefined) {
+        sections[SECONDARY_MODEL_SECTION] = cascadedPool ?? undefined;
+      }
     }
     await this.config.replaceSections(sections);
     return {

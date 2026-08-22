@@ -219,6 +219,7 @@ describe('mcp.tools_discovered records', () => {
       transport: 'stdio',
       status: 'connected',
       toolCount: input.rawTools.length,
+      config: { transport: 'stdio', command: 'mock' },
     };
     const mcp = {
       list: () => [entry],

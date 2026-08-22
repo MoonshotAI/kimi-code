@@ -61,4 +61,67 @@ describe('SessionApprovalService', () => {
     svc.decide('r1', { decision: 'approved' });
     expect(svc.listPending()).toEqual([]);
   });
+
+  it('mints distinct interaction ids when the provider reuses a toolCallId within one step', async () => {
+    const svc = ix.get(ISessionApprovalService);
+    const interaction = ix.get(ISessionInteractionService);
+    const req = (): ApprovalRequest => ({
+      toolCallId: 'Bash_0',
+      toolName: 'bash',
+      action: 'run',
+      display,
+    });
+
+    const first = svc.request(req());
+    const second = svc.request(req());
+
+    const pending = interaction.listPending();
+    expect(pending.map((i) => (i.payload as ApprovalRequest).toolCallId)).toEqual([
+      'Bash_0',
+      'Bash_0',
+    ]);
+    const ids = pending.map((i) => i.id);
+    expect(new Set(ids).size).toBe(2);
+    expect(ids.every((id) => id.startsWith('approval_'))).toBe(true);
+
+    svc.decide(ids[0]!, { decision: 'approved' });
+    svc.decide(ids[1]!, { decision: 'rejected' });
+    await expect(first).resolves.toEqual({ decision: 'approved' });
+    await expect(second).resolves.toEqual({ decision: 'rejected' });
+  });
+
+  it('a toolCallId repeated across steps still gets a fresh id after the first request resolved', async () => {
+    const svc = ix.get(ISessionApprovalService);
+    const interaction = ix.get(ISessionInteractionService);
+    const req = (): ApprovalRequest => ({
+      toolCallId: 'Bash_0',
+      toolName: 'bash',
+      action: 'run',
+      display,
+    });
+
+    const first = svc.request(req());
+    const firstId = interaction.listPending()[0]!.id;
+    svc.decide(firstId, { decision: 'approved' });
+    await expect(first).resolves.toEqual({ decision: 'approved' });
+
+    const second = svc.request(req());
+    const secondId = interaction.listPending()[0]!.id;
+    expect(secondId).not.toBe(firstId);
+    svc.decide(secondId, { decision: 'approved' });
+    await expect(second).resolves.toEqual({ decision: 'approved' });
+  });
+
+  it('listPending surfaces the minted interaction id so hosts can decide', async () => {
+    const svc = ix.get(ISessionApprovalService);
+
+    const parked = svc.request({ toolCallId: 'Bash_0', toolName: 'bash', action: 'run', display });
+    const pending = svc.listPending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.id).toMatch(/^approval_/);
+    expect(pending[0]!.toolCallId).toBe('Bash_0');
+
+    svc.decide(pending[0]!.id!, { decision: 'approved' });
+    await expect(parked).resolves.toEqual({ decision: 'approved' });
+  });
 });

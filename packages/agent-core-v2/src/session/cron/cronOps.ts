@@ -1,79 +1,85 @@
-/**
- * `cron` domain — wire Model (`CronModel`) and the `cron.add`
- * (`cronAdd`) / `cron.delete` (`cronDelete`) / `cron.cursor` (`cronCursor`)
- * Ops for the session-level scheduling engine, plus the `cron.fired` edge
- * event declared on `DomainEventMap`.
- *
- * The Model is the replayable map of `taskId -> CronTask` (initial empty). The
- * cursor (`lastFiredAt`) lives on the task itself, so there is no separate
- * cursor map — `cron.cursor` folds into the same map by updating the matching
- * task's `lastFiredAt`. Each `apply` returns a new `Map` on a real change and
- * the same reference on a no-op (a `cron.delete` of absent ids, or a
- * `cron.cursor` for an unknown id) so the wire's reference-equality gate stays
- * quiet. The Ops are live-only because cron records are not v1 wire types; the
- * authoritative store is the App-scoped `ICronTaskPersistence`, reloaded on
- * resume. The Ops register into the global
- * `OP_REGISTRY` at import time.
- */
-
-import type { CronJobOrigin } from '#/agent/contextMemory/types';
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
-import { defineModel } from '#/wire/model';
-
+import type { CronJobOrigin } from '#/agent/contextMemory/types';
 import type { CronTask } from '#/app/cron/cronTask';
+import { Event2 } from '#/app/event/event2';
+import { defineState } from '#/state/state';
 
 export type CronModelState = Map<string, CronTask>;
 
-export const CronModel = defineModel<CronModelState>('cron', () => new Map());
-
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'cron.fired': { readonly origin: CronJobOrigin; readonly prompt: string };
-  }
-}
-
-declare module '#/wire/types' {
-  interface TransientOpMap {
-    'cron.add': typeof cronAdd;
-    'cron.delete': typeof cronDelete;
-    'cron.cursor': typeof cronCursor;
-  }
-}
-
-export const cronAdd = CronModel.defineOp('cron.add', {
-  schema: z.object({ task: z.custom<CronTask>() }),
-  persist: false,
-  apply: (s, p) => {
-    const next = new Map(s);
-    next.set(p.task.id, p.task);
-    return next;
-  },
+const cronTaskSchema = z.object({
+  id: z.string(),
+  cron: z.string(),
+  prompt: z.string(),
+  createdAt: z.number(),
+  recurring: z.boolean().optional(),
+  lastFiredAt: z.number().optional(),
+  tags: z.record(z.string(), z.string()).optional(),
 });
 
-export const cronDelete = CronModel.defineOp('cron.delete', {
-  schema: z.object({ ids: z.array(z.string()).readonly() }),
-  persist: false,
-  apply: (s, p) => {
-    let next: Map<string, CronTask> | undefined;
-    for (const id of p.ids) {
-      if (s.has(id)) {
-        next = next ?? new Map(s);
-        next.delete(id);
-      }
+const cronAddSchema = z.object({ task: cronTaskSchema });
+const cronDeleteSchema = z.object({ ids: z.array(z.string()) });
+const cronCursorSchema = z.object({ id: z.string(), lastFiredAt: z.number() });
+
+export interface CronAddPayload {
+  readonly task: CronTask;
+}
+
+export class CronAdd extends Event2<CronAddPayload> {
+  static override readonly type = 'cron.add';
+  static override readonly durable = true;
+  static override readonly schema = cronAddSchema;
+}
+export interface CronAdd extends CronAddPayload {}
+
+export interface CronDeletePayload {
+  readonly ids: readonly string[];
+}
+
+export class CronDelete extends Event2<CronDeletePayload> {
+  static override readonly type = 'cron.delete';
+  static override readonly durable = true;
+  static override readonly schema = cronDeleteSchema;
+}
+export interface CronDelete extends CronDeletePayload {}
+
+export interface CronCursorPayload {
+  readonly id: string;
+  readonly lastFiredAt: number;
+}
+
+export class CronCursor extends Event2<CronCursorPayload> {
+  static override readonly type = 'cron.cursor';
+  static override readonly durable = true;
+  static override readonly schema = cronCursorSchema;
+}
+export interface CronCursor extends CronCursorPayload {}
+
+export interface CronFiredPayload {
+  readonly origin: CronJobOrigin;
+  readonly prompt: string;
+}
+
+export class CronFired extends Event2<CronFiredPayload> {
+  static override readonly type = 'cron.fired';
+  static override readonly observable = true;
+}
+export interface CronFired extends CronFiredPayload {}
+
+export const cronKey = defineState('cron', (): CronModelState => new Map()).replayable({
+  schema: z.custom<CronModelState>(),
+})
+  .on(CronAdd, (s, e) => {
+    s.set(e.task.id, e.task);
+  })
+  .on(CronDelete, (s, e) => {
+    for (const id of e.ids) {
+      s.delete(id);
     }
-    return next ?? s;
-  },
-});
-
-export const cronCursor = CronModel.defineOp('cron.cursor', {
-  schema: z.object({ id: z.string(), lastFiredAt: z.number() }),
-  persist: false,
-  apply: (s, p) => {
-    const task = s.get(p.id);
-    if (task === undefined) return s;
-    const next = new Map(s);
-    next.set(p.id, { ...task, lastFiredAt: p.lastFiredAt });
-    return next;
-  },
-});
+  })
+  .on(CronCursor, (s, e) => {
+    const task = s.get(e.id);
+    if (task === undefined) return;
+    s.set(e.id, { ...task, lastFiredAt: e.lastFiredAt });
+  });

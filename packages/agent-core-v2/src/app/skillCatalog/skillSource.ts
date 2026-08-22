@@ -1,17 +1,3 @@
-/**
- * `skillCatalog` domain — skill-source contract.
- *
- * `ISkillSource` is the producer half of the skill subsystem: each source loads
- * a `SkillContribution` and advertises a `priority` so the Session sink can
- * ordered-merge contributions (higher priority wins name collisions). Sources
- * PUSH into the sink; the sink is a dumb ordered-merge table. File-backed
- * sources additionally carry the load diagnostics (`skipped`, `scannedRoots`)
- * produced by `ISkillDiscovery`, which the sink folds into the merged catalog;
- * ad-hoc contributions omit them. Concrete sources (builtin/user at App scope,
- * extra/workspace/plugin at Session scope) each bind their own DI token
- * extending this contract.
- */
-
 import type { Event } from '#/_base/event';
 
 import type { SkillDefinition, SkippedSkill } from './types';

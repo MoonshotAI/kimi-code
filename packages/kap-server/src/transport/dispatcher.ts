@@ -1,15 +1,7 @@
-/**
- * `/api/v1/debug` dispatcher — resolves the scope + Service + method from a request
- * and calls it. No facade: Services are reached directly through the scope
- * tree, the channel registry decides which Services are exposed at all, and the
- * method is invoked by reflection (VS Code's `ProxyChannel.fromService` model).
- */
-
 import {
   ErrorCodes,
   IAgentGoalService,
   IAgentLifecycleService,
-  IWorkspaceLifecycleService,
   Error2,
   getLiveSessionById,
   type IScopeHandle,
@@ -45,10 +37,6 @@ export async function resolveScope(
   switch (scopeKind) {
     case 'core':
       return core;
-    case 'workspace': {
-      const workspaceId = params['workspace_id'] ?? '';
-      return core.accessor.get(IWorkspaceLifecycleService).handlerFor({ workspaceId });
-    }
     case 'session': {
       const sessionId = params['session_id'] ?? '';
       const session = getLiveSessionById(core.accessor, sessionId);
@@ -65,7 +53,7 @@ export async function resolveScope(
         throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} not found`);
       }
       if (agentId === MAIN_AGENT_ID) return ensureMainAgent(session);
-      const agent = session.accessor.get(IAgentLifecycleService).get(agentId);
+      const agent = session.accessor.get(IAgentLifecycleService).findAgentHandle(agentId);
       if (agent === undefined) {
         throw new Error2(
           ErrorCodes.AGENT_NOT_FOUND,
@@ -87,7 +75,7 @@ export async function resolveService(
   scopeKind: ScopeKind,
   params: Record<string, string>,
   serviceName: string,
-  lookup: ChannelLookup = resolveAnyScopedServiceId,
+  lookup: ChannelLookup = (name) => resolveAnyScopedServiceId(core, name),
 ): Promise<object> {
   const scope = await resolveScope(core, scopeKind, params);
   if (scope === undefined) {
@@ -128,7 +116,7 @@ export async function dispatch(
   serviceName: string,
   method: string,
   arg: unknown,
-  lookup: ChannelLookup = resolveAnyScopedServiceId,
+  lookup: ChannelLookup = (name) => resolveAnyScopedServiceId(core, name),
 ): Promise<unknown> {
   const service = await resolveService(core, scopeKind, params, serviceName, lookup);
   const member = (service as Record<string, unknown>)[method];
@@ -136,7 +124,6 @@ export async function dispatch(
     throw new Error2(ErrorCodes.REQUEST_INVALID, `method not found: ${serviceName}.${method}`);
   }
 
-  // Property read (e.g. `mode`, `rules`, `isActive`) — return as-is.
   if (typeof member !== 'function') {
     return assertSerializable(member);
   }

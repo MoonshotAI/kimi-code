@@ -984,6 +984,7 @@ describe('ToolManager MCP reconnect-on-call', () => {
     statusListener?.({
       name: 'srv',
       transport: 'http',
+      config: { transport: 'http', url: 'http://example.test/mcp' },
       status: 'failed',
       toolCount: 0,
       error: 'connection dropped',

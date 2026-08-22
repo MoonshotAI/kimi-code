@@ -1,16 +1,3 @@
-/**
- * `kosong/protocol` domain — protocol base identity, definition, and
- * the module-level base registry.
- *
- * A protocol base is the component that actually understands one wire
- * format: it implements `ChatProvider` and exposes a `hooks?` option through
- * which composed traits flow in. The base itself never knows this registry
- * exists.
- *
- * This module only holds the data structures and the registry functions; it
- * deliberately registers nothing on its own.
- */
-
 import { BugIndicatingError } from '#/_base/errors/errors';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ChatProvider } from '#/kosong/contract/provider';

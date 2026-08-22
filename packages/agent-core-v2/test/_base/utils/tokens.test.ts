@@ -1,11 +1,3 @@
-/**
- * Scenario: token estimation for rich content parts.
- * Responsibilities: media parts contribute bounded non-zero estimates to
- * content-part and whole-message estimates. Wiring: pure utility functions, no
- * collaborators. Run with:
- * `vitest run --config packages/agent-core-v2/vitest.config.ts test/_base/utils/tokens.test.ts`.
- */
-
 import type { ContentPart } from '#/kosong/contract/message';
 import { describe, expect, it } from 'vitest';
 

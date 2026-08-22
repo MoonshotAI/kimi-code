@@ -1,4 +1,4 @@
-import type { HookDefConfig } from '#/agent/externalHooks/configSection';
+import type { HookDefConfig } from '#/features/externalHooks/configSection';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 
 export type PluginDiagnosticSeverity = 'error' | 'warn' | 'info';
@@ -39,6 +39,7 @@ export interface PluginManifest {
   readonly homepage?: string;
   readonly license?: string;
   readonly skills?: readonly string[];
+  readonly rootSkillFallback?: boolean;
   readonly agents?: readonly string[];
   readonly sessionStart?: PluginSessionStart;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;

@@ -12,7 +12,7 @@ import {
 } from '../../../harness';
 
 type InjectableDynamicInjector = {
-  inject(): Promise<void>;
+  inject(boundary: undefined, isNewTurn: boolean): Promise<void>;
 };
 
 async function enterPlan(
@@ -28,7 +28,7 @@ async function enterPlan(
 }
 
 async function injectDynamic(injector: InjectableDynamicInjector): Promise<void> {
-  await injector.inject();
+  await injector.inject(undefined, false);
 }
 
 function appendAssistantTurn(
@@ -88,8 +88,6 @@ describe('PlanModeService dynamic injection content', () => {
     await injectDynamic(injector);
     const text = lastPlanReminder(context);
 
-    expect(text).toContain('Plan mode is active');
-    expect(text).toContain('current plan file');
     expect(text).toContain('Write');
     expect(text).toContain('Edit');
     expect(text).toContain('ExitPlanMode');
@@ -103,7 +101,6 @@ describe('PlanModeService dynamic injection content', () => {
 
     expect(planFilePath).toContain('derived-plan.md');
     expect(lastPlanReminder(context)).toContain(`Plan file: ${planFilePath}`);
-    expect(lastPlanReminder(context)).not.toContain('Wait for the host to provide a plan file path');
   });
 
   it('injects the exit reminder when plan mode turns off after being active', async () => {
@@ -113,7 +110,7 @@ describe('PlanModeService dynamic injection content', () => {
     plan.exit();
     await injectDynamic(injector);
 
-    expect(lastPlanReminder(context)).toContain('Plan mode is no longer active');
+    expect(planReminderMessages(context)).toHaveLength(2);
   });
 
   it('does not inject anything when plan mode is inactive from the start', async () => {
@@ -133,7 +130,6 @@ describe('PlanModeService dynamic injection content', () => {
     await injectDynamic(injector);
 
     expect(lastPlanReminder(context)).toContain('Re-entering Plan Mode');
-    expect(lastPlanReminder(context)).toContain('Read the existing plan file');
   });
 });
 

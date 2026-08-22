@@ -900,6 +900,42 @@ describe('FullCompaction', () => {
     ]);
   });
 
+  it('fails fast without shrinking when the provider filters the compaction response', async () => {
+    // End-to-end through the real kosong generate(): a think-only stream whose
+    // finishReason is 'filtered' (content_filter) throws APIEmptyResponseError,
+    // and the retry predicate now marks it non-retryable. Compaction must NOT
+    // route it into the shrink-and-retry branch either — replaying the same
+    // filtered request would just re-trigger the filter — so it fails on the
+    // very first attempt with the history untouched.
+    const inputs: string[][] = [];
+    const generate = realKosongGenerate((_attempt, history) => {
+      inputs.push(inputHistorySnapshot(history));
+      return mockStreamedMessage(
+        [{ type: 'think', think: 'Filtered while reasoning about the summary.' }],
+        { finishReason: 'filtered', rawFinishReason: 'content_filter' },
+      );
+    });
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const failed = ctx.once('error');
+
+    await ctx.rpc.beginCompaction({});
+    await failed;
+
+    expect(inputs).toHaveLength(1);
+    expect(ctx.compactHistory()).toEqual([
+      { role: 'user', text: 'old user one' },
+      { role: 'assistant', text: 'old assistant one' },
+      { role: 'user', text: 'recent user two' },
+      { role: 'assistant', text: 'recent assistant two' },
+    ]);
+  });
+
   it('waits before retrying compaction generation after a retryable failure', async () => {
     vi.useFakeTimers();
     const firstAttemptFailed = deferred<void>();
@@ -2609,7 +2645,10 @@ function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
   };
 }
 
-function mockStreamedMessage(parts: readonly StreamedMessagePart[]): StreamedMessage {
+function mockStreamedMessage(
+  parts: readonly StreamedMessagePart[],
+  opts?: { finishReason?: StreamedMessage['finishReason']; rawFinishReason?: string | null },
+): StreamedMessage {
   return {
     get id(): string | null {
       return 'mock-stream';
@@ -2617,8 +2656,8 @@ function mockStreamedMessage(parts: readonly StreamedMessagePart[]): StreamedMes
     get usage() {
       return null;
     },
-    finishReason: null,
-    rawFinishReason: null,
+    finishReason: opts?.finishReason ?? null,
+    rawFinishReason: opts?.rawFinishReason ?? null,
     async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
       for (const part of parts) {
         yield part;

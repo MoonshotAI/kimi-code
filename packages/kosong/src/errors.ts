@@ -215,7 +215,10 @@ export function isRetryableGenerateError(error: unknown): boolean {
     return true;
   }
   if (error instanceof APIEmptyResponseError) {
-    return true;
+    // A filtered response is deterministic: replaying the same request just
+    // re-triggers the provider's safety filter, so fail fast and surface the
+    // filter notice instead of burning the whole step-retry budget.
+    return error.finishReason !== 'filtered';
   }
   if (error instanceof APIStatusError) {
     // Quota/balance exhaustion is a 429 but deterministic until the account

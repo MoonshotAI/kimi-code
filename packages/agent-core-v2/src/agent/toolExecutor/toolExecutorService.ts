@@ -1,24 +1,8 @@
-/**
- * `toolExecutor` domain — `IAgentToolExecutorService` implementation.
- *
- * Resolves executable tools through `toolRegistry`, adjudicates tool calls
- * through the `onBeforeExecuteTool` veto event, awaits readiness work
- * through the `onWillExecuteTool` participation event, finalizes results
- * through the ordered `onDidExecuteTool` hook, publishes tool lifecycle
- * events through `event`, records telemetry through `telemetry`, truncates
- * oversized outputs through `toolResultTruncation`, and logs parse
- * diagnostics through `log`. The mutable dup-type tracking state
- * (`toolCallDupTypes`, `dupTypeTurnId`) is registered into `agentState`
- * (`IAgentStateService`) and read/written through it; the emitters, the hook
- * slot, and the describer/guard registration slots stay plain fields. Bound
- * at Agent scope.
- */
-
 import { toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { AsyncEmitter, type Event } from '#/_base/event';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import type { ContentPart, ToolCall } from '#/kosong/contract/message';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
@@ -31,7 +15,7 @@ import {
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { PathSecurityError } from '#/tool/path-access';
 import { isAbortError, isUserCancellation } from '#/_base/utils/abort';
-import { IEventBus } from '#/app/event/eventBus';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   ToolAccesses,
   type ExecutableTool,
@@ -49,6 +33,7 @@ import type {
   WillExecuteToolEvent,
 } from '#/agent/toolExecutor/toolHooks';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ILogService } from '#/_base/log/log';
 import type { ToolCallEvent } from '#/app/telemetry/events';
@@ -65,14 +50,17 @@ import {
   type ToolExecutorExecuteOptions,
   type UnavailableToolDescriber,
 } from './toolExecutor';
+import { ToolCallStarted, ToolProgress, ToolResultEvent } from './toolExecutorEvents';
 import { ToolScheduler } from './toolScheduler';
-import './toolExecutorEvents';
 
 const ABORT_GRACE_MS = 2_000;
 const TOOL_OUTPUT_EMPTY = 'Tool output is empty.';
 const TOOL_OUTPUT_NON_TEXT = 'Tool returned non-text content.';
 
-const validators = new WeakMap<ExecutableTool, ToolArgsValidator>();
+const validators = new WeakMap<
+  ExecutableTool,
+  { schema: Record<string, unknown>; validator: ToolArgsValidator }
+>();
 
 export interface ToolExecutionTask {
   readonly accesses: ToolAccesses;
@@ -161,16 +149,17 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
   }
 
   constructor(
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IEventBus private readonly eventBus: IEventBus,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentToolResultTruncationService
     private readonly resultTruncation: IAgentToolResultTruncationService,
     @IAgentStateService private readonly states: IAgentStateService,
     @ILogService private readonly log?: ILogService,
   ) {
-    this.states.register(toolExecutorToolCallDupTypesKey);
-    this.states.register(toolExecutorDupTypeTurnIdKey);
+    this.states.contributeState(toolExecutorToolCallDupTypesKey);
+    this.states.contributeState(toolExecutorDupTypeTurnIdKey);
   }
 
   private get toolCallDupTypes(): Map<string, ToolCallDupType> {
@@ -583,15 +572,17 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     options: ToolExecutorExecuteOptions,
     displayFields?: ToolCallDisplayFields,
   ): void {
-    this.eventBus.publish({
-      type: 'tool.call.started',
-      turnId: options.turnId,
-      toolCallId: call.toolCall.id,
-      name: call.toolName,
-      args,
-      description: displayFields?.description,
-      display: displayFields?.display,
-    });
+    void this.dispatcher.dispatch(
+      new ToolCallStarted({
+        agentId: this.scopeContext.agentId,
+        turnId: options.turnId,
+        toolCallId: call.toolCall.id,
+        name: call.toolName,
+        args,
+        description: displayFields?.description,
+        display: displayFields?.display,
+      }),
+    );
     options.onToolCall?.({
       toolCallId: call.toolCall.id,
       name: call.toolName,
@@ -604,13 +595,15 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     result: ToolResult,
     options: ToolExecutorExecuteOptions,
   ): void {
-    this.eventBus.publish({
-      type: 'tool.result',
-      turnId: options.turnId,
-      toolCallId: call.toolCall.id,
-      output: result.output,
-      isError: result.isError,
-    });
+    void this.dispatcher.dispatch(
+      new ToolResultEvent({
+        agentId: this.scopeContext.agentId,
+        turnId: options.turnId,
+        toolCallId: call.toolCall.id,
+        output: result.output,
+        isError: result.isError,
+      }),
+    );
   }
 
   private dispatchToolProgress(
@@ -618,12 +611,14 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     update: ToolUpdate,
     options: ToolExecutorExecuteOptions,
   ): void {
-    this.eventBus.publish({
-      type: 'tool.progress',
-      turnId: options.turnId,
-      toolCallId: call.toolCall.id,
-      update,
-    });
+    void this.dispatcher.dispatch(
+      new ToolProgress({
+        agentId: this.scopeContext.agentId,
+        turnId: options.turnId,
+        toolCallId: call.toolCall.id,
+        update,
+      }),
+    );
   }
 
   private async finalizeToolResult(
@@ -793,16 +788,17 @@ function preflightToolCall(
 }
 
 function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string | null {
-  let validator = validators.get(tool);
-  if (validator === undefined) {
+  const schema = tool.parameters;
+  let cached = validators.get(tool);
+  if (cached === undefined || cached.schema !== schema) {
     try {
-      validator = compileToolArgsValidator(tool.parameters);
-      validators.set(tool, validator);
+      cached = { schema, validator: compileToolArgsValidator(schema) };
+      validators.set(tool, cached);
     } catch (error) {
       return error instanceof Error ? error.message : String(error);
     }
   }
-  return validateToolArgs(validator, args as JsonType);
+  return validateToolArgs(cached.validator, args as JsonType);
 }
 
 function toolCallDisplayFieldsFromExecution(

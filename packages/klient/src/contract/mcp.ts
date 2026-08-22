@@ -20,6 +20,7 @@ const mcpServerCommonFields = {
 export const mcpServerConfigSchema = z.discriminatedUnion('transport', [
   z.object({
     transport: z.literal('stdio'),
+    runtime_id: z.string().min(1).optional(),
     command: z.string().min(1),
     args: z.array(z.string()).optional(),
     env: stringRecordSchema.optional(),

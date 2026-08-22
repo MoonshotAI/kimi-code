@@ -1,10 +1,3 @@
-/**
- * Per-request pino logger access for route handlers whose request type is
- * structurally narrowed (`defineRoute` declares only the fields a handler
- * uses). At runtime every handler receives a real Fastify request, which
- * always carries `log` — the same pattern `error-handler.ts` relies on.
- */
-
 import type { Logger } from 'pino';
 
 /** Minimal pino surface used by route handlers. */

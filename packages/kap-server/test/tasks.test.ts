@@ -35,6 +35,9 @@ interface TaskWire {
   completed_at?: string;
   output_preview?: string;
   output_bytes?: number;
+  agent_id?: string;
+  subagent_type?: string;
+  parent_tool_call_id?: string;
 }
 
 interface ListWire {
@@ -48,8 +51,6 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-tasks-'));
-    // Seed a stub IModelCatalog so the agent scope can instantiate if a
-    // transitive service needs it; IAgentTaskService itself does not.
     const modelCatalog: IModelCatalog = {
       _serviceBrand: undefined,
       get: () => {
@@ -122,20 +123,15 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     return body.data.id;
   }
 
-  // The main agent scope is not created automatically on session creation
-  // (server-v2 gap G10); create it here, then register fake tasks
-  // directly into its IAgentTaskService to bypass the tool loop.
   async function mainAgentTasks(sessionId: string): Promise<IAgentTaskService> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     const agent =
-      session.accessor.get(IAgentLifecycleService).get('main') ??
+      session.accessor.get(IAgentLifecycleService).findAgentHandle('main') ??
       (await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' }));
     return agent.accessor.get(IAgentTaskService);
   }
 
-  // Let the `registerTask` microtask run `start` (which appends output) before
-  // the next request.
   async function flush(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
@@ -158,6 +154,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
               kind: 'agent',
               agentId: 'sub-1',
               subagentType: 'explore',
+              parentToolCallId: 'call-parent-1',
               model: 'provider/secondary',
               thinkingEffort: 'low',
             };
@@ -200,29 +197,38 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     expect(process).toMatchObject({
       id: processId,
       session_id: id,
-      kind: 'bash', // process → bash
+      kind: 'bash',
       status: 'running',
       description: 'fake process task',
-      command: 'echo hi', // only process/bash tasks expose command
+      command: 'echo hi',
     });
     expect(typeof process?.created_at).toBe('string');
 
     expect(byId.get(agentId)).toMatchObject({
       id: agentId,
       session_id: id,
-      kind: 'subagent', // agent → subagent
+      kind: 'subagent',
       status: 'running',
-      model: 'provider/secondary', // subagent tasks expose the bound display model
-      thinking_effort: 'low', // …and its effective thinking effort
+      model: 'provider/secondary',
+      thinking_effort: 'low',
+      agent_id: 'sub-1',
+      subagent_type: 'explore',
+      parent_tool_call_id: 'call-parent-1',
     });
     expect(byId.get(agentId)?.command).toBeUndefined();
 
     expect(byId.get(questionId)).toMatchObject({
       id: questionId,
       session_id: id,
-      kind: 'tool', // question → tool
+      kind: 'tool',
       status: 'running',
     });
+    expect(byId.get(processId)?.agent_id).toBeUndefined();
+    expect(byId.get(questionId)?.agent_id).toBeUndefined();
+    expect(byId.get(processId)?.subagent_type).toBeUndefined();
+    expect(byId.get(questionId)?.subagent_type).toBeUndefined();
+    expect(byId.get(processId)?.parent_tool_call_id).toBeUndefined();
+    expect(byId.get(questionId)?.parent_tool_call_id).toBeUndefined();
   });
 
   it('filters the list by wire status', async () => {
@@ -245,11 +251,24 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     const id = await createSession();
     const tasks = await mainAgentTasks(id);
     const taskId = tasks.registerTask(fakeTask('process'));
+    const subagentId = tasks.registerTask(fakeTask('agent'));
     await flush();
 
     const got = await getJson<TaskWire>(`/api/v1/sessions/${id}/tasks/${taskId}`);
     expect(got.body.code).toBe(0);
     expect(got.body.data).toMatchObject({ id: taskId, session_id: id, kind: 'bash' });
+    expect(got.body.data.agent_id).toBeUndefined();
+
+    const gotSubagent = await getJson<TaskWire>(`/api/v1/sessions/${id}/tasks/${subagentId}`);
+    expect(gotSubagent.body.code).toBe(0);
+    expect(gotSubagent.body.data).toMatchObject({
+      id: subagentId,
+      session_id: id,
+      kind: 'subagent',
+      agent_id: 'sub-1',
+      subagent_type: 'explore',
+      parent_tool_call_id: 'call-parent-1',
+    });
 
     const missing = await getJson<null>(`/api/v1/sessions/${id}/tasks/nope`);
     expect(missing.body.code).toBe(40406);
@@ -268,7 +287,6 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     expect(got.body.data.output_preview).toBe('hello world');
     expect(got.body.data.output_bytes).toBe(Buffer.byteLength('hello world', 'utf-8'));
 
-    // Without with_output the metadata is returned without output fields.
     const plain = await getJson<TaskWire>(`/api/v1/sessions/${id}/tasks/${taskId}`);
     expect(plain.body.code).toBe(0);
     expect(plain.body.data.output_preview).toBeUndefined();
@@ -288,8 +306,6 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     expect(cancelled.body.data).toEqual({ cancelled: true });
     expect(tasks.getTask(taskId)?.stopReason).toBe('Aborted by the user');
 
-    // The task is now terminal (killed → cancelled); a second cancel is a
-    // conflict with the idempotent envelope shape.
     const again = await postJson<{ cancelled: boolean }>(
       `/api/v1/sessions/${id}/tasks/${taskId}:cancel`,
     );

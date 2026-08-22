@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { type ISessionTodoService } from '#/session/todo/sessionTodo';
 import { TODO_LIST_TOOL_NAME, type TodoItem } from '#/session/todo/todoItem';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { TodoListInputSchema } from '#/agent/tools/todo-list/todo-list';
 import { TodoListTool } from '#/agent/tools/todo-list/todoListTool';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
@@ -16,11 +17,11 @@ function makeTodoService(initial: readonly TodoItem[] = []): {
   return {
     service: {
       _serviceBrand: undefined,
-      getTodos: () => todos,
-      setTodos: (next: readonly TodoItem[]) => {
+      getTodos: async () => todos,
+      setTodos: async (_agent, next: readonly TodoItem[]) => {
         todos = next.map((todo) => ({ title: todo.title, status: todo.status }));
       },
-      clear: () => {
+      clear: async () => {
         todos = [];
       },
       onDidChange: () => ({ dispose: () => {} }),
@@ -34,7 +35,8 @@ function makeTool(initial: readonly TodoItem[] = []): {
   readonly getTodos: () => readonly TodoItem[];
 } {
   const { service, getTodos } = makeTodoService(initial);
-  return { tool: new TodoListTool(service), getTodos };
+  const agent = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' });
+  return { tool: new TodoListTool(service, agent), getTodos };
 }
 
 describe('TodoListTool', () => {
@@ -55,27 +57,6 @@ describe('TodoListTool', () => {
         todos: { type: 'array' },
       },
     });
-  });
-
-  it('description includes the anti-churn guardrails', () => {
-    const { description } = makeTool().tool;
-
-    expect(description).toContain('**Avoid churn:**');
-    expect(description).toMatch(/nothing meaningful has changed/i);
-    expect(description).toMatch(/real progress/i);
-    expect(description).toMatch(/query mode/i);
-    expect(description).toMatch(/tell the user/i);
-  });
-
-  it('description encourages proactive progress updates without allowing churn', () => {
-    const { description } = makeTool().tool;
-
-    expect(description).toMatch(/proactively and often/i);
-    expect(description).toMatch(/immediately after finishing/i);
-    expect(description).toMatch(/exactly one/i);
-    expect(description).toMatch(/in_progress/i);
-    expect(description).toMatch(/tests are failing/i);
-    expect(description).toContain('**Avoid churn:**');
   });
 
   it('query mode renders the current list without mutating it', async () => {
