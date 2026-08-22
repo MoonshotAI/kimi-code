@@ -1,11 +1,50 @@
+/**
+ * `plugin` domain (L3) — owns the on-disk `installed.json` record store.
+ *
+ * Reads, validates, and atomically rewrites the installed-plugin file for
+ * `PluginManager`. Records are validated rather than cast because the file is
+ * hand-editable and survives downgrades; every schema is loose at every level
+ * so a record written by a newer client round-trips through an older one.
+ */
+
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+
+import { z } from 'zod';
 
 import { Error2, ErrorCodes } from '#/errors';
 
 import type { PluginCapabilityState, PluginGithubMetadata, PluginSource } from './types';
 
 const INSTALLED_REL = path.join('plugins', 'installed.json');
+
+const PluginSourceSchema: z.ZodType<PluginSource> = z.enum(['local-path', 'zip-url', 'github']);
+
+const PluginGithubMetadataSchema: z.ZodType<PluginGithubMetadata> = z.looseObject({
+  owner: z.string(),
+  repo: z.string(),
+  ref: z.looseObject({
+    kind: z.enum(['branch', 'tag', 'sha']),
+    value: z.string(),
+  }),
+  installedSha: z.string().optional(),
+});
+
+const PluginCapabilityStateSchema: z.ZodType<PluginCapabilityState> = z.looseObject({
+  mcpServers: z.record(z.string(), z.looseObject({ enabled: z.boolean() })).optional(),
+});
+
+const InstalledRecordSchema = z.looseObject({
+  id: z.string(),
+  root: z.string(),
+  source: PluginSourceSchema,
+  enabled: z.boolean(),
+  installedAt: z.string(),
+  updatedAt: z.string().optional(),
+  originalSource: z.string().optional(),
+  capabilities: PluginCapabilityStateSchema.optional(),
+  github: PluginGithubMetadataSchema.optional(),
+});
 
 export interface InstalledRecord {
   readonly id: string;
@@ -52,7 +91,18 @@ export async function readInstalled(kimiHomeDir: string): Promise<InstalledFile>
       { details: { path: filePath } },
     );
   }
-  return parsed;
+  const plugins = parsed.plugins.map((entry, index) => {
+    const record = InstalledRecordSchema.safeParse(entry);
+    if (!record.success) {
+      throw new Error2(
+        ErrorCodes.PLUGIN_LOAD_FAILED,
+        `Failed to parse ${filePath}: plugins[${index}] is not a valid installed record: ${record.error.message}`,
+        { cause: record.error, details: { path: filePath } },
+      );
+    }
+    return record.data as InstalledRecord;
+  });
+  return { ...parsed, plugins };
 }
 
 export async function writeInstalled(kimiHomeDir: string, data: InstalledFile): Promise<void> {
