@@ -23,11 +23,11 @@ import {
 } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
+import { providerDisplayName } from '#/tui/utils/provider-label';
 import { renderTabStrip } from '#/tui/utils/tab-strip';
 
 import {
   ModelSelectorComponent,
-  providerDisplayName,
   type ModelSelection,
   type ModelSelectorOptions,
 } from './model-selector';

@@ -16,6 +16,8 @@ export const STATUS_LINE_MAX_CAPTURE_BYTES = 65_536;
 
 export interface StatusLinePayload {
   model: string;
+  /** Provider serving the current model; empty when the alias is unknown. */
+  provider: string;
   cwd: string;
   gitBranch: string | null;
   permissionMode: string;

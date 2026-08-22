@@ -16,6 +16,7 @@ import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/danc
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
+import { providerDisplayName } from '#/tui/utils/provider-label';
 import {
   StatusLineCommandRunner,
   type StatusLinePayload,
@@ -145,6 +146,19 @@ function modelDisplayName(state: AppState): string {
   const model = state.availableModels[state.model];
   const effective = model === undefined ? undefined : effectiveModelAlias(model);
   return effective?.displayName ?? effective?.model ?? state.model;
+}
+
+/**
+ * Provider serving the current model, as a display label. Empty when the
+ * active alias is not in the catalog, which drops the slot rather than
+ * echoing the raw alias — unlike the model name, an alias is no answer to
+ * "which provider".
+ */
+function modelProviderName(state: AppState): string {
+  const model = state.availableModels[state.model];
+  const effective = model === undefined ? undefined : effectiveModelAlias(model);
+  const provider = effective?.provider;
+  return provider === undefined || provider.length === 0 ? '' : providerDisplayName(provider);
 }
 
 function shortenCwd(path: string): string {
@@ -373,6 +387,7 @@ export class FooterComponent implements Component {
     const slots: Record<string, string[]> = {
       mode: [],
       goal: [],
+      provider: [],
       model: [],
       tasks: [],
       cwd: [],
@@ -396,6 +411,11 @@ export class FooterComponent implements Component {
 
     const goalBadge = formatGoalBadge(state.goal, colors, this.goalWallClockMs(state.goal));
     if (goalBadge !== null) slots['goal'] = [goalBadge];
+
+    // Opt-in slot: the provider behind the current model, so a footer that
+    // lists several look-alike model names still says who serves them.
+    const provider = modelProviderName(state);
+    if (provider) slots['provider'] = [chalk.hex(colors.textDim)(provider)];
 
     const model = modelDisplayName(state);
     if (model) {
@@ -451,6 +471,7 @@ export class FooterComponent implements Component {
     const state = this.state;
     return {
       model: modelDisplayName(state),
+      provider: modelProviderName(state),
       cwd: state.workDir,
       gitBranch: this.gitCache.getStatus()?.branch ?? null,
       permissionMode: state.permissionMode,
