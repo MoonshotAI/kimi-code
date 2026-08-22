@@ -5046,9 +5046,9 @@ command = "vim"
 
     const transcript = stripSgr(renderTranscript(driver));
     const panel = stripSgr(renderBtwPanel(driver));
-    const rootChildren = driver.state.ui.children;
-    expect(rootChildren.indexOf(driver.state.btwPanelContainer)).toBe(
-      rootChildren.indexOf(driver.state.editorContainer) - 1,
+    const dockChildren = driver.state.dockContainer.children;
+    expect(dockChildren.indexOf(driver.state.btwPanelContainer)).toBe(
+      dockChildren.indexOf(driver.state.editorContainer) - 1,
     );
     expect(transcript).toContain('main answer after btw');
     expect(transcript).not.toContain('side answer');

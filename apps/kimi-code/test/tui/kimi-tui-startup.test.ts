@@ -326,14 +326,12 @@ describe('KimiTUI startup', () => {
     });
   });
 
-  it('mounts the docked fullscreen layout when KIMI_CODE_TUI_FULL_SCREEN=1', async () => {
+  it('mounts the docked fullscreen layout', async () => {
     const harness = makeHarness(makeSession());
-    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
     const driver = makeDriver(harness, { ...makeStartupInput(), engineV2: true });
-    vi.unstubAllEnvs();
 
-    // buildLayout() runs in the constructor: fullscreen keeps the root
-    // children list empty and mounts the layout root instead.
+    // The chrome hangs off the layout root, so the root children list stays
+    // empty.
     expect(driver.state.ui.mode).toBe('fullscreen');
     expect(driver.state.ui.children).toHaveLength(0);
 
@@ -2388,5 +2386,8 @@ function uiContainsFooter(driver: StartupDriver): boolean {
     const children = (node as { children?: unknown[] }).children;
     return Array.isArray(children) && children.some(visit);
   };
-  return visit(driver.state.ui);
+  // The chrome hangs off the alternate screen's layout root, not the root
+  // children list.
+  const ui = driver.state.ui as { getLayoutRoot?: () => unknown };
+  return visit(ui.getLayoutRoot?.()) || visit(driver.state.ui);
 }
