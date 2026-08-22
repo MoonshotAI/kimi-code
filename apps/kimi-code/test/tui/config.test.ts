@@ -35,6 +35,7 @@ describe('TUI config', () => {
     expect(text).toContain('Client preferences for kimi-code.');
     expect(text).toContain('theme = "auto"');
     expect(text).toContain('cache_expiry_hint = true');
+    expect(text).toContain('thinking_live_display = "preview"');
     expect(text).toContain('command = ""');
     expect(text).toContain('[upgrade]');
     expect(text).toContain('auto_install = true');
@@ -63,6 +64,7 @@ auto_install = false
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
+      thinkingLiveDisplay: 'preview',
       editorCommand: 'code --wait',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
@@ -98,6 +100,16 @@ cache_expiry_hint = false
     expect(config.cacheExpiryHint).toBe(false);
   });
 
+  it('defaults thinking_live_display to preview and parses stats', () => {
+    expect(parseTuiConfig('').thinkingLiveDisplay).toBe('preview');
+
+    const config = parseTuiConfig(`
+thinking_live_display = "stats"
+`);
+
+    expect(config.thinkingLiveDisplay).toBe('stats');
+  });
+
   it('normalizes an empty editor command to auto-detect', () => {
     const config = parseTuiConfig(`
 [editor]
@@ -109,6 +121,7 @@ command = "   "
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
+      thinkingLiveDisplay: 'preview',
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
@@ -156,6 +169,7 @@ command = "   "
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
+      thinkingLiveDisplay: 'preview',
       editorCommand: 'vim',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
